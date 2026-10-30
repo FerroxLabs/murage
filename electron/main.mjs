@@ -47,6 +47,7 @@ import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { MAX_BACKUP_BYTES } from "../shared/backup-max-bytes.mjs";
+import { MAX_BACKUP_DURATION_MS, withoutBackupBudgetArgument } from "../shared/backup-budget.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
 import { backupFolderRefusal } from "./backup-folder-check.mjs";
 import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
@@ -385,7 +386,7 @@ let backupProgress=null; // the "Backing up your workspace" window while the off
 const returnToWorkspaceAfterBackup=createBackupReturn({
   app,
   cleanup:()=>cleanupDesktopForExit(),
-  relaunch:()=>relaunchDesktop({app,args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
+  relaunch:()=>relaunchDesktop({app,args:withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
   takeProgress:()=>{const progress=backupProgress;backupProgress=null;return progress;},
   log:line=>slog(line),
 });
@@ -523,7 +524,7 @@ const backupMode = createBackupModeController({
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
     await cleanupForBackupRestart();
-    relaunchDesktop({ app, args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
+    relaunchDesktop({ app, args:[...withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
     app.quit();
   },
 });
@@ -936,7 +937,7 @@ const launchCloudLink = doorLinkFromCommandLine(process.argv);
 async function takeLaunchCloudLink() {
   if (cloudHome && launchCloudLink && needsDoorHandoff({ link: launchCloudLink })) {
     const handedOver = await handOffDoorLink({ app, safeStorage, directory: cloudHomesDirectory(), url: launchCloudLink.url,
-      relaunch: (args) => relaunchDesktop({ app, args }), blocked: () => relaunchBlockedCode() });
+      relaunch: (args) => relaunchDesktop({ app, args: withoutBackupBudgetArgument(args) }), blocked: () => relaunchBlockedCode() });
     if (handedOver) return true;
     console.log("[cloud] door: handoff-skipped");
   }
@@ -3209,7 +3210,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
-    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
+    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>MAX_BACKUP_DURATION_MS)throw new Error("INVALID_BACKUP_BUDGET");
     args.push("--max-bytes",String(parameters.maxBytes),"--max-duration-ms",String(parameters.maxDurationMs));
   }
   await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
@@ -3233,6 +3234,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+    ...(operation==="backup-encrypted"&&typeof parameters.onProgress==="function"?{onProgress:parameters.onProgress}:{}),
   });
     // Undoing the restore of a separate installation leaves nothing for the
     // selection to open: hand the next start back to the original (D2).
@@ -4695,17 +4697,21 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
+    reportWorkerProgress:progress=>backupProgress?.worker(progress),
     reportCaptureFailure:(failure,handoff)=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
-    relaunch:async mode=>{
+    argv:()=>process.argv,
+    noteBudget:budget=>sentinelHost?.backupBudget(budget),
+    relaunch:async(mode,budgetArgument)=>{
       // Back to the workspace after a backup-mode capture, whatever its
       // outcome: one relaunch, the progress window destroyed before the quit,
       // and a bounded exit if the quit is still held (backup-offline-return.mjs).
       if(mode==="normal")return returnToWorkspaceAfterBackup();
-      const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
-      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
+      const args=withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
+      if(mode==="backup"){args.push(BACKUP_MODE_ARGUMENT);if(budgetArgument)args.push(budgetArgument);}
+      relaunchDesktop({app,args});app.quit();
     },
   });
   // 1.0.9 Sentinel: publish the committed backup state once, now that the folder/key check exists, so a restart or an
@@ -4775,6 +4781,7 @@ const desktopStartup = app.whenReady().then(async () => {
     void runOfflineBackup({
       run:()=>desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()),
       abandon:()=>backupScheduleHost.abandonOffline(),
+      ceilingMs:backupScheduleHost.offlineCeilingMs(),
       returnToWorkspace:returnToWorkspaceAfterBackup,
       shutdownStarted:()=>desktopShutdownStarted,
       showBackupMode:()=>showDesktopRecovery("BACKUP_REQUESTED"),

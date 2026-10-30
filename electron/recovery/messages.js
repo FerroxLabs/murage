@@ -43,7 +43,7 @@
   // A plain file error while the backup file was written (W-D1): about the
   // backup folder or the drive, never the recovery key.
   const WRITE_FAILED = "Murage couldn't finish writing the backup file, and nothing in your workspace was changed. Try again; if it happens again, open the diagnostics folder and send the newest log to support.";
-  const DISK_FULL = "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then try again.";
+  const DISK_FULL = "There isn't enough free space to finish. Free up space on this computer's drive and on the drive that holds your backup folder, then try again.";
   const NOT_WRITABLE = "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder, then try again.";
   const IN_USE = "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then try again.";
   const FOLDER_UNUSABLE = "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in, then try again.";
