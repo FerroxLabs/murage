@@ -168,6 +168,12 @@ export interface OptionCardData {
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
+  /** UX-TRUST-MOMENTS-1012 1.2: the card's class, written once when the
+   * permission card opened (server). Absent on questions and older cards:
+   * the fold then reads the keys alone (shared/fold-scopes.ts). */
+  cardClass?: import("../../shared/fold-scopes").CardClass;
+  /** 1.4: the why-line, a ux.l1.why.* key and its words (server). */
+  why?: { key: string; params: Record<string, string | number> };
   approvalScope?: "local-computer";
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
@@ -644,6 +650,9 @@ export interface Bot {
   autoReview?: "off" | "shadow" | "enforce";
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
+  /** UX-TRUST-MOMENTS-1012 2.3.12: how many 12-hour task allowances the bot
+   * holds across its open conversations (a count, never the keys) */
+  taskAllowanceCount?: number;
   /** speak this bot's replies aloud as they settle */
   speakReplies?: boolean;
   /** this bot's own voice id (falls back to the app-wide one) */
@@ -1360,6 +1369,11 @@ export type { HttpOrigin };
 /** How a Delete the person asked for ended (the archived list waits for it). */
 export type DeleteOutcome = { outcome: "deleted" | "refused" | "gaveUp"; error?: string };
 
+/** UX-TRUST-MOMENTS-1012 1.3: a bot "Always" save's `added` receipt, by holder. */
+export interface GrantHolders { bot: string[]; task: string[]; taskThreadId?: string }
+/** The strings of a reply's list field (anything else reads as none). */
+const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((key: unknown): key is string => typeof key === "string") : [];
+
 export type Action =
   | ({
       type: "hydrate";
@@ -1553,15 +1567,20 @@ export type Action =
       reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
-      alwaysAllow?: { botId: string; key?: string; keys?: string[] };
+      /** `onSaved` gets the save's `added` receipt BY HOLDER (the bot's
+       * defaults, this task), so the card's Undo takes back only that. */
+      alwaysAllow?: { botId: string; key?: string; keys?: string[]; onSaved?: (added: GrantHolders) => void };
       /** "Always allow for this routine" (AMEND-13 Rules 81, 82): the server
        * rereads the card's own offer and saves its whole action set, plus each
        * offered stop the owner also ticked (`stopKeys`); an older card names
        * its one routineAllowKey (`key`). `onSaved` gets what the server saved. */
-      alwaysAllowRoutine?: { routineId: string; key?: string; stopKeys?: string[]; onSaved?: (keys: string[]) => void };
+      alwaysAllowRoutine?: { routineId: string; key?: string; stopKeys?: string[]; onSaved?: (keys: string[], added: string[]) => void };
       /** a stop-line card's "Allow for this task": the server records the
        * card's own scoped grant (taskAllowKey) for this task */
       allowForTask?: boolean;
+      /** Local UI hook: the allowance the server reported as ADDED by this
+       * answer (`taskAdded`; empty when it was already held). Never sent. */
+      onTaskAdded?: (keys: string[]) => void;
       /** The card the owner is looking at: the phone checks it against the
        * server's challenge before it asks for Face ID. */
       card?: import("../../shared/approval-digest").DigestCard;
@@ -5113,9 +5132,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // SEC-006: an Allow from the phone may be met by a challenge; the
           // helper asks for Face ID and re-posts once. A deny or an answer is
           // never signed.
+          const { allowForTask, onTaskAdded } = action;
           const respond = () =>
             decideWithFreshAuth(
-              (extra) => api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) }),
+              async (extra) => {
+                const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+                // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
+                if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
+                return body;
+              },
               {
                 threadId: action.threadId,
                 requestId: action.requestId,
@@ -5150,7 +5175,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     ...extra,
                   }),
                 });
-                if (Array.isArray(body?.saved)) grant.onSaved?.(body.saved.filter((key: unknown): key is string => typeof key === "string"));
+                // `saved`: the set it answered with; `added`: what it added (the card's Undo removes only that)
+                if (Array.isArray(body?.saved)) grant.onSaved?.(stringList(body.saved), stringList(body.added));
                 return body;
               },
               { threadId: action.threadId, requestId: action.requestId, decision: "allow", card: action.card, botName: action.botName, onDevicePrompt: action.onDevicePrompt },
@@ -5164,10 +5190,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // and leave the grant behind. Desktop only (the route's policy).
             const grant = action.alwaysAllow;
             void decideWithFreshAuth(
-              (extra) => api(`/api/bots/${grant.botId}/always-allow`, {
-                method: "POST",
-                body: JSON.stringify({ ...(grant.keys ? { allowKeys: grant.keys } : { allowKey: grant.key }), threadId: action.threadId, requestId: action.requestId, answer: true, ...extra }),
-              }),
+              async (extra) => {
+                const body = await api(`/api/bots/${grant.botId}/always-allow`, {
+                  method: "POST",
+                  body: JSON.stringify({ ...(grant.keys ? { allowKeys: grant.keys } : { allowKey: grant.key }), threadId: action.threadId, requestId: action.requestId, answer: true, ...extra }),
+                });
+                // UX-TRUST-MOMENTS-1012 1.3: what this save added to each holder, for the card's Undo
+                if (body?.added && typeof body.added === "object") grant.onSaved?.({ bot: stringList(body.added.bot), task: stringList(body.added.task), ...(typeof body.taskThreadId === "string" ? { taskThreadId: body.taskThreadId } : {}) });
+                return body;
+              },
               { threadId: action.threadId, requestId: action.requestId, decision: "allow", card: action.card, botName: action.botName, onDevicePrompt: action.onDevicePrompt },
               { onError: action.onError, onSuccess: action.onSuccess, showError },
             );

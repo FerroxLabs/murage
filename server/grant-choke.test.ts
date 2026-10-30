@@ -115,8 +115,10 @@ describe("C1 amendment: the write follows the answer, through a pending row", ()
   it("a lost answer (Deny or another device won) writes nothing and reports what landed", async () => {
     for (const outcome of ["rejected", "unavailable", "answered"] as const) {
       const w = world({ outcome });
-      const decided = await rememberAndAnswer(w.deps, w.input());
-      expect(decided).toEqual({ ok: false, status: 409, error: "This request was answered elsewhere, so nothing was saved.", answered: outcome });
+      const decided = await rememberAndAnswer(w.deps, w.input({ botName: "Nova" }));
+      // UX-TRUST-MOMENTS-1012 2.3.9: a holder that stopped waiting is named as such
+      const error = outcome === "unavailable" ? "Nova stopped waiting for this. Ask it again." : "This request was answered elsewhere, so nothing was saved.";
+      expect(decided).toEqual({ ok: false, status: 409, error, answered: outcome });
       expect(w.active).toEqual([]);
       expect(w.pending.ids()).toEqual([]);
     }
