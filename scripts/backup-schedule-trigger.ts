@@ -2,6 +2,7 @@ import {spawn} from "node:child_process";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 import {BackupCoordinator} from "../server/backup-coordinator.ts";
+import {CLOSED_BACKUP_PROCESS_LIMIT_MS} from "../shared/backup-budget.mjs";
 import {runClosedBackupTrigger} from "../electron/backup-closed-trigger.mjs";
 import {APPRUN_NO_SANDBOX,CLOSED_DESCRIPTOR_FLAG} from "../electron/backup-closed-profile.mjs";
 import {assertClosedRegistration,closedControlDirectory} from "../electron/backup-closed-controller.mjs";
@@ -9,7 +10,7 @@ import {createNativeClosedBackupProvider} from "../electron/backup-closed-native
 
 const statuses=new Set(["disabled","not-due","busy","verified","needs-review","unavailable"]);
 /** Only the exact finite result is retained; child stdout/stderr is never logged. */
-export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=32*60*1000}:any={}){
+export function launchClosedCapture(invocation:any,{spawnChild=spawn,timeoutMs=CLOSED_BACKUP_PROCESS_LIMIT_MS}:any={}){
   return new Promise<{status:string;confirmed:boolean}>(resolve=>{
     let child:any,bytes=0,text="",failed=false,force:ReturnType<typeof setTimeout>|undefined;
     try{child=spawnChild(invocation.executable,invocation.args,{env:invocation.env,stdio:["ignore","pipe","pipe"],windowsHide:true});}catch{resolve({status:"unavailable",confirmed:false});return;}
