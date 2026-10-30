@@ -11,16 +11,26 @@ import { respondWithFreshAuth } from "./fresh-auth";
 import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 
 export type Api = (path: string, init?: RequestInit) => Promise<unknown>;
-/** What the status route said: on (with the view), off (show nothing), or off with the section 8 Flux line. */
-export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "on"; view: EmailStatusView };
+/** What the status route said: on (with the view), off (a 404: not on here), off with the section 8 Flux line, or a read that failed
+ *  (network, 5xx) and says nothing about whether email is on. */
+export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "flux-refused"; line: string }
+  | { kind: "flux-sign-in"; line: string } | { kind: "flux-line"; line: string } | { kind: "error" } | { kind: "on"; view: EmailStatusView };
 
 export async function readEmailStatus(call: Api = api, refresh = false): Promise<EmailStatusState> {
   try {
     const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as EmailStatusView;
     return view && view.enabled === true ? { kind: "on", view } : { kind: "off" };
   } catch (error) {
-    const body = (error as { body?: { fluxOff?: unknown } }).body;
-    return typeof body?.fluxOff === "string" ? { kind: "flux-off", line: body.fluxOff } : { kind: "off" };
+    const { status, body } = error as { status?: unknown; body?: { fluxOff?: unknown; fluxRefused?: unknown; fluxSignIn?: unknown; fluxLine?: unknown } };
+    if (typeof body?.fluxOff === "string") return { kind: "flux-off", line: body.fluxOff };
+    // 1.0.11: Flux answered 401 on the saved key; the stub offers Sign in with Flux instead of hiding the card
+    if (typeof body?.fluxRefused === "string") return { kind: "flux-refused", line: body.fluxRefused };
+    // 1.0.11: the saved key has no email scope (403 email_scope_required); signing in mints the email:owner key
+    if (typeof body?.fluxSignIn === "string") return { kind: "flux-sign-in", line: body.fluxSignIn };
+    // a 200 with eligible: false (or a 403 account state): Flux's reason as one owner line
+    if (typeof body?.fluxLine === "string") return { kind: "flux-line", line: body.fluxLine };
+    // only a 404 means "not available here"; any other failure is a read that did not happen
+    return status === 404 ? { kind: "off" } : { kind: "error" };
   }
 }
 
@@ -87,6 +97,22 @@ export function emailSectionActions(view: Pick<EmailBotView, "state"> & Partial<
 
 /** 2.4: the owner act of turning email on (or signing in again) obtains the email:owner token in the desktop shell. Resolves null when
  *  signed in, the refusal line otherwise; without the desktop shell there is nothing to run (null, and the route answers for itself). */
+type FluxSigninBridge = { start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status?: { configured: boolean } } | { ok: false; message: string }> };
+/** 1.0.11: the Bot email stub's "Sign in with Flux" after Flux answered 401 on the saved key. The same desktop flow as Models & engines
+ *  (flux-signin:start), replacing the saved key at its current revision. Null when it worked, else the line to show. */
+export async function signInFluxAgain(bridge: FluxSigninBridge | undefined = typeof window !== "undefined" ? window.muragebox?.fluxSignin : undefined, call: Api = api,
+  onConnected?: (status: { configured: boolean }) => void): Promise<string | null> {
+  if (!bridge) return null;
+  const flux = await call("/api/flux-connection") as { configured?: unknown; revision?: unknown } | null;
+  const revision = typeof flux?.revision === "string" ? flux.revision : "";
+  const result = await bridge.start({ action: flux?.configured === true ? "replace" : "connect", revision });
+  if (!result.ok) return result.message;
+  // as Models & engines does: the saved-key state and the connection list follow the new key at once
+  if (result.status) onConnected?.(result.status);
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") window.dispatchEvent(new Event("murage:provider-connections-changed"));
+  return null;
+}
+
 export async function signInEmailOwner(bridge = typeof window !== "undefined" ? window.muragebox?.emailOwnerSignin : undefined): Promise<string | null> {
   if (!bridge) return null;
   const result = await bridge.start();

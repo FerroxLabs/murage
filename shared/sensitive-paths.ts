@@ -81,9 +81,10 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",
-    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](gcloud|npm)[\\/]|[\\/]login data\b/i,
-    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/AppData/Roaming/npm/**", "**/Login Data"],
-    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*AppData*Roaming*npm*", "*Login Data*"],
+    // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
+    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](gcloud|npm)[\\/]|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
+    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/**", "**/Login Data"],
+    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*.config/gcloud*", "*AppData*Roaming*npm*", "*Login Data*"],
   },
   {
     id: "keys-and-cluster-configs",

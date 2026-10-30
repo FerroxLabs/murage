@@ -99,6 +99,10 @@ export class EmailRuntime {
     this.secrets = new EmailSecretStore(options.persistSecrets);
     this.health = new EmailKeyHealth({ now: options.now });
     const account = () => {
+      // 1.0.11: the saved key has no email scope (403 email_scope_required, e.g. a dashboard key): once the owner signs in, the
+      // capability read goes on the email:owner token, which Flux minted for this account
+      const owner = this.probe?.useOwnerKey() ? this.secrets.owner() : null;
+      if (owner) return owner;
       const key = options.accountKey();
       return key ? { token: key, keyId: `account:${credentialFingerprint(key)}` } : null;
     };
@@ -108,7 +112,10 @@ export class EmailRuntime {
       observe: (ref, outcome) => this.health.observe(ref, outcome),
       gate: ref => this.health.gate(ref),
     });
-    this.probe = new EmailCapabilityProbe({ client: this.client, accountRef: () => { const key = options.accountKey(); return key ? credentialFingerprint(key) : null; }, now: options.now });
+    this.probe = new EmailCapabilityProbe({
+      client: this.client, accountRef: () => { const key = options.accountKey(); return key ? credentialFingerprint(key) : null; },
+      ownerKeySaved: () => this.secrets.owner() !== null, now: options.now,
+    });
     this.probe.onChange(enabled => { if (enabled) this.startTick(); else this.stopTick(); });
   }
 
