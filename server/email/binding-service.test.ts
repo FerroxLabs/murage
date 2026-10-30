@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
 import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
 import { EMAIL_INDEXES, EMAIL_TABLES, EmailStore, initializeEmailTables } from "./email-store.ts";
-import { EmailBindingService } from "./binding-service.ts";
+import { EmailBindingService, SETUP_GIVE_UP_MS, SETUP_GIVE_UP_TRIES, SETUP_NO_ANSWER, SETUP_RETRY_MS } from "./binding-service.ts";
 import { FakeFlux, fluxError, ownerOnly } from "../testing/fake-flux-email.ts";
 import { readFileSync, readdirSync } from "node:fs";
 import { bindingFailureLine } from "../../shared/email-copy.ts";
@@ -112,6 +112,57 @@ describe("setup (2.5, F21)", () => {
     await service.reconcileBindings();
     expect(store.getBinding("b1")!.state).toBe("active");
     expect(fake.calls("POST", /bot-keys$/).map(call => call.headers["idempotency-key"])).toEqual(["murage-key:inst:op-1", "murage-key:inst:op-1"]);
+  });
+
+  it("no answer at a setup step: the tick runs it again with the same op_id after the wait, and it finishes with no restart", async () => {
+    fake.on("POST", /bot-keys$/, "reset");
+    expect(await service.enable("b1", {})).toMatchObject({ state: "provisioning", opId: "op-1" });
+    await service.retryStalledSetups();
+    expect(fake.calls("POST", /bot-keys$/)).toHaveLength(1); // the wait is not over
+    clock += SETUP_RETRY_MS[0];
+    fake.on("POST", /bot-keys$/, minted).on("POST", /\/v1\/email\/inboxes$/, "reset");
+    await service.retryStalledSetups();
+    expect(store.getBinding("b1")).toMatchObject({ state: "provisioning", step: "inbox" });
+    clock += SETUP_RETRY_MS[1];
+    fake.on("POST", /\/v1\/email\/inboxes$/, inbox());
+    await service.retryStalledSetups();
+    expect(store.getBinding("b1")).toMatchObject({ state: "active", inboxId: "ibx_1" });
+    expect(fake.calls("POST", /bot-keys$/).map(call => call.headers["idempotency-key"])).toEqual(["murage-key:inst:op-1", "murage-key:inst:op-1"]);
+    expect(fake.calls("POST", /\/v1\/email\/inboxes$/).map(call => call.headers["idempotency-key"])).toEqual(["murage-inbox:inst:op-1", "murage-inbox:inst:op-1"]);
+    expect(store.getCursor("setup-retry:b1")).toBeNull();
+  });
+
+  it("after five runs with no answer setup shows failed with Retry; Retry replays the same op_id with a fresh budget", async () => {
+    for (let i = 0; i < SETUP_GIVE_UP_TRIES; i++) fake.on("POST", /bot-keys$/, "reset");
+    await service.enable("b1", {});
+    for (let i = 1; i < SETUP_GIVE_UP_TRIES; i++) { clock += SETUP_RETRY_MS[i - 1]; await service.retryStalledSetups(); }
+    expect(store.getBinding("b1")).toMatchObject({ state: "failed", failure: SETUP_NO_ANSWER });
+    expect(fake.calls("POST", /bot-keys$/)).toHaveLength(SETUP_GIVE_UP_TRIES);
+    expect(bindingFailureLine(SETUP_NO_ANSWER)).toContain("Press Retry");
+    clock += 300_000;
+    await service.retryStalledSetups();
+    expect(fake.calls("POST", /bot-keys$/)).toHaveLength(SETUP_GIVE_UP_TRIES); // failed waits for the owner
+    fake.on("POST", /bot-keys$/, minted).on("POST", /\/v1\/email\/inboxes$/, inbox());
+    expect(await service.enable("b1", {})).toMatchObject({ state: "active", opId: "op-1" });
+    expect(fake.calls("POST", /bot-keys$/).at(-1)!.headers["idempotency-key"]).toBe("murage-key:inst:op-1");
+  });
+
+  it("the give-up budget survives a restart, and past 15 minutes the next unanswered run shows failed", async () => {
+    fake.on("POST", /bot-keys$/, "reset");
+    await service.enable("b1", {});
+    const restarted = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, newId: () => "op-x", withdrawSends: () => undefined });
+    clock += SETUP_GIVE_UP_MS;
+    fake.on("POST", /bot-keys$/, "reset");
+    await restarted.reconcileBindings();
+    expect(store.getBinding("b1")).toMatchObject({ state: "failed", failure: SETUP_NO_ANSWER, opId: "op-1" });
+  });
+
+  it("two callers at once share one setup run", async () => {
+    fake.on("POST", /bot-keys$/, minted).on("POST", /\/v1\/email\/inboxes$/, inbox());
+    const [first, second] = await Promise.all([service.enable("b1", {}), service.enable("b1", {})]);
+    expect(first).toMatchObject({ state: "active" });
+    expect(second).toMatchObject({ state: "active" });
+    expect(fake.calls("POST", /bot-keys$/)).toHaveLength(1);
   });
 
   it("past Flux's 24 h window the key step starts over with a new op_id", async () => {

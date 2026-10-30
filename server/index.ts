@@ -7700,6 +7700,9 @@ setVenueReadLive({
 /** Bot email (1.0.9, server/email/runtime.ts). Dark: only the capability probe runs until Flux answers enabled: true. */
 const emailRuntime = new EmailRuntime({
   accountKey: () => fluxKey(),
+  // EMAIL-CAPS-CACHE-1011: the last definitive #31 answer per account, so a launch renders email at once; the app re-reads on emailStatus
+  capsFile: join(DATA_DIR, "email-capabilities.json"),
+  onStatus: () => broadcast({ kind: "emailStatus" }),
   database,
   transaction: fn => transaction(() => fn()),
   workspaceRoot: (botId, threadId) => selectFileWorkspace(DATA_DIR, store, botId, threadId)?.root,

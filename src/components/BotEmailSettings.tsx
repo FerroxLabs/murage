@@ -7,14 +7,16 @@
 //   - BotEmailSection: the bot's Email section: the state line (section 6), the setup steps (2.5), Retry / Pause / Resume / Remove /
 //     Reconnect, the 3.3 policy row, the trusted and Never email lists (3.5) and the Activity list;
 //   - BotEmailFluxLine: the section 8 line, shown in Access only when the server says this install had email and lost its Flux key.
-// Nothing renders unless the status route said enabled: true. Words come from shared/email-copy.ts verbatim.
+// Nothing renders unless the status route said enabled: true, or "Checking" (EMAIL-CAPS-CACHE-1011: a saved key with no definitive answer
+// yet is never shown as off). Words come from shared/email-copy.ts verbatim.
 import { useEffect, useState } from "react";
 import { Mail } from "lucide-react";
 import { Card, Switch } from "./SettingsPrimitives";
 import { inNativeShell } from "@/lib/native-shell";
 import { emailOwnerAct, emailSectionActions, priceLine, readBotEmail, readEmailStatus, removeOtherSetup, setEmailAccount, signInEmailOwner, useEmailStatus, type EmailStatusState } from "@/lib/bot-email";
-import { EMAIL_FILTERED_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
+import { EMAIL_FILTERED_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_STATUS_COPY, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 
+const SETUP_REREAD_MS = 15_000;
 const button = "min-h-9 rounded-lg px-3 text-[13px] font-medium disabled:opacity-60";
 const message = (error: unknown) => (error instanceof Error && error.message ? error.message : EMAIL_OWNER_COPY.actionFailed);
 
@@ -28,6 +30,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
   const [status, setStatus] = useState<EmailStatusState>(given ?? read);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   useEffect(() => { if (!given) setStatus(read); }, [read, given]);
+  if (status.kind === "checking") return <Card title={EMAIL_OWNER_COPY.sectionTitle}><p className="text-[13px] text-ink-secondary" data-testid="bot-email-checking">{status.note ?? EMAIL_STATUS_COPY.checking}</p></Card>;
   if (status.kind !== "on") return null;
   const view = status.view;
   const on = view.accountState === "active" || view.accountState === "on";
@@ -59,6 +62,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
         <Switch checked={on} disabled={busy} aria-label={on ? EMAIL_OWNER_COPY.accountOffAction : EMAIL_OWNER_COPY.accountOn} onClick={() => void change(!on)} />
       </div>
       {price && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-price">{price}</p>}
+      {view.staleNote && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-stale">{view.staleNote}</p>}
       {view.ownerKeyLine && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-owner-key">{view.ownerKeyLine}</p>}
       {on && canSignIn && (view.ownerKeyLine || !view.ownerSignedIn) && <button type="button" className={`${button} mt-2 bg-control text-ink`} disabled={busy} onClick={() => void signIn()}>{EMAIL_SETUP_COPY.signInAction}</button>}
       {view.accountSends && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-account-sends">{EMAIL_OWNER_COPY.accountSentToday(view.accountSends.today, view.accountSends.perDay)}</p>}
@@ -92,6 +96,14 @@ export function BotEmailSection({ bot, status }: { bot: { id: string; name: stri
     void readBotEmail(bot.id).then(next => { if (live) setView(next); });
     return () => { live = false; };
   }, [bot.id, status.kind]);
+  // a setup the server finishes on its own shows here without reopening the section
+  useEffect(() => {
+    if (status.kind !== "on" || view?.state !== "provisioning") return;
+    let live = true;
+    const timer = setTimeout(() => { void readBotEmail(bot.id).then(next => { if (live && next) setView(next); }); }, SETUP_REREAD_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [bot.id, status.kind, view]);
+  if (status.kind === "checking") return <div data-testid="bot-email-section"><Card title={EMAIL_OWNER_COPY.sectionTitle}><p className="text-[13px] text-ink-secondary" data-testid="bot-email-checking">{status.note ?? EMAIL_STATUS_COPY.checking}</p></Card></div>;
   if (status.kind !== "on" || !view) return null;
   const act = async (action: EmailOwnerAction, body: Record<string, unknown> = {}) => {
     setBusy(true); setError(null);

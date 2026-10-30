@@ -8,6 +8,7 @@ import { formerChiefOutcome } from "../../shared/chief-handover";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
 import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
 import { CALL_EVENT } from "@/lib/bot-call-event";
+import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -6072,6 +6073,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Bot calls 1.0.9: call.ring / call.answered / call.ended are hints; the ring banner and the Calls settings re-read
       // GET /api/calls/active on each one (calls-109.yaml sse).
       if (frame.kind === "call") { window.dispatchEvent(new CustomEvent(CALL_EVENT, { detail: frame })); return; }
+      if (frame.kind === "emailStatus") { window.dispatchEvent(new CustomEvent(EMAIL_STATUS_EVENT)); return; }
       if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);

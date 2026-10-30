@@ -5,9 +5,9 @@
 // only when the server sends it, the price line never inside the phone apps, the buttons each state offers, and an owner act posting the
 // exact body the server digests. Plus the house copy rules over every owner-facing word.
 import { describe, expect, it } from "vitest";
-import { emailOwnerAct, emailSectionActions, OWNER_ROUTE, emailSectionOffered, priceLine, readEmailStatus, setEmailAccount, signInEmailOwner } from "./bot-email";
+import { emailOwnerAct, emailSectionActions, OWNER_ROUTE, emailSectionOffered, heldEmailStatus, priceLine, readEmailStatus, resetHeldEmailStatus, setEmailAccount, signInEmailOwner } from "./bot-email";
 import { EMAIL_KEY_HEALTH_COPY as KEY_HEALTH_LINES } from "../../shared/email-copy.ts";
-import { EMAIL_CARD_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_TRUST_COPY, checkLine, emailOwnerActionCard, ownerRouteLine, type EmailStatusView } from "../../shared/email-copy.ts";
+import { EMAIL_CARD_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_STATUS_COPY, EMAIL_TRUST_COPY, checkLine, emailOwnerActionCard, ownerRouteLine, type EmailStatusView } from "../../shared/email-copy.ts";
 
 const VIEW: EmailStatusView = { enabled: true, accountState: "active", termsVersion: "v1", priceNote: "One cost line.", limits: {}, removing: [] };
 const failing = (status: number, body: unknown) => async () => { throw Object.assign(new Error("x"), { status, body }); };
@@ -20,6 +20,24 @@ describe("the status read (2.0, section 8)", () => {
     expect(await readEmailStatus(async () => ({ enabled: false }))).toEqual({ kind: "off" });
     expect(emailSectionOffered({ kind: "on", view: VIEW })).toBe(true);
     for (const state of [{ kind: "off" }, { kind: "loading" }, { kind: "flux-off", line: "x" }] as const) expect(emailSectionOffered(state)).toBe(false);
+  });
+
+  it("EMAIL-CAPS-CACHE-1011: Checking is offered, never off; a failed read (500, 502, a throw, a malformed body) keeps the last status", async () => {
+    resetHeldEmailStatus();
+    expect(await readEmailStatus(failing(500, { error: "x" }))).toEqual({ kind: "checking" });
+    expect(await readEmailStatus(async () => ({ enabled: false, checking: true, accountRef: "r1" }))).toEqual({ kind: "checking" });
+    expect(await readEmailStatus(async () => ({ enabled: false, checking: true, accountRef: "r1", note: EMAIL_STATUS_COPY.checkingNote }))).toEqual({ kind: "checking", note: EMAIL_STATUS_COPY.checkingNote });
+    expect(emailSectionOffered({ kind: "checking", note: "x" })).toBe(true);
+    expect(emailSectionOffered({ kind: "checking" })).toBe(true);
+    expect(await readEmailStatus(async () => VIEW)).toEqual({ kind: "on", view: VIEW });
+    for (const read of [failing(500, { error: "x" }), failing(502, {}), failing(503, {}), async () => { throw new Error("offline"); }, async () => null, async () => "html"]) {
+      expect(await readEmailStatus(read)).toEqual({ kind: "on", view: VIEW });
+    }
+    expect(heldEmailStatus()).toEqual({ kind: "on", view: VIEW });
+    // only the route's own 404 is off
+    expect(await readEmailStatus(failing(404, { error: "x" }))).toEqual({ kind: "off" });
+    expect(await readEmailStatus(failing(500, { error: "x" }))).toEqual({ kind: "off" });
+    resetHeldEmailStatus();
   });
 
   it("asks for a fresh capability read when Settings opens", async () => {

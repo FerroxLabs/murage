@@ -250,7 +250,21 @@ export interface EmailStatusView {
   ownerSignedIn?: boolean;
   /** Section 8: the owner token's health line, when Flux refused it, paused or is busy. */
   ownerKeyLine?: string | null;
+  /** EMAIL-CAPS-CACHE-1011: the saved key this answer belongs to (a fingerprint, never the key), and when it was read. */
+  accountRef?: string;
+  readAt?: number;
+  /** Rule 5: present (EMAIL_STATUS_COPY.staleNote) while a read after `readAt` gave no definitive answer. */
+  staleNote?: string;
 }
+/** EMAIL-CAPS-CACHE-1011 rule 4: no definitive answer yet for the saved key (never shown as off). `note` replaces the word "Checking" once
+ *  a read gave no definitive answer, so the card never waits in silence. */
+export interface EmailCheckingView { enabled: false; checking: true; accountRef: string | null; note?: string }
+export const EMAIL_STATUS_COPY = {
+  checking: "Checking",
+  checkingNote: "Flux has not confirmed bot email yet. Murage keeps checking.",
+  staleNote: "Can't reach Flux right now. Showing the last status we had.",
+  consentOffline: "Can't reach Flux right now. Try again shortly.",
+} as const;
 export interface EmailTrustEntry { entry: string; source: string; sourceLabel: string }
 export interface EmailBotView {
   botId: string; botName: string; state: string | null; address: string | null; chip: string | null; panelLine: string | null; failure: string | null;

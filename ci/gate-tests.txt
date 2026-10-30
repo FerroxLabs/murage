@@ -1670,3 +1670,4 @@ server/reload-retain.test.ts	all	engine reload keeps a folder lease while an eng
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
 server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
 server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated
+server/email/caps-cache.test.ts	all	email setup no longer stalls on a slow capabilities check: the answer is cached and reconciled at start-up
