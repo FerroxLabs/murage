@@ -1670,3 +1670,5 @@ server/reload-retain.test.ts	all	engine reload keeps a folder lease while an eng
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
 server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
 server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated
+server/drivers/acp/issue-perms-1010.test.ts	all	ISSUE-PERMS-1010: a Full access routine applies Fuigo codex apply_patch edits and runs commands after a slow environment check with no card; key files, the stop line and unreadable patches still wait
+server/stop-line-bypass-corpus.test.ts	linux	ISSUE-PERMS-1010: every reviewer bypass form keeps its card, and nothing shipped 1.0.9 held is let through

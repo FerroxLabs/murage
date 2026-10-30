@@ -244,6 +244,18 @@ export function acpMalformedSource(toolCall: { locations?: unknown; rawInput?: u
   return undefined;
 }
 
+/** ISSUE-PERMS-1010 B: a call stamped codex/apply_patch and filed as an edit, with the patch's destinations
+ *  (parseApplyPatch, the Codex driver's one reader) appended to `locations`. Any other call comes back as it was. */
+export function acpApplyPatchCall(toolCall: any, kind: string): { toolCall: any; unread: boolean } {
+  const stamp = acpStampedIdentity(toolCall);
+  if (kind !== "edit" || stamp?.namespace !== "codex" || stamp.name !== "apply_patch") return { toolCall, unread: false };
+  const raw = isPlainInput(toolCall.rawInput) ? toolCall.rawInput : undefined;
+  const parsed = parseApplyPatch(raw?.patch);
+  if (!parsed || (toolCall.locations !== undefined && !Array.isArray(toolCall.locations))) return { toolCall, unread: true };
+  const locations = [...(toolCall.locations ?? []), ...parsed.destinations.map((path) => ({ path }))];
+  return { toolCall: { ...toolCall, locations }, unread: false };
+}
+
 export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unknown }): string[] | undefined {
   const paths: string[] = [];
   const { locations } = toolCall;
@@ -905,6 +917,7 @@ import type {
   SteerDelivery,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
+import { parseApplyPatch } from "../codex-hook.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { customMountEntries } from "../../custom-mcp-mounts.ts";
@@ -3113,8 +3126,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               message: `${ENGINE} offered no way to ${want === "allow" ? "allow" : "decline"} this request, so Murage cancelled it instead of guessing.`,
             });
 
-          const toolCall = params.toolCall ?? {};
-          const kind = String(toolCall.kind ?? "");
+          const kind = String((params.toolCall ?? {}).kind ?? "");
+          // ISSUE-PERMS-1010 B: Fuigo's codex apply_patch carries its targets only inside the patch; they are read with the
+          // Codex driver's reader into `locations`, so every path check reads the real destinations (a patch it cannot read
+          // whole is unread, never an edit with no path)
+          const patchRead = acpApplyPatchCall(params.toolCall ?? {}, kind);
+          const toolCall = patchRead.toolCall;
           // An agent that routes its question tool (e.g. AskUserQuestion)
           // through request_permission names it in the tool call. That tool
           // asks the OWNER, so fullAuto must not select "allow" for it — that
@@ -3347,7 +3364,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(acpCommandShell ? { commandShell: acpCommandShell } : {}),
             // F5: no kind on the wire means nothing to resolve the call by;
             // the title is never a name.
-            ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
+            ...(!questionTool && !kind ? { toolInputMissing: "kind" } : patchRead.unread ? { toolInputMissing: "patch" } : {}),
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
