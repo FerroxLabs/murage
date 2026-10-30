@@ -11,16 +11,19 @@ import { respondWithFreshAuth } from "./fresh-auth";
 import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 
 export type Api = (path: string, init?: RequestInit) => Promise<unknown>;
-/** What the status route said: on (with the view), off (show nothing), or off with the section 8 Flux line. */
-export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "on"; view: EmailStatusView };
+/** What the status route said: on (with the view), off (a 404: not on here), off with the section 8 Flux line, or a read that failed
+ *  (network, 5xx) and says nothing about whether email is on. */
+export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "error" } | { kind: "on"; view: EmailStatusView };
 
 export async function readEmailStatus(call: Api = api, refresh = false): Promise<EmailStatusState> {
   try {
     const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as EmailStatusView;
     return view && view.enabled === true ? { kind: "on", view } : { kind: "off" };
   } catch (error) {
-    const body = (error as { body?: { fluxOff?: unknown } }).body;
-    return typeof body?.fluxOff === "string" ? { kind: "flux-off", line: body.fluxOff } : { kind: "off" };
+    const { status, body } = error as { status?: unknown; body?: { fluxOff?: unknown } };
+    if (typeof body?.fluxOff === "string") return { kind: "flux-off", line: body.fluxOff };
+    // only a 404 means "not available here"; any other failure is a read that did not happen
+    return status === 404 ? { kind: "off" } : { kind: "error" };
   }
 }
 
