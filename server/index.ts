@@ -223,7 +223,7 @@ import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync, realpathSync } from "node:fs";
 import { availableParallelism, homedir, hostname as osHostname, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { familyOffered, phoneFamily, phonesOffered, shareAskOffered } from "./phones/offered.ts";
+import { familyOffered, offeredAnswer, phoneFamily, phonesOffered, shareAskOffered } from "./phones/offered.ts";
 import { ensurePhonesTables, phoneAskCaller, phoneCaller } from "./phones/gate.ts";
 import { isDirectOwnerThread } from "./phones/direct-thread.ts";
 import { PhoneAuthorities, phoneMintEligible, type MintFacts } from "./phones/authority.ts";
@@ -21869,7 +21869,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const offerFacts = currentOfferFacts();
       const offered = phonesOffered(offerFacts);
       // `shareAsk` is additive (features.phoneShareAsk, independent of phoneTools); readers of `offered` keep reading it.
-      if (method === "GET" && path === "/api/phones/offered") return json(res, 200, { offered, flag: cfg.features?.phoneTools === true, shareAsk: shareAskOffered(offerFacts) });
+      // 1.0.12 adds `shareAskFlag` and `blocked` for the Settings preview switches (server/phones/offered.ts offeredAnswer).
+      if (method === "GET" && path === "/api/phones/offered") return json(res, 200, offeredAnswer(offerFacts));
       // Each family answers to its own flag; a path in no family answers to phoneTools, as before.
       const family = phoneFamily(method, path);
       if (!(family ? familyOffered(family, offerFacts) : offered)) return json(res, 404, { error: "no such route" });
@@ -22885,6 +22886,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // Not offered (flag off, Cloud home, shared workspace): the same answer as an unknown route, and nothing is read.
         if (!registry) return json(res, 404, { error: "no such route" });
         const parsed = z.object({ tool: z.string().max(64), args: z.unknown() }).strict().safeParse(await readBody(req));
+        // Asked again after the body's await: phone tools turned off while it was read must not open a job behind the revoke. Nothing awaits from here to the job.
+        if (!phoneRegistryNow()) return json(res, 404, { error: "no such route" });
         const result = !parsed.success || !(PHONE_TOOL_NAMES as readonly string[]).includes(parsed.data.tool)
           ? { ok: false as const, code: "refused", text: PHONE_COPY.refused }
           : await phoneRpc(internalClaim, { tool: parsed.data.tool as (typeof PHONE_TOOL_NAMES)[number], args: parsed.data.args }, {
@@ -30573,6 +30576,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // Access settings are read live by the service; applying them bumps the access revision and revokes removed chats.
       if (patch.whatsapp) void whatsapp?.applySettings().catch(() => console.error("WhatsApp settings change could not be applied."));
       if (patch.features) {
+        // Phone tools turned off: every open phone job (its card on the phone, the bot's waiting tool call) ends now as did not
+        // run, or may have run once leased, instead of waiting out its deadline behind routes that are already absent.
+        if (cfg.features?.phoneTools !== true) phoneJobs.revokeFor({});
         queueMicrotask(pumpRoomDispatcher);
         for (const group of store.groups) if (group.channelProject) projectFrames.strip(group.id);
       }
