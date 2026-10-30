@@ -94,6 +94,50 @@ describe("dark launch (2.0, section 8)", () => {
   });
 });
 
+describe("the saved Flux key stopped working (1.0.11)", () => {
+  const refusedBody = { error: EMAIL_OWNER_COPY.notAvailable, fluxRefused: EMAIL_SETUP_COPY.fluxKeyRefused };
+  it("a probe 401 on the account key answers the status read with the sign-in-again line, never a bare not-available", async () => {
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 401, body: { error: "invalid_api_key", message: "" } });
+    await runtime.probe.refresh();
+    expect(runtime.probe.accountKeyRefused()).toBe(true);
+    expect(await call("GET", "/api/email/status")).toEqual({ status: 404, body: refusedBody });
+    // only the status read carries the line; every other route stays the one refusal
+    expect(await call("GET", "/api/email/bots/b1")).toEqual({ status: 404, body: { error: EMAIL_OWNER_COPY.notAvailable } });
+    expect(tables()).toEqual([]);
+  });
+
+  it("the refresh read sees the 401 too, and a readable answer afterwards clears it", async () => {
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 401, body: { error: "key_revoked", message: "" } });
+    expect((await call("GET", "/api/email/status", undefined, { query: new URLSearchParams("refresh=1") }))?.body).toEqual(refusedBody);
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 200, body: { enabled: false } });
+    expect((await call("GET", "/api/email/status", undefined, { query: new URLSearchParams("refresh=1") }))?.body).toEqual({ error: EMAIL_OWNER_COPY.notAvailable });
+    expect(runtime.probe.accountKeyRefused()).toBe(false);
+  });
+
+  it("a 403, a lost answer or a new saved key is not a refused key; with no key saved the line never shows", async () => {
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 403, body: { error: "email_not_enabled", message: "" } });
+    await runtime.probe.refresh();
+    expect((await call("GET", "/api/email/status"))?.body).toEqual({ error: EMAIL_OWNER_COPY.notAvailable });
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 401, body: { error: "invalid_api_key", message: "" } });
+    await runtime.probe.refresh();
+    expect((await call("GET", "/api/email/status"))?.body).toEqual(refusedBody);
+    // a new key (Sign in with Flux again) is a different account: nothing refused until Flux answers for it
+    accountKey = "sk-flux-new-account-fixture";
+    expect(runtime.probe.accountKeyRefused()).toBe(false);
+    expect((await call("GET", "/api/email/status"))?.body).toEqual({ error: EMAIL_OWNER_COPY.notAvailable });
+    accountKey = null;
+    expect((await call("GET", "/api/email/status"))?.body).toEqual({ error: EMAIL_OWNER_COPY.notAvailable });
+  });
+
+  it("the probe keeps a refused key across a network blip (uncertain answer keeps the last word)", async () => {
+    fake.on("GET", /^\/v1\/email\/capabilities$/, { status: 401, body: { error: "invalid_api_key", message: "" } });
+    await runtime.probe.refresh();
+    fake.on("GET", /^\/v1\/email\/capabilities$/, "reset");
+    await runtime.probe.refresh();
+    expect(runtime.probe.accountKeyRefused()).toBe(true);
+  });
+});
+
 describe("who may call (2.1, 2.4, F18)", () => {
   it("a bot or engine credential never reaches a route, on or off, and Flux is never called for it", async () => {
     await enable();

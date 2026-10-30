@@ -71,7 +71,9 @@ export async function emailOwnerRoute(deps: OwnerRouteDeps, request: OwnerRouteR
     if (!deps.runtime.enabled()) {
       // section 8: the Flux line only for an install that had email on and has lost its key; never for one that never had it (dark wins)
       const fluxOff = request.path === "/api/email/status" && !deps.fluxKeyPresent() && deps.runtime.everEnabled();
-      return refuse(404, EMAIL_OWNER_COPY.notAvailable, fluxOff ? { fluxOff: EMAIL_SETUP_COPY.fluxOff } : {});
+      // a saved account key Flux answered 401 (revoked or unknown): say so and offer sign-in, never hide the card (1.0.11)
+      const fluxRefused = request.path === "/api/email/status" && deps.fluxKeyPresent() && deps.runtime.probe.accountKeyRefused();
+      return refuse(404, EMAIL_OWNER_COPY.notAvailable, fluxOff ? { fluxOff: EMAIL_SETUP_COPY.fluxOff } : fluxRefused ? { fluxRefused: EMAIL_SETUP_COPY.fluxKeyRefused } : {});
     }
     return await enabledRoute(deps, request);
   } catch {

@@ -20,6 +20,8 @@ const OUTAGE_REREAD_MS = 30_000;
 
 export class EmailCapabilityProbe {
   private readonly cache = new Map<string, { caps: Capabilities; readAt: number }>();
+  /** Accounts whose last definite answer was a 401: Flux no longer accepts the saved account key (revoked or unknown). */
+  private readonly keyRefused = new Set<string>();
   private readonly inflight = new Map<string, Promise<Capabilities | null>>();
   private readonly listeners = new Set<(enabled: boolean) => void>();
   private readonly options: CapabilityProbeOptions;
@@ -29,6 +31,13 @@ export class EmailCapabilityProbe {
   current(): Capabilities | undefined {
     const account = this.options.accountRef();
     return account ? this.cache.get(account)?.caps : undefined;
+  }
+
+  /** True when Flux answered the saved account's last capability read with 401: the key stopped working, so the owner signs in again.
+   *  A later readable answer (or a different saved key, which is a different account ref) clears it. */
+  accountKeyRefused(): boolean {
+    const account = this.options.accountRef();
+    return account ? this.keyRefused.has(account) : false;
   }
 
   /** True only when the saved account's last answer said enabled: true (r2.5: the platform flag) and passed the #33 checks (isEnabled). */
@@ -57,6 +66,8 @@ export class EmailCapabilityProbe {
     const read = (async () => {
       const before = this.emailEnabled();
       const outcome = await this.options.client.capabilities();
+      if (outcome.kind === "ok") this.keyRefused.delete(account);
+      else if (outcome.kind === "refused") { if (outcome.status === 401) this.keyRefused.add(account); else this.keyRefused.delete(account); }
       if (outcome.kind === "ok") this.cache.set(account, { caps: outcome.body, readAt: (this.options.now ?? Date.now)() });
       // a definite answer that is not a body (401, 403) turns email off; an uncertain one (no answer) keeps the last answer, so a network
       // blip never unmounts tools, and with no last answer nothing is enabled
