@@ -491,6 +491,9 @@ export interface RoutineManagerOptions {
    * (server/index.ts opens it as its last step, right before start()). Work that arrives meanwhile is kept, queued,
    * for the first tick after. Absent: always open. */
   dispatchOpen?: () => boolean;
+  /** 1.0.8 owner zone: true while no new run may start because daily next times are still to be worked out in the
+   *  owner's zone (index.ts ownerZoneReconciler). Unlike a closed dispatchOpen, run limits are still enforced. */
+  dispatchHeld?: () => boolean;
   /** Startup gate: true once the connected-apps inventory has loaded and the
    * MCP mounts have settled. Scheduled runs (including catch-up runs for
    * occurrences missed while the app was closed) wait for it, bounded by
@@ -2315,6 +2318,8 @@ export class RoutineManager {
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
+    // After the limits, on purpose: runs already going still stop at their limit while new ones wait.
+    if (this.options.dispatchHeld?.()) return;
     if (this.ticking) return;
     this.ticking = true;
     try {
@@ -2390,6 +2395,12 @@ export class RoutineManager {
         }
         routine.nextRunAt =
           routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, scheduledFor));
+        // 1.0.8 owner zone: one daily occurrence per calendar day in the owner's zone now in force. An occurrence
+        // kept due through a zone change (rescheduleForZoneChange) was worked out in the old zone, so the new zone's
+        // time can fall later on the same day (09:00 UTC ran, Chicago's 09:00 is 14:00 UTC): the day after is taken.
+        // In an unchanged zone the next daily time is always a later day, so this moves nothing.
+        if (routine.schedule.type === "daily" && routine.nextRunAt !== null && new Date(routine.nextRunAt).toDateString() === new Date(scheduledFor).toDateString())
+          routine.nextRunAt = nextOccurrence(routine.schedule, routine.nextRunAt);
         // `updatedAt` is the optimistic definition revision carried by
         // routine confirmation cards. Moving the scheduler cursor is runtime
         // progress, not a definition edit, so recurring ticks must not make a
@@ -2750,6 +2761,45 @@ export class RoutineManager {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** 1.0.8 owner zone: a daily routine's next time is its wall-clock time in the owner's zone as it stood when that
+   *  time was worked out (nextOccurrence), and the tick only works out the one after it once it fires. Called after
+   *  the owner's zone changed (desktop and Cloud), with the new zone already in force: every enabled daily routine
+   *  whose next time is still ahead gets it worked out again from now, in the new zone, so "09:00" means 09:00 there
+   *  and nothing fires at the old zone's 09:00 first. A next time already due is kept, so the tick still runs (or
+   *  records as missed) the occurrence that came due. An occurrence that already ran keeps its day: when the new
+   *  time falls on the same calendar day, in the new zone, as the last scheduled occurrence, the day after is taken.
+   *  One commit, so the fleet's earliest due time is worked out again too. Returns the routines that moved.
+   *  `offWallClockOnly` (at boot, index.ts reconcileOwnerZone): only a routine whose next time is not its own
+   *  wall-clock time in the zone now in force, so a change whose routine write failed before a restart is still
+   *  carried over, and a routine already worked out in this zone is left as it is.
+   *  `since` (a retry of a change whose write failed, owner-zone-reconcile.ts): the moment the zone changed. Everything
+   *  is worked out as of then, so a next time that came due during the failed writes moves too. */
+  rescheduleForZoneChange(options: { offWallClockOnly?: boolean; since?: number } = {}): Routine[] {
+    const now = options.since ?? this.now();
+    const lastScheduled = new Map<string, number>();
+    for (const run of this.runs) {
+      if ((run.triggerSource ?? (run.manual ? "manual" : "schedule")) !== "schedule") continue;
+      lastScheduled.set(run.routineId, Math.max(lastScheduled.get(run.routineId) ?? -Infinity, run.scheduledFor));
+    }
+    const dayOf = (at: number) => new Date(at).toDateString();
+    const moves: Array<{ routine: Routine; next: number | null }> = [];
+    for (const routine of this.routines) {
+      if (!routine.enabled || routine.schedule.type !== "daily" || routine.nextRunAt == null || routine.nextRunAt <= now) continue;
+      if (options.offWallClockOnly) {
+        const at = new Date(routine.nextRunAt);
+        if (`${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` === routine.schedule.time) continue;
+      }
+      let next = nextOccurrence(routine.schedule, now);
+      const last = Math.max(lastScheduled.get(routine.id) ?? -Infinity, routine.lastSkippedAt ?? -Infinity);
+      if (next !== null && Number.isFinite(last) && dayOf(next) === dayOf(last)) next = nextOccurrence(routine.schedule, next);
+      if (next !== routine.nextRunAt) moves.push({ routine, next });
+    }
+    if (!moves.length) return [];
+    this.commitMutation(() => { for (const { routine, next } of moves) routine.nextRunAt = next; });
+    for (const { routine } of moves) this.emitRoutine(routine);
+    return moves.map(({ routine }) => routine);
   }
 
   /** min(nextRunAt of enabled routines, watch expiry of watched ones): nothing in the fleet walk can happen before it. */

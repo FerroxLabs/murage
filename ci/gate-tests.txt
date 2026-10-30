@@ -107,6 +107,10 @@ scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under 
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/owner-time-zone-api.test.ts	linux+mac	Only the owner can change the time zone and a bad zone is refused
+server/owner-time-zone-engines.test.ts	all	Every engine turn runs in the owner's time zone
+server/owner-time-zone.test.ts	all	The owner's time zone is saved and read back and never silently changed
+server/owner-zone-reconcile.test.ts	all	A time zone change reaches routines and a failed write is retried
 server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
 server/health/counters.test.ts	all	health counters stay bounded and never publish a raw thread or message id
 server/health/publisher.test.ts	all	health metadata stays in its own owner-only folder and never appears mid-backup
@@ -1516,6 +1520,7 @@ src/components/RoutineSchedulerNotice.test.ts	all	late routine scheduler warning
 src/components/ServerLifecycleBanner.test.ts	all	banner when engine not running
 src/components/SettingsSurface.test.ts	all	credential panes withheld from phone surface
 src/components/SlackSettings.test.ts	all	status strips undeclared secret fields
+src/components/TimeZoneSettings.test.ts	all	The time zone card shows and saves the owner's zone
 src/components/UpdateStaleNotice.test.ts	all	update-check failure notice appears once and can be dismissed
 src/components/app-grant-a13-r1.test.ts	all	Always allow saves and answers in one request
 src/components/app-grant-a13-r2.test.ts	all	voice reads every operation the grant card shows

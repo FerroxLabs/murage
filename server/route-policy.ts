@@ -88,7 +88,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
-  { methods: ["PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The paired owner sets the home's routine time zone." },
+  { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
   { methods: ["POST"], path: "/api/projects/proposal", class: "desktop", cloudWrite: "ordinary", why: "The owner asks the Chief for a project proposal." },
   { methods: ["POST"], path: "/api/projects", class: "desktop", cloudWrite: "ordinary", why: "The owner creates project authority and members." },

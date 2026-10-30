@@ -4004,6 +4004,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         settingsRev: claudeSettingsRevision(env, cwd),
         // S4 power (design section 7): a constant on a key whose spawn is under the block (Windows only for Claude).
         ...hostPowerKeyField({ posixHostPower: false }),
+        // 1.0.8 owner zone: the zone the process was handed (engine-env.ts withOwnerTimeZone); a change respawns it
+        timeZone: handed.env.TZ ?? null,
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session

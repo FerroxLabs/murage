@@ -31,6 +31,8 @@ import { readOwnerTimeZone, validateOwnerTimeZone, writeOwnerTimeZone } from "./
 // 1.0.9 Sentinel: health producers, owner reads, page and digest delivery (server/sentinel/server-host.ts, owner-api.ts).
 import { captureActiveFromControl, startServerSentinel } from "./sentinel/server-host.ts";
 import { handleSentinelRead, sentinelOwner } from "./sentinel/owner-api.ts";
+import { applyOwnerTimeZone, chosenOwnerTimeZone, computerTimeZone, ownerTimeZone } from "./owner-time-zone.ts";
+import { createOwnerZoneReconciler } from "./owner-zone-reconcile.ts";
 import { CloudBrowserProfileUsage } from "./cloud-home/browser-profile-usage.ts";
 import { setCloudBrowserAdmission } from "./cloud-home/browser-process.ts";
 import { cloudTurnEnvironment, CLOUD_ENGINES } from "./cloud-home/turn-process.ts";
@@ -211,7 +213,7 @@ import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { createDataWriterGate, stopDataWriters } from "./data-writers.ts";
 import { refuseEngineHistoryJobs, stopEngineHistory } from "./engine-history-offthread.ts";
 import { WAITING_NOTE } from "./harness/instance-holds.ts";
-import { pipReflectPendingSliced, maintainPip, runPipReflect, type ReflectDeps } from "./memory/pip-reflect.ts";
+import { pipReflectPendingSliced, maintainPip, pinTraceDayEnds, runPipReflect, type ReflectDeps } from "./memory/pip-reflect.ts";
 import { endsWithHandle } from "./memory/handle-guard.ts";
 import { createResolveRoute } from "./memory/pip-reflect-host.ts";
 import { interruptOpenTurn, recordMemorySettlement } from "./memory/settlement.ts";
@@ -1191,6 +1193,9 @@ const serverSentinel = startServerSentinel({
 // runs the store is inert, so no engine writer can see a user address.
 configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
+// 1.0.8: the owner's time zone, when they chose one, is this server's clock (owner-time-zone.ts).
+// A Cloud home's process TZ already follows its owner.json.
+if (process.env.MURAGE_CLOUD_ROLE !== "home") applyOwnerTimeZone(cfg.profile?.timeZone);
 // Lines the server writes into an outside chat read in the owner's app language, read live (channels/reply-text.ts).
 setChannelReplyLanguage(() => cfg.language);
 // Rule 57a (APP-GRANT-DESIGN-FINAL.AGREED-r10.md), once at load before any
@@ -13231,6 +13236,7 @@ routines = new RoutineManager({
     }).read(source, signal);
   },
   dispatchOpen: () => routineDispatchOpen,
+  dispatchHeld: () => !ownerZoneReconciler.reconcile(),
   priorReplyCarryable,
   priorReplyEmailDerived,
   automaticPaused: () => Boolean(homeExecutionGate && !homeExecutionGate.open()) || homeExecutionGate?.safeMode === true || backupRestartAdmission.held() || cfg.automationsPaused === true,
@@ -13883,7 +13889,25 @@ const routineRequests = new RoutineRequestService({
   webhooks: () => webhooks,
 });
 const ROUTINE_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
-const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+// The owner's zone: their choice in Settings, else this computer's (owner-time-zone.ts).
+const routineTimeZone = () => ownerTimeZone();
+/** Daily routines' next times still to be worked out in the owner's zone (owner-zone-reconcile.ts): tried before every
+ *  dispatch (dispatchOpen), so no daily routine fires at a time worked out in the old zone while a write keeps failing. */
+const ownerZoneReconciler = createOwnerZoneReconciler(() => routines ? (options) => routines?.rescheduleForZoneChange(options) : null);
+/** Before the owner's zone changes, with the old zone still in force: a bot whose last trace day was written before
+ *  1.0.8 has no recorded end for it, and working that end out later in the new zone would leave hours no day reads
+ *  (pip-reflect.ts pinTraceDayEnds). Memory that cannot be opened has nothing to pin. */
+function pinOwnerZoneTraceDays(): void {
+  try { pinTraceDayEnds(); }
+  catch (error) { console.warn(`owner time zone: trace days keep their old end (${error instanceof Error ? error.message : String(error)})`); }
+}
+/** After the owner's zone changed (PUT /api/owner/timezone, desktop or Cloud), with the new zone in force: daily
+ *  routines' next times were worked out in the old zone, so they are worked out again in the new one
+ *  (RoutineManager.rescheduleForZoneChange). The zone is already saved; when the routine file cannot be written the
+ *  change stays pending (retried before routines dispatch, and by a save of the same zone) and this answers false. */
+function ownerZoneChanged(before: string | null, after: string): boolean {
+  return ownerZoneReconciler.changed(before, after);
+}
 const routineTimestamp = (value: number | undefined) =>
   value !== undefined && Number.isFinite(value) ? new Date(value).toISOString() : null;
 const agentRoutine = (
@@ -29262,14 +29286,44 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // identity handshake for the packaged app's port fallback: the forked
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
-    if (cloudHome && method === "PUT" && path === "/api/owner/timezone") {
+    // The owner's time zone (Settings > General > Time zone). A Cloud home keeps
+    // it in owner.json and always has one; the desktop keeps it on the owner's
+    // profile in config.json, where null or "" means follow this computer.
+    if (method === "GET" && path === "/api/owner/timezone") {
+      if (cloudHome) {
+        let timeZone: string;
+        try { timeZone = readOwnerTimeZone(DATA_DIR); } catch { timeZone = ownerTimeZone(); }
+        return json(res, 200, { timeZone, chosen: true, computerTimeZone: timeZone, canFollowComputer: false });
+      }
+      return json(res, 200, { timeZone: ownerTimeZone(), chosen: chosenOwnerTimeZone(cfg.profile?.timeZone) !== null, computerTimeZone: computerTimeZone(), canFollowComputer: true });
+    }
+    if (method === "PUT" && path === "/api/owner/timezone") {
       const body = await readBody(req);
-      let timeZone: string;
-      try { timeZone = validateOwnerTimeZone(body?.timeZone); }
-      catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
-      writeOwnerTimeZone(DATA_DIR, timeZone);
-      process.env.TZ = timeZone;
-      return json(res, 200, { timeZone });
+      if (cloudHome) {
+        let timeZone: string;
+        try { timeZone = validateOwnerTimeZone(body?.timeZone); }
+        catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
+        let before: string | null = null;
+        try { before = readOwnerTimeZone(DATA_DIR); } catch { before = null; }
+        pinOwnerZoneTraceDays();
+        writeOwnerTimeZone(DATA_DIR, timeZone);
+        process.env.TZ = timeZone;
+        const routinesMoved = ownerZoneChanged(before, timeZone);
+        return json(res, 200, { timeZone, chosen: true, computerTimeZone: timeZone, canFollowComputer: false, routinesMoved });
+      }
+      const requested = body?.timeZone;
+      let saved = "";
+      if (requested !== null && requested !== "") {
+        try { saved = validateOwnerTimeZone(requested); }
+        catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
+      }
+      const before = ownerTimeZone();
+      pinOwnerZoneTraceDays();
+      saveConfig({ profile: { timeZone: saved } });
+      cfg.profile = { ...cfg.profile, timeZone: saved };
+      const timeZone = applyOwnerTimeZone(saved);
+      const routinesMoved = ownerZoneChanged(before, timeZone);
+      return json(res, 200, { timeZone, chosen: saved !== "", computerTimeZone: computerTimeZone(), canFollowComputer: true, routinesMoved });
     }
     if (method === "GET" && path === "/api/health") {
       healthAnswered = true;

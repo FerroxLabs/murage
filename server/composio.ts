@@ -2,6 +2,8 @@
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
 import { toolSlugsOf, withScopeHint, type ScopeRoute } from "./connector-scope-hint.ts";
+import { withForeignTimesNote } from "./connector-time-note.ts";
+import { ownerTimeZone } from "./owner-time-zone.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import {
   CONNECTED_APP_ACTION_TIMEOUT_MS,
@@ -1907,7 +1909,9 @@ export function scopeRouteFor(broker: BrokerKind | null): ScopeRoute {
 /** The reply with the missing-permission note added when the app refused for that reason; the very same reply otherwise. */
 function withScopeRefusalNote(op: ConnectedAppOperation, reply: RelayReply): RelayReply {
   const call = operationCalls.get(op);
-  const bytes = withScopeHint(reply.bytes, reply.contentType, toolSlugsOf(call?.name, call?.args), call?.route ?? "managed");
+  const scoped = withScopeHint(reply.bytes, reply.contentType, toolSlugsOf(call?.name, call?.args), call?.route ?? "managed");
+  // 1.0.8: times stamped in another zone than the owner's (a free/busy answer in UTC) get one line naming the owner's zone (connector-time-note.ts).
+  const bytes = withForeignTimesNote(scoped, reply.contentType, ownerTimeZone());
   return bytes === reply.bytes ? reply : { ...reply, bytes };
 }
 
