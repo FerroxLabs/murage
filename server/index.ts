@@ -8643,6 +8643,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
                 command: isCommandTool(event.tool) ? commandFromToolInput(event.toolCall?.input) : undefined,
                 filePaths: event.filePaths,
                 dirs: event.toolResultDirs,
+                ...(event.commandShell ? { commandShell: event.commandShell } : {}),
               }),
             },
           }).verdict
