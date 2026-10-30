@@ -364,8 +364,14 @@ describe("product copy rules", () => {
 
   it("no translated catalogue does either", () => {
     const dir = join(ROOT, "src/locales");
-    const found = readdirSync(dir).filter(name => name.endsWith(".json"))
-      .flatMap(name => catalogueHits(join(dir, name), RULES));
+    const fragments = join(dir, "en-ux");
+    const found = [
+      ...readdirSync(dir).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(dir, name), RULES)),
+      // 1.0.12 to 1.0.14: the UX lanes' English fragments are part of the English pack
+      ...readdirSync(fragments).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(fragments, name), RULES)),
+      // and the help panel's words for each screen, which ride the help chunk
+      ...catalogueHits(join(dir, "en-help/screens.json"), RULES),
+    ];
     expect(found).toEqual([]);
   });
 
@@ -388,7 +394,8 @@ describe("product copy rules", () => {
       !entries.some(entry => found.startsWith(`${entry.file}:`) && found.endsWith(`: ${entry.text.trim().slice(0, 120)}`));
     const found = hits(walk(join(ROOT, "src")), [PRICE, RAW_ERROR]).filter(allowText(PRICE_KNOWN));
     const dir = join(ROOT, "src/locales");
-    expect([...found, ...catalogueHits(join(dir, "en.json"), [PRICE, RAW_ERROR], PRICE_KNOWN_KEYS)]).toEqual([]);
+    const fragments = readdirSync(join(dir, "en-ux")).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(dir, "en-ux", name), [PRICE, RAW_ERROR]));
+    expect([...found, ...catalogueHits(join(dir, "en.json"), [PRICE, RAW_ERROR], PRICE_KNOWN_KEYS), ...fragments, ...catalogueHits(join(dir, "en-help/screens.json"), [PRICE, RAW_ERROR])]).toEqual([]);
   });
 
   it("the price and raw-error rules catch what the 0.1.60 Mac pass found, and not the other senses of free", () => {

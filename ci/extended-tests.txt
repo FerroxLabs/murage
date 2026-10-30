@@ -914,6 +914,7 @@ shared/unreachable-endpoint.test.ts	extended
 shared/usage-month.test.ts	extended
 shared/workspace-files.test.ts	extended
 src/App.test.ts	delete (pending review; runs here until then)
+src/a11y-styles.test.ts	extended
 src/action-feedback.test.ts	extended
 src/components/AboutMeSettings.test.ts	extended
 src/components/ActionButton.test.ts	extended
@@ -1340,6 +1341,7 @@ src/lib/routine-health.test.ts	extended
 src/lib/routine-instructions-limit.test.ts	extended
 src/lib/save-file.test.ts	extended
 src/lib/screen-preview.test.ts	extended
+src/lib/screens-index.test.ts	extended
 src/lib/scrollback-first-page.test.ts	extended
 src/lib/scrollback.test.ts	extended
 src/lib/section-context-client.test.ts	extended

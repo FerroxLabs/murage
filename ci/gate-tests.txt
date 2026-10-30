@@ -115,6 +115,7 @@ server/health/backup-status.test.ts	all	backup health says due until a checked b
 server/health/extraction-health.test.ts	all	learning health counts every extraction attempt the same way on every engine and never reports a reply or model name
 server/health/producer-hooks.test.ts	all	turn, deletion and setup health reports stay counts only and never change what the app decides
 server/memory/revocation-health.test.ts	all	forgetting reports its write work and pending jobs without changing what it removes
+server/help-routes.test.ts	all	help search answers from the shipped docs, refuses a bad limit and survives any question
 server/io-budget-health.test.ts	all	disk write reports cover quiet minutes without changing the write watchdog
 server/sentinel/lifecycle.test.ts	all	health issues open, recover and page exactly once per episode within the 3-per-day cap
 server/sentinel/detectors/backup.test.ts	all	an unverified backup pages the owner, and turning backups off is never shown as recovered
@@ -1455,6 +1456,9 @@ shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-ask-contract.test.ts	all	security boundary or path/file access
 shared/phone-jobs-contract.test.ts	all	security boundary or path/file access
 shared/web-safe-imports.test.ts	all	the web app failing to load because it imports server-only code
+src/components/help/FeedbackForm.test.ts	all	tester feedback sends only a fixed screen envelope and one fixed sentence, stamped when Send is pressed, never owner text
+src/components/help/HelpHost.lazy.test.ts	all	help's panel chunk is fetched only when help opens, never in the background, so a closed help can never reload the app
+src/components/help/HelpPanel.test.ts	all	the help panel opens on every screen and over every window, owns Esc and Tab inside it, and a help chunk that fails to load shows its retry line inside help
 src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
@@ -1564,6 +1568,7 @@ src/lib/first-run-flow.test.ts	all	first-run flow states honest per job
 src/lib/first-run-reachable.test.ts	all	first run screen works on every machine
 src/lib/first-run.test.ts	all	restored install never sees first run
 src/lib/flux-key-paste.test.ts	all	Flux key recognised on paste, sentences rejected
+src/lib/focus-trap.test.ts	all	Tab and Shift+Tab stay inside an open window and wrap, so keyboard owners never lose their place
 src/lib/fresh-auth.test.ts	all	fresh auth signs challenge before sensitive answer
 src/lib/group-call.test.ts	all	spoken message routed to correct room member
 src/lib/group-routing.test.ts	all	room message routes to the right bot
@@ -1581,6 +1586,7 @@ src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the te
 src/lib/question-fence-display.test.ts	all	a fence hides only when its card exists, streaming fences never show raw JSON
 src/lib/random-uuid-polyfill.test.ts	all	phone page over plain http crashes when a screen creates an ID
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
+src/lib/screen-envelope.test.ts	all	the screen envelope drops drafts, keys, names and ids, and refuses any field outside its fixed tables
 src/lib/session-check.test.ts	all	only real 401 means signed out
 src/lib/settings-drafts.test.ts	all	are kept while they differ from the saved text and forgotten when they match it
 src/lib/source-code.test.ts	all	AGPL source offer present on every surface
