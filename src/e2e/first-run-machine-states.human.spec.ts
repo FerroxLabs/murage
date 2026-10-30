@@ -445,7 +445,7 @@ test.describe("a machine with an engine that can answer", () => {
     // returns `detect` for ever and the Flux screen is never shown to anybody
     // with an engine — which is most installs, and is why
     // `FirstRunDetectOnward` exists.
-    const onward = app.getByRole("button", { name: /Show me the interesting part/i }).last();
+    const onward = app.getByRole("button", { name: "Next", exact: true }).last();
     await expect(onward, "the detection report must carry its own way out").toBeEnabled();
     await onward.click();
     await expect(

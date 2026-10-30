@@ -93,25 +93,35 @@ describe("what a job still needs, on a real machine", () => {
   it("asks for nothing when the key and both accounts are there", () => {
     for (const row of firstRunJobRows(READY)) {
       expect(row.missing, row.id).toEqual([]);
-      expect(row.tag.text, row.id).toBe("ready now");
-      expect(row.tag.tone, row.id).toBe("ready");
+      // §1.6: a tag appears only when a connection is missing.
+      expect(row.tag, row.id).toBeNull();
     }
+  });
+
+  it("marks the first row Recommended and no other", () => {
+    const rows = firstRunJobRows(READY);
+    expect(rows[0].recommended).toBe("Recommended");
+    expect(rows.slice(1).every((row) => row.recommended === "")).toBe(true);
   });
 
   it("names the one account a brief is short of, rather than counting it", () => {
     const world = machine({ fluxReady: true, connected: ["gmail"] });
     const brief = firstRunJobRows(world).find((row) => row.id === "brief")!;
     expect(brief.missing).toEqual(["googlecalendar"]);
-    expect(brief.tag.text).toBe("connect Google Calendar");
-    expect(brief.tag.tone).toBe("accent");
+    expect(brief.tag?.text).toBe("asks for Gmail or your calendar if you want them in it");
   });
 
-  it("counts when there is more than one, because two names is a paragraph", () => {
+  it("says each job's need in that job's words (§1.6)", () => {
     const world = machine({ fluxReady: true });
-    const brief = firstRunJobRows(world).find((row) => row.id === "brief")!;
-    expect(brief.missing).toEqual(["googlecalendar", "gmail"]);
-    expect(brief.tag.text).toBe("2 to connect");
-    expect(brief.tag.tone).toBe("neutral");
+    const rows = firstRunJobRows(world);
+    const tag = (id: string) => rows.find((row) => row.id === id)!.tag?.text ?? null;
+    expect(tag("brief")).toBe("asks for Gmail or your calendar if you want them in it");
+    expect(tag("day")).toBe("needs your calendar");
+    expect(tag("business")).toBe("asks for the apps it needs as it goes");
+    expect(tag("notes")).toBeNull();
+    expect(tag("research")).toBeNull();
+    // The generic counted tag is still what jobTag says on its own.
+    expect(jobTag(["googlecalendar", "gmail"]).text).toBe("2 to connect");
   });
 
   it("puts Flux at the front of the list, never behind an account", () => {
@@ -126,7 +136,7 @@ describe("what a job still needs, on a real machine", () => {
   it("says the key by name when it is the only thing wanting", () => {
     const day = firstRunJobRows(machine({ connected: ["googlecalendar"] })).find((row) => row.id === "day")!;
     expect(day.missing).toEqual(["flux"]);
-    expect(day.tag.text).toBe("needs Flux Router");
+    expect(day.tag?.text).toBe("needs Flux Router");
   });
 
   it("leaves the three account-free jobs ready on a computer with an engine and no key", () => {
@@ -135,7 +145,7 @@ describe("what a job still needs, on a real machine", () => {
     for (const id of ["notes", "research", "business"] as const) {
       const row = rows.find((candidate) => candidate.id === id)!;
       expect(row.missing, id).toEqual([]);
-      expect(row.tag.text, id).toBe("ready now");
+      expect(row.tag?.text ?? "", id).not.toMatch(/Flux/);
     }
   });
 
@@ -143,14 +153,14 @@ describe("what a job still needs, on a real machine", () => {
   it("needs Flux for EVERY job on a machine with nothing to think with", () => {
     for (const row of firstRunJobRows(BLANK)) {
       expect(row.missing[0], row.id).toBe("flux");
-      expect(row.tag.text, row.id).not.toBe("ready now");
+      expect(row.tag?.text, row.id).toBe("needs Flux Router");
     }
     // Including the two that ask for no account at all, which is the whole
     // point: there is no engine behind them, so "ready now" would be a
     // promise the machine cannot keep.
     const rows = firstRunJobRows(BLANK);
-    expect(rows.find((row) => row.id === "notes")!.tag.text).toBe("needs Flux Router");
-    expect(rows.find((row) => row.id === "business")!.tag.text).toBe("needs Flux Router");
+    expect(rows.find((row) => row.id === "notes")!.tag?.text).toBe("needs Flux Router");
+    expect(rows.find((row) => row.id === "business")!.tag?.text).toBe("needs Flux Router");
   });
 
   // THE MACHINE BETWEEN THE TWO, WHICH IS WHERE THE DEFECT LIVED.
@@ -166,7 +176,7 @@ describe("what a job still needs, on a real machine", () => {
   it("needs Flux for every job when the only engine here is signed out", () => {
     for (const row of firstRunJobRows(SIGNED_OUT_ONLY)) {
       expect(row.missing[0], row.id).toBe("flux");
-      expect(row.tag.text, row.id).not.toBe("ready now");
+      expect(row.tag?.text, row.id).toBe("needs Flux Router");
     }
     for (const id of ["notes", "research", "business"] as const) {
       expect(missingForJob(FIRST_RUN_JOB_SHAPES[id], SIGNED_OUT_ONLY), id).toEqual(["flux"]);
@@ -333,7 +343,7 @@ describe("the research job and whose account it searches on", () => {
     expect(researchNote("anonymous")).toBeNull();
     const row = firstRunJobRows(READY).find((job) => job.id === "research")!;
     expect(row.note).toBeNull();
-    expect(row.tag.text).toBe("ready now");
+    expect(row.tag).toBeNull();
   });
 
   it("names the account whenever the search would go through one of theirs", () => {
@@ -488,8 +498,8 @@ describe("the assembled sentences obey the house rules too", () => {
     chiefStatusLine(machine(), "Claude Code"),
     chiefLead(READY),
     chiefLead(BLANK),
-    ...firstRunJobRows(machine()).flatMap((row) => [row.title, row.sub, row.tag.text, row.note ?? ""]),
-    ...firstRunJobRows(READY).map((row) => row.tag.text),
+    ...firstRunJobRows(machine()).flatMap((row) => [row.title, row.sub, row.tag?.text ?? "", row.note ?? ""]),
+    ...firstRunJobRows(machine({ fluxReady: true })).map((row) => row.tag?.text ?? ""),
     // `?? ""` rather than `!`: a rule that stops being said is a defect for
     // the test that asserts it is said, not a crash in the one that checks
     // how it is worded.
