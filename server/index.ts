@@ -145,6 +145,7 @@ import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, par
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
+import { createFluxConnectionApply } from "./flux-connection-apply.ts";
 import { rememberedMomentsAwaitingReply, rememberedMomentsForJob, threadAwaitsRememberedChip } from "./memory/memory-moments.ts";
 import { forgetBotLearningData, sweepLearningRetention } from "./memory/evolution-forgetting.ts";
 import { consolidateCompletedMemorySource, consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
@@ -411,6 +412,7 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
+import { toolApprovalUnattended, unattendedMarkAction } from "./unattended-mark.ts";
 import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
@@ -8489,7 +8491,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
       // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
       const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
-      const toolUnattended = unattended && !routineWake;
+      const toolUnattended = toolApprovalUnattended(unattended, routineWake);
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -10979,9 +10981,12 @@ async function startTurnAdmitting(
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
+  // a person typing into this bot ends the unattended window immediately; 1.0.10 (NOLIMITS-CARDS r1): so does a scheduled
+  // or manual run of the owner's own routine. It is the owner's standing instruction, not an outside event: a mark left by
+  // an earlier channel or webhook turn in this thread must not turn the run, and every peer it asks, into a turn nobody
+  // started (it carded a plain Read at No limits, 10-31 23:13:59Z). The rule itself: unattended-mark.ts
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  else if (unattendedMarkAction(opts, humanIsOwner) === "clear") clearUnattended(threadId);
   // A scheduled or manual routine run is judged at its routine's level (its
   // own, or the bot's level right now), not at whatever this run's task
   // copied when it was made. The level is applied here, before the run's
@@ -11031,7 +11036,7 @@ async function startTurnAdmitting(
     : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
-    : opts?.automationSource === "channel" ? "owner-channel"
+    : opts?.automationSource === "channel" ? opts?.notOwnerAudience === true ? "other" : "owner-channel"
     : opts?.unattended ? "other" // (an explicitly unattended turn never had a routine level or an inherited ceiling before wakes did)
     : routineLevel || inheritedRoutine ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
@@ -19160,7 +19165,8 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+  // 1.0.10 (NOLIMITS-CARDS r3): only the owner's own DM; a group or any audience besides the owner stays "other"
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) && run.notOwnerAudience !== true ? "owner-channel"
     : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
@@ -20507,23 +20513,22 @@ function readFluxConnectionState(): FluxCredentialState {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Flux configuration is unreadable. Original credentials were preserved."); }
   return { bank: cfg.modelProviders?.bank, workspaceKey: fluxKey() ?? "", aliases: cfg.flux?.connectionAliases, fileWorkspaceKey, ambientWorkspaceKey: process.env.MURAGE_FLUX_AMBIENT_KEY };
 }
+// Every server copy of the key is rewritten synchronously here (config.json, env, memory); see flux-connection-apply.ts.
+const fluxConnectionApply = createFluxConnectionApply({
+  config: () => cfg,
+  cloudHome: Boolean(cloudHome),
+  persistCloudCredentialPatch: patch => persistCloudCredentialPatch(patch),
+  dropFluxBrokerToken: () => composio.dropFluxBrokerToken(),
+  providerConnectionsChanged: (previous, next) => providerConnections.changed(previous, next),
+});
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
   assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error(fluxCredentialBusyMessage()), { status: 409 }); },
   fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (held) void closeAllStreams(); if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
-  apply: async (state, external, restore) => {
-    const previous = cfg.modelProviders?.bank, previousKey = cfg.flux?.apiKey ?? "";
-    const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
-    if (previousKey !== apiKey) composio.dropFluxBrokerToken();
-    if (cloudHome) await persistCloudCredentialPatch({ modelProviders: { bank }, flux: { apiKey } });
-    saveConfig({ modelProviders: { bank: cloudHome || external ? "" : bank }, flux: { apiKey: cloudHome ? "" : restore ? state.fileWorkspaceKey ?? "" : external ? "" : apiKey, connectionAliases } });
-    syncCredentialEnv({ modelProviders: { bank }, flux: { apiKey } });
-    process.env.MURAGE_FLUX_CONNECTION_ALIASES = JSON.stringify(connectionAliases);
-    if (restore && state.ambientWorkspaceKey) process.env.MURAGE_FLUX_AMBIENT_KEY = state.ambientWorkspaceKey; else delete process.env.MURAGE_FLUX_AMBIENT_KEY;
-    cfg.modelProviders = { bank }; cfg.flux = { apiKey, connectionAliases };
-    await providerConnections.changed(previous, bank);
-  },
+  apply: fluxConnectionApply.apply,
 });
+/** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
+const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired() });
 async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
@@ -29493,7 +29498,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       });
       if (answer) return json(res, answer.status, answer.body);
     }
-    if (path === "/api/flux-connection" && method === "GET") return json(res, 200, fluxCredentialStatus(readFluxConnectionState()));
+    if (path === "/api/flux-connection" && method === "GET") return json(res, 200, fluxConnectionStatusWithRestart(fluxCredentialStatus(readFluxConnectionState())));
     if (path === "/api/flux-connection/test" && method === "POST") {
       if (providerConfigBusy || providerConnectionsBusy) return json(res, 409, { error: "Flux credentials are being changed. Try again shortly." });
       const status = fluxCredentialStatus(readFluxConnectionState());
@@ -29522,7 +29527,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
       const update = body as Record<string, unknown>;
       if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
-      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, committed); }
+      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
       if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
       return json(res, 400, { error: "Invalid Flux connection update." });
@@ -29530,7 +29535,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path === "/api/flux-connection/mutate" && method === "POST") {
       if (utilityParentPort && !cloudHome) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
       const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
-      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, committed); }
+      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
       finally { fluxConnectionTransaction.finish(reserved.lease); }
     }

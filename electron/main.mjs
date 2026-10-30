@@ -90,7 +90,7 @@ import {
   createRendererMemorySampler,
   readSafeLogTail,
 } from "./diagnostics.mjs";
-import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
@@ -2133,7 +2133,10 @@ async function startServerOn(port) {
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
   // (audit P1, S1b R8).
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
-    ...restoredHarnessEnvironment(process.env, restoredConnections),
+    // The shell's FLUX_API_KEY never reaches the child as a key: only the
+    // store's does (workspaceCredentialEnv below), and the shell value is
+    // offered as MURAGE_FLUX_AMBIENT_KEY, a choice, when the store is not managed.
+    ...desktopFluxEnvironment(restoredHarnessEnvironment(process.env, restoredConnections), secureCredentials),
     // A packaged utility child must never fall back to a descriptor inherited
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
@@ -2173,7 +2176,6 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
-    MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
@@ -4186,6 +4188,15 @@ async function mutateFluxConnectionInMain(input) {
   });
 }
 ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnectionInMain(input));
+// Settings: after a Flux key change, running engines keep the key they were
+// spawned with until Murage restarts. The same relaunch-then-quit pair backup
+// mode uses; refused where Murage cannot reopen itself.
+ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
+  if (args.length) throw new Error("Invalid restart request.");
+  if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
+  relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
+  app.quit();
+});
 
 // One-click Flux sign-in. The key is minted by the token endpoint and stored by
 // the SAME road a pasted key takes; it never reaches the renderer.
