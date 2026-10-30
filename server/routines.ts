@@ -1450,10 +1450,10 @@ export class RoutineManager {
 
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
-  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal; notOwnerAudience?: true } | null {
+  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
-    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}), ...(run.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}) };
+    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}) };
   }
 
   /** One of the harness's own cards opened in this thread. In a scheduled or

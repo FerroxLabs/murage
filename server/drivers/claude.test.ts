@@ -2290,6 +2290,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(lines[0].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("first-capability");
     expect(lines[1].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("second-capability");
     expect(lines[1].credFile.path).toBe(lines[0].credFile.path);
+    // the warm turn's line names its bot and thread too, though the mcp config file went when the first turn settled
+    expect(lines.map((line) => [line.botId, line.threadId])).toEqual([["fixture-bot", "t-rotate"], ["fixture-bot", "t-rotate"]]);
     expect(readFileSync(lines[1].credFile.path, "utf8")).toBe("{}");
   });
 

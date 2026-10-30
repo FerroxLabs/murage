@@ -716,6 +716,7 @@ const finishIfDone = () => {
  * engine's MCP proxies would read it at this moment (per turn). */
 let credPath: string | null = null;
 let firstMcpConfig: unknown = null;
+let firstLogServers: Record<string, { env?: Record<string, string> }> | null = null;
 let firstSystemPrompt: string | null = null;
 const readCredFile = (): { path: string | null; content: unknown } => {
   const configPath = argAfter("--mcp-config");
@@ -785,7 +786,14 @@ const playTurn = (prompt: JsonValue) => {
   if (process.env.FAKE_CLAUDE_DUMP_LOG) {
     let servers: Record<string, { env?: Record<string, string> }> = {};
     const configPath = argAfter("--mcp-config");
-    try { servers = configPath ? (JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: typeof servers }).mcpServers ?? {} : {}; } catch { /* none */ }
+    try {
+      servers = configPath ? (JSON.parse(readFileSync(configPath, "utf8")) as { mcpServers?: typeof servers }).mcpServers ?? {} : {};
+      firstLogServers ??= servers;
+    } catch {
+      // a warm process's later turn: the driver deleted the file after the first turn, and the process still runs on what it
+      // read then, so this turn's line still names its bot and thread
+      servers = (firstLogServers ?? {}) as typeof servers;
+    }
     const agents = servers.agents?.env ?? {};
     appendFileSync(process.env.FAKE_CLAUDE_DUMP_LOG, `${JSON.stringify({
       servers: Object.keys(servers).sort(), botId: agents.MURAGE_BOT_ID ?? null, threadId: agents.MURAGE_THREAD_ID ?? null,

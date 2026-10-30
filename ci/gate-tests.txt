@@ -1668,5 +1668,14 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
-server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
-server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated
+src/a11y-styles.test.ts	all	reduced motion, focus ring and contrast for keyboard and low-vision owners
+src/lib/focus-trap.test.ts	all	keyboard users trapped or lost in dialogs
+src/lib/undo.test.ts	all	an Undo that commits twice, undoes the wrong thing, or loses a delete the owner took back
+src/components/ui/UndoToast.test.ts	all	the Undo toast has a named Undo button and says what it is doing
+src/lib/today-model.test.ts	all	Today shows the wrong engine, needs or apps state, or a first run sees the full board
+src/lib/working-now.test.ts	all	a working bot missing from Today, so the owner cannot find or stop it
+src/lib/connectivity.test.ts	all	the offline band flickers or claims offline while the owner is online
+src/components/shell/RailDoors.test.ts	all	the four doors missing, mislabelled, unreachable by keyboard or below 44 px
+src/components/shell/shell-nav.test.ts	all	Watch or a result from Today opens the wrong conversation
+src/state/store.shell-views.test.ts	all	Today, Needs you or Health open under a dialog, or a returning owner lands in the wrong place
+server/engine-health-routes.test.ts	all	engine health readable by a non-owner, or a slow Flux check holding Today up
