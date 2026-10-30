@@ -9,8 +9,6 @@ function context(command: string, patch: Partial<AutoContext> = {}): AutoContext
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
-// 1.0.10 (NOLIMITS-CARDS r5): each line also names who started the turn, whether it was unattended, the command
-// class and, for an unreadable hold, the reader's class. All value-free.
 describe("approval ask reason logging", () => {
   it("logs early holds with fixed tags and never command text, values, arguments or paths", () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
@@ -25,12 +23,12 @@ describe("approval ask reason logging", () => {
     ];
     for (const [id, command, patch] of rows) expect(autoVerdict({ ...full, id }, "shell", sentinel, context(command, patch)).approve).toBeNull();
     expect(log.mock.calls.map(([line]) => line)).toEqual([
-      "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root origin=owner unattended=0 cmd=shell suppressed=0",
-      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held suppressed=0",
-      "approvals: asked bot=env tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell suppressed=0",
-      "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell suppressed=0",
-      "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell suppressed=0",
-      "approvals: asked bot=cut tool=shell reason=unread-call:truncated origin=owner unattended=0 cmd=shell suppressed=0",
+      "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root suppressed=0",
+      "approvals: asked bot=unreadable tool=shell reason=unreadable suppressed=0",
+      "approvals: asked bot=env tool=shell reason=unread-call:U20 suppressed=0",
+      "approvals: asked bot=pin tool=shell reason=unread-call:U19 suppressed=0",
+      "approvals: asked bot=stop tool=shell reason=stop-line:pay suppressed=0",
+      "approvals: asked bot=cut tool=shell reason=unread-call:truncated suppressed=0",
     ]);
     autoVerdict({ id: "no-grant" }, "shell", sentinel, context(`echo ${sentinel}`));
     expect(log.mock.calls.at(-1)?.[0]).toContain("reason=no-grant");
@@ -53,7 +51,7 @@ describe("approval ask reason logging", () => {
     expect(log).toHaveBeenCalledTimes(4);
     vi.setSystemTime(1_060_000); ask();
     expect(log).toHaveBeenCalledTimes(5);
-    expect(log.mock.calls.at(-1)?.[0]).toBe("approvals: asked bot=rate-fixture tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell suppressed=3");
+    expect(log.mock.calls.at(-1)?.[0]).toBe("approvals: asked bot=rate-fixture tool=shell reason=unread-call:U20 suppressed=3");
     ask(); vi.setSystemTime(1_120_000); ask();
     expect(log.mock.calls.at(-1)?.[0]).toContain("suppressed=1");
     expect(JSON.stringify(log.mock.calls)).not.toContain("private");
@@ -61,6 +59,6 @@ describe("approval ask reason logging", () => {
   it("does not let malformed tool labels inject command text or log lines", () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     autoVerdict({ id: "bad\nid" }, "echo /secret/path\nforged", "TOP_SECRET", { question: true });
-    expect(log.mock.calls).toEqual([["approvals: asked bot=unknown tool=unknown reason=question-tool origin=owner unattended=0 cmd=none suppressed=0"]]);
+    expect(log.mock.calls).toEqual([["approvals: asked bot=unknown tool=unknown reason=question-tool suppressed=0"]]);
   });
 });
