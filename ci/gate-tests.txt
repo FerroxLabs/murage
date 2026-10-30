@@ -885,6 +885,7 @@ server/memory/authority-epoch.test.ts	all	Protects forget/revoke, upgrade or pri
 server/memory/automatic-learning.test.ts	all	Undo restores prior memory; held correction needs owner approval
 server/memory/backfill-ancestry.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/branch-read-gate.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
+server/memory/candidate-gate.test.ts	all	a durable memory is kept and only thin or passing lines drop, whatever the extractor flags
 server/memory/capture-export.test.ts	all	C1: a message with an account number is kept masked, so is the bot's echo, and a later bundle carries no digit of it
 server/memory/claim-deny-restart.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/claim-settle-downgrade.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
