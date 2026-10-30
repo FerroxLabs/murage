@@ -13,7 +13,7 @@ export function safePath(value) {
 export function encodeRequest(request, identity = "") {
   const { nonce, operation, parentPid, parentDirectory, ciphertext = "", maxBytes, timeoutMs = 900000, closeTimeoutMs = 5000 } = request;
   if (!noncePattern.test(nonce) || !["private-stage", "decrypt"].includes(operation) || !integer(parentPid, 0xffffffff) ||
-      !safePath(parentDirectory) || !integer(maxBytes, limits.bytes) || !integer(timeoutMs, 1800000) || !integer(closeTimeoutMs, 30000)) fail();
+      !safePath(parentDirectory) || !integer(maxBytes, limits.bytes) || !integer(timeoutMs, 14400000) || !integer(closeTimeoutMs, 30000)) fail();
   if (operation === "decrypt" ? !safePath(ciphertext) || !/^AGE-SECRET-KEY-1[A-Z0-9]{40,120}\n$/.test(identity) : ciphertext !== "" || identity !== "") fail();
   const key = Buffer.from(identity, "ascii");
   if (key.length > limits.key) fail();

@@ -48,6 +48,7 @@ companion/test/terms-door.test.ts	all	cloud home, enrolment and key custody
 companion/test/upstream-failure.test.ts	all	phone-to-desktop door and its auth
 companion/test/wire.test.ts	all	phone-to-desktop door and its auth
 electron/assemblyai.test.mjs	all	protects user-visible behaviour in core flows
+electron/backup-budget-a.test.mjs	all	a backup that runs past 30 minutes is left to finish
 electron/backup-closed-controller.test.mjs	all	protects user-visible behaviour in core flows
 electron/backup-offline-return.test.mjs	all	a backup taken with Murage closed always ends with Murage open again
 electron/backup-progress-window.test.mjs	all	first backup shows its progress screen, not a blank flash
@@ -236,11 +237,13 @@ server/auto-review.test.ts	all	which permissions get auto-reviewed
 server/automations-chat-api.test.ts	linux+mac	a routine or webhook proposed from a run, channel or someone else, or an Undo that fails after a restart
 server/automations-chat.test.ts	all	a webhook from chat or an Undo that makes a second webhook, leaks a link, or overwrites an owner change
 server/b11-destination-api.test.ts	all	Resumed engine requests land in correct desk
+server/backup-budget-a-1013.test.ts	all	a long backup finishes and a long pre-upgrade backup still installs
 server/backup-after-restore.test.ts	all	Restored installation can be backed up again
 server/backup-bot-folder.test.ts	all	bot folder backup keeps real work, lists omissions
 server/backup-card-kinds-108.test.ts	all	A chat holding question, approval or widget cards still backs up instead of refusing the whole backup
 server/backup-channel-run.test.ts	all	backup runs after channel messages and routine runs
 server/backup-coordinator.test.ts	all	backup scheduling, handoff and enablement rules
+server/backup-disk-full-1012.test.ts	all	A full disk during a backup is named as a full disk
 server/backup-ebusy.test.ts	all	Locked files skipped, own records stop backup
 server/backup-follow-model-marker.test.ts	all	Chat model cleanup marker backs up with bots
 server/backup-frozen-replies-cursor.test.ts	all	Recovery cursor never stops a backup
@@ -1463,6 +1466,8 @@ shared/approval-digest.test.ts	all	push delivery and approval integrity
 shared/arg-vocabulary-ssh.test.ts	all	security boundary or path/file access
 shared/arg-vocabulary.test.ts	all	security boundary or path/file access
 shared/backup-capture-cause.test.ts	all	protects user-visible behaviour in core flows
+shared/backup-budget.test.ts	all	the backup time limit follows the data and falls back to the stored limit
+shared/backup-progress.test.ts	all	Backup progress notes never change a backup
 shared/chief-handover.test.ts	all	keeps the former Chief leading its team when it can
 shared/exact-command.test.ts	all	protects user-visible behaviour in core flows
 shared/financial-ids.test.ts	all	the vectors are for this rule version
@@ -1668,3 +1673,5 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
+server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated

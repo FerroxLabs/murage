@@ -290,7 +290,7 @@ int run(DWORD expectedParent) {
   const auto fields = split(metadata, '\n'); need(fields.size() == 10 && fields[0] == "1" && nonceValid(fields[1]));
   const bool isDecrypt = fields[2] == "decrypt"; need(isDecrypt || fields[2] == "private-stage"); need(number(fields[3], MAXDWORD) == expectedParent);
   const auto directory = wide(fields[4]); pathValid(directory); const auto keySize = static_cast<size_t>(number(fields[6], keyLimit, true));
-  const auto maxBytes = number(fields[7], byteLimit); const auto deadline = number(fields[8], 1800000); const auto closeMs = static_cast<DWORD>(number(fields[9], 30000));
+  const auto maxBytes = number(fields[7], byteLimit); const auto deadline = number(fields[8], 14400000); const auto closeMs = static_cast<DWORD>(number(fields[9], 30000));
   std::wstring ciphertext; if (isDecrypt) { ciphertext = wide(fields[5]); pathValid(ciphertext); need(keySize >= 56); } else need(fields[5].empty() && keySize == 0);
   Secret secret; if (isDecrypt) secret.read(input, keySize);
   auto stagePins = pinDirectories(directory); const auto stagePath = directory + L"\\.murage-backup-" + wide(fields[1]);

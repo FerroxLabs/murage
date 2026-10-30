@@ -37,8 +37,9 @@
         "7d1492fed80afe89": "const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === \"p",
         "f7f4f3d0f1e47544": "const windowsBash = shell === \"pwsh\" && fullAccessOriginOf(context) === \"owner\" && fullAcc",
         "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS",
-        "54aef574116e11f9": "const dequoted = pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim() ? ",
-        "2b3dc75b64c03c12": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
+        "b7899b27a0da7d3f": "const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? \"none\" : isPower",
+        "a97a271e3bccca0b": "const dequoted = (pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim()) ",
+        "7a740b380a441e1e": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
       }
     },
     "server/claude-accounts.ts": {

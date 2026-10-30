@@ -64,7 +64,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else and webhooks still ask. Routines use their own level." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "On unless you turn it off. Group chats, other people and webhooks still ask. Routines use their own level." },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (
@@ -110,10 +110,10 @@ export function BotPermissionDefault({
               <div className="mt-0.5 text-[11.5px] text-ink-secondary">{hint}</div>
             </div>
             <Switch
-              checked={bot[key] === true}
+              checked={key === "fullAccessChannelMessages" ? bot[key] !== false : bot[key] === true}
               disabled={!full || remote}
               aria-label={label}
-              onClick={() => onOption(key, bot[key] !== true)}
+              onClick={() => onOption(key, key === "fullAccessChannelMessages" ? bot[key] === false : bot[key] !== true)}
             />
           </div>
         ))}
