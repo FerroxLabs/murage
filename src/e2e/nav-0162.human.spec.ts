@@ -19,7 +19,12 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSidebar } from "./fixtures.ts";
-import { accountMenuTrigger, sidebarPlace } from "./sidebar-nav";
+import { accountMenuTrigger } from "./sidebar-nav";
+import type { Locator } from "@playwright/test";
+
+/** UX 1.0.13: the four doors at the top of the rail, in order, with their visible labels. */
+const DOORS = [["today", "Today"], ["chats", "Chats"], ["needs-you", "Needs you"], ["routines", "Routines"]] as const;
+const sidebarDoor = (sidebar: Locator, door: (typeof DOORS)[number][0]) => sidebar.locator(`[data-door="${door}"]`).first();
 
 let fixture: { info: { url: string; dataDir: string }; close(): Promise<void> }, vite: ViteDevServer, origin: string, headers: Record<string, string>;
 
@@ -89,13 +94,15 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   const dir = shotDir(info.outputPath("shots"));
   await start(page, width, height);
   const sidebar = await openSidebar(page);
-  // the places are on screen, labelled, in one row of four
-  for (const [place, label] of [["routines", "Routines"], ["files", "Files"], ["apps", "Apps"], ["map", "Map"]] as const) {
-    await expect(sidebarPlace(sidebar, place)).toBeVisible();
-    await expect(sidebarPlace(sidebar, place)).toContainText(label);
+  // UX 1.0.13: the four doors are on screen, labelled, one under the other at the top of the rail
+  for (const [door, label] of DOORS) {
+    await expect(sidebarDoor(sidebar, door)).toBeVisible();
+    await expect(sidebarDoor(sidebar, door)).toContainText(label);
   }
-  const tops = await sidebar.locator("[data-sidebar-place]").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().top)));
-  expect(new Set(tops).size).toBe(1);
+  const lefts = await sidebar.locator("[data-door]").evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().left)));
+  expect(lefts).toHaveLength(4);
+  expect(new Set(lefts).size).toBe(1);
+  await expect(sidebar.locator("[data-sidebar-place]")).toHaveCount(0);
   await expect(sidebar).toHaveCSS("width", "280px");
   await expect(sidebar.getByRole("button", { name: "Tools", exact: true })).toHaveCount(0);
   await page.screenshot({ path: join(dir, `sidebar-${width}x${height}.png`) });
@@ -104,7 +111,7 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await accountMenuTrigger(sidebar).click();
   const menu = page.getByRole("menu", { name: "Your menu" });
   await expect(menu).toBeVisible();
-  await expect(menu.getByRole("menuitem")).toHaveText([/About me/, /Phone/, ...(HAS_WHATS_NEW ? [/What's new/] : []), /^Murage \d/, /Keyboard shortcuts/, /Get set up/, /Settings/]);
+  await expect(menu.getByRole("menuitem")).toHaveText([/Health/, /About me/, /Phone/, /Files/, /Connected apps/, /Team map/, ...(HAS_WHATS_NEW ? [/What's new/] : []), /^Murage \d/, /Keyboard shortcuts/, /Get set up/, /Settings/]);
   await expect(menu.getByRole("menuitem").first()).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitem").nth(1)).toBeFocused();
@@ -124,8 +131,8 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   const shape = await scrollShape(page);
   expect(shape).toMatchObject({ dialogClips: true, dialogFits: true, navOverflowY: "auto", pageOverflowY: "auto" });
   if (width === 1440) expect(shape.navScrolls).toBe(false);
-  // no label is cut off: every section name and every place label fits
-  const clipped = await page.evaluate(() => [...document.querySelectorAll('[data-settings-section] span, [data-sidebar-place] span:last-child')]
+  // no label is cut off: every section name and every door label fits
+  const clipped = await page.evaluate(() => [...document.querySelectorAll('[data-settings-section] span, [data-door] > span:nth-child(2)')]
     .filter((el) => (el as HTMLElement).scrollWidth > (el as HTMLElement).clientWidth + 1).map((el) => el.textContent));
   expect(clipped, JSON.stringify(clipped)).toEqual([]);
   await page.screenshot({ path: join(dir, `settings-${width}x${height}.png`) });
@@ -184,9 +191,10 @@ test("a narrow desktop window folds the sidebar to the rail, and one click opens
   await start(page, 900, 600);
   const sidebar = page.getByRole("complementary", { name: "Bots and navigation" });
   await expect(sidebar).toHaveCSS("width", "64px");
-  await expect(sidebarPlace(sidebar, "routines")).toBeVisible();
-  await expect(sidebarPlace(sidebar, "apps")).toHaveAttribute("title", "Connected apps: Gmail, Slack and other apps your bots can use");
-  await expect(sidebarPlace(sidebar, "apps")).toHaveAccessibleName("Connected apps");
+  // the doors stay on the rail as icons, named and with their tooltip
+  for (const [door] of DOORS) await expect(sidebarDoor(sidebar, door)).toBeVisible();
+  await expect(sidebarDoor(sidebar, "routines")).toHaveAttribute("title", "What your bots do on a schedule");
+  await expect(sidebarDoor(sidebar, "routines")).toHaveAccessibleName("Routines");
   expect(await noSideScroll(page)).toBe(true);
   await page.screenshot({ path: join(dir, "sidebar-rail-900x600.png") });
   await sidebar.getByRole("button", { name: "Expand sidebar", exact: true }).click();
@@ -208,11 +216,11 @@ for (const skin of ["dark", "light"]) test(`phone: drawer, strip and Settings sh
   const sidebar = await openSidebar(page);
   const box = (await sidebar.boundingBox())!;
   expect(box.width).toBeLessThanOrEqual(Math.min(300, 390 * 0.86) + 1);
-  // one row of four places, all inside the drawer
-  const places = await sidebar.locator("[data-sidebar-place]").evaluateAll((els) => els.map((el) => el.getBoundingClientRect()).map((r) => ({ top: Math.round(r.top), left: r.left, right: r.right, height: r.height })));
-  expect(places).toHaveLength(4);
-  expect(new Set(places.map((p) => p.top)).size).toBe(1);
-  for (const place of places) { expect(place.left).toBeGreaterThanOrEqual(box.x); expect(place.right).toBeLessThanOrEqual(box.x + box.width + 1); expect(place.height).toBeGreaterThanOrEqual(44); }
+  // the four doors, one under the other, all inside the drawer and at least 44px tall
+  const doors = await sidebar.locator("[data-door]").evaluateAll((els) => els.map((el) => el.getBoundingClientRect()).map((r) => ({ top: Math.round(r.top), left: r.left, right: r.right, height: r.height })));
+  expect(doors).toHaveLength(4);
+  expect(new Set(doors.map((d) => d.top)).size).toBe(4);
+  for (const door of doors) { expect(door.left).toBeGreaterThanOrEqual(box.x); expect(door.right).toBeLessThanOrEqual(box.x + box.width + 1); expect(door.height).toBeGreaterThanOrEqual(44); }
   expect(await noSideScroll(page)).toBe(true);
   await page.screenshot({ path: join(dir, `sidebar-390x844-${skin}.png`) });
   await accountMenuTrigger(sidebar).click();

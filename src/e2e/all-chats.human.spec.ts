@@ -52,7 +52,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 async function open(page: Page) {
   await page.goto(origin);
   await openSidebar(page);
-  await page.getByTestId("all-chats-entry").click();
+  await page.locator('[data-door="chats"]').first().click();
   await expect(page.getByRole("textbox", { name: "Search all chats", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Bot", exact: true }).selectOption(ids.bot);
   await expect(page.locator("[data-chat-row]")).toHaveCount(50);
@@ -105,7 +105,10 @@ test("shortcuts, Expand, and the header button use the current bot", async ({ pa
   const created = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/api/bots/${ids.bot}/tasks`));
   await page.keyboard.press("Control+Shift+N");
   expect((await created).status()).toBe(201);
-  await expect(page.getByRole("button", { name: "Chat list", exact: true })).toContainText("New chat");
+  // The fixture's only bot is the Chief with setup still open, so whenever a setup read lands after the new chat
+  // opens, setup carries on in it and names it (server nameTheSetupTask); either title is that new chat, and the
+  // count (122 + 1) proves it was added to the current bot.
+  await expect(page.getByRole("button", { name: "Chat list", exact: true })).toContainText(/^(New chat|Getting you set up)123/);
   if (await phoneLayout(page)) {
     // The phone header is one row, so the + beside the chip folds away
     // (chip-trim); the chat list's own New chat row is the way in there.

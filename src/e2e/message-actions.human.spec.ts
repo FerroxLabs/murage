@@ -95,7 +95,9 @@ async function seedTranscript(page: Page): Promise<void> {
 async function openSeeded(page: Page, target: "chat" | "channel"): Promise<void> {
   await seedTranscript(page);
   await page.reload();
-  await expect(page.getByTestId("chat-scroll")).toBeVisible();
+  // UX 1.0.13: a returning owner (a saved conversation) opens on Today, a fresh one on the chat; the pick below
+  // opens the seeded conversation from either.
+  await expect(page.getByTestId("chat-scroll").or(page.locator('main[data-view="today"]')).first()).toBeVisible();
 
   const sidebar = page.getByRole("complementary", { name: "Bots and navigation" });
   const menu = page.getByRole("button", { name: "Open bot list" });

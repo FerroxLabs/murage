@@ -1,78 +1,23 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// 0.1.62: the Tools pull-up is gone. Its four places are a labelled strip
-// under "Needs you" (SidebarPlaces), and the rest sits in the You menu in the
-// footer (SidebarYouMenu). NAV-OVERHAUL.md 3.1.
+// 0.1.62: the Tools pull-up is gone; the rest sits in the You menu in the
+// footer (SidebarYouMenu). NAV-OVERHAUL.md 3.1. UX 1.0.13: the place strip
+// became the four doors (shell/RailDoors.tsx).
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
-import { NAV_MOVED_SEEN_KEY, SidebarMovedNote, SidebarPlaces, shouldShowMovedNote, sidebarPlaceName, type SidebarPlaceItem } from "./SidebarPlaces";
 import { SidebarYouMenu, type YouMenuItem } from "./SidebarYouMenu";
 import { SidebarYouMenuPanel } from "./SidebarYouMenuPanel";
 
 const sidebar = readFileSync(fileURLToPath(new URL("./Sidebar.tsx", import.meta.url)), "utf8");
 
-const place = (over: Partial<SidebarPlaceItem> = {}): SidebarPlaceItem => ({
-  key: "routines",
-  label: "Routines",
-  name: "Routines",
-  icon: null,
-  onSelect: vi.fn(),
-  ...over,
-});
-const four = (): SidebarPlaceItem[] => [
-  place(),
-  place({ key: "files", label: "Files", name: "Files" }),
-  place({ key: "apps", label: "Apps", name: "Connected apps" }),
-  place({ key: "map", label: "Map", name: "Team map" }),
-];
-
-describe("the place strip", () => {
-  it("shows all four places at once, each labelled, in one row", () => {
-    const html = renderToStaticMarkup(createElement(SidebarPlaces, { places: four() }));
-    expect(html).toContain('role="toolbar"');
-    expect(html).toContain('aria-label="Places"');
-    expect(html).toContain("repeat(4, minmax(0, 1fr))");
-    for (const [key, label, name] of [["routines", "Routines", "Routines"], ["files", "Files", "Files"], ["apps", "Apps", "Connected apps"], ["map", "Map", "Team map"]]) {
-      expect(html).toContain(`data-sidebar-place="${key}"`);
-      expect(html).toContain(`aria-label="${name}"`);
-      expect(html).toContain(`>${label}</span>`);
-      // the full name contains what the button shows, so voice control finds it
-      expect(name.toLowerCase()).toContain(label.toLowerCase());
-    }
-    // one Tab stop for the strip; arrows move within it
-    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
-    expect(html.match(/tabindex="-1"/g)).toHaveLength(3);
-  });
-
-  it("keeps the routine's attention dot on the Routines place and says it out loud", () => {
-    const html = renderToStaticMarkup(createElement(SidebarPlaces, { places: [place({ attention: true, active: true })] }));
-    expect(html).toContain("data-sidebar-place-attention");
-    expect(html).toContain('aria-label="Routines, needs attention"');
-    expect(html).toContain('aria-current="page"');
-    expect(sidebarPlaceName({ name: "Routines" })).toBe("Routines");
-  });
-
-  it("stacks as icon buttons with tooltips on the rail", () => {
-    const html = renderToStaticMarkup(createElement(SidebarPlaces, { places: four(), rail: true }));
-    expect(html).toContain('aria-orientation="vertical"');
-    expect(html).toContain('title="Connected apps"');
-    expect(sidebar).toContain('tip: t("nav.tip.apps")');
-    expect(html).not.toContain(">Apps</span>");
-  });
-
-  it("is wired to the real destinations, the routine dot included", () => {
-    expect(sidebar).toContain('attention: state.routineRuns.some(isUnseenRoutineProblem)');
-    expect(sidebar).toContain('dispatch({ type: "togglePlugins", open: true })');
-    expect(sidebar).toContain('dispatch({ type: "showTeamMap" })');
-    expect(sidebar).toContain('dispatch({ type: "showRoutines" })');
-    expect(sidebar).toContain("<SidebarPlaces rail={density === \"icons\"} places={places} />");
-  });
-});
+// UX 1.0.13 (L2A): the place strip and its one-time "Tools moved" note gave way to the four doors
+// (Today, Chats, Needs you, Routines); Files, Connected apps and Team map moved to the You menu.
+// Their tests are in shell/RailDoors.test.ts.
 
 describe("the You menu", () => {
   it("gates the recorder menu and page on the local macOS desktop as well as the switch", () => {
@@ -140,22 +85,6 @@ describe("reaching Settings and the dialogs Settings opens", () => {
   });
 });
 
-describe("the one-time Tools moved note (NAV-OVERHAUL.md 5)", () => {
-  const storage = (values: Record<string, string>) => ({ getItem: (key: string) => values[key] ?? null });
-  it("shows only to someone who used the Tools pull-up, until dismissed", () => {
-    expect(shouldShowMovedNote(storage({}))).toBe(false);
-    expect(shouldShowMovedNote(storage({ "murage-email-gate": "skipped" }))).toBe(true);
-    expect(shouldShowMovedNote(storage({ "murage-email-gate": "skipped", [NAV_MOVED_SEEN_KEY]: "1" }))).toBe(false);
-    expect(shouldShowMovedNote(null)).toBe(false);
-  });
-  it("says where the places went and can be dismissed by name", () => {
-    const html = renderToStaticMarkup(createElement(SidebarMovedNote, { onDismiss: vi.fn() }));
-    expect(html).toContain("Tools moved");
-    expect(html).toContain("Routines, Files, Apps and Map are here now.");
-    expect(html).toContain('aria-label="Dismiss the note about Tools"');
-  });
-});
-
 describe("the sidebar search hands a word to the palette", () => {
   it("offers Search Settings for the word typed, on touch too", () => {
     expect(sidebar).toContain('openCommandPalette(query.trim());');
@@ -172,12 +101,6 @@ describe("Expand sticks across launches", () => {
 });
 
 describe("the grandma test: plain words on every icon", () => {
-  it("explains each place in a tooltip and to a screen reader", () => {
-    const html = renderToStaticMarkup(createElement(SidebarPlaces, { places: [place({ tip: "Routines: things your bots do on a schedule" })], rail: true }));
-    expect(html).toContain('title="Routines: things your bots do on a schedule"');
-    expect(html).toContain('aria-description="Routines: things your bots do on a schedule"');
-    for (const key of ["routines", "files", "apps", "map"]) expect(sidebar).toContain(`tip: t("nav.tip.${key}")`);
-  });
   it("gives the header's icon buttons a plain tooltip, and every Settings page and group a one-line note", async () => {
     expect(sidebar).toContain('title={density === "icons" ? t("nav.tip.expand") : t("nav.tip.collapse")}');
     expect(sidebar).toContain('title={t("nav.tip.new")}');

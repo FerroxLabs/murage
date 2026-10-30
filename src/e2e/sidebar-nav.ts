@@ -25,12 +25,16 @@ export async function chooseFromAccountMenu(scope: Scope, item: string): Promise
   await scope.getByRole("menuitem", { name: item, exact: true }).click();
 }
 
-/** The strip button for a place. */
+/** UX 1.0.13: Routines is a door at the top of the rail; Files, Connected apps and Team map are in the You menu. */
+const MENU_NAME: Record<Exclude<SidebarPlace, "routines">, string> = { files: "Files", apps: "Connected apps", map: "Team map" };
+
+/** The control that opens a place: the Routines door, or your name (the You menu holds the rest). */
 export function sidebarPlace(scope: Scope, place: SidebarPlace): Locator {
-  return scope.locator(`[data-sidebar-place="${place}"]`).first();
+  return place === "routines" ? scope.locator('[data-door="routines"]').first() : accountMenuTrigger(scope);
 }
 
-/** Go to a place in the strip. */
+/** Go to a place. */
 export async function openSidebarPlace(scope: Scope, place: SidebarPlace): Promise<void> {
-  await sidebarPlace(scope, place).click();
+  if (place === "routines") await scope.locator('[data-door="routines"]').first().click();
+  else await chooseFromAccountMenu(scope, MENU_NAME[place]);
 }

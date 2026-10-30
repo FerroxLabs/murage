@@ -112,7 +112,12 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
   const botRow=(messages:any[],text:string)=>messages.find((message:any)=>message.role==="bot"&&message.kind==="text"&&message.text===text);
   // Settled: both sentences are on the transcript (a queued one lands when it is drained, as its turn starts),
   // Tango is idle, and every launched turn has answered.
-  await expect.poll(async()=>{const bot=await current();const launched=turns().length;return bot.busy!==true&&launched>0&&bot.messages.some((message:any)=>message.role==="user"&&message.text==="That's about right")&&REPLIES.slice(0,launched).every(reply=>botRow(bot.messages,reply));},{timeout:30_000}).toBe(true);
+  // The fake writes its turn log beside the transcript, so the log can trail it: a second answer with only one launch
+  // line yet, or a steered sentence with no steer line yet, is not settled (read too early, the branches below
+  // misread the run).
+  await expect.poll(async()=>{const bot=await current();const launched=turns().length;const said=bot.messages.find((message:any)=>message.role==="user"&&message.text==="That's about right");
+    const logCaughtUp=(!said?.steered||steerLines(said.dispatchedIn).some((line:any)=>String(line.steer).includes("That's about right")))&&(!botRow(bot.messages,REPLIES[1])||launched>=2||Boolean(said?.steered));
+    return bot.busy!==true&&launched>0&&Boolean(said)&&logCaughtUp&&REPLIES.slice(0,launched).every(reply=>botRow(bot.messages,reply));},{timeout:30_000}).toBe(true);
   const launches=turns();const messages=(await current()).messages;
   expect(launches.length,JSON.stringify(launches.map((turn:any)=>turn.prompt))).toBeLessThanOrEqual(2);
   const steered=launches.length===1;
