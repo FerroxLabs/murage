@@ -1040,7 +1040,10 @@ export interface AppState {
    * move on their own (hydration, another surface); the phone drawer closes
    * on this instead (drawer-close.ts). */
   conversationPicks?: number;
-  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats";
+  /** UX 1.0.13 shell (handoffs/HANDOFF-1013-UX-L2A.md): Today, Needs you and Health are views too. */
+  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats" | "today" | "needs-you" | "health";
+  /** The Needs you page's tab; "decisions" (the Needs you umbrella) unless a door or a link asked for another. */
+  needsYouTab?: import("../../shared/inbox").InboxView;
   /** All chats opened from a bot's or a channel's chat list: the Bot or Project/channel filter it starts with. */
   allChatsScope?: { botId?: string; groupId?: string };
   teamMapMemoryOpen?: boolean;
@@ -1387,6 +1390,11 @@ export type Action =
     } & HttpOrigin)
   | { type: "serverSends"; threadId: string; pending: ServerPendingSend[] }
   | { type: "showRoutines" }
+  /** UX 1.0.13 shell doors (HANDOFF-1013-UX-L2A.md, shell contract). */
+  | { type: "showToday" }
+  | { type: "showNeedsYou"; tab?: import("../../shared/inbox").InboxView }
+  | { type: "setNeedsYouTab"; tab: import("../../shared/inbox").InboxView }
+  | { type: "showHealth" }
   | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
   | { type: "hideTeamLibrary" }
@@ -2867,6 +2875,14 @@ function applyBotFrame(state: AppState, incoming: BotAnnouncement): AppState {
   return patched;
 }
 
+/** What every shell door closes on its way in, the same set the Routines view closes. */
+const SHELL_OVERLAYS_CLOSED = { settingsOpen: false, computerOpen: false, inspectorOpen: false, appSettingsOpen: false, pluginsOpen: false } as const;
+
+/** The first roster of a launch, for an owner whose setup is finished, with nothing chosen yet: Today. */
+export function landsOnToday(state: Pick<AppState, "hydrated" | "activeView" | "conversationPicks">, resumeId: string | undefined): boolean {
+  return !state.hydrated && Boolean(resumeId) && state.activeView === "chat" && (state.conversationPicks ?? 0) === 0;
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   const next = reduceState(state, action);
   return next === state ? next : withSidebarLines(state, next);
@@ -3121,6 +3137,9 @@ function reduceState(state: AppState, action: Action): AppState {
           sidebarSectionOrder: action.sidebarSectionOrder,
           selectedId: settledSelection,
           hydrated: true,
+          // A returning owner (a saved conversation exists only once setup finished) opens on Today, once per launch;
+          // a fresh install stays on the Chief's chat, and a link or a pick that came first wins (HANDOFF-1013-UX-L2A.md).
+          ...(landsOnToday(state, action.resumeId) ? { activeView: "today" as const } : {}),
         },
         [...bots, ...groups].map((owner) => ({ messages: owner.messages.length ? owner.messages : owner.sidebarLine?.queueId ? [{ queueId: owner.sidebarLine.queueId, at: owner.sidebarLine.at }] : [] })),
       );
@@ -3248,6 +3267,14 @@ function reduceState(state: AppState, action: Action): AppState {
       if (!loading?.firstPageEvents) return state;
       return replayFirstPageEvents(updateOwnerByThread(state, action.threadId, (owner) => ({ ...owner, firstPageEvents: undefined })), loading.firstPageEvents);
     }
+    case "showToday":
+      return { ...state, activeView: "today", ...SHELL_OVERLAYS_CLOSED };
+    case "showNeedsYou":
+      return { ...state, activeView: "needs-you", needsYouTab: action.tab ?? "decisions", ...SHELL_OVERLAYS_CLOSED };
+    case "setNeedsYouTab":
+      return state.needsYouTab === action.tab ? state : { ...state, needsYouTab: action.tab };
+    case "showHealth":
+      return { ...state, activeView: "health", ...SHELL_OVERLAYS_CLOSED };
     case "showRoutines":
       return {
         ...state,

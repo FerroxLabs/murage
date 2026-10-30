@@ -91,8 +91,8 @@ describe("the first paint", () => {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
-    // the sidebar's new places and menu are the first paint, and small
-    for (const file of ["src/components/SidebarPlaces.tsx", "src/components/SidebarYouMenu.tsx", "src/lib/settings-sections.ts", "src/lib/mod-shortcut.ts"]) {
+    // the rail's doors (UX 1.0.13) and menu are the first paint, and small
+    for (const file of ["src/components/shell/RailDoors.tsx", "src/components/SidebarYouMenu.tsx", "src/lib/settings-sections.ts", "src/lib/mod-shortcut.ts"]) {
       expect(reached, file).toContain(file);
     }
   });

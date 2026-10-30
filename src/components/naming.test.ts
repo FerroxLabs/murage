@@ -113,9 +113,9 @@ describe("skills are skills, and 'Add a skill' opens them", () => {
 describe("routines are routines", () => {
   it("names the sidebar row and the page after the thing, not the grid", () => {
     const sidebar = read("./Sidebar.tsx");
-    // the strip's place (0.1.62), named through the catalog
-    expect(sidebar).toContain('label: t("nav.routines")');
-    expect(en["nav.routines"]).toBe("Routines");
+    // the Routines door (UX 1.0.13), named through the catalog
+    expect(read("./shell/RailDoors.tsx")).toContain('routines: "ux.l2a.door.routines"');
+    expect(en["ux.l2a.door.routines"]).toBe("Routines");
     expect(sidebar).not.toContain(">Calendar</span>");
     expect(Object.values(en)).not.toContain("Calendar");
     expect(read("./RoutineCalendarPage.tsx")).toContain(">Routines</h1>");

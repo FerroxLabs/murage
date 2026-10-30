@@ -52,7 +52,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 async function open(page: Page) {
   await page.goto(origin);
   await openSidebar(page);
-  await page.getByTestId("all-chats-entry").click();
+  await page.locator('[data-door="chats"]').first().click();
   await expect(page.getByRole("textbox", { name: "Search all chats", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Bot", exact: true }).selectOption(ids.bot);
   await expect(page.locator("[data-chat-row]")).toHaveCount(50);

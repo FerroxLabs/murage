@@ -42,6 +42,13 @@ import { loadPlainApproval } from "@/lib/plain-approval";
 import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { TermsGate } from "@/components/TermsGate";
+import { UndoToastHost } from "@/components/ui/UndoToast";
+import { OfflineBand } from "@/components/shell/OfflineBand";
+import { HealthPage, NeedsYouPage, PhoneTabs, useHealthStatus, useNeedsSummary } from "@/components/shell/lane-slots";
+import { doorForView, shellNav } from "@/components/shell/shell-nav";
+import type { ShellDoor } from "@/components/shell/shell-contract";
+import { TodayView } from "@/components/today/TodayView";
+import { useConnectivity } from "@/lib/connectivity";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -140,12 +147,22 @@ function Shell() {
   // the panel hands off to this and back)
   const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
   const previousViewRef = useRef(state.activeView);
-  const calendarOriginRef = useRef<"chat" | "team-map" | "skill-recorder">("chat");
+  const calendarOriginRef = useRef<"chat" | "team-map" | "skill-recorder" | "today" | "needs-you" | "health">("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
-  const calendarFocus = state.activeView === "routines";
-
-  const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(!calendarFocus);
+  // UX 1.0.13 (L2A): the rail shows on every view, Routines included, so a door is always one click away.
+  const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(true);
+  // One read of each for the whole shell: the rail's door, Today and the phone tabs show the same numbers.
+  const needs = useNeedsSummary();
+  const health = useHealthStatus();
+  const connectivity = useConnectivity();
+  const nav = shellNav(dispatch, () => state);
+  const openDoor = useCallback((door: ShellDoor) => {
+    if (door === "today") dispatch({ type: "showToday" });
+    else if (door === "chats") dispatch({ type: "showAllChats" });
+    else if (door === "needs-you") dispatch({ type: "showNeedsYou" });
+    else dispatch({ type: "showRoutines" });
+  }, [dispatch]);
   // A workspace panel (LocalVm/Browser) covers the call's own bot/room's
   // screen the same way another selection does, with nothing to return to
   // otherwise (callbar-rereview.md N4). CallOverlaySlot (CallControls.tsx)
@@ -325,6 +342,9 @@ function Shell() {
   };
 
   const closeCalendar = useCallback(() => {
+    if (calendarOriginRef.current === "today") { dispatch({ type: "showToday" }); return; }
+    if (calendarOriginRef.current === "needs-you") { dispatch({ type: "showNeedsYou" }); return; }
+    if (calendarOriginRef.current === "health") { dispatch({ type: "showHealth" }); return; }
     if (calendarOriginRef.current === "team-map") {
       dispatch({ type: "showTeamMap" });
       return;
@@ -390,6 +410,8 @@ function Shell() {
       {desktop === true && <FluxKeyProblemBanner />}
       {/* Only after the door itself said 401 (lib/session-check.ts). */}
       {state.signedOut && <SignedOutCard />}
+      {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
+      <OfflineBand connectivity={connectivity} desktop={desktop} />
       {/* fixed-position popup, bottom-left — outside the layout flow */}
       <UpdateBanner />
       <UpdateStaleNotice />
@@ -407,14 +429,16 @@ function Shell() {
           draws it as the first item of its own row (OpenBotListButton.tsx), so
           it is centred with the name and the ••• instead of floating over
           them. The calendar focus view gets no provider, so no button. */}
-      {drawerOpen && !calendarFocus && (
+      {drawerOpen && (
         <div
           aria-hidden
           onMouseDown={(e) => e.target === e.currentTarget && setDrawerOpen(false)}
           className="absolute inset-0 z-30 bg-black/50 md:hidden"
         />
       )}
-      {!calendarFocus && <Sidebar
+      <Sidebar
+        needs={needs}
+        health={health}
         open={drawerOpen}
         // Focus goes back to the bot-list button once the view the pick
         // opened has mounted its own (useBotListDrawer).
@@ -422,8 +446,15 @@ function Shell() {
         // Closed by an effect (closeKey: something opened over the chat) with
         // focus still inside: the now inert drawer would drop it to the page.
         onReturnFocus={returnDrawerFocus}
-      />}
-      {state.activeView === "all-chats" ? (
+      />
+      {/* UX 1.0.13 main slot: Today (L2A), Needs you and Health (L2B through lane-slots), then the views as before. */}
+      {state.activeView === "today" ? (
+        <TodayView needs={needs} health={health} firstRun={setupOwnsView} chiefBotId={setupView?.chiefBotId ?? null} remote={desktop !== true} />
+      ) : state.activeView === "needs-you" ? (
+        <NeedsYouPage tab={state.needsYouTab ?? "decisions"} onTabChange={(tab) => dispatch({ type: "setNeedsYouTab", tab })} onOpenChat={nav.openChat} />
+      ) : state.activeView === "health" ? (
+        <HealthPage onOpenNeedsYou={() => nav.showNeedsYou()} />
+      ) : state.activeView === "all-chats" ? (
         <LazyBoundary onRetry={AllChatsPageLazy.retry}><Suspense fallback={<LazyFallback />}><AllChatsPage /></Suspense></LazyBoundary>
       ) : state.activeView === "team-map" ? (
         <LazyBoundary onRetry={TeamMapPageLazy.retry}><Suspense fallback={<LazyFallback />}><TeamMapPage /></Suspense></LazyBoundary>
@@ -518,7 +549,13 @@ function Shell() {
         isCallTargetCovered={isCallTargetCovered}
         uncoverCallTarget={uncoverCallTarget}
       />
+      {/* UX 1.0.13 undoToast slot (L5A). The helpPanel slot is L4A's <HelpHost />, mounted here at the 1.0.12 merge. */}
+      <UndoToastHost />
       </BotListDrawerProvider>
+      </div>
+      {/* UX 1.0.13 phoneTabs slot (L7): below md only. */}
+      <div className="md:hidden">
+        <PhoneTabs active={doorForView(state.activeView) ?? "chats"} needsCount={needs.count} onSelect={openDoor} />
       </div>
     </div>
   );
