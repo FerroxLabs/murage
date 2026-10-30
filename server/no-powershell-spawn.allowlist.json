@@ -37,8 +37,9 @@
         "7d1492fed80afe89": "const shell = isPowerShellTool(tool) || (commandTool && context?.call?.commandShell === \"p",
         "f7f4f3d0f1e47544": "const windowsBash = shell === \"pwsh\" && fullAccessOriginOf(context) === \"owner\" && fullAcc",
         "cf3fd17ebff44577": "const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandS",
-        "54aef574116e11f9": "const dequoted = pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim() ? ",
-        "2b3dc75b64c03c12": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
+        "b7899b27a0da7d3f": "const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? \"none\" : isPower",
+        "a97a271e3bccca0b": "const dequoted = (pinShell === \"pwsh\" && !windowsBash?.length || !commandGlobText.trim()) ",
+        "7a740b380a441e1e": "const reads = (pinShell === \"pwsh\" ? windowsBash ?? [] : [isCommandTool(tool) ? summary : "
       }
     },
     "server/claude-accounts.ts": {
@@ -181,6 +182,18 @@
       "reason": "Fixed environment-probe executable only: builds Windows PowerShell from the server absolute SystemRoot; never searches handed PATH. This helper starts nothing; engine-env.ts launches the fixed bounded probe.",
       "lines": {
         "185f94ce07a26daa": "return win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\");"
+      }
+    },
+    "server/own-file-reads.ts": {
+      "reason": "recognizer: a bot's read of its own files is placed only for a POSIX shell's line; a command the engine marks as run under PowerShell (commandShell 'pwsh') is not placed and asks (fix/1011-own-tool-results); compares a field, starts nothing",
+      "lines": {
+        "a5c8f28c6a53bf75": "if ((request.platform ?? process.platform) === \"win32\" || request.commandShell === \"pwsh\" || !PO"
+      }
+    },
+    "server/own-tool-results.ts": {
+      "reason": "recognizer: a read of a bot's own saved tool result is placed only for a POSIX shell's line; a command the engine marks as run under PowerShell (commandShell 'pwsh') is not placed and asks (fix/1011-own-tool-results); compares a field, starts nothing",
+      "lines": {
+        "a5c8f28c6a53bf75": "if ((request.platform ?? process.platform) === \"win32\" || request.commandShell === \"pwsh\" || !PO"
       }
     },
     "server/shell/walk.ts": {

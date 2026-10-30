@@ -41,6 +41,16 @@ function sourcePaths(dir: string): string[] {
 const PROBE = join(serverDir, "__structure_probe__.ts");
 /** TypeScript names every file with "/" on every OS (C:\a\b.ts is C:/a/b.ts to the compiler host), so virtual files are keyed that way. */
 const tsName = (path: string): string => path.replaceAll("\\", "/");
+/**
+ * One parse of each file on disk, shared by every program this file builds. The default compiler host parses every
+ * file again for each program, and a new SourceFile object counts as a changed file, so each probe program used to
+ * re-read, re-parse and re-bind the whole server, shared/ and the node_modules types next to the base program it
+ * was built from: two whole programs live at once, a dozen times over. That passed the default heap of the 7 GB
+ * macOS runner (scoped CI run OOM). With the same SourceFile objects a probe program reuses every file as it is
+ * (the binder skips a bound file) and only the probe's own text is parsed. The language service shares SourceFiles
+ * between programs the same way. Virtual files (a probe, a changed index.ts) are never cached.
+ */
+const parsedOnDisk = new Map<string, ts.SourceFile>();
 function buildProgram(named: Record<string, string> = {}, old?: ts.Program): ts.Program {
   const virtual = Object.fromEntries(Object.entries(named).map(([path, text]) => [tsName(path), text]));
   const config = ts.readConfigFile(join(rootDir, "tsconfig.server.json"), ts.sys.readFile);
@@ -49,7 +59,16 @@ function buildProgram(named: Record<string, string> = {}, old?: ts.Program): ts.
   const getSourceFile = host.getSourceFile.bind(host), fileExists = host.fileExists.bind(host), readFile = host.readFile.bind(host);
   host.fileExists = (file) => tsName(file) in virtual || fileExists(file);
   host.readFile = (file) => virtual[tsName(file)] ?? readFile(file);
-  host.getSourceFile = (file, language, onError, shouldCreate) => (tsName(file) in virtual ? ts.createSourceFile(file, virtual[tsName(file)]!, language, true) : getSourceFile(file, language, onError, shouldCreate));
+  host.getSourceFile = (file, language, onError, shouldCreate) => {
+    if (tsName(file) in virtual) return ts.createSourceFile(file, virtual[tsName(file)]!, language, true);
+    const target = typeof language === "object" ? `${language.languageVersion}:${language.impliedNodeFormat ?? ""}` : String(language);
+    const key = `${target}|${tsName(file)}`;
+    const cached = parsedOnDisk.get(key);
+    if (cached) return cached;
+    const parsed = getSourceFile(file, language, onError, shouldCreate);
+    if (parsed) parsedOnDisk.set(key, parsed);
+    return parsed;
+  };
   const roots = sourcePaths(serverDir).filter((path) => !path.endsWith("pi-mcp-extension.ts"));
   return ts.createProgram([...roots, ...Object.keys(virtual)], options, host, old);
 }

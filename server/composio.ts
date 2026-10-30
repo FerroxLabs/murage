@@ -50,6 +50,7 @@ import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
 import { SqliteOperationJournal, defaultJournalFile } from "./connected-app-journal.ts";
 import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
 import { createHash } from "node:crypto";
+import * as net from "node:net";
 import { fluxRetryDelayMs } from "./flux-key-health.ts";
 import { z } from "zod";
 import { brokerTokenFingerprint } from "../electron/flux-composio-token.mjs";
@@ -80,6 +81,7 @@ import {
 import { handOverInitialTools } from "./connector-cache-harness.ts";
 import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
 import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
+import { isFluxHost, setFluxUsageHeaders } from "./flux-usage-tags.ts";
 
 export interface ConnectedAccountSummary {
   id: string;
@@ -492,12 +494,36 @@ function tokenError(): string | undefined {
 // from every bot for 5 minutes. The initial value is "not ready".
 const FLUX_READY_TTL_MS = 5 * 60_000;
 const FLUX_NOT_READY_TTL_MS = 20_000;
-const FLUX_PROBE_TIMEOUT_MS = 5_000;
+/** 1.0.10 (NOLIMITS-CARDS A8): a readiness probe tries up to 3 times, 4 s each,
+ * 0.5 s then 1.5 s apart, before it records "not ready": one jittery connect
+ * (ETIMEDOUT while the broker answers) no longer takes connected apps away.
+ * Only a failure with no answer retries; an HTTP answer is final. */
+export const FLUX_PROBE_TIMEOUT_MS = 4_000;
+export const FLUX_PROBE_BACKOFF_MS: readonly number[] = [500, 1_500];
+let probeBackoffMs: readonly number[] = FLUX_PROBE_BACKOFF_MS;
+/** Test hook: shorten (or, with no argument, restore) the probe's backoff. */
+export function setFluxProbeBackoffMsForTests(ms?: readonly number[]): void {
+  probeBackoffMs = ms ?? FLUX_PROBE_BACKOFF_MS;
+}
+/** The whole probe, every attempt and backoff: at most 14 s. */
+export const FLUX_PROBE_DEADLINE_MS = FLUX_PROBE_TIMEOUT_MS * (FLUX_PROBE_BACKOFF_MS.length + 1) + FLUX_PROBE_BACKOFF_MS.reduce((sum, ms) => sum + ms, 0);
 /** How long a turn's connector MOUNT waits on a readiness probe another request
- * already started. Without the wait, the turn read the not-yet-updated cache,
- * mounted no Composio, and its first connector call failed with "tools never
- * loaded". Bounded so a slow or hung broker can never hang a turn. */
-export const FLUX_MOUNT_WAIT_CAP_MS = 5_000;
+ * already started, when there is no earlier ready answer to keep using.
+ * Without the wait, the turn read the not-yet-updated cache, mounted no
+ * Composio, and its first connector call failed with "tools never loaded".
+ * 1.0.10 (A8): the probe's remaining deadline, so a mount covers the retries;
+ * bounded so a slow or hung broker can never hang a turn. */
+export const FLUX_MOUNT_WAIT_CAP_MS = FLUX_PROBE_DEADLINE_MS;
+
+// 1.0.10 (A8): Node gives each address family 250 ms to connect before it tries
+// the next. Behind a missing IPv6 route a slow IPv4 connect was abandoned and the
+// fetch failed with ETIMEDOUT while the broker answered from the same computer.
+try {
+  if (typeof net.setDefaultAutoSelectFamilyAttemptTimeout === "function" && typeof net.getDefaultAutoSelectFamilyAttemptTimeout === "function"
+    && net.getDefaultAutoSelectFamilyAttemptTimeout() < 1_000) net.setDefaultAutoSelectFamilyAttemptTimeout(1_000);
+} catch { /* an older runtime keeps its default */ }
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => { setTimeout(resolve, ms); });
 let mountWaitCapMs = FLUX_MOUNT_WAIT_CAP_MS;
 /** Test hook: shrink (or, with no argument, restore) the mount wait cap. */
 export function setMountWaitCapMsForTests(ms?: number): void {
@@ -517,7 +543,7 @@ async function settleWithin(promise: Promise<void>, ms: number): Promise<void> {
   }
 }
 let fluxReadiness: { url: string; ready: boolean; at: number } | null = null;
-let fluxReadinessProbe: { url: string; promise: Promise<void> } | null = null;
+let fluxReadinessProbe: { url: string; promise: Promise<void>; deadline: number } | null = null;
 
 // Why connected apps read as unreachable. Every path that ends in "unreachable"
 // logs one line with the cause (an HTTP status or an error code, never a token,
@@ -559,14 +585,22 @@ function logUnreachable(route: UnreachableRoute, cause: string): void {
 async function probeFluxReadiness(url: string): Promise<void> {
   let ready = false;
   let cause: string | null = null;
-  try {
-    const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
-    const body = response.status === 200 ? await response.json().catch(() => null) : null;
-    ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
-    if (!ready) cause = response.status === 200 ? "HTTP 200 health not ready" : `HTTP ${response.status}`;
-  } catch (error) {
-    ready = false;
-    cause = errorCause(error);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
+      const body = response.status === 200 ? await response.json().catch(() => null) : null;
+      ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
+      cause = ready ? null : response.status === 200 ? "HTTP 200 health not ready" : `HTTP ${response.status}`;
+      break;
+    } catch (error) {
+      // no answer at all (a connect timeout, a reset, a name lookup, the attempt's own timeout): try again. Any other
+      // failure (a redirect, a bad URL) is final (fix round, Grok Medium)
+      ready = false;
+      cause = errorCause(error);
+      const backoff = probeBackoffMs[attempt];
+      if (backoff === undefined || !probeRetryable(error)) break;
+      await sleep(backoff);
+    }
   }
   lastProbeCause = cause;
   if (cause !== null) logUnreachable("readiness probe", cause);
@@ -604,18 +638,20 @@ export async function primeBrokerReadiness(options: { turn?: boolean; mount?: bo
     const ttl = cached.ready ? FLUX_READY_TTL_MS : FLUX_NOT_READY_TTL_MS;
     if (Date.now() - cached.at < ttl) return;
   }
+  // 1.0.10 (A8): last-known-good. While a probe runs after a ready answer, that
+  // answer stands (the synchronous read keeps it until the probe finishes), so a
+  // turn or a mount never waits on, or loses its apps to, a probe that is retrying.
+  const lastReady = cached !== null && cached.url === candidate.url && cached.ready;
   if (fluxReadinessProbe && fluxReadinessProbe.url === candidate.url) {
-    if (options.turn && options.mount) return settleWithin(fluxReadinessProbe.promise, options.waitMs ?? mountWaitCapMs);
+    if (options.turn && options.mount && !lastReady) return settleWithin(fluxReadinessProbe.promise, options.waitMs ?? Math.max(0, Math.min(mountWaitCapMs, fluxReadinessProbe.deadline - Date.now())));
     if (options.turn) return;
     return fluxReadinessProbe.promise;
   }
-  const probe = { url: candidate.url, promise: probeFluxReadiness(candidate.url) };
+  const probe = { url: candidate.url, promise: probeFluxReadiness(candidate.url), deadline: Date.now() + FLUX_PROBE_DEADLINE_MS };
   fluxReadinessProbe = probe;
-  try {
-    await probe.promise;
-  } finally {
-    if (fluxReadinessProbe === probe) fluxReadinessProbe = null;
-  }
+  const settled = probe.promise.finally(() => { if (fluxReadinessProbe === probe) fluxReadinessProbe = null; });
+  if (options.turn && lastReady) { void settled.catch(() => {}); return; }
+  await settled;
 }
 
 /** Forget the readiness answer; the next primed request probes again. */
@@ -1111,6 +1147,8 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   // never be what unlocks the user's connected apps.
   headers.set("authorization", `Bearer ${broker.token}`);
   if (init?.body) headers.set("content-type", "application/json");
+  // a broker on Flux Router: the usage tags say what the call is for (flux-usage-tags.ts)
+  if (isFluxHost(broker.url)) setFluxUsageHeaders(headers, { feature: "other" });
   const response = await fetch(`${broker.url}${path}`, {
     ...init,
     headers,
@@ -1505,26 +1543,45 @@ async function relayMcpUpstream(
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
+  if (isFluxHost(url)) setFluxUsageHeaders(headers, { feature: "other" });
   beforeDispatch?.();
   let response: Response;
+  const body = JSON.stringify(payload);
+  let tries = 0;
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      // A lookup stops a short grace after the bridge gives up. An action runs
-      // for its own lifetime (relayConnectedAppCall keeps it going after the
-      // bot's wait ends), bounded inside the broker's 285 s upstream cap plus
-      // a margin, so a broker that never answers cannot hold a socket forever.
-      signal: AbortSignal.timeout(options.timeoutMs ?? (connectedAppActionCall(payload)
-        ? CONNECTED_APP_OPERATION_LIFETIME_MS
-        : connectedAppCallTimeoutMs(payload) + CONNECTED_APP_RELAY_GRACE_MS)),
-    });
+    for (;;) {
+      tries++;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body,
+          // fix round (Astra High 6): a redirect is never followed, so a failure at a redirect's destination can
+          // never read as "never sent" for a request the broker already took
+          redirect: "manual",
+          // A lookup stops a short grace after the bridge gives up. An action runs
+          // for its own lifetime (relayConnectedAppCall keeps it going after the
+          // bot's wait ends), bounded inside the broker's 285 s upstream cap plus
+          // a margin, so a broker that never answers cannot hold a socket forever.
+          signal: AbortSignal.timeout(options.timeoutMs ?? (connectedAppActionCall(payload)
+            ? CONNECTED_APP_OPERATION_LIFETIME_MS
+            : connectedAppCallTimeoutMs(payload) + CONNECTED_APP_RELAY_GRACE_MS)),
+        });
+        break;
+      } catch (error) {
+        // 1.0.10 (A9): a call that never reached the broker (nothing was sent) is
+        // tried twice more, 0.5 s then 1.5 s apart. A failure after the request
+        // may have left is never sent again: its outcome is unknown.
+        const backoff = TOOL_CALL_BACKOFF_MS[tries - 1];
+        if (broker?.kind === "flux" && error instanceof TypeError && neverConnected(error) && backoff !== undefined) { await sleep(backoff); continue; }
+        throw error;
+      }
+    }
   } catch (error) {
     // A dropped connection reads as a plain sentence, and readiness is
     // re-checked one negative TTL later by whoever asks next.
     if (broker?.kind === "flux" && error instanceof TypeError) {
-      logUnreachable("tool call", errorCause(error));
+      logUnreachable("tool call", tries > 1 ? `${errorCause(error)} after ${tries} tries` : errorCause(error));
       invalidateBrokerReadiness();
       const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
       // Refused before anything left is "not sent"; a drop after the request
@@ -1533,6 +1590,14 @@ async function relayMcpUpstream(
       if (answer !== null) return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery };
     }
     throw error;
+  }
+  // fix round (Astra High 6): a redirect answer means the request reached a server that may have acted on it. It is
+  // possibly delivered, never retried and never followed.
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    await response.body?.cancel().catch(() => {});
+    if (broker?.kind === "flux") logUnreachable("tool call", `HTTP ${response.status} redirect`);
+    const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
+    return { status: answer !== null ? 200 : 502, bytes: new TextEncoder().encode(JSON.stringify(answer ?? { error: "redirect" })), contentType: "application/json", delivery: "unknown" };
   }
   // Read before any body is consumed: only the broker saying so, in so many
   // words, makes a 5xx "nothing was sent".
@@ -1710,11 +1775,31 @@ export function reconnectPromptFor(labels: ReadonlyArray<string>): string {
   return ` ${list} ${verb} reconnecting: ${one ? "its" : "their"} sign-in has stopped working, so calls to ${one ? "it" : "them"} fail until the owner reconnects ${one ? "it" : "them"} in Connected apps, where there is a Reconnect button. If the user asks for work in ${one ? "that app" : "those apps"}, say plainly that ${list} ${verb} reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.`;
 }
 
-const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"]);
-/** A fetch failure that happened before the request could have left. */
+const NEVER_CONNECTED = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH", "ENETUNREACH", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "UND_ERR_CONNECT_TIMEOUT"]);
+/** Fix round (Grok Medium): the network failures a readiness probe (a GET, safe to repeat) tries again: no answer at
+ * all. Anything else is final. */
+const PROBE_RETRY_CODES: ReadonlySet<string> = new Set([...NEVER_CONNECTED, "ETIMEDOUT", "ECONNRESET", "ECONNABORTED", "EPIPE", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT"]);
+function probeRetryable(error: unknown): boolean {
+  // the attempt's own AbortSignal.timeout
+  if ((error as { name?: unknown } | null)?.name === "TimeoutError") return true;
+  const cause = (error as { cause?: { code?: unknown; errors?: unknown } } | null)?.cause;
+  if (typeof cause?.code === "string" && PROBE_RETRY_CODES.has(cause.code)) return true;
+  const each = Array.isArray(cause?.errors) ? cause.errors as { code?: unknown }[] : [];
+  return each.length > 0 && each.every((one) => typeof one?.code === "string" && PROBE_RETRY_CODES.has(one.code));
+}
+/** 1.0.10 (A9): the backoff before each retry of a tool call that was never sent. */
+const TOOL_CALL_BACKOFF_MS: readonly number[] = [500, 1_500];
+/** A fetch failure that happened before the request could have left: a refused
+ * or unresolved connect, or a connect that timed out (ETIMEDOUT on `connect`,
+ * every address of a happy-eyeballs attempt included). */
 function neverConnected(error: TypeError): boolean {
-  const cause = (error as { cause?: { code?: unknown } }).cause;
-  return typeof cause?.code === "string" && NEVER_CONNECTED.has(cause.code);
+  const cause = (error as { cause?: { code?: unknown; syscall?: unknown; errors?: unknown } }).cause;
+  if (typeof cause?.code !== "string") return false;
+  if (NEVER_CONNECTED.has(cause.code)) return true;
+  if (cause.code !== "ETIMEDOUT") return false;
+  if (cause.syscall === "connect") return true;
+  const each = Array.isArray(cause.errors) ? cause.errors as { code?: unknown; syscall?: unknown }[] : [];
+  return each.length > 0 && each.every((one) => one?.syscall === "connect" && (one.code === "ETIMEDOUT" || (typeof one.code === "string" && NEVER_CONNECTED.has(one.code))));
 }
 
 /** Codes the Flux broker answers a 503 with only when it turned the request

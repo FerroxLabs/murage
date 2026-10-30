@@ -119,6 +119,9 @@ export const EMAIL_SETUP_COPY = {
   removeConfirm: (address: string, bot: string) => `Remove ${address}? ${bot} stops sending and receiving now. Mail is deleted after 30 days and this address can't be used again.`,
   accountOff: "Bot email is off for this account. Turn it on in Settings > Bot email.",
   fluxOff: "Email addresses for bots come with Flux. Connect Flux in Settings to use them.",
+  /** 1.0.11: the capability read on the saved Flux key answered 401 (the key was revoked or Flux does not know it). */
+  fluxKeyRefused: "Your Flux key stopped working. Sign in with Flux again.",
+  fluxSignIn: "Sign in with Flux",
 } as const;
 
 /** Section 6 header chip for a binding state (and open cards). */

@@ -5,7 +5,7 @@
 // only when the server sends it, the price line never inside the phone apps, the buttons each state offers, and an owner act posting the
 // exact body the server digests. Plus the house copy rules over every owner-facing word.
 import { describe, expect, it } from "vitest";
-import { emailOwnerAct, emailSectionActions, OWNER_ROUTE, emailSectionOffered, priceLine, readEmailStatus, setEmailAccount, signInEmailOwner } from "./bot-email";
+import { emailOwnerAct, emailSectionActions, OWNER_ROUTE, emailSectionOffered, priceLine, readEmailStatus, setEmailAccount, signInEmailOwner, signInFluxAgain } from "./bot-email";
 import { EMAIL_KEY_HEALTH_COPY as KEY_HEALTH_LINES } from "../../shared/email-copy.ts";
 import { EMAIL_CARD_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_TRUST_COPY, checkLine, emailOwnerActionCard, ownerRouteLine, type EmailStatusView } from "../../shared/email-copy.ts";
 
@@ -18,8 +18,14 @@ describe("the status read (2.0, section 8)", () => {
     expect(await readEmailStatus(failing(404, { error: "Bot email is not available." }))).toEqual({ kind: "off" });
     expect(await readEmailStatus(failing(404, { error: "x", fluxOff: EMAIL_SETUP_COPY.fluxOff }))).toEqual({ kind: "flux-off", line: EMAIL_SETUP_COPY.fluxOff });
     expect(await readEmailStatus(async () => ({ enabled: false }))).toEqual({ kind: "off" });
+    // a failed read (5xx, network) is not "off": the stub must not claim the account is waiting for a rollout
+    expect(await readEmailStatus(failing(500, { error: "x" }))).toEqual({ kind: "error" });
+    // 1.0.11: Flux answered 401 on the saved key: the status says so (the stub offers Sign in with Flux)
+    expect(await readEmailStatus(failing(404, { error: "x", fluxRefused: EMAIL_SETUP_COPY.fluxKeyRefused }))).toEqual({ kind: "flux-refused", line: EMAIL_SETUP_COPY.fluxKeyRefused });
+    expect(emailSectionOffered({ kind: "flux-refused", line: "x" })).toBe(false);
+    expect(await readEmailStatus(async () => { throw new TypeError("Failed to fetch"); })).toEqual({ kind: "error" });
     expect(emailSectionOffered({ kind: "on", view: VIEW })).toBe(true);
-    for (const state of [{ kind: "off" }, { kind: "loading" }, { kind: "flux-off", line: "x" }] as const) expect(emailSectionOffered(state)).toBe(false);
+    for (const state of [{ kind: "off" }, { kind: "loading" }, { kind: "error" }, { kind: "flux-off", line: "x" }] as const) expect(emailSectionOffered(state)).toBe(false);
   });
 
   it("asks for a fresh capability read when Settings opens", async () => {
@@ -111,6 +117,24 @@ describe("credentials and key health (2.3, 2.4, section 8)", () => {
     expect(await signInEmailOwner({ start: async () => ({ ok: false, code: "cancelled", message: "Sign-in was cancelled. Nothing was changed." }), cancel: async () => {} }))
       .toBe("Sign-in was cancelled. Nothing was changed.");
     expect(started).toBe(1);
+  });
+
+  it("1.0.11: Sign in with Flux again replaces the refused key through the Models & engines flow, at the saved revision", async () => {
+    expect(await signInFluxAgain(undefined, async () => { throw new Error("never read"); })).toBeNull();
+    const starts: unknown[] = [];
+    const bridge = (answer: { ok: true } | { ok: false; message: string }) => ({ start: async (input: unknown) => { starts.push(input); return answer; } });
+    const reads: string[] = [];
+    const flux = async (path: string) => { reads.push(path); return { configured: true, revision: "rev-7" }; };
+    const connected: unknown[] = [];
+    expect(await signInFluxAgain({ start: async (input: unknown) => { starts.push(input); return { ok: true, status: { configured: true } }; } }, flux, status => connected.push(status))).toBeNull();
+    expect(starts).toEqual([{ action: "replace", revision: "rev-7" }]);
+    // the saved-key state follows the new key, as Models & engines does
+    expect(connected).toEqual([{ configured: true }]);
+    expect(reads).toEqual(["/api/flux-connection"]);
+    expect(await signInFluxAgain(bridge({ ok: false, message: "Sign-in was cancelled. Nothing was changed." }), flux)).toBe("Sign-in was cancelled. Nothing was changed.");
+    // no key saved any more: the same flow connects instead
+    await signInFluxAgain(bridge({ ok: true }), async () => ({ configured: false, revision: "rev-8" }));
+    expect(starts.at(-1)).toEqual({ action: "connect", revision: "rev-8" });
   });
 
   it("the import offer and the key line use the design's words", () => {

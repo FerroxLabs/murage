@@ -380,7 +380,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
       : "",
     facts.mounted.agents
       ? `When you are unsure what Murage can do, or how the owner does something in it, call ${murageTool("murage_help")} before answering. Do not guess at product behaviour.`
-      : "You have no way to look Murage's documentation up from here, so if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour.",
+      : "You cannot look Murage's documentation up from here. When Murage has checked facts for the owner's question, they come with the message as \"Murage facts\"; outside them, if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour.",
   ];
   return ` ${lines.filter(Boolean).join("\n")}`;
 }

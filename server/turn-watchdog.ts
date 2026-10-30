@@ -35,6 +35,12 @@
 // `heartbeatOnlyMs` bounds that: a running turn whose only sign of life for
 // that long is heartbeats is stopped as stalled. Any real engine event (text,
 // reasoning, a tool starting or finishing) restarts that clock too.
+//
+// Sleep is not silence (1.0.10 C3): `slept` reports the sleep the server
+// counted (sleep-clock.ts). Every clock read here first moves every watched
+// turn's stamps later by the sleep counted since the previous read, so time
+// the computer slept never counts as a quiet turn, and a stamp set after a
+// wake is never shifted by that sleep again.
 
 /** Why a turn is waiting rather than working. */
 export type StallWaitReason =
@@ -91,6 +97,8 @@ export interface TurnWatchdogOptions {
    * shorter than the turn's own silence limit; absent, heartbeats count as
    * activity without a cap. */
   heartbeatOnlyMs?: number;
+  /** Total sleep the server has counted (sleep-clock.ts); absent, none. */
+  slept?: () => number;
   checkMs: number;
   /** Called once per stalled turn, after the entry is removed. */
   onStall: (turn: WatchedTurn) => void;
@@ -105,6 +113,8 @@ export class TurnWatchdog {
   private stalledGenerations = new Set<string>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private opts: TurnWatchdogOptions;
+  /** The sleep already shifted into the stamps. */
+  private sleptShifted = 0;
 
   // a plain field assignment, not a parameter property — the server runs
   // under Node's type-stripping, which cannot transform the latter
@@ -112,8 +122,24 @@ export class TurnWatchdog {
     this.opts = opts;
   }
 
+  /** Every stamp and every judgement reads the clock here, after any sleep
+   * counted since was shifted into the stamps already set. */
   private now(): number {
+    this.shiftForSleep();
     return this.opts.now?.() ?? Date.now();
+  }
+
+  /** Move every watched turn's stamps later by the sleep counted since the
+   * last read (C3): time the computer slept is not time the turn was quiet. */
+  private shiftForSleep(): void {
+    const slept = this.opts.slept?.() ?? 0;
+    const delta = slept - this.sleptShifted;
+    if (!(delta > 0)) return;
+    this.sleptShifted = slept;
+    for (const turn of this.turns.values()) {
+      turn.lastEventAt += delta;
+      turn.lastWorkAt += delta;
+    }
   }
 
   private owned(threadId: string, generation?: string): WatchedTurn | undefined {

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { Store } from "../store.ts";
-import { PublishOperations, PUBLISH_APPROVAL_TIMEOUT_MS, expectedFingerprint, publishAnswerAllowed, siteSlug } from "./publish-ops.ts";
+import { PublishOperations, expectedFingerprint, publishAnswerAllowed, siteSlug } from "./publish-ops.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const TOKEN = "nfp_SECRET_TOKEN_123";
@@ -99,14 +99,20 @@ it("never auto-approves: no hook exists and a bot on Full access still gets the 
   f.controller.abort(); await expect(job).rejects.toBeTruthy();
 });
 
-it("a card nobody answers closes after the wait and sends nothing", async () => {
+// GROK-STOPPED F1 (1.0.10): an owner-facing card never expires; a restored card timer fails here.
+it("a card nobody answers stays open past a day and sends nothing until the owner answers", async () => {
   vi.useFakeTimers();
   try {
     const f = fixture();
     const job = f.operations.publish(f.actor, { folder: "site", name: "shop" }); const settled = job.catch((e: unknown) => e);
     await vi.advanceTimersByTimeAsync(10);
-    await vi.advanceTimersByTimeAsync(PUBLISH_APPROVAL_TIMEOUT_MS + 1);
-    expect(await settled).toMatchObject({ code: "unanswered" });
+    const message = await f.card();
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(f.store.messageById(f.actor.threadId, message.id)!.card!.answered).toBeUndefined();
+    expect(f.net.calls.filter(call => call.startsWith("POST"))).toEqual([]);
+    expect(f.operations.resolve(f.actor.threadId, message.card!.requestId!, "deny")).toBe("rejected");
+    expect(await settled).toMatchObject({ code: "declined" });
     expect(f.net.calls.filter(call => call.startsWith("POST"))).toEqual([]);
   } finally { vi.useRealTimers(); }
 });

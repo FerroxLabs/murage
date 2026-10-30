@@ -690,6 +690,13 @@ process.stdin.on("data", (chunk) => {
           if (mode === "parent-early") frames = [...parent, ack];
           else if (mode === "parent-overflow") frames = [...Array.from({ length: 257 }, () => parent[0]), ack];
           else if (mode === "parent-invalid-ack") frames = [ack, ...parent];
+          // a tool item announced ahead of a turn/start that then fails (OpenMausBot 7045f15a1, adapted)
+          else if (mode === "parent-early-tool-fail" || mode === "parent-early-text-fail") {
+            const early = mode === "parent-early-tool-fail"
+              ? notification("item/started", { item: { id: "early-tool", type: "commandExecution", command: "touch report.md" } })
+              : notification("item/agentMessage/delta", { itemId: "early-text", delta: "early words" });
+            frames = [early, { jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "turn could not start" } }];
+          }
           else {
             frames = [
               ...foreign("helper-thread", "helper-turn"),

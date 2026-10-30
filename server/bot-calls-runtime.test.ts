@@ -5,14 +5,20 @@
 // outbox on the machine's own connection, the dispatch fence's callRinging (without it no ring is ever sent), boot
 // reconcile before the outbox starts, sendNow after commit, the card inside the transition, and the call routes.
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
+import { WebSocket } from "ws";
+import { attachCloudUpgradeGate } from "./cloud-home/upgrade-gate.ts";
+import { setCloudIdentity, type CloudRequestIdentity } from "./cloud-request-identity.ts";
+import { callCaller } from "./bot-calls-caller.ts";
 import { DatabaseSync } from "node:sqlite";
 import { initializeMessageTables } from "./message-tables.ts";
 import { PushStore, initializeMobilePush } from "./mobile-push-store.ts";
 import { PushOutbox, type OutboxWorld, type SendResult } from "./mobile-push-outbox.ts";
-import { callsOffUntil, initializeBotCalls, insertCallRule, setBotCallsEnabled, setCallsOffUntil, type CallRuleInput } from "./bot-calls-schema.ts";
+import { LEGACY_SESSION_PRINCIPAL, migrateSessionPrincipals, callsOffUntil, initializeBotCalls, insertCallRule, setBotCallsEnabled, setCallsOffUntil, type CallRuleInput } from "./bot-calls-schema.ts";
 import { admitIntent, getIntent, type CallIntent } from "./bot-calls-machine.ts";
 import { createBotCallsRuntime, matchTurnOwed } from "./bot-calls-runtime.ts";
-import { createCallTickets, handleCallsRoute, liveFrame, nextLocalMidnight, type CallsRouteDeps } from "./bot-calls-routes.ts";
+import { createCallChannel, createCallTickets, handleCallsRoute, liveFrame, nextLocalMidnight, type CallsRouteDeps } from "./bot-calls-routes.ts";
 import { routeAdmits, routeClass, routePolicy } from "./route-policy.ts";
 import { callCardRow, callOpener } from "./bot-calls-card.ts";
 
@@ -167,7 +173,7 @@ describe("drain wake and turn settle (4.1)", () => {
 describe("call routes", () => {
   function routes(t: ReturnType<typeof setup>, visible = true) {
     const deps: CallsRouteDeps = {
-      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), visible: () => visible,
+      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: () => visible,
       bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
     };
@@ -224,7 +230,7 @@ describe("call routes", () => {
 describe("Calls off for today (calls-109.yaml v2, off-today)", () => {
   function routes(t: ReturnType<typeof setup>) {
     const deps: CallsRouteDeps = {
-      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), visible: () => true,
+      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: () => true,
       bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
     };
@@ -274,7 +280,7 @@ describe("Calls off for today (calls-109.yaml v2, off-today)", () => {
     t.runtime.stop();
   });
   it("is an owner route: the desktop and the companion proof pass, a bot's capability is refused", () => {
-    expect(routePolicy("POST", "/api/calls/off-today")).toMatchObject({ class: "companion", cloudWrite: "ordinary" });
+    expect(routePolicy("POST", "/api/calls/off-today")).toMatchObject({ class: "companion", cloudWrite: "browser-step-up" });
     const cls = routeClass("POST", "/api/calls/off-today");
     expect(routeAdmits(cls, { desktop: true, companion: false, door: false, bot: false })).toBe(true);
     expect(routeAdmits(cls, { desktop: false, companion: true, door: false, bot: false })).toBe(true);
@@ -300,7 +306,7 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
     const t = setup();
     let running: { turnId: string; botId: string } | null = { turnId: "turn-9", botId: "scout" };
     const deps: CallsRouteDeps = {
-      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), visible: (id) => id === "t1",
+      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",
       bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(), runningTurn: () => running,
     };
@@ -324,7 +330,7 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
   it("while Calls off for today holds it answers 409 calls_off_today and queues nothing; turned back on, the retry marks the turn", async () => {
     const t = setup();
     const deps: CallsRouteDeps = {
-      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), visible: (id) => id === "t1",
+      db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible: (id) => id === "t1",
       bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "", quietHours: () => null, voiceReady: () => true,
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(), runningTurn: () => ({ turnId: "turn-7", botId: "scout" }),
     };
@@ -364,7 +370,7 @@ describe("the call channel echoes the heartbeat number (R3-H1)", () => {
 
 describe("bot calls follow-up (Grok union-server M1, M2, L1)", () => {
   const deps = (t: ReturnType<typeof setup>, visible: (threadId: string) => boolean): CallsRouteDeps => ({
-    db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), visible,
+    db: () => t.db, runtime: t.runtime, tickets: createCallTickets(), caller: () => "desktop", visible,
     bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
     setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(),
   });
@@ -374,7 +380,7 @@ describe("bot calls follow-up (Grok union-server M1, M2, L1)", () => {
     const id = t.intent();
     t.runtime.admitted(id);
     await t.settle(); await t.settle();
-    const r = t.runtime.answer(id, "phone:abc");
+    const r = t.runtime.answer(id, "phone:abc", "desktop");
     expect(r.status).toBe(200);
     const { callId } = r as { callId: string };
     expect(t.runtime.endSession(callId)).toBe(true);
@@ -388,7 +394,7 @@ describe("bot calls follow-up (Grok union-server M1, M2, L1)", () => {
   it("M2: a caller the request check refuses touches nothing, so the session still goes silent and ends", () => {
     const t = setup();
     t.runtime.boot();
-    const { callId } = t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:xyz" });
+    const { callId } = t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:xyz", principal: "desktop" });
     const seen = () => (t.db.prepare("SELECT last_seen_at AS s FROM bot_call_sessions WHERE call_id=?").get(callId) as { s: number }).s;
     const opened = seen();
     t.tick(30_000);
@@ -429,5 +435,235 @@ describe("bot calls follow-up (Grok union-server M1, M2, L1)", () => {
     const all = await history("?limit=5");
     expect(all.items.map((i) => i.intentId)).toEqual([newer, older]);
     expect(all.next).toBeNull();
+  });
+});
+
+describe("the call channel on a Cloud home (BOT-CALLS-109 5.7)", () => {
+  const servers: Server[] = [];
+  afterEach(async () => { for (const server of servers.splice(0)) await new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }); });
+  // Two of the owner's Cloud devices. The gate stub stands in for cloudRequestAuth: it resolves a bearer token to a device and
+  // records it with setCloudIdentity, exactly where the real gate does; the routes and the channel then read the device through
+  // the real callCaller and cloudIdentity, never from anything the client sent.
+  const device = (id: string): CloudRequestIdentity => ({ id, account: "acct", scope: "owner-phone", publicKey: "", assertionKey: "", revoked: 0, factor: false });
+  const TOKENS: Record<string, CloudRequestIdentity> = { "token-a": device("devA"), "token-b": device("devB") };
+  const authenticate = (headers: Record<string, unknown>): boolean => {
+    const match = /^Bearer (.+)$/.exec(String(headers.authorization ?? ""));
+    const resolved = match ? TOKENS[match[1]!] : undefined;
+    if (resolved) setCloudIdentity(headers, resolved);
+    return Boolean(resolved);
+  };
+  // Headers, a body field and a query value that claim to be device A; none of them may count.
+  const FORGED = { "x-murage-stream-principal": "companion:devA:s1", "x-test-device": "devA", "x-murage-approval-device": "devA", "x-murage-call-principal": "cloud:devA" };
+  async function home(t: ReturnType<typeof setup>) {
+    const tickets = createCallTickets();
+    const channel = createCallChannel({ db: () => t.db, runtime: () => t.runtime, tickets, admitUpgrade: () => true,
+      upgradeCaller: (req) => callCaller(req.headers, { cloudHome: true, upgrade: true }) });
+    const server = createServer();
+    servers.push(server);
+    attachCloudUpgradeGate(server, async (req, res) => {
+      if (authenticate(req.headers)) return false;
+      res.writeHead(401); res.end(); return true;
+    }, async (req, socket: Socket, head) => channel.handleUpgrade(req, socket, head));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    return { tickets, channel, port: (server.address() as AddressInfo).port };
+  }
+  /** One HTTP call route as the request with this bearer token (null: none), with the forged claims added. */
+  const route = (t: ReturnType<typeof setup>, tickets: ReturnType<typeof createCallTickets>, token: string | null, method: string, path: string, body: Record<string, unknown>) => {
+    const headers: Record<string, unknown> = { ...FORGED, ...(token ? { authorization: `Bearer ${token}` } : {}) };
+    authenticate(headers);
+    const url = new URL(`http://h${path}?device=cloud:devA&principal=cloud:devA`);
+    return handleCallsRoute(method, path, url, {
+      db: () => t.db, runtime: t.runtime, tickets, caller: () => callCaller(headers as never, { cloudHome: true, upgrade: false, query: url.searchParams }), visible: () => true,
+      bot: (id) => id === "scout" ? { id, name: "Scout" } : null, opener: () => "Hi, it's Scout.", quietHours: () => null, voiceReady: () => true,
+      setRingsForCalls: () => true, readBody: async () => ({ ...body, principal: "cloud:devA", caller: "cloud:devA" }), now: () => t.now(),
+    });
+  };
+  const open = (port: number, path: string, token: string | null) => new Promise<{ status: number; ws?: WebSocket }>((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${path}&device=cloud:devA`, { headers: { ...FORGED, ...(token ? { authorization: `Bearer ${token}` } : {}) } });
+    ws.once("open", () => resolve({ status: 101, ws }));
+    ws.once("unexpected-response", (_req, res) => { resolve({ status: res.statusCode ?? 0 }); res.resume(); });
+    ws.once("error", () => resolve({ status: 0 }));
+  });
+  const ticketOf = async (reply: Promise<{ status: number; body: unknown } | null>) => { const r = await reply; expect(r!.status).toBe(200); return (r!.body as { ticket: string }).ticket; };
+  const livePath = (callId: string, ticket: string) => `/api/calls/sessions/${callId}/live?ticket=${encodeURIComponent(ticket)}`;
+
+  it("only the authenticated device that opened the session gets its ticket and redeems it; forged claims count for nothing", async () => {
+    const t = setup();
+    t.runtime.boot();
+    const { tickets, channel, port } = await home(t);
+    // no Cloud device: forged headers, body and query alone open nothing
+    expect((await route(t, tickets, null, "POST", "/api/calls/sessions", { botId: "scout", threadId: "t1", device: "desktop:xyz" }))!.status).toBe(403);
+    const opened = await route(t, tickets, "token-a", "POST", "/api/calls/sessions", { botId: "scout", threadId: "t1", device: "desktop:xyz" });
+    const callId = (opened!.body as { callId: string }).callId;
+    const ticketFor = (token: string | null) => route(t, tickets, token, "POST", `/api/calls/sessions/${callId}/ticket`, { device: "desktop:xyz" });
+    // ticket request: B read A's call id and device string from /api/calls/active, and is still refused
+    expect((await ticketFor("token-b"))!.status).toBe(404);
+    expect((await ticketFor(null))!.status).toBe(404);
+    const ticket = await ticketOf(ticketFor("token-a"));
+    // the gate runs first: an unauthenticated upgrade never reaches (or spends) the ticket
+    expect((await open(port, livePath(callId, ticket), null)).status).toBe(401);
+    // redemption: A's unused ticket does not work with B's valid Cloud session, whatever B claims
+    expect((await open(port, livePath(callId, ticket), "token-b")).status).toBe(403);
+    const second = await ticketOf(ticketFor("token-a"));
+    const live = await open(port, livePath(callId, second), "token-a");
+    expect(live.status).toBe(101);
+    const echo = new Promise<string>((r) => live.ws!.once("message", (data) => r(String(data))));
+    live.ws!.send(JSON.stringify({ type: "call.alive", seq: 1 }));
+    expect(JSON.parse(await echo)).toMatchObject({ type: "call.live", seq: 1 });
+    expect(channel.open(callId)).toBe(1);
+    // single use: the same ticket again is refused, even for A
+    expect((await open(port, livePath(callId, second), "token-a")).status).toBe(403);
+    live.ws!.close();
+    t.runtime.stop();
+  });
+
+  it("an answered call is bound to the device that answered it: a retry from B does not move it, and B cannot redeem A's ticket", async () => {
+    const t = setup();
+    t.runtime.boot();
+    const { tickets, port } = await home(t);
+    const id = t.intent();
+    t.runtime.admitted(id);
+    await t.settle();
+    const answered = await route(t, tickets, "token-a", "POST", `/api/calls/${id}/answer`, { device: "phone:aaa" });
+    expect(answered!.status).toBe(200);
+    const callId = (answered!.body as { callId: string }).callId;
+    expect((await route(t, tickets, "token-b", "POST", `/api/calls/${id}/answer`, { device: "phone:aaa" }))!.status).toBe(200);
+    expect((await route(t, tickets, "token-b", "POST", `/api/calls/sessions/${callId}/ticket`, { device: "phone:aaa" }))!.status).toBe(404);
+    const ticket = await ticketOf(route(t, tickets, "token-a", "POST", `/api/calls/sessions/${callId}/ticket`, { device: "phone:aaa" }));
+    expect((await open(port, livePath(callId, ticket), "token-b")).status).toBe(403);
+    const live = await open(port, livePath(callId, ticket), "token-a");
+    expect(live.status).toBe(101);
+    live.ws!.close();
+    t.runtime.stop();
+  });
+
+  it("a session that existed before principals were recorded is marked legacy: it never binds and never gets a ticket", async () => {
+    const t = setup();
+    t.runtime.boot();
+    const tickets = createCallTickets();
+    // made the 1.0.9 way, before the column: an owner session and an answered ring
+    const id = t.intent();
+    t.runtime.admitted(id);
+    await t.settle();
+    const answered = t.runtime.answer(id, "phone:aaa", "desktop");
+    expect(answered.status).toBe(200);
+    const owner = t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:xyz", principal: "desktop" });
+    const ringCall = (answered as { callId: string }).callId;
+    // a 1.0.9 file: no column, so the principals this build wrote are gone
+    t.db.exec("ALTER TABLE bot_call_sessions DROP COLUMN principal");
+    initializeBotCalls(t.db);
+    const principals = t.db.prepare("SELECT principal FROM bot_call_sessions").all() as Array<{ principal: string | null }>;
+    expect(principals.map((row) => row.principal)).toEqual([LEGACY_SESSION_PRINCIPAL, LEGACY_SESSION_PRINCIPAL]);
+    expect((await route(t, tickets, "token-a", "POST", `/api/calls/sessions/${owner.callId}/ticket`, { device: "desktop:xyz" }))!.status).toBe(404);
+    // the answer retry returns the same session but binds nothing
+    expect((await route(t, tickets, "token-a", "POST", `/api/calls/${id}/answer`, { device: "phone:aaa" }))!.status).toBe(200);
+    expect((t.db.prepare("SELECT principal FROM bot_call_sessions WHERE call_id=?").get(ringCall) as { principal: string }).principal).toBe(LEGACY_SESSION_PRINCIPAL);
+    expect((await route(t, tickets, "token-a", "POST", `/api/calls/sessions/${ringCall}/ticket`, { device: "phone:aaa" }))!.status).toBe(404);
+    // and a row without a principal (only an older build writes one) gets no ticket either
+    const unbound = t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:zzz", principal: "cloud:devA" });
+    t.db.prepare("UPDATE bot_call_sessions SET principal=NULL WHERE call_id=?").run(unbound.callId);
+    expect((await route(t, tickets, "token-a", "POST", `/api/calls/sessions/${unbound.callId}/ticket`, { device: "desktop:zzz" }))!.status).toBe(404);
+    t.runtime.stop();
+  });
+
+  it("opening and answering leave no row without a principal at any await, and a second open of the database freezes no live call", async () => {
+    const t = setup();
+    t.runtime.boot();
+    const { tickets, port } = await home(t);
+    const nulls = () => (t.db.prepare("SELECT COUNT(*) AS n FROM bot_call_sessions WHERE principal IS NULL").get() as { n: number }).n;
+    const id = t.intent();
+    t.runtime.admitted(id);
+    await t.settle();
+    const answering = route(t, tickets, "token-b", "POST", `/api/calls/${id}/answer`, { device: "phone:bbb" });
+    expect(nulls()).toBe(0);
+    const answered = await answering;
+    expect(answered!.status).toBe(200);
+    const ring = (answered!.body as { callId: string }).callId;
+    expect(nulls()).toBe(0);
+    const opening = route(t, tickets, "token-a", "POST", "/api/calls/sessions", { botId: "scout", threadId: "t1", device: "desktop:xyz" });
+    expect(nulls()).toBe(0);
+    const opened = await opening;
+    expect(opened!.status).toBe(200);
+    const owner = (opened!.body as { callId: string }).callId;
+    expect(nulls()).toBe(0);
+    // the same process opens the database again (a reopen runs initializeBotCalls): both calls stay theirs
+    initializeBotCalls(t.db);
+    const principal = (callId: string) => (t.db.prepare("SELECT principal FROM bot_call_sessions WHERE call_id=?").get(callId) as { principal: string }).principal;
+    expect(principal(owner)).toBe("cloud:devA");
+    expect(principal(ring)).toBe("cloud:devB");
+    const ownerTicket = await ticketOf(route(t, tickets, "token-a", "POST", `/api/calls/sessions/${owner}/ticket`, { device: "desktop:xyz" }));
+    const ringTicket = await ticketOf(route(t, tickets, "token-b", "POST", `/api/calls/sessions/${ring}/ticket`, { device: "phone:bbb" }));
+    for (const [callId, ticket, token] of [[owner, ownerTicket, "token-a"], [ring, ringTicket, "token-b"]] as const) {
+      const live = await open(port, livePath(callId, ticket), token);
+      expect(live.status).toBe(101);
+      live.ws!.close();
+    }
+    t.runtime.stop();
+  });
+});
+
+describe("the session principal backfill (at every open, one transaction)", () => {
+  const principals = (db: DatabaseSync) => (db.prepare("SELECT principal FROM bot_call_sessions ORDER BY rowid").all() as Array<{ principal: string | null }>).map((row) => row.principal);
+  const hasColumn = (db: DatabaseSync) => (db.prepare("PRAGMA table_info(bot_call_sessions)").all() as Array<{ name: string }>).some((c) => c.name === "principal");
+  it("desktop 1.0.10, then 1.0.9, then 1.0.10 again: the sessions 1.0.9 made are legacy, the bound ones keep their device", () => {
+    const t = setup();
+    t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:a", principal: "desktop" });
+    // 1.0.9 keeps the column (a downgrade to it does not drop it) and inserts sessions without a principal
+    t.db.prepare("INSERT INTO bot_call_settings (key, value) VALUES ('sessions_principal_v1', '1')").run();
+    for (const device of ["desktop:b", "desktop:c"]) {
+      const { callId } = t.runtime.openSession({ botId: "scout", threadId: "t1", device, principal: "desktop" });
+      t.db.prepare("UPDATE bot_call_sessions SET principal=NULL WHERE call_id=?").run(callId);
+    }
+    expect(principals(t.db)).toEqual(["desktop", null, null]);
+    initializeBotCalls(t.db);
+    expect(principals(t.db)).toEqual(["desktop", LEGACY_SESSION_PRINCIPAL, LEGACY_SESSION_PRINCIPAL]);
+    expect(t.db.prepare("SELECT 1 AS x FROM bot_call_settings WHERE key='sessions_principal_v1'").get()).toBeUndefined();
+  });
+  it("an interrupted run leaves nothing half done, and the next open recovers", () => {
+    const t = setup();
+    t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:a", principal: "desktop" });
+    t.db.exec("ALTER TABLE bot_call_sessions DROP COLUMN principal");
+    // the backfill fails: the column add rolls back with it
+    t.db.exec("CREATE TRIGGER fail_backfill BEFORE UPDATE ON bot_call_sessions BEGIN SELECT RAISE(ABORT, 'crash'); END");
+    expect(() => migrateSessionPrincipals(t.db)).toThrow(/crash/);
+    expect(hasColumn(t.db)).toBe(false);
+    t.db.exec("DROP TRIGGER fail_backfill");
+    initializeBotCalls(t.db);
+    expect(principals(t.db)).toEqual([LEGACY_SESSION_PRINCIPAL]);
+  });
+  it("a session is written with its device, and one without a proper device is refused, the legacy sentinel included", async () => {
+    const t = setup();
+    t.runtime.boot();
+    const id = t.intent();
+    t.runtime.admitted(id);
+    await t.settle();
+    expect(() => t.runtime.answer(id, "phone:aaa", LEGACY_SESSION_PRINCIPAL)).toThrow();
+    expect(() => t.runtime.answer(id, "phone:aaa", "")).toThrow();
+    const answered = t.runtime.answer(id, "phone:aaa", "cloud:devA") as { status: number; callId: string };
+    expect(answered.status).toBe(200);
+    expect(principals(t.db)).toEqual(["cloud:devA"]);
+    expect(() => t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:x", principal: LEGACY_SESSION_PRINCIPAL })).toThrow();
+    expect(() => t.runtime.openSession({ botId: "scout", threadId: "t1", device: "desktop:x", principal: "companion:devA" })).toThrow();
+    expect(principals(t.db)).toEqual(["cloud:devA"]);
+    t.runtime.stop();
+  });
+});
+
+describe("callCaller off Cloud", () => {
+  it("is the desktop only: a companion-marked or unproven request, or a stamped principal header, is no call device", () => {
+    expect(callCaller({ "x-murage-companion": "1", "x-murage-stream-principal": "companion:devA:s1" }, { cloudHome: false, upgrade: false })).toBeNull();
+    expect(callCaller({ "x-murage-stream-principal": "companion:devA:s1" }, { cloudHome: false, upgrade: false })).toBeNull();
+    expect(callCaller({ "x-murage-companion": "1", "x-murage-stream-principal": "companion:devA:s1" }, { cloudHome: false, upgrade: true })).toBeNull();
+    // the desktop page's upgrade carries no headers: it is the desktop, proven by its ticket
+    expect(callCaller({}, { cloudHome: false, upgrade: true })).toBe("desktop");
+    // on a home, nothing without a resolved Cloud identity
+    expect(callCaller({ "x-murage-stream-principal": "companion:devA:s1", "x-test-device": "devA" }, { cloudHome: true, upgrade: true })).toBeNull();
+    // never the legacy sentinel, whatever the device id: a Cloud caller is always cloud:<id>
+    for (const id of ["none", "legacy:none", "legacy", "x"]) {
+      const headers = {};
+      setCloudIdentity(headers, { id, account: "acct", scope: "owner-phone", publicKey: "", assertionKey: "", revoked: 0, factor: false });
+      for (const upgrade of [false, true]) expect(callCaller(headers, { cloudHome: true, upgrade })).not.toBe(LEGACY_SESSION_PRINCIPAL);
+    }
+    for (const upgrade of [false, true]) expect(callCaller({}, { cloudHome: false, upgrade })).not.toBe(LEGACY_SESSION_PRINCIPAL);
   });
 });
