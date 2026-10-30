@@ -82,8 +82,8 @@ describe("where the button is mounted", () => {
     const app = read("../App.tsx");
     expect(app).not.toContain('aria-label="Open bot list"');
     expect(app).toContain("<BotListDrawerProvider value={drawerControl}>");
-    // The calendar focus view has no drawer, so no button.
-    expect(app).toContain("useBotListDrawer(!calendarFocus)");
+    // UX 1.0.13: the rail shows on every view, the calendar included, so the drawer is always on offer.
+    expect(app).toContain("useBotListDrawer(true)");
     // A pick or Escape closes through the hook, which returns focus to the
     // button the NEXT view mounts; never a synchronous .focus() on the old
     // one (measured across view kinds in src/e2e/bot-list-focus.human.spec.ts).
@@ -111,7 +111,7 @@ describe("where the button is mounted", () => {
   });
 
   it("is on every other main view a phone can reach", () => {
-    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx"]) {
+    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx", "./today/TodayView.tsx", "./shell/stubs/needs-page.tsx", "./shell/stubs/health-page.tsx"]) {
       expect(read(file), file).toContain("<OpenBotListButton />");
     }
     expect(read("./NoEngines.tsx")).toContain("<PhoneBotListBar />");

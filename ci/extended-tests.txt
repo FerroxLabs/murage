@@ -1069,7 +1069,6 @@ src/components/SettingsShell.test.ts	extended
 src/components/Sidebar.test.ts	extended
 src/components/SidebarLeadership.test.ts	extended
 src/components/SidebarNav.test.ts	extended
-src/components/SidebarNeedsYou.test.ts	extended
 src/components/SidebarNewChatPanel.test.ts	extended
 src/components/SidebarPhoneButton.test.ts	extended
 src/components/SidebarRows.test.ts	delete (pending review; runs here until then)
