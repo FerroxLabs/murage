@@ -210,7 +210,7 @@ const REASONS = {
   ENCRYPTED_BACKUP_FAILED:
     "Murage couldn't finish writing the backup file. Nothing in your workspace was changed. Back up again, and if it happens again, open the diagnostics folder from Backups.",
   BACKUP_DISK_FULL:
-    "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then back up again.",
+    "There isn't enough free space to finish this backup. Free up space on this computer's drive and on the drive that holds your backup folder, then back up again.",
   BACKUP_FOLDER_NOT_WRITABLE:
     "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder and in the folder that holds Murage's data, then back up again.",
   BACKUP_FOLDER_UNUSABLE:
