@@ -445,6 +445,8 @@ type SkillRecordingPayload = {
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
+      /** Restart Murage so running engines use the saved Flux key. Refused where Murage cannot restart itself. */
+      restartForFluxKey?(): Promise<void>;
       fluxSignin?: {
         start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status: import("../../shared/flux-connection").FluxConnectionStatus } | { ok: false; code: string; message: string }>;
         cancel(): Promise<void>;

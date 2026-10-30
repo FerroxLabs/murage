@@ -187,6 +187,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "engine:open-terminal",
   // flux-connection, and the desktop Flux sign-in (opens the browser, saves the key in main)
   "flux-connection:mutate",
+  "flux-connection:restart-app",
   "flux-signin:cancel",
   "flux-signin:start",
   // mcp-servers
