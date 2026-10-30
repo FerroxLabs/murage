@@ -799,6 +799,7 @@ server/image-operations-v2.test.ts	all	Multi-image render publishes all, resumes
 server/image-operations.test.ts	all	image request approval, replay and provider failures
 server/inbox-access.test.ts	all	inbox door identity: desktop versus companion
 server/inbox-backup-notices.test.ts	all	stopped backup counted in Needs you
+server/inbox-needs-you-count.test.ts	all	one approval card counted twice in Needs you
 server/inbox.test.ts	all	inbox decisions, requests and restart survival
 server/incident-diagnostics-api.test.ts	all	incident reads gated to desktop and safe
 server/incident-diagnostics.test.ts	all	refuses traversal, symlinks, hardlinks (path security)
@@ -1668,3 +1669,5 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
+server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
+server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated

@@ -300,7 +300,7 @@ import { materializeProjectCreation, migrateChannelProjects, reconcileProjectRec
 import { runProjectDigests } from "./project-digest.ts";
 import { markProjectDerivedStale, pruneProjectRows } from "./project-tables.ts";
 import { onMemoryMessagesForgotten } from "./memory/forget.ts";
-import { deriveGroupedDecisions } from "./project-goals.ts";
+import { deriveGroupedDecisions, projectOwedBeyondCards } from "./project-goals.ts";
 import { projectDecisionSentence, ProjectDecisionReminders } from "./project-decisions.ts";
 import { taskWorkspacePath } from "./workspace.ts";
 import { createSharedOwnerUsage } from "./shared-owner-usage.ts";
@@ -411,6 +411,7 @@ import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from ".
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
+import { toolApprovalUnattended, unattendedMarkAction } from "./unattended-mark.ts";
 import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
@@ -8489,7 +8490,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
       // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
       const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
-      const toolUnattended = unattended && !routineWake;
+      const toolUnattended = toolApprovalUnattended(unattended, routineWake);
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -10979,9 +10980,12 @@ async function startTurnAdmitting(
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
+  // a person typing into this bot ends the unattended window immediately; 1.0.10 (NOLIMITS-CARDS r1): so does a scheduled
+  // or manual run of the owner's own routine. It is the owner's standing instruction, not an outside event: a mark left by
+  // an earlier channel or webhook turn in this thread must not turn the run, and every peer it asks, into a turn nobody
+  // started (it carded a plain Read at No limits, 10-31 23:13:59Z). The rule itself: unattended-mark.ts
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
-  // a person typing into this bot ends the unattended window immediately
-  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
+  else if (unattendedMarkAction(opts, humanIsOwner) === "clear") clearUnattended(threadId);
   // A scheduled or manual routine run is judged at its routine's level (its
   // own, or the bot's level right now), not at whatever this run's task
   // copied when it was made. The level is applied here, before the run's
@@ -11031,7 +11035,7 @@ async function startTurnAdmitting(
     : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
-    : opts?.automationSource === "channel" ? "owner-channel"
+    : opts?.automationSource === "channel" ? opts?.notOwnerAudience === true ? "other" : "owner-channel"
     : opts?.unattended ? "other" // (an explicitly unattended turn never had a routine level or an inherited ceiling before wakes did)
     : routineLevel || inheritedRoutine ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
@@ -19160,7 +19164,8 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
   const run = routines?.activeRunOrigin(threadId);
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
+  // 1.0.10 (NOLIMITS-CARDS r3): only the owner's own DM; a group or any audience besides the owner stays "other"
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) && run.notOwnerAudience !== true ? "owner-channel"
     : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
@@ -21994,7 +21999,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const body=withLearningPaused(withMemoryWaiting(withLearningSuggestions(withBackupNotices(result.body as { decisions?: number }, { backupWaiting, backupFailed, health: ownerHealth }),learningRows),waitingRows),desktopInbox?learningPausedRow(database()):null);
       if(method === "GET" && result.status === 200) {
         const projects=store.groups.filter(group=>group.channelProject && !group.dm && (desktopInbox || visibleToCompanion(store,{scope:"group",groupId:group.id}))).map(readProjectDecisions).filter(row=>row.count>0);
-        const extra=projects.reduce((count,row)=>count+row.goals.length+row.deadWaitCards.length,0);
+        const extra=projects.reduce((count,row)=>count+projectOwedBeyondCards(row),0);
         return json(res,result.status,{...body,decisions:(body.decisions??0)+extra,questions:Number((body as {questions?:number}).questions??0)+extra,
           ...(["decisions","approvals","questions","all"].includes(url.searchParams.get("view") ?? "decisions")?{projects}:{})});
       }
@@ -31629,10 +31634,10 @@ void releasePreListenHealth().catch(() => undefined).then(() => { startLoopLagMo
       setScopeFlowEdgesRecorded(true);
       setReadTimeJudgeRetired(true);
       // Objects other lanes retired are handed back by the same idle, sliced reclaim (owner idle 10 minutes, no live turn), never in a turn:
-      // msearch2's partial owner-tail index from an earlier development build, and hotpath's set-aside Inbox projection tables of layouts 0 to 3
-      // (inbox.ts retiredTables: `retired<layout>_<table>`; all are ordinary rowid tables, emptied by rowid).
+      // msearch2's partial owner-tail index from an earlier development build, and hotpath's set-aside Inbox projection tables of layouts 0 to 4
+      // (inbox.ts retiredTables: `retired<layout>_<table>`; emptied in slices by rowid, or by primary key for the WITHOUT ROWID inbox_keys and inbox_counts).
       registerRetiredObjects("msearch2", { indexes: [LEGACY_OWNER_TAIL_INDEX] });
-      registerRetiredObjects("hotpath", { tables: [0, 1, 2, 3].flatMap(layout => ["inbox_counts", "inbox_items", "inbox_keys", "inbox_raw", "setup_marks", "inbox_fill_deferred"].map(name => ({ name: `retired${layout}_${name}` }))) });
+      registerRetiredObjects("hotpath", { tables: [0, 1, 2, 3, 4].flatMap(layout => ["inbox_counts", "inbox_items", "inbox_keys", "inbox_raw", "setup_marks", "inbox_fill_deferred"].map(name => ({ name: `retired${layout}_${name}` }))) });
     } },
     // The v8 revocation index is filled in small slices, never before listen; each slice also waits for the owner (owner-first.ts), never past the gate's bound.
     { name: "revocationIndex", run: () => {

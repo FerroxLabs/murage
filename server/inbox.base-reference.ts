@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
-import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
+import { INBOX_DECISION_STATUSES, INBOX_RUN_ON_CARD_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
 import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
@@ -14,6 +14,10 @@ import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
  *  literals from a `const` tuple, never anything a caller supplies. */
 const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(",");
 const DECISION_SQL = sqlList(INBOX_DECISION_STATUSES);
+// 1.0.11: the oracle follows the one rule change since base, a routine run waiting on a card is not owed beside the card.
+const RUN_ON_CARD = `(kind='routine.run' AND status IN (${sqlList(INBOX_RUN_ON_CARD_STATUSES)}))`;
+const OWED = `(status IN (${DECISION_SQL}) AND NOT ${RUN_ON_CARD})`;
+const runOnCard = (status: string) => (INBOX_RUN_ON_CARD_STATUSES as readonly string[]).includes(status);
 const TO_READ_SQL = sqlList(INBOX_TO_READ_STATUSES);
 
 export interface InboxThread { threadId: string; label: string; botId?: string }
@@ -192,7 +196,7 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
     -- why putting them in one bucket made the count unreadable. The status
     -- lists live there too, and are spliced in below so SQL and TypeScript
     -- cannot drift apart.
-    CASE WHEN status IN (${DECISION_SQL}) THEN 1 ELSE 0 END AS decision,
+    CASE WHEN ${OWED} THEN 1 ELSE 0 END AS decision,
     CASE WHEN status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS to_read,
     -- A RUN THAT HAS STOPPED AND IS ASKING IS NOT A NOTIFICATION.
     --
@@ -212,7 +216,7 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
     -- the three tabs would add to two, and the missing one would be
     -- unreachable except by scrolling the umbrella. That is the defect this
     -- whole redesign exists to remove, reintroduced by arithmetic.
-    CASE WHEN kind_segment='routine' AND status IN (${DECISION_SQL}) THEN 'question'
+    CASE WHEN kind_segment='routine' AND ${OWED} THEN 'question'
       ELSE kind_segment END AS segment,
     -- WHAT A SEGMENT TAB SHOWS, WHICH IS NOT THE SAME AS WHAT IT COUNTS.
     --
@@ -237,7 +241,7 @@ const buildSource = (rawFilter: string, pruneText = false) => `WITH raw AS (
     -- umbrella and nothing can badge for ever with no way to clear it; the
     -- LIST is the place a person goes to look, and it has to hold everything
     -- of that kind or they will look in it and conclude it is not there.
-    CASE WHEN status IN (${DECISION_SQL}) OR status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS owed_or_over
+    CASE WHEN ${OWED} OR status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END AS owed_or_over
   FROM ranked r LEFT JOIN inbox_item_state s ON s.source_key=r.source_key
   WHERE position=1 AND NOT(status='completed' AND length(trim(summary))=0)
 ) `;
@@ -289,8 +293,8 @@ function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["thre
     // the owner is the one case where "failed" is not generous but wrong —
     // it would print "Not recovering" over a routine that is one answer away
     // from carrying on.
-    failed: row.status !== "completed" && row.decision !== 1,
-    owed: row.decision === 1,
+    failed: row.status !== "completed" && row.decision !== 1 && !runOnCard(row.status),
+    owed: row.decision === 1 || runOnCard(row.status),
     detail: row.summary,
     link: { threadId: row.thread_id, messageId: row.message_id },
   })), ...routineRecordFacts(records, carded, threads, now)];
@@ -448,7 +452,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
       OR (?='connections' AND owed_or_over=1 AND segment='connection')
       OR (?='routines' AND kind_segment='routine')
       OR (?='to-read' AND to_read=1 AND (status<>'digest' OR read_version IS NULL))
-      OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text')))
+      OR (?='results' AND decision=0 AND to_read=0 AND kind IN ('routine.run','goal.run','text') AND NOT ${RUN_ON_CARD}))
     AND (?=1 OR ((snoozed_until IS NULL OR snoozed_until<=?) AND (cleared_at IS NULL OR at>cleared_at)))
     AND (?='' OR instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))`;

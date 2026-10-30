@@ -5,7 +5,7 @@ import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
-import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
+import { INBOX_DECISION_STATUSES, INBOX_RUN_ON_CARD_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
 import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
@@ -17,6 +17,11 @@ import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
 const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(",");
 const DECISION_SQL = sqlList(INBOX_DECISION_STATUSES);
 const TO_READ_SQL = sqlList(INBOX_TO_READ_STATUSES);
+/** Owed: a decision status, except a routine run waiting on a card that is
+ *  itself the item owed (shared/inbox.ts INBOX_RUN_ON_CARD_STATUSES). `p` is
+ *  the row prefix ("p.", "h."). */
+const RUN_ON_CARD = (p: string) => `(${p}kind='routine.run' AND ${p}status IN (${sqlList(INBOX_RUN_ON_CARD_STATUSES)}))`;
+const OWED = (p: string) => `(${p}status IN (${DECISION_SQL}) AND NOT ${RUN_ON_CARD(p)})`;
 
 export interface InboxThread { threadId: string; label: string; botId?: string }
 /** One routine run as the routine's own record has it (server/routines.ts).
@@ -190,7 +195,7 @@ const ITEM_KINDS = "'options','secret','connector','mcpSignIn','routine.run','go
 /** A copy in one of these states outranks a newer pending replay of the same item. */
 const TERMINAL_SQL = "'resolved','completed','failed','cancelled','stopped','missed'";
 /** The reduced rows of the messages `where` selects, ready to insert. */
-const projectedRows = (where: string, source = "messages m") => `SELECT p.*, CASE WHEN p.status IN (${TERMINAL_SQL}) THEN 1 ELSE 0 END, CASE WHEN p.status IN (${DECISION_SQL}) THEN 1 ELSE 0 END
+const projectedRows = (where: string, source = "messages m") => `SELECT p.*, CASE WHEN p.status IN (${TERMINAL_SQL}) THEN 1 ELSE 0 END, CASE WHEN ${OWED("p.")} THEN 1 ELSE 0 END
   FROM (SELECT ${RAW_COLUMNS}
     FROM ${source} WHERE ${where} AND m.role='bot' AND m.kind IN (${PROJECTED_KINDS}) AND ${RAW_VALID}) p`;
 const RAW_COLUMNS_LIST = "source_row,thread_id,message_id,at,kind,expired,run_id,routine_id,source_key,status,summary,title,kind_segment,terminal,decision";
@@ -219,7 +224,8 @@ const candidate = (row: "NEW" | "OLD") => `(${row}.role='bot' AND (${row}.kind I
 
 /** The projection's layout. A database holding another layout's objects has
  *  them dropped and rebuilt from its messages (they are derived data). */
-const PROJECTION_VERSION = 4;
+// 5 (1.0.11): a routine run waiting on a card is no longer owed beside the card (RUN_ON_CARD).
+const PROJECTION_VERSION = 5;
 /** Index names carry the layout, so an older layout's indexes (which stay with its set-aside tables) never collide with these. */
 const ix = (name: string) => `${name}_${PROJECTION_VERSION}`;
 
@@ -267,10 +273,10 @@ const ITEM_COLUMNS = "source_key,thread_id,message_id,source_row,at,kind,expired
 const refreshItem = (key: string) => `DELETE FROM inbox_items WHERE source_key=${key};
     INSERT INTO inbox_items(${ITEM_COLUMNS})
     SELECT h.source_key, h.thread_id, h.message_id, h.source_row, h.at, h.kind, h.expired, h.run_id, h.routine_id, h.status, h.summary, h.title, h.kind_segment, k.copies,
-      CASE WHEN h.status IN (${DECISION_SQL}) THEN 1 ELSE 0 END,
+      CASE WHEN ${OWED("h.")} THEN 1 ELSE 0 END,
       CASE WHEN h.status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END,
-      CASE WHEN h.kind_segment='routine' AND h.status IN (${DECISION_SQL}) THEN 'question' ELSE h.kind_segment END,
-      CASE WHEN h.status IN (${DECISION_SQL}) OR h.status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END,
+      CASE WHEN h.kind_segment='routine' AND ${OWED("h.")} THEN 'question' ELSE h.kind_segment END,
+      CASE WHEN ${OWED("h.")} OR h.status IN (${TO_READ_SQL}) THEN 1 ELSE 0 END,
       s.read_version, s.snoozed_until, s.cleared_at,
       CASE WHEN s.cleared_at IS NULL OR h.at>s.cleared_at THEN 1 ELSE 0 END
     FROM inbox_raw h JOIN inbox_keys k ON k.source_key=h.source_key LEFT JOIN inbox_item_state s ON s.source_key=h.source_key
@@ -295,7 +301,8 @@ const listTerms = (list: ListName, p = ""): string[] => {
     case "connections": return [`${p}owed_or_over=1`, `${p}segment='connection'`];
     case "routines": return [`${p}kind_segment='routine'`];
     case "to-read": return [`${p}to_read=1`, `(${p}status<>'digest' OR ${p}read_version IS NULL)`];
-    case "results": return [`${p}decision=0`, `${p}to_read=0`, `${p}kind IN ('routine.run','goal.run','text')`];
+    // a run waiting on its card is still working, not a result: the Routines list shows it as waiting
+    case "results": return [`${p}decision=0`, `${p}to_read=0`, `${p}kind IN ('routine.run','goal.run','text')`, `NOT ${RUN_ON_CARD(p)}`];
   }
 };
 const ident = (list: ListName) => list.replace("-", "_");
@@ -887,6 +894,7 @@ function routineRows(db: DatabaseSync, allowed: string, now: number): RoutineRow
     WHERE kind_segment='routine' AND at>=? AND ${SCOPE} ORDER BY at DESC LIMIT ?`)
     .all(now - ROUTINE_WINDOW_MS, allowed, ROUTINE_ROW_LIMIT) as unknown as RoutineRow[];
 }
+const runOnCard = (status: string) => (INBOX_RUN_ON_CARD_STATUSES as readonly string[]).includes(status);
 function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["threads"], now: number, records: readonly InboxRoutineRun[] = []): RoutineRunFact[] {
   const rows = sqlRows.filter(row => row.at >= now - ROUTINE_WINDOW_MS);
   // One lookup per row, not a walk of every conversation per row.
@@ -906,8 +914,9 @@ function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["thre
     // the owner is the one case where "failed" is not generous but wrong —
     // it would print "Not recovering" over a routine that is one answer away
     // from carrying on.
-    failed: row.status !== "completed" && row.decision !== 1,
-    owed: row.decision === 1,
+    // A run waiting on its card is waiting, not failed, though the card and not the run is counted (RUN_ON_CARD).
+    failed: row.status !== "completed" && row.decision !== 1 && !runOnCard(row.status),
+    owed: row.decision === 1 || runOnCard(row.status),
     detail: row.summary,
     link: { threadId: row.thread_id, messageId: row.message_id },
   })), ...routineRecordFacts(records, carded, byThread, now)];
