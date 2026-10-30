@@ -107,6 +107,7 @@ scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under 
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/phone-preview-switches.test.ts	all	Phone preview switches start off and only the owner can turn them on
 server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
 server/health/counters.test.ts	all	health counters stay bounded and never publish a raw thread or message id
 server/health/publisher.test.ts	all	health metadata stays in its own owner-only folder and never appears mid-backup
@@ -1508,6 +1509,7 @@ src/components/MemoryReview.test.ts	all	approve request only from explicit valid
 src/components/MurageMessageRow.test.ts	all	a repeat or nudge notice in a project chat reads as a plain line, never its stored loop-notice key
 src/components/NewsSignupSettings.test.ts	all	Settings news signup posts only to the local server
 src/components/PasteKeys.test.ts	all	pasted keys never reach the screen
+src/components/PhonePreviewSwitches.test.ts	all	The phone preview switch card shows the true state of each switch
 src/components/PluginsPanel.test.ts	all	a connected app is authorized, Reconnect included, only from the confirmed label form
 src/components/ProviderErrorCard.test.ts	all	payment error copy; no way to buy past limit
 src/components/QuestionCard.test.ts	all	never posts a secret answer into the conversation (secrets)
