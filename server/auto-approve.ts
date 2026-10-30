@@ -1039,6 +1039,15 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   return { approve: null, source: "always-ask", rule: `own-always-ask ${own}`, note: OWN_ALWAYS_ASK_NOTE };
 }
 
+/** A check that could not start or timed out does not hold a command at Full access or No limits on a turn the owner
+ * started, or on a routine's run judged at that level: the owner set the level for the routine, and `routineLevel` says
+ * the routine's own level is what `bot` carries here. Nothing else is waived: a channel, webhook or unproven turn holds. */
+function envCheckWaived(bot: AutoApprover, context: AutoContext): boolean {
+  if (!hasFullAccess(bot)) return false;
+  return context.fullAccessOrigin === "owner"
+    || (context.fullAccessOrigin === "routine" && context.routineLevel === true && !context.unattended && !context.channelOwner);
+}
+
 /** Who started this turn, as Full access reads it. */
 function fullAccessOriginOf(context: AutoContext | undefined): FullAccessOrigin {
   if (context?.routineLevel && !context.unattended && !context.channelOwner) return "routine";
@@ -1117,7 +1126,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
-    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
+    : context?.envUnchecked && !envCheckWaived(bot, context) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
     // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path

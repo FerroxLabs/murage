@@ -461,7 +461,7 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     const fs = await import('node:fs');
     const path = await import('node:path');
     fs.writeFileSync(path.join(process.env.MURAGE_DATA_DIR, 'config.json'), JSON.stringify({ instances: {
-      approval: { driver: 'approvalDelivery108', environment: { FAKE_ACP_MODE: 'permission' }, config: { cli: process.execPath, fullAuto: false } }
+      approval: { driver: 'approvalDelivery108', environment: { FAKE_ACP_MODE: 'permission-edit-file' }, config: { cli: process.execPath, fullAuto: false } }
     }}));
   `;
   const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource });
@@ -477,8 +477,9 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     expect(patched.ok).toBe(true);
     await stream.until(frame => frame.kind === "hello");
     expect((await post(`/api/bots/${bot.id}/messages`, { text: "Ask for fixture approval", threadId: bot.threadId })).ok).toBe(true);
-    // The card opens after the shell environment check, whose Windows budget
-    // (CHECK_WINDOWS_MS, a cold PowerShell on a CI runner) is 10 s by itself.
+    // A file edit, not a command: a command's card waits for the shell environment
+    // check, and PowerShell in this fixture's bare environment outlasts both Windows
+    // budgets (10 s + 30 s, against 0.5 s on a real one). Delivery is the same for both.
     const opened = await stream.until(frame => frame.kind === "message" && frame.threadId === bot.threadId && frame.message?.card?.requestId, 30_000).catch((error: unknown) => {
       // A runner failure must be readable from the job log alone: every frame
       // the stream carried, and the end of the fixture server's own log.
