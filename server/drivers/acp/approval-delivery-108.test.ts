@@ -433,6 +433,11 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     const spawn = cp.spawn;
     cp.spawn = function(command, args, options) {
       const child = spawn(command, args, options);
+      if (/powershell|pwsh/i.test(String(command))) {
+        const t0 = Date.now(); const e = options?.env ?? {};
+        console.log('[diag] ps spawn', t0, JSON.stringify({ cwd: options?.cwd, PATH: String(e.PATH ?? e.Path ?? '').slice(0, 160), LOCALAPPDATA: e.LOCALAPPDATA, USERPROFILE: e.USERPROFILE, PSModulePath: e.PSModulePath, TEMP: e.TEMP, n: Object.keys(e).length }));
+        child.once('exit', (c, s) => console.log('[diag] ps exit', Date.now() - t0, 'ms', c, s));
+      }
       if (!args?.includes(${JSON.stringify(FAKE_CLI)})) return child;
       const write = child.stdin.write.bind(child.stdin);
       let failures = 3;
@@ -479,13 +484,15 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     expect((await post(`/api/bots/${bot.id}/messages`, { text: "Ask for fixture approval", threadId: bot.threadId })).ok).toBe(true);
     // The card opens after the shell environment check, whose Windows budget
     // (CHECK_WINDOWS_MS, a cold PowerShell on a CI runner) is 10 s by itself.
-    const opened = await stream.until(frame => frame.kind === "message" && frame.threadId === bot.threadId && frame.message?.card?.requestId, 30_000).catch((error: unknown) => {
+    const diagT0 = Date.now();
+    const opened = await stream.until(frame => frame.kind === "message" && frame.threadId === bot.threadId && frame.message?.card?.requestId, 55_000).catch((error: unknown) => {
       // A runner failure must be readable from the job log alone: every frame
       // the stream carried, and the end of the fixture server's own log.
       console.error(`[approval fixture frames]\n${stream.frames.map(frame => JSON.stringify(frame).slice(0, 1500)).join("\n")}`);
       try { console.error(`[fixture server log, last 12000 bytes]\n${readFileSync(fixture.info.logPath, "utf8").slice(-12000)}`); } catch { /* no log yet */ }
       throw error;
     });
+    console.error(`[diag] card after ${Date.now() - diagT0}ms ${JSON.stringify(opened.message.card).slice(0, 1200)}`);
     const requestId = opened.message.card.requestId;
     const respond = () => post(`/api/threads/${bot.threadId}/respond`, { requestId, behavior: "allow" });
     const failed = await respond();
@@ -501,7 +508,30 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     const delivered = await (await fetch(fixture.info.url + `/api/threads/${bot.threadId}/messages`, { headers })).json() as { messages: Message[] };
     expect(delivered.messages.find(message => message.card?.requestId === requestId)?.card?.answered).toBe("allow");
   } finally {
+    try { console.error(`[diag server]\n${readFileSync(fixture.info.logPath, "utf8").split("\n").filter(line => /\[diag\]|approvals:/.test(line)).join("\n")}`); } catch { /* no log yet */ }
     stream.close();
     await fixture.close();
   }
-}, 60000);
+}, 110000);
+
+it.runIf(process.platform === "win32")("diag: PowerShell probe time, real env against the fixture's env", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { mkdirSync } = await import("node:fs");
+  const { powerShellEnvProbe } = await import("../../engine-env.ts");
+  const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const go = (label: string, env: NodeJS.ProcessEnv, timeout = 60_000) => {
+    const start = Date.now();
+    const result = spawnSync(ps, ["-NoProfile", "-Command", powerShellEnvProbe("a".repeat(32))], { env, timeout, windowsHide: true, input: "", maxBuffer: 1024 * 1024 });
+    console.error(`[diag probe] ${label}: ${Date.now() - start}ms status=${result.status} err=${(result.error as { code?: string } | undefined)?.code ?? ""} out=${result.stdout?.length} stderr=${String(result.stderr).slice(0, 300)}`);
+  };
+  const fresh = (name: string) => {
+    const root = mkdtempSync(join(tmpdir(), `diag-${name}-`));
+    mkdirSync(join(root, "tmp"));
+    return { SYSTEMROOT: process.env.SYSTEMROOT, WINDIR: process.env.WINDIR, COMSPEC: process.env.COMSPEC, PATHEXT: process.env.PATHEXT, HOME: root, USERPROFILE: root, APPDATA: join(root, "AppData", "Roaming"), LOCALAPPDATA: join(root, "AppData", "Local"), TEMP: join(root, "tmp"), TMP: join(root, "tmp"), PATH: "" } as NodeJS.ProcessEnv;
+  };
+  go("real env 1", process.env); go("real env 2", process.env);
+  const a = fresh("a"); go("fixture env cold", a); go("fixture env warm 2", a); go("fixture env warm 3", a);
+  const b = fresh("b"); go("fixture env killed at 10s", b, 10_000); go("fixture env after kill", b);
+  const c = fresh("c"); go("fixture env + real LOCALAPPDATA", { ...c, LOCALAPPDATA: process.env.LOCALAPPDATA });
+  const d = fresh("d"); go("fixture env + PSModulePath", { ...d, PSModulePath: process.env.PSModulePath });
+}, 300_000);
