@@ -1,31 +1,33 @@
 ---
 title: Engine troubleshooting
-description: Fix missing CLIs, failed authentication, model errors, and path differences.
+description: Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.
 icon: Wrench
 ---
 
 ## “CLI not found”
 
-1. Open a terminal and run the CLI directly.
-2. Confirm the command is an executable, not only a shell alias or function.
-3. Restart Murage after installation.
-4. Set the exact executable in **Settings → Engines** if automatic detection still fails.
+This message means Murage could not find the AI app on this computer. (CLI is short for command-line app: an AI app you start by typing its name in a terminal.)
 
-Desktop applications often inherit a different environment than a terminal. This is common on Windows shortcuts, macOS Finder launches, and Linux application menus.
+1. Open a terminal and type the app's name, for example `claude` or `codex`, to check it starts.
+2. Make sure it is the app itself, not a shortcut you set up only inside your terminal.
+3. Restart Murage after you install it.
+4. If Murage still cannot find it, open **Settings → Models & engines** and use **Choose location…** on that engine.
+
+Apps opened from the desktop do not always see the same settings as your terminal. This happens with Windows shortcuts, apps opened from the macOS Finder, and Linux app menus.
 
 ## Authentication failures
 
-Run the provider's own status or login command in a terminal. Murage uses the CLI's authenticated session; installing the binary alone is not enough.
+Sign in again with the AI app itself, in a terminal or in the app. Murage uses the app's own sign-in; installing the app is not enough.
 
-A `401 Unauthorized` response from `api.openai.com` means the launched Codex process did not receive valid authentication. Confirm `codex login status`, sign in again if needed, then restart Murage. Do not paste a ChatGPT password into Murage.
+If Codex says it is not authorized (the details show 401 Unauthorized from OpenAI), run `codex login status`, sign in again if needed, then restart Murage. Never paste your ChatGPT password into Murage.
 
 ## A selected model fails
 
-- Refresh the model picker after updating the CLI.
-- Choose a model actually available to that provider account.
-- Confirm a custom wrapper forwards the model argument and preserves the provider's expected environment.
-- Try the provider CLI directly with the same model to separate an account problem from an Murage integration problem.
+- Refresh the model picker after you update the AI app.
+- Choose a model your account with that AI service can actually use.
+- If you start the app through your own wrapper, make sure it passes the model choice and its settings through.
+- Try the same model in the AI app directly. If it fails there too, the problem is outside Murage: read the error the AI app shows, and check your account, your internet connection and the AI service's status.
 
 ## Windows notes
 
-Use a real `.exe`, `.cmd`, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper.
+When you choose an engine's location on Windows, pick the real program file (it ends in `.exe` or `.cmd`). An AI app installed inside WSL (Linux on Windows) is a Linux program, so the Windows app cannot start it directly without a wrapper.

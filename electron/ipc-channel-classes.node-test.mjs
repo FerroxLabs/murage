@@ -116,7 +116,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   };
   const ok = run(["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-abc" });
   assert.equal(ok.exposed.key, "muragecloud");
-  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
   for (const [label, argv, location] of [
     ["no argument", ["electron"], { protocol: "murage-home:", hostname: "h-abc" }],
     ["another home's host", ["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-other" }],

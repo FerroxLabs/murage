@@ -19,12 +19,13 @@ import { inventoryFidelity, openFidelitySource } from "./installation-fidelity-s
 import { decryptBackupFile, encryptBackupStream, resolveWindowsBackupRuntime } from "./installation-backup-encryption.ts";
 import { runWindowsBackupTransport } from "./installation-windows-backup-transport.ts";
 import { restoreInstallation } from "./installation-restore.ts";
+import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
 
 function fail(code:string):never{throw new InstallationSnapshotError(code);}
 /** Where inside the capture a failure happened; read only by the redacted log record. */
 type CaptureStep="private-stage"|"offline-open"|"stage"|"inventory"|"manifest"|"encrypt"|"readback"|"flush"|"publish";
 function withCaptureStep<T>(error:T,step:CaptureStep):T{if(error&&typeof error==="object"&&!Object.hasOwn(error,"captureStep"))Object.defineProperty(error,"captureStep",{value:step,enumerable:false,configurable:true});return error;}
-export interface EncryptedBackupOptions extends ArchiveLimits { ageExecutable:string; identity:string; timeoutMs?:number; closeTimeoutMs?:number }
+export interface EncryptedBackupOptions extends ArchiveLimits { ageExecutable:string; identity:string; timeoutMs?:number; closeTimeoutMs?:number; onProgress?:BackupProgressReport }
 function unconfirmedClose(error:unknown){return error instanceof InstallationSnapshotError&&error.code==="AGE_PROCESS_CLOSE_UNCONFIRMED";}
 function retainFailure(error:unknown){return process.platform==="win32"||unconfirmedClose(error);}
 /** A failed capture's staging folder sits in the backup folder, which may be
@@ -46,8 +47,8 @@ function capturedFilesystemError(error:unknown):InstallationSnapshotError{
   const leaseCode=raw?.name==="DataDirLeaseError"&&typeof raw.code==="string"?raw.code:undefined;
   const errno=typeof raw?.ioCause?.errno==="string"?raw.ioCause.errno:!leaseCode&&typeof raw?.code==="string"?raw.code:undefined;
   const code=errno==="EEXIST"&&!leaseCode?"DESTINATION_EXISTS"
-    :errno==="ENOSPC"?"BACKUP_DISK_FULL"
-    :errno==="EACCES"||errno==="EPERM"?"BACKUP_FOLDER_NOT_WRITABLE"
+    :errno==="ENOSPC"||errno==="EDQUOT"?"BACKUP_DISK_FULL"
+    :errno==="EACCES"||errno==="EPERM"||errno==="EROFS"?"BACKUP_FOLDER_NOT_WRITABLE"
     :errno==="EBUSY"?"BACKUP_FILE_IN_USE"
     :leaseCode==="LEASE_BUSY"||leaseCode==="LEASE_CHILD_BUSY"?"RECOVERY_OWNERSHIP_REQUIRED"
     :"ENCRYPTED_BACKUP_FAILED";
@@ -122,12 +123,13 @@ function parseFidelity(value:unknown,options:ArchiveLimits):FidelityManifest{
 
 /** Authenticated decryption finishes before any archive entry is inspected. */
 export async function inspectEncryptedInstallationBackup(archive:string,outputParent:string,options:EncryptedBackupOptions){
-  const limits=budget(options),source=lstatSync(archive);
+  const limits=budget(options),source=lstatSync(archive),report=safeBackupProgress(options.onProgress);
   if(!source.isFile()||source.isSymbolicLink()||source.nlink!==1)fail("UNSAFE_ARCHIVE_FILE");
   if(source.size>limits.maxBytes+64*1024**2)fail("BACKUP_LIMIT_EXCEEDED");
   {const refusal=windowsRestoreRefusal(process.platform,source.size);if(refusal)fail(refusal);}
   if(process.platform==="win32"){
     const runtime=await resolveWindowsBackupRuntime(options.ageExecutable);
+    report("readback");
     let privateDirectory:string|undefined;
     let pending:Promise<{value:{directory:string;stateDirectory:string;manifest:FidelityManifest;sha256:string};ciphertextSha256:string}>|undefined;
     try{
@@ -136,9 +138,11 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
       validate:context=>{privateDirectory=context.directory;pending=(async()=>{
         if(!context.plaintext)fail("AGE_PROCESS_FAILED");
         const signal=combineSignal(context.signal,options.signal);
+        report("readback-entries");
         const inspected=await inspectArchiveEntries(context.plaintext,context.directory,value=>parseFidelity(value,options),{...options,signal,maxEntries:2*limits.maxFiles});
         const after=lstatSync(archive);
         if(source.dev!==after.dev||source.ino!==after.ino||source.size!==after.size||source.mtimeMs!==after.mtimeMs)fail("ARCHIVE_CHANGED");
+        report("readback-hash");
         const sha256=await hashFile(archive,signal);
         return{value:{directory:context.directory,stateDirectory:join(inspected.directory,"state"),manifest:inspected.manifest,sha256},ciphertextSha256:sha256};
       })();return pending;}},{verifyHelper:runtime.verifyHelper,spawn});
@@ -164,13 +168,16 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
   const directory=mkdtempSync(join(dataDirLeasePaths(outputParent).canonicalDataDir,".murage-encrypted-inspection-"));
   const plaintext=join(directory,"authenticated.zip");let success=false,retain=false;
   try{
-    await decryptBackupFile(options.ageExecutable,options.identity,archive,plaintext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs});
+    report("readback",0,source.size);
+    await decryptBackupFile(options.ageExecutable,options.identity,archive,plaintext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs,onBytes:bytes=>report("readback",bytes,source.size)});
+    report("readback-entries");
     const inspected=await inspectArchiveEntries(plaintext,directory,value=>parseFidelity(value,options),{...options,maxEntries:2*limits.maxFiles});
     // Every entry is checked and extracted; the decrypted copy of the whole
     // archive is no longer needed and would double the space a restore takes.
     rmSync(plaintext,{force:true});
     const after=lstatSync(archive);
     if(source.dev!==after.dev||source.ino!==after.ino||source.size!==after.size||source.mtimeMs!==after.mtimeMs)fail("ARCHIVE_CHANGED");
+    report("readback-hash");
     const sha256=await hashFile(archive);
     success=true;return{directory,stateDirectory:join(inspected.directory,"state"),manifest:inspected.manifest,sha256};
   }catch(error){retain=unconfirmedClose(error);if(retain)Object.assign(error as Error,{retainedDirectory:directory});throw error;}
@@ -184,7 +191,9 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const parent=dataDirLeasePaths(dirname(destination)).canonicalDataDir,target=join(parent,basename(destination));
   const sourceRoot=dataDirLeasePaths(dataDir).canonicalDataDir;
   if(parent===sourceRoot||parent.startsWith(sourceRoot+sep))fail("DESTINATION_INSIDE_INSTALLATION");
-  try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+  try{lstatSync(target);fail("DESTINATION_EXISTS");}catch(error){
+    if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error instanceof InstallationSnapshotError?error:withCaptureStep(capturedFilesystemError(error),"private-stage");
+  }
   const execute=async(scratch:string,options:EncryptedBackupOptions&{recipient:string;selection:BackupSelection},held?:OfflineInstallation)=>{
   const ciphertext=join(scratch,"backup.age");
   // Plaintext (the stage, the database snapshot, the readback's decrypted
@@ -196,11 +205,13 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   const work=createBackupWork(sourceRoot);
   let retain=false,step:CaptureStep="offline-open",failure:unknown;
   let bots:Record<string,string>={};
+  const report=safeBackupProgress(options.onProgress);
   try{
     const offline=<T,>(work:(installation:OfflineInstallation)=>Promise<T>)=>held?work(held):withOfflineInstallation(dataDir,work);
     const manifest=await offline(async installation=>{
       if(parent===installation.dataDir||parent.startsWith(installation.dataDir+sep))fail("DESTINATION_INSIDE_INSTALLATION");
       step="stage";
+      report("records");
       // Windows' backup helper holds at most 20 GiB (native/backup-age,
       // byteLimit). Past that the owner's own, larger limit can't help, so the
       // stage stops at the helper's size with its own sentence and the file
@@ -215,6 +226,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
       try{
         stage.assertSourceUnchanged();
         step="inventory";
+        report("inventory");
         const fidelity=await inventoryFidelity(installation,stage,options.selection,options);
         {const refusal=windowsTotalRefusal(process.platform,stage.manifest.files.reduce((total,file)=>total+file.bytes,0),fidelity.sources.reduce((total,file)=>total+file.bytes,0));if(refusal)fail(refusal);}
         step="manifest";
@@ -224,6 +236,7 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         writer=new ZipFile();
         const manifestBytes=Buffer.from(JSON.stringify(manifest)+"\n");
         if(manifestBytes.length>32*1024**2)fail("ARCHIVE_LIMIT_EXCEEDED");
+        const archiveBytes=files.reduce((total,file)=>total+file.bytes,manifestBytes.length);
         writer.addBuffer(manifestBytes,"manifest.json",{compress:false,mode:0o100600});
         for(const file of fidelity.sources)writer.addReadStreamLazy(`state/raw/${file.path}`,{size:file.bytes,compress:false,mode:0o100600},callback=>{
           try{const stream=openFidelitySource(file);streams.add(stream);stream.once("close",()=>streams.delete(stream));callback(null,stream);}catch(error){callback(error,Readable.from([]));}
@@ -236,7 +249,8 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
         writer.once("error",error=>(writer!.outputStream as Readable).destroy(error));
         writer.end();
         step="encrypt";
-        await encryptBackupStream(options.ageExecutable,options.recipient,writer.outputStream as Readable,ciphertext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs});
+        report("encrypt",0,archiveBytes);
+        await encryptBackupStream(options.ageExecutable,options.recipient,writer.outputStream as Readable,ciphertext,{maxBytes:limits.maxBytes+64*1024**2,signal:options.signal,timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs,onBytes:bytes=>report("encrypt",bytes,archiveBytes)});
         fidelity.assertUnchanged();
         stage.assertSourceUnchanged();
         return manifest;
@@ -248,9 +262,12 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     if(inspection.manifest.snapshotId!==manifest.snapshotId)fail("FIDELITY_READBACK_MISMATCH");
     const sha256=inspection.sha256;rmSync(inspection.directory,{recursive:true,force:true});
     step="flush";
+    report("flush");
     const fd=openSync(ciphertext,"r+");try{fsyncSync(fd);}finally{closeSync(fd);}
     step="publish";
+    report("publish");
     if(process.platform!=="win32")publishNoReplace(ciphertext,target);
+    report("done");
     return{path:target,sha256,snapshotId:manifest.snapshotId,coverage:manifest.coverage,restorePolicy:manifest.restorePolicy,...skippedSummary(manifest.recovery as StateSnapshotManifest,bots)};
   }catch(error){failure=error;retain=retainFailure(error);const reported=error instanceof InstallationSnapshotError?error:capturedFilesystemError(error);withCaptureStep(reported,step);if(retain)Object.assign(reported,{retainedDirectory:scratch});throw reported;}
   finally{if(process.platform!=="win32"){if(!retain)rmSync(scratch,{recursive:true,force:true});else discardFailedStage(scratch,true);
@@ -262,7 +279,12 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
     // the run folder, owner-only, is swept once this process has gone.
     else if(!unconfirmedClose(failure))try{removeBackupWork(work);}catch{/* swept at the next backup or start */}}
   };
-  if(process.platform!=="win32")return execute(mkdtempSync(join(parent,".murage-encrypted-write-")),options);
+  if(process.platform!=="win32"){
+    let scratch:string;
+    try{scratch=mkdtempSync(join(parent,".murage-encrypted-write-"));}
+    catch(error){throw withCaptureStep(capturedFilesystemError(error),"private-stage");}
+    return execute(scratch,options);
+  }
   let scratch:string|undefined,success=false;
   try{
     // The data-folder lease is taken before the native helper starts and let

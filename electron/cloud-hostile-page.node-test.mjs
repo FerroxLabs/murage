@@ -32,21 +32,27 @@ const flagOn = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "1" 
 // ── 1. the bridge ───────────────────────────────────────────────────────────
 
 function runCloudPreload({ argv, location }) {
-  const sent = [], invoked = [], listened = [];
+  const sent = [], invoked = [], listened = [], invokedArgs = [];
   let exposed = null;
   const electron = {
     contextBridge: { exposeInMainWorld: (key, value) => { exposed = { key, value }; } },
     ipcRenderer: {
       send: (channel) => sent.push(channel),
       sendSync: (channel) => { sent.push(channel); return ""; },
-      invoke: (channel) => { invoked.push(channel); return Promise.resolve({ ok: true }); },
+      invoke: (channel, ...args) => { invoked.push(channel); invokedArgs.push([channel, ...args]); return Promise.resolve({ ok: true }); },
       on: (channel) => listened.push(channel),
       removeListener() {},
     },
   };
   vm.runInNewContext(read("preload-cloud.cjs"), { require: () => electron, process: { platform: "darwin", argv }, globalThis: { location }, location, URL, queueMicrotask });
-  return { exposed, sent, invoked, listened };
+  return { exposed, sent, invoked, listened, invokedArgs };
 }
+
+test("the Cloud bridge hands main the address unchanged, and adds nothing to it", async () => {
+  const { exposed, invokedArgs } = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
+  await exposed.value.openExternal("https://example.com/x");
+  assert.deepEqual(invokedArgs, [["desktop:open-external", "https://example.com/x"]]);
+});
 
 test("hostile page: the Cloud bridge appears only on its own home's document", () => {
   const argv = ["electron", `--murage-cloud-home=${HOME}`];
@@ -69,7 +75,7 @@ test("hostile page: the Cloud bridge appears only on its own home's document", (
 test("hostile page: whatever the page passes to the bridge, only cloud-safe / cloud-only channels are reached", async () => {
   const { exposed, sent, invoked, listened } = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
   const bridge = exposed.value;
-  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
   assert.equal(Object.hasOwn(bridge, "ipcRenderer") || Object.hasOwn(bridge, "invoke") || Object.hasOwn(bridge, "send"), false, "no raw IPC handle");
   const hostile = [undefined, null, "../../x", { channel: "credential:set" }, { toString() { throw new Error("boom"); } }, JSON.parse('{"__proto__":{"channel":"credential:set"}}'), "x".repeat(1_000_000), -1, NaN, [], () => {}];
   for (const arg of hostile) {
@@ -77,6 +83,7 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
       () => bridge.setUnreadCount(arg),
       () => bridge.reachable(arg),
       () => bridge.disconnectThisComputer(arg),
+      () => bridge.openExternal(arg),
       () => bridge.approvalNotifications.show(arg),
       () => bridge.approvalNotifications.onOpen(arg),
     ]) {
@@ -86,7 +93,7 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
   // `listened` is main -> page (approval-notification:open): the page can only receive it, never send on it.
   assert.deepEqual([...new Set(listened)], ["approval-notification:open"]);
   const reached = new Set([...sent, ...invoked]);
-  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:reachable", "desktop:unread-count"]);
+  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:reachable", "desktop:open-external", "desktop:unread-count"]);
   for (const channel of reached) assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, channel);
 });
 

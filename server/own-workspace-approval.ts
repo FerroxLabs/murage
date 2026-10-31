@@ -88,6 +88,11 @@ export function isOwnWorkspaceFileTool(tool: unknown): boolean {
  * here. The vocabulary is artifacts.ts's private workspace names. */
 const NOT_BOOKKEEPING = /^(credentials|skills|SOUL\.md|AGENTS\.md|CLAUDE\.md)$/i;
 
+/** Inside the bot's own folder, but never read without the person: the keys
+ * the owner handed it. Its standing instructions and skills are its own to
+ * read (server/own-file-reads.ts), never to write without a card. */
+export const NOT_OWN_READ = /^credentials$/i;
+
 /** Split on BOTH separators. A Windows spelling reaching a POSIX process (or
  * the reverse) must not hide a `..` from the scan below simply because
  * `node:path` picked one separator for this platform. */
@@ -98,8 +103,10 @@ function identityOf(path: string): string | undefined {
   try { return artifactWorkspaceIdentity(path); } catch { return undefined; }
 }
 
-/** Is `candidate` a file strictly inside `rootPath`? */
-export function within(rootPath: string, candidate: unknown, bookkeeping = true): boolean {
+/** Is `candidate` a file strictly inside `rootPath`? `refused` names the
+ * segments below the root that never count: the bookkeeping exclusions by
+ * default, none with `false`, or a caller's own (`NOT_OWN_READ`). */
+export function within(rootPath: string, candidate: unknown, refused: boolean | RegExp = true): boolean {
   if (typeof candidate !== "string" || !candidate || !isAbsolute(candidate)) return false;
   // `..` and `.` refuse outright rather than being resolved. Every resolver
   // available here collapses them LEXICALLY, before any symlink in the chain
@@ -119,7 +126,8 @@ export function within(rootPath: string, candidate: unknown, bookkeeping = true)
   // which is why this compares segments and never a string prefix.
   if (targetParts.length <= rootParts.length) return false;
   if (!rootParts.every((part, index) => part === targetParts[index])) return false;
-  return !bookkeeping || !targetParts.slice(rootParts.length).some(part => NOT_BOOKKEEPING.test(part));
+  const refusedPart = refused === true ? NOT_BOOKKEEPING : refused === false ? null : refused;
+  return !refusedPart || !targetParts.slice(rootParts.length).some(part => refusedPart.test(part));
 }
 
 /** A symlink BELOW a root is caught by the comparison above: the real path
@@ -128,7 +136,7 @@ export function within(rootPath: string, candidate: unknown, bookkeeping = true)
  * pointing at `/` would make every path on the disk "the bot's own folder".
  * Those components are checked directly, the same way server/memory/import.ts
  * refuses an import through a linked workspace. */
-function managedPathIsLinked(dataDir: string, botId: string): boolean {
+export function managedPathIsLinked(dataDir: string, botId: string): boolean {
   let components: string[];
   // the workspaces folder is the bot folder's parent, by server/workspace.ts's own derivation
   try { const bot = botWorkspacePath(dataDir, botId); components = [dataDir, dirname(bot), bot]; }

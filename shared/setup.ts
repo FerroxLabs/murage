@@ -289,6 +289,10 @@ export interface SetupLiveState {
   bundledEngine: SetupEngineReading;
   /** The Chief's OWN engine — its `modelSelection.instanceId`. "" = none. */
   chiefInstanceId: string;
+  /** The local model the Chief's own turns run on, on THIS computer, read
+   *  from the Chief's own selection (server/setup.ts `chiefLocalModelOf`).
+   *  Absent whenever that is not certain. */
+  chiefLocalModel?: { model: string; host: string };
   /** Engines that have actually produced a settled reply in the Chief's own
    *  threads. A per-task engine that answered is in here too, which is why
    *  the brain step compares it against the bot's own selection. */
@@ -826,6 +830,20 @@ export interface SetupView {
   chiefBotId?: string;
   /** What to call the person. "" until they say. */
   ownerName: string;
+  /**
+   * The engine the Chief of Staff is on right now, its instance id, or ""
+   * when it has none.
+   *
+   * CARRIED SO THE DETECTION REPORT CAN PROVE ONE ROW. The approved flow tags
+   * the engine answering "using this now", and without this field the card
+   * could only guess which row that was. It is `live.chiefInstanceId`, read
+   * the same way as every other field here, so it is never remembered and
+   * never supplied by a request.
+   */
+  chiefInstanceId?: string;
+  /** The local model the Chief's own turns run on, on this computer. Only
+   *  this may back the "I am using it now" line. */
+  chiefLocalModel?: { model: string; host: string };
   /** The engine Murage ships, as this machine can run it. Reported whatever
    *  the Chief is currently on, so the agents card can name the included
    *  option and say plainly when it is not available here. */
@@ -933,6 +951,8 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     startedAt: state.startedAt,
     ...(state.chiefBotId ? { chiefBotId: state.chiefBotId } : {}),
     ownerName: live.ownerName,
+    ...(live.chiefInstanceId ? { chiefInstanceId: live.chiefInstanceId } : {}),
+    ...(live.chiefLocalModel ? { chiefLocalModel: live.chiefLocalModel } : {}),
     engine: live.bundledEngine,
     agents: live.agents,
     signedOutAgents: live.signedOutAgents,

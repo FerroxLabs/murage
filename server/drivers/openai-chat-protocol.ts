@@ -46,7 +46,7 @@ export class ChatToolCalls {
     const omitted = (field: unknown) => field === undefined || (streaming && field === null);
     for (const [position, raw] of value.entries()) {
       const delta = object(raw);
-      const index = streaming ? delta?.index : position;
+      const index = !streaming ? position : delta?.index ?? this.slotOf(delta?.id);
       if (!delta || !Number.isInteger(index) || Number(index) < 0 || Number(index) >= MAX_REPLY_TOOL_CALLS) {
         throw new ChatProtocolError("provider returned an invalid tool-call index");
       }
@@ -73,6 +73,14 @@ export class ChatToolCalls {
       }
       this.calls.set(Number(index), call);
     }
+  }
+
+  /** Gemini's OpenAI-compatible endpoint streams each call whole, with an id and no index (adapted from OpenMausBot
+   * 0cd63a7db): the slot of the call with that id, else the one after the last. Neither index nor id is still refused. */
+  private slotOf(id: unknown): number | undefined {
+    if (typeof id !== "string" || !id) return undefined;
+    for (const [slot, call] of this.calls) if (call.id === id) return slot;
+    return this.calls.size ? Math.max(...this.calls.keys()) + 1 : 0;
   }
 
   finish(reason: string | null, malformedFrame: boolean): ChatToolCall[] {

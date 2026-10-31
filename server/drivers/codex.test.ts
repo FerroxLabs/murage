@@ -276,7 +276,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toMatchObject([{ ok: true }]);
   });
 
-  it("a turn that holds its permission asks never arms the 15-minute deny (routine runs)", async () => {
+  it("a permission card never arms the old 15-minute deny, on any turn (direct chat included, Sean 10-29)", async () => {
     await create({ mode: "parent-approval" });
     process.env.FAKE_CODEX_DUMP = join(scratch, "dump.json");
     const originalTimeout = globalThis.setTimeout;
@@ -286,7 +286,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       return originalTimeout(callback, delay, ...args);
     }) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "held-approval", text: "one parent action", holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "held-approval", text: "one parent action" });
       const ask = await recorder.until((e) => e.type === "request.opened");
       expect(armed).toEqual([]);
       await instance.adapter.respondToRequest("held-approval", String(ask.requestId), { behavior: "allow" });
@@ -1381,7 +1381,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === 30 * 60_000 ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true, holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));

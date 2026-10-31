@@ -145,7 +145,7 @@ describe("the shipped index", () => {
     }
     const page = HELP_INDEX.filter((entry) => entry.id.startsWith("features/mcp-servers#"));
     expect(page.length).toBeGreaterThan(3);
-    expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → MCP servers");
+    expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → Connected tools");
   });
 
   it("places the graduated browser and recorder in regular Settings with their defaults", () => {

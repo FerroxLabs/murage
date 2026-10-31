@@ -1206,3 +1206,33 @@ describe.skipIf(process.platform === "win32")("shutdown with a turn in flight (r
     expect(exitAt - startedAt).toBeLessThan(SERVER_SHUTDOWN_TIMEOUT_MS);
   });
 });
+
+// 1.0.10 copy lane: the app used to call local models on openai-compat "chat only (no tools)". They get the mounted tools
+// like any other model; this turn pins that for a Local models server row (the loopback Ollama probe), keyless.
+describe("openai-compat: a Local models server receives the mounted tools", () => {
+  it("sends the mounted tool catalog to the local server's chat endpoint", async () => {
+    setEnv("MURAGE_PROBE_LOCAL_INJECT", "1");
+    const stub = globalThis.fetch;
+    const chatUrls: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url === "http://127.0.0.1:11434/v1/models") {
+        return new Response(JSON.stringify({ data: [{ id: "companion:latest" }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/chat/completions")) chatUrls.push(url);
+      return stub(input, init);
+    }) as typeof fetch;
+    const instance = await make("openai-compat");
+    await waitFor(() => instance.models.options.some((option) => option.id === "ollama::companion:latest"));
+    const log = newLog();
+    script = [() => textReply("hello from the local model")];
+    const { completed, events } = await run(instance, {
+      threadId: threadId(), text: "hi", model: "ollama::companion:latest", integrations: { custom: { fake: mount(log) } },
+    });
+    expect(completed.ok).toBe(true);
+    expect(chatUrls).toEqual(["http://127.0.0.1:11434/v1/chat/completions"]);
+    expect(bodies[0]!.model).toBe("companion:latest");
+    expect(toolNames(bodies[0]!)).toEqual(["fake_echo", "fake_noop", "fake_slow", "fake_secret", "fake_ask_user"]);
+    expect(answers(events)).toEqual(["hello from the local model"]);
+  });
+});

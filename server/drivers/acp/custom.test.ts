@@ -18,7 +18,7 @@ const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "test
 
 describe("CustomAcpDriver config", () => {
   it("teaches instead of ENOENT when the command is missing or blank", async () => {
-    expect(() => CustomAcpDriver.decodeConfig({})).toThrow(/Set CLI|config\.json/);
+    expect(() => CustomAcpDriver.decodeConfig({})).toThrow(/Choose location|config\.json/);
     expect(() => CustomAcpDriver.decodeConfig({ cli: "   " })).toThrow(/<your-agent> acp/);
     // registry uses defaultConfig() verbatim when the entry has no config —
     // create() must reject with the same teaching message, never spawn ""

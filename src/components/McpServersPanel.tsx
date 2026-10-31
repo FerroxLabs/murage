@@ -22,7 +22,7 @@ import {
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { displayArgs, envForBody, hostOf, installStage, removeServer, signInTo, testServer, type ProbeView } from "@/lib/mcp-add-flow";
+import { displayArgs, envForBody, hostOf, installStage, probeToolCount, removeServer, signInTo, testServer, type ProbeView } from "@/lib/mcp-add-flow";
 import { probeSentence } from "@/lib/mcp-card-view";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
 import { api } from "@/state/store";
@@ -540,7 +540,7 @@ export function McpServersPanel() {
                     <div role="status" className={cn("mt-3 rounded-lg px-3 py-2 text-[12px]", result.ok ? "bg-success/10 text-success" : "bg-danger/10 text-danger")}>
                       {result.ok ? (
                         <span className="flex items-start gap-2"><CheckCircle2 size={14} className="mt-px shrink-0" />{" "}
-                          {result.tools.length ? t("mcp.row.connectedTools", { count: result.tools.length, names: result.tools.map((tool) => tool.name).join(", ") }) : t("mcp.row.connectedNoTools")}</span>
+                          {result.tools.length ? t("mcp.row.connectedTools", { count: probeToolCount(result), names: result.tools.map((tool) => tool.name).join(", ") }) : t("mcp.row.connectedNoTools")}</span>
                       ) : probeSentence(result, host)}
                     </div>
                   )}

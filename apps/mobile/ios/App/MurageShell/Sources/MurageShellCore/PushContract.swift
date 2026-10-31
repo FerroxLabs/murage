@@ -24,7 +24,7 @@ public enum PushCategory: String, CaseIterable, Sendable {
         case .approval, .approvalOpen: "approvals"
         case .deviceJob: "requests"
         case .question, .callNote: "questions"
-        case .call: "calls"
+        case .call: "calls_v2"
         case .done, .resolved: "finished"
         }
     }

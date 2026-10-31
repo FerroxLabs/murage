@@ -3,7 +3,7 @@
 import { errorTextCases, ERROR_TEXT_LEAK } from "../testing/error-text-fixtures.ts";
 import { describe, expect, it } from "vitest";
 
-import { claudeAuthFailure, claudeAuthStatus, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
+import { claudeAuthFailure, claudeAuthStatus, claudeBillingOf, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
 import { CLAUDE_UPDATE_MESSAGE } from "./claude-guards.ts";
 
 describe("claudeAuthStatus", () => {
@@ -54,6 +54,16 @@ describe("claudeAuthStatus", () => {
     expect(await claudeAuthStatus("claude", {}, refusing("error: unknown option '--some-owner-flag'\n"))).toEqual({ signedIn: false, error: "error: unknown option '--some-owner-flag'" });
     expect(await claudeAuthStatus("claude", {}, refusing("error: unknown command 'auth'\n"))).toEqual({ signedIn: false, error: "error: unknown command 'auth'" });
     expect(await claudeAuthStatus("claude", {}, refusing(""))).toEqual({ signedIn: false, error: "Command failed: exit code 1" });
+  });
+
+  it("reads the billing from authMethod only when signed in, and only for names it knows", async () => {
+    const said = (json: string) => ((_cli, _args, _options, callback) => callback(null, json, "")) satisfies typeof import("../procs.ts").execCli;
+    expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'))).toEqual({ signedIn: true, billing: "subscription" });
+    expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":true,"authMethod":"api_key","apiKeySource":"/login managed key"}'))).toEqual({ signedIn: true, billing: "metered" });
+    expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":true,"authMethod":"a_future_method"}'))).toEqual({ signedIn: true });
+    expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":true}'))).toEqual({ signedIn: true });
+    expect(await claudeAuthStatus("claude", {}, said('{"loggedIn":false,"authMethod":"api_key"}'))).toEqual({ signedIn: false });
+    expect([null, 1, {}, "Claude.ai", "none"].map(claudeBillingOf)).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 
   it("returns the status itself when the CLI gives one, even with a non-zero exit", async () => {

@@ -137,8 +137,12 @@ describe("Inbox projection against base", () => {
     try {
       for (const view of VIEWS) listInbox(db, { view }, access, NOW);
     } finally { (db as unknown as { prepare: unknown }).prepare = prepare; }
+    // The one counted read (1.0.12, docs/designs/NEEDS-YOU-COUNT-1012.md 2.2): runs on cards, read once per
+    // messages version down the decisions partial index (owed and unexpired rows only). Its plan is still checked below.
+    const correction = (sql: string) => /INDEXED BY inbox_items_v_decisions_4/.test(sql) && /GROUP BY thread_id, live, snoozed_until/.test(sql);
+    expect(seen.filter(correction).length).toBeLessThanOrEqual(VIEWS.length);
     for (const sql of seen) {
-      expect(sql).not.toMatch(/COUNT\(\*\)/);
+      if (!correction(sql)) expect(sql).not.toMatch(/COUNT\(\*\)/);
       if (!/FROM inbox_items/.test(sql)) continue;
       const plan = (prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...Array.from({ length: (sql.match(/\?/g) ?? []).length }, () => null)) as Array<{ detail: string }>).map(row => row.detail).join("\n");
       expect(plan, sql).not.toMatch(/SCAN inbox_items\b(?! USING)/);

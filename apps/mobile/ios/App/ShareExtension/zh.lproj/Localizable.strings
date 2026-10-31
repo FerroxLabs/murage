@@ -18,5 +18,6 @@
 "share_offline" = "目前无法连接到你的电脑。连接恢复后，Murage 会发送此内容。";
 "share_passcode" = "请先在此手机上设置锁屏密码，然后打开 Murage。";
 "share_again" = "请打开 Murage 重新设置共享。";
-"share_update" = "请更新电脑上的 Murage 以使用此功能。";
+"share_update" = "请在电脑上开启此功能，或更新 Murage。";
+"share_turned_off" = "电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。";
 "share_done" = "完成";
