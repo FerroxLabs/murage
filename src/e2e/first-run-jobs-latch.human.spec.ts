@@ -88,7 +88,7 @@ test("a job row is still pressable after the step is reopened", async ({ app }) 
   // answer a card that has not been drawn. It cost four diagnostic runs, and
   // it is why the first two attempts looked like the flow never arrived.
   await expect(
-    app.getByText(/Where should I send your setup guide\?/i),
+    app.getByText(/Tell me what to call you and I will get the rest ready/i),
     "the Chief must have asked before the checklist is driven",
   ).toBeVisible();
 
