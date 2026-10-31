@@ -46,6 +46,8 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.9": { kind: "none" },
   // 1.0.10: the notes are on the docs changelog and the release page.
   "1.0.10": { kind: "none" },
+  // 1.0.11: the notes are on the docs changelog and the release page.
+  "1.0.11": { kind: "none" },
 };
 
 /** The page for `version`, or null when it has none. */

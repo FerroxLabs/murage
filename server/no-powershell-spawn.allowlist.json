@@ -184,6 +184,18 @@
         "185f94ce07a26daa": "return win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\");"
       }
     },
+    "server/own-file-reads.ts": {
+      "reason": "recognizer: a bot's read of its own files is placed only for a POSIX shell's line; a command the engine marks as run under PowerShell (commandShell 'pwsh') is not placed and asks (fix/1011-own-tool-results); compares a field, starts nothing",
+      "lines": {
+        "a5c8f28c6a53bf75": "if ((request.platform ?? process.platform) === \"win32\" || request.commandShell === \"pwsh\" || !PO"
+      }
+    },
+    "server/own-tool-results.ts": {
+      "reason": "recognizer: a read of a bot's own saved tool result is placed only for a POSIX shell's line; a command the engine marks as run under PowerShell (commandShell 'pwsh') is not placed and asks (fix/1011-own-tool-results); compares a field, starts nothing",
+      "lines": {
+        "a5c8f28c6a53bf75": "if ((request.platform ?? process.platform) === \"win32\" || request.commandShell === \"pwsh\" || !PO"
+      }
+    },
     "server/shell/walk.ts": {
       "reason": "recognizer: restored nested Windows executor guard rejects interpreters and launchers the Bash reader cannot model; starts nothing",
       "lines": {

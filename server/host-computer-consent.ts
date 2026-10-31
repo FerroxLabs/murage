@@ -79,8 +79,6 @@ interface Pending {
   botId: string;
   threadId: string;
   messageId: string;
-  /** None while a routine run holds the card open. */
-  timer?: ReturnType<typeof setTimeout>;
   /** Held open by a routine run (ApprovalBus.routineCard). */
   held: boolean;
   waiters: Set<(outcome: HostConsentOutcome) => void>;
@@ -90,19 +88,18 @@ interface Pending {
 /** botId → the one open card for that bot. Concurrent actions (or two turns)
  *  share it, so the owner is never shown the same question twice. */
 const pendingByBot = new Map<string, Pending>();
-const CARD_TIMEOUT_MS = 15 * 60_000;
 
 function settle(pending: Pending, behavior: "allow" | "deny", source: "user" | "system"): void {
   const existing = pending.bus.store.messageById(pending.threadId, pending.messageId);
   if (!existing?.card || existing.card.answered) return;
   pending.bus.store.patchMessage(pending.threadId, pending.messageId, {
-    card: { ...existing.card, answered: behavior, dismissed: source !== "user" },
+    // A close the owner did not choose reads "Not answered", never "Not allowed" (LONGWORK H2). An "allow" stays "allow" whatever its source: an allow that went through ran the action, so "Not answered" would be untrue (GROK-STOPPED F6, kept on purpose).
+    card: { ...existing.card, answered: source === "user" || behavior === "allow" ? behavior : "unavailable", dismissed: source !== "user" },
   });
 }
 
 function finish(pending: Pending, outcome: HostConsentOutcome): void {
   pendingByBot.delete(pending.botId);
-  clearTimeout(pending.timer);
   if (pending.held) {
     const answer = outcome === "allowed" ? "allow" : outcome === "declined" ? "deny" : "none";
     try { pending.bus.routineCard?.closed(pending.threadId, pending.requestId, answer); } catch { /* delivery never changes authority */ }
@@ -139,16 +136,10 @@ function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
     messageId: message.id,
     waiters: new Set(),
     bus,
-    // No answer is not an answer: the card closes and the next action asks
-    // again. Only the owner's own choice is ever remembered. A routine run
-    // holds it open instead: the run waits on the owner.
-    timer: held ? undefined : setTimeout(() => {
-      if (pendingByBot.get(bot.id) !== pending) return;
-      settle(pending, "deny", "system");
-      finish(pending, "waiting");
-    }, CARD_TIMEOUT_MS),
+    // The card waits for the owner until it is answered or cancelled (cards-wait
+    // 1.0.8, GROK-STOPPED F1). Each action's own wait is bounded below, and only
+    // the owner's own choice is ever remembered.
   };
-  pending.timer?.unref?.();
   pendingByBot.set(bot.id, pending);
   try { bus.onApproval?.(bot.id, threadId, requestId, message.id); } catch { /* delivery never changes authority */ }
   return pending;
@@ -158,7 +149,7 @@ function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
  *  bot that has not been confirmed. Opens the card if none is open for the
  *  bot. Resolves "waiting" when the window passes, the caller gives up
  *  (`signal`), or the card closes unanswered; the card itself stays open
- *  until answered, cancelled or timed out. */
+ *  until answered or cancelled. */
 export function awaitHostComputerConsent(
   bus: ApprovalBus,
   bot: BotRecord,

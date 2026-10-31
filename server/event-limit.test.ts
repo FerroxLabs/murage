@@ -177,7 +177,7 @@ describe("event run limits ask the owner", () => {
     fill("handoff", 4);
     const stale = store.appendMessage(ops.threadId, { role: "bot", kind: "options", card: { title: "t", subtitle: "s", options: ["Allow", "Not now"], requestId: "gone", tool: "more_handoffs" } });
     expect(dismissStalePeerCards(bus)).toBe(1);
-    expect(store.messagesFor(ops.threadId).find(m => m.id === stale.id)?.card).toMatchObject({ answered: "deny", dismissed: true });
+    expect(store.messagesFor(ops.threadId).find(m => m.id === stale.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
     expect(new RoutineManager(options).getEventBudget(eventId)).toMatchObject({ limits: { handoff: 4 } });
   });
 
