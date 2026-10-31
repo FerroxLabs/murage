@@ -37,9 +37,9 @@ test("a fresh install opens on the welcome screen despite the seeded bot, and a 
   // The only thing here is the untouched seeded bot, so this is a first run.
   // The first load compiles the app in this spec's own Vite server.
   // Since 0.1.58 (311387b1) the first run is the Chief's conversation, and it opens on his first question.
-  await expect(page.getByText(/Where should I send your setup guide\?/i).first()).toBeVisible({timeout:60_000});
+  await expect(page.getByText(/Tell me what to call you and I will get the rest ready/i).first()).toBeVisible({timeout:60_000});
   const before=(await api("GET","/api/bots")).bots;await fixture.restart();headers={"x-murage-surface":"desktop","x-murage-surface-secret":(await api("GET","/api/desktop-secret")).secret};
-  await page.reload();await expect(page.getByText(/Where should I send your setup guide\?/i).first()).toBeVisible({timeout:60_000});
+  await page.reload();await expect(page.getByText(/Tell me what to call you and I will get the rest ready/i).first()).toBeVisible({timeout:60_000});
   const after=(await api("GET","/api/bots")).bots;expect(after.map((bot:any)=>({id:bot.id,threadId:bot.threadId}))).toEqual(before.map((bot:any)=>({id:bot.id,threadId:bot.threadId})));expect(after[0]).toMatchObject({id:seeded.id,threadId:seeded.threadId});
   expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("seeded-welcome-after-restart.png"),fullPage:true});
 });
@@ -51,7 +51,7 @@ test("companion surface renders profile guidance without desktop installation ac
   const writes:string[]=[];page.on("request",request=>{if(request.method()!=="GET"&&/\/api\/bots\/[^/]+\/(assistant-profile|skills)/.test(request.url()))writes.push(request.url());});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);await expect(page.getByText("Companion helper",{exact:true}).first()).toBeVisible();await page.getByText("Companion helper",{exact:true}).first().click();
   await expect(page.getByRole("textbox",{name:"Message Companion helper",exact:true})).toBeVisible();await expect(page.getByTestId("chat-scroll").getByText("Add this on your desktop",{exact:true})).toBeVisible();await expect(page.getByRole("button",{name:"Set that up",exact:true})).toHaveCount(0);expect(writes).toEqual([]);
-  await expect(page.getByText(/Where should I send your setup guide\?/i)).toHaveCount(0);expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("companion-profile-guidance.png"),fullPage:true});
+  await expect(page.getByText(/Tell me what to call you and I will get the rest ready/i)).toHaveCount(0);expect(existsSync(fixture.fixtureDumpPath)).toBe(false);await page.screenshot({path:info.outputPath("companion-profile-guidance.png"),fullPage:true});
 });
 
 test("Tango keeps its identity/history/Chief while conversationally adopting reviewed Cowork",async({page},info)=>{

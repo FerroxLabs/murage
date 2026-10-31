@@ -440,6 +440,8 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  /** The thread is sealed (thread recall): this turn is cold by design. Read by the reuse gauge only. */
+  sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string;
@@ -704,7 +706,7 @@ export interface ProviderAdapter {
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
-  resetSession?(threadId: ThreadId): Promise<void>;
+  resetSession?(threadId: ThreadId, why?: { route: string }): Promise<void>;
   /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
    * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
    * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
@@ -855,6 +857,10 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */

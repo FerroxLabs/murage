@@ -126,6 +126,6 @@ export function probeSentence(probe: Extract<ProbeView, { ok: false }>, host: st
   return key ? t(key, { host }) : probe.error;
 }
 
-export function connectedSentence(count: number): string {
+export function connectedSentence(count: number | string): string {
   return count === 0 ? t("mcp.card.connected.none") : count === 1 ? t("mcp.card.connected.one") : t("mcp.card.connected.other", { count });
 }

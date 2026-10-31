@@ -152,7 +152,7 @@ const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8"),parsed=ts.
 function actualFunction(name){const found=parsed.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text===name);assert.ok(found);return found.getText(parsed);}
 test("actual closed finish waits for cleanup and exits once without recovery or relaunch",async()=>{
   const calls=[];let release;
-  const traces=[];const context=vm.createContext({closedTrace:stage=>traces.push(stage),desktopCleanupStage:"",closedBackupFinish:null,cleanupDesktopForExit:()=>new Promise(resolve=>{release=resolve;}),writeClosedBackupResult:status=>calls.push({type:"murage:closed-backup-result",status}),app:{exit:code=>calls.push(code)}});
+  const traces=[];const context=vm.createContext({serverStopReason:{note(){}},closedTrace:stage=>traces.push(stage),desktopCleanupStage:"",closedBackupFinish:null,cleanupDesktopForExit:()=>new Promise(resolve=>{release=resolve;}),writeClosedBackupResult:status=>calls.push({type:"murage:closed-backup-result",status}),app:{exit:code=>calls.push(code)}});
   vm.runInContext(actualFunction("finishClosedBackup"),context);
   const first=context.finishClosedBackup({status:"verified"});assert.equal(context.finishClosedBackup({status:"unavailable"}),first);assert.deepEqual(calls,[]);release();await first;
   assert.deepEqual(calls,[{type:"murage:closed-backup-result",status:"verified"},0]);
