@@ -499,6 +499,8 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
     if (typeof table === "object") {
       if (lhs === "trusted") { if (!set(table.key, tomlTrusted(rhs))) return null; continue; }
       if (lhs === "decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
+      // Fuigo 1.0.35 stamps every grant with `consent = <n>`; 1.0.34 ignores it, and so does this reader (R7)
+      if (lhs === "consent") { if (!/^\d+$/.test(rhs)) return null; continue; }
       return null;
     }
     // inside [folders]: `"key" = { trusted = true, decided_at = 1 }` or `"key".trusted = true`
@@ -512,6 +514,7 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
         if (!m) return null;
         if (m[1] === "trusted") { trusted = tomlTrusted(m[2]!); if (trusted === null) return null; }
         else if (m[1] === "decided_at") { if (!/^-?\d+$/.test(m[2]!.trim())) return null; }
+        else if (m[1] === "consent") { if (!/^\d+$/.test(m[2]!.trim())) return null; }
         else return null;
       }
       if (trusted === null) return null;
@@ -520,6 +523,7 @@ export function parseUpstreamTrustedFolders(text: string): Map<string, boolean> 
     }
     if (after === ".trusted") { if (!set(key.value, tomlTrusted(rhs))) return null; continue; }
     if (after === ".decided_at") { if (!/^-?\d+$/.test(rhs)) return null; continue; }
+    if (after === ".consent") { if (!/^\d+$/.test(rhs)) return null; continue; }
     return null;
   }
   return folders;
@@ -540,8 +544,34 @@ export function readUpstreamTrustedFolders(fuigoHome: string): Map<string, boole
   return parseUpstreamTrustedFolders(text) ?? new Map();
 }
 
+export interface UpstreamTrustFile {
+  file: string;
+  /** Keys the file answers no for, exactly as written there. */
+  declines: string[];
+  /** The file exists and could not be read or parsed. */
+  unreadable: boolean;
+}
+
+/** What Settings says about the engine's own trust file. Same text and parser
+ * as `readUpstreamTrustedFolders`, which folds every failure into empty for the
+ * engine's rule; a screen needs to tell a broken file from one that is absent.
+ * Absent or empty is a file with nothing in it. No turn reads this. */
+export function readUpstreamTrustFile(fuigoHome: string): UpstreamTrustFile {
+  const file = join(fuigoHome, UPSTREAM_TRUST_FILE);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    return { file, declines: [], unreadable: (error as NodeJS.ErrnoException).code !== "ENOENT" };
+  }
+  if (!text.trim()) return { file, declines: [], unreadable: false };
+  const parsed = parseUpstreamTrustedFolders(text);
+  if (!parsed) return { file, declines: [], unreadable: true };
+  return { file, declines: [...parsed].filter(([, trusted]) => !trusted).map(([key]) => key), unreadable: false };
+}
+
 /** Component-wise "`path` is `prefix` or below it" (Rust `Path::starts_with`). */
-function pathStartsWith(path: string, prefix: string): boolean {
+export function pathStartsWith(path: string, prefix: string): boolean {
   const rel = relative(prefix, path);
   return rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith(`..${sep}`));
 }
@@ -620,6 +650,67 @@ export interface FolderTrustRecord {
   source: FolderTrustSource;
   /** the folder the decision was made on; the record is keyed by its root */
   folder: string;
+  /** Stamped by a generation 2 card answer only, whose key is the engine's own
+   * `workspace`. An unstamped trust never answers the engine (R2). */
+  consent?: 2;
+}
+
+/** A stored "no", as the turn carries it. */
+export interface FolderTrustReject {
+  key: string;
+  folder: string;
+}
+
+/** What R3 reads for a turn: the stored records, nothing derived. */
+export interface FolderTrustTurnRecords {
+  /** every consent-2 trust key */
+  trustKeys: string[];
+  /** every stored reject, stamped or legacy */
+  rejects: FolderTrustReject[];
+}
+
+/** R3 rule 2: the stored "no" that answers for this turn, or null. A reject
+ * answers when its key or its `folder` is K, or is `realCwd` or an ancestor of
+ * it that is not a strict ancestor of K. By path only: no key is computed. Home
+ * and root never answer. */
+export function folderTrustRejectFor(rejects: readonly FolderTrustReject[], key: string, realCwd: string): FolderTrustReject | null {
+  const usable = (path: string) => !isUnrecordableTrustRoot(path);
+  const exact = rejects.find((reject) => (reject.key === key && usable(reject.key)) || (reject.folder === key && usable(reject.folder)));
+  if (exact) return exact;
+  const onCwdPath = (path: string) => usable(path) && pathStartsWith(realCwd, path) && (path === key || !pathStartsWith(key, path));
+  return rejects.find((reject) => onCwdPath(reject.key) || onCwdPath(reject.folder)) ?? null;
+}
+
+/** The rejects a generation 2 card names when a Trust of K may not keep them:
+ * every stored reject but K itself, those strictly inside K first. */
+export function folderTrustDeclinesFor(rejects: readonly FolderTrustReject[], key: string): string[] {
+  const others = [...new Set(rejects.map((reject) => reject.key))].filter((reject) => reject !== key);
+  return [...others.filter((reject) => pathStartsWith(reject, key)), ...others.filter((reject) => !pathStartsWith(reject, key))];
+}
+
+export interface FolderTrustRecordRow {
+  key: string;
+  folder: string;
+  decision: FolderTrustDecision;
+  consent?: 2;
+  source: FolderTrustSource;
+  decidedAt: number;
+  onPath: boolean;
+}
+
+/** Every stored record for the settings surface. `onPath` is a display hint:
+ * the record's key or `folder` is `folder` or an ancestor of it. It filters
+ * nothing and no reply reads it. Rejects first, then on-path, then newest. */
+export function folderTrustRecordRows(records: ReadonlyArray<{ key: string } & FolderTrustRecord>, folder: string): FolderTrustRecordRow[] {
+  const here = canonicalFolder(folder);
+  return records
+    .map(({ key, folder: decidedIn, decision, consent, source, decidedAt }) => ({
+      key, folder: decidedIn, decision, ...(consent === 2 ? { consent } : {}), source, decidedAt,
+      onPath: pathStartsWith(here, key) || pathStartsWith(here, decidedIn),
+    }))
+    .sort((a, b) => Number(b.decision === "reject") - Number(a.decision === "reject")
+      || Number(b.onPath) - Number(a.onPath)
+      || b.decidedAt - a.decidedAt);
 }
 
 interface PersistedFolderTrust {
@@ -711,13 +802,13 @@ export class FolderTrustStore {
    * the engine's, when the turn's Fuigo home is known). Unrecordable roots
    * (home, a filesystem root) are never written: Fuigo never gates them, so
    * a record would only mislead. Returns the key. */
-  remember(folder: string, decision: FolderTrustDecision, source: FolderTrustSource, options: FolderTrustKeyOptions & { key?: string } = {}): string | null {
+  remember(folder: string, decision: FolderTrustDecision, source: FolderTrustSource, options: FolderTrustKeyOptions & { key?: string; consent?: 2 } = {}): string | null {
     // a card answers for the key it asked about (the engine's key for that
     // turn, carried by the question), which may no longer be derivable once
     // the turn's home is gone
     const key = options.key ?? folderTrustKey(folder, options);
     if (isUnrecordableTrustRoot(key)) return null;
-    this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder) });
+    this.folders.set(key, { decision, decidedAt: Date.now(), source, folder: canonicalFolder(folder), ...(options.consent === 2 ? { consent: 2 as const } : {}) });
     this.persist();
     return key;
   }
@@ -728,6 +819,27 @@ export class FolderTrustStore {
     for (const key of this.keysFor(folder, options)) removed = this.folders.delete(key) || removed;
     if (removed) this.persist();
     return removed;
+  }
+
+  /** Forget one stored record by its exact key, whatever folder is asking.
+   * Never writes a trust and never touches another key. */
+  forgetKey(key: string): boolean {
+    if (!this.folders.delete(key)) return false;
+    this.persist();
+    return true;
+  }
+
+  /** The stored records R3 and the seeds read, sorted so the pool digest
+   * follows the set of records and not the order they were decided in. */
+  turnRecords(): FolderTrustTurnRecords {
+    const trustKeys: string[] = [];
+    const rejects: FolderTrustReject[] = [];
+    for (const [key, record] of this.folders) {
+      if (record.decision === "reject") rejects.push({ key, folder: record.folder });
+      else if (record.consent === 2) trustKeys.push(key);
+    }
+    const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    return { trustKeys: trustKeys.sort(order), rejects: rejects.sort((a, b) => order(a.key, b.key)) };
   }
 
   /** Every record, for the settings surface: key → record. */
