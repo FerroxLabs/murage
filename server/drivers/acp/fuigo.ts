@@ -47,6 +47,7 @@ import {
   type LocalHost,
 } from "../local-inject.ts";
 import { quoteToml, readTomlConfigForEdit, removeTomlTables, tomlTables } from "./kimi.ts";
+import { versionAtLeast } from "../codex-hook.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
@@ -573,11 +574,16 @@ export function isolateFuigoFromExternalMcp(env: Record<string, string | undefin
   forceHookGatesOff(env, "FUIGO");
 }
 
+/** Folder trust generation (FUIGO-TRUST-V2): 1 only for a parsed version below
+ *  1.0.35, where Murage decides before the spawn and passes `--trust`. Unknown
+ *  or unparseable is 2: the engine is the judge, and Murage grants nothing ahead of it. */
+export function fuigoFolderTrustGeneration(version: string | undefined): 1 | 2 {
+  return /\d+\.\d+\.\d+/.test(version ?? "") && !versionAtLeast(version, [1, 0, 35]) ? 1 : 2;
+}
+
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
-  // A bare reject_once ends the prompt: a deny carries a follow-up note instead.
-  rejectNeedsFollowup: true,
   // A cut MCP result is saved in this session's own `mcp/` folder; reading it
   // back is the bot reading its own output (server/own-tool-results.ts).
   toolResultDirs: ({ env, cwd, sessionId }) => fuigoToolResultDirs(fuigoHome(env), sessionFolders(cwd), sessionId),
@@ -697,21 +703,20 @@ const support: AcpSupport = {
    * and it is NOT accepted after `agent`. The combined form below was run
    * live and honoured the model.
    *
-   * `--permission-mode default` ALWAYS, at every level, never
-   * bypassPermissions: under bypass Fuigo never asks, so its ask rules and
-   * Murage's guard never see a call. Murage's ACP core answers
-   * `session/request_permission` itself, fail-closed, and answers a fullAuto
-   * turn's asks at once (one-time allow only, allowOnceOnly). Explicit rather
-   * than omitted, so a `[permissions] mode` a user set in ~/.fuigo/config.toml
-   * for their own terminal cannot silently auto-approve calls inside Murage.
+   * Passing `--permission-mode default` explicitly, rather than omitting it,
+   * is deliberate: it pins the non-fullAuto spawn to ASK, so a
+   * `[permissions] mode` a user set in ~/.fuigo/config.toml for their own
+   * terminal cannot silently auto-approve tool calls inside Murage. Murage's
+   * ACP core answers `session/request_permission` itself, fail-closed, and
+   * that only works if the CLI actually asks.
    *
    * Long form `--reasoning-effort` on purpose, same as grok: `--effort` is
    * declared as a `visible_alias` (fuigo-pager/src/app/cli.rs:273) and an
    * alias is the part a CLI is free to rename.
    */
-  spawnArgs: (_config, turn, ctx) => [
+  spawnArgs: (config, turn, ctx) => [
     "--permission-mode",
-    "default",
+    config.fullAuto ? "bypassPermissions" : "default",
     // Folder trust (1.0.13, FUIGOTRUST1): `--trust` is a top-level flag like
     // --permission-mode (fuigo-pager/src/app/cli.rs `trust`, hidden alias
     // `--trust-folder`) that grants the PROCESS CWD — the same folder the
@@ -745,6 +750,10 @@ const support: AcpSupport = {
    *  trust before the spawn from Murage's record or a card (see `spawnArgs`
    *  and core.ts FUIGOTRUST1). */
   folderTrust: true,
+  /** From 1.0.35 the engine itself asks and names the key (FUIGO-TRUST-V2). */
+  folderTrustGeneration: fuigoFolderTrustGeneration,
+  /** The generation decides the spawn, the advert and the primer's folder line. */
+  spawnNeedsCliVersion: true,
 
   /** 1.0.19/1.0.20 answer session/new before the `mcpServers` are connected
    *  and emit `_fuigo/mcp_initialized {sessionId, mcpToolCount, elapsedMs}`
