@@ -1,4 +1,5 @@
 import type { Bot } from "@/state/store";
+import { t } from "@/lib/i18n";
 
 /** The approval level a conversation runs at: Ask, Auto, Full access, or No
  * limits (Full access without the stop line). Each only counts on top of the
@@ -21,7 +22,9 @@ export function isDesktopOnlyMode(mode: PermissionMode): boolean {
  * this computer when the bot drives it) or the Auto-on-this-computer warning.
  * The same order as the composer's switch; the server refuses a save that
  * skipped a warning either way. `needsLocalWarning` is
- * `autoNeedsLocalComputerWarning` for the bot as it stands. */
+ * `autoNeedsLocalComputerWarning` for the bot as it stands. `termsPending`:
+ * the owner has not accepted No limits as it now stands, so its warning shows
+ * again even on a bot that confirmed the older one. */
 export type DefaultModeStep =
   | { kind: "patch"; patch: { autoApprove: boolean; fullAccess: boolean; noLimits?: boolean } }
   | { kind: "full-warning"; onThisComputer: boolean }
@@ -32,10 +35,11 @@ export function defaultModeStep(
   bot: Pick<Bot, "autoApprove" | "fullAccess" | "fullAccessAcknowledgedAt"> & { noLimitsAcknowledgedAt?: number },
   mode: PermissionMode,
   needsLocalWarning: boolean,
+  termsPending = false,
 ): DefaultModeStep {
   const needsLocal = mode !== "ask" && needsLocalWarning;
   if (mode === "unlimited") {
-    if (bot.noLimitsAcknowledgedAt === undefined) return { kind: "no-limits-warning", onThisComputer: needsLocal };
+    if (bot.noLimitsAcknowledgedAt === undefined || termsPending) return { kind: "no-limits-warning", onThisComputer: needsLocal };
     if (needsLocal) return { kind: "local-warning", mode: "unlimited" };
     return { kind: "patch", patch: { autoApprove: true, fullAccess: true, noLimits: true } };
   }
@@ -90,7 +94,7 @@ export function peerContactHint(bot: Pick<Bot, "autoApprove" | "fullAccess" | "a
   if (!bot.approvePeerComms) return "Off: this bot contacts other bots without asking you first.";
   const mode = permissionModeOf(bot);
   if (mode === "full" || mode === "unlimited") {
-    return `On, but ${mode === "full" ? "Full access" : "No limits"} skips this in conversations you start and in routines at that level; webhook turns still stop and ask. Switch to Auto to be asked every time.`;
+    return t("ux.lcopyb.level.peerSkip", { level: mode === "full" ? "Full access" : "No limits" });
   }
   return "On: this bot stops and asks you before it contacts another bot.";
 }

@@ -16,7 +16,7 @@ export const PERMISSION_MODES: ReadonlyArray<{ mode: PermissionMode; label: stri
     mode: "unlimited",
     label: "No limits",
     chip: "No limits",
-    detail: "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.",
+    detail: "In conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read.",
   },
 ];
 

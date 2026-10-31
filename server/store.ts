@@ -1045,7 +1045,7 @@ export interface BotRecord {
   fullAccessAcknowledgedAt?: number;
   /** No limits, the level above Full access: no stop line (deleting outside
    * its folder, paying, messaging someone new all go ahead); the key guard
-   * still asks. Counts only while fullAccess is on. Set only from the
+   * still asks, on a turn the owner started only for its gate files. Counts only while fullAccess is on. Set only from the
    * desktop app, after its own one-time warning. Absent = guarded. */
   noLimits?: boolean;
   /** When the owner confirmed this bot's one-time No limits warning. */

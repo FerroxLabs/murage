@@ -532,7 +532,8 @@ export interface SendTurnInput {
    * Codex `approvalPolicy: never`, an ACP engine's `fullAuto`, Antigravity's
    * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
    * answers everything else at once. Also set on No limits, which drops the
-   * stop line but keeps the key guard: that guard holds only if Murage sees
+   * stop line but keeps the wipe list and the gate files, and the whole key
+   * guard on any turn the owner did not start: those hold only if Murage sees
    * the asks. When both stopLine and routeAsks are absent, the instance's
    * own setting stands. */
   stopLine?: true;
@@ -855,6 +856,10 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */
