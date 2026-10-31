@@ -82,7 +82,7 @@ export function cloudRequestAllowed(url) {
  *   Called ONLY when the flag is on. main.mjs passes the WP2 client factory; its `provider` feeds the proxy and its
  *   `onAuthFailure` is what the proxy calls on a 401 / 403 session-invalid (one refresh, one retry).
  * @param {string} [deps.cloudPreload] absolute path of preload-cloud.cjs: the Cloud window's own tiny bridge (WP4). It is NOT the main
- *   preload; it exposes `muragecloud` (unread badge, approval notification, reachability) and nothing else.
+ *   preload; it exposes `muragecloud` (unread badge, approval notification, reachability, disconnect, https link out) and nothing else.
  * @param {(homeId: string) => void} [deps.onWindowClosed] a Cloud window closed (main re-applies the unread badge)
  * @param {(m: string) => void} [deps.warn]
  */

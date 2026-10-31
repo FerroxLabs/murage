@@ -11,7 +11,7 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-names.ts";
-import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
+import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
@@ -19,6 +19,7 @@ import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExact
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
+import { ENV_RULE, envRowText, fileToolRead, projectTemplatePath, splitCommand, isReadPassHold, keyRowId, keyValueShapeIn, PATH_RULES, readKindRules, TEXT_RULES, type CommandDataRead, type FileToolRead } from "./key-text.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
 import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
 import { braceCandidates } from "./shell/walk.ts";
@@ -542,6 +543,8 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The bot reading its own files (server/own-file-reads.ts). */
+  | "own-files"
   /** The bot reading back its OWN saved tool result: a read-only command or
    * read tool on a file in this session's own result folder
    * (server/own-tool-results.ts). Not a grant and not a mode. */
@@ -652,6 +655,8 @@ export interface AutoContext {
    * which resolves links itself): the rule it named. The key guard keeps
    * that verdict at every level; it can only add a hold, never clear one. */
   localHold?: string;
+  /** The folder this turn runs in: a full path under it is inside the project for Rule 64's text read (NOLIMITS-KEY-TEXT A1). */
+  turnCwd?: string;
   /** the card's tool input or summary was cut, so the owner cannot see all
    * of it (server/approval-text.ts approvalIsCut); no routine carve-out then */
   inputCut?: boolean;
@@ -730,6 +735,12 @@ export interface AutoContext {
    * behind the guards, ahead of the unattended and host blocks, because an
    * engine reading what it was just given is not something a person grants. */
   ownToolResults?: boolean;
+  /** The bot reading its own files: its SOUL.md, skills, memory and
+   * conversation folders, never credentials/. Decided in
+   * server/own-file-reads.ts (a read tool or a strictly read-only command,
+   * every path inside the bot's own folders by real path) and set only for a
+   * turn the workspace owner is behind; placed like `ownToolResults`. */
+  ownFileRead?: boolean;
   projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
@@ -877,8 +888,30 @@ function findingCover(
 }
 
 const askedWindows = new Map<string, { at: number; suppressed: number }>();
+/** NOLIMITS-KEY-TEXT 3.7: why the key guard held a verdict, by fixed name, for the asked line only. */
+type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pwsh" | "local-hold";
+const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
+
+const LOCAL_HOLD_WORDS = "the engine's own check held this as a key file";
+const REAL_PATH_WORDS = "a path this call names could not be followed to where it lands, so it is held as a key file";
+const HOME_GLOB_WORDS = " could name a key file";
+
+/** The bot's own level. A turn it does not cover shows as origin= beside it. */
+function askLevel(bot: AutoApprover): "ask" | "auto" | "full" | "no-limits" {
+  return hasNoLimits(bot) ? "no-limits" : hasFullAccess(bot) ? "full" : bot.autoApprove === true ? "auto" : "ask";
+}
+
+/** What held the call at the key guard or the reader, by fixed name only; undefined for every other card. */
+function askHeldClass(verdict: AutoVerdict): "key-row" | "home-glob" | "local-hold" | "real-path" | "unread" | undefined {
+  if (verdict.source === "unread-call" || (verdict.source === "always-ask" && verdict.rule === "unreadable")) return "unread";
+  if (verdict.source !== "sensitive-guard") return undefined;
+  const rule = verdict.rule ?? "";
+  if (rule.startsWith(LOCAL_HOLD_WORDS)) return "local-hold";
+  if (rule.startsWith(REAL_PATH_WORDS)) return "real-path";
+  return rule.endsWith(HOME_GLOB_WORDS) && !rule.startsWith("a glob too deep") ? "home-glob" : "key-row";
+}
 
 /** No free-text rule, note, argument, path or grant key enters a log line. */
 function askReasonClass(verdict: AutoVerdict): string {
@@ -892,6 +925,7 @@ function askReasonClass(verdict: AutoVerdict): string {
     if (rule.startsWith(U19_WORDS)) return "unread-call:U19";
     if (rule === "the call was cut before it could be checked") return "unread-call:truncated";
     if (rule === "the call's arguments run past what the key guard reads") return "unread-call:scan";
+    if (rule.endsWith(STAMP_SPELLING_WHY)) return "unread-call:stamp-spelling";
     if (rule.startsWith("the tool this runs cannot be proven:")) return "unread-call:identity";
     if (rule.startsWith("the call does not carry what this tool needs")) return "unread-call:contract";
     return "unread-call:actions";
@@ -905,7 +939,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   if (verdict.approve !== null) return;
   const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
   const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
-  const reason = askReasonClass(verdict), key = JSON.stringify([botId, toolName, reason]), now = Date.now();
+  const reason = askReasonClass(verdict), held = askHeldClass(verdict), key = JSON.stringify([botId, toolName, reason, held]), now = Date.now();
   const previous = askedWindows.get(key);
   if (previous && now - previous.at < ASK_LOG_MS && now >= previous.at) { previous.suppressed++; return; }
   askedWindows.set(key, { at: now, suppressed: 0 });
@@ -914,7 +948,11 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const origin = fullAccessOriginOf(context);
   const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
   const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} suppressed=${previous?.suppressed ?? 0}`);
+  // fixed names only: a row's id and the class of read, never a path, a name or command text
+  const keyRow = held === "key-row" || held === "local-hold" ? keyRowId(verdict.rule) : undefined;
+  const why = keyWhyOf.get(verdict);
+  const keyFields = `${keyRow ? ` row=${keyRow}` : ""}${why ? ` why=${why}` : ""}`;
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}`);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
@@ -1039,6 +1077,15 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   return { approve: null, source: "always-ask", rule: `own-always-ask ${own}`, note: OWN_ALWAYS_ASK_NOTE };
 }
 
+/** A check that could not start or timed out does not hold a command at Full access or No limits on a turn the owner
+ * started, or on a routine's run judged at that level: the owner set the level for the routine, and `routineLevel` says
+ * the routine's own level is what `bot` carries here. Nothing else is waived: a channel, webhook or unproven turn holds. */
+function envCheckWaived(bot: AutoApprover, context: AutoContext): boolean {
+  if (!hasFullAccess(bot)) return false;
+  return context.fullAccessOrigin === "owner"
+    || (context.fullAccessOrigin === "routine" && context.routineLevel === true && !context.unattended && !context.channelOwner);
+}
+
 /** Who started this turn, as Full access reads it. */
 function fullAccessOriginOf(context: AutoContext | undefined): FullAccessOrigin {
   if (context?.routineLevel && !context.unattended && !context.channelOwner) return "routine";
@@ -1079,6 +1126,38 @@ function cutCallReadable(tool: string, context: AutoContext | undefined, resolve
   return (context?.realPaths?.length ?? 0) > 0;
 }
 
+const SENSITIVE_PATH_SOURCES: ReadonlySet<string> = new Set(PATH_RULES.map((re) => re.source));
+
+/** The one command every text of a bash call agrees on, its card text a copy of it. A bash call's own command tool only;
+ * a wrapper or an MCP tool carrying a command keeps the whole read. */
+function oneCommand(tool: string, summary: string, resolved: ResolvedCall, texts: ReadonlyArray<string | undefined>): string | undefined {
+  if (!isCommandTool(tool) || isPowerShellTool(tool)) return undefined;
+  if (resolved.kind !== "unstamped" && !(resolved.kind === "engine" && !resolved.wrapped)) return undefined;
+  const shown = summary.trim();
+  const commands = new Set(texts.filter((text): text is string => text !== undefined).map((text) => text.trim()));
+  if (commands.size > 1) return "\0unmodeled";
+  const command = [...commands][0] ?? (approvalSummaryIsCut(shown) ? undefined : shown);
+  if (command === undefined) return "\0unmodeled";
+  const body = approvalSummaryIsCut(shown) ? shown.replace(/…\[truncated, \d+ characters more\]$/, "") : undefined;
+  if (shown !== command && !shown.includes(command) && !(body !== undefined && command.startsWith(body))) return "\0summary";
+  return command;
+}
+
+/** D2, D3 on a covered bash call. */
+function coveredCommandRead(tool: string, summary: string, resolved: ResolvedCall, texts: ReadonlyArray<string | undefined>): CommandDataRead | "plain" | "unmodeled" | "summary" | undefined {
+  const command = oneCommand(tool, summary, resolved, texts);
+  if (command === undefined) return undefined;
+  if (command.startsWith("\0")) return command.slice(1) as "unmodeled" | "summary";
+  return splitCommand(command);
+}
+
+/** Every string of a command call other than the command and its model-written description: a `cwd` field names a place. */
+function coveredOtherStrings(resolved: ResolvedCall, call: GrantCall | undefined, withDescription = false): string[] {
+  const input = resolved.kind === "engine" ? resolved.input : call?.toolCall?.input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return [];
+  return Object.entries(input).filter(([key]) => !["command", "cmd", "script", "code"].includes(key) && (withDescription || key !== "description")).map(([, value]) => placeArgumentScan(value).text);
+}
+
 function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
   // Full access raises almost no card — not the destructive guard, not the
   // host-control guard — for a turn the owner started. It still stops at the
@@ -1117,7 +1196,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
-    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
+    : context?.envUnchecked && !envCheckWaived(bot, context) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
     // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path
@@ -1131,8 +1210,40 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     : contract.ok ? null
     : `the call does not carry what this tool needs (${contract.field})`;
   const keyText = [guarded, scan.text, ...(context?.realPaths ?? [])].join("\n");
-  const localHold = context?.localHold ? `the engine's own check held this as a key file (${context.localHold})`
-    : context?.realPathCannot ? `a path this call names could not be followed to where it lands, so it is held as a key file (${context.realPathCannot.slice(0, 200)})` : null;
+  // NOLIMITS-KEY-TEXT (design section 14): on a turn Full access or No limits covers, a known file tool's fields are read
+  // by role (B1) and a modeled bash line's data operands leave the path rows (D2, D3). Never at Ask or Auto, never for a
+  // PowerShell text (3.6), an MCP or unproven tool: those keep the whole read.
+  const covered = fullAccessCovers(bot, origin) && context?.fullAccessOrigin !== "other";
+  const fields: FileToolRead | undefined = covered ? fileToolRead(tool, context?.call, resolved, summary) : undefined;
+  const commandData: CommandDataRead | "plain" | "unmodeled" | "summary" | undefined = covered && pinShell !== "pwsh" && !windowsBash?.length ? coveredCommandRead(tool, summary, resolved, [context?.exactCommand?.command, innerCommand, wholeText, context?.commandText]) : undefined;
+  const dataRead = typeof commandData === "object" ? commandData : undefined;
+  // A1, every level: a command that names another folder for itself is not in the project, and PowerShell has no split
+  const projectCwd = context?.turnCwd ?? context?.commandCwd ?? context?.exactCommand?.cwd;
+  const namedElsewhere = [context?.commandCwd, context?.exactCommand?.cwd].some((cwd) => cwd !== undefined && cwd !== projectCwd);
+  const a1Command = pinShell === "pwsh" || windowsBash?.length || namedElsewhere ? undefined : oneCommand(tool, summary, resolved, [context?.exactCommand?.command, innerCommand, wholeText, context?.commandText]);
+  const a1Words = a1Command !== undefined && !a1Command.startsWith("\0") ? envRowText(a1Command, projectCwd) : undefined;
+  const envText = a1Words === undefined ? undefined : [a1Words, ...coveredOtherStrings(resolved, context?.call, !covered), ...(context?.realPaths ?? [])].join("\n");
+  const rowsOver = (text: string, rules: readonly RegExp[] = SENSITIVE): string | null => {
+    for (const re of rules) if (re.test(re === ENV_RULE && envText !== undefined ? envText : text)) return re.source;
+    return null;
+  };
+  // the file tool's own read: every path field and real path by the kind's rows, a glob field as a glob, no content
+  const fieldHit = (read: FileToolRead): string | null => {
+    for (const text of [...read.paths, ...(context?.realPaths ?? []), ...(read.summaryRead ? [summary] : [])]) {
+      const rules = read.read ? readKindRules(text) : SENSITIVE;
+      const hit = rowsOver(text, projectTemplatePath(text, projectCwd) ? rules.filter((re) => re !== ENV_RULE) : rules);
+      if (hit) return hit;
+    }
+    for (const glob of read.globs) {
+      const hit = rowsOver(glob) ?? globKeyRead(glob);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  // 3.5: a Read of a tooling place keeps no hold of the engine's own, by exact row id, when the same read passes the path
+  const holdDropped = fields?.read === true && context?.localHold !== undefined && isReadPassHold(context.localHold) && fieldHit(fields) === null;
+  const localHold = context?.localHold && !holdDropped ? `${LOCAL_HOLD_WORDS} (${context.localHold})`
+    : context?.realPathCannot ? `${REAL_PATH_WORDS} (${context.realPathCannot.slice(0, 200)})` : null;
   // 09-1: a glob in the command text that could match a key file
   // (`cat ~/.aw?/credentials`, `Get-Content ~\.aws\cred*`) is a read of it
   const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
@@ -1146,10 +1257,28 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     const read = reads.filter((one): one is NonNullable<typeof one> => one !== undefined);
     return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob } : undefined;
   })();
-  const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText)
-    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob} could name a key file` : null) : null);
+  const rowHit = (): string | null => fields ? fieldHit(fields)
+    : dataRead ? rowsOver([dataRead.paths, ...coveredOtherStrings(resolved, context?.call), ...(context?.realPaths ?? [])].join("\n"), PATH_RULES) ?? matchFirst(TEXT_RULES, keyText)
+    // a modeled command's description is the model's own words about it, never run: read for values, not paths
+    : commandData === "plain" ? rowsOver([guarded, ...coveredOtherStrings(resolved, context?.call), ...(context?.realPaths ?? [])].join("\n"), PATH_RULES) ?? matchFirst(TEXT_RULES, keyText)
+    : rowsOver(keyText);
+  const dequotedHit = (): string | null => !dequoted ? null
+    : (dataRead ? matchFirst(TEXT_RULES, dequoted.text) ?? globKeyRead(dataRead.globs) : rowsOver(dequoted.text) ?? globKeyRead(dequoted.globText)) ?? (dequoted.homeGlob ? `${dequoted.homeGlob}${HOME_GLOB_WORDS}` : null);
+  // A10: a key's value in any string, at every level, whatever else the call is
+  const shapeHit = (): string | null => keyValueShapeIn(keyText) ?? (dequoted ? keyValueShapeIn(dequoted.text) : null);
+  const keyHit = (): string | null => unread ?? localHold ?? rowHit() ?? shapeHit() ?? (dataRead ? null : globKeyRead(commandGlobText)) ?? dequotedHit();
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
+  const keyHeld = (rule: string): AutoVerdict => {
+    const verdict: AutoVerdict = { approve: null, source: sensitiveSource, rule };
+    if (!unread) keyWhyOf.set(verdict, context?.localHold && rule.startsWith(LOCAL_HOLD_WORDS) ? "local-hold"
+      : resolved.kind === "mcp" || resolved.kind === "unproven" ? "mcp"
+      : pinShell === "pwsh" ? "pwsh"
+      : fields ? "field"
+      : commandData === "unmodeled" || commandData === "summary" ? commandData
+      : SENSITIVE_PATH_SOURCES.has(rule) ? "path" : "value");
+    return verdict;
+  };
   // The stop line outranks every mode, Full access included: deleting
   // outside its folder, paying, and messaging someone new wait for the
   // owner. Only a grant scoped to the same place answers it — the owner's
@@ -1190,7 +1319,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   let coveredRows: ReadonlySet<number> = new Set();
   if (rows) {
     const keyGuard = keyHit();
-    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
+    if (keyGuard) return keyHeld(keyGuard);
     const covers: Array<{ source: string; key: string }> = [];
     for (const row of rows) for (const hit of row) {
       const cover = findingCover(bot, hit, context, routineGrants);
@@ -1206,7 +1335,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   if (stop && !rows) {
     const attended = !context?.unattended && !context?.automated;
     const keyGuard = keyHit();
-    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
+    if (keyGuard) return keyHeld(keyGuard);
     if (context?.stopAllowedForTask && attended && context.scope !== "local-computer" && stopLineKeyCovers(context.stopAllowedForTask, stop)) {
       return promptHeld ?? { approve: `auto-approved ${tool} (allowed for this task)`, source: "task-allowance", rule: context.stopAllowedForTask };
     }
@@ -1225,7 +1354,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   if (fullAccessCovers(bot, origin)) {
     // the key guard is the one stop No limits keeps too
     const keyGuard = sensitive ?? (destructive ? keyHit() : null);
-    if (keyGuard) return { approve: null, source: sensitiveSource, rule: keyGuard };
+    if (keyGuard) return keyHeld(keyGuard);
     if (hasNoLimits(bot)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
     return { approve: `auto-approved ${tool} (full access)`, source: "full-access" };
   }
@@ -1233,7 +1362,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // does the unattended block when a grant would have answered.
   if (promptHeld) {
     if (destructive) return { approve: null, source: "destructive-guard", rule: destructive };
-    if (sensitive) return { approve: null, source: sensitiveSource, rule: sensitive };
+    if (sensitive) return keyHeld(sensitive);
     if (context?.unattended) {
       const would = standingGrant(bot, tool, summary, context, routineGrants, coveredRows);
       if (would) return { approve: null, source: "unattended-block", rule: would.rule };
@@ -1257,6 +1386,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
     return { approve: "read its own saved tool result", source: "own-tool-results" };
+  }
+  if (context?.ownFileRead === true && !destructive && !sensitive && !context.scope) {
+    return { approve: `auto-approved ${tool} (its own files)`, source: "own-files" };
   }
   // Murage's own tools that never ask on Claude or Codex (OWN_UNASKED) reach
   // here from an ACP engine (Fuigo, Grok Build), whose dispatcher asks for

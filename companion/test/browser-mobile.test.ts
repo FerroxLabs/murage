@@ -215,7 +215,7 @@ describe("the launcher's probe", () => {
   it("says what this door is and what it is called, with no session", async () => {
     const answer = await knock("GET", "/healthz");
     expect(answer.status).toBe(200);
-    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sam's computer", mobile: 1, mobileFeatures: 1, approvalProof: 1 });
+    expect(JSON.parse(answer.body)).toEqual({ ok: true, name: "Sam's computer", mobile: 1, mobileFeatures: 1, approvalProof: 1, phoneFlags: 1 });
     expect(answer.headers["content-type"]).toBe("application/json");
     expect(answer.headers["cache-control"]).toBe("private, no-store");
     expect(answer.headers["set-cookie"]).toBeUndefined();

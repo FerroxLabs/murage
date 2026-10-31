@@ -2,6 +2,7 @@ import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { loopNoticeLabel } from "@/lib/loop-notice";
+import { ServedModelNote } from "@/components/ServedModelNote";
 import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
 import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
@@ -814,6 +815,7 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)
                 <div className="mt-1 text-[11px] text-ink-secondary/70">{withheldNote(message)}</div>

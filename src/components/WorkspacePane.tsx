@@ -50,6 +50,8 @@ import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDra
 import { saveBlob } from "@/lib/save-file";
 import type { MarkdownEditorController } from "./MarkdownEditor";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { openHelp } from "./help/HelpHost";
+import { hx } from "./help/help-copy";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
 import { MemorySettings } from "./MemorySettingsLazy";
@@ -344,6 +346,8 @@ export function WorkspacePaneSurface({
             {pane.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           </button>
         )}
+        {/* The Workspace pane carries its own "?": the floating tab would sit on its Save and Download buttons (styles.css hides it here). */}
+        <button type="button" className={cn(iconButton, "text-[14px] font-semibold")} aria-label={hx("ux.l4a.panel.open")} title={hx("ux.l4a.panel.open")} data-testid="workspace-pane-help" onClick={() => openHelp()}>?</button>
         <button type="button" className={iconButton} aria-label={t("workspacePane.close")} title={t("workspacePane.close")} data-testid="workspace-pane-close" onClick={() => dispatch({ type: "setOpen", open: false })}>
           <X size={16} />
         </button>

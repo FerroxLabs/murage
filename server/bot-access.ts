@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isNativeHighLevelName } from "../shared/highlevel.ts";
+import { highlevelRelayRefusal } from "./highlevel/access.ts";
 import { z } from "zod";
 import { ACCESS_REQUEST_TTL_MS, accessRequestExpired, CONNECTED_APP_TOOLS, accessGrantSchema, type AccessGrant } from "../shared/bot-access.ts";
 import { connectedAppToolId, isConnectedAppStatusTool } from "../shared/connected-app-calls.ts";
@@ -76,6 +78,8 @@ function forbiddenAuthArguments(value:unknown):boolean {
 export function assertConnectedAppCall(bot:BotRecord,input:unknown):void {
  if(bot.hidden||bot.composio===false)fail("Connected apps are disabled for this bot.");
  if(bot.draftOnly)assertDraftOnlyCall(input);
+ // Native HighLevel names run only on Murage's own HighLevel host, in every mode (GAP-HIGHLEVEL-109 section 7).
+ const nativeRefusal=highlevelRelayRefusal(input);if(nativeRefusal)fail(nativeRefusal);
  const policy=botAccessPolicy(bot);
  if(policy.mode==="unrestricted")return;
  if(!object(input))fail("Restricted connected-app access requires one explicit tool request.");
@@ -147,7 +151,7 @@ export function assertStoredConnectedAppAccess(bot:BotRecord,used:{requirements:
  * Do not relay tools/list to an upstream catalog that may describe other accounts. */
 export function restrictedConnectorTools(bot:BotRecord,id:unknown) {
  const policy=botAccessPolicy(bot);if(policy.mode!=="restricted")return null;
- const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
+ const approved=policy.grants.flatMap(grant=>grant.tools.filter(name=>!isNativeHighLevelName(name)&&CONNECTED_APP_TOOLS.some(tool=>tool.tool===name&&(!tool.writes||policy.allowWrites))));
  return {jsonrpc:"2.0",id,result:{tools:approved.length?[{name:"COMPOSIO_MULTI_EXECUTE_TOOL",description:"Run only owner-approved connected-app tools. Each tool must include its exact approved connected-account ID. Approved scopes: "+JSON.stringify(policy.grants.map(grant=>({...grant,tools:[...new Set(grant.tools)]}))),inputSchema:{type:"object",properties:{tools:{type:"array",minItems:1,maxItems:50,items:{type:"object",properties:{tool_slug:{type:"string",enum:[...new Set(approved)]},account:{type:"string",enum:[...new Set(policy.grants.map(grant=>grant.accountId))]},arguments:{type:"object"}},required:["tool_slug","account","arguments"],additionalProperties:false}},sync_response_to_workbench:{type:"boolean",const:false}},required:["tools"],additionalProperties:false}}]:[]}};
 }
 

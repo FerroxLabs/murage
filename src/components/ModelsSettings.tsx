@@ -7,6 +7,7 @@ import type { KeyProviderPreset, ProviderCatalog, ProviderConnectionMutation, Pr
 import { t } from "@/lib/i18n";
 import type { FluxConnectionMutation, FluxConnectionStatus } from "../../shared/flux-connection";
 import { FluxRouterConnection } from "./FluxRouterConnection";
+import { FluxRestartNotice } from "./FluxRestartNotice";
 import { LocalModelsSettings } from "./LocalModelsSettings";
 // Plan sign-in (ChatGPT, Grok): its own chunk, fetched when Models opens.
 const SubscriptionSignIn = lazy(() => import("./SubscriptionSignIn"));
@@ -173,6 +174,7 @@ export function ModelsSettings() {
       onSelect={async connectionId => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "select", revision: flux.revision, connectionId }); }}
       onTest={fluxTest}
       onDisconnect={async () => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "disconnect", revision: flux.revision }); }}>
+      <FluxRestartNotice required={Boolean(flux?.restartRequired)} configured={Boolean(flux?.configured)} onRestart={window.muragebox?.restartForFluxKey ? () => window.muragebox!.restartForFluxKey!() : undefined} />
       {fluxError && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{fluxError}</p>}
       {flux?.configured && !flux.conflict && fluxConnection && <InAdvanced><section aria-label="Flux Router models" className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{fluxModels.length} matching Flux chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</section></InAdvanced>}
     </FluxRouterConnection>

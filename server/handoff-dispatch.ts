@@ -10,11 +10,12 @@
 // store refuses a hand-off's prompt id unless the same transaction moved the hand-off's row to started (handoff-stamp.ts). `handoff-dispatch.structure.test.ts` reads the sources
 // and fails if any other code starts a hand-off.
 //
-//   gate     one gate, closed while the owner-record migration is pending OR the boot settling is still paging: nothing is admitted, the row is untouched.
+//   gate     one gate, closed while the owner-record migration is pending, the boot settling is still paging OR the server is closing: nothing is admitted, the row is untouched.
 //   admit    one synchronous decision from the row's own state: start | wait | cancel | settled | gaveUp.
 //   dispatch admit, the origin's pre-steps (the peer approval, or the shared request's dispatch and owner approval), admit AGAIN after every wait, then the
 //            start on the STORED destination with the ticket.
 //   failure  decided by the row's state, never by an error's text (delegations.ts settleAfterFailure): a start that never began waits, it is not ended.
+import { refuseAppChild } from "./app-trigger-zero.ts";
 import { database, transaction } from "./database.ts";
 import { startFailureCodeFrom, type StartFailureCode } from "./failure-code.ts";
 import { MurageStatus, cancelledEnding, status, type Outbound } from "./murage-status.ts";
@@ -198,6 +199,9 @@ function startDelegation(ticket: DispatchTicket, targetThreadId: string, options
   if (unmigratedOwnerRecordRan(db, id)) throw coded(DELEGATION_NOT_STARTABLE, "an earlier build's record says this handoff already ran");
   if (options.held && !(row.start_attempts && row.start_attempts > 0)) throw coded(DELEGATION_NOT_STARTABLE, "this handoff has no earlier start to resume");
   if (deletionOf(row.source_thread_id, row.from_bot_id, row.to_bot_id)) throw coded(DELEGATION_DELETED, DELETED_NOTE);
+  // The hard zero (app-trigger-zero.ts): a queued or recovered hand-off from a connected-app run never starts, before the
+  // started-state mutation and whatever approval it carries.
+  if (refuseAppChild({ threadId: row.source_thread_id }, "recovered")) throw coded(DELEGATION_NOT_STARTABLE, "a connected-app routine never hands work to other bots");
   const now = options.now ?? Date.now();
   const changed = db.prepare("UPDATE pending_delegations SET phase='started', started_at=?, target_thread_id=?, retry_at=NULL, start_attempts=COALESCE(start_attempts,0)+1 WHERE id=? AND phase<>'started'").run(now, targetThreadId, id);
   if (Number(changed.changes) !== 1) throw coded(DELEGATION_NOT_STARTABLE, "this handoff already started");

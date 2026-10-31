@@ -161,7 +161,8 @@ describe("every card that asks for a step can be answered on it", () => {
     const flux = FIRST_RUN_COPY.flux.key;
     const markup = render("flux", "key");
     expect(markup).toContain(flux.headingBare);
-    expect(markup).toContain("found nothing I can think with");
+    // §1.4 Variant C: the Chief's bare-machine line sits above the example brief.
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.agents["bare-needs-key"].second));
     expect(markup, "no way to enter the key the step cannot end without").toContain(flux.submit);
     expect(markup, "no way past it either").toContain(flux.dismiss);
   });
@@ -172,7 +173,8 @@ describe("card one: hello", () => {
   it("asks for two things, offers a way past, and says detection is already running", () => {
     const markup = render("hello", "welcome");
     expect(markup).toContain(copy.heading);
-    expect(markup).toContain(copy.lead.replace(/'/g, "&#x27;"));
+    expect(markup).toContain(copy.chief);
+    expect(markup).toContain(copy.emailHelper);
     expect(markup).toContain(`aria-label="${copy.nameLabel}"`);
     expect(markup).toContain(`aria-label="${copy.emailLabel}"`);
     expect(markup).toContain(copy.skip);
@@ -183,16 +185,16 @@ describe("card one: hello", () => {
     // The step that builds the owner's list, so its words are the ones that
     // were signed off rather than a paraphrase of them. Both fields say what
     // they are FOR: a field with no stated purpose is a field people skip.
-    // Sean's Halbert wording, 10-26: single opt-in, so no confirm line, and
-    // the setup guide is the reason to give a real address.
-    expect(copy.heading).toBe("Where should I send your setup guide?");
-    expect(copy.lead).toContain("We've put together a short guide to getting the most out of Murage from day one");
-    expect(copy.lead).toContain("Tell me your name so I know who I'm working for");
-    expect(copy.lead).toContain("every new release, insight, how-to and tutorial we put out");
-    expect(copy.lead).not.toMatch(/confirm/i);
+    // UX-FIRSTRUN-SCALE-1012 §1.3 (1.0.12): the Chief's line, the "Hello"
+    // heading, and the email's purpose said under the field. Still single
+    // opt-in (Sean 10-26), so no confirm line, and the setup guide is still
+    // the reason to give a real address.
+    expect(copy.chief).toBe("Hi. I am your Chief of Staff. Tell me what to call you and I will get the rest ready.");
+    expect(copy.heading).toBe("Hello");
+    expect(copy.emailHelper).toBe("For your setup guide and news. Nothing else.");
+    expect(copy.emailHelper).not.toMatch(/confirm/i);
     expect(copy.submit).toBe("Continue");
     expect(copy.skip).toBe("Skip");
-    expect(copy.lead).toContain(`press ${copy.skip}.`);
   });
 
   /**
@@ -218,7 +220,7 @@ describe("card one: hello", () => {
       .filter((entry) => readFileSync(root + entry.name, "utf8").includes("ownerEmail"))
       .map((entry) => entry.name);
     expect(consumers, "something now reads an owner email; the lead may say so again").toEqual([]);
-    expect(copy.lead).not.toMatch(/reach you|away from this computer|email you/i);
+    expect(`${copy.chief} ${copy.emailHelper}`).not.toMatch(/reach you|away from this computer|email you/i);
     // The one mail the lead DOES promise (1.0.7): the address goes to the news
     // list, which sends the getting set up guide at once. That promise is only
     // true while the server really posts it there.
@@ -284,7 +286,7 @@ describe("card two: what is already here", () => {
       ],
     });
     const markup = render("detect", "found");
-    expect(markup).toContain(lookedAroundLine("Sean"));
+    expect(markup).toContain(copy.foundChief);
     expect(markup).toContain(copy.heading);
     // Every runnable engine, named the way its owner names it.
     expect(markup).toContain("qwen3:8b on Ollama");
@@ -300,6 +302,41 @@ describe("card two: what is already here", () => {
   // has eighteen engines on it. What must never happen is the opposite
   // mistake: hiding something that CAN think behind a button, so the person
   // cannot see what is about to answer them.
+  // Astra r2 High: "I am using it now" with a local model is a claim about
+  // the Chief's OWN turns. It is backed only by `chiefLocalModel` (the
+  // Chief's own selected model, on a loopback host), never by the engine's
+  // default model or a registered host.
+  const LOCAL_ENGINE = { id: "ollama", name: "generic", installed: true, localModel: { model: "qwen3:8b", host: "Ollama" } };
+
+  it("says the Chief is on the local model only when the Chief's own model is local", async () => {
+    await machine({ agents: [LOCAL_ENGINE], chiefInstanceId: "ollama", chiefLocalModel: { model: "qwen3:8b", host: "Ollama" } });
+    const markup = render("detect", "found");
+    expect(markup).toContain(asHtml(copy.localChief("qwen3:8b")));
+    expect(markup).not.toContain(asHtml(copy.foundChief));
+  });
+
+  it("says the generic line when the Chief is on a remote model on an engine with a local default", async () => {
+    await machine({ agents: [LOCAL_ENGINE], chiefInstanceId: "ollama" });
+    const markup = render("detect", "found");
+    expect(markup).toContain(asHtml(copy.foundChief));
+    expect(markup).not.toContain(asHtml(copy.localChief("qwen3:8b")));
+  });
+
+  it("says the generic line when the Chief is on another engine or its model is unknown", async () => {
+    const claude = { id: "claude", name: "Claude Code", installed: true };
+    for (const view of [
+      { agents: [LOCAL_ENGINE, claude], chiefInstanceId: "claude" },
+      { agents: [LOCAL_ENGINE, claude] },
+      // A local reading for an engine that is not one that can answer here.
+      { agents: [LOCAL_ENGINE], chiefInstanceId: "gone", chiefLocalModel: { model: "qwen3:8b", host: "Ollama" } },
+    ]) {
+      await machine(view);
+      const markup = render("detect", "found");
+      expect.soft(markup).toContain(asHtml(copy.foundChief));
+      expect.soft(markup).not.toContain(asHtml(copy.localChief("qwen3:8b")));
+    }
+  });
+
   it("never hides a runnable engine behind the button", async () => {
     await machine({
       agents: Array.from({ length: 6 }, (_, index) => ({ id: `e${index}`, name: `Engine ${index}`, installed: true })),
@@ -336,7 +373,7 @@ describe("card two: what is already here", () => {
       agents: [],
       signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
     });
-    expect(render("detect", "signed-out"), "signed-out").toContain(copy.action);
+    expect(render("detect", "signed-out"), "signed-out").toContain(FIRST_RUN_COPY.agents["signed-out"].leave);
 
     // ...including the one where they went and signed in, which empties the
     // list and settles nothing on its own.
@@ -379,8 +416,8 @@ describe("card two: what is already here", () => {
     expect(markup, "the false line was removed and nothing took its place")
       .toContain(asHtml(signedOut.thirdBare));
     // The rest of the card is untouched: this is one sentence, not a variant.
-    expect(markup).toContain(asHtml(signedOut.second));
-    expect(markup).toContain(copy.action);
+    expect(markup).toContain(asHtml(signedOut.chief));
+    expect(markup).toContain(signedOut.leave);
   });
 
   it("still tells a machine that has an engine that it carries on", async () => {
@@ -477,7 +514,7 @@ describe("card three: the key", () => {
     }
   });
 
-  it("asks for the key only after it has opened the page that issues one", () => {
+  it("takes the key on the card, with the way to get one beside the box", () => {
     // The paste box is the SECOND screen. Asking somebody who has never heard
     // of Flux Router to paste something they do not have, with the way to get
     // one third in a row of three buttons, is the shape this replaces.
@@ -486,16 +523,17 @@ describe("card three: the key", () => {
     // React escapes the apostrophe in "computer's keychain" on its way into
     // the markup, which is a fact about HTML rather than about the copy.
     expect(markup).toContain(asHtml(copy.keyCaveat));
-    expect(markup).not.toContain('type="password"');
-    expect(markup).not.toContain(copy.connectHeading);
+    // 1.0.12 §1.5: the box is on the card, with "I need a key" beside it for
+    // the owner who has none, so nobody is asked to paste blind.
+    expect(markup).toContain('type="password"');
+    expect(markup).toContain(copy.signup);
   });
 
   it("offers a blank machine nothing to carry on with, because it has nothing", async () => {
     await machine({ nothingToThinkWith: true, ownerName: "Sean" });
     const markup = render("flux", "key");
     expect(markup).toContain(copy.headingBare);
-    expect(markup).toContain(lookedAroundLine("Sean").slice(0, 22));
-    expect(markup).toContain("found nothing I can think with");
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.agents["bare-needs-key"].second));
     expect(markup).toContain(copy.dismiss);
     expect(markup).not.toContain(copy.dismissLocal);
     expect(markup).not.toContain(copy.heading);
@@ -623,10 +661,11 @@ describe("step four: what can I take off your plate", () => {
   it("tags each job with what it is still waiting on, live", async () => {
     await machine({ ownerName: "Sean", fluxReady: false, nothingToThinkWith: false, connectedJobApps: [] });
     const missing = render("chat", "jobs");
-    // Nothing connected and no key: the brief wants both accounts and the
-    // key, and the jobs that reach for nothing are ready on this machine.
-    expect(missing).toContain(copy.tags.ready);
-    expect(missing).toContain("3 " + copy.tags.countTail);
+    // Nothing connected, no key, an engine of its own: the brief and the day
+    // need the key first and say so, and the jobs that reach for nothing
+    // carry no tag at all (§1.6: a tag only when something is missing).
+    expect(missing).toContain(copy.tags.flux);
+    expect(missing).not.toContain(copy.tags.ready);
 
     await machine({ ownerName: "Sean", fluxReady: true, connectedJobApps: ["gmail", "googlecalendar"] });
     expect(render("chat", "jobs")).toContain(copy.status.connected);
@@ -812,15 +851,16 @@ describe("cards five and six: the brief", () => {
     const { FirstRunBriefCard } = await import("./FirstRunBriefCard");
     const markup = renderToStaticMarkup(createElement(FirstRunBriefCard, { settled: false }));
     expect(markup).toContain('type="time"');
-    expect(markup).toContain('value="07:00"');
-    expect(markup).toContain("Set my brief for 7:00 am");
+    // 1.0.12 §1.7: the brief is offered at 8, one time everywhere.
+    expect(markup).toContain('value="08:00"');
+    expect(markup).toContain("Set my brief for 8:00 am");
     expect(markup).toContain(copy.weekdays);
   });
 
   it("points at the brief it has already run rather than promising one", () => {
     const markup = render(PARKED, "brief-ran");
     expect(markup).toContain(FIRST_RUN_COPY.brief["brief-ran"].body);
-    expect(markup).toContain("From tomorrow it arrives on its own at 7:00 am.");
+    expect(markup).toContain("From tomorrow it arrives on its own at 8:00 am.");
   });
 });
 
@@ -833,12 +873,41 @@ describe("card seven: two more", () => {
   });
 });
 
-describe("card eight: what shall we do", () => {
-  const copy = FIRST_RUN_COPY.routines.next;
-  it("offers work, a project, a job and the phone", () => {
+describe("card six: done", () => {
+  const copy = FIRST_RUN_COPY.routines.done;
+  it("offers work and a teammate, one sentence and one button each", () => {
     const markup = render(PARKED, "next");
-    for (const offer of [...copy.work, ...copy.more]) expect(markup).toContain(offer.label);
-    expect(markup).toContain("Hire your first teammate");
+    expect(markup).toContain(asHtml(copy.chief));
+    for (const row of [copy.work, copy.hire]) {
+      expect(markup).toContain(asHtml(row.title));
+      expect(markup).toContain(asHtml(row.line));
+      expect(markup).toContain(row.button);
+    }
+    // No desktop bridge here, so no phone row: it is offered only once a
+    // read-only probe has said what this computer can do.
+    expect(markup).not.toContain(copy.phone.button);
+    expect(markup).not.toContain(copy.phoneNeeds.button);
+  });
+
+  // Static markup runs no effects, so the mount probe is held to its source:
+  // refreshTailscale() starts the phone sidecar when it is off, and the Done
+  // card must only READ (bridge.state()) until somebody presses the row. The
+  // embedded phone card is live, and its "Not now" closes the row instead of
+  // writing a setup step this card does not own.
+  it("never starts phone access on mount, and keeps the phone walkthrough usable", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./FirstRunNextCard.tsx", import.meta.url)), "utf8");
+    const code = src.replace(/\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+    expect(code).not.toMatch(/refreshTailscale|\.start\(|\.pairing\(/);
+    expect(code).toMatch(/bridge\.state\(\)/);
+    // The card loads on first use (first paint stays small), behind the row's press, and the wrapper hands every prop on.
+    expect(code).toMatch(/\{phoneOpen && \([\s\S]*?<LazyFirstRunPhoneCard settled=\{false\} onClose=/);
+    expect(code).not.toMatch(/import \{[^}]*\bFirstRunPhoneCard\b/);
+    const lazy = readFileSync(fileURLToPath(new URL("./FirstRunPhoneCardLazy.tsx", import.meta.url)), "utf8");
+    expect(lazy).toMatch(/<Chunk\.Component \{\.\.\.props\} \/>/);
+    const phone = readFileSync(fileURLToPath(new URL("./FirstRunPhoneCard.tsx", import.meta.url)), "utf8");
+    expect(phone).toMatch(/if \(onClose\) \{\s*onClose\(\);\s*return;\s*\}\s*try \{\s*await skipSetupStep/);
   });
 
   // The card used to assert that backups were "already running quietly in the
@@ -871,7 +940,7 @@ describe("an upgrade that arrives mid-flow, with the old cards still in the thre
   /** Every control on these cards that writes to the checklist. */
   const WRITERS: Array<[string, string[]]> = [
     ["apps", [FIRST_RUN_COPY.apps.apps.connect, FIRST_RUN_COPY.apps.apps.dismiss]],
-    ["brief", ["Set my brief for 7:00 am", FIRST_RUN_COPY.brief.brief.dismiss]],
+    ["brief", ["Set my brief for 8:00 am", FIRST_RUN_COPY.brief.brief.dismiss]],
     ["more-routines", [FIRST_RUN_COPY.routines["more-routines"].add, FIRST_RUN_COPY.routines["more-routines"].dismiss]],
     ["phone", [FIRST_RUN_COPY.phone.phone.dismiss]],
     ["phone-needs-tailscale", [FIRST_RUN_COPY.phone.phone.dismiss]],

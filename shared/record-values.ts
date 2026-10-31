@@ -18,7 +18,8 @@
 /** routines.ts RoutineRunStatus. */
 export const ROUTINE_RUN_STATUSES = ["queued", "running", "waiting", "needs-you", "completed", "failed", "cancelled", "missed"] as const;
 /** routines.ts RoutineRunTrigger: why a run exists. */
-export const ROUTINE_RUN_TRIGGERS = ["schedule", "manual", "webhook", "channel"] as const;
+/** "app": a connected-app event run (1.0.11 APP-TRIGGERS); its runs live in the app run store, not routines.json runs. */
+export const ROUTINE_RUN_TRIGGERS = ["schedule", "manual", "webhook", "channel", "app"] as const;
 /** routines.ts RoutineTarget. */
 export const ROUTINE_TARGETS = ["bot", "room-goal"] as const;
 /** routines.ts RoutineRunOn. */

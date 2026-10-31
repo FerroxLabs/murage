@@ -1,6 +1,6 @@
 {
   "base": "cloud-v2/b3 @ 471d88479",
-  "note": "Channels main.mjs registers through the owned-main gate (plus the cua/updater registrars and android-device), flag off, measured by electron/ipc-inventory-harness.mjs on cloud-v2/b3. Regenerate only when a channel is added deliberately. 1.0.3: the train's own new channels (Settings L5 first-run backup, Flux desktop sign-in, Quit, prepare for the previous version) added on int/1.0.3, each classed local-only. 1.0.9: companion:share-ask (phone) and email-owner-signin:start/cancel (bot email owner sign-in), each classed local-only.",
+  "note": "Channels main.mjs registers through the owned-main gate (plus the cua/updater registrars and android-device), flag off, measured by electron/ipc-inventory-harness.mjs on cloud-v2/b3. Regenerate only when a channel is added deliberately. 1.0.3: the train's own new channels (Settings L5 first-run backup, Flux desktop sign-in, Quit, prepare for the previous version) added on int/1.0.3, each classed local-only. 1.0.9: companion:share-ask (phone) and email-owner-signin:start/cancel (bot email owner sign-in), each classed local-only. 1.0.12: flux-connection:restart-app (Settings restart after a Flux key change), local-only.",
   "handles": [
     "android-device:frame",
     "android-device:input",
@@ -104,6 +104,7 @@
     "engine:open-setup-terminal",
     "engine:open-terminal",
     "flux-connection:mutate",
+    "flux-connection:restart-app",
     "flux-signin:cancel",
     "flux-signin:start",
     "mcp-servers:cancel-sign-in",
@@ -290,6 +291,7 @@
     "platform",
     "quit()",
     "reconnectConnectedApps()",
+    "restartForFluxKey()",
     "revealWorkspace()",
     "saveFile()",
     "screenFrame()",

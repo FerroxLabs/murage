@@ -138,6 +138,21 @@ it("round trips notification privacy and quiet hours through an inactive restore
   expect(readFileSync(file)).toEqual(before);
 });
 
+// 1.0.8 owner zone: the owner's chosen time zone is part of the profile, so a backup carries it and a restore
+// brings it back instead of falling back to the new computer's zone.
+it("round trips the owner's time zone on the profile through a backup and an inactive restore", async () => {
+  const f = fixture();
+  const file = join(f.data, "config.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), profile: { name: "Fixture owner", timeZone: "America/Chicago" } }));
+  const staged = await stageInstallationState(f.data, f.parent);
+  expect(JSON.parse(readFileSync(join(staged.directory, "state", "config.json"), "utf8")).profile).toEqual({ name: "Fixture owner", timeZone: "America/Chicago" });
+  expect(staged.manifest.omitted.map(item => item.path)).not.toContain("config.json/profile/timeZone");
+  const archive = join(f.parent, "owner-zone.zip");
+  await writeInstallationArchive(f.data, archive);
+  const restored = await prepareInstallationRestore(archive, f.parent);
+  expect(JSON.parse(readFileSync(join(restored.stateDirectory, "config.json"), "utf8")).profile).toEqual({ name: "Fixture owner", timeZone: "America/Chicago" });
+});
+
 it("refuses malformed notification preferences rather than silently defaulting during snapshot", async () => {
   const f = fixture(), file = join(f.data, "config.json");
   const bytes = JSON.stringify({ notifications: { quietHours: { enabled: true, start: "22:00", end: "07:00", timeZone: "Invalid/Zone" } } });

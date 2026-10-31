@@ -55,7 +55,7 @@ test("aliases reject collisions, secrets and injection; mutation never accepts a
 test("connect and replacement enforce provider binding and preserve existing aliases", () => {
   const connected = change(state(), { action: "connect", key: "sk-flux-FAKE_ONLY" });
   assert.throws(() => change(connected, { action: "connect", key: "sk-flux-FAKE_OTHER" }), /already/);
-  assert.throws(() => change(connected, { action: "replace", key: "sk-ant-FAKE_ONLY" }), /different provider/);
+  assert.throws(() => change(connected, { action: "replace", key: "sk-ant-FAKE_ONLY" }), /does not match the AI service/);
   assert.equal(change(connected, { action: "replace", key: "sk-flux-FAKE_OTHER" }).workspaceKey, "sk-flux-FAKE_OTHER");
 });
 test("different raw configuration and inherited environment keys require explicit selection", () => {
@@ -70,10 +70,10 @@ test("different raw configuration and inherited environment keys require explici
 test("select and consolidate never make another provider's key the Flux key", () => {
   const google = `AIza${"g".repeat(35)}`;
   const saved = state([row("named", google)]);
-  assert.throws(() => change(saved, { action: "select", connectionId: "named" }), /different provider/);
-  assert.throws(() => change(saved, { action: "consolidate" }), /different provider/);
+  assert.throws(() => change(saved, { action: "select", connectionId: "named" }), /does not match the AI service/);
+  assert.throws(() => change(saved, { action: "consolidate" }), /does not match the AI service/);
   const legacy = { ...state([], ""), fileWorkspaceKey: "xai-fixture-key-private-0000" };
-  assert.throws(() => change(legacy, { action: "select", connectionId: "legacy-flux-file" }), /different provider/);
+  assert.throws(() => change(legacy, { action: "select", connectionId: "legacy-flux-file" }), /does not match the AI service/);
   // Not an sk-flux- value: never selectable as the Flux key (2026-10-01 ingress).
   assert.throws(() => change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "select", connectionId: "opaque" }), /not a Flux Router key/);
   assert.throws(() => change(state([row("opaque", "opaque-legacy-flux-key")]), { action: "consolidate" }), /not a Flux Router key/);

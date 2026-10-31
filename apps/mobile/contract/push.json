@@ -16,7 +16,7 @@
     { "kind": "call-note", "risk": "unrated", "category": "call-note" }
   ],
   "iosCategory": { "approval": "APPROVAL", "approval-open": "APPROVAL_OPEN", "question": "QUESTION", "done": "DONE", "resolved": "DONE", "device-job": "DEVICE_JOB", "call": "CALL", "call-note": "CALL_NOTE" },
-  "androidChannel": { "approval": "approvals", "approval-open": "approvals", "question": "questions", "done": "finished", "resolved": "finished", "device-job": "requests", "call": "calls", "call-note": "questions" },
+  "androidChannel": { "approval": "approvals", "approval-open": "approvals", "question": "questions", "done": "finished", "resolved": "finished", "device-job": "requests", "call": "calls_v2", "call-note": "questions" },
   "iosActions": {
     "CALL": [
       { "id": "ANSWER", "title": "Answer", "options": ["foreground", "authenticationRequired"] },

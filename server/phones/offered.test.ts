@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { familyOffered, phoneFamily, phonesOffered, shareAskOffered } from "./offered.ts";
+import { familyOffered, offerBlock, offeredAnswer, phoneFamily, phonesOffered, shareAskOffered } from "./offered.ts";
 import { routeClass, routePolicy } from "../route-policy.ts";
 
 const base = { features: { phoneTools: true }, cloudRole: undefined, launchProof: true, sharedWorkspace: false };
@@ -72,5 +72,26 @@ describe("route policy for the ask paths", () => {
     }
     expect(routeClass("POST", "/api/phones/ask-revoke")).toBe("companion");
     expect(routePolicy("POST", "/api/phones/ask-revoke")?.why.length).toBeGreaterThan(10);
+  });
+});
+
+describe("offeredAnswer (1.0.12 preview switches)", () => {
+  const facts = { features: { phoneTools: true, phoneShareAsk: true }, cloudRole: undefined, launchProof: true, sharedWorkspace: false };
+  it("keeps the 1.0.9 fields and adds each flag and the reason a flag that is on does nothing", () => {
+    expect(offeredAnswer(facts)).toEqual({ offered: true, flag: true, shareAsk: true, shareAskFlag: true, blocked: null });
+    expect(offeredAnswer({ ...facts, features: {} })).toEqual({ offered: false, flag: false, shareAsk: false, shareAskFlag: false, blocked: null });
+    expect(offeredAnswer({ ...facts, features: { phoneShareAsk: true } })).toMatchObject({ offered: false, flag: false, shareAsk: true, shareAskFlag: true });
+    expect(offeredAnswer({ ...facts, cloudRole: "home" })).toMatchObject({ offered: false, flag: true, shareAsk: false, shareAskFlag: true, blocked: "cloud-home" });
+    expect(offeredAnswer({ ...facts, sharedWorkspace: true })).toMatchObject({ offered: false, flag: true, blocked: "shared-workspace" });
+    expect(offeredAnswer({ ...facts, launchProof: false })).toMatchObject({ offered: false, flag: true, blocked: "launch-proof" });
+  });
+  it("names a Cloud home first, then a shared workspace, then the launch proof", () => {
+    expect(offerBlock({ ...facts, cloudRole: "home", sharedWorkspace: true, launchProof: false })).toBe("cloud-home");
+    expect(offerBlock({ ...facts, sharedWorkspace: true, launchProof: false })).toBe("shared-workspace");
+    expect(offerBlock({ ...facts, launchProof: false })).toBe("launch-proof");
+    expect(offerBlock(facts)).toBeNull();
+  });
+  it("PATCH /api/config, the switches' only write, stays desktop class", () => {
+    expect(routeClass("PATCH", "/api/config")).toBe("desktop");
   });
 });
