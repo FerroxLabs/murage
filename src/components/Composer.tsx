@@ -58,6 +58,7 @@ import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
 import { RefreshPermissionsButton } from "./ThreadFollowControls";
+import { computerHere } from "@/lib/computer-surface";
 import { fullAccessRefusalMessage, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
@@ -193,9 +194,10 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
         aria-label={`${current === "ask" ? "Ask for approval" : currentEntry.label}${routine ? ` for the routine ${routine.name}` : ""}`}
         title={routine ? `Every run of the routine ${routine.name} works here at this level. Choosing one here sets it for the routine.` : undefined}
         data-routine-level={routine ? "" : undefined}
+        data-coach="level-chip"
         disabled={bot.busy}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+        className="relative flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary after:absolute after:-inset-1.5 after:content-[''] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
         <PermissionModeIcon mode={current} size={14} className="opacity-70" />
         {currentEntry.chip}
@@ -230,6 +232,8 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
   const desktop = useDesktopSurface();
   const { state } = useStore();
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  // 3.1: the bot's own record holds the default for new conversations
+  const profile = state.bots.find((candidate) => candidate.id === bot.id);
   return (
     <PermissionModeMenu
       botName={bot.name}
@@ -238,7 +242,8 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
       engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
       engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
       scope={routine ? { routine: routine.name } : {}}
-      footer={!routine && desktop ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={onDone} /> : undefined}
+      botDefault={profile ? permissionModeOf(profile) : undefined}
+      footer={!routine && computerHere(desktop) === true ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={onDone} /> : undefined}
       onPick={onPick}
     />
   );

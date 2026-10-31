@@ -3,6 +3,8 @@ import { api, useStoreActions, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { FULL_ACCESS_DESKTOP_ONLY, isDesktopOnlyMode, permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import { Switch } from "./SettingsPrimitives";
+import { t } from "@/lib/i18n";
+import { LevelExamples } from "./approval/LevelExamples";
 
 export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord";
 export const FULL_ACCESS_SETUP_OPTION = "Also approve setup requests: installing skills, proposing routines and trusting folders";
@@ -17,20 +19,20 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 ];
 
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
+  // UX-TRUST-MOMENTS-1012 section 8 rows 16, 17 and 10: what each level
+  // still asks about, and routines keep their own level (T10)
   if (mode === "unlimited") {
-    return onThisComputer
-      ? "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Webhook turns still ask. Routines use this level unless a routine has its own.";
+    return `${t("ux.l1.level.unlimitedDetail")}${onThisComputer ? " That includes this computer." : ""} Webhook turns still ask.`;
   }
   if (mode === "full") {
     return onThisComputer
-      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? `Keeps going without asking, including on this computer and before contacting other bots. ${t("ux.l1.level.fullDetail")} Webhook turns still ask.`
+      : `Keeps going without asking, including before contacting other bots. ${t("ux.l1.level.fullDetail")} Webhook turns still ask.`;
   }
   if (mode === "auto") {
     return onThisComputer
-      ? "Keeps going on this computer; you'll still be asked about anything destructive, and about questions it asks you."
-      : "Keeps going on its own; you'll still be asked about anything destructive, and about questions it asks you.";
+      ? `Keeps going on this computer. ${t("ux.l1.level.autoDetail")}`
+      : `Keeps going on its own. ${t("ux.l1.level.autoDetail")}`;
   }
   return onThisComputer
     ? "Approve each action on this computer yourself."
@@ -64,7 +66,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "On unless you turn it off. Group chats, other people and webhooks still ask. Routines use their own level." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "Messages from anyone else and webhooks still ask. Routines use their own level." },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (
@@ -87,7 +89,7 @@ export function BotPermissionDefault({
               title={unavailable ? FULL_ACCESS_DESKTOP_ONLY : undefined}
               onClick={() => current !== mode && onChoose(mode)}
               className={cn(
-                "flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium disabled:cursor-not-allowed",
+                "min-h-11 flex-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed",
                 current === mode ? "bg-raised text-ink" : "text-ink-secondary hover:text-ink disabled:hover:text-ink-secondary",
               )}
             >
@@ -97,6 +99,7 @@ export function BotPermissionDefault({
         })}
       </div>
       <div className="mt-2 text-[12.5px] text-ink-secondary">{modeDetail(current, onThisComputer)}</div>
+      <LevelExamples current={current} only={remote ? current : undefined} className="mt-3 rounded-lg bg-inset px-3 py-2" />
       {desktop === true && botId && <OpenConversationPermissions key={botId} botId={botId} requested={requested} mode={current}
         acknowledged={current === "unlimited" ? bot.noLimitsAcknowledgedAt !== undefined : current !== "full" || bot.fullAccessAcknowledgedAt !== undefined || bot.noLimitsAcknowledgedAt !== undefined}
         onConfirmLevel={() => onChoose(current)} />}
@@ -110,10 +113,10 @@ export function BotPermissionDefault({
               <div className="mt-0.5 text-[11.5px] text-ink-secondary">{hint}</div>
             </div>
             <Switch
-              checked={key === "fullAccessChannelMessages" ? bot[key] !== false : bot[key] === true}
+              checked={bot[key] === true}
               disabled={!full || remote}
               aria-label={label}
-              onClick={() => onOption(key, key === "fullAccessChannelMessages" ? bot[key] === false : bot[key] !== true)}
+              onClick={() => onOption(key, bot[key] !== true)}
             />
           </div>
         ))}

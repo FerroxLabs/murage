@@ -26,7 +26,7 @@ import { cloudHomeCopy } from "./cloud-home/copy.ts";
 import { cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
 import { handleOwnServerApi } from "./cloud-home/own-server.ts";
 import { cloudIdentity, isPasskeyOwnerBrowser } from "./cloud-request-identity.ts";
-import { cloudPhoneHighRiskRefusal, isDesktopApp, ownerSurface, skipsFreshAuth } from "./cloud-owner-surface.ts";
+import { cloudPhoneHighRiskRefusal, isDesktopApp, isOwnersComputer, ownerSurface, skipsFreshAuth } from "./cloud-owner-surface.ts";
 import { readOwnerTimeZone, validateOwnerTimeZone, writeOwnerTimeZone } from "./cloud-home/timezone.ts";
 // 1.0.9 Sentinel: health producers, owner reads, page and digest delivery (server/sentinel/server-host.ts, owner-api.ts).
 import { captureActiveFromControl, startServerSentinel } from "./sentinel/server-host.ts";
@@ -407,20 +407,22 @@ import { addBotMcpServer } from "./mcp-bot-add.ts";
 import { mcpCredentialCards, mcpEnableCard, mcpEnableRefusal, mcpKeyHeld, openMcpCards, resolveMcpCard, resolveMcpCredential, withKeyHeld, withKeyValue } from "./mcp-bot-cards.ts";
 
 import { applyRoutinePermissionMode, botPermissionMode, effectiveRoutinePermissionMode, capQueuedPeerSource, peerTurnAuthority, routineCardThreadOf, routineRunGrants, routineRecordUnwrittenVerdict, routineTurnApproval, routineValueTargetLine, turnPermissionEnforcement, type RoutinePeerSource, type RoutinePermissionMode } from "./routine-permissions.ts";
-import { GRANT_SCHEMA, isAppShapeKey, isStaleGrant, withoutStaleGrants } from "../shared/app-action-words.ts";
+import { GRANT_SCHEMA, isAppShapeKey, withoutStaleGrants } from "../shared/app-action-words.ts";
 import { actionGrantSet, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { grantRequestFor, routineCardFields, routineDecisionKeys } from "./approval-grant-request.ts";
 import { requestOwnerId } from "./request-owner.ts";
-import { toolApprovalUnattended, unattendedMarkAction } from "./unattended-mark.ts";
-import { approvalKey, approvalHoldNote, isBareCommandGrant, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionGrant, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
+import { approvalKey, approvalHoldNote, isCommandTool, exactAllowKeyFor, exactCommandForRequest, fullAccessCovers, hasFullAccess, isQuestionTool, realKeyPaths, withoutBareCommandGrants, withoutQuestionGrants, type AutoContext, type FullAccessOrigin } from "./auto-approve.ts";
 import { approvalIsCut, cardAuditSummary, cardDetail } from "./approval-text.ts";
 import { isOwnWorkspaceBookkeeping, ownWorkspaceRoots } from "./own-workspace-approval.ts";
 import { isOwnToolResultRead } from "./own-tool-results.ts";
 import { approvalCardGrants } from "./approval-card-grants.ts";
+import { cardLevelOf, cardWhy } from "./approval-card-why.ts";
+import { botAlwaysAllowSave, botAlwaysAllowUndo, cardKeysOf, registerTaskAllowances, routineGrantRefusal, routineRunLive, routineSaveRefusal, taskAllowClear, taskAllowRemove, taskAllowanceWire, taskGrantRefusal, type TaskGrantReceipt } from "./approval-grant-routes.ts";
+import { taskScopeOffered } from "../shared/fold-scopes.ts";
 import { classifyAsk, classifyAskRows, deletesPlacedInside, stopLineKey, type StopHit, type StopLinePlace } from "./stop-line.ts";
 import { commandCwdFromToolInput, commandFromToolInput } from "../shared/exact-command.ts";
 import { extendStepLine, newStepLine, type StepLevel } from "./full-access-steps.ts";
-import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, rememberRecipients, stopLineRealpath, stopLineRoots } from "./stop-line-state.ts";
+import { TaskAllowances, chatAllowance, githubRepoOf, knownRecipients, recipientForms, recipientsNotNotedLine, rememberStopRecipientsFor, stopLineRealpath, stopLineRoots } from "./stop-line-state.ts";
 import { requestReview, resolveAutoReviewMode, shouldReview } from "./auto-review.ts";
 import {
   BrowserCleanupCoordinator,
@@ -5088,6 +5090,8 @@ const wireBot = (bot: NonNullable<ReturnType<typeof store.bot>>, taskWindow?: nu
       usageTotal: aggregates!.usage,
       grantsAll: aggregates!.grants,
     } : {}),
+    // UX-TRUST-MOMENTS-1012 2.3.12: how many 12-hour allowances it holds (no keys)
+    ...taskAllowanceWire(bot.id),
   };
 };
 
@@ -6472,7 +6476,7 @@ async function answerRequest(
   answers?: QuestionAnswer[],
   /** "Allow for this task" on a stop-line card: record the card's own scoped
    * grant for this bot and conversation once the engine has taken the answer. */
-  options?: { allowForTask?: boolean; desktop?: boolean },
+  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt },
 ): Promise<RequestOutcome> {
   const flight = `${threadId}:${requestId}`;
   answersInFlight.set(flight, (answersInFlight.get(flight) ?? 0) + 1);
@@ -6555,7 +6559,7 @@ async function deliverAnswer(
   message?: string,
   decidedFor?: { id: string; name: string },
   answers?: QuestionAnswer[],
-  options?: { allowForTask?: boolean; desktop?: boolean },
+  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt },
 ): Promise<RequestOutcome> {
   // Putting something on the internet is said yes to on the computer running Murage only.
   // A chat button, a push action or a paired phone can still say no.
@@ -6595,9 +6599,13 @@ async function deliverAnswer(
   const stopHit = stopHitByRequest.get(`${threadId}:${requestId}`);
   if (outcome !== "unavailable") stopHitByRequest.delete(`${threadId}:${requestId}`);
   if (!question && behavior === "allow" && outcome === "allowed-once" && decidedFor) {
-    rememberStopRecipients(decidedFor.id, stopHit);
-    // The key comes from the card the server built, never from the client.
-    if (options?.allowForTask && card?.taskAllowKey) taskAllowances.grant(decidedFor.id, threadId, card.taskAllowKey);
+    rememberStopRecipients(decidedFor.id, stopHit, threadId);
+    // The key comes from the card the server built, never from the client,
+    // and only when the card's fold offers it (UX-TRUST-MOMENTS-1012 1.2, F18)
+    if (options?.allowForTask && card?.taskAllowKey && taskScopeOffered(card.cardClass, cardKeysOf(card), card.taskAllowKey)) {
+      // the receipt names it only when this answer added it, so Undo never takes back an older allowance
+      if (taskAllowances.grant(decidedFor.id, threadId, card.taskAllowKey) && options.receipt) options.receipt.taskAdded = [card.taskAllowKey];
+    }
   }
   // A folder-trust answer IS an authorization (unlike an ordinary question):
   // remembered for the folder's workspace once the engine has taken it, and
@@ -7850,6 +7858,7 @@ function isUnattended(threadId?: string | null): boolean {
 // messaging someone new. These are the facts the pure classifier needs, and
 // the two things it remembers (server/stop-line-state.ts).
 const taskAllowances = new TaskAllowances();
+registerTaskAllowances(taskAllowances);
 /** The folder each conversation's current turn runs in, recorded at dispatch. */
 const turnCwdByThread = new Map<string, string>();
 /** The stop hit behind each open card, so an allowed message can record its
@@ -7964,10 +7973,12 @@ function deletesInsideFor(botId: string, threadId: string, event: { tool: string
 
 /** A message the owner allowed (or a grant covered) goes to people who are
  * now known: the next message to them is not "someone new". */
-function rememberStopRecipients(botId: string, hit: StopHit | undefined): void {
-  if (hit?.kind !== "message" || !hit.recipients?.length) return;
-  try { rememberRecipients(DATA_DIR, botId, hit.recipients); }
-  catch (error) { console.warn(`[stop-line] could not record recipients: ${error instanceof Error ? error.message : String(error)}`); }
+function rememberStopRecipients(botId: string, hit: StopHit | undefined, threadId: string): void {
+  // a public post is never learned (2.3.7); a failed write is said in the transcript (F16)
+  const missed = rememberStopRecipientsFor(DATA_DIR, botId, hit);
+  if (!missed.length) return;
+  const bot = store.bot(botId);
+  try { store.appendMessage(threadId, { role: "bot", kind: "text", actorKind: "murage", murage: { kind: "status" }, ...(bot ? { from: { botId: bot.id, name: bot.name, color: bot.color } } : {}), text: recipientsNotNotedLine(missed) }); } catch { /* the send was approved either way */ }
 }
 
 /** The line each conversation's current run of Full access approvals is
@@ -8490,7 +8501,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       // the keyboard, never because an outside event started it: its tool approvals are that routine's, at the ceiling it carries.
       // NOLIMITS-PROJECT-ROUTINE-107: the same for the owner's own routine run in a project room (queued as an unattended room request)
       const routineWake = unattended ? routineWakeCeiling(event.threadId) ?? (asker ? projectRoomRoutineCeiling(event.threadId, asker) : undefined) : undefined;
-      const toolUnattended = toolApprovalUnattended(unattended, routineWake);
+      const toolUnattended = unattended && !routineWake;
       // A question tool filed as a permission (Claude's AskUserQuestion via
       // the permission host, Pi `select`, a Codex form elicitation) is still
       // a question: never auto-approved, never remembered, never reviewed.
@@ -8699,7 +8710,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             if (answerMs > 250) rateLimited("permission-auto-slow", 60_000, suppressed => `[permission] auto-answer slow ms=${Math.round(answerMs)} engine=${instance.driverKind}${suppressed ? ` more=${suppressed}` : ""}`);
             if (outcome === "unavailable") throw new Error("the ask is no longer open");
             stopHitByRequest.delete(`${event.threadId}:${requestId}`);
-            rememberStopRecipients(asker.id, stopHit ?? undefined);
+            rememberStopRecipients(asker.id, stopHit ?? undefined, event.threadId);
             // Full access answers almost every step now that engines ask it,
             // so its approvals collapse into one quiet line per run of steps
             // that counts up and opens to list them. Every other automatic
@@ -8788,6 +8799,21 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         ? event.questions?.length ? event.questions : [questionFromChoices(event.summary, event.choices)]
         : undefined;
       const questionUnattended = questions ? isUnattended(event.threadId) || Boolean(routineRun) : false;
+      // the grants the card offers and its class (server/approval-card-grants.ts):
+      // none for a command that always asks
+      const cardGrants = approvalCardGrants({
+        permission: Boolean(permission), questionAsk: Boolean(questionAsk), inputCut: Boolean(inputCut),
+        approvalScope: event.approvalScope, stopHit, tool: event.tool, summary: event.summary,
+        exactAllowKey, routineAllowCard, verdict, call: event, grantCard,
+        unattended: Boolean(unattended), automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
+      });
+      // UX-TRUST-MOMENTS-1012 1.4: the why-line, from the class, the stop finding and the card's level
+      const runTrigger = cardGrants.cardClass?.unattended ? routines?.activeRunOrigin(event.threadId)?.triggerSource : undefined;
+      const why = cardGrants.cardClass && asker ? cardWhy({
+        cardClass: cardGrants.cardClass, stopHit, level: cardLevelOf(judged), botName: asker.name,
+        ...(grantRequest?.routine?.routineName ? { routineName: grantRequest.routine.routineName } : {}),
+        ...(runTrigger === "webhook" || runTrigger === "channel" ? { origin: runTrigger } : {}),
+      }) : undefined;
       const message = pushMessage({
         role: "bot",
         kind: "options",
@@ -8811,13 +8837,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
           ...(event.folderTrust ? { folderTrust: event.folderTrust } : {}),
           ...(questionUnattended ? { unattended: true } : {}),
           tool: permission ? event.tool : undefined,
-          // the grants the card offers (server/approval-card-grants.ts):
-          // none for a command that always asks
-          ...approvalCardGrants({
-            permission: Boolean(permission), questionAsk: Boolean(questionAsk), inputCut: Boolean(inputCut),
-            approvalScope: event.approvalScope, stopHit, tool: event.tool, summary: event.summary,
-            exactAllowKey, routineAllowCard, verdict, call: event, grantCard,
-          }),
+          ...cardGrants,
+          ...(why ? { why } : {}),
           ...(inputCut ? { toolInputTruncated: true } : {}),
           held: questionAsk ? approvalHoldNote({ approve: null, source: "question-tool" }) : permission ? approvalHoldNote(verdict) : undefined,
           approvalScope: event.approvalScope,
@@ -10980,12 +11001,9 @@ async function startTurnAdmitting(
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
   // a webhook turn, or one inherited from a bot already running unattended
-  // a person typing into this bot ends the unattended window immediately; 1.0.10 (NOLIMITS-CARDS r1): so does a scheduled
-  // or manual run of the owner's own routine. It is the owner's standing instruction, not an outside event: a mark left by
-  // an earlier channel or webhook turn in this thread must not turn the run, and every peer it asks, into a turn nobody
-  // started (it carded a plain Read at No limits, 10-31 23:13:59Z). The rule itself: unattended-mark.ts
   if (opts?.automationSource === "webhook" || opts?.automationSource === "channel" || opts?.unattended) markUnattended(threadId);
-  else if (unattendedMarkAction(opts, humanIsOwner) === "clear") clearUnattended(threadId);
+  // a person typing into this bot ends the unattended window immediately
+  else if (opts?.automationSource === undefined && !opts?.commsDepth && !opts?.cardContinuation) clearUnattended(threadId);
   // A scheduled or manual routine run is judged at its routine's level (its
   // own, or the bot's level right now), not at whatever this run's task
   // copied when it was made. The level is applied here, before the run's
@@ -11035,7 +11053,7 @@ async function startTurnAdmitting(
     : undefined;
   // who this turn is for, as Full access reads it (fullAccessTurnOrigin)
   const fullAccessOrigin: FullAccessOrigin = !humanIsOwner ? "other"
-    : opts?.automationSource === "channel" ? opts?.notOwnerAudience === true ? "other" : "owner-channel"
+    : opts?.automationSource === "channel" ? "owner-channel"
     : opts?.unattended ? "other" // (an explicitly unattended turn never had a routine level or an inherited ceiling before wakes did)
     : routineLevel || inheritedRoutine ? "routine"
     : opts?.automationSource !== undefined || opts?.unattended || isUnattended(threadId) ? "other" : "owner";
@@ -13568,6 +13586,8 @@ const channelApprovalActions: (targetBotId: string, bindingId?:()=>string|undefi
       // a question is never answered with allow/deny
       if (!card?.requestId || isQuestionCard(card)) return false;
       if (card.approvalScope && behavior === "allow") return false; // answer-time recheck: computer control is approved on the desktop
+      // a task row the card's fold does not show is refused before delivery, never answered Allow once (UX-TRUST-MOMENTS-1012 1.2)
+      if (forTask && behavior === "allow" && taskGrantRefusal(card)) return false;
       // "Allow for this task" records the card's own scoped grant
       const outcome = forTask && behavior === "allow" && card.taskAllowKey
         ? await answerRequest(bot.threadId, bot.modelSelection.instanceId, card.requestId, behavior, undefined, { id: bot.id, name: bot.name }, undefined, { allowForTask: true })
@@ -19164,8 +19184,7 @@ function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
   if (routinePeerSources.has(threadId) && !isUnattended(threadId)) return "routine";
   const run = routines?.activeRunOrigin(threadId);
-  // 1.0.10 (NOLIMITS-CARDS r3): only the owner's own DM; a group or any audience besides the owner stays "other"
-  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) && run.notOwnerAudience !== true ? "owner-channel"
+  if (run) return run.triggerSource === "channel" && run.humanPrincipal !== undefined && isWorkspaceOwner(run.humanPrincipal) ? "owner-channel"
     : routineRunLevel(threadId) ? "routine" : "other";
   return isUnattended(threadId) ? "other" : "owner";
 }
@@ -24074,9 +24093,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (allowKey !== undefined && allowKey !== card.routineAllowKey && !offer?.actionKeys.includes(allowKey) && !offer?.stopKeys.some((stop) => stop.key === allowKey)) {
         return json(res, 409, { error: "that grant is not on a pending approval for this routine" });
       }
+      // a payment is never remembered for a routine (UX-TRUST-MOMENTS-1012 2.3.4)
+      const payRefusal = routineGrantRefusal(allowKey, chosen);
+      if (payRefusal) return json(res, 400, { error: payRefusal });
       const picked = chosen ?? (allowKey !== undefined && offer?.stopKeys.some((stop) => stop.key === allowKey) ? [allowKey] : undefined);
       const keys = routineDecisionKeys(offer, card.routineAllowKey, picked);
       if (typeof keys === "string") return json(res, 409, { error: keys });
+      // only from a routine row the card's own fold shows, and only its keys (UX-TRUST-MOMENTS-1012 1.2, 2.3.4)
+      const foldRefusal = routineSaveRefusal(card, routineId, keys);
+      if (foldRefusal) return json(res, foldRefusal.status, { error: foldRefusal.error });
       // A13-FIX-DESIGN C1: an approving answer is required before anything else
       if (body?.answer !== true) return json(res, 400, { error: "Always allow answers this request too: send answer true. Nothing was saved." });
       // Rule 81d: the phone's remembered choice passes the same fresh check its
@@ -24090,8 +24115,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const run = routines!.routineRunForThread(threadId);
       const decided = await rememberAndAnswer({
         res, threadId, requestId, answer: body.answer, onComputer: requestSurface(req.headers, url.searchParams) === "desktop",
-        holderId: run?.botId ?? "",
-        live: () => routines!.routineRunForThread(threadId)?.routineId === routineId,
+        holderId: run?.botId ?? "", botName: run ? store.bot(run.botId)?.name : undefined,
+        // the exact run that raised the card, checked again before the write (2.3.9)
+        live: routineRunLive((thread) => routines!.routineRunForThread(thread), threadId, routineId),
         row: { kind: "routine", ownerId: routineId },
         plan: () => {
           const planned = routines!.planAlwaysAllowSet(routineId, keys);
@@ -24102,7 +24128,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       });
       if (!decided.ok) return json(res, decided.status, { error: decided.error, ...(decided.answered ? { outcome: decided.answered } : {}) });
       if (!decided.value) return json(res, 404, { error: "no such routine" });
-      return json(res, 200, { routine: decided.value.routine, saved: keys, outcome: decided.outcome });
+      // `added`: what this save added (Undo removes only that); `saved`: the whole set it answered with
+      return json(res, 200, { routine: decided.value.routine, saved: keys, added: decided.value.added, outcome: decided.outcome });
     }
     routineMatch = path.match(/^\/api\/routines\/([\w-]+)\/run$/);
     if (routineMatch && method === "POST") {
@@ -26944,7 +26971,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // 1.0.4 SL-K K3: copy the bot's permissions onto one chat. First call previews, the second applies that exact preview.
     m = path.match(/^\/api\/bots\/([\w-]+)\/tasks\/([\w-]+)\/permissions\/refresh$/);
     if (m && method === "POST") {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "not found" });
+      // preview and apply alike: the owner's computer only, never a Cloud surface or the phone (L1A-GRANT-AUTHORITY-1013 B4)
+      if (!isOwnersComputer(req.headers, url.searchParams)) return json(res, 404, { error: "not found" });
       const record = store.bot(m[1]);
       const task = record ? store.taskByThread(record.id, m[2]) : undefined;
       if (!record || !task) return json(res, 404, { error: "no such task" });
@@ -26962,7 +26990,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // Desktop only, like adding one: route-policy.ts classes it desktop as well.
     m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow\/remove$/);
     if (m && method === "POST") {
-      if (requestSurface(req.headers, url.searchParams) !== "desktop") return json(res, 404, { error: "no such route" });
+      // the owner's computer only: no Cloud surface, no phone, no browser (L1A-GRANT-AUTHORITY-1013 B3)
+      if (!isOwnersComputer(req.headers, url.searchParams)) return json(res, 404, { error: "no such route" });
       const record = store.bot(m[1]);
       if (!record) return json(res, 404, { error: "no such bot" });
       const body = await readBody(req);
@@ -26975,83 +27004,55 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
     }
+    // UX-TRUST-MOMENTS-1012 2.3.8, 2.5: Undo of a task row, and Settings "Clear"
+    m = path.match(/^\/api\/bots\/([\w-]+)\/task-allow\/(remove|clear)$/);
+    if (m && method === "POST") {
+      const taskAllowDeps = {
+        mayApprove: mayApprove(req, url), readBody: () => readBody(req), botExists: (botId: string) => Boolean(store.bot(botId)),
+        botThread: (botId: string, threadId: string) => store.tasks(botId).some((task) => task.threadId === threadId) || store.groupByThread(threadId)?.memberIds.includes(botId) === true,
+        ownerThread: (threadId: string) => isWorkspaceOwner(threadHumanPrincipal(threadId)), allowances: taskAllowances,
+      };
+      const reply = m[2] === "remove" ? await taskAllowRemove(taskAllowDeps, m[1]!) : await taskAllowClear(taskAllowDeps, m[1]!);
+      if (reply.status === 200 && store.bot(m[1]!)) broadcast({ kind: "bot", bot: wireBot(store.bot(m[1]!)!, ROSTER_TASK_WINDOW) });
+      return json(res, reply.status, reply.body);
+    }
+    // The card's Undo of one "Always" save, by holder (server/approval-grant-routes.ts, UX-TRUST-MOMENTS-1012 1.3, M06)
+    m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow\/undo$/);
+    if (m && method === "POST") {
+      const reply = await botAlwaysAllowUndo({
+        desktop: isOwnersComputer(req.headers, url.searchParams),
+        readBody: () => readBody(req),
+        botName: (botId) => store.bot(botId)?.name,
+        isTask: (botId, threadId) => store.tasks(botId).some((task) => task.threadId === threadId),
+        remove: (botId, taskThread, keys) => store.removeBotGrants(botId, taskThread, keys),
+        publish: (botId) => { const visible = wireBot(store.bot(botId)!, ROSTER_TASK_WINDOW); broadcast({ kind: "bot", bot: visible }); return visible; },
+      }, m[1]!);
+      return json(res, reply.status, reply.body);
+    }
+    // "Always allow" on a bot's card (server/approval-grant-routes.ts): the
+    // computer only, never a routine's card, only a key the card's fold offers,
+    // through the one choke point; the reply names what was added.
     m = path.match(/^\/api\/bots\/([\w-]+)\/always-allow$/);
     if (m && method === "POST") {
-      const body = await readBody(req);
-      const allowKey = typeof body.allowKey === "string" ? body.allowKey : "";
-      // Rule 78c: the set a several-action card offered, echoed whole
-      const allowKeys = Array.isArray(body.allowKeys) && body.allowKeys.length && body.allowKeys.every((key: unknown) => typeof key === "string") ? body.allowKeys as string[] : undefined;
-      const grantBotId = m[1];
-      const record = store.bot(grantBotId);
-      if (!record) return json(res, 404, { error: "no such bot" });
-      if (!allowKey && !allowKeys) return json(res, 400, { error: "allowKey required" });
-      // A question is answered by the owner every time; no grant speaks for
-      // them, even over a card an older build rendered with this key.
-      if (allowKey && isQuestionGrant(allowKey)) return json(res, 400, { error: "questions cannot be always allowed" });
-      // A card an older build rendered may still carry a grant over every
-      // connected-app action (or every "other" tool); it is never stored.
-      if (allowKey && isStaleGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
-      // nor a command tool's bare name, which an older build offered on a PowerShell card (1.0.4 G09-3)
-      if (allowKey && isBareCommandGrant(allowKey)) return json(res, 400, { error: "This approval can only be allowed once." });
-      // A card raised while this bot was answering in a ROOM sits on the
-      // room's thread, which is not one of the bot's own tasks. The client
-      // still offers "Always allow" there, and this route answered every one
-      // of them with "No such thread for this bot." — so the grant never
-      // landed and the identical card came back on the next turn, forever.
-      // A room turn reads the bot's own defaults (the asker is the bot
-      // record, not a task), which is exactly where such a grant belongs.
-      const roomThread =
-        typeof body.threadId === "string" &&
-        !store.tasks(grantBotId).some((task) => task.threadId === body.threadId) &&
-        store.groupByThread(body.threadId)?.memberIds.includes(grantBotId)
-          ? body.threadId
-          : undefined;
-      const bot = roomThread ? record : requestedDirectBot(grantBotId,body.threadId);
-      const cardThread = roomThread ?? bot.threadId;
-      // AMEND-13 Rule 81: the decision names its pending request; the server
-      // rereads THAT card and never searches for some card holding the key.
-      const requestId = typeof body.requestId === "string" ? body.requestId : "";
-      if (!requestId) return json(res, 400, { error: "requestId required" });
-      const pending = store.openRequestCardRows(cardThread).find((message) =>
-        message.card?.requestId === requestId &&
-        !message.card?.answered &&
-        message.card?.dismissed !== true &&
-        // In a room many bots share one transcript; only the bot that raised
-        // the card may be granted anything by answering it.
-        (!roomThread || message.from?.botId === grantBotId)
-      )?.card;
-      // Rule 78c: a card's whole action set, or the one key it offered
-      const grantKeys = !pending ? undefined
-        : allowKeys ? (pending.allowKeys?.length === new Set(allowKeys).size && allowKeys.every((key) => pending.allowKeys!.includes(key)) ? [...pending.allowKeys] : undefined)
-        : allowKey && (pending.allowKey === allowKey || pending.exactAllowKey === allowKey) ? [allowKey] : undefined;
-      if (!grantKeys) {
-        return json(res, 409, { error: "that grant is not on a pending approval for this bot" });
-      }
-      if (grantKeys.some((key) => isQuestionGrant(key) || isStaleGrant(key) || isBareCommandGrant(key))) return json(res, 400, { error: "This approval can only be allowed once." });
-      // A13-FIX-DESIGN C1 (Rules 81a, 81b, amended): through the one choke
-      // point. The set is saved on the bot's defaults and this task in ONE
-      // durable write (a room card: the bot's defaults, which a room turn
-      // reads), only after the approving answer of the same call has landed
-      // with the request's holder: the engine that raised it, or the peer
-      // bus for a bot-to-bot contact card (C1b). The grant belongs to the
-      // BOT, not to whichever task happened to be open; new tasks inherit
-      // the defaults at creation.
-      const taskThread = roomThread ? undefined : bot.threadId;
-      const decided = await rememberAndAnswer({
-        res, threadId: cardThread, requestId, answer: body.answer, onComputer: true, holderId: grantBotId,
-        row: { kind: "bot", ownerId: grantBotId, ...(taskThread ? { taskThreadId: taskThread } : {}) },
-        plan: () => {
-          const planned = store.planBotGrants(grantBotId, taskThread, grantKeys).added;
-          return [...new Set([...planned.bot, ...planned.task])];
-        },
-        // Rule 57b: the builder's first key of an app shape marks the record,
-        // so a later load keeps what this builder wrote.
-        write: () => store.rememberBotGrants(grantBotId, taskThread, grantKeys, grantKeys.some(isAppShapeKey) ? { grantSchema: GRANT_SCHEMA as 2 } : {}),
-      });
-      if (!decided.ok) return json(res, decided.status, { error: decided.error, ...(decided.answered ? { outcome: decided.answered } : {}) });
-      const visible = wireBot(store.bot(grantBotId)!, ROSTER_TASK_WINDOW);
-      broadcast({ kind: "bot", bot: visible });
-      return json(res, 200, { bot: visible, saved: grantKeys, outcome: decided.outcome });
+      const reply = await botAlwaysAllowSave({
+        desktop: isOwnersComputer(req.headers, url.searchParams),
+        readBody: () => readBody(req),
+        botName: (botId) => store.bot(botId)?.name,
+        isTask: (botId, threadId) => store.tasks(botId).some((task) => task.threadId === threadId),
+        roomHas: (threadId, botId) => store.groupByThread(threadId)?.memberIds.includes(botId) === true,
+        directThread: (botId, requested) => requestedDirectBot(botId, requested).threadId,
+        pendingCard: (threadId, requestId, roomBotId) => store.openRequestCardRows(threadId).find((message) =>
+          message.card?.requestId === requestId && !message.card?.answered && message.card?.dismissed !== true &&
+          // In a room many bots share one transcript; only the bot that raised the card may be granted anything by answering it.
+          (!roomBotId || message.from?.botId === roomBotId))?.card,
+        routineName: (routineId) => routines?.listRoutines().find((candidate) => candidate.id === routineId)?.name,
+        remember: rememberAndAnswer,
+        plan: (botId, taskThread, keys) => store.planBotGrants(botId, taskThread, keys).added,
+        // Rule 57b: the builder's first key of an app shape marks the record, so a later load keeps what this builder wrote.
+        write: (botId, taskThread, keys) => store.rememberBotGrants(botId, taskThread, keys, keys.some(isAppShapeKey) ? { grantSchema: GRANT_SCHEMA as 2 } : {}),
+        publish: (botId) => { const visible = wireBot(store.bot(botId)!, ROSTER_TASK_WINDOW); broadcast({ kind: "bot", bot: visible }); return visible; },
+      }, m[1]!, res);
+      return json(res, reply.status, reply.body);
     }
     m = path.match(/^\/api\/bots\/([\w-]+)$/);
     if (m && method === "GET") {
@@ -27069,6 +27070,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) {
         return json(res, 400, { error: "body must be a JSON object" });
       }
+      // a bot's "Always" list is the owner's computer's alone: refused before the turn is taken or anything is written (L1A-GRANT-AUTHORITY-1013 B5)
+      if (body.alwaysAllow !== undefined && !isOwnersComputer(req.headers, url.searchParams)) return json(res, 404, { error: "no such route" });
       // Archive and restore take the bot's turn, as a DELETE of it does (and it waits for them): the DELETE tears the bot's facilities
       // down before its commit, so a restore landing in its awaits would refuse the commit with the bot alive and stripped (r5 order
       // 6). The rest of this handler runs inside the turn, which `run` releases in its own `finally`: a handler that throws, or whose
@@ -28603,6 +28606,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const skip = body.behavior === "skip";
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
       if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
+      // "For 12 hours in this conversation" is checked first, before any branch can answer: a card whose fold shows no task row
+      // (a peer, extension or host-consent card) is refused, never answered Allow once (L1A-GRANT-AUTHORITY-1013 4, Astra 7)
+      const taskRefusal = body.allowForTask === true && behavior === "allow" ? taskGrantRefusal(cardByRequest(bot.threadId, String(body.requestId))?.card) : undefined;
+      if (taskRefusal) return json(res, 400, { error: taskRefusal });
       // 1.0.4 SL-I I5: the limit offer card is the harness's own (a bot's shell never answers it: mayApprove above)
       if (String(body.requestId).startsWith("limit-") && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const limitAnswer = answerLimitCard(bot.threadId, String(body.requestId), behavior ?? undefined, body);
@@ -28653,8 +28660,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       const onComputer = isDesktopApp(req.headers, url.searchParams);
       if (!publishAnswerAllowed(String(body.requestId), behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
-      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name }, undefined, { ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}) });
-      return json(res, 200, { ok: true, outcome });
+      // the task row was checked first, above; the reply names what it added (UX-TRUST-MOMENTS-1012 1.3)
+      const receipt: TaskGrantReceipt = {};
+      const outcome = await answerRequest(bot.threadId, bot.modelSelection.instanceId, String(body.requestId), behavior, body.message, { id: bot.id, name: bot.name }, undefined, { receipt, ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}) });
+      return json(res, 200, { ok: true, outcome, ...(receipt.taskAdded ? { taskAdded: receipt.taskAdded } : {}) });
     }
     // QW Q4: a press on a widget. The text is built here; the widget is settled and the owner send accepted in ONE transaction,
     // under ONE send id per widget ("widget-" + its id): the first press settles, any other ref, client or retry meets
@@ -28711,6 +28720,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
       if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const requestId = String(body.requestId);
+      // "For 12 hours in this conversation" is checked first, before any branch can answer: a card whose fold shows no task row
+      // (a peer, extension or host-consent card) is refused, never answered Allow once (L1A-GRANT-AUTHORITY-1013 4, Astra 7)
+      const taskRefusal = body.allowForTask === true && behavior === "allow" ? taskGrantRefusal(cardByRequest(threadId, requestId)?.card) : undefined;
+      if (taskRefusal) return json(res, 400, { error: taskRefusal });
       // 1.0.4 SL-I I5: the limit offer card is the harness's own (a bot's shell never answers it: mayApprove above)
       if (requestId.startsWith("limit-") && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
       const limitAnswer = answerLimitCard(threadId, requestId, behavior ?? undefined, body);
@@ -28797,8 +28810,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
       const onComputer = isDesktopApp(req.headers, url.searchParams);
       if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
-      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor, undefined, { ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}) });
-      return json(res, 200, { ok: true, outcome });
+      // the task row was checked first, above; the reply names what it added (UX-TRUST-MOMENTS-1012 1.3)
+      const receipt: TaskGrantReceipt = {};
+      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor, undefined, { receipt, ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}) });
+      return json(res, 200, { ok: true, outcome, ...(receipt.taskAdded ? { taskAdded: receipt.taskAdded } : {}) });
     }
     // "Who this bot can message" (SPEC-P 3.12): an owner-only reach field,
     // desktop class; it only ever widens reach, so a restore resets it.
@@ -30354,7 +30369,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // the answer is computed per-request rather than baked into
       // configStatus(), because the same process serves both.
       const surface = requestSurface(req.headers, url.searchParams);
-      return json(res, 200, { ...(surface === "desktop" ? configStatus() : scopedConfig(configStatus())), surface });
+      // `computer`: the owner's computer (isOwnersComputer, never on a Cloud home), so the page offers bot-level "Always" only where the route takes it
+      return json(res, 200, { ...(surface === "desktop" ? configStatus() : scopedConfig(configStatus())), surface, computer: isOwnersComputer(req.headers, url.searchParams) });
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);

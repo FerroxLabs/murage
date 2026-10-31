@@ -43,10 +43,15 @@ export class TaskAllowances {
     else this.byTask.delete(id);
     return list;
   }
-  grant(botId: string, threadId: string, key: string): void {
-    const list = this.live(botId, threadId).filter((item) => item.key !== key);
+  /** Gives (or renews) one allowance. True when it was not already held, so
+   * the card's Undo takes back only an allowance this answer added. */
+  grant(botId: string, threadId: string, key: string): boolean {
+    const live = this.live(botId, threadId);
+    const list = live.filter((item) => item.key !== key);
+    const added = list.length === live.length;
     list.push({ key, at: this.now() });
     this.byTask.set(`${botId}:${threadId}`, list.slice(-MAX_ALLOWANCES_PER_TASK));
+    return added;
   }
   /** The allowance that covers this hit, if the owner gave one for this task. */
   covering(botId: string, threadId: string, hit: StopHit): string | undefined {
@@ -61,6 +66,70 @@ export class TaskAllowances {
   clearThread(threadId: string): void {
     for (const id of [...this.byTask.keys()]) if (id.endsWith(`:${threadId}`)) this.byTask.delete(id);
   }
+  /** UX-TRUST-MOMENTS-1012 2.3.8: take back one allowance (Undo of a task
+   * row). True when it was held; every other allowance stays. */
+  revoke(botId: string, threadId: string, key: string): boolean {
+    const list = this.live(botId, threadId);
+    const kept = list.filter((item) => item.key !== key);
+    if (kept.length === list.length) return false;
+    if (kept.length) this.byTask.set(`${botId}:${threadId}`, kept);
+    else this.byTask.delete(`${botId}:${threadId}`);
+    return true;
+  }
+  /** Every live allowance this bot holds, across its open conversations
+   * (2.3.12, the Settings line). */
+  countForBot(botId: string): number {
+    let count = 0;
+    for (const id of [...this.byTask.keys()]) {
+      if (!id.startsWith(`${botId}:`)) continue;
+      count += this.live(botId, id.slice(botId.length + 1)).length;
+    }
+    return count;
+  }
+  /** Settings "Clear": every allowance of this bot, in every conversation.
+   * Returns how many it cleared. */
+  clearBot(botId: string): number {
+    const count = this.countForBot(botId);
+    for (const id of [...this.byTask.keys()]) if (id.startsWith(`${botId}:`)) this.byTask.delete(id);
+    return count;
+  }
+}
+
+/** 2.3.7: the recipients an allowed message makes known. A public post is
+ * never learned (Sean, 2026-10-30): only "Always, for posts on {where}"
+ * stands for it, which Settings lists and Take back removes. */
+export function recipientsToRemember(hit: StopHit | undefined): string[] {
+  if (hit?.kind !== "message" || !hit.recipients?.length) return [];
+  if (hit.place?.startsWith("public:")) return [];
+  return hit.recipients.filter((recipient) => !isPublicDestination(recipient));
+}
+
+/** A destination the stop line names for a public post (`github:<owner/repo>`),
+ * never a person. */
+export function isPublicDestination(recipient: string): boolean {
+  return /^github:[^/\s]+\/[^/\s]+$/i.test(recipient);
+}
+
+/** F16: remember the recipients of an allowed send, best effort. Returns the
+ * ones that could not be noted (the write threw), so the caller can say so in
+ * the transcript; the next send to them asks again. */
+export function rememberStopRecipientsFor(dataDir: string, botId: string, hit: StopHit | undefined, write: typeof rememberRecipients = rememberRecipients): string[] {
+  const fresh = recipientsToRemember(hit);
+  if (!fresh.length) return [];
+  try {
+    write(dataDir, botId, fresh);
+    return [];
+  } catch (error) {
+    console.warn(`[stop-line] could not record recipients: ${error instanceof Error ? error.message : String(error)}`);
+    return fresh;
+  }
+}
+
+/** F16, the transcript line (the English of `ux.l1.why.recipientNotNoted`,
+ * src/locales/en-ux/l1.json; a test keeps the two the same). */
+export function recipientsNotNotedLine(names: readonly string[]): string {
+  const name = names.length <= 1 ? names[0] ?? "" : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `Murage could not note ${name} as known, so the next email to ${name} asks again.`;
 }
 
 const BOT_ID = /^[\w-]{1,128}$/;
@@ -73,6 +142,9 @@ function recipientsFile(dataDir: string, botId: string): string | undefined {
   return BOT_ID.test(botId) ? [recipientsDir(dataDir), `${botId}.json`].join(sep) : undefined;
 }
 
+/** Bots whose dropped public destinations were already counted in the log. */
+const publicDropLogged = new Set<string>();
+
 /** Everyone this bot has already sent a message to. A missing or unreadable
  * record is an empty one: the next message then asks, which is the side
  * this is allowed to fail on. */
@@ -81,7 +153,15 @@ export function knownRecipients(dataDir: string, botId: string): Set<string> {
   if (!file || !existsSync(file)) return new Set();
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as { recipients?: unknown };
-    return new Set(Array.isArray(parsed.recipients) ? parsed.recipients.filter((item): item is string => typeof item === "string") : []);
+    const listed = Array.isArray(parsed.recipients) ? parsed.recipients.filter((item): item is string => typeof item === "string") : [];
+    // 2.3.7 migration: a public destination an older build learned is not a
+    // person; dropped here (the next write leaves it out), counted once per bot
+    const people = listed.filter((item) => !isPublicDestination(item));
+    if (people.length !== listed.length && !publicDropLogged.has(botId)) {
+      publicDropLogged.add(botId);
+      console.warn(`[stop-line] dropped ${listed.length - people.length} public destinations from a bot's known recipients`);
+    }
+    return new Set(people);
   } catch {
     return new Set();
   }

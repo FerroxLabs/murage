@@ -129,8 +129,11 @@ export interface RememberInput<T> {
   onComputer: boolean;
   /** the bot the request must be held for; another holder saves nothing */
   holderId: string;
-  /** a route's own live check after the reread (a routine's run is still live) */
+  /** a route's own live check after the reread (a routine's run is still
+   * live), checked again after delivery, before the write (2.3.9) */
   live?: () => boolean;
+  /** the bot by name, for the outcome line when it stopped waiting */
+  botName?: string;
   row: { kind: "bot" | "routine"; ownerId: string; taskThreadId?: string };
   /** validates the choice and names the keys the active write would add;
    * throws (with a `status`) when it cannot be saved */
@@ -144,6 +147,13 @@ export type RememberResult<T> =
   | { ok: false; status: number; error: string; answered?: RequestOutcome };
 
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** 2.3.9: the outcome line when the holder no longer waits for this answer. */
+export function stoppedWaiting(botName: string | undefined): string {
+  return `${botName?.trim() || "Your bot"} stopped waiting for this. Ask it again.`;
+}
+/** F9: the routine's run ended between delivery and the write. */
+export const RUN_ENDED = "This run has ended. The next run will ask again.";
 
 /**
  * Stage, answer, then write. The write runs only when the answer's outcome
@@ -185,7 +195,14 @@ export async function rememberAndAnswer<T>(deps: GrantChokeDeps, input: Remember
   }
   if (outcome !== "allowed-once") {
     discard();
+    // UX-TRUST-MOMENTS-1012 2.3.9 (F1, H08): the holder stopped waiting
+    if (outcome === "unavailable") return { ok: false, status: 409, error: stoppedWaiting(input.botName), answered: outcome };
     return { ok: false, status: 409, error: "This request was answered elsewhere, so nothing was saved.", answered: outcome };
+  }
+  // F9: the run that raised the card ended while the answer was delivered
+  if (input.live && !input.live()) {
+    discard();
+    return { ok: false, status: 409, error: RUN_ENDED, answered: outcome };
   }
   let value: T;
   try {

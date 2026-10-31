@@ -26,6 +26,9 @@ export const ROUTINE_GRANT_REASONS = {
   nothing: "Nothing in this request can be remembered for this routine, so it can only be allowed once.",
 } as const;
 
+/** The routine offer's line for a pay finding: it asks on every run. */
+export const ROUTINE_PAY_NOT_REMEMBERED = "Paying asks on every run.";
+
 export interface GrantRequestInput {
   ask: GrantCall & { tool: string; summary: string };
   /** the call-level stop finding (server/stop-line.ts classifyAsk) */
@@ -94,6 +97,8 @@ function routineOffer(input: GrantRequestInput, routine: { routineId: string; ro
   const stopKeys: RoutineStopOffer[] = [];
   for (const hit of hits) {
     const key = stopLineKey(hit);
+    // a payment is never remembered, for a routine either (UX-TRUST-MOMENTS-1012 2.3.4)
+    if (hit.kind === "pay") { if (!notRemembered.includes(ROUTINE_PAY_NOT_REMEMBERED)) notRemembered.push(ROUTINE_PAY_NOT_REMEMBERED); continue; }
     if (!key || !isRoutineGrantKey(key)) { notRemembered.push(hit.what); continue; }
     if (stopKeys.some((offer) => offer.key === key)) continue;
     const recipient = hit.kind === "message" && hit.place && !hit.place.startsWith("public:") && !hit.place.includes(",") ? hit.place : undefined;
