@@ -1438,7 +1438,7 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * goes silent forever without ever answering the RPC.
  *
  * Off by default (0.1.61): the thread's silence watch (server/turn-watchdog.ts,
- * 20 minutes, or the room's own setting) is the one place silence is judged.
+ * one hour, or the room's own setting) is the one place silence is judged.
  * A three-minute guard here cut long tool calls short and ignored the owner's
  * setting. Setting the knob turns it back on for an engine that needs a
  * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */

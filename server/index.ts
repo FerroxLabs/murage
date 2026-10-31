@@ -7363,9 +7363,12 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // whose thread has emitted NOTHING for stallMs — activity-based, so an
 // hour-long turn that keeps streaming is never touched, and turns parked on a
 // human approval are exempt. Room turns follow the same rule on their own
-// silence limit (rooms.turnTimeoutMinutes, never under this one's default);
+// silence limit (rooms.turnTimeoutMinutes, from 20 minutes, set apart from this default);
 // they no longer have an absolute ceiling (0.1.61).
-const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
+// One hour (was 20 minutes): a quiet tool, a long build or a slow connected
+// app can sit silent past 20 minutes without being stuck (LONGWORK-STALL-60).
+// Owner Stop is not on this clock: it ends a turn at any moment.
+const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 60 * 60_000);
 // The watch is armed at admission (upstream #1682), and setup is latched to
 // this longer ceiling until dispatch: a box, VPS or VM being prepared, a
 // connected-app discovery or a memory build can be slow and silent without

@@ -39,8 +39,9 @@ const BROWSER_PROFILE_ID = /^[a-z0-9_-]{1,40}$/;
 // work while it was still streaming. A short value was chosen under that old
 // meaning, so a saved value under the minimum still loads (the whole config
 // file is refused on a schema error) and is raised to it on read; a new save
-// must be at least the minimum. The minimum and default match the direct
-// turns' 20-minute no-activity limit (TURN_STALL_MS in index.ts).
+// must be at least the minimum. The minimum and default stay at 20 minutes;
+// the direct turns' no-activity limit (TURN_STALL_MS in index.ts) is one hour
+// since 1.0.12, and a room keeps its own, shorter setting.
 export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
