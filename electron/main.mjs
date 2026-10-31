@@ -1363,6 +1363,8 @@ const LOG_DIR = app.getPath("logs");
 const DESKTOP_CRASH_LOG = path.join(LOG_DIR, "desktop-crashes.log");
 const DESKTOP_CRASH_LOG_MAX_BYTES = 512 * 1024;
 let logStream = null;
+// Past the single-instance lock, before the first line of this run.
+if (rotateLogAtLaunch(path.join(LOG_DIR, "server.log"))) slog("earlier lines are in server.log.1");
 let desktopShutdownStarted = false;
 import {
   companionAdvertisedHostedUrl,
@@ -1399,6 +1401,7 @@ import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 import { lanPairingView } from "./companion-lan-pairing.mjs";
 import { LINUX_KEYRING_REQUIRED, secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { DESK_POST_TIMEOUT_MS, startDeskPresence } from "./desk-presence.mjs";
+import { openLogStream, rotateLogAtLaunch } from "./log-rotate.mjs";
 
 let companionPowerBlocker = null;
 
@@ -1417,7 +1420,7 @@ function slog(line) {
   try {
     if (!logStream) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+      logStream = openLogStream(path.join(LOG_DIR, "server.log"), (lost) => { if (logStream === lost) logStream = null; });
     }
     logStream.write(`[${new Date().toISOString()}] ${line}\n`);
   } catch {

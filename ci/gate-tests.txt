@@ -81,6 +81,7 @@ electron/flux-composio-token.test.mjs	all	cloud home, enrolment and key custody
 electron/harness-resources.test.mjs	all	protects user-visible behaviour in core flows
 electron/incident-export.test.mjs	all	protects user-visible behaviour in core flows
 electron/install-id.test.mjs	all	protects user-visible behaviour in core flows
+electron/log-rotate.test.mjs	all	the server log stays a size an owner can open and send, and launch never stops over it
 electron/managed-companion-guardian.test.mjs	all	cloud home, enrolment and key custody
 electron/managed-companion-tunnel.test.mjs	all	cloud home, enrolment and key custody
 electron/managed-composio.test.mjs	all	cloud home, enrolment and key custody
