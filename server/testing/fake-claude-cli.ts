@@ -328,6 +328,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 const sessionId = argAfter("--resume") ?? argAfter("--session-id") ?? "fake-session";
 const model = argAfter("--model") ?? "claude-fake";
 let dumped = false;
+let slowServerStarted = false;
 let turnRunning = false;
 let steered: string[] = [];
 // `final-steer`: the turn's final answer is being written. Input that arrives
@@ -922,6 +923,17 @@ const playTurn = (prompt: JsonValue) => {
     return;
   }
 
+  // FAKE_CLAUDE_SLOW_SERVER: a stdio server slow enough to be in the init baseline, which
+  // later forks one child and never waits for it, as a Python server on subprocess.Popen
+  // does. `zombie`: that child exits and stays a zombie. `live`: it keeps running.
+  if (process.env.FAKE_CLAUDE_SLOW_SERVER && !slowServerStarted) {
+    slowServerStarted = true;
+    const late = process.env.FAKE_CLAUDE_SLOW_SERVER === "live" ? "sleep 30" : "true";
+    const server = spawn("sh", ["-c", `sleep 2.4; ${late} & exec sleep 60`], { stdio: "ignore" });
+    process.on("exit", () => { try { server.kill("SIGKILL"); } catch { /* already gone */ } });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
+  }
+
   // the real CLI re-announces init on every turn of a live process
   out({ type: "system", subtype: "init", session_id: sessionId, model });
 
@@ -1074,6 +1086,12 @@ const playTurn = (prompt: JsonValue) => {
 
   // Upstream signed-out protocol capture; the success-result variant ensures
   // a flagged auth failure cannot be mislabeled as successful completion.
+  if (mode === "org-login-off") {
+    out({ type: "assistant", error: "api_error", is_api_error_message: true,
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Your organization has disabled subscription access for Claude Code. (oauth_org_not_allowed)" }] } });
+    out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
   if (mode === "not-logged-in" || mode === "not-logged-in-success-result") {
     out({ type: "assistant", error: "authentication_failed", is_api_error_message: true,
       message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in · Please run /login" }] } });
