@@ -25,7 +25,9 @@ export const FLUX_DESKTOP_TOKEN_URL = "https://fluxrouter.ai/api/desktop/token";
 export const FLUX_DESKTOP_SIGNIN_TIMEOUT_MS = 5 * 60 * 1000;
 export const FLUX_DESKTOP_EXCHANGE_TIMEOUT_MS = 15_000;
 
-// Contract: MURAGE-DESKTOP-SIGNIN.md (FluxMain PR #207, not yet deployed).
+// Contract: MURAGE-DESKTOP-SIGNIN.md (FluxMain PR #207, live in production since
+// 2026-10-30: the authorize page answers and the token route returns
+// {api_key, key_prefix, name, key_id (UUID), scopes} for client murage-desktop).
 // Documented: any loopback path and port (http://127.0.0.1:<port>/<path>), the
 // exact redirect_uri reused at exchange; JSON body {code, code_verifier,
 // redirect_uri} with NO client_id or grant_type; response {api_key, ...}.
@@ -52,7 +54,8 @@ const MESSAGES = Object.freeze({
   busy: "Sign-in is already open in your browser.",
   // bot email (contract r2.5): the token came back without email:owner, so bot email is not open on this Flux account yet
   email_dark: "Bot email opens on your Flux account soon. Everything else stays as it is.",
-  FLUX_SIGNIN_UNAVAILABLE: "Sign in with Flux is not available yet. Paste your key instead.",
+  // only when config.json sets features.fluxDesktopSignin = false (the default is on)
+  FLUX_SIGNIN_UNAVAILABLE: "Sign in with Flux is turned off on this computer. Paste your key instead.",
 });
 const fail = (code) => new FluxSigninError(code, MESSAGES[code] ?? MESSAGES.rejected);
 
@@ -106,7 +109,7 @@ export function fluxDesktopSigninEnabledIn(config) {
   return fluxDesktopSigninOn(config?.features);
 }
 
-/** Throws FLUX_SIGNIN_UNAVAILABLE when the switch is off. */
+/** Throws FLUX_SIGNIN_UNAVAILABLE when the switch is explicitly off (config.json features.fluxDesktopSignin = false). */
 export function assertFluxDesktopSigninEnabled(config) {
   if (!fluxDesktopSigninEnabledIn(config)) throw fail("FLUX_SIGNIN_UNAVAILABLE");
 }

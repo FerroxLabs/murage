@@ -24,8 +24,9 @@ export interface RespondDeps {
   now(): number;
   /** A hidden thread answers exactly like a missing one (Global Constraints). */
   visible(threadId: string): boolean;
-  /** `scope` is the LIVE card's approval scope at answer time. */
-  card(threadId: string, requestId: string): { pending: boolean; scope?: string } | null;
+  /** `scope` is the LIVE card's approval scope at answer time. `answered` is true only when the card carries an
+   *  answer; a card the system closed (dismissed, or the engine stopped waiting) is neither pending nor answered. */
+  card(threadId: string, requestId: string): { pending: boolean; answered?: boolean; scope?: string } | null;
   /** The request's rating right now (index.ts liveRating over the live card): the same rule the response route uses. */
   liveRating(threadId: string, requestId: string): "low" | "risky" | "unrated";
   answer(threadId: string, requestId: string, decision: "allow" | "deny"): Promise<string>;
@@ -45,11 +46,18 @@ export async function respondFromPush(input: { deviceId: string; bindingId: stri
   // The notification outlives the owner hiding this bot from the phone: the
   // lock-screen action must then be as unavailable as the detail route is.
   if (!deps.visible(event.threadId)) return fail(404, "unavailable", "This request is no longer available. Open Murage to see what is waiting.");
-  if (event.category === "resolved") return fail(409, "already_answered", "This was already answered.");
+  // A resolved push says who settled the card: only an answer is "already answered"; a card the system closed is unavailable.
+  if (event.category === "resolved") return event.resolvedBy === "dismissed" || event.resolvedBy === "expired"
+    ? fail(404, "unavailable", "This request is no longer available. Open Murage to see what is waiting.")
+    : fail(409, "already_answered", "This was already answered.");
   if (event.category !== "approval" && event.category !== "approval-open") return fail(400, "not_supported", "Open Murage to answer this.");
   if (body.revision !== event.revision) return fail(409, "stale", "This changed since the notification. Open Murage to answer.");
   const card = deps.card(event.threadId, body.requestId);
-  if (!card?.pending) return fail(409, "already_answered", "This was already answered.");
+  // Only a card the owner (or another phone) really answered is "already answered". A card the system closed
+  // (dismissed, expired, the turn ended) or one that is gone gets the same reply as an expired push: the phone
+  // then says "Open Murage to answer this." (iOS/Android PushOutcome map 404 "unavailable"), never "Approved."
+  if (!card || (!card.pending && !card.answered)) return fail(404, "unavailable", "This request is no longer available. Open Murage to see what is waiting.");
+  if (!card.pending) return fail(409, "already_answered", "This was already answered.");
   // An Allow that meets an unfinished Deny is told so before any step-up or
   // risk check, and the decision is neither consumed nor changed.
   if (body.decision === "allow" && deps.store.unfinishedDecision(event.threadId, body.requestId) === "deny") return fail(409, "unfinished", "An earlier answer from this phone did not finish. Open Murage to answer.");
