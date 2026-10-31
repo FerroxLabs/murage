@@ -24,6 +24,22 @@ export class Unreadable extends Error {
   }
 }
 
+let failureRead = false;
+
+/** Is the failure read of NOLIMITS-MEANS-IT 3.3 (c) running? In it the lexers read on through a well-formed spelling
+ * they do not model, as a value of that one word, so that one word fails one statement and not the whole text. Off,
+ * every lexer is as it always was. */
+export function failuresPassing(): boolean {
+  return failureRead;
+}
+
+export function setFailuresPassing(on: boolean): void {
+  failureRead = on;
+}
+
+/** The name of the value a failure read puts for such a spelling. No text can bind it. */
+const UNMODELED_VALUE = "unmodeled?";
+
 /** More text than this asks: nothing an owner types is that long. */
 export const MAX_TEXT_CHARS = 256 * 1024;
 
@@ -141,7 +157,7 @@ class Lexer {
       return [];
     }
     this.scan();
-    if (this.pending.length) throw new Unreadable("heredoc", "no terminator");
+    if (this.pending.length && !failureRead) throw new Unreadable("heredoc", "no terminator");
     this.tokens.push({ kind: "eof" });
     return this.tokens;
   }
@@ -210,7 +226,7 @@ class Lexer {
    * where a command name stands opens one. */
   private pushWord(word: Word): void {
     const option = optionExpansion(word);
-    if (option) throw new Unreadable("expansion", option);
+    if (option && !failureRead) throw new Unreadable("expansion", option);
     this.tokens.push({ kind: "word", word });
     if (this.redirectTarget) { this.redirectTarget = false; return; }
     const bare = word.parts.length === 1 && word.parts[0]!.kind === "lit" && word.parts[0]!.quote === "none" ? word.parts[0]!.text : undefined;
@@ -334,7 +350,8 @@ class Lexer {
         lines.push(line);
         if (last) break;
       }
-      if (!found) throw new Unreadable("heredoc", `no terminator ${heredoc.delimiter}`);
+      // a shell takes the end of the text as the end of the heredoc
+      if (!found && !failureRead) throw new Unreadable("heredoc", `no terminator ${heredoc.delimiter}`);
       heredoc.body = lines.map((line) => `${line}\n`).join("");
       if (this.i > s.length) this.i = s.length;
     }
@@ -512,6 +529,16 @@ class Lexer {
     const close = this.matchBrace(open);
     const inner = s.slice(open, close);
     this.i = close + 1;
+    try {
+      return this.modeledVar(inner, quote);
+    } catch (error) {
+      if (!failureRead || !(error instanceof Unreadable)) throw error;
+      // a substitution in it is still read
+      return { kind: "var", name: UNMODELED_VALUE, quote, word: { parts: lexQuotedBody(inner) } };
+    }
+  }
+
+  private modeledVar(inner: string, quote: Quote): Part {
     if (inner.startsWith("!")) throw new Unreadable("expansion", "${!…}");
     let rest = inner;
     let length = false;
@@ -663,6 +690,14 @@ class Lexer {
     throw new Unreadable("quote", "$'");
   }
 
+  /** A range the reader does not expand: numbers or letters, never a path or a program. A shell splits words before
+   * it expands braces, so in a failure read the `{` becomes a value and the word lexes on as usual. */
+  private unmodeledBrace(inner: string): Part {
+    if (!failureRead) throw new Unreadable("expansion", `{${inner}}`);
+    this.i++;
+    return { kind: "var", name: UNMODELED_VALUE, quote: "none" };
+  }
+
   /** `{a,b}` or `{1..3}` at the current `{`, or undefined when the brace is
    * a plain character (`{}` for xargs, `${` handled elsewhere). */
   private brace(): Part | undefined {
@@ -688,7 +723,7 @@ class Lexer {
     const range = /^(-?\d+)\.\.(-?\d+)$/.exec(inner);
     if (range) {
       const [lo, hi] = [Number(range[1]), Number(range[2])];
-      if (Math.abs(hi - lo) + 1 > MAX_BRACE_ALTS) throw new Unreadable("expansion", `{${inner}}`);
+      if (Math.abs(hi - lo) + 1 > MAX_BRACE_ALTS) return this.unmodeledBrace(inner);
       alts = [];
       for (let n = lo; lo <= hi ? n <= hi : n >= hi; n += lo <= hi ? 1 : -1) alts.push(String(n));
     } else if (/^[A-Za-z]\.\.[A-Za-z]$/.test(inner)) {
@@ -697,7 +732,7 @@ class Lexer {
       alts = [];
       for (let n = lo; lo <= hi ? n <= hi : n >= hi; n += lo <= hi ? 1 : -1) alts.push(String.fromCharCode(n));
     } else if (/^(?:-?\d+|[A-Za-z])\.\.(?:-?\d+|[A-Za-z])\.\.-?\d+$/.test(inner)) {
-      throw new Unreadable("expansion", `{${inner}}`);
+      return this.unmodeledBrace(inner);
     } else if (inner.includes(",")) {
       alts = inner.split(",");
     } else {
@@ -780,6 +815,8 @@ function ansiUnescape(text: string): string {
       : next === "U" ? /^U([0-9A-Fa-f]{1,8})/.exec(text.slice(i + 1))
       : /^([0-7]{1,3})/.exec(text.slice(i + 1));
     if (numeric) {
+      // a shell ends the word at a NUL
+      if (failureRead && parseInt(numeric[1]!, next === "x" || next === "u" || next === "U" ? 16 : 8) === 0) return out;
       out += decoded(parseInt(numeric[1]!, next === "x" || next === "u" || next === "U" ? 16 : 8), `\\${numeric[0]}`);
       i += numeric[0].length;
       continue;
@@ -793,6 +830,7 @@ function ansiUnescape(text: string): string {
       i += 2;
       continue;
     }
+    if (failureRead) { out += `\\${next}`; i++; continue; }
     throw new Unreadable("escape", `\\${next} in $'…'`);
   }
   return out;

@@ -8,7 +8,7 @@
 // recovery, because a shape the reader did not understand must ask, not
 // approve.
 
-import { lex, lexQuotedBody, type Heredoc, type Token, type Word, Unreadable } from "./lex.ts";
+import { failuresPassing, lex, lexQuotedBody, literalText, type Heredoc, type Token, type Word, Unreadable } from "./lex.ts";
 
 export interface Script {
   items: Item[];
@@ -143,7 +143,12 @@ class Parser {
       const andOr = this.andOr();
       const sep = this.peek();
       let background = false;
-      if (this.isOp(sep, "&")) { background = true; this.next(); }
+      if (this.isOp(sep, "&")) {
+        background = true;
+        this.next();
+        // zsh takes `a & ; b`; a failure read does too
+        if (failuresPassing() && this.isOp(this.peek(), ";")) this.next();
+      }
       else if (this.isOp(sep, ";") || sep.kind === "newline") this.next();
       else if (sep.kind !== "eof" && !this.atStop(sep, stops)) throw new Unreadable("syntax", `unexpected ${this.describe(sep)}`);
       items.push({ andOr, background });
@@ -234,7 +239,8 @@ class Parser {
       }
       if (word !== undefined && DIALECT_WORDS.includes(word)) throw new Unreadable("dialect", word);
       if (word !== undefined && RESERVED.has(word)) throw new Unreadable("syntax", `unexpected ${word}`);
-      if (token.kind === "word" && this.isOp(this.peek(1), "(") && this.isOp(this.peek(2), ")")) {
+      // (`a=()` is an empty array; a failure read says so)
+      if (token.kind === "word" && this.isOp(this.peek(1), "(") && this.isOp(this.peek(2), ")") && !(failuresPassing() && /^[A-Za-z_][A-Za-z0-9_]*\+?=$/.test(literalText(token.word) ?? ""))) {
         const name = bareWord(token) ?? "";
         this.next(); this.next(); this.next();
         this.skipNewlines();
@@ -345,6 +351,8 @@ class Parser {
     const name = bareWord(this.peek());
     if (name === undefined) throw new Unreadable("syntax", "for without a name");
     this.next();
+    // zsh takes `for a b in ...`; a failure read does too. The later names stay unbound, so they read as values
+    if (failuresPassing()) while (this.peek().kind === "word" && !this.isReserved(this.peek(), "in") && !this.isReserved(this.peek(), "do")) this.next();
     this.skipNewlines();
     let words: Word[] | undefined;
     if (this.isReserved(this.peek(), "in")) {

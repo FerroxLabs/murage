@@ -51,7 +51,7 @@
 import { homedir } from "node:os";
 import { powershellRunner } from "./pwsh.ts";
 
-import { isPlain, lex, lexQuotedBody, literalText, renderWord, Unreadable, type Part, type Word } from "./lex.ts";
+import { failuresPassing, isPlain, lex, lexQuotedBody, literalText, renderWord, setFailuresPassing, Unreadable, type Part, type Word } from "./lex.ts";
 import { parse, type AndOr, type Command, type Pipeline, type Redirect, type Script } from "./parse.ts";
 import { checkUnplacedWrite, isLoaderName, loadsCodeFirst, namesStartupFile, writtenStartupFile, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile, type LoaderMarks } from "./loaders.ts";
 
@@ -758,7 +758,7 @@ function branches<H>(ctx: WalkContext, runs: Array<(branch: WalkContext) => H | 
   const forks: WalkContext[] = [];
   for (const run of runs) {
     const branch = fork(ctx);
-    const hit = run(branch);
+    const hit = passing(() => run(branch));
     if (hit) return hit;
     forks.push(branch);
   }
@@ -1641,6 +1641,69 @@ export const ASK_UNELEVATED_REMOTE_RUN = false;
 
 /** The detail of the ask for downloaded text run elevated; the card names it. */
 export const REMOTE_ELEVATED = "runs downloaded text elevated";
+/** The detail of a throw that carries something the reader FOUND, as opposed to
+ * something it could not follow. These stay a card at every level. */
+export const DELETE_OPTION_VALUE = "a delete option from a value";
+export const RUNS_CATASTROPHE = "runs a catastrophe";
+export const NAMES_CATASTROPHE = "names a catastrophe";
+
+/** Did this failure carry a finding, rather than an end to what the reader could follow? */
+export function isFoundUnreadable(error: Unreadable): boolean {
+  return [REMOTE_ELEVATED, DELETE_OPTION_VALUE, RUNS_CATASTROPHE, NAMES_CATASTROPHE].some((detail) => error.message.endsWith(detail));
+}
+
+/** The end of a failure read's message for text no lexer or parser takes as a whole: a shell may run what comes before
+ * the fault line by line, so no part of it is read past. */
+const REFUSED_TEXT = "text refused whole";
+
+/** Does this failure hold its card at owner No limits too? A finding, a depth stop, or text refused whole. The depth
+ * stop is here because what lies past it was never read. */
+export function keepsItsCard(error: Unreadable): boolean {
+  return isFoundUnreadable(error) || error.reason === "depth" || error.reason === "nesting" || error.message.endsWith(REFUSED_TEXT);
+}
+
+
+/** NOLIMITS-MEANS-IT 3.3 (c): run a read in which a failure ends one statement, not the read. The state the text
+ * fixed so far stays, and a found failure still ends the read. Off, every walk is as it always was. */
+export function withFailuresPassed<T>(run: () => T): T {
+  const before = failuresPassing();
+  setFailuresPassing(true);
+  try {
+    return run();
+  } finally {
+    setFailuresPassing(before);
+  }
+}
+
+/** Under `withFailuresPassed`: is this a failure the next statement may step past? */
+export function failurePassed(error: unknown): boolean {
+  return failuresPassing() && error instanceof Unreadable && !keepsItsCard(error);
+}
+
+/** Was this text refused whole? */
+export function textRefused(error: Unreadable): boolean {
+  return error.message.endsWith(REFUSED_TEXT);
+}
+
+/** Run one lexer or parser over a whole text. In a failure read its refusal is named as such, so it keeps its card. */
+export function refusedWhole<T>(run: () => T): T {
+  try {
+    return run();
+  } catch (error) {
+    if (failuresPassing() && error instanceof Unreadable && !keepsItsCard(error)) throw new Unreadable(error.reason, `${error.message} ${REFUSED_TEXT}`);
+    throw error;
+  }
+}
+
+/** One step of a walk: in a failure read, a failure in it is passed over and the next step is read. */
+function passing<H>(run: () => H | null): H | null {
+  try {
+    return run();
+  } catch (error) {
+    if (!failurePassed(error)) throw error;
+    return null;
+  }
+}
 
 /** Downloaded text is about to run: elevated it asks; unelevated it follows
  * `ASK_UNELEVATED_REMOTE_RUN`. */
@@ -2191,7 +2254,7 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
   // the same text elsewhere in the code. The words after the code are never one
   const separators = new Set<number>();
   ranges.forEach(([from, to], r) => { if (separatorArgument(code, from, to, strings[tops[r]!]!, key)) separators.add(tops[r]!); });
-  if ((runs || deletes) && judged.some((s, i) => visitor.catastrophic?.(s) && (stemOnly || !separators.has(i)))) throw new Unreadable("opaque", "names a catastrophe");
+  if ((runs || deletes) && judged.some((s, i) => visitor.catastrophic?.(s) && (stemOnly || !separators.has(i)))) throw new Unreadable("opaque", NAMES_CATASTROPHE);
   // (5) the rules for what a run or delete call is given, read in the call's
   // own span: code that reads the environment to print it and runs a
   // literal elsewhere is ordinary
@@ -2216,12 +2279,12 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
         try {
           hit = walkScript(s, fork(ctx, true), visitor);
         } catch (error) {
-          if (!(error instanceof Unreadable)) throw error;
+          if (!(error instanceof Unreadable) || isFoundUnreadable(error) || error.reason === "depth") throw error;
           // a string that is no shell text (`it's`) is data; one-word dialect names (`end`) too
           if (NOT_SHELL.has(error.reason) || (error.reason === "dialect" && !/\s/.test(s.trim()))) continue;
           throw new Unreadable("opaque", `runs shell text the reader cannot read (${error.reason})`);
         }
-        if (hit) throw new Unreadable("opaque", "runs a catastrophe");
+        if (hit) throw new Unreadable("opaque", RUNS_CATASTROPHE);
       }
     }
   }
@@ -2482,7 +2545,7 @@ function scanWritten<H>(text: string, visitor: Visitor<H>): void {
       if (text[j] === "\\" && (text[j + 1] === "\\" || text[j + 1] === "'" || text[j + 1] === '"')) { s += text[j + 1]; j++; continue; }
       s += text[j];
     }
-    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", "names a catastrophe");
+    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", NAMES_CATASTROPHE);
     i = j;
   }
   if (STRICT_HOME.test(text)) throw new Unreadable("opaque", "looks up the home folder");
@@ -2515,7 +2578,7 @@ export function walkScript<H>(text: string, ctx: WalkContext, visitor: Visitor<H
   // interpreter or a shell run anywhere in the read, asks
   const loader = mentionsLoaderVariable(text, "posix");
   if (loader) markLoaderVariable(ctx.loaders, loader);
-  return walkList(parse(text), ctx, visitor);
+  return walkList(refusedWhole(() => parse(text)), ctx, visitor);
 }
 
 /** `wsl` options that take a value, and those that manage WSL and run nothing. */
@@ -2580,7 +2643,13 @@ function walkList<H>(script: Script, ctx: WalkContext, visitor: Visitor<H>): H |
   for (const item of script.items) {
     // `cmd &` runs in a subshell of its own: what it binds or moves to may
     // or may not reach what follows (zsh and bash differ), so it is a branch
-    const hit = item.background ? branches(ctx, [(branch) => walkAndOr(item.andOr, branch, visitor)]) : walkAndOr(item.andOr, ctx, visitor);
+    let hit: H | null;
+    try {
+      hit = item.background ? branches(ctx, [(branch) => walkAndOr(item.andOr, branch, visitor)]) : walkAndOr(item.andOr, ctx, visitor);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      continue;
+    }
     if (hit) return hit;
   }
   return null;
@@ -2594,7 +2663,8 @@ function walkList<H>(script: Script, ctx: WalkContext, visitor: Visitor<H>): H |
  * what failed, so each one from there is a branch of its own. */
 function walkAndOr<H>(andOr: AndOr, ctx: WalkContext, visitor: Visitor<H>): H | null {
   const [first, ...rest] = andOr.pipelines;
-  let hit = walkPipeline(first!, ctx, visitor);
+  const step = (pipeline: Pipeline, state: WalkContext): H | null => passing(() => walkPipeline(pipeline, state, visitor));
+  let hit = step(first!, ctx);
   if (hit) return hit;
   let chain: WalkContext | undefined;
   let exact = true;
@@ -2604,7 +2674,7 @@ function walkAndOr<H>(andOr: AndOr, ctx: WalkContext, visitor: Visitor<H>): H | 
       if (chain) merge(ctx, [chain]);
       chain = fork(ctx);
     }
-    hit = walkPipeline(pipeline, chain, visitor);
+    hit = step(pipeline, chain);
     if (hit) return hit;
   }
   if (chain) merge(ctx, [chain]);
@@ -2717,7 +2787,7 @@ function substituteLead(words: Word[], ctx: WalkContext): { lists: Word[][]; der
 function walkCommand<H>(command: Command, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
   if (command.kind === "simple") return walkSimple(command, ctx, visitor, before);
   // redirects first: a heredoc on a compound is what the commands inside read
-  let hit = walkRedirects(command.redirects, ctx, visitor);
+  let hit = passing(() => walkRedirects(command.redirects, ctx, visitor));
   if (hit) return hit;
   const outerStdin = ctx.stdin;
   const stdin = stdinProvenance(command, before, ctx);
@@ -2756,13 +2826,20 @@ function walkCompound<H>(command: Exclude<Command, { kind: "simple" }>, ctx: Wal
       case "for": {
         const body = command.body;
         if (command.header) {
-          hit = walkParts(command.header, ctx, visitor);
+          const header = command.header;
+          hit = passing(() => walkParts(header, ctx, visitor));
           if (hit) return hit;
         }
         if (command.words) {
-          hit = walkWords(command.words, ctx, visitor);
+          const list = command.words;
+          hit = passing(() => walkWords(list, ctx, visitor));
           if (hit) return hit;
-          const values = command.words.flatMap((word) => expandWord(word, ctx));
+          let values: Word[] = [{ parts: [{ kind: "var", name: command.name, quote: "none" }] }];
+          try {
+            values = list.flatMap((word) => expandWord(word, ctx));
+          } catch (error) {
+            if (!failurePassed(error)) throw error;
+          }
           const literal = values.every((word) => word.parts.every((part) => part.kind !== "var" && part.kind !== "subst" && part.kind !== "arith" && part.kind !== "procsub"));
           if (literal && !ctx.readonly.has(command.name)) ctx.bound.set(command.name, values); else unknownName(command.name, ctx);
         } else if (command.name) {
@@ -2771,7 +2848,7 @@ function walkCompound<H>(command: Exclude<Command, { kind: "simple" }>, ctx: Wal
         return branches(ctx, [(branch) => walkList(body, branch, visitor)]);
       }
       case "case":
-        hit = walkParts(command.word, ctx, visitor);
+        hit = passing(() => walkParts(command.word, ctx, visitor));
         if (hit) return hit;
         return branches(ctx, command.clauses.map((clause) => (branch: WalkContext) => walkWords(clause.patterns, branch, visitor) ?? walkList(clause.body, branch, visitor)));
       case "subshell":

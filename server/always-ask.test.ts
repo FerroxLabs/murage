@@ -1260,7 +1260,7 @@ describe("always ask, at every access level", () => {
       const verdict = autoVerdict(bot, "Bash", command);
       expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule });
       // It asks; it is not blocked: the card says what the command would do.
-      expect(approvalHoldNote(verdict)).toMatch(/always asks before a command like this/);
+      expect(approvalHoldNote(verdict)).toMatch(/asks before a command like this/);
     });
 
     it.each(plain([...ORDINARY, ...UNREADABLE_TWINS, ...ASTRA_R3_TWINS, ...ASTRA_R4_TWINS, ...ASTRA_R5_TWINS, ...released(RULED)]))(`${level}: $title runs without asking`, ({ command }) => {
@@ -1295,7 +1295,7 @@ describe("always ask, at every access level", () => {
   it("keeps the plain words: no dash-pause punctuation and no 'safe'", () => {
     for (const [command] of ASKS.filter(([command]) => !unseenOnDisk(command))) {
       const note = approvalHoldNote(autoVerdict(NO_LIMITS, "Bash", command)) ?? "";
-      expect(note).toMatch(/always asks before a command like this/);
+      expect(note).toMatch(/asks before a command like this/);
       expect(note).not.toMatch(/\u2014|\u2013|\bsafe\b|\bunsafe\b/i);
     }
   });

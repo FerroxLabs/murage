@@ -17,9 +17,9 @@
 // Remove-Item, as its aliases; with `/s` they are cmd's. Everything else
 // that is not a recognized delete or disk command is ordinary.
 
-import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
+import { failuresPassing, isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
-import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { attachedInlineCode, candidatesOf, expandWord, failurePassed, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, refusedWhole, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -209,7 +209,13 @@ function lexPwsh(s: string): Lexed {
     if (c === "\n" || c === ";") { endStatement(); i++; continue; }
     if (c === "|") {
       // `a || b` runs b on a's failure: a branch the reader does not follow
-      if (s[i + 1] === "|") throw new Unreadable("operator", "||");
+      // (a failure read takes it as a statement break: what follows may run, and each side is read)
+      if (s[i + 1] === "|") {
+        if (!failuresPassing()) throw new Unreadable("operator", "||");
+        endStatement();
+        i += 2;
+        continue;
+      }
       endStatement(true);
       i++;
       let j = i;
@@ -915,16 +921,23 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
   const loader = mentionsLoaderVariable(text, "pwsh");
   if (loader) markLoaderVariable(ctx.loaders, loader);
-  const { statements, nested } = lexPwsh(text);
+  const { statements, nested } = refusedWhole(() => lexPwsh(text));
   for (const inner of nested) {
     const branch = fork(ctx, true);
-    const hit = walkPwsh(inner, branch, visitor);
+    let hit: H | null;
+    try {
+      hit = walkPwsh(inner, branch, visitor);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      hit = null;
+    }
     if (hit) return hit;
     keepBranchWrites(ctx, branch);
   }
   // what the statement before writes down the pipe, when one joins them
   let carried: Provenance | undefined;
   for (const statement of statements) {
+    try {
     // a statement no pipe feeds reads what this shell was given (a nested
     // `pwsh -Command` or `cmd /c` reached by a pipe, UPSEC 10.6)
     const stdin = statement.piped ? carried : ctx.stdin;
@@ -959,6 +972,10 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
     recordPwshWrites(words, ctx);
     // `$null = Set-Content c.txt …`: the right side's command writes too
     if (rhs) recordPwshWrites(rhs, ctx);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      carried = valueOutput("a statement the reader could not follow");
+    }
   }
   return null;
 }
@@ -1367,7 +1384,7 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
   const loader = mentionsLoaderVariable(text, "pwsh");
   if (loader) markLoaderVariable(ctx.loaders, loader);
-  const tokens = lexCmd(text);
+  const tokens = refusedWhole(() => lexCmd(text));
   let pos = 0;
   const separator = (token: CmdToken | undefined) => token?.kind === "op" && token.op !== "(" && token.op !== ")";
   // the words of the last simple statement, for what it writes down a pipe
@@ -1385,7 +1402,17 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
         pos++;
         return null;
       }
-      const hit = statement(state, piped);
+      const start = pos;
+      let hit: H | null;
+      try {
+        hit = statement(state, piped);
+      } catch (error) {
+        if (!failurePassed(error)) throw error;
+        // on to the next separator; a block a failed header opened is read as a block
+        if (pos === start) pos++;
+        while (tokens[pos] && tokens[pos]!.kind !== "op") pos++;
+        hit = null;
+      }
       if (hit) return hit;
     }
   };

@@ -1,15 +1,18 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The few commands Murage always asks about, at every access level.
+// The few commands Murage always asks about once it has found them, at every access level.
 //
 // Ask, Auto, Full access and No limits decide how much a bot does without a
 // card. None of them was ever meant to cover wiping the computer: deleting
 // the whole drive, the home folder or a folder the system runs from, erasing
-// a disk, or a fork bomb. Under No limits those used to go through unasked.
-// They now raise an ordinary approval card, every time. They are not
-// blocked: the owner can still allow one, and only that once (no "always
-// allow" is offered or honoured for them).
+// a disk, or a fork bomb. A wipe the reader finds raises an ordinary approval
+// card, every time. It is not blocked: the owner can still allow one, and
+// only that once (no "always allow" is offered or honoured for them).
+//
+// Text the reader could not follow carries `readerFailed`. It asks too,
+// except at No limits on a turn the owner started himself, where it runs
+// once a second read finds nothing in it (server/auto-approve.ts).
 //
 // The list is short and literal on purpose. It parses the command as a shell
 // would (server/shell/), visits every place a command can run, and calls a
@@ -40,8 +43,8 @@
 import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
 import { looksLikePowerShell, nestedProgram, POWERSHELLS, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
-  candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
-  UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
+  candidatesOf, DELETE_OPTION_VALUE, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, keepsItsCard, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
+  textRefused, UNKNOWN_MARK, unmarked, walkScript, withFailuresPassed, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { posix as posixPath } from "node:path";
@@ -69,6 +72,9 @@ export interface AlwaysAskHit {
    * unseen script Full access and No limits would run, but for this reader
    * limit; the card names the fix. */
   unseenWhy?: UnseenWhy;
+  /** `unreadable` only (NOLIMITS-MEANS-IT): the reader could not follow the text and found nothing it can name. Set
+   * only where that is proven, so a new `unreadable` hit keeps its card until someone marks it. The `what` is not read. */
+  readerFailed?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -93,6 +99,7 @@ const PROTECTED_WHAT: Record<ProtectedClass, string> = {
 /** The sentence a held card shows: what it would do, and why it asks. */
 export function alwaysAskNote(hit: AlwaysAskHit): string {
   const fix = hit.unseenWhy ? ` ${UNSEEN_FIX[hit.unseenWhy]}` : "";
+  if (hit.readerFailed) return `${hit.what} Murage asks before a command like this.${fix}`;
   return `${hit.what} Murage always asks before a command like this, at every access level.${fix}`;
 }
 
@@ -110,8 +117,8 @@ const UNSEEN_FIX: Record<UnseenWhy, string> = {
   "device": "Full access and No limits run a script unasked when it and its folders sit outside the system's device and process folders.",
   "tilde-escape": "Full access and No limits run a script unasked when ~ is written plainly, with no backslash: ~/Documents.",
   "no-home": "Full access and No limits run a script unasked when ~ stands for a home folder Murage knows; the full path works too.",
-  "relayed": "A script on a computer Murage reaches through the Cloud asks, because Murage checks the file on the computer that runs it.",
-  "windows": "On Windows, Murage asks before a script it cannot read runs, at every access level; on Mac and Linux, Full access and No limits run it unasked.",
+  "relayed": "A script on a computer Murage reaches through the Cloud asks, because Murage cannot check the file on that computer, except in your own conversations at No limits.",
+  "windows": "On Windows, Murage asks before a script it cannot read runs, except in your own conversations at No limits; on Mac and Linux, Full access and No limits run it unasked.",
   "windows-path": "On Windows, Full access and No limits run a script unasked when its path starts with its drive (C:/Users/me/tool.mjs) or is relative (./tool.mjs), with ~ only in cd ~/...",
   "windows-link": "On Windows, Full access and No limits run a script unasked when it is an ordinary file, not a Git Bash link or socket file.",
 };
@@ -124,13 +131,19 @@ const REMOTE_ELEVATED_WHAT = "This runs text downloaded from the internet with a
 
 /** The hit for a command the reader was not given whole (a cut card). */
 export function unreadableHit(): AlwaysAskHit {
+  return { ...hit("unreadable"), readerFailed: true };
+}
+
+/** The hit for a verdict that crashed: it may have skipped any check, so it asks at every level and carries no mark. */
+export function verdictFaultHit(): AlwaysAskHit {
   return hit("unreadable");
 }
 
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
   if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  return hit("unreadable");
+  // a finding thrown (`rm $F /`, inline code naming `/`) is a finding, and a depth stop was never read past: no mark
+  return keepsItsCard(error) ? hit("unreadable") : unreadableHit();
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -252,13 +265,23 @@ function classifyCandidate(candidate: Candidate, ctx: WalkContext): AlwaysAskRul
 /** The worst thing any candidate of these operands names. */
 function worstOf(lists: Candidate[][], ctx: WalkContext): AlwaysAskRule | null {
   let found: AlwaysAskRule | null = null;
+  // a candidate the reader cannot judge must not hide the next one (`cd "$D" && rm -rf build /`)
+  let failure: Unreadable | undefined;
   for (const list of lists) {
     for (const candidate of list) {
-      const rule = classifyCandidate(candidate, ctx);
+      let rule: AlwaysAskRule | null;
+      try {
+        rule = classifyCandidate(candidate, ctx);
+      } catch (error) {
+        if (!(error instanceof Unreadable)) throw error;
+        failure ??= error;
+        continue;
+      }
       if (rule === "delete-root") return rule;
       if (rule && (!found || RANK[rule] > RANK[found])) found = rule;
     }
   }
+  if (!found && failure) throw failure;
   return found;
 }
 
@@ -275,7 +298,7 @@ function optionFromValue(recursive: boolean, unknown: boolean, paths: Candidate[
   if (recursive) return worstOf(paths, ctx);
   // the target here is a literal that asks; only the option is a value, so
   // the routine carve-out never covers it
-  if (unknown && worstOf(paths, ctx)) throw new Unreadable("expansion", "a delete option from a value");
+  if (unknown && worstOf(paths, ctx)) throw new Unreadable("expansion", DELETE_OPTION_VALUE);
   return null;
 }
 
@@ -1233,12 +1256,31 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
     // Keep foreign executors held without mistaking Elixir iex for PowerShell.
     const foreignExecutor = foreignExecutorIn(text, shell !== undefined);
     return !found && mode === "command" && foreignExecutor
-      ? hit("unreadable")
+      ? unreadableHit()
       : found;
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
     if (mode !== "command") return null;
     return readerFailure(error);
+  }
+}
+
+/** NOLIMITS-MEANS-IT 3.3 (c): the second read of a text the reader failed on, before that failure is waived. Each
+ * statement is read alone at every depth, with what the text fixed so far. A found failure, a depth stop and text no
+ * lexer takes as a whole end the read and keep a card with no mark: a shell runs a script line by line, so what
+ * precedes the fault may run, and only a reader of the whole text can say what that is. `cut` says the text stops at a
+ * card's or an input's limit: an open quote or heredoc there is the cut's own doing, so a refusal is no card, and what
+ * it hides is the same as anything past the cut. */
+export function alwaysAskFailureRead(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[], cut = false): AlwaysAskHit | null {
+  try {
+    return withFailuresPassed(() => read(text, cwd, shell, windowsBash));
+  } catch (error) {
+    if (!(error instanceof Unreadable)) throw error;
+    if (cut && textRefused(error)) return null;
+    const { rule, what } = readerFailure(error);
+    return { rule, what };
+  } finally {
+    unseen = null;
   }
 }
 
@@ -1296,10 +1338,10 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (found || !unseen || unseen.paths.length === 0) return found;
     // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
     // Windows) keeps the 1.0.5 ask; Git Bash's own text is read below
-    if (windowsBash) return hit("unreadable");
+    if (windowsBash) return unreadableHit();
     const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
-    if (admits === true) return { ...hit("unreadable"), unseenScript: true };
-    return admits === null ? hit("unreadable") : { ...hit("unreadable"), unseenWhy: admits };
+    if (admits === true) return { ...unreadableHit(), unseenScript: true };
+    return admits === null ? unreadableHit() : { ...unreadableHit(), unseenWhy: admits };
   } finally {
     unseen = null;
   }

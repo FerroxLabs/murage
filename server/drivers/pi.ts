@@ -559,7 +559,6 @@ export interface PiGateAsk {
 /** Rule 13: the identity of an ask that did not come from this turn's gate. */
 export const PI_UNPROVEN_IDENTITY = { namespace: "", name: "" } as const;
 /** The owner-facing reason for a call the gate sent cut. */
-const PI_GATE_CUT_REASON = "Murage could not read this call whole, so it did not run.";
 
 
 /**
@@ -1128,11 +1127,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
                   // Rule 73d: Allow echoes the input the gate sent (a rewrite,
                   // when the verdict makes one, replaces it); Deny carries the
                   // reason, which for a narrowing denial (Rule 72) is the
-                  // verdict's own text.
+                  // verdict's own text. A call that reached this side cut, or
+                  // with no input Murage can vouch for, has nothing to echo:
+                  // Allow then tells the gate to run the call it holds.
                   const allowed = decision.behavior === "allow" && gate?.gateInput !== undefined && !gate.truncated;
                   const reply = allowed
                     ? { allow: true, input: gate!.gateInput }
-                    : { deny: true, reason: decision.behavior === "allow" ? PI_GATE_CUT_REASON : decision.message?.trim() || "The owner did not allow this in Murage." };
+                    : decision.behavior === "allow"
+                      ? { allow: true, keep: true }
+                      : { deny: true, reason: decision.message?.trim() || "The owner did not allow this in Murage." };
                   send({ type: "extension_ui_response", id: reqId, value: JSON.stringify(reply) });
                   return;
                 }

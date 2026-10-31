@@ -12,6 +12,8 @@
 // all of them together, under one deadline per turn), and tells the bot
 // plainly when one is still missing.
 
+import { redactSecretsInText } from "../redact.ts";
+
 /** Servers the turn needs when they are mounted: connected apps, memory and
  * the bot-to-bot tools. Everything else (computer, browser, phone, custom
  * servers) is optional and never holds a turn past MCP_OPTIONAL_WAIT_MS. */
@@ -380,4 +382,106 @@ export function parseMcpStatus(response: unknown): Map<string, McpServerState> |
     states.set(name, status === "connected" || status === "pending" || status === "failed" || status === "needs-auth" || status === "disabled" ? status : "unknown");
   }
   return states;
+}
+
+/** What one entry of an ACP engine's server list adds to its status. */
+export interface AcpMcpServerDetail {
+  /** Tools the engine holds for it. Fuigo leaves an empty list out of the frame, so no list reads as 0. */
+  tools: number;
+  /** One fixed word for why it is not ready (acpMcpMissingReason), or null when the engine gave none. */
+  reason: string | null;
+}
+
+/** Fuigo's failure text (McpError, fuigo-mcp servers.rs, kept in `unavailableReason`) read down to a fixed word.
+ * The text itself never goes in a log: it can quote what a server printed, a path or an address. */
+const ACP_MCP_FAILURES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^MCP server '.*' timed out after (\d{1,6})s/, "timeout-$1s"],
+  [/^Failed to spawn MCP server /, "spawn-failed"],
+  [/^MCP server '.*' handshake failed/, "handshake-failed"],
+  [/^MCP server '.*': Auth required/, "auth"],
+  [/^MCP server '.*': unreachable during startup/, "unreachable"],
+  [/^MCP client error/, "client-error"],
+  [/^MCP service error/, "service-error"],
+];
+
+function acpMcpFailureWord(text: string): string {
+  const head = text.trim().slice(0, 400);
+  for (const [pattern, word] of ACP_MCP_FAILURES) {
+    const match = pattern.exec(head);
+    if (match) return word.replace("$1", match[1] ?? "");
+  }
+  return "other";
+}
+
+/** The fixed word for why a listed server is not ready. Null when the engine said nothing about it. */
+export function acpMcpMissingReason(session: unknown): string | null {
+  const entry = (session ?? {}) as { enabled?: unknown; authRequired?: unknown; setupRequired?: unknown; blockedReason?: unknown; unavailableReason?: unknown; status?: unknown };
+  if (typeof entry.blockedReason === "string" && entry.blockedReason.trim()) return "blocked";
+  if (entry.enabled === false) return "disabled";
+  if (entry.authRequired === true) return "auth";
+  if (entry.setupRequired === true) return "setup";
+  if (typeof entry.unavailableReason === "string" && entry.unavailableReason.trim()) return acpMcpFailureWord(entry.unavailableReason);
+  return entry.status === "initializing" ? "starting" : null;
+}
+
+export function acpMcpServerDetail(session: unknown): AcpMcpServerDetail {
+  const tools = (session as { tools?: unknown } | null | undefined)?.tools;
+  return { tools: Array.isArray(tools) ? tools.length : 0, reason: acpMcpMissingReason(session) };
+}
+
+/** Everything one ACP turn's gate knows. */
+export interface AcpMcpGateFacts {
+  threadId: string;
+  engine: string;
+  waitedMs: number;
+  /** How the engine's ready wait ended, or null when none ran. */
+  waitOutcome: string | null;
+  required: string[];
+  /** Every server handed to the engine this turn, required or not. */
+  mounted: string[];
+  reconnected: string[];
+  backedOff: string[];
+  /** Required servers the engine reports as not ready. */
+  missing: string[];
+  /** Connected apps ready by status, still on the stand-in tool list. */
+  standIn: string[];
+  /** The last list, or null when the engine never answered. */
+  states: Map<string, string> | null;
+  details: Map<string, AcpMcpServerDetail> | null;
+  unchecked?: "unsupported" | "no-answer";
+}
+
+/** A server name as the log prints it. An owner names a custom server, so a name stays one token on one line, with no key in it. */
+const logName = (name: string): string => redactSecretsInText(name).replace(/[^\w.@-]/g, "_").slice(0, 64);
+/** The statuses an engine's list uses (Fuigo's McpSessionStatus, lowercased on the wire). Anything else prints as "unknown". */
+const ACP_MCP_STATUSES: ReadonlySet<string> = new Set(["ready", "initializing", "setuprequired", "unavailable"]);
+const logStatus = (status: string): string => (ACP_MCP_STATUSES.has(status.toLowerCase()) ? status.toLowerCase() : "unknown");
+const logList = (items: string[]): string => items.join(",") || "none";
+
+const acpMcpNotReady = (gate: AcpMcpGateFacts): string[] => gate.states ? gate.mounted.filter((name) => gate.states!.get(name) !== "ready") : [];
+const acpMcpEmpty = (gate: AcpMcpGateFacts): string[] => gate.required.filter((name) => gate.states?.get(name) === "ready" && gate.details?.get(name)?.tools === 0);
+
+/** The same bar as the Claude gate, plus the turn this line exists for: a required server that reports ready and holds no tools. */
+export function acpMcpGateWorthLogging(gate: AcpMcpGateFacts): boolean {
+  return gate.waitedMs >= 1_000 || !!gate.unchecked || gate.missing.length > 0 || gate.reconnected.length > 0 || gate.backedOff.length > 0
+    || gate.standIn.length > 0 || acpMcpNotReady(gate).length > 0 || acpMcpEmpty(gate).length > 0;
+}
+
+/** The ACP gate line. The fields the Claude gate logs come first, under the same names; `reasons`, `standIn` and `tools` are what
+ * only the ACP list can say. Fixed words, counts and server names only: never engine text, tool arguments or a value. */
+export function acpMcpGateLine(gate: AcpMcpGateFacts): string {
+  const notReady = acpMcpNotReady(gate);
+  const absent = gate.required.filter((name) => gate.states !== null && !gate.states.has(name));
+  // The turn's own verdict (core.ts, mcpReadiness): unknown for a required server not listed, or a wait that ran out with no list.
+  const readiness = absent.length || (gate.unchecked && gate.waitOutcome === "timeout") ? "unknown" : gate.missing.length ? "degraded" : "ready";
+  const notConnected = notReady.map((name) => {
+    const status = gate.states!.get(name);
+    return `${logName(name)}:${status !== undefined ? logStatus(status) : gate.details?.has(name) ? "no-status" : "absent"}`;
+  });
+  const reasons = notReady.map((name) => `${logName(name)}:${gate.details?.get(name)?.reason ?? (gate.details?.has(name) ? "unreported" : "not-listed")}`);
+  const tools = gate.mounted.filter((name) => gate.details?.has(name)).map((name) => `${logName(name)}:${gate.details!.get(name)!.tools}`);
+  return `acp mcp gate thread=${gate.threadId} engine=${gate.engine} waitedMs=${gate.waitedMs} readiness=${readiness} wait=${gate.waitOutcome ?? "none"}`
+    + ` reconnected=${logList(gate.reconnected.map(logName))} backedOff=${logList(gate.backedOff.map(logName))} missing=${logList(gate.missing.map(logName))}`
+    + ` notConnected=${logList(notConnected)} reasons=${logList(reasons)} standIn=${logList(gate.standIn.map(logName))} tools=${logList(tools)}`
+    + (gate.unchecked ? ` unchecked=${gate.unchecked}` : "");
 }

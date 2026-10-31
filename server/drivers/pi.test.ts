@@ -1536,6 +1536,28 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, input: { command: "rm -rf ~/Documents/old" } });
   });
 
+  it.each([
+    ["a call over the cap", { tool: "bash", truncated: true }],
+    ["an unproven mount", { tool: "x_y", mount: "not_mounted", mcpTool: "y", input: { a: 1 } }],
+    ["a missing required field", { tool: "bash", input: {} }],
+  ])("S4: on %s Allow tells the gate to run what it holds, and Deny stays a deny", async (_name, call) => {
+    const dump = await create(false, { FAKE_PI_GATE_CALL: JSON.stringify(call) });
+    const threadId = `t-gate-keep-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "go" });
+    await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, keep: true });
+    const denied = `t-gate-keep-deny-${newId()}`;
+    const second = await instance!.adapter.sendTurn({ threadId: denied, text: "go" });
+    await recorder!.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
+    await instance!.adapter.respondToRequest(denied, "ask-host", { behavior: "deny", message: "no" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const after = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(JSON.parse(after.at(-1).uiResponse.value)).toEqual({ deny: true, reason: "no" });
+  });
+
   it("T14: a confirm from any other extension is unproven (empty identity), whatever its title says", async () => {
     await create(false, { FAKE_PI_GATE_FORGE: "1" });
     const threadId = `t-gate-forge-${newId()}`;

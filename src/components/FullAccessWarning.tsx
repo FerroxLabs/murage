@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { t } from "@/lib/i18n";
 import { AlertTriangle } from "lucide-react";
 
 /** Shown once per bot, on the desktop, before Full access is switched on. */
@@ -9,8 +10,6 @@ export const FULL_ACCESS_WARNING =
 export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
-export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks still ask, as they do in Auto.";
 
 /** Images follow the level now (server/image-approval.ts): made without a card in
  * the owner's own conversations and routines, with a record, unless the bot's Images setting says otherwise. */
@@ -37,7 +36,10 @@ export const FULL_ACCESS_ON_THIS_COMPUTER =
 
 /** Shown once per bot before No limits is switched on. */
 export const NO_LIMITS_WARNING =
-  "This bot will do everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes deleting files outside its folder, paying for things, and messaging anyone or posting in public.";
+  "In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking. That includes reading and sending your keys and passwords, deleting files outside its folder, and running commands Murage cannot read, so one of those could do anything, even wipe this computer. A page or message it reads can steer it. It still asks before a wipe it can read, before an unknown program touches your home folder or a whole disk, before a command names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run. Publishing, browser payments and steps, and new email recipients keep their own approvals. Follow-on work after you answer a sign-in or setup card can still ask. Messages from other people, group chats, other bots, webhooks, routines, and your own Telegram, Slack and Discord messages keep the cards they have now.";
+
+/** The line above the warning when an owner who already had No limits reads the new terms (NOLIMITS-MEANS-IT section 6). */
+export const NO_LIMITS_TERMS_LINE = "No limits changed. Read this once and it applies to every bot.";
 
 export function FullAccessWarning({
   open,
@@ -45,6 +47,7 @@ export function FullAccessWarning({
   level = "full",
   scope,
   onThisComputer,
+  terms = false,
   onCancel,
   onConfirm,
 }: {
@@ -57,6 +60,8 @@ export function FullAccessWarning({
   /** the bot drives this computer, so the Auto-on-this-computer warning is
    * confirmed by this same dialog */
   onThisComputer: boolean;
+  /** the owner is reading the new No limits terms, for every bot, not switching one on */
+  terms?: boolean;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -94,17 +99,20 @@ export function FullAccessWarning({
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
           <div>
             <h2 id="full-access-warning-title" className="text-[15px] font-semibold text-ink">
-              {level === "unlimited" ? `Give @${botName} no limits?` : `Give @${botName} full access?`}
+              {terms ? "No limits" : level === "unlimited" ? `Give @${botName} no limits?` : `Give @${botName} full access?`}
             </h2>
             <div id="full-access-warning-body" className="mt-1.5 flex flex-col gap-1.5 text-[13px] leading-relaxed text-ink-secondary">
+              {terms && <p className="font-medium text-ink">{NO_LIMITS_TERMS_LINE}</p>}
               <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}
-              <p>{FULL_ACCESS_STILL_ASKS}</p>
+              <p>{t("ux.lcopyb.fullAccess.stillAsks")}</p>
               <p>{FULL_ACCESS_IMAGES}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
-              <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>
+              {terms
+                ? <p>Not now changes nothing: your bots keep asking as they do today. You can review this later in Bot settings.</p>
+                : <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>}
             </div>
           </div>
         </div>
@@ -115,14 +123,14 @@ export function FullAccessWarning({
             onClick={onCancel}
             className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
           >
-            Cancel
+            {terms ? "Not now" : "Cancel"}
           </button>
           <button
             type="button"
             onClick={onConfirm}
             className="rounded-xl bg-accent px-4 py-2 text-[13px] font-medium text-white hover:brightness-110"
           >
-            {level === "unlimited" ? "Turn on no limits" : "Turn on full access"}
+            {terms ? "Accept" : level === "unlimited" ? "Turn on no limits" : "Turn on full access"}
           </button>
         </div>
       </div>

@@ -7,6 +7,7 @@
 // built-in protections are not part of it and cannot be turned off here;
 // the "Always on" note says what they are.
 import { useEffect, useMemo, useState } from "react";
+import { t } from "@/lib/i18n";
 
 import { RichMarkdownEditor } from "./editor/RichMarkdownEditor";
 import { richEditable } from "./skills/SkillEditor";
@@ -43,10 +44,11 @@ export function lengthHint(words: number): { text: string; long: boolean } {
  *  messages and deletes), the credential rule in every prompt, and the
  *  untrusted-input labels on channel, webhook and web text. Full access
  *  approves before those guards, so the note says so. */
-export const ALWAYS_ON_RULES = [
+/** Read at render time, so the untrusted-input line follows the chosen language (ux.lcopyb.houseRules.untrusted). */
+export const alwaysOnRules = (): readonly string[] => [
   "In Ask and Auto mode, bots stop and ask you before they delete things, read your keys and passwords, move money or message people for you. They never ask you to paste a key into chat.",
-  "A message from a channel, a webhook or a web page can't approve anything or give a bot more access. Full access approves on its own, so give it only to bots you trust with that.",
-] as const;
+  t("ux.lcopyb.houseRules.untrusted"),
+];
 
 const BUTTON = "min-h-9 rounded-lg px-3 py-1.5 text-[12.5px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -206,7 +208,7 @@ export function HouseRulesSettings() {
 
           <div className="rounded-lg border border-hairline/50 px-3 py-2.5">
             <div className="text-[12px] font-medium text-ink">Always on, even with house rules off</div>
-            {ALWAYS_ON_RULES.map((line) => <p key={line} className="mt-0.5 text-[12px] text-ink-secondary">{line}</p>)}
+            {alwaysOnRules().map((line) => <p key={line} className="mt-0.5 text-[12px] text-ink-secondary">{line}</p>)}
           </div>
         </>
       )}
