@@ -28,6 +28,7 @@ import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
 import { createCloudLinkQueue } from "./cloud-link-queue.mjs";
 import { handOffDoorLink, needsDoorHandoff, takeStashedDoorLink } from "./cloud-link-handoff.mjs";
+import { configureLinuxPasswordStore } from "./linux-password-store.mjs";
 import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
 import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
@@ -36,7 +37,7 @@ import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeControll
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
-import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { cloudNoticeStore, createRecoveryKeyFlow, defaultRecoveryKeyFolder, hostCloudFolder, recoveryKeyAutomaticExclusions, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -90,7 +91,7 @@ import {
   createRendererMemorySampler,
   readSafeLogTail,
 } from "./diagnostics.mjs";
-import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
@@ -112,6 +113,7 @@ import { createCompanionRestarter } from "./companion-restart.mjs";
 import { safeStorageSeal } from "./companion-stale.mjs";
 import { createServerChildLifecycle, awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { createSessionEndHandler } from "./session-end.mjs";
+import { createServerStopReason } from "./server-stop-reason.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
@@ -205,6 +207,8 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 }
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+// Keep this outside the profile-isolation slice, but before Electron is ready.
+configureLinuxPasswordStore({ commandLine: app.commandLine });
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -384,7 +388,7 @@ let backupProgress=null; // the "Backing up your workspace" window while the off
 // here because the host's relaunch and the run's own ending both use it.
 const returnToWorkspaceAfterBackup=createBackupReturn({
   app,
-  cleanup:()=>cleanupDesktopForExit(),
+  cleanup:()=>{serverStopReason.note("backup");return cleanupDesktopForExit();},
   relaunch:()=>relaunchDesktop({app,args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
   takeProgress:()=>{const progress=backupProgress;backupProgress=null;return progress;},
   log:line=>slog(line),
@@ -420,6 +424,7 @@ function finishClosedBackup(result){
   if(closedBackupFinish)return closedBackupFinish;
   closedBackupFinish=(async()=>{
     closedTrace("finishing");
+    serverStopReason.note("backup");
     try{await cleanupDesktopForExit();closedTrace("cleaned up");}
     catch{
       closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
@@ -442,7 +447,7 @@ function ensureDesktopUpdater(scheduleChecks=true){
         const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
           headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
         if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
-      },cleanup:cleanupDesktopForExit,
+      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();},
     }),
   })});
   return desktopUpdater;
@@ -480,6 +485,7 @@ function backupUnavailableReason() {
 /** The close before a backup's restart. When it can't finish, this window can
  * no longer back up: say so, instead of every later click just failing. */
 async function cleanupForBackupRestart() {
+  serverStopReason.note("backup");
   try { await cleanupDesktopForExit(); }
   catch (error) {
     desktopBackupCleanupFailed = true;
@@ -542,7 +548,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
-  defaultFolder:()=>app.getPath("documents"),
+  defaultFolder:()=>defaultRecoveryKeyFolder(name=>app.getPath(name)),
   // Where a key is written when nobody is asked: the person's home folder,
   // then (Windows) the local app data folder. Never Documents: that is the
   // folder sync clients take over (OneDrive on Windows, iCloud Desktop and
@@ -558,7 +564,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   rebindKeyFile:file=>backupScheduleHost.rebindKeyFile(file),
   noticeStore:cloudNoticeStore(path.join(app.getPath("userData"),"backup-key-cloud-notice.json")),
   // Never written to without asking, even when an earlier key went there.
-  neverAutomatic:()=>{try{return [app.getPath("documents")];}catch{return [];}},
+  neverAutomatic:()=>recoveryKeyAutomaticExclusions(name=>app.getPath(name)),
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
@@ -569,14 +575,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // The second copy: somewhere other than the backup folder.
   chooseCopyFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Save this copy somewhere other than your backup folder: a USB drive, another computer, or your password manager. Without this key nobody, including you, can open your backups."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
   // `suggested` is a name not yet taken in that folder.
   chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
@@ -966,11 +972,13 @@ app.on("second-instance", (_event, commandLine) => {
 // alternate ports until one binds AND identifies as ours (the probe checks
 // our API shape, not just a 200).
 let serverProc = null;
+/** Why this run's server is being stopped: one line in the log, so a start can be told from a crash. */
+const serverStopReason = createServerStopReason((line) => slog(line));
 /** The OS ending the session (session-end.mjs): the live harness writes its deferred saves first, then the app quits. */
 const sessionEnd = createSessionEndHandler({
   // every harness this app owns that has not exited, from the moment it is forked (not only once it answered health)
   children: () => [...ownedServerChildren].filter((child) => !child.exited),
-  beginQuit: () => backgroundLifecycle?.beginQuit(),
+  beginQuit: () => { serverStopReason.note("system-shutdown"); backgroundLifecycle?.beginQuit(); },
   quit: () => app.quit(),
   ackDir: os.tmpdir(),
   log: (line) => slog(line),
@@ -1363,6 +1371,8 @@ const LOG_DIR = app.getPath("logs");
 const DESKTOP_CRASH_LOG = path.join(LOG_DIR, "desktop-crashes.log");
 const DESKTOP_CRASH_LOG_MAX_BYTES = 512 * 1024;
 let logStream = null;
+// Past the single-instance lock, before the first line of this run.
+if (rotateLogAtLaunch(path.join(LOG_DIR, "server.log"))) slog("earlier lines are in server.log.1");
 let desktopShutdownStarted = false;
 import {
   companionAdvertisedHostedUrl,
@@ -1399,6 +1409,7 @@ import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 import { lanPairingView } from "./companion-lan-pairing.mjs";
 import { LINUX_KEYRING_REQUIRED, secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { DESK_POST_TIMEOUT_MS, startDeskPresence } from "./desk-presence.mjs";
+import { openLogStream, rotateLogAtLaunch } from "./log-rotate.mjs";
 
 let companionPowerBlocker = null;
 
@@ -1417,7 +1428,7 @@ function slog(line) {
   try {
     if (!logStream) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+      logStream = openLogStream(path.join(LOG_DIR, "server.log"), (lost) => { if (logStream === lost) logStream = null; });
     }
     logStream.write(`[${new Date().toISOString()}] ${line}\n`);
   } catch {
@@ -2133,7 +2144,10 @@ async function startServerOn(port) {
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
   // (audit P1, S1b R8).
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
-    ...restoredHarnessEnvironment(process.env, restoredConnections),
+    // The shell's FLUX_API_KEY never reaches the child as a key: only the
+    // store's does (workspaceCredentialEnv below), and the shell value is
+    // offered as MURAGE_FLUX_AMBIENT_KEY, a choice, when the store is not managed.
+    ...desktopFluxEnvironment(restoredHarnessEnvironment(process.env, restoredConnections), secureCredentials),
     // A packaged utility child must never fall back to a descriptor inherited
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
@@ -2173,7 +2187,6 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
-    MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
@@ -3233,6 +3246,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+    ...(operation==="backup-encrypted"&&typeof parameters.onProgress==="function"?{onProgress:parameters.onProgress}:{}),
   });
     // Undoing the restore of a separate installation leaves nothing for the
     // selection to open: hand the next start back to the original (D2).
@@ -3903,10 +3917,12 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 });
 
 // Connector login, plugin/team links and browser-panel "open in browser" all
-// come from the owned main window's top frame. Any other sender is refused
-// before the address is parsed; the address must be credential-free http(s).
+// come from the owned main window's top frame. A Cloud-home window's top frame
+// may ask too, https only. Any other sender is refused before the address is
+// parsed; the address must be credential-free http(s).
 ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
+  isCloudSender: (event) => cloudHome?.isCloudSender(event) === true,
   openExternal: (url) => shell.openExternal(url),
 }));
 
@@ -4186,6 +4202,16 @@ async function mutateFluxConnectionInMain(input) {
   });
 }
 ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnectionInMain(input));
+// Settings: after a Flux key change, running engines keep the key they were
+// spawned with until Murage restarts. The same relaunch-then-quit pair backup
+// mode uses; refused where Murage cannot reopen itself.
+ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
+  if (args.length) throw new Error("Invalid restart request.");
+  if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
+  serverStopReason.note("restart");
+  relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
+  app.quit();
+});
 
 // One-click Flux sign-in. The key is minted by the token endpoint and stored by
 // the SAME road a pasted key takes; it never reaches the renderer.
@@ -4696,6 +4722,7 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
+    reportWorkerProgress:progress=>backupProgress?.worker(progress),
     reportCaptureFailure:(failure,handoff)=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -4706,6 +4733,7 @@ async function initializeBackupScheduleHost(){
       // and a bounded exit if the quit is still held (backup-offline-return.mjs).
       if(mode==="normal")return returnToWorkspaceAfterBackup();
       const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
+      serverStopReason.note(mode==="backup"?"backup":"restart");
       if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
     },
   });
@@ -4797,7 +4825,7 @@ const desktopStartup = app.whenReady().then(async () => {
     }else{
       desktopRecoveryMode=true;
       // Wait for this startup promise to settle before cleanup can await it.
-      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:cleanupDesktopForExit})).catch(()=>{
+      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();}})).catch(()=>{
         if(!desktopShutdownStarted){
           showDesktopRecovery("BACKUP_REQUESTED");
           dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
@@ -5149,6 +5177,7 @@ function startDeskPresenceReporting(){
 }
 
 function cleanupDesktopForExit() {
+  serverStopReason.logOnce();
   stopDeskPresence();stopDeskPresence=()=>{};
   // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
   void sentinelHost?.shutdown().catch(()=>{});
