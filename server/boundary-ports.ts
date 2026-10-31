@@ -19,6 +19,7 @@ import { database } from "./database.ts";
 import { projectCardById, projectSettingsFor, type ProjectCard } from "./project-records.ts";
 import { roomCardName } from "./project-prompt.ts";
 import { requestReplyTarget, roomRequest, roomRequestByKey } from "./room-requests.ts";
+import { isRetryLine } from "./failure-code.ts";
 import { requestEnding } from "./room-request-status.ts";
 import { SHARED_RESULT_DELIVERED } from "./task-resolution.ts";
 import { resolveTask, type ResolvedTask, type TaskCaller, type TaskResolutionDeps } from "./task-resolution.ts";
@@ -33,7 +34,7 @@ import type { HumanPrincipal } from "./human-principals.ts";
 function failureOf(message: Message): WorkerMessage["failure"] {
   const tool = message.tool;
   if (message.kind !== "activity" || !tool) return undefined;
-  if (/^\s*retrying\b/i.test(tool.name)) return "retrying";
+  if (isRetryLine(tool.name)) return "retrying";
   if (tool.ok === false || /^\s*error\b/i.test(tool.name) || tool.errorDetails !== undefined || tool.errorKind !== undefined || tool.providerError !== undefined || tool.localFailure !== undefined) return "error";
   return undefined;
 }

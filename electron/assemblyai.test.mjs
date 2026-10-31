@@ -32,6 +32,6 @@ describe("AssemblyAI credential boundary", () => {
       json: async () => ({ error: "upstream secret-shaped detail" }),
     }));
     await expect(mintAssemblyAIStreamingToken("wrong", { fetchImpl }))
-      .rejects.toThrow("AssemblyAI rejected this API key");
+      .rejects.toThrow("AssemblyAI did not accept this key");
   });
 });

@@ -27,6 +27,9 @@ import {
   readFirstRunPhases,
   resetFirstRunPhases,
   forgetFirstRunStarted,
+  dismissFirstRunAllSet,
+  firstRunAllSet,
+  firstRunWaitingOn,
 } from "./first-run";
 import { SETUP_STEPS, type SetupStep, type SetupStepStatus, type SetupView } from "../../shared/setup";
 
@@ -188,11 +191,50 @@ describe("the pills are the server's list", () => {
     expect(rows.map((row) => row.id)).toEqual(["hello", "flux", "chat", "flow"]);
     expect(rows.map((row) => row.number)).toEqual([1, 2, 3, 4]);
     expect(rows.map((row) => row.label)).toEqual([
-      "1 · who you are",
-      "2 · switch it on",
-      "3 · first chat",
-      "4 · do the thing",
+      "1 · you",
+      "2 · Flux Router",
+      "3 · your first job",
+      "4 · done",
     ]);
+  });
+
+  it("names the five phases as UX-FIRSTRUN-SCALE-1012 §1.1 does", () => {
+    expect(firstRunPhaseRows(view()).map((row) => row.label)).toEqual([
+      "1 · you",
+      "2 · what is here",
+      "3 · Flux Router",
+      "4 · your first job",
+      "5 · done",
+    ]);
+  });
+
+  it("says what a waiting pill is waiting on, and nothing on the others", () => {
+    const rows = firstRunPhaseRows(view({ next: "flux" }, { hello: "done", detect: "done", flux: "blocked" }));
+    const flux = rows.find((row) => row.id === "flux")!;
+    expect(flux.mark).toBe("blocked");
+    expect(flux.waiting).toBe("Waiting on Flux Router");
+    for (const row of rows.filter((entry) => entry.id !== "flux")) expect.soft(row.waiting).toBe("");
+  });
+
+  it("waits on the internet when the Flux step is next and there is none", () => {
+    const rows = firstRunPhaseRows(view({ next: "flux" }, { hello: "done", detect: "done" }), false);
+    const flux = rows.find((row) => row.id === "flux")!;
+    expect(flux.mark).toBe("blocked");
+    expect(flux.waiting).toBe("Waiting on the internet");
+    expect(rows.find((row) => row.id === "hello")?.mark).toBe("done");
+    // Online, the same view is simply the step they are on.
+    expect(firstRunPhaseRows(view({ next: "flux" }, { hello: "done", detect: "done" }), true).find((row) => row.id === "flux")?.mark).toBe("now");
+  });
+
+  it("words every block reason as a wait on something named", () => {
+    const at = (id: SetupStep, reason: NonNullable<SetupView["steps"][number]["block"]>["reason"]) =>
+      firstRunWaitingOn({ id, block: { reason, message: "x" } }, true);
+    expect(at("flux", "payment-required")).toBe("Waiting on Flux Router");
+    expect(at("flux", "flux-choice-needed")).toBe("Waiting on Flux Router");
+    expect(at("chat", "payment-required")).toBe("Waiting on something to think with");
+    expect(at("chat", "engine-needs-model")).toBe("Waiting on something to think with");
+    expect(at("flow", "apps-unreadable")).toBe("Waiting on your connected apps");
+    expect(firstRunWaitingOn({ id: "flux", block: { reason: "flux-key-needed", message: "x" } }, false)).toBe("Waiting on the internet");
   });
 
   it("keeps it when the server says that phase is still open", () => {
@@ -307,10 +349,21 @@ describe("how long the checklist stays on screen", () => {
     expect(firstRunPhasesVisible(view({ firstRun: false, next: "apps" }), open)).toBe(true);
   });
 
-  it("goes when there is nothing left to do", () => {
+  it("says All set when there is nothing left to do, then goes after the next move", () => {
     forgetFirstRunStarted();
     expect(firstRunPhasesVisible(view({ firstRun: true }), open)).toBe(true);
-    expect(firstRunPhasesVisible(view({ firstRun: false, next: null }), open)).toBe(false);
+    // §1.8: the strip stays one more beat to say so, for the person who
+    // watched it run.
+    const finished = view({ firstRun: false, next: null });
+    expect(firstRunPhasesVisible(finished, open)).toBe(true);
+    expect(firstRunAllSet(finished)).toBe(true);
+    dismissFirstRunAllSet();
+    expect(firstRunPhasesVisible(finished, open)).toBe(false);
+  });
+
+  it("never says All set to somebody who did not watch it run", () => {
+    forgetFirstRunStarted();
+    expect(firstRunPhasesVisible(view({ conversationLive: true, next: null }), open)).toBe(false);
   });
 
   it("never appears on an established install that simply has a step open", () => {

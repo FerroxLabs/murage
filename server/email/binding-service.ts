@@ -20,6 +20,23 @@ export const KEY_IDEMPOTENCY_WINDOW_MS = 24 * 3_600_000;
 export const TOMBSTONE_KEEP_MS = 30 * 86_400_000;
 const ROTATE_SCOPE = "rotate:";
 export const REMOVAL_RETRY_MS = [60_000, 300_000, 1_800_000, 7_200_000] as const;
+/** A setup step that got no answer runs again on the tick after this wait (the last one repeats), with the same op_id. */
+export const SETUP_RETRY_MS = [30_000, 60_000, 120_000, 300_000] as const;
+/** A setup with no answer this many runs in a row, or for this long, shows as failed with a Retry. */
+export const SETUP_GIVE_UP_TRIES = 5;
+export const SETUP_GIVE_UP_MS = 15 * 60_000;
+/** The failure of a setup that stopped on no answer; its Retry replays the same op_id inside Flux's 24 h window. */
+export const SETUP_NO_ANSWER = "setup_no_answer";
+/** Cursor row per bot: the unanswered-run budget of the current setup op ({opId, attempt, since}), so a restart does not reset it. */
+const SETUP_BUDGET_SCOPE = "setup-retry:";
+
+function readBudget(raw: string | null): { opId: string; attempt: number; since: number } | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as { opId?: unknown; attempt?: unknown; since?: unknown } | null;
+    return value && typeof value.opId === "string" && typeof value.attempt === "number" && typeof value.since === "number" ? { opId: value.opId, attempt: value.attempt, since: value.since } : null;
+  } catch { return null; }
+}
 
 export type BindingClient = Pick<FluxEmailClient, "mintBotKey" | "revokeBotKey" | "createInbox" | "getInbox" | "deleteInbox" | "restoreInbox" | "setSendPolicy" | "patchInbox" | "resumeInbox" | "listInboxes">;
 
@@ -70,6 +87,10 @@ export class EmailBindingService {
   private readonly now: () => number;
   private readonly newId: () => string;
   private readonly options: BindingServiceOptions;
+  /** One setup run per bot at a time: a second caller (owner, tick, boot) shares the running one. */
+  private readonly setupRuns = new Map<string, Promise<BindingRow | null>>();
+  /** When the tick runs a stalled setup next (in memory: boot runs every provisioning binding anyway). */
+  private readonly setupRetries = new Map<string, number>();
   constructor(options: BindingServiceOptions) {
     this.options = options;
     this.now = options.now ?? Date.now;
@@ -79,18 +100,61 @@ export class EmailBindingService {
 
   /** Owner act: give this bot an address. A new binding, or a failed one retried, starts at step `key` with a new op_id. */
   async enable(botId: string, input: { username?: string; displayName?: string }): Promise<BindingRow | null> {
+    const running = this.setupRuns.get(botId);
+    if (running) return running;
     const now = this.now();
     const existing = this.store.getBinding(botId);
     if (!existing) {
       this.store.insertBinding({ botId, inboxId: null, address: null, username: input.username ?? null, displayName: input.displayName ?? null, emailKeyRef: null, fluxAccountId: null, state: "provisioning", step: "key", opId: this.newId(), opStartedAt: now, policy: "auto", failure: null, updatedAt: now });
     } else if (existing.state === "failed") {
-      this.store.casBinding(botId, existing.revision, { state: "provisioning", step: this.options.secrets.botKey(botId) ? "inbox" : "key", opId: this.newId(), opStartedAt: now, failure: null, username: input.username ?? existing.username, displayName: input.displayName ?? existing.displayName }, now);
+      // a setup that stopped on no answer replays its op_id inside Flux's 24 h window, so Flux returns what it made, and gets a fresh budget
+      const replay = existing.failure === SETUP_NO_ANSWER && existing.opId !== null && existing.opStartedAt !== null && now - existing.opStartedAt < KEY_IDEMPOTENCY_WINDOW_MS;
+      this.store.clearCursor(`${SETUP_BUDGET_SCOPE}${botId}`);
+      this.store.casBinding(botId, existing.revision, { state: "provisioning", step: this.options.secrets.botKey(botId) ? "inbox" : "key", ...(replay ? {} : { opId: this.newId(), opStartedAt: now }), failure: null, username: input.username ?? existing.username, displayName: input.displayName ?? existing.displayName }, now);
     }
     return this.advance(botId);
   }
 
   /** Runs the next setup step of a provisioning binding (also from boot). */
-  async advance(botId: string): Promise<BindingRow | null> {
+  advance(botId: string): Promise<BindingRow | null> {
+    const running = this.setupRuns.get(botId);
+    if (running) return running;
+    const run = (async () => {
+      try { return this.noteSetupResult(botId, await this.advanceSetup(botId)); }
+      finally { this.setupRuns.delete(botId); }
+    })();
+    this.setupRuns.set(botId, run);
+    return run;
+  }
+
+  /** The tick: every provisioning binding whose wait is over runs its step again. Never throws. */
+  async retryStalledSetups(): Promise<void> {
+    for (const row of this.store.bindings()) {
+      if (row.state !== "provisioning" || this.setupRuns.has(row.botId) || this.now() < (this.setupRetries.get(row.botId) ?? 0)) continue;
+      await this.advance(row.botId).catch(() => undefined);
+    }
+  }
+
+  /** After a run: a settled binding forgets its waits. One still provisioning got no answer: it waits for its next try, and after
+   *  SETUP_GIVE_UP_TRIES runs or SETUP_GIVE_UP_MS it shows as failed with Retry, so setup never sits on "Setting up email" with no button. */
+  private noteSetupResult(botId: string, row: BindingRow | null): BindingRow | null {
+    const scope = `${SETUP_BUDGET_SCOPE}${botId}`;
+    if (!row || row.state !== "provisioning") { this.setupRetries.delete(botId); this.store.clearCursor(scope); return row; }
+    const saved = readBudget(this.store.getCursor(scope));
+    const same = saved?.opId === row.opId;
+    const attempt = (same ? saved!.attempt : 0) + 1;
+    const since = same ? saved!.since : this.now();
+    if (attempt >= SETUP_GIVE_UP_TRIES || this.now() - since >= SETUP_GIVE_UP_MS) {
+      this.setupRetries.delete(botId);
+      this.store.clearCursor(scope);
+      return this.store.casBinding(botId, row.revision, { state: "failed", failure: SETUP_NO_ANSWER }, this.now()) ?? this.store.getBinding(botId);
+    }
+    this.store.setCursor(scope, JSON.stringify({ opId: row.opId, attempt, since }), this.now());
+    this.setupRetries.set(botId, this.now() + SETUP_RETRY_MS[Math.min(attempt, SETUP_RETRY_MS.length) - 1]!);
+    return row;
+  }
+
+  private async advanceSetup(botId: string): Promise<BindingRow | null> {
     let row = this.store.getBinding(botId);
     if (!row || row.state !== "provisioning") return row!;
     // step 1: the key. A key already in the secret store moves the binding to step inbox (boot checks the store first).

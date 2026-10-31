@@ -61,6 +61,11 @@ describe("a running delegation's recent activity", () => {
     expect(JSON.stringify(body)).not.toContain("OWNER-PLAN");
   });
 
+  it("today's retry line is told as a retry too, in the same words", async () => {
+    const body = await poll([{ kind: "activity", tool: { name: "The model is busy. Trying again (attempt 2 of 4).", ok: true } }]);
+    expect(body.recentActivity).toEqual(["retrying after a failure: its provider had an error"]);
+  });
+
   it("a runtime error is told as its code, whatever its message and details say", async () => {
     const body = await poll([{ kind: "activity", tool: { name: `error: 401 unauthorized for ${PATH}`, ok: false, errorDetails: `401 unauthorized for ${PATH} (key sk-live-123)` } }]);
     expect(body.recentActivity).toEqual(["error: it is not signed in to its provider"]);

@@ -13,9 +13,15 @@ export function failureCodeFrom(detail: string | null | undefined): FailureCode 
   if (/rate.?limit|too many requests|\b429\b|quota|overloaded/.test(text)) return "rate_limit";
   if (/\b40[13]\b|unauthori[sz]ed|forbidden|auth|sign.?in|login|api key|credential|token (?:expired|invalid)/.test(text)) return "auth";
   if (/time.?d? ?out|deadline|\b408\b|\b504\b/.test(text)) return "timeout";
-  if (/\b5\d\d\b|provider|upstream|server error|internal error|unavailable|bad gateway/.test(text)) return "provider_error";
+  if (/\b5\d\d\b|provider|upstream|server error|internal error|unavailable|bad gateway|the model is busy/.test(text)) return "provider_error";
   return "other";
 }
+
+/** The owner's line while an engine waits to try a turn again. Why it failed goes to the log, not here. */
+export const retryLine = (attempt: number, maxAttempts: number): string => `The model is busy. Trying again (attempt ${attempt} of ${maxAttempts}).`;
+
+/** Is this activity row a retry? Rows written before the line above read `retrying: attempt 2/3 in 5s: <reason>`. */
+export const isRetryLine = (name: string): boolean => /^\s*(?:retrying\b|the model is busy\. trying again\b)/i.test(name);
 
 /** Why a turn could not START, which is more than a provider failure: Murage's own refusals at the start (a teammate this conversation cannot reach,
  * an archived bot, sharing removed, a request that no longer fits its conversation) carry their own code on the error, so the line names the real

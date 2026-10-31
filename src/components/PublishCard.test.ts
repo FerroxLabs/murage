@@ -154,8 +154,8 @@ it("tells the owner what is happening while it signs in and while it checks", ()
 
 it("when the Netlify sign-in is not enough, the card says so and goes straight to the token", () => {
   const html = connect({ step: "token", why: "sign-in-not-enough" });
-  expect(html).toContain("Netlify wants an access token for publishing");
-  expect(connect({ step: "token", why: "token-rejected" })).toContain("did not accept that token");
+  expect(html).toContain("Netlify wants an access key for publishing");
+  expect(connect({ step: "token", why: "token-rejected" })).toContain("did not accept that key");
   expect(connect({ step: "token", why: "no-shell", shell: false })).toContain("Signing in is available in the Murage desktop app");
 });
 

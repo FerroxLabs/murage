@@ -78,6 +78,8 @@ function foldFixture() {
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,
     liveSubtasks: new Map(), broadcast: noop, routines: undefined, botForDirectThread: () => bot,
     groupSpeakers: new Map(), turnEngineByThread: stamps, memoryDispatches: new Map(),
+    // the model Flux reported serving each thread's turn (usage-tags: stored on the reply), empty: these fixtures are no Flux turn
+    turnServedModelByThread: new Map(),
     toolMessageByItem: new Map(), toolRowByItem: new Map(), narrateTool: () => "Sending", screenTouchingTool: () => false,
     turnOutputRoots: new Map(), isMemoryProvenanceEcho: () => false, lastReply: new Map(), sessionAudienceByThread: new Map(), registry: { get: () => instance },
     isUnattended: () => false, exactAllowKeyFor: noop, routineRunLevel: () => null,
@@ -544,6 +546,12 @@ describe("the production fold marks only the engine's own reply as the proof tha
     fold({ ...base, eventId: "e4", type: "item.completed", itemType: "assistant_text", origin: "murage", text: "a cap note" });
     expect(evidence()).toBeNull();
   });
+  it("the retry line is plain, counts the engine's own attempts, and keeps its reason out of the chat", () => {
+    const { fold, store, bot, base } = handoffThread();
+    fold({ ...base, eventId: "r1", type: "turn.retrying", attempt: 1, delayMs: 2000, reason: "server_error", maxAttempts: 4 });
+    const names = store.activePath(bot.threadId).filter(row => row.role === "bot").map(row => row.tool?.name);
+    expect(names).toEqual(["The model is busy. Trying again (attempt 2 of 4)."]);
+  });
   it("every line the fold writes in Murage's voice carries the Murage marker and is no turn's engine output; the engine's own reply and tool start are (1.0.3 lifecycle card)", () => {
     const { fold, store, bot, base } = handoffThread();
     fold({ ...base, eventId: "m1", type: "runtime.error", message: "spawn failed" });
@@ -554,7 +562,7 @@ describe("the production fold marks only the engine's own reply as the proof tha
     fold({ ...base, eventId: "m6", type: "item.completed", itemType: "assistant_text", origin: "engine", text: "done" });
     const rows = store.activePath(bot.threadId).filter(row => row.role === "bot");
     const row = (match: (row: Message) => boolean) => { const found = rows.find(match); expect(found).toBeDefined(); return found!; };
-    const murage = [row(r => r.tool?.name === "error: spawn failed"), row(r => r.tool?.name?.startsWith("retrying:") === true), row(r => r.tool?.name === "Waking up")];
+    const murage = [row(r => r.tool?.name === "error: spawn failed"), row(r => r.tool?.name === "The model is busy. Trying again (attempt 2 of 3)."), row(r => r.tool?.name === "Waking up")];
     for (const line of murage) {
       expect(line.murageLine, line.tool?.name).toBe(true);
       expect(line.turnId, "the line still reads as the turn's (its chip group)").toBe("turn-1");

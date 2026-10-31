@@ -16,6 +16,12 @@ Run receipts distinguish queued, active, waiting on you, completed, missed, fail
 
 Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now.
 
+## Where results go
+
+When a routine run finishes, its result comes back to the chat where you set the routine up: the bot's final reply, the files and images it saved, and **Open run** for the whole run. A routine with no chat of its own (one made on the calendar), or whose chat was deleted, posts to the bot's main chat instead. A run that fails or is missed posts one line that says what to do next.
+
+To keep results out of chat, open the routine editor and set **Advanced → Send results to** to **Routines list only**. Each run still stays in the routine's own conversation and on the Routines list. Room and project routines, webhooks and messaging-app routines keep their own delivery.
+
 ## Routine approval level
 
 Each routine runs at its own approval level: Ask, Auto, Full access or No limits. Set it in the routine editor under **Advanced → Approvals for this routine**, or from the permission chip in the routine's own conversation: choosing a level there sets it for the routine.
@@ -49,16 +55,16 @@ The problems count at the top of Routines counts failed and missed runs you have
 
 ## Webhook triggers
 
-Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on `127.0.0.1:8800` by default. A turn started by a webhook asks for approvals the way Auto does, because someone other than you wrote its input.
+A webhook is a trigger link: a private web address another app calls to start work for a bot. It runs the same kind of task as a routine, without a schedule. By default Murage listens for these calls only on this computer (`127.0.0.1:8800`). Work started by another app's trigger link asks for approvals the way Auto does, because someone other than you wrote what it says.
 
-The receiver exposes only health and secret hook routes. It does not expose the broader Murage API.
+That listener answers only a status check and your private trigger links. Nothing else in Murage can be reached through it.
 
-Bearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers.
+For developers: prefer sending the secret in a Bearer header, which keeps it out of web addresses and most logs. If the sending app cannot set headers, use the link with the secret inside it instead.
 
 ## Reaching a local webhook
 
-To accept events from the public internet, proxy only the webhook receiver through a narrowly configured relay or tunnel. Do not expose the main harness port.
+For developers: to accept calls from the internet, pass only the trigger link listener through a tightly set up relay or tunnel. Never open Murage's main connection (port) to the internet.
 
 <Callout type="warn" title="Murage must remain running">
-  Local routines and webhook deliveries are not hosted jobs. Closing the desktop app stops the local executor and receiver.
+  Routines and trigger links on this computer do not run online. Closing the desktop app stops them until you open it again.
 </Callout>

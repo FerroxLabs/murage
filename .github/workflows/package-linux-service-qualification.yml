@@ -65,6 +65,8 @@ jobs:
           set -euo pipefail
           pnpm install --frozen-lockfile 2>&1 | tee qualification-evidence/linux-service/install.log
       - name: Build the existing UI, bundled server and companion
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           set -euo pipefail
           # build type-checks the server but does not emit the standalone bundle.

@@ -281,4 +281,19 @@ describe("the restore-hold routes are listed by name as desktop-only", () => {
     expect(own("POST", "/api/restore-holds/other_kind/abc/release")).toHaveLength(0);
     expect(own("DELETE", "/api/restore-holds")).toHaveLength(0);
   });
+
+  it("a chat-only Cloud browser needs a step-up for the owner's call settings; in-the-moment call actions stay ordinary", () => {
+    const settings: Array<[string, string]> = [["PUT", "/api/bots/b1/calls/rules"], ["POST", "/api/calls/off-today"], ["POST", "/api/calls/rearm"]];
+    for (const [method, route] of settings) {
+      expect(routePolicy(method, route)?.cloudWrite, route).toBe("browser-step-up");
+      expect(cloudRouteDecision(method, route, "browser", {}), route).toBe("step-up required");
+      expect(cloudRouteDecision(method, route, "browser", {}, true), route).toBe("allow");
+      expect(cloudRouteDecision(method, route, "owner-phone", {}), route).toBe("allow");
+    }
+    expect(cloudRouteDecision("GET", "/api/bots/b1/calls/rules", "browser", null)).toBe("allow");
+    const moment: Array<[string, string]> = [["POST", "/api/calls/turn-end"], ["POST", "/api/calls/sessions"],
+      ["POST", "/api/calls/00000000-0000-4000-8000-000000000000/answer"], ["POST", "/api/calls/00000000-0000-4000-8000-000000000000/decline"],
+      ["POST", "/api/calls/00000000-0000-4000-8000-000000000000/seen"]];
+    for (const [method, route] of moment) expect(cloudRouteDecision(method, route, "browser", {}), route).toBe("allow");
+  });
 });

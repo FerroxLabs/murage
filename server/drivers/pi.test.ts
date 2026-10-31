@@ -227,9 +227,9 @@ describe("PiDriver config + install", () => {
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
     expect(PiDriver.install).toMatchObject({
       command: {
-        darwin: "npm install -g @earendil-works/pi-coding-agent",
-        linux: "npm install -g @earendil-works/pi-coding-agent",
-        win32: "npm install -g @earendil-works/pi-coding-agent",
+        darwin: "npm install -g --force @earendil-works/pi-coding-agent",
+        linux: "npm install -g --force @earendil-works/pi-coding-agent",
+        win32: "npm install -g --force @earendil-works/pi-coding-agent",
       },
       docsUrl: "https://pi.dev",
       needsNode: true,
@@ -288,11 +288,11 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance?.dispose();
   });
 
-  it("reports the last step once for each of two multi-step turns",async()=>{
+  it("reports every step's usage once for each of two multi-step turns",async()=>{
     await create("tooluse");
     for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"ollama-cloud/glm-5.2"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
-    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:12,output:2}});
+    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:17,output:3}});
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -329,25 +329,15 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
-  it("resumes a prior pi session using the sessionFile resume cursor", async () => {
-    await create();
-    const first = await instance.adapter.sendTurn({ threadId: "t-resume", text: "first" });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
-    const firstSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === first.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(firstSession?.sessionId).toMatch(/\/fake\/pi-session-\d+\.json/);
-
-    const second = await instance.adapter.sendTurn({
-      threadId: "t-resume",
-      text: "second",
-      resumeCursor: firstSession!.sessionId,
-    });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
-    const secondSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === second.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(secondSession?.sessionId).toBe(firstSession?.sessionId);
+  it("keeps no session: pi under --no-session names no file, so no cursor comes back and each turn starts a new one", async () => {
+    await create(undefined, { FAKE_PI_NO_SESSION: "1" });
+    expect(instance.keepsNoSession).toBe(true);
+    for (const text of ["first", "second"]) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-no-session", text });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    }
+    expect(recorder.events.filter((e) => e.type === "session.started").map((e) => (e as { sessionId: string | null }).sessionId)).toEqual([null, null]);
+    expect(outboundCommands("t-no-session").filter((command) => String(command).endsWith("_session"))).toEqual(["new_session", "new_session"]);
   });
 
   it("fails promptly when the pi process exits before replying", async () => {
@@ -750,7 +740,8 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "item.started").length).toBe(1);
     expect(recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "tool").length).toBe(1);
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
-    expect((done as { usage: { input: number; output: number } }).usage).toEqual({ input: 12, output: 2 });
+    // both rounds count: the tool round's 5/1 plus the reply round's 12/2
+    expect((done as { usage: { input: number; output: number } }).usage).toEqual({ input: 17, output: 3 });
     const text = recorder.events.find(
       (e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "assistant_text",
     ) as { text: string } | undefined;

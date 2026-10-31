@@ -1,0 +1,43 @@
+# Capability records: bots. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: bots.rename-chief
+    name: Rename the Chief of Staff
+    status: can
+    questions:
+      - Can I rename Ember?
+      - Change my Chief of Staff's name
+      - How do I call my assistant something else?
+    answer: Yes. Open your Chief's Bot settings, then Identity & instructions, and change the Name.
+    settings_path: Bot settings → Identity & instructions → Name
+    platforms: [all]
+    engines: [all]
+    anchors:
+      - bot-settings:identity
+      - settings-control:identity/name
+    verified: 1.0.10
+    doc: features/settings-guide#bot-settings
+
+  - id: bots.channel-turns
+    name: Channel turn timeout
+    status: can
+    questions:
+      - How long does a bot keep working in a quiet channel?
+      - Change the channel turn timeout
+      - A bot's reply in a channel stopped after a while
+      - Set the no activity limit for channel replies
+    answer: >
+      A bot's reply in a channel stops after a set number of minutes with no activity. A reply that
+      keeps working runs as long as it needs, and time spent waiting on you does not count. The No
+      activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.
+    settings_path: Settings → Bots → Advanced → Channel turn timeout
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:botDefaults/channel-turns
+      - file:src/components/RoomTurnTimeoutSettings.tsx#No activity limit
+      - file:src/lib/room-turn-timeout.ts#DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20
+    verified: 1.0.10
+    doc: features/chat-and-teams#rooms
+    internal: The card label is "Channel turn timeout" (settings.l1.card.botDefaults.channel-turns), not "Channel turns".
+retired: []

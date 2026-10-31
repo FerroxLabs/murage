@@ -159,6 +159,7 @@ import { findTask, isTruncated } from "@/lib/task-window";
 import { loadProjectTab, projectViewTab, saveProjectTab, type ProjectTab } from "@/lib/project-tab";
 import { fromAnswer } from "@/state/answer-tag";
 import { useWindowDrag } from "@/hooks/use-window-drag";
+import { ServedModelNote } from "@/components/ServedModelNote";
 
 function dayLabel(at: number): string {
   const d = new Date(at);
@@ -609,6 +610,7 @@ const Transcript = memo(function Transcript({
                         // plain Save a copy link.
                         <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
                       ) : null}
+                      {m.kind === "text" && <ServedModelNote served={m.servedModel} />}
                       {m.withheldFromBots && (
                         <div className="mt-1 text-[11px] text-ink-secondary/70">{m.withheldFromBots === "forgotten" ? "Bots no longer see this reply: you chose to forget it." : m.withheldFromBots === "checking" ? "Bots will see this reply once earlier memory is checked." : "Bots no longer see this reply: it used something you deleted or changed."}</div>
                       )}

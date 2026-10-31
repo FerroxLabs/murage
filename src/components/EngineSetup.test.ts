@@ -8,6 +8,20 @@ import type { InstanceInfo } from "@/state/store";
 vi.mock("@/state/store", async (original) => ({ ...await original<typeof import("@/state/store")>(), useStore: () => ({ dispatch: vi.fn() }) }));
 afterEach(() => vi.unstubAllGlobals());
 
+describe("Pi below the version Murage can run", () => {
+  it("offers the update with the reason, not a first install", () => {
+    vi.stubGlobal("window", { muragebox: { platform: "linux" } });
+    const reason = "Your Pi engine is version 0.73.1, and Murage needs 0.80.5 or newer.";
+    const value: InstanceInfo = { ...instance({ state: "unavailable", version: "0.73.1", reason }),
+      driverKind: "piAgent", displayName: "Pi", install: { command: { linux: "npm install -g --force @earendil-works/pi-coding-agent" }, needsNode: true, platform: "linux" } };
+    const html = renderToStaticMarkup(createElement(EngineSetup, { instance: value }));
+    expect(html).toContain("Update Pi");
+    expect(html).toContain("Run this once, then check again.");
+    expect(html).toContain("npm install -g --force @earendil-works/pi-coding-agent");
+    expect(html).not.toContain("Install Pi");
+  });
+});
+
 describe("bundled engine repair", () => {
   it("renders repair guidance without sending desktop customers to npm", () => {
     vi.stubGlobal("window", { muragebox: { platform: "linux" } });
