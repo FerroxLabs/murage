@@ -12,7 +12,7 @@ The packaged app can request Accessibility and Screen Recording permission. Afte
 
 ## Ubuntu
 
-Ubuntu 24.04 GNOME host control is temporarily disabled while the real-seat input-safety blocker in issue #345 is resolved. Packaged builds retain the pinned runtime for reproducible review, but Murage does not start it and clears legacy opt-ins. Chat, screen preview, Cloud, and Local VM remain available. Do not start the bundled driver manually as a workaround.
+Local control works on Ubuntu 24.04 GNOME with Xorg, as a Beta. Open the Computer panel, press **Enable local control (Beta)** and let the Cua Driver checks finish. Every local action asks you first. On Wayland, local control stays off until its input protection is validated: sign out, choose **Ubuntu on Xorg** at the login screen, and This computer is ready to use. Chat, screen preview, Cloud and Local VM work on both.
 
 ## Safety model
 

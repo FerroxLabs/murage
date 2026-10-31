@@ -127,7 +127,7 @@ it("a shared row uses held asks and failure settlement without a project group",
  database().prepare("UPDATE room_requests SET state='running',dispatched_at=2 WHERE id=?").run(queued.request.id);
  const request=roomRequest(database(),queued.request.id)!;
  const run:ProjectUsageRun={request,generation:"shared-generation",botId:f.iris.id,engine:"fixture"};let failures=0;
- await expect(dispatchProjectUsageTurn({threadId:request.targetThreadId!,text:"work"},run,{bindings:new Map(),pending:new Map(),turns:new Map(),project:false,interrupt:()=>{},send:async input=>{expect(input).toMatchObject({holdPermissionAsks:true,holdProjectAsks:true});throw Error("before acceptance");},failure:failed=>{failures++;settleProjectUsage(database(),failed.request,{threadId:request.targetThreadId!,botId:f.iris.id,engine:"fixture",turnGeneration:run.generation,at:10,ok:false});}})).rejects.toThrow("before acceptance");
+ await expect(dispatchProjectUsageTurn({threadId:request.targetThreadId!,text:"work"},run,{bindings:new Map(),pending:new Map(),turns:new Map(),project:false,interrupt:()=>{},send:async input=>{expect(input).toMatchObject({holdProjectAsks:true});throw Error("before acceptance");},failure:failed=>{failures++;settleProjectUsage(database(),failed.request,{threadId:request.targetThreadId!,botId:f.iris.id,engine:"fixture",turnGeneration:run.generation,at:10,ok:false});}})).rejects.toThrow("before acceptance");
  expect(failures).toBe(1);expect(run.settled).toBe(true);expect(database().prepare("SELECT count(*) AS n FROM usage_ledger WHERE request_id=?").get(request.id)?.n).toBe(1);
 });
 
@@ -249,7 +249,7 @@ it("R4 C (Astra r3 #1): Stop it now cancels the stopped request's approval card,
  const closed:string[]=[];
  changeSharing(f.store,f.iris.id,{mode:"none",teams:[]},"stop",{now:10,closeApprovals:thread=>closed.push(thread)});
  await expect(verdict).resolves.toBe("cancelled");
- expect(card()).toMatchObject({answered:"deny",dismissed:true});
+ expect(card()).toMatchObject({answered:"unavailable",dismissed:true});
  // the owner's late answer finds nothing to decide
  expect(resolvePeerComms(bus,card().requestId!,"allow")).toBe(false);
  expect(closed).toEqual([f.iris.tasks!.find(t=>t.sharedWork)!.threadId]);

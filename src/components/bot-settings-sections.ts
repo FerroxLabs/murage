@@ -26,8 +26,11 @@ export function botSettingsSectionLabel(section: typeof BOT_SETTINGS_SECTIONS[nu
 }
 /** Sections that read or change desktop-only routes: not offered elsewhere. */
 export const DESKTOP_ONLY_BOT_SETTINGS: ReadonlySet<BotSettingsSection> = new Set(["shapes", "teams", "learning"]);
-/** Sections offered only while a server feature says it is on: `email` only while bot email's status route answers enabled (dark launch). */
+/** Sections that depend on a server feature: `email` on bot email's status route (dark launch). They are always listed
+ *  (SETTINGS-UX-1011 S1); while the feature is off the row is marked "Off" and the section body renders its stub. */
 export const GATED_BOT_SETTINGS: ReadonlySet<BotSettingsSection> = new Set(["email"]);
+/** The mark a gated row carries while its feature is not on; null while on or still checking. */
+export const GATED_ROW_MARK = "Off";
 export function filterBotSettingsSections(query: string) {
   const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return BOT_SETTINGS_SECTIONS.filter(section => words.every(word => `${section.label} ${section.keywords}`.toLowerCase().includes(word)));

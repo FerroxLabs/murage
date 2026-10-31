@@ -217,7 +217,10 @@ async function createSession(env: Env, userId: string) {
     }),
   });
   if (!response.ok) throw new Error(await upstreamError(response, `Session creation failed (${response.status})`));
-  return parseSession(sessionWireSchema.parse(await response.json()));
+  const session = parseSession(sessionWireSchema.parse(await response.json()));
+  // A Session is only ever this installation's (adapted from OpenMausBot e3b9af254).
+  if (session.userId && session.userId !== userId) throw new Error("Composio created a Session for another user");
+  return { ...session, userId };
 }
 
 /** Session ids this isolate already tried to upgrade once. If the fresh
@@ -231,6 +234,9 @@ async function ensureSession(installation: InstallationRow, env: Env, ctx: Execu
     throw new Response(JSON.stringify({ error: "too many connected-app requests" }), { status: 429, headers: JSON_HEADERS });
   }
   let session = installation.session_id ? await getSession(env, installation.session_id) : null;
+  // The stored Session is reused only while Composio says it belongs to this installation's user; any other (or an
+  // unnamed) one is replaced, so connected apps never attach to another user's Session (adapted from OpenMausBot e3b9af254).
+  if (session && session.userId !== installation.composio_user_id) session = null;
   if (session && !session.multiAccountConfigured && multiAccountUpgradeAttempted.has(session.sessionId)) {
     return session;
   }

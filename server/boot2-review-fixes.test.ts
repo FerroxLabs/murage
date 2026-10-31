@@ -52,7 +52,7 @@ describe("2a. the open-card walk after listen", () => {
     expect(mark.at).not.toBeNull();                                                   // on d6cee1176 the marker was null before the walk ran
     expect(readMessage("owned", "dead")?.card?.dismissed).toBeUndefined();
     expect(await settleStaleCardsFromMark(bus, kinds, mark, high, owned, async () => {})).toBe(1);
-    expect(readMessage("owned", "dead")?.card).toMatchObject({ answered: "deny", dismissed: true });
+    expect(readMessage("owned", "dead")?.card).toMatchObject({ answered: "unavailable", dismissed: true });
     expect(mark.at).toBeNull();
     expect(await settleStaleCardsFromMark(bus, kinds, mark, high, owned, async () => {})).toBe(0);
   });

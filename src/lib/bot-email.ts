@@ -9,34 +9,63 @@ import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { respondWithFreshAuth } from "./fresh-auth";
 import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
+import { EMAIL_STATUS_EVENT } from "./email-status-event";
 
 export type Api = (path: string, init?: RequestInit) => Promise<unknown>;
-/** What the status route said: on (with the view), off (show nothing), or off with the section 8 Flux line. */
-export type EmailStatusState = { kind: "loading" } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "on"; view: EmailStatusView };
+/** What the status route said: on (with the view), checking (a key is saved and Flux has not given a definitive answer yet, never off; after
+ *  a read with no definitive answer it carries a plain note in place of the word), off (a 404: not on here), or off with its Flux line.
+ *  `error` is the stub's could-not-check state; readEmailStatus keeps the last status (or checking) for a failed read instead. */
+export type EmailStatusState = { kind: "loading" } | { kind: "checking"; note?: string } | { kind: "off" } | { kind: "flux-off"; line: string } | { kind: "flux-refused"; line: string }
+  | { kind: "flux-sign-in"; line: string } | { kind: "flux-line"; line: string } | { kind: "error" } | { kind: "on"; view: EmailStatusView };
+
+/** EMAIL-CAPS-CACHE-1011: the last status the server gave in this app session. A read that fails (a 500, a 502, a malformed body, no
+ *  answer) keeps it, so a failed read never turns email off or hides it; only the server's own answer changes it. */
+let held: EmailStatusState | null = null;
+export function heldEmailStatus(): EmailStatusState | null { return held; }
+export function resetHeldEmailStatus(): void { held = null; }
 
 export async function readEmailStatus(call: Api = api, refresh = false): Promise<EmailStatusState> {
+  let next: EmailStatusState;
   try {
-    const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as EmailStatusView;
-    return view && view.enabled === true ? { kind: "on", view } : { kind: "off" };
+    const view = await call(`/api/email/status${refresh ? "?refresh=1" : ""}`) as (EmailStatusView & { checking?: unknown; note?: unknown }) | null;
+    if (view && typeof view === "object" && view.enabled === true) next = { kind: "on", view };
+    else if (view && typeof view === "object" && view.checking === true) next = typeof view.note === "string" && view.note ? { kind: "checking", note: view.note } : { kind: "checking" };
+    else if (view && typeof view === "object" && (view as { enabled?: unknown }).enabled === false) next = { kind: "off" };
+    else return held ?? { kind: "checking" };
   } catch (error) {
-    const body = (error as { body?: { fluxOff?: unknown } }).body;
-    return typeof body?.fluxOff === "string" ? { kind: "flux-off", line: body.fluxOff } : { kind: "off" };
+    const failure = error as { status?: unknown; body?: { fluxOff?: unknown; fluxRefused?: unknown; fluxSignIn?: unknown; fluxLine?: unknown } };
+    // only the route's own 404 means off (with its line when the server sends one); anything else keeps the last status
+    if (failure?.status !== 404) return held ?? { kind: "checking" };
+    const body = failure.body;
+    if (typeof body?.fluxOff === "string") next = { kind: "flux-off", line: body.fluxOff };
+    // 1.0.11: Flux answered 401 on the saved key; the stub offers Sign in with Flux instead of hiding the card
+    else if (typeof body?.fluxRefused === "string") next = { kind: "flux-refused", line: body.fluxRefused };
+    // 1.0.11: the saved key has no email scope (403 email_scope_required); signing in mints the email:owner key
+    else if (typeof body?.fluxSignIn === "string") next = { kind: "flux-sign-in", line: body.fluxSignIn };
+    // a 200 with eligible: false (or a 403 account state): Flux's reason as one owner line
+    else if (typeof body?.fluxLine === "string") next = { kind: "flux-line", line: body.fluxLine };
+    else next = { kind: "off" };
   }
+  held = next;
+  return next;
 }
 
-/** The status, read once per mount (Settings open re-reads the capability, 2.0). */
+/** The status, read once per mount (Settings open re-reads the capability, 2.0) and again whenever the server says a read landed. */
 export function useEmailStatus(refresh = false): EmailStatusState {
-  const [state, setState] = useState<EmailStatusState>({ kind: "loading" });
+  const [state, setState] = useState<EmailStatusState>(() => held ?? { kind: "loading" });
   useEffect(() => {
     let live = true;
-    void readEmailStatus(api, refresh).then(next => { if (live) setState(next); });
-    return () => { live = false; };
+    const read = (fresh: boolean) => { void readEmailStatus(api, fresh).then(next => { if (live) setState(next); }); };
+    read(refresh);
+    const again = () => read(false);
+    window.addEventListener(EMAIL_STATUS_EVENT, again);
+    return () => { live = false; window.removeEventListener(EMAIL_STATUS_EVENT, again); };
   }, [refresh]);
   return state;
 }
 
-/** Is a bot settings section offered? `email` only while the status says on. */
-export function emailSectionOffered(status: EmailStatusState): boolean { return status.kind === "on"; }
+/** Is a bot settings section offered? `email` while the status says on, or checking (no definitive answer yet is never off). */
+export function emailSectionOffered(status: EmailStatusState): boolean { return status.kind === "on" || status.kind === "checking"; }
 
 export const OWNER_ROUTE: Record<EmailOwnerAction, string> = {
   setup: "setup", retry: "retry", pause: "pause", resume: "resume", remove: "remove", keep: "keep", reconnect: "reconnect", policy: "policy",
@@ -87,6 +116,22 @@ export function emailSectionActions(view: Pick<EmailBotView, "state"> & Partial<
 
 /** 2.4: the owner act of turning email on (or signing in again) obtains the email:owner token in the desktop shell. Resolves null when
  *  signed in, the refusal line otherwise; without the desktop shell there is nothing to run (null, and the route answers for itself). */
+type FluxSigninBridge = { start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status?: { configured: boolean } } | { ok: false; message: string }> };
+/** 1.0.11: the Bot email stub's "Sign in with Flux" after Flux answered 401 on the saved key. The same desktop flow as Models & engines
+ *  (flux-signin:start), replacing the saved key at its current revision. Null when it worked, else the line to show. */
+export async function signInFluxAgain(bridge: FluxSigninBridge | undefined = typeof window !== "undefined" ? window.muragebox?.fluxSignin : undefined, call: Api = api,
+  onConnected?: (status: { configured: boolean }) => void): Promise<string | null> {
+  if (!bridge) return null;
+  const flux = await call("/api/flux-connection") as { configured?: unknown; revision?: unknown } | null;
+  const revision = typeof flux?.revision === "string" ? flux.revision : "";
+  const result = await bridge.start({ action: flux?.configured === true ? "replace" : "connect", revision });
+  if (!result.ok) return result.message;
+  // as Models & engines does: the saved-key state and the connection list follow the new key at once
+  if (result.status) onConnected?.(result.status);
+  if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") window.dispatchEvent(new Event("murage:provider-connections-changed"));
+  return null;
+}
+
 export async function signInEmailOwner(bridge = typeof window !== "undefined" ? window.muragebox?.emailOwnerSignin : undefined): Promise<string | null> {
   if (!bridge) return null;
   const result = await bridge.start();

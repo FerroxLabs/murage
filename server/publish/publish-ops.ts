@@ -24,7 +24,6 @@ import { listSite, resolveSiteFolder } from "./site-files.ts";
 import { zipStore } from "./zip.ts";
 import { murageLine } from "../murage-line.ts";
 
-export const PUBLISH_APPROVAL_TIMEOUT_MS = 15 * 60_000;
 const ID = /^[A-Za-z0-9-]{1,64}$/;
 /** readPublishedSites keeps this many records, so a new site is refused before it is made once the list is full. */
 const MAX_SITES_PER_BOT = 200;
@@ -39,7 +38,8 @@ export interface PublishResult {
   phases: string[];
   summary: string;
 }
-type Answer = "allow" | "deny" | "unanswered" | "gone";
+// A publish card waits for the owner until answered or its turn ends: no expiry timer (cards-wait 1.0.8, GROK-STOPPED F1).
+type Answer = "allow" | "deny" | "gone";
 
 /** A Netlify address label: lowercase letters, digits and hyphens. */
 export function siteSlug(name: string): string {
@@ -100,7 +100,7 @@ export class PublishOperations {
     /** The bot's own files folder (a site folder must be inside it). */
     workspaceFor: (botId: string, threadId: string) => string | undefined;
     speaker?: (threadId: string, botId: string) => Message["from"] | undefined;
-    fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void>; approvalTimeoutMs?: number;
+    fetchImpl?: typeof fetch; sleep?: (ms: number) => Promise<void>;
   };
   constructor(options: PublishOperations["options"]) { this.options = options; }
 
@@ -334,7 +334,6 @@ export class PublishOperations {
   private settled(answer: Answer, what: "publish" | "take-down") {
     if (answer === "allow") return;
     if (answer === "deny") throw new PublishError("declined", `The owner chose not to ${what === "publish" ? "publish" : "take it down"}. Nothing was changed.`);
-    if (answer === "unanswered") throw new PublishError("unanswered", `Nobody answered the approval card within ${PUBLISH_APPROVAL_TIMEOUT_MS / 60_000} minutes, so it was closed and nothing was changed. Ask again if the owner still wants this.`);
     throw new PublishError("cancelled", "This turn ended before the owner answered. Nothing was changed.");
   }
 
@@ -349,17 +348,15 @@ export class PublishOperations {
     } }));
     this.options.waiting(actor.threadId, true, requestId, message.id, actor.botId);
     return new Promise<{ answer: Answer; messageId: string }>(resolve => {
-      let done = false, expired = false;
+      let done = false;
       const finish = (allow: boolean, source: "user" | "system" = "system") => {
-        if (done) return; done = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
+        if (done) return; done = true; actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
         const current = store.messageById(actor.threadId, message.id);
         if (current?.card && !current.card.answered) store.patchMessage(actor.threadId, message.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
         this.options.waiting(actor.threadId, false, requestId, undefined, actor.botId);
-        resolve({ answer: source === "user" ? (allow ? "allow" : "deny") : expired ? "unanswered" : "gone", messageId: message.id });
+        resolve({ answer: source === "user" ? (allow ? "allow" : "deny") : "gone", messageId: message.id });
       };
       const abort = () => finish(false);
-      const timer = setTimeout(() => { expired = true; finish(false); }, this.options.approvalTimeoutMs ?? PUBLISH_APPROVAL_TIMEOUT_MS);
-      timer.unref?.();
       this.pending.set(requestId, { threadId: actor.threadId, messageId: message.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();

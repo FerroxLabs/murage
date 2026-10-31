@@ -28,6 +28,7 @@ beforeEach(() => thawRootSetWritesForTest(true));
 afterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "../config.ts";
 import { insertMessage } from "../message-db.ts";
+import { runRevocationJobsNow } from "./memory-revocation.ts";
 import { writtenWithReceipts } from "./testing/legacy-file-model.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -198,6 +199,7 @@ it("a delegated reply copied in from Kessler follows its original in a long chat
   for (const message of messages) insertMessage("dax-direct", message);
   expect(directAllowed("dax-direct", messages, a, new Set()).map(m => m.id)).toContain("copy-k-answer");
   forgetMemory(ownerMemoryTicket(), { kind: "record", id: kesslerMemory });
+  runRevocationJobsNow(database());
   // the copy goes with its original; Dax's own replies do not (content rule)
   const withheld = replayExclusions(LineageAllowance.tool(1_000_000_000), "dax-direct", messages.slice(-80), null, { failClosed: true });
   expect(withheld.has("copy-k-answer")).toBe(true);

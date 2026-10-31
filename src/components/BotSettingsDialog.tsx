@@ -3,30 +3,33 @@ import { X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { SettingsPanel } from "./SettingsPanel";
-import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, GATED_BOT_SETTINGS, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
+import { BOT_SETTINGS_SECTIONS, DESKTOP_ONLY_BOT_SETTINGS, GATED_BOT_SETTINGS, GATED_ROW_MARK, LEARNING_BADGE_SECTION, botSettingsSectionLabel, filterBotSettingsSections, type BotSettingsSection } from "./bot-settings-sections";
 import { BotSettingsDraftContext, BotSettingsNavigationContext, type BotSettingsDraft } from "./bot-settings-drafts";
 import { returnFocus } from "@/lib/return-focus";
 import { lastBotSection, rememberBotSection } from "@/lib/last-bot-section";
 import { badgeLabel, badgeText, useLearningBadge } from "@/lib/learning-counts";
-import { emailSectionOffered, useEmailStatus } from "@/lib/bot-email";
+import { useEmailStatus } from "@/lib/bot-email";
 
 export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
   const { state, dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const desktop = useDesktopSurface();
-  // bot email (1.0.9): the Email section is offered only while the server says email is on (dark launch)
-  const emailOn = emailSectionOffered(useEmailStatus());
+  // bot email (1.0.9): the Email row is always listed (SETTINGS-UX-1011 S1); while the server does not say email is on,
+  // the row is marked "Off" and the section body is the stub that says why and how to turn it on. Checking (EMAIL-CAPS-CACHE-1011: no
+  // definitive answer yet) is never off. Opening a bot's settings re-reads the capability (M4); the shared store keeps the last state.
+  const emailStatus = useEmailStatus(true);
+  const gatedOff = (id: BotSettingsSection) => GATED_BOT_SETTINGS.has(id) && (emailStatus.kind === "off" || emailStatus.kind === "flux-off" || emailStatus.kind === "flux-refused" || emailStatus.kind === "flux-sign-in" || emailStatus.kind === "flux-line");
   // A deep link (intent) wins; otherwise the profile reopens where the person last was.
   const [section, setSection] = useState<BotSettingsSection>(() =>
     state.botSettingsIntent?.section
-    ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id).filter(id => (desktop === true || !DESKTOP_ONLY_BOT_SETTINGS.has(id)) && !GATED_BOT_SETTINGS.has(id)), [LEARNING_BADGE_SECTION])
+    ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id).filter(id => desktop === true || !DESKTOP_ONLY_BOT_SETTINGS.has(id)), [LEARNING_BADGE_SECTION])
     ?? "overview");
   const [query, setQuery] = useState("");
   const chooseSection = (id: BotSettingsSection) => { setSection(id); rememberBotSection(id); };
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
   // "What shapes" and Teams read desktop-only routes; elsewhere they would be
   // empty pages, so the sections are not offered at all.
-  const matches = useMemo(() => filterBotSettingsSections(query).filter(item => (desktop || !DESKTOP_ONLY_BOT_SETTINGS.has(item.id)) && (emailOn || !GATED_BOT_SETTINGS.has(item.id))), [query, desktop, emailOn]);
+  const matches = useMemo(() => filterBotSettingsSections(query).filter(item => desktop || !DESKTOP_ONLY_BOT_SETTINGS.has(item.id)), [query, desktop]);
   const selected = BOT_SETTINGS_SECTIONS.find(item => item.id === section)!;
   // What was learned since the owner last looked: a count on the row, gone once the section is opened.
   const newLearning = useLearningBadge(bot.id, section === LEARNING_BADGE_SECTION);
@@ -88,10 +91,10 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
           <label htmlFor="bot-settings-search" className="sr-only">Search settings</label>
           <input id="bot-settings-search" autoFocus type="search" value={query} maxLength={100} onChange={event => setQuery(event.target.value)} placeholder="Search settings" className="min-h-10 w-full min-w-0 flex-1 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus sm:min-h-0" />
           <label className="block min-w-0 flex-1 text-[12px] sm:hidden"><span className="sr-only">Section</span><select value={section} onChange={event => chooseSection(event.target.value as BotSettingsSection)} className="min-h-10 w-full rounded-lg border border-hairline/50 bg-inset px-2 text-[13px]">
-            {!matches.some(item => item.id === section) && <option value={section}>{label(selected)}</option>}{matches.map(item => <option key={item.id} value={item.id}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) ? ` (${badgeText(newLearning)})` : ""}</option>)}
+            {!matches.some(item => item.id === section) && <option value={section}>{label(selected)}{gatedOff(section) ? ` (${GATED_ROW_MARK})` : ""}</option>}{matches.map(item => <option key={item.id} value={item.id}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) ? ` (${badgeText(newLearning)})` : ""}{gatedOff(item.id) ? ` (${GATED_ROW_MARK})` : ""}</option>)}
           </select></label>
           </div>
-          <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => chooseSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) && <span aria-label={badgeLabel(newLearning) ?? undefined} className="ml-2 rounded-full bg-accent/15 px-1.5 text-[11px] font-medium text-ink">{badgeText(newLearning)}</span>}</button>)}</div>
+          <div className="mt-3 hidden space-y-1 sm:block">{matches.map(item => <button key={item.id} type="button" aria-pressed={section === item.id} onClick={() => chooseSection(item.id)} className={`min-h-10 w-full rounded-lg px-3 py-2 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus ${section === item.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-inset"}`}>{label(item)}{item.id === LEARNING_BADGE_SECTION && badgeText(newLearning) && <span aria-label={badgeLabel(newLearning) ?? undefined} className="ml-2 rounded-full bg-accent/15 px-1.5 text-[11px] font-medium text-ink">{badgeText(newLearning)}</span>}{gatedOff(item.id) && <span data-gated-row={item.id} className="ml-2 text-[11px] text-ink-secondary">{GATED_ROW_MARK}</span>}</button>)}</div>
           {!matches.length && <p className="mt-3 text-[12px] text-ink-secondary">No matching settings sections.</p>}
           {query && <button className="mt-2 min-h-9 text-[12px] text-ink-secondary underline" onClick={() => setQuery("")}>Clear search</button>}
         </nav>

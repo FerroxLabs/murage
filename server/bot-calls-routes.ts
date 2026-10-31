@@ -36,6 +36,9 @@ export interface CallsRouteDeps {
   /** The turn running now on this conversation (the provider turn id turn.completed carries) and its bot; null when none. */
   runningTurn?(threadId: string): { turnId: string; botId: string } | null;
   tickets: TicketStore;
+  /** The authenticated device making this request (a Cloud device identity, the desktop, or the companion's phone); null when
+   *  none is proven. A call session is bound to it, and only it is given that session's ticket. */
+  caller(): string | null;
   now?: () => number;
 }
 
@@ -44,7 +47,7 @@ const offUntilNow = (db: DatabaseSync, at: number): number | null => { const unt
 const ok = (body: unknown): CallsRouteReply => ({ status: 200, body });
 const err = (status: number, error: string): CallsRouteReply => ({ status, body: { error } });
 const objectOf = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-const ticketPrincipal = (callId: string, device: string) => `call:${callId}:${device}`;
+const ticketPrincipal = (callId: string, device: string, principal: string) => `call:${callId}:${device}:${principal}`;
 
 export function createCallTickets(): TicketStore { return createTicketStore({ ttlMs: CALL_PROTOCOL.ticketMs, maxOutstanding: 64 }); }
 
@@ -194,8 +197,10 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
     const bot = typeof body.botId === "string" ? d.bot(body.botId) : null;
     if (!bot || typeof body.threadId !== "string" || !d.visible(body.threadId)) return err(404, "no such conversation");
     if (typeof body.device !== "string" || !CALL_DEVICE.test(body.device)) return err(400, "device");
+    const caller = d.caller();
+    if (!caller) return err(403, "device");
     // the call id on the headers too, so a client that aborts a slow body still ends the session it opened
-    const opened = d.runtime.openSession({ botId: bot.id, threadId: body.threadId, device: body.device });
+    const opened = d.runtime.openSession({ botId: bot.id, threadId: body.threadId, device: body.device, principal: caller });
     return { ...ok(opened), headers: { [CALL_PROTOCOL.callIdHeader]: opened.callId } };
   }
   if (method === "POST" && (m = /^\/api\/calls\/sessions\/([\w-]{1,64})\/(ticket|end)$/.exec(path))) {
@@ -204,9 +209,11 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
     if (!session || (session.threadId && !d.visible(session.threadId))) return err(404, "no such call");
     if (action === "end") return ok({ ended: d.runtime.endSession(callId, "closed") });
     const body = objectOf(await d.readBody());
-    if (body.device !== session.device) return err(404, "no such call");
+    // only the authenticated device the session is bound to gets its ticket: a device string read from /api/calls/active is not enough
+    const caller = d.caller();
+    if (body.device !== session.device || !caller || session.principal !== caller) return err(404, "no such call");
     if (session.endedAt !== null || d.runtime.touch(callId) !== "live") return err(410, "gone");
-    return ok({ ticket: d.tickets.mint(ticketPrincipal(callId, session.device)), expiresAt: now() + CALL_PROTOCOL.ticketMs });
+    return ok({ ticket: d.tickets.mint(ticketPrincipal(callId, session.device, caller)), expiresAt: now() + CALL_PROTOCOL.ticketMs });
   }
   if (method === "POST" && (m = /^\/api\/calls\/([0-9a-f-]{36})\/(answer|decline|text-instead|never-again|seen)$/.exec(path))) {
     const [, id, action] = m;
@@ -215,7 +222,9 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
     const body = objectOf(await d.readBody());
     if (action === "answer") {
       if (typeof body.device !== "string" || !CALL_DEVICE.test(body.device)) return err(400, "device");
-      const r = d.runtime.answer(id, body.device);
+      const caller = d.caller();
+      if (!caller) return err(403, "device");
+      const r = d.runtime.answer(id, body.device, caller);
       return r.status === 200 ? ok({ sessionId: r.sessionId, callId: r.callId, threadId: r.threadId }) : err(r.status, r.error);
     }
     if (action === "decline") return d.runtime.decline(id, "declined") ? ok({ outcome: "declined" }) : err(409, "not_ringing");
@@ -274,6 +283,8 @@ export interface CallChannelDeps {
   tickets: TicketStore;
   /** The same Host and Origin rules as the HTTP gate (voice/stream-route.ts upgradeAdmitted). */
   admitUpgrade(req: IncomingMessage): boolean;
+  /** The authenticated device of the upgrading request, in the same form as CallsRouteDeps.caller; null when none is proven. */
+  upgradeCaller(req: IncomingMessage): string | null;
   pingEveryMs?: number;
 }
 
@@ -315,7 +326,8 @@ export function createCallChannel(deps: CallChannelDeps) {
       if (!m) return false;
       const session = getSession(deps.db(), m[1]);
       const ticket = url.searchParams.get("ticket") ?? "";
-      if (!deps.admitUpgrade(req) || !session || session.endedAt !== null || !deps.tickets.redeem(ticket, ticketPrincipal(session.callId, session.device))) {
+      const caller = deps.admitUpgrade(req) ? deps.upgradeCaller(req) : null;
+      if (!caller || !session || session.endedAt !== null || session.principal !== caller || !deps.tickets.redeem(ticket, ticketPrincipal(session.callId, session.device, caller))) {
         socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
         socket.destroy();
         return true;

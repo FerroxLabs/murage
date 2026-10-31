@@ -210,10 +210,14 @@ describe("engines say where they stand on local models (spec V4)", () => {
     }
   });
 
-  it("labels the chat-only drivers truthfully instead of implying agents", () => {
-    for (const driver of ["openai-compat", "grok"]) {
-      expect(engineLocalLine(driver), driver).toBe(`${LOCAL_MODELS_TITLE}: chat only (no tools)`);
-    }
+  it("says openai-compat runs tools on local models, and gives the grok API no line", () => {
+    // 1.0.9 sends local models the mounted tools on openai-compat; the old "chat only (no tools)" line is gone
+    const line = engineLocalLine("openai-compat");
+    expect(line).toContain("tools included");
+    expect(line).toContain(`Models → ${LOCAL_MODELS_TITLE}`);
+    expect(line).not.toMatch(/chat only|no tools|\u2014/i);
+    // the grok API driver has no local endpoint at all
+    expect(engineLocalLine("grok")).toBe("");
   });
 
   it("says nothing at all for an engine that cannot use a local server", () => {

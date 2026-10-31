@@ -293,7 +293,7 @@ function MemoryCard({ bot }: { bot: Bot }) {
   };
 
   return (
-    <div className="rounded-xl bg-card p-4">
+    <div id="bot-setting-notebook" data-setting="bot.memory.notebook" className="rounded-xl bg-card p-4">
       <button
         className="flex w-full items-center justify-between gap-4 text-left"
         aria-expanded={open}
@@ -534,8 +534,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="overview" active={section}>
           {/* What this bot is FOR comes first. The avatar studio used to open
               the panel, with the purpose and the role below the fold. */}
+          <div id="bot-setting-setup" data-setting="bot.overview.setup" className="space-y-4 empty:hidden">
           <BotSetupAction bot={bot} />
           {desktop === true && <LearningOverviewLine key={`learning-line-${bot.id}`} botId={bot.id} />}
+          </div>
           {/* An org chart needs an org. With one bot in the workspace there is
               nobody to lead and nobody to report to, so the role summary and
               the Role control below are both hidden until a second bot
@@ -556,7 +558,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="identity" active={section}>
           {/* Appearance opens Identity & instructions, always open: a bot's
               looks sit with its name and instructions (Sean, 2026-10-03). */}
-          <div className="rounded-xl bg-card p-3">
+          <div id="bot-setting-avatar" data-setting="bot.identity.avatar" className="rounded-xl bg-card p-3">
             <h3 className="mb-2 text-[13px] font-medium">{t("settings.appearance.title")}</h3>
             <BotProfileAvatarCard
               bot={bot}
@@ -565,15 +567,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               onPatch={patch}
             />
           </div>
-          <Field label={t("settings.bot.identity.name")}>
+          <div id="bot-setting-name" data-setting="bot.identity.name"><Field label={t("settings.bot.identity.name")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.name}
               value={bot.name}
               onChange={(e) => patch({ name: e.target.value })}
             />
-          </Field>
-          <Field label={t("settings.bot.identity.title")}>
+          </Field></div>
+          <div id="bot-setting-title" data-setting="bot.identity.title"><Field label={t("settings.bot.identity.title")}>
             <input
               className={inputCls}
               maxLength={BOT_PROFILE_LIMITS.title}
@@ -581,7 +583,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               value={bot.title}
               onChange={(e) => patch({ title: e.target.value })}
             />
-          </Field>
+          </Field></div>
           {/* Description is NOT a note about the bot. It is pasted verbatim
               into the bot's system prompt on every turn ("About: …"), and it
               is also what a Chief of Staff, the avatar prompt and the team
@@ -589,7 +591,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               neither, so people wrote notes where instructions go — and, once
               they realised, wrote voice ("be snarky") into the one field that
               routing reads. Personality below is the field for that. */}
-          <Field label={t("settings.bot.identity.instructions")}>
+          <div id="bot-setting-instructions" data-setting="bot.identity.instructions"><Field label={t("settings.bot.identity.instructions")}>
             <textarea
               className={cn(inputCls, "min-h-[96px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.description}
@@ -601,8 +603,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             <p className="mt-1.5 text-[12px] leading-relaxed text-ink-secondary">
               {t("settings.bot.identity.instructionsHint")}
             </p>
-          </Field>
-          <Field label={t("settings.bot.identity.personality")}>
+          </Field></div>
+          <div id="bot-setting-personality" data-setting="bot.identity.personality"><Field label={t("settings.bot.identity.personality")}>
             <textarea
               className={cn(inputCls, "min-h-[64px] resize-none")}
               maxLength={BOT_PROFILE_LIMITS.persona}
@@ -618,7 +620,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 {persona.length}/{BOT_PROFILE_LIMITS.persona}
               </span>
             </div>
-          </Field>
+          </Field></div>
 
           </SettingsSection>
 
@@ -630,13 +632,13 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               before it touches an agent that already has skills, a
               description, or a conversation behind it. */}
           <SettingsSection id="overview" active={section}>
-          {hasTeammates && <BotRoleControl bot={bot} canCoordinate={canCoordinate} />}
+          <div id="bot-setting-role" data-setting="bot.overview.role" className="empty:hidden">{hasTeammates && <BotRoleControl bot={bot} canCoordinate={canCoordinate} />}</div>
           </SettingsSection>
 
 
           <SettingsSection id="permissions" active={section}>
-          <CanTalkToControl bot={bot} />
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+          <div id="bot-setting-can-talk" data-setting="bot.permissions.can-talk" className="empty:hidden"><CanTalkToControl bot={bot} /></div>
+          <div id="bot-setting-peers" data-setting="bot.permissions.peers" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
                 {PEER_CONTACT_LABEL}
@@ -657,7 +659,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           </SettingsSection>
           <SettingsSection id="access" active={section}>
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+          <div id="bot-setting-apps" data-setting="bot.access.apps" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">{t("settings.bot.apps.title")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
@@ -688,11 +690,11 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             />
           </div>
 
-          <BotAccessSettings key={`access-${bot.id}`} botId={bot.id} />
-          <PhoneAccessCard key={`phone-${bot.id}`} bot={bot} />
-          <PhoneForBotsRow />
+          <div id="bot-setting-app-access" data-setting="bot.access.app-access" className="empty:hidden"><BotAccessSettings key={`access-${bot.id}`} botId={bot.id} /></div>
+          <div id="bot-setting-phone" data-setting="bot.access.phone" className="empty:hidden"><PhoneAccessCard key={`phone-${bot.id}`} bot={bot} /></div>
+          <div id="bot-setting-phone-for-bots" data-setting="bot.access.phone-for-bots" className="empty:hidden"><PhoneForBotsRow /></div>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+          <div id="bot-setting-browser" data-setting="bot.access.browser" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">{t("settings.bot.browser.title")}</div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
@@ -716,7 +718,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           </SettingsSection>
           <SettingsSection id="model" active={section}>
-          <div className="rounded-xl bg-card p-4">
+          <div id="bot-setting-model" data-setting="bot.model.model" className="rounded-xl bg-card p-4">
             <ModelPicker
               bot={bot}
               contained
@@ -731,10 +733,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             />
             <BotFollowModelRow bot={bot} />
           </div>
-          {desktop && <LimitBackupRow bot={bot} />}
+          <div id="bot-setting-backup" data-setting="bot.model.backup" className="empty:hidden">{desktop && <LimitBackupRow bot={bot} />}</div>
 
           {!!engine?.capabilities?.effortLevels?.length && (
-            <div className="rounded-xl bg-card p-4">
+            <div id="bot-setting-effort" data-setting="bot.model.effort" className="rounded-xl bg-card p-4">
               <div className="text-[15px] font-medium text-ink">{t("settings.bot.effort.title")}</div>
               {/* Says what the app does, not what the engine ends up at:
                   Codex applies a level to the whole thread and has no way to
@@ -774,7 +776,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               set to; nothing here is required to read a conversation, approve
               an action, or send a message from a phone. */}
           {desktop === true && (
-          <div className="rounded-xl bg-card p-4">
+          <div id="bot-setting-computer" data-setting="bot.access.computer" className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {bot.computer ? t("settings.bot.computer.note") : t("settings.bot.computer.noteAuto")}
@@ -837,23 +839,23 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           </SettingsSection>
           <SettingsSection id="usage" active={section}>
-          <BotUsageCard bot={bot} />
-          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">{t("usageCard.empty")}</p>}
+          <div id="bot-setting-usage" data-setting="bot.usage.usage" className="space-y-4"><BotUsageCard bot={bot} />
+          {botUsage(bot).turns === 0 && <p className="text-[13px] text-ink-secondary">{t("usageCard.empty")}</p>}</div>
           </SettingsSection>
           <SettingsSection id="access" active={section}>
-          <WorkingFolder bot={bot} />
-          <PublishedSitesPanel bot={bot} />
+          <div id="bot-setting-folder" data-setting="bot.access.folder" className="empty:hidden"><WorkingFolder bot={bot} /></div>
+          <div id="bot-setting-sites" data-setting="bot.access.sites" className="empty:hidden"><PublishedSitesPanel bot={bot} /></div>
           {/* bot email section 8: only for an install that had email on and lost its Flux key */}
           <BotEmailAccessLine />
           </SettingsSection>
           <SettingsSection id="email" active={section}>
-          <BotEmailSectionHost bot={bot} />
+          <div id="bot-setting-email" data-setting="bot.email.email" className="empty:hidden"><BotEmailSectionHost bot={bot} /></div>
           </SettingsSection>
 
 
           <SettingsSection id="memory" active={section}>
           {/* keyed so switching bots never shows one bot's notes under another's name */}
-          <section className="rounded-xl bg-card p-4">
+          <section id="bot-setting-memory" data-setting="bot.memory.memory" className="rounded-xl bg-card p-4">
             <h3 className="text-[15px] font-medium text-ink">{t("settings.bot.memory.title")}</h3>
             <p className="mt-1 text-[12px] text-ink-secondary">{t("settings.bot.memory.note")}</p>
             <MemoryLauncher key={`memory-${bot.id}`} botId={bot.id} botName={bot.name} />
@@ -868,22 +870,22 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               shows the bot's notes and its team's brief. Read again each
               time the section is shown. */}
           <SettingsSection id="shapes" active={section}>
-          {desktop === true && <BotShapesPanel key={`shapes-${bot.id}`} bot={bot} active={section === undefined || section === "shapes"} />}
+          <div id="bot-setting-shapes" data-setting="bot.shapes.shapes" className="empty:hidden">{desktop === true && <BotShapesPanel key={`shapes-${bot.id}`} bot={bot} active={section === undefined || section === "shapes"} />}</div>
           </SettingsSection>
 
 
           {/* "Add a skill" picks and adds skills right here, inside this
               window (skills/SkillPicker): nothing to close, nothing behind. */}
           <SettingsSection id="skills" active={section}>
-          <BotSkillsPanel key={`skills-${bot.id}`} bot={bot} />
+          <div id="bot-setting-skills" data-setting="bot.skills.skills" className="empty:hidden"><BotSkillsPanel key={`skills-${bot.id}`} bot={bot} /></div>
           </SettingsSection>
           <SettingsSection id="learning" active={section}>
-          {desktop === true && <LearningSettings key={`learning-${bot.id}`} bot={bot} />}
+          <div id="bot-setting-learning" data-setting="bot.learning.learning" className="empty:hidden">{desktop === true && <LearningSettings key={`learning-${bot.id}`} bot={bot} />}</div>
           </SettingsSection>
 
 
           <SettingsSection id="permissions" active={section}>
-          <BotPermissionDefault
+          <div id="bot-setting-level" data-setting="bot.permissions.level" className="empty:hidden"><BotPermissionDefault
             botId={bot.id}
             bot={bot}
             requested={permissionRequest}
@@ -893,16 +895,20 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onOption={(key, value) => patch(key === "fullAccessChannelMessages" ? { fullAccessChannelMessages: value } : { fullAccessSetupRequests: value })}
           />
 
-          <BotImageApproval
+          </div>
+
+          <div id="bot-setting-images" data-setting="bot.permissions.images" className="empty:hidden"><BotImageApproval
             bot={bot}
             desktop={desktop}
             onChoose={(setting) => patch({ imageApproval: setting })}
             onAskAfter={(value) => patch({ imageAskAfter: value })}
           />
 
-          <RememberedApprovals bot={bot} desktop={desktop} />
+          </div>
 
-          <div className="rounded-xl bg-card p-4">
+          <div id="bot-setting-always-allowed" data-setting="bot.permissions.always-allowed" className="empty:hidden"><RememberedApprovals bot={bot} desktop={desktop} /></div>
+
+          <div id="bot-setting-review" data-setting="bot.permissions.review" className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.review.title")}</div>
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {canAutoReview
@@ -939,9 +945,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
           </SettingsSection>
           <SettingsSection id="voice" active={section}>
-          <VoiceSettings bot={bot} onPatch={patch} />
+          <div id="bot-setting-voice" data-setting="bot.voice.voice" className="empty:hidden"><VoiceSettings bot={bot} onPatch={patch} /></div>
 
-          <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
+          <div id="bot-setting-notifications" data-setting="bot.voice.notifications" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
               <div className="text-[15px] font-medium text-ink">
                 {t("settings.bot.notifications.title")}
@@ -962,20 +968,24 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </div>
           </SettingsSection>
           <SettingsSection id="routines" active={section}>
+          <div id="bot-setting-routines" data-setting="bot.routines.routines" className="space-y-4">
           {state.routines.filter(routine => routine.botId === bot.id).map(routine => <div key={routine.id} className="rounded-xl bg-card p-4"><p className="text-[14px] font-medium">{routine.name}</p><p className="mt-1 text-[12px] text-ink-secondary">{routine.enabled ? t("settings.bot.routines.enabled") : t("settings.bot.routines.paused")}</p></div>)}
           {!state.routines.some(routine => routine.botId === bot.id) && <p className="text-[13px] text-ink-secondary">{t("settings.bot.routines.none")}</p>}
           <button type="button" onClick={() => navigate(() => dispatch({ type: "showRoutines" }))} className="min-h-10 rounded-lg bg-control px-3 py-2 text-[13px]">{t("settings.bot.routines.open")}</button>
+          </div>
           </SettingsSection>
           <SettingsSection id="teams" active={section}>
-          {desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">{t("settings.bot.teams.loading")}</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}
+          <div id="bot-setting-teams" data-setting="bot.teams.teams" className="empty:hidden">{desktop === true && section === "teams" && <LazyBoundary inline onRetry={TeamsSection.retry}><Suspense fallback={<p role="status" className="text-[13px] text-ink-secondary">{t("settings.bot.teams.loading")}</p>}><TeamsSection.Component key={`teams-${bot.id}`} bot={bot} /></Suspense></LazyBoundary>}</div>
           </SettingsSection>
           <SettingsSection id="history" active={section}>
+          <div id="bot-setting-history" data-setting="bot.history.history" className="space-y-4">
           {allHeldTasks(bot).map(task => <button type="button" key={task.threadId} onClick={() => dispatch({ type: "switchTask", botId: bot.id, threadId: task.threadId })} className="block min-h-10 w-full rounded-xl bg-card p-4 text-left">
             <p className="text-[14px] font-medium">{task.title}</p><p className="mt-1 text-[12px] text-ink-secondary">{new Date(task.createdAt).toLocaleString()}{task.threadId === bot.threadId ? ` · ${t("settings.bot.history.current")}` : ""}</p>
           </button>)}
           {!bot.tasks?.length && <p className="text-[13px] text-ink-secondary">{t("settings.bot.history.none")}</p>}
           {olderHistory.hasMore && <button type="button" disabled={olderHistory.loading} onClick={olderHistory.loadMore} className="block min-h-10 w-full rounded-xl bg-control px-3 py-2 text-left text-[13px] disabled:opacity-60">{olderHistory.loading ? t("settings.bot.history.loadingOlder") : t("settings.bot.history.showOlder")}</button>}
           {olderHistory.failed && !olderHistory.loading && <p role="alert" className="text-[13px] text-danger">{t("settings.bot.history.loadFailed")}</p>}
+          </div>
           </SettingsSection>
         </div>
       </div>

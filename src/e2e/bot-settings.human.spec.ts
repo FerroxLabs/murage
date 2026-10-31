@@ -133,11 +133,11 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
   await expect(dialog.getByText("The imported role is not active. Use the role control below to assign a role explicitly.", { exact: true })).toBeVisible();
-  // 14 on the desktop: the 11 sections everywhere plus the three that read
-  // or change desktop-only routes (What shapes, Learning, Teams), offered
-  // only once the renderer knows it is the desktop (DESKTOP_ONLY_BOT_SETTINGS).
-  if (width < 640) await expect(dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option")).toHaveCount(14);
-  else await expect(dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button")).toHaveCount(14);
+  // 15 on the desktop: the 12 sections everywhere (Email included: a gated section is always listed and shows its stub
+  // while off, SETTINGS-UX-1011 S1) plus the three that read or change desktop-only routes (What shapes, Learning, Teams),
+  // offered only once the renderer knows it is the desktop (DESKTOP_ONLY_BOT_SETTINGS).
+  if (width < 640) await expect(dialog.getByRole("combobox", { name: "Section", exact: true }).locator("option")).toHaveCount(15);
+  else await expect(dialog.getByRole("navigation", { name: "Bot settings sections" }).getByRole("button")).toHaveCount(15);
   await page.screenshot({ path: testInfo.outputPath(`settings-overview-${width}-${skin}.png`), fullPage: true });
   if (width === 1440 && skin === "dark") {
     // Delay an actual fixture upload response. Closing must not pretend it

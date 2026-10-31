@@ -207,6 +207,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "engine-commands.json": excluded(DOWNLOADED),
   // The engine the last start chose (default-engine.ts): a start-up speed cache that the probe rewrites on every start, so a restore has nothing to bring back.
   "default-engine.json": excluded(RUNTIME),
+  // The last definitive bot email capability answer for the saved Flux key (email/caps-file.ts, keyed by a fingerprint, never the key): a
+  // start-up cache the probe rewrites on every definitive read; it describes the key, not the data, so a restore has nothing to bring back.
+  "email-capabilities.json": excluded(RUNTIME), "email-capabilities.json.tmp": excluded(LEFTOVER),
   // When the bundled memory model first verifies, records indexed without a model are re-queued once (memory/model-adoption.ts);
   // this marker records that it finished. The memory index is not restored, so a restored computer runs the catch-up again.
   "memory-model-adopted.json": excluded("Marker that the memory model's one-time catch-up finished; run again on the restored computer, so not restored"),
@@ -220,6 +223,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // folders the owner trusted, and the stop line's remembered recipients
   // (stop-line-state.ts), which decide when a send needs no card.
   "door-identity": excluded(TRUST), "folder-trust.json": excluded(TRUST), "stop-line": excluded(TRUST),
+  // The random id tester feedback carries (feedback-relay.ts), so the team can tell one install's notes from another's.
+  // Not a credential; a restored computer simply makes a new one.
+  "feedback-install-id": excluded("Random feedback id, made again when missing; not restored"),
 
   // Credentials and pairings, made again on the restored computer: Claude
   // account config dirs, the Hermes engine home, the dev harness broker token,

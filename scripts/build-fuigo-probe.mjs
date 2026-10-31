@@ -54,7 +54,7 @@ if (!['linux', 'win32'].includes(platform) || arch !== 'x64') {
           { source: '/usr/include/linux/landlock.h', target: '/uapi/linux/landlock.h', readOnly: true },
           { source: '/usr/include/x86_64-linux-gnu/asm/unistd_64.h', target: '/uapi/asm/unistd_64.h', readOnly: true },
           { source: directory, target: '/work' },
-        ], command: ['/bin/bash', '-c', PROBE_BUILD_SCRIPT] }), { timeout: 20 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
+        ], command: ['/bin/bash', '-c', PROBE_BUILD_SCRIPT] }), { timeout: 40 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 });
         verifyGlibcFloor((await run('objdump', ['-T', join(directory, 'output')], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 })).stdout);
         await rename(join(directory, 'output'), file);
       } finally {

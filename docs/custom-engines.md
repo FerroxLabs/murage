@@ -67,13 +67,20 @@ Either:
 **KV cache.** Extreme KV-cache quantization (`q4_0`) noticeably degrades tool
 calling. Use `q8_0`.
 
-## The OpenAI-compatible endpoint is chat only
+## The OpenAI-compatible endpoint runs Murage's tools
 
 The built-in `openai-compat` driver (and the Grok API driver) talks to any
-OpenAI-compatible endpoint, hosted or local, but it is **chat only**: no tool
-calls, no agents, no files, computers or connected apps. For tools on a local
-model, use Local models above. It is labelled "chat only" in the picker and
-in Settings → Engines.
+OpenAI-compatible endpoint, hosted or local, and since 1.0.9 it runs tools on
+every model, local ones included. A bot on it gets the same Murage tools a pi
+bot gets: memory and recall, asking other bots, your phone, connected apps and
+your own MCP servers, each call through your normal approvals. It has no shell
+or file tools of its own; for those on a local model, pick an agent engine such
+as Fuigo, pi or OpenCode under Local models above.
+
+Every model a Local models server offers is listed here, whether or not it
+passed the tools test. A model that refuses tools is remembered and answers in
+text, so a chat or role-play model still works. Settings → Engines says
+"Works with local models, tools included".
 
 It supports multiple instances in `~/.murage/config.json` (restart after
 editing):

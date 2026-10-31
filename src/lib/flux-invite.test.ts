@@ -217,6 +217,15 @@ describe("nothing in the app is gated on a Flux key", () => {
     // model, on by default once a key exists), room routing itself keeps working without it, and the muted switch
     // says why (the key is needed). Nothing is hidden or removed.
     "components/RoomRoutingSettings.tsx",
+    // BotEmailSettings reads it (with the key's state) only to choose which line the Bot email stub shows while email is
+    // off: "Not on for your account yet" when a working key exists, otherwise "Needs a Flux Router account". It clears the
+    // same bar: bot email is work the key performs (the mail account lives in Flux), the card and the section render with
+    // or without a key, and nothing is hidden or removed; the key only changes the explanation (SETTINGS-UX-1011 S1).
+    "components/BotEmailSettings.tsx",
+    // bot-email.ts signInFluxAgain reads the /api/flux-connection answer's `configured` only to pick the sign-in action
+    // ("replace" the saved key or "connect" a first one) for the Bot email stub's Sign in with Flux (1.0.11
+    // FLUX-SIGNIN-DEFAULT). It gates nothing: the stub and the section render either way.
+    "lib/bot-email.ts",
   ]);
 
   const sources = (): string[] => {

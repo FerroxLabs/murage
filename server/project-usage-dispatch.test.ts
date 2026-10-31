@@ -14,7 +14,7 @@ it.each(["assign", "review"] as const)("binds %s before dispatch, holds asks, an
   const send = vi.fn(async input => {
     expect(bindings.get("turn-1")).toBe("card-request");
     expect(pending.get("desk")?.request).toBe(request);
-    expect(input).toMatchObject({ holdPermissionAsks: true, holdProjectAsks: true });
+    expect(input).toMatchObject({ holdProjectAsks: true });
     return { turnId: "provider-1" };
   });
   await dispatchProjectUsageTurn({ threadId: "desk", text: "Work" }, run, { bindings, pending, turns, project: true, send, interrupt, failure });

@@ -20,7 +20,7 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const DENY_MS = 1_500;
+const WAIT_MS = 3_000;
 
 let base: string;
 let desktopHeaders: Record<string, string>;
@@ -70,7 +70,6 @@ async function startServer() {
       MURAGE_PORT: String(serverPort),
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
-      MURAGE_PERMISSION_DENY_MS: String(DENY_MS),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -125,7 +124,7 @@ describe.skipIf(process.platform === "win32")("a backup held up by a card waitin
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
     const card = await poll(() => cardFor(threadId!), 20_000);
     expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-    await sleep(DENY_MS * 2);
+    await sleep(WAIT_MS);
 
     // Back up now: refused, naming who; nothing listed in the Inbox for it.
     const manual = await request("POST", "/api/backup-restart", { action: "prepare", token: randomUUID(), occasion: "manual" });

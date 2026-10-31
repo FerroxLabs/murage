@@ -19,7 +19,7 @@ CONFIG = "/etc/murage-home/backup.json"
 EXCLUDES = "/etc/murage-home/backup-excludes.txt"
 LAST = "/var/lib/murage-home/backup-last"
 SOURCE = "/data"
-REQUIRED_EXCLUDES = (".claude", ".claude.json", ".codex", ".grok", ".kimi-code", "auth.json", ".credentials.json", "/data/engine-homes/**/signin")
+REQUIRED_EXCLUDES = (".claude", ".claude.json", ".codex", ".grok", ".kimi-code", "auth.json", ".credentials.json", "/data/engine-homes/**/signin", "/data/home/health", "/data/home/health-key", "/data/home/sentinel-delivery.json")
 KEEP_DAILY, KEEP_WEEKLY = "7", "4"
 # murage-commands takes the same lock for a reset, undo or export: never two writers on /data or the repository.
 OPS_LOCK = "/run/murage-data-ops.lock"

@@ -20,6 +20,7 @@ import { DATA_DIR } from "../../config.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { FLUX_OPENAI_BASE, fluxModelId } from "../../flux-routing.ts";
 import { FLUX_HEADER_REFUSAL, type FluxMemoryDecision } from "../../flux-memory-headers.ts";
+import { isFluxUsageHeader } from "../../flux-usage-tags.ts";
 import { mergeFluxCatalog } from "../../flux-surface.ts";
 import { decodeInjectId, hostApiKey, INJECT_SEP, localHost, mergeLocalInject } from "../local-inject.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
@@ -124,9 +125,17 @@ const HERMES_OWNER_HOOK_EVENTS = [
   "subagent_start", "subagent_stop", "on_stream_start", "on_stream_delta", "on_stream_end", "on_interim_message",
 ] as const;
 
+/** The most the hook's message carries. A call whose arguments do not fit is sent as `truncated: true` with no
+ *  arguments, and Murage holds it as a call it could not read (a card), never judging a cut command. */
+export const HERMES_ASK_MESSAGE_CAP = 16 * 1024;
+
 /** The hook program: whatever tool it is told about, it answers "ask". Hermes only runs it for the tools the
- *  matcher selects, so it needs no list of its own. */
+ *  matcher selects, so it needs no list of its own. Hermes escalates the call to session/request_permission with
+ *  `rawInput.command` set to the placeholder `<tool> (plugin approval rule)` and this message as
+ *  `rawInput.description` (tools/approval.py request_tool_approval; acp_adapter/permissions.py), so the message is
+ *  the call's whole arguments as one JSON object, which `normalizeHermesAsk` reads back on Murage's side. */
 export const HERMES_ASK_HOOK_SOURCE = `"use strict";
+const CAP = ${HERMES_ASK_MESSAGE_CAP};
 let raw = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => { raw += chunk; });
@@ -134,11 +143,62 @@ process.stdin.on("end", () => {
   let call = {};
   try { call = JSON.parse(raw) || {}; } catch { call = {}; }
   const tool = typeof call.tool_name === "string" && call.tool_name ? call.tool_name : "tool";
-  const input = call.tool_input && typeof call.tool_input === "object" ? call.tool_input : {};
-  const detail = typeof input.command === "string" ? input.command : typeof input.code === "string" ? input.code : JSON.stringify(input);
-  process.stdout.write(JSON.stringify({ action: "approve", message: tool + ": " + String(detail).slice(0, 400) }));
+  const input = call.tool_input && typeof call.tool_input === "object" && !Array.isArray(call.tool_input) ? call.tool_input : {};
+  let message = JSON.stringify({ murage: 1, v: 1, tool, input, truncated: false });
+  if (message.length > CAP) message = JSON.stringify({ murage: 1, v: 1, tool, input: null, truncated: true });
+  process.stdout.write(JSON.stringify({ action: "approve", message }));
 });
 `;
+
+/** Hermes's placeholder command on a hook-escalated ask (approval.py request_tool_approval `display_target`). */
+const HERMES_HOOK_PLACEHOLDER = /^<([^<>\s]+)> \(plugin approval rule\)$/;
+
+const plainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+
+export type HermesAskNormal =
+  | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string }
+  | { ok: false; why: "hermes-hook"; summary: string };
+
+/**
+ * One reading of a Hermes ask that Murage's own hook escalated, for every reader after it (the command reader,
+ * the card, the policy call, the stop line, the decision record). Undefined when the request is not a hook
+ * escalation at all (Hermes's own dangerous-command or edit approval), which every reader keeps reading as today.
+ *
+ * A hook escalation carries the placeholder as its command and the hook's message as its description. The
+ * message must be exactly the object HERMES_ASK_HOOK_SOURCE writes, for the same tool, whole (`truncated: false`),
+ * and for `terminal` it must name the command; then a terminal call's input carries the real command and its
+ * workdir, with the request's original fields and the decoded arguments kept beside them, so a scan of every
+ * string still sees all of them. Anything else (an older hook, an owner's own approve hook, a message cut to fit) is a
+ * call Murage could not read: `ok: false`, held as unread, never judged by the placeholder.
+ */
+export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefined {
+  if (!plainObject(rawInput) || typeof rawInput.command !== "string") return undefined;
+  const placeholder = HERMES_HOOK_PLACEHOLDER.exec(rawInput.command);
+  if (!placeholder) return undefined;
+  const tool = placeholder[1]!;
+  // The card shows the raw request: the hook's text as Hermes sent it, beside the tool it names.
+  const bad = { ok: false, why: "hermes-hook", summary: `${tool}: ${typeof rawInput.description === "string" ? rawInput.description : "(no description)"}` } as const;
+  if (typeof rawInput.description !== "string") return bad;
+  let message: unknown;
+  try { message = JSON.parse(rawInput.description); } catch { return bad; }
+  if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool || message.truncated !== false) return bad;
+  const input = message.input;
+  if (!plainObject(input)) return bad;
+  if (tool === "terminal" && (typeof input.command !== "string" || !input.command.trim())) return bad;
+  // The request's own fields stay, and the decoded arguments beside them, so a scan of every string sees all.
+  const kept = { description: rawInput.description, hermesAsk: { tool, placeholder: rawInput.command, input } };
+  if (tool === "terminal") {
+    // Only the fields Hermes's terminal tool runs by (terminal_tool.py, the handler's args) are read at the top:
+    // a `cwd` the model added would be ignored by Hermes but taken as the command's folder by Murage.
+    const workdir = input.workdir;
+    return { ok: true, tool, rawInput: { command: input.command, ...(workdir !== undefined && workdir !== null ? { workdir } : {}), ...kept }, summary: input.command as string };
+  }
+  // Another tool (execute_code, an MCP tool): its arguments are kept and shown, but nothing of them is read as a
+  // shell command or a folder, so the placeholder stays the command and the call is judged as before.
+  const detail = typeof input.code === "string" ? input.code : JSON.stringify(input);
+  return { ok: true, tool, rawInput: { command: rawInput.command, ...kept }, summary: `${tool}: ${detail}` };
+}
 
 function hermesAskDir(env: Record<string, string | undefined>): string {
   return join(env.MURAGE_DATA_DIR || DATA_DIR, "native", "hermes-ask");
@@ -413,7 +473,7 @@ export function applyHermesFluxMemory(env: Record<string, string | undefined>, d
   }
   const base = overlayBase(env);
   const held = asRecord(asRecord(base.model).extra_headers);
-  const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
+  const kept = Object.fromEntries(Object.entries(held).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory") && !isFluxUsageHeader(name)));
   writeHermesTurnOverlay(env, { model: { extra_headers: { ...kept, ...decision.headers } } });
 }
 
@@ -923,6 +983,11 @@ const support: AcpSupport = {
   // turn only (localComputer.scope === "local-computer", as core.ts controlsHost); Murage's computer service asks per
   // action instead. A Local VM or VPS computer carries no scope, so its tools stay on the ask hook and get a card.
   hostComputerAskedByMurage: true,
+  // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
+  normalizeAsk: (rawInput) => {
+    const normal = normalizeHermesAsk(rawInput);
+    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary };
+  },
   spawnArgs: (config, turn, ctx) => {
     if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
     return hermesSpawnArgs(config, ctx?.env);

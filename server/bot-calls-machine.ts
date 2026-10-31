@@ -9,7 +9,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { CALL_PROTOCOL, type AnswerRefusal } from "../shared/bot-calls-contract.ts";
-import { inTransaction, insertCallRule } from "./bot-calls-schema.ts";
+import { CALL_PRINCIPAL, inTransaction, insertCallRule } from "./bot-calls-schema.ts";
 
 /** One constant for freshness (4.1): a fact older than this when admitted or decided is late, never a late ring. */
 export const FRESH_MS = 10 * 60_000;
@@ -38,6 +38,8 @@ export interface CallIntent {
 export interface CallSession {
   id: string; callId: string; botId: string; intentId: string | null; threadId: string | null; device: string; openedAt: number;
   lastSeenAt: number; backstopAt: number; endedAt: number | null; endedBy: SessionEnd | null;
+  /** The authenticated device that opened or answered it, written with the row; null only on a row from before principals. */
+  principal: string | null;
 }
 
 /** How a call request was resolved on the phones (resolveCall, 5.5): answered gives `elsewhere`, the rest `dismissed`. */
@@ -82,10 +84,11 @@ export function getIntent(db: DatabaseSync, id: string): CallIntent | null {
   return row ? toIntent(row) : null;
 }
 type SessionRow = { id: string; call_id: string; bot_id: string; intent_id: string | null; thread_id: string | null; device: string; opened_at: number; last_seen_at: number;
-  backstop_at: number; ended_at: number | null; ended_by: SessionEnd | null };
+  backstop_at: number; ended_at: number | null; ended_by: SessionEnd | null; principal?: string | null };
 const toSession = (r: SessionRow): CallSession => ({
   id: r.id, callId: r.call_id, botId: r.bot_id, intentId: r.intent_id, threadId: r.thread_id, device: r.device, openedAt: Number(r.opened_at),
   lastSeenAt: Number(r.last_seen_at), backstopAt: Number(r.backstop_at), endedAt: num(r.ended_at), endedBy: r.ended_by,
+  principal: typeof r.principal === "string" ? r.principal : null,
 });
 export function getSession(db: DatabaseSync, callId: string): CallSession | null {
   const row = db.prepare("SELECT * FROM bot_call_sessions WHERE call_id=?").get(callId) as SessionRow | undefined;
@@ -248,11 +251,14 @@ export function sessionLive(s: Pick<CallSession, "endedAt" | "lastSeenAt" | "bac
 const silentEnd = (s: Pick<CallSession, "lastSeenAt" | "backstopAt">, now: number): SessionEnd =>
   now - s.lastSeenAt > CALL_PROTOCOL.silenceEndsMs ? "lost" : "backstop";
 
-function insertSession(db: DatabaseSync, o: { botId: string; intentId: string | null; threadId: string; device: string }, now: number): { sessionId: string; callId: string } {
+/** A session row always carries the authenticated device that opened or answered it, in the same INSERT: no row of this build
+ *  is ever without one, so the boot backfill (bot-calls-schema.ts migrateSessionPrincipals) never touches it. */
+function insertSession(db: DatabaseSync, o: { botId: string; intentId: string | null; threadId: string; device: string; principal: string }, now: number): { sessionId: string; callId: string } {
+  if (!CALL_PRINCIPAL.test(o.principal)) throw new Error("bot call: a session needs the authenticated device that opened it");
   const sessionId = randomUUID();
   const callId = randomUUID();
-  db.prepare(`INSERT INTO bot_call_sessions (id, call_id, bot_id, intent_id, thread_id, device, opened_at, last_seen_at, backstop_at) VALUES (?,?,?,?,?,?,?,?,?)`)
-    .run(sessionId, callId, o.botId, o.intentId, o.threadId, o.device, now, now, now + CALL_PROTOCOL.backstopMs);
+  db.prepare(`INSERT INTO bot_call_sessions (id, call_id, bot_id, intent_id, thread_id, device, opened_at, last_seen_at, backstop_at, principal) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(sessionId, callId, o.botId, o.intentId, o.threadId, o.device, now, now, now + CALL_PROTOCOL.backstopMs, o.principal);
   return { sessionId, callId };
 }
 
@@ -315,12 +321,12 @@ export function ringingIntent(db: DatabaseSync): CallIntent | null {
 
 /** An ordinary owner call (POST /api/calls/sessions). Opening one while an intent rings ends that ring as `text_instead`
  * with "You started another call" (5.4). */
-export function openOwnerSession(db: DatabaseSync, o: { botId: string; threadId: string; device: string }, fx: CallEffects, now: number):
+export function openOwnerSession(db: DatabaseSync, o: { botId: string; threadId: string; device: string; principal: string }, fx: CallEffects, now: number):
   { sessionId: string; callId: string; endedRing: string | null } {
   return inTransaction(db, () => {
     const ringing = ringingIntent(db);
     const endedRing = ringing && endRing(db, ringing.id, "text_instead", fx, now, { stop: "another_call" }) ? ringing.id : null;
-    return { ...insertSession(db, { botId: o.botId, intentId: null, threadId: o.threadId, device: o.device }, now), endedRing };
+    return { ...insertSession(db, { botId: o.botId, intentId: null, threadId: o.threadId, device: o.device, principal: o.principal }, now), endedRing };
   });
 }
 
@@ -335,13 +341,14 @@ export type AnswerResult =
 /** T5: the first device wins. A retry by the winner returns the same session while it is live; once it ended, or is no
  * longer live (the request ends it `lost` and runs T8), `410`. Any other device gets `409 answered_elsewhere`. An answer
  * after the ring's deadline is `409 expired` and runs T7 (F16, F17, F18). */
-export function answerCall(db: DatabaseSync, id: string, device: string, fx: CallEffects, now: number): AnswerResult {
+/** A ring has no session row until someone answers: the answer inserts it, with the answering device, in this transaction. */
+export function answerCall(db: DatabaseSync, id: string, device: string, fx: CallEffects, now: number, principal: string): AnswerResult {
   return inTransaction(db, (): AnswerResult => {
     const before = getIntent(db, id);
     if (!before) return { status: 404, error: "not_found" };
     if (before.state === "ringing") {
       if (before.deadlineAt === null || before.deadlineAt <= now) { endRing(db, id, "missed", fx, now); return { status: 409, error: "expired" }; }
-      const { sessionId, callId } = insertSession(db, { botId: before.botId, intentId: id, threadId: before.threadId, device }, now);
+      const { sessionId, callId } = insertSession(db, { botId: before.botId, intentId: id, threadId: before.threadId, device, principal }, now);
       const changed = Number(db.prepare("UPDATE bot_calls SET state='live', answered_on=?, session_id=?, receipt=? WHERE id=? AND state='ringing' AND deadline_at > ?")
         .run(device, sessionId, receiptWith(before, [{ check: "answer", result: "answered", detail: device.split(":")[0] }]), id, now).changes);
       if (changed !== 1) throw new Error("bot call: the ring changed inside its own transaction");

@@ -15,6 +15,8 @@
 //   uncertain  no answer, a reset, a timeout, a 5xx without a body, 409 idempotency_in_progress, 409 idempotency_mismatch, an unreadable 2xx
 // An uncertain outcome is never replayed by the caller: nothing proves that nothing went out (3.4, Astra R3).
 
+import { fluxUsageHeaders } from "../flux-usage-tags.ts";
+
 export type CredentialKind = "account" | "owner" | "bot";
 export interface FluxCredential { token: string; /** the Flux key id, recorded per attempt; never the secret */ keyId: string }
 export interface EmailCredentialProvider {
@@ -136,21 +138,22 @@ export class FluxEmailClient {
     return ref.kind === "account" ? credentials.account() : ref.kind === "owner" ? credentials.owner() : ref.kind === "candidate" ? ref.credential : credentials.bot(ref.botId);
   }
 
-  async request<T>(ref: CredentialRef, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number } = {}): Promise<FluxOutcome<T>> {
+  async request<T>(ref: CredentialRef, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string } = {}): Promise<FluxOutcome<T>> {
     const credential = this.credential(ref);
     if (!credential) return { kind: "uncertain", reason: "no_credential" };
     const waiting = this.options.gate?.(ref);
     if (waiting) return waiting;
-    const outcome = await this.exchange<T>(credential, method, path, init);
+    const outcome = await this.exchange<T>(credential, method, path, { ...init, botId: init.botId ?? (ref.kind === "bot" ? ref.botId : undefined) });
     try { this.options.observe?.(ref, outcome as FluxOutcome<unknown>); } catch { /* health never decides an answer */ }
     return outcome;
   }
 
-  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number }): Promise<FluxOutcome<T>> {
+  private async exchange<T>(credential: FluxCredential, method: string, path: string, init: { body?: unknown; idempotencyKey?: string; host?: "api" | "app"; query?: Record<string, string | number | undefined>; timeoutMs?: number; botId?: string }): Promise<FluxOutcome<T>> {
     const base = (init.host === "app" ? this.options.appBase : this.options.apiBase).replace(/\/+$/, "");
     const url = new URL(base + path);
     for (const [name, value] of Object.entries(init.query ?? {})) if (value !== undefined) url.searchParams.set(name, String(value));
-    const headers: Record<string, string> = { authorization: `Bearer ${credential.token}`, accept: "application/json" };
+    // usage tags: bot email work, for the bot the call is made for when the call names one (flux-usage-tags.ts)
+    const headers: Record<string, string> = { authorization: `Bearer ${credential.token}`, accept: "application/json", ...fluxUsageHeaders({ feature: "email", botId: init.botId }) };
     if (init.body !== undefined) headers["content-type"] = "application/json";
     if (init.idempotencyKey) headers["idempotency-key"] = init.idempotencyKey;
     const controller = new AbortController();
@@ -180,7 +183,7 @@ export class FluxEmailClient {
   // Flux (ask 9). The bot's monthly budget is the one number Flux stamps on every key of the bot; no per-key budget, no label (Flux names it).
   mintBotKey(input: { botId: string; botMonthlySpendLimitUsd?: number }, idempotencyKey: string) {
     return this.request<BotKeyBody>({ kind: "owner" }, "POST", "/api/desktop/bot-keys", {
-      host: "app", idempotencyKey,
+      host: "app", idempotencyKey, botId: input.botId,
       body: { bot_id: input.botId, scopes: ["email:bot"], ...(input.botMonthlySpendLimitUsd !== undefined ? { bot_monthly_spend_limit_usd: input.botMonthlySpendLimitUsd } : {}) },
     });
   }
@@ -188,7 +191,7 @@ export class FluxEmailClient {
   // #3 to #7. #3 is owner-only in v1 (r2.5) and names the bot with bot_id (there is no bot_key_id): 404 bot_not_found, 409 inbox_exists
   // (carries inbox_id), and a bot key would get 403 owner_required, so only the owner token ever calls it.
   createInbox(input: { botId: string; username?: string; displayName?: string }, idempotencyKey: string) {
-    return this.request<InboxBody>({ kind: "owner" }, "POST", "/v1/email/inboxes", { idempotencyKey, body: { bot_id: input.botId, ...(input.username ? { username: input.username } : {}), ...(input.displayName ? { display_name: input.displayName } : {}) } });
+    return this.request<InboxBody>({ kind: "owner" }, "POST", "/v1/email/inboxes", { idempotencyKey, botId: input.botId, body: { bot_id: input.botId, ...(input.username ? { username: input.username } : {}), ...(input.displayName ? { display_name: input.displayName } : {}) } });
   }
   listInboxes(ref: CredentialRef = { kind: "owner" }) { return this.request<ListBody<InboxBody>>(ref, "GET", "/v1/email/inboxes"); }
   getInbox(ref: CredentialRef, inboxId: string) { return this.request<InboxBody>(ref, "GET", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`); }
@@ -200,7 +203,7 @@ export class FluxEmailClient {
   /** #7 (r2.5): 202 state "closing" (closing_until): 30 days with no sends, restorable, then deleted and #5 answers 404. */
   deleteInbox(inboxId: string) { return this.request<InboxBody>({ kind: "owner" }, "DELETE", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`); }
   /** Activation #37 Keep address: a closing inbox comes back with the same address (`bot_id` must be its bound bot). */
-  restoreInbox(inboxId: string, botId: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/restore`, { body: { bot_id: botId } }); }
+  restoreInbox(inboxId: string, botId: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/restore`, { botId, body: { bot_id: botId } }); }
   // #9, #10: Idempotency-Key required, client_reference = send_id (ask 7)
   send(botId: string, inboxId: string, body: SendRequest, idempotencyKey: string) {
     return this.request<SendBody>({ kind: "bot", botId }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/messages`, { idempotencyKey, body: { ...body, html: null, on_new_recipient: "hold" } });

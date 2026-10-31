@@ -4,7 +4,7 @@ description: A map of the capabilities currently available in Murage.
 icon: Sparkles
 ---
 
-Murage turns agent CLIs into a messaging-style workspace. The harness normalizes each provider into one event stream, so the interface can treat different agents consistently while preserving their native strengths.
+Murage turns the AI apps on your computer into one chat workspace. It shows every AI app's work the same way, while each one keeps its own strengths.
 
 ## Agents and conversations
 
@@ -18,7 +18,7 @@ Murage turns agent CLIs into a messaging-style workspace. The harness normalizes
 - Learning from your feedback, with a chip under each reply and a Learning screen per bot
 - Telegram, Slack and Discord messages to your Chief of Staff, and a phone app
 - Queueing and steering while an agent is already working
-- Per-task token and cost visibility
+- Usage and cost for each task
 - Readable, editable bot memory
 - Snooze for conversations, and team management (rename, members, lead, delete)
 - House rules every bot follows, About me, and What shapes a bot to see everything a bot reads
@@ -27,7 +27,7 @@ Murage turns agent CLIs into a messaging-style workspace. The harness normalizes
 
 ## Computers and tools
 
-- Local computer control with explicit opt-in and approval boundaries on supported hosts; Ubuntu currently fails closed under an input-safety hold
+- Local computer control with explicit opt-in and approval boundaries on supported hosts, including Ubuntu 24.04 GNOME on Xorg as a Beta
 - Isolated Local VM desktops through Docker or Podman
 - Hosted Box cloud computers
 - A self-hosted Linux VPS backend over Docker's SSH transport
@@ -40,7 +40,7 @@ Murage turns agent CLIs into a messaging-style workspace. The harness normalizes
 - One-time and recurring routines, each with its own approval level
 - Approval levels Ask, Auto, Full access and No limits, with Always allow choices you can review and remove
 - An Inbox for everything that needs you, and approvals from the tray menu
-- Webhook-triggered tasks with dedicated secret endpoints
+- Tasks another app can start with its own private trigger link
 - Fresh task context and durable run receipts for each automated run
 - Notifications for work that needs attention
 
@@ -58,5 +58,5 @@ Murage turns agent CLIs into a messaging-style workspace. The harness normalizes
 - Automatic updates on macOS and Windows
 
 <Callout type="info" title="Platform differences are intentional">
-  macOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, while host control is temporarily disabled under an input-safety hold. Windows installers are not yet signed. Reaching your bots from a phone is on the roadmap, over your own tailnet in a browser; the iOS companion was retired before release.
+  macOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, and local control works on Ubuntu 24.04 Xorg as a Beta. Windows release installers are signed. To reach your bots from your phone, pair it under **Settings → Devices**.
 </Callout>
