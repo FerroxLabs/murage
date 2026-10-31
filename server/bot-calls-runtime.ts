@@ -209,8 +209,8 @@ export function createBotCallsRuntime(deps: BotCallsRuntimeDeps) {
     turnCompleted(turnId: string): void {
       try { if (settleTurnOwed(deps.db(), turnId, now())) wake(); } catch (error) { warn("turn-settle", error); }
     },
-    answer(id: string, device: string): AnswerResult {
-      const r = answerCall(deps.db(), id, device, fx, now());
+    answer(id: string, device: string, principal: string): AnswerResult {
+      const r = answerCall(deps.db(), id, device, fx, now(), principal);
       if (r.status === 200) safeHint({ type: "call.answered", intentId: id, callId: r.callId, device, threadId: r.threadId });
       settled(id);
       return r;
@@ -221,7 +221,7 @@ export function createBotCallsRuntime(deps: BotCallsRuntimeDeps) {
       return ok;
     },
     seen(id: string): boolean { const ok = markSeen(deps.db(), id, now()); if (ok) { clearTimer(id); send(id); } return ok; },
-    openSession(o: { botId: string; threadId: string; device: string }): { sessionId: string; callId: string } {
+    openSession(o: { botId: string; threadId: string; device: string; principal: string }): { sessionId: string; callId: string } {
       const r = openOwnerSession(deps.db(), o, fx, now());
       if (r.endedRing) settled(r.endedRing);
       return { sessionId: r.sessionId, callId: r.callId };

@@ -144,7 +144,6 @@ server/browser-extension-read-wiring.test.ts	extended
 server/browser-extension-refusals.test.ts	extended
 server/browser-extension-round2.test.ts	extended
 server/browser-extension-round5.test.ts	delete (pending review; runs here until then)
-server/browser-extension-setup.test.ts	extended
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
@@ -880,7 +879,6 @@ shared/error-diagnostic.test.ts	extended
 shared/first-run-chief.test.ts	extended
 shared/flux-desktop-signin-default.test.ts	delete (pending review; runs here until then)
 shared/flux-stream-contract.test.ts	extended
-shared/help-capabilities.test.ts	extended
 shared/help-coverage.test.ts	extended
 shared/host-stop.test.ts	extended
 shared/image-capabilities.test.ts	extended
@@ -944,7 +942,6 @@ src/components/BotTeamsSection.test.ts	extended
 src/components/BrowserActivityLog.test.ts	extended
 src/components/BrowserApprovalMode.test.ts	extended
 src/components/BrowserApprovedSites.test.ts	extended
-src/components/BrowserExtensionPanel.test.ts	extended
 src/components/BrowserExternalClients.test.ts	extended
 src/components/BrowserPanel.test.ts	extended
 src/components/BrowserSetupCard.test.ts	extended
@@ -1153,7 +1150,6 @@ src/hooks/use-warm-intent.test.ts	extended
 src/hooks/use-window-drag.test.ts	extended
 src/lib/about-version.test.ts	extended
 src/lib/account-localisation.test.ts	extended
-src/lib/activity-runs.test.ts	extended
 src/lib/anchor-wait.test.ts	extended
 src/lib/app-catalog.test.ts	extended
 src/lib/assemblyai-transcription.test.ts	extended

@@ -266,7 +266,7 @@ it("r8 #5: when the open-card list completes during the descending sweep, the ol
   ensureOpenCardIndex(db); // the list completes now; the descending walk stops
   insertMessage("room", { id: "this-run", at: 50_000, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "ask_bot" } } as never);
   expect(await settleStaleCardsFromList(bus, [stalePeerCardKind()], null, high, owned, async () => {})).toBe(1);
-  expect(readMessage("room", "m40")?.card).toMatchObject({ answered: "deny", dismissed: true });
+  expect(readMessage("room", "m40")?.card).toMatchObject({ answered: "unavailable", dismissed: true });
   expect(readMessage("room", "m40")?.card?.orphaned).toBeUndefined();
   expect(readMessage("room", "this-run")?.card?.dismissed).toBeUndefined();
 });

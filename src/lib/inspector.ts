@@ -76,7 +76,7 @@ const previewText = (preview: FoldPreview) => `${preview.text}${preview.overflow
 
 /** Plain words for the automatic rules (server/auto-approve.ts AutoVerdictSource, decision-log.ts DecisionSource). */
 const AUTOMATIC_RULE: Readonly<Record<string, string>> = {
-  "own-workspace": "own workspace", "own-tool-results": "its own saved result", "own-unasked": "Murage's own tool", "project-work-roots": "project folder",
+  "own-workspace": "own workspace", "own-tool-results": "its own saved result", "own-files": "its own files", "own-unasked": "Murage's own tool", "project-work-roots": "project folder",
   "auto-mode": "Auto mode", "full-access": "Full access", "no-limits": "No limits", "always-allow": "always allow", "exact-command": "always allow this command",
   "task-allowance": "allowed for this task", "routine-allow": "routine grant", "stop-line": "stop line", "image-setting": "picture setting",
   "auto-review": "automatic review", "narrow": "narrowed",

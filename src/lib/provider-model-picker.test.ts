@@ -153,8 +153,8 @@ describe("a local row names its machine (spec V3)", () => {
   });
 });
 
-describe("local rows on a chat-only engine", () => {
-  it("lists a failed-test model as chat only instead of warning it off", () => {
+describe("local rows on openai-compat (every model listed, tools sent)", () => {
+  it("lists a failed-test model and says what still works instead of warning it off", () => {
     const compat: PickerEngine = {
       instanceId: "openaiCompat", driverKind: "openai-compat", displayName: "OpenAI-compatible",
       snapshot: { state: "available", authenticated: true },
@@ -163,13 +163,19 @@ describe("local rows on a chat-only engine", () => {
       ] },
     };
     const [row] = pickerModels(compat, []);
-    expect(row).toMatchObject({ group: LOCAL_MODELS_GROUP, chatOnly: true, localTools: "failed" });
-    expect(localToolsWarning(row!)).toContain("Chat only");
-    expect(localToolsWarning(row!)).not.toContain("Tools test failed");
+    expect(row).toMatchObject({ group: LOCAL_MODELS_GROUP, anyModel: true, localTools: "failed" });
+    expect(localToolsWarning(row!)).toContain("still chats here");
+    expect(localToolsWarning(row!)).not.toMatch(/sends no tools|not usable/);
+    // an untested or passing local row on openai-compat carries no warning at all
+    expect(localToolsWarning({ ...row!, localTools: undefined })).toBe("");
+    expect(localToolsWarning({ ...row!, localTools: "pass" })).toBe("");
     // The same model on a tools engine keeps the agent-work warning.
     const [onFuigo] = pickerModels({ ...compat, instanceId: "fuigo", driverKind: "fuigoAgent" }, []);
-    expect(onFuigo!.chatOnly).toBeUndefined();
+    expect(onFuigo!.anyModel).toBeUndefined();
     expect(localToolsWarning(onFuigo!)).toContain("Tools test failed");
+    // the grok API driver never marks a row: it has no local endpoint
+    const [onGrok] = pickerModels({ ...compat, instanceId: "grok", driverKind: "grok" }, []);
+    expect(onGrok!.anyModel).toBeUndefined();
   });
 });
 
@@ -204,21 +210,21 @@ describe("the rail is a state, not an absence", () => {
     expect(showNoLocalServerRow(withServer, pickerModels(withServer, []))).toBe(false);
   });
 
-  it("never claims 'no local server' on a chat-only engine (openai-compat, grok)", () => {
-    // These drivers are not local engines (grok never merges the Local models
-    // inject; openai-compat lists it only as chat-only extras), so the row
-    // would be a false nudge. Their Engines line already says "chat only
-    // (no tools)"; the rail stays quiet.
+  it("never claims 'no local server' on openai-compat or the grok API", () => {
+    // Neither is a local engine: grok never merges the Local models inject,
+    // and openai-compat lists local rows (tools included) only as extras
+    // beside the endpoint the owner named, so the row would be noise in a
+    // cloud picker. Its Engines line says it works with local models.
     for (const driverKind of ["openai-compat", "grok"]) {
-      const chatOnly: PickerEngine = {
+      const extrasOnly: PickerEngine = {
         ...engine([{ id: "qwen3.8-27b", label: "qwen3.8-27b", custom: true }]),
         instanceId: driverKind,
         driverKind,
       };
-      const rows = pickerModels(chatOnly, []);
+      const rows = pickerModels(extrasOnly, []);
       expect(rows.map((row) => row.group)).toEqual([CUSTOM_MODELS_GROUP]);
       expect(localPickerRows(rows)).toEqual([]);
-      expect(showNoLocalServerRow(chatOnly, rows)).toBe(false);
+      expect(showNoLocalServerRow(extrasOnly, rows)).toBe(false);
     }
   });
 

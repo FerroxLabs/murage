@@ -47,8 +47,10 @@ afterAll(async () => { await removeTempDir(fixture); });
 /** A path as a model writes it in a shell command: on Windows it is single-quoted, since an unquoted backslash is an escape to the
  *  POSIX shell the engine runs (Git Bash), so the bare word would name another file. */
 const word = (path: string) => (process.platform === "win32" ? `'${path}'` : path);
-const shell = (command: string, over: Partial<{ dirs: string[] }> = {}) =>
-  isOwnToolResultRead({ tool: "shell", command, dirs: over.dirs ?? dirs });
+/** A POSIX shell read, judged as on macOS/Linux whatever this host is (the Windows gate has its own rows). */
+const shell = (command: string, over: Partial<{ dirs: string[]; tool: string; commandShell: "pwsh"; platform: NodeJS.Platform }> = {}) =>
+  isOwnToolResultRead({ tool: over.tool ?? "shell", command, dirs: over.dirs ?? dirs, platform: over.platform ?? "linux", ...(over.commandShell ? { commandShell: over.commandShell } : {}) });
+const PY_READ = `python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data']['items'][0]['subject'])"`;
 
 describe("the engine's own result folder", () => {
   it("is the session folder the engine writes a cut MCP result into", () => {
@@ -67,8 +69,7 @@ describe("the engine's own result folder", () => {
 });
 
 describe("reading its own saved tool result asks nobody", () => {
-  it("allows the read the engine told the model to run (1.0.1 on camera)", () => {
-    expect(shell(`cat ${word(own)} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['data']['items'][0]['subject'])"`)).toBe(true);
+  it("allows the jq and plain reads the engine told the model to run", () => {
     expect(shell(`jq -r '.data.items[].subject' '${own}'`)).toBe(true);
     expect(shell(`jq -r '.content[0].text' ${word(own)} | head -300`)).toBe(true);
     expect(shell(`head -c 4000 ${word(own)}`)).toBe(true);
@@ -123,7 +124,6 @@ describe("everything else still asks", () => {
     expect(shell(`jq -r '.a | @sh' ${own}`)).toBe(false);
   });
   it("the same shapes, said the safe way, are answered", () => {
-    expect(shell(`cat ${word(own)} | python3 -c "import sys; print(sys.stdin.read()[:200])"`)).toBe(true);
     expect(shell(`jq -r '.data.items[] | .subject' ${word(own)}`)).toBe(true);
     expect(shell(`jq --arg k data -r '.[$k].items | length' ${word(own)}`)).toBe(true);
     expect(shell(`jq -c '.data.items | map({subject: .subject})' ${word(own)}`)).toBe(true);
@@ -161,6 +161,51 @@ describe("everything else still asks", () => {
   });
 });
 
+// 1.0.11 OWN-TOOL-RESULTS (GrokBuild, pre-existing High): CPython puts the folder it runs in first on sys.path, and the bot can
+// write a json.py there with no card, so an allow-listed `python3 -c "import json…"` ran the bot's own module unasked.
+// python never counts now, however safe its script; jq says the same read and is answered.
+describe("a python read of its own saved result asks (planted-module attack)", () => {
+  it("the attack: a json.py beside the command, then the 1.0.1 camera line", () => {
+    const folder = join(fixture, "workspaces", "bot-1", "threads", "thread-1");
+    writeFileSync(join(folder, "json.py"), "import os\nos.system('id')\n");
+    expect(shell(`cat ${word(own)} | ${PY_READ}`)).toBe(false);
+    expect(autoVerdict({ autoApprove: false }, "shell", `cat ${own} | ${PY_READ}`, { ownToolResults: shell(`cat ${word(own)} | ${PY_READ}`) }).approve).toBeNull();
+    // the same read through jq is answered: nothing of the bot's folder runs
+    expect(shell(`jq -r '.data.items[0].subject' ${word(own)}`)).toBe(true);
+  });
+  it("every python name and flag form, and the rows 1.0.9 answered", () => {
+    for (const py of ["python", "python3", "python3.12", "python3 -I", "python3 -I -S", "python3 -IS", "python3 -E -s", "python3 -B -u"]) {
+      expect(shell(`cat ${word(own)} | ${py} -c "import sys; print(sys.stdin.read()[:200])"`)).toBe(false);
+      expect(shell(`jq -c . ${word(own)} | ${py} -c "import json,sys; print(json.load(sys.stdin))"`)).toBe(false);
+    }
+    expect(shell(`cat ${word(own)} | ${PY_READ}`)).toBe(false);
+    expect(shell(`cat ${word(own)} | python3 -c "import sys; print(sys.stdin.read()[:200])"`)).toBe(false);
+  });
+});
+
+describe("only a POSIX shell's command is placed", () => {
+  const read = () => `jq -r '.data.items[].subject' ${word(own)}`;
+  it("an engine's own bare POSIX shell tools are answered off Windows", () => {
+    for (const tool of ["Bash", "bash", "shell", "execute", "exec_command", "run_command", "terminal"]) {
+      expect(shell(read(), { tool })).toBe(true);
+    }
+  });
+  it("PowerShell, a namespaced or unknown tool, the remote runner, or Windows ask", () => {
+    for (const tool of ["powershell", "pwsh", "PowerShell", "mcp__x__shell", "functions.shell", "computer_exec", " shell", "Shell", "exec"]) {
+      expect(shell(read(), { tool })).toBe(false);
+    }
+    expect(shell(read(), { commandShell: "pwsh" })).toBe(false);
+    expect(shell(read(), { tool: "Bash", platform: "win32" })).toBe(false);
+    expect(isOwnToolResultRead({ tool: "shell", command: read(), dirs, platform: "win32" })).toBe(false);
+  });
+  it("on Windows the engine's read tool is still answered", () => {
+    expect(isOwnToolResultRead({ tool: "read", filePaths: [own], dirs, platform: "win32" })).toBe(true);
+  });
+  it("with no platform given, the host's platform decides", () => {
+    expect(isOwnToolResultRead({ tool: "shell", command: read(), dirs })).toBe(process.platform !== "win32");
+  });
+});
+
 describe("policy: an own-result read is answered in every mode", () => {
   const ask = { autoApprove: false };
   it("Ask mode answers it without a card", () => {
@@ -189,7 +234,7 @@ describe("a routine's runs reading their own saved results", () => {
   const verdictFor = (runDirs: string[], command: string, run: { permissionMode: "ask"; alwaysAllow: string[] }, unattended = false) =>
     routineTurnApproval({
       bot: { autoApprove: false }, tool: "shell", summary: command, run: unattended ? undefined : run,
-      context: { unattended, stopLine: null, ownToolResults: isOwnToolResultRead({ tool: "shell", command, dirs: runDirs }) },
+      context: { unattended, stopLine: null, ownToolResults: isOwnToolResultRead({ tool: "shell", command, dirs: runDirs, platform: "linux" }) },
     }).verdict;
 
   it("answers each read in every run, with no grant and nobody watching", () => {

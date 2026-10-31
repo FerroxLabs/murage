@@ -15,6 +15,7 @@ import {
   computeFluxSpacePlan,
   describeFluxMemoryDecision,
   FLUX_CALL_SITES,
+  FLUX_CALL_SITE_FEATURES,
   FLUX_CODEX_TABLE_HEADERS,
   FLUX_ENGINE_HEADERS,
   FLUX_MEMORY_APP_HEADER,
@@ -159,12 +160,13 @@ describe("never sent", () => {
     const seen: Headers[] = [];
     const stub = (async (_url: unknown, init?: RequestInit) => { seen.push(new Headers(init?.headers)); return new Response("{}"); }) as typeof fetch;
     await fluxFetch("decider", "https://api.fluxrouter.ai/v1/x", { headers: { authorization: "Bearer k", "x-flux-memory-scope": "bot", "x-flux-memory-inject": "on" } }, stub);
-    expect(Object.fromEntries(seen[0]!.entries())).toEqual({ authorization: "Bearer k", ...OFF });
+    // the decider is metered as "other" (FLUX_CALL_SITE_FEATURES)
+    expect(Object.fromEntries(seen[0]!.entries())).toEqual({ authorization: "Bearer k", "x-flux-feature": "other", ...OFF });
   });
 
   it("a direct call is background work: off/off, whatever the site", () => {
-    for (const site of Object.keys(FLUX_CALL_SITES) as Array<keyof typeof FLUX_CALL_SITES>) expect(fluxCallHeaders(site, { settings: BASE })).toEqual(OFF);
-    expect(withFluxCallHeaders("voice-stream", { authorization: "Bearer k", "X-Flux-Memory-Inject": "on" })).toEqual({ authorization: "Bearer k", ...OFF });
+    for (const site of Object.keys(FLUX_CALL_SITES) as Array<keyof typeof FLUX_CALL_SITES>) expect(fluxCallHeaders(site, { settings: BASE })).toEqual({ "x-flux-feature": FLUX_CALL_SITE_FEATURES[site], ...OFF });
+    expect(withFluxCallHeaders("voice-stream", { authorization: "Bearer k", "X-Flux-Memory-Inject": "on" })).toEqual({ authorization: "Bearer k", "x-flux-feature": "voice", ...OFF });
   });
 
   it("knows a Flux host", () => {

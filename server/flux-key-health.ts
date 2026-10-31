@@ -15,6 +15,7 @@
 // Fuigo's exit code is no signal: Fuigo 1.0.20 falls back to its bundled
 // models and exits 0 on a 401.
 import { createHash } from "node:crypto";
+import { fluxUsageHeaders } from "./flux-usage-tags.ts";
 
 /** First wait after a failed catalog fetch; doubles on every failure after. */
 export const CATALOG_BACKOFF_BASE_MS = 15 * 60_000;
@@ -135,7 +136,7 @@ export async function checkFluxKey(key: string, options: { fetchImpl?: typeof fe
     };
     try {
       const response = await (options.fetchImpl ?? fetch)(FLUX_KEY_INFO_URL, {
-        headers: { authorization: `Bearer ${key.trim()}`, accept: "application/json" },
+        headers: { authorization: `Bearer ${key.trim()}`, accept: "application/json", ...fluxUsageHeaders({ feature: "other" }) },
         redirect: "error",
         signal: AbortSignal.timeout(10_000),
       });

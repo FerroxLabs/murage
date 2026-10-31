@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { randomUUID } from "node:crypto";
 import { TURN_ASK_RULES } from "../shared/ask-wording.ts";
+import { capabilityFacts, CAPABILITY_FACTS_HEADER } from "../shared/capability-facts.ts";
 import type { SendTurnInput } from "./contracts.ts";
 
 export type McpToolSurface =
@@ -91,7 +92,13 @@ export function renderMurageTurn(turn: SendTurnInput, surface: McpToolSurface, m
   turn.onToolSurface?.(surface, systemMounts, { mounts, binding, askRules });
   const rendered = turn.engineCommand ? turn.text : renderMurageTools(turn.text, surface, mounts);
   const recall = turn.threadRecall === true && mounts.memory && !turn.engineCommand && surface.kind !== "none" ? THREAD_RECALL_LINE : "";
-  const body = recall ? `${recall}\n\n${rendered}` : rendered;
+  // CAPABILITY-DB-1010 route B: a turn with no agents mount (OpenClaw's own tools, a tool-less or draft-only chat turn, a
+  // text-only model) cannot call murage_help, so the capability records that match the owner's words ride with the
+  // message. Engine commands carry no product question. In the text, not the system stack, so the cached system prefix
+  // stays the same turn to turn.
+  const facts = !mounts.agents && !turn.engineCommand && !turn.text.includes(CAPABILITY_FACTS_HEADER) ? capabilityFacts(turn.text) : "";
+  const withFacts = facts ? `${facts}\n\n${rendered}` : rendered;
+  const body = recall ? `${recall}\n\n${withFacts}` : withFacts;
   // QW 208: the rule line for asking the owner, word for word the same on every engine (a tool engine and one with none)
   return { ...turn, text: binding ? `${binding}\n\n${body}` : body,
     system: [turn.system && renderMurageTools(turn.system, surface, systemMounts), hint && !turn.system?.includes(hint) ? hint : "", askRules].filter(Boolean).join("\n\n") || undefined };
