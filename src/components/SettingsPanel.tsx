@@ -13,6 +13,7 @@ import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { computerHere } from "@/lib/computer-surface";
 import { usageCaption } from "@/lib/usage-card";
 import { botUsage, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
@@ -395,6 +396,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   // routes require the desktop marker and the browser door strips it, so from
   // a phone the segmented control was four buttons that 404. See below.
   const desktop = useDesktopSurface();
+  const computer = computerHere(desktop);
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
@@ -900,7 +902,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onAskAfter={(value) => patch({ imageAskAfter: value })}
           />
 
-          <RememberedApprovals bot={bot} desktop={desktop} />
+          <RememberedApprovals bot={bot} desktop={desktop} computer={computer} />
 
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.review.title")}</div>

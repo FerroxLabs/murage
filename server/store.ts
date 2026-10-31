@@ -73,6 +73,7 @@ import { openingLine } from "../shared/bot-openers.ts";
 import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutBareCommandGrants, withoutQuestionGrants } from "./auto-approve.ts";
 import { withoutPreSchemaGrants, withoutStaleGrants } from "../shared/app-action-words.ts";
+import { durableGrantAllowed, withoutRefusedGrants } from "../shared/durable-grant-allowed.ts";
 import { parseAcpToolKey } from "../shared/mount-identity.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
 import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
@@ -157,6 +158,12 @@ export interface OptionCardData {
   grantRequest?: ApprovalGrantRequest;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
+  /** UX-TRUST-MOMENTS-1012 1.2: the card's class, written once when it opens
+   * (server/approval-card-grants.ts); shared/fold-scopes.ts reads it with the
+   * keys above. Absent on a card an older build wrote. */
+  cardClass?: import("../shared/fold-scopes.ts").CardClass;
+  /** 1.4: the why-line, a locale key and its params (server/approval-card-why.ts). */
+  why?: import("./approval-card-why.ts").CardWhy;
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
   lowRisk?: boolean;
@@ -599,6 +606,15 @@ export interface GroupRecord {
 export const threadSealed = (task: Pick<TaskRecord, "sealGeneration"> | undefined | null): boolean => (task?.sealGeneration ?? 0) > 0;
 
 /** 1.0.4 SL-K K4: a task copy whose session was reset forgets what its engine was last sent. */
+/** UX-TRUST-MOMENTS-1012 2.3.3: a bot patch's remembered lists (its own and
+ * each task's) keep only what durableGrantAllowed keeps. */
+function durableGrantsOnly(patch: Partial<BotRecord>): Partial<BotRecord> {
+  return {
+    ...patch,
+    ...(patch.alwaysAllow ? { alwaysAllow: withoutRefusedGrants(patch.alwaysAllow).kept } : {}),
+    ...(patch.tasks ? { tasks: patch.tasks.map((task) => task.alwaysAllow ? { ...task, alwaysAllow: withoutRefusedGrants(task.alwaysAllow).kept } : task) } : {}),
+  };
+}
 function withoutEffortSent<T extends { effortSent?: unknown }>(task: T): T { const { effortSent: _effortSent, ...rest } = task; return rest as T; }
 
 export interface TaskRecord {
@@ -1928,6 +1944,9 @@ export class Store {
     // permission card), so strip any such remembered grant — from the bot
     // and from every task that inherited or recorded one. Runs after task
     // adoption above so a freshly inherited copy is cleaned too.
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a
+    // payment, a browser stop) is never kept for good; counted once, no payee
+    let refusedGrants = 0;
     for (const b of this.bots) {
       for (const holder of [b, ...(b.tasks ?? [])] as { alwaysAllow?: string[] }[]) {
         if (!holder.alwaysAllow?.length) continue;
@@ -1936,12 +1955,15 @@ export class Store {
         // (shared/app-action-grant.ts). The owner is asked again, per action.
         // ...and a command tool's bare name (an older PowerShell grant): its
         // next command asks again and is remembered by program (1.0.4 G09-3)
-        const kept = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const cleaned = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const { kept, dropped } = withoutRefusedGrants(cleaned);
+        refusedGrants += dropped;
         if (kept.length === holder.alwaysAllow.length) continue;
         holder.alwaysAllow = kept;
         botsMigrated = true;
       }
     }
+    if (refusedGrants) console.warn(`[grants] dropped ${refusedGrants} remembered ${refusedGrants === 1 ? "approval" : "approvals"} that are never kept for good (payments, browser stops)`);
     // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
     const followCleanup = !followCleanupDone(DATA_DIR);
     if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
@@ -4138,6 +4160,8 @@ export class Store {
     const bot = this.bot(id);
     if (!bot) return null;
     if (Object.hasOwn(patch, "section")) { assertSectionUnlocked(); assertHomeMove(bot, patch.section); }
+    // UX-TRUST-MOMENTS-1012 2.3.3: a remembered list keeps only what durableGrantAllowed keeps, whoever writes it
+    if (patch.alwaysAllow || patch.tasks?.some((task) => task.alwaysAllow)) patch = durableGrantsOnly(patch);
     // 1.0.4 SL-K K1: a bot's account change resets the session of every chat that follows the bot; a chat's own pick is left alone.
     if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
@@ -4188,6 +4212,8 @@ export class Store {
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a payment) is never saved, whoever asks
+    if (keys.some((key) => !durableGrantAllowed(key))) throw Object.assign(new Error("This approval can only be allowed once."), { status: 400 });
     const unique = [...new Set(keys)];
     const addBot = unique.filter((key) => !(bot.alwaysAllow ?? []).includes(key));
     const addTask = task ? unique.filter((key) => !(task.alwaysAllow ?? []).includes(key)) : [];
@@ -4195,6 +4221,25 @@ export class Store {
       throw Object.assign(new Error("This bot already remembers 200 approvals. Remove some in Settings, Permissions, then try again."), { status: 409 });
     }
     return { bot, task, added: { bot: addBot, task: addTask } };
+  }
+
+  /** UX-TRUST-MOMENTS-1012 1.3, M06: Undo of one card's "Always" takes back
+   * exactly what that save added, by holder: `bot` from the bot's defaults,
+   * `task` from the one task it was saved on, nothing anywhere else. One
+   * durable write, staged like rememberBotGrants. Returns what it removed. */
+  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: { bot: readonly string[]; task: readonly string[] }): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
+    const bot = this.bot(botId);
+    if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
+    if (keys.task.length && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    const fromBot = (bot.alwaysAllow ?? []).filter((key) => keys.bot.includes(key));
+    const fromTask = task ? (task.alwaysAllow ?? []).filter((key) => keys.task.includes(key)) : [];
+    const removed = { bot: [...new Set(fromBot)], task: [...new Set(fromTask)] };
+    if (!removed.bot.length && !removed.task.length) return { bot, removed };
+    const botKeys = (bot.alwaysAllow ?? []).filter((key) => !removed.bot.includes(key));
+    const taskKeys = task && removed.task.length ? (task.alwaysAllow ?? []).filter((key) => !removed.task.includes(key)) : undefined;
+    const staged = this.stageBotGrants(bot, taskKeys ? task : undefined, botKeys, taskKeys, undefined, removed);
+    return { bot: staged.bot, removed: staged.added };
   }
 
   private stageBotGrants<T>(bot: BotRecord, task: TaskRecord | undefined, botKeys: string[], taskKeys: string[] | undefined, grantSchema: 2 | undefined, result: T): { bot: BotRecord; added: T } {
@@ -5008,6 +5053,8 @@ export class Store {
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
+    // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
+    if(rest.alwaysAllow)rest.alwaysAllow=withoutRefusedGrants(rest.alwaysAllow).kept;
     const next:TaskRecord={...task,...structuredClone(rest)};
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
     for(const key of ["modelSelection","effortSent","limitFailover"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];

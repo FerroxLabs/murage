@@ -29,6 +29,7 @@ import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
 import { ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TARGETS } from "../shared/record-values.ts";
 import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
+import { durableGrantAllowed } from "../shared/durable-grant-allowed.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -1080,6 +1081,13 @@ export class RoutineManager {
       const diskRoutines = Array.isArray(disk.routines)
         ? disk.routines.map((routine) => (routine && typeof routine.id === "string" ? states.get(routine.id) as Routine | undefined : undefined) ?? routine)
         : undefined;
+      // UX-TRUST-MOMENTS-1012 2.3.3: a stored payment grant is never kept for
+      // good (routineGrantKeys drops it); counted once below, no payee
+      let refusedGrants = 0;
+      const countRefusedGrants = (keys: unknown): unknown => {
+        if (Array.isArray(keys)) refusedGrants += keys.filter((key) => typeof key === "string" && key.startsWith("stop:") && !durableGrantAllowed(key)).length;
+        return keys;
+      };
       this.routines = diskRoutines
         ? diskRoutines.flatMap((routine) => {
             const cleanedSchedule = loadSchedule(routine.schedule);
@@ -1100,7 +1108,7 @@ export class RoutineManager {
               overlap: routine.overlap === "queue" ? "queue" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
-              alwaysAllow: routineGrantKeys(routine.alwaysAllow),
+              alwaysAllow: routineGrantKeys(countRefusedGrants(routine.alwaysAllow)),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
@@ -1122,6 +1130,7 @@ export class RoutineManager {
       // overlaid on the journal (the file is the newer copy when a downgrade
       // happened in between) and moved out below. Idempotent: a crash after the
       // journal write but before the file rewrite just repeats this on next boot.
+      if (refusedGrants) console.warn(`[routines] dropped ${refusedGrants} remembered routine ${refusedGrants === 1 ? "approval" : "approvals"} that are never kept for good (payments)`);
       let diskRuns: RoutineRun[] = journalRuns;
       if (Array.isArray(disk.runs) && disk.runs.length > 0) {
         const byId = new Map(journalRuns.map((run) => [run.id, run] as const));
@@ -1450,10 +1459,10 @@ export class RoutineManager {
 
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
-  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal; notOwnerAudience?: true } | null {
+  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
-    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}), ...(run.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}) };
+    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}) };
   }
 
   /** One of the harness's own cards opened in this thread. In a scheduled or
