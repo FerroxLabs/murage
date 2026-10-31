@@ -11,6 +11,8 @@ export interface Capability {
   readonly name: string;
   /** The words the help index has to contain, as a person would say them. */
   readonly term: string;
+  /** An older word for the same thing the help may use instead (a page's pre-1.0.3 section name). */
+  readonly alt?: string;
   /** Where the code says so. */
   readonly source: string;
 }
@@ -338,121 +340,125 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "settings-page",
     "name": "general",
     "term": "General",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "aboutMe",
-    "term": "About me",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "botDefaults",
-    "term": "Bot defaults",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "houseRules",
-    "term": "House rules",
-    "source": "src/lib/settings-sections.ts"
+    "term": "Bots",
+    "alt": "Bot defaults",
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "skills",
     "term": "Skills",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "experimental",
-    "term": "Teach a skill",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "memory",
     "term": "Memory",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "models",
-    "term": "Models",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "engines",
-    "term": "Engines",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "images",
-    "term": "Images",
-    "source": "src/lib/settings-sections.ts"
+    "term": "Models & engines",
+    "alt": "Models",
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "webSearch",
-    "term": "Web search",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "voice",
-    "term": "Voice",
-    "source": "src/lib/settings-sections.ts"
+    "term": "Tools",
+    "alt": "Web search",
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "connections",
     "term": "Connected apps",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "channels",
     "term": "Messaging apps",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "companion",
-    "term": "Phone and other devices",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "computer",
-    "term": "Computer & browser",
-    "source": "src/lib/settings-sections.ts"
+    "term": "Devices",
+    "alt": "Phone and other devices",
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "backups",
     "term": "Backups",
-    "source": "src/lib/settings-sections.ts"
-  },
-  {
-    "kind": "settings-page",
-    "name": "storage",
-    "term": "Storage",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "usage",
     "term": "Usage",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "settings-page",
     "name": "about",
     "term": "About & updates",
-    "source": "src/lib/settings-sections.ts"
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "aboutMe",
+    "term": "About me",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "houseRules",
+    "term": "House rules",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "engines",
+    "term": "Engines",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "images",
+    "term": "Images",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "voice",
+    "term": "Voice",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "computer",
+    "term": "Computer & browser",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "experimental",
+    "term": "Teach a skill",
+    "source": "src/lib/settings-pages.ts"
+  },
+  {
+    "kind": "settings-page",
+    "name": "storage",
+    "term": "Storage",
+    "source": "src/lib/settings-pages.ts"
   },
   {
     "kind": "bot-settings",

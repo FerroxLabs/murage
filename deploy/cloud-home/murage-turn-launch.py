@@ -2230,8 +2230,9 @@ def validate_request(request, manifest_path=ENGINE_MANIFEST, manifest_uid=0, eng
     # the files rendered for this turn.
     args = check_argv(engine, args, render, login)
     if engine == "fuigoAgent":
-        # Every Fuigo shell command asks Murage, on every spawn but Full access (fuigo_config_text).
-        render["bashAsk"] = not fuigo_full_access(args)
+        # Every Fuigo shell command asks Murage on every spawn, Full access included (fuigo_config_text): the
+        # driver always runs `--permission-mode default`, and the server answers a Full access turn's asks itself.
+        render["bashAsk"] = True
     # A probe (--version, auth status) runs outside any bot: without a bot it stages and
     # collects nothing. Every other non-login turn names its bot (r5 R5.2).
     if bot is None and not login and args not in [list(probe) for probe in ARGV_PROBES.get(engine, ())]:
@@ -3065,10 +3066,6 @@ def codex_config_text(render):
         text += ("startup_timeout_sec = " + str(CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC) + "\n") if stanza["ask"] else "default_tools_approval_mode = \"auto\"\n"
     return text
 
-def fuigo_full_access(args):
-    """Full access is exactly `--permission-mode bypassPermissions` (the owner's own choice); anything else asks."""
-    return any(arg == "--permission-mode" and args[i + 1:i + 2] == ["bypassPermissions"] for i, arg in enumerate(args))
-
 def fuigo_config_text(render):
     text = "[cli]\nuse_leader = false\n" + FUIGO_PINS
     route = render["route"]
@@ -3479,7 +3476,9 @@ class ArgvRule:
     def __init__(self, flags, required=(), repeat=(), literals=(), tail=(), first=None):
         self.flags, self.required, self.repeat, self.literals, self.tail, self.first = dict(flags), tuple(required), frozenset(repeat), tuple(literals), tuple(tail), first
 
-PERMISSION_MODES = one_of("default", "bypassPermissions")
+# Grok and Fuigo run `--permission-mode default` at every level (grok.ts, fuigo.ts spawnArgs): under
+# bypassPermissions the engine never asks, so Murage's guard would never see a call. Nothing else is accepted.
+PERMISSION_MODES = one_of("default")
 
 # grok.ts grokPluginStub: <tmpdir>/murage-grok-isolation-<6 mkdtemp chars>/<plugin name>, the name being
 # PLUGIN_NAME there. Anchored, no "..", one level under the stub directory. Only Grok 1.0.50+ with a personal

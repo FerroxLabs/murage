@@ -394,6 +394,37 @@ describe("MCP tool execution", () => {
     expect(result).toMatchObject({ status: "needs-user", messages: [{ text: "Approve?" }] });
   });
 
+  it("returns the status, the waited task and a short tail, never the owner's whole task list", async () => {
+    const tasks = Array.from({ length: 300 }, (_, i) => ({ threadId: `task-${i}`, title: `Task ${i}`, createdAt: i }));
+    const fetcher = vi.fn(async (path: string) => {
+      if (path === "/api/bots?messages=0") return {
+        bots: [{ id: "bot-1", name: "Mira", title: "Ops", busy: false, activity: "idle", threadId: "task-7", tasks, tasksTotal: 900 }],
+        groups: [{ id: "channel-1", name: "Launch", memberIds: ["bot-1"], threadId: "task-9", tasks, tasksTotal: 900, working: false, busyBotId: null }],
+      };
+      if (/^\/api\/threads\/task-\d+\/messages\?limit=10$/.test(path)) return { messages: [{ id: "m1", at: 1, role: "bot", kind: "text", text: "Done" }], hasMore: true };
+      if (path === "/api/bots/bot-1/tasks/task-800") return { task: { threadId: "task-800", title: "Task 800", createdAt: 800 } };
+      throw new Error(`unexpected path ${path}`);
+    });
+    const bot: any = await handleToolCall("wait_for_conversation", { target_type: "bot", target_id: "bot-1", timeout_seconds: 1 }, fetcher);
+    expect(bot).toMatchObject({ status: "settled", targetType: "bot", targetId: "bot-1", taskId: "task-7", hasMore: true, messages: [{ text: "Done" }] });
+    expect(bot.target).toMatchObject({ id: "bot-1", name: "Mira", title: "Ops", busy: false, activity: "idle", activeTaskId: "task-7" });
+    expect(bot.target.task).toEqual({ taskId: "task-7", title: "Task 7", createdAt: 7, active: true });
+    expect(bot.target).not.toHaveProperty("tasks");
+    expect(bot.target).not.toHaveProperty("totalTasks");
+    expect(JSON.stringify(bot)).not.toContain("Task 8");
+    const channel: any = await handleToolCall("wait_for_conversation", { target_type: "channel", target_id: "channel-1", timeout_seconds: 1 }, fetcher);
+    expect(channel.target).toMatchObject({ id: "channel-1", working: false, busyBotId: null, activeTaskId: "task-9", task: { taskId: "task-9" } });
+    expect(channel.target).not.toHaveProperty("tasks");
+    // A listed historical task is projected as it is listed.
+    const listed: any = await handleToolCall("wait_for_conversation", { target_type: "bot", target_id: "bot-1", task_id: "task-299", timeout_seconds: 1 }, fetcher);
+    expect(listed.target.task).toMatchObject({ taskId: "task-299", active: false });
+    // A task older than the listed ones (tasksTotal 900) is found by its own lookup and still projected alone.
+    const unlisted: any = await handleToolCall("wait_for_conversation", { target_type: "bot", target_id: "bot-1", task_id: "task-800", timeout_seconds: 1 }, fetcher);
+    expect(unlisted).toMatchObject({ status: "settled", taskId: "task-800" });
+    expect(unlisted.target.task).toEqual({ taskId: "task-800", title: "Task 800", createdAt: 800, active: false });
+    expect(unlisted.target).not.toHaveProperty("tasks");
+  });
+
   it("reports no-signal as stalled and keeps the frozen task tail", async () => {
     const fetcher = vi.fn(async (path: string) => {
       if (path === "/api/bots?messages=0") return {
