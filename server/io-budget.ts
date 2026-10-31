@@ -13,6 +13,7 @@ import { activeTaskName, oldestLongOp, rateLimited, reportSlowSql, SLOW_SQL_MS }
 import { systemLoad } from "./system-load.ts";
 import { HEALTH_LIMITS, type IoSample, type IoSourceClass } from "../shared/health-protocol.mjs";
 import { recordFact } from "./health/counters.ts";
+import { NET_LINE_BYTES_PER_MINUTE, netMeter, netText, type NetMinute } from "./net-meter.ts";
 
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
@@ -45,6 +46,8 @@ export interface IoBudgetOptions {
   /** Told every judged minute, calm and zero minutes included (1.0.9 Sentinel's io-minute fact). Enums and byte counts
    *  only: never statement text or a file path. A throw is ignored. */
   onSample?: (sample: IoSample) => void;
+  /** Reads and restarts the minute's traffic counters (net-meter.ts). A throw is ignored. */
+  netMinute?: () => NetMinute;
 }
 
 export function readProcess(): IoReading {
@@ -72,6 +75,7 @@ export class IoBudget {
   private onMemoryWork?: () => void;
   private systemOverloaded: () => { overloaded: boolean; why: string } | null;
   private onSample?: (sample: IoSample) => void;
+  private netMinute?: () => NetMinute;
   private deferredSource: string | null = null;
   private deferUntil = 0;
   /** Bytes written in the last minute under a budget of their own (the revoke marker's, revoke-budget.ts): planned, capped there, and
@@ -84,7 +88,7 @@ export class IoBudget {
   private traced = new Map<string, { calls: number; ms: number }>();
   private traceTimer: ReturnType<typeof setInterval> | null = null;
   /** One diagnostic per category per minute; three fixed keys bound state even as sources change. */
-  private readonly diagnosticLogs = new Map<"writing" | "cpu" | "both", { at: number; suppressed: number }>();
+  private readonly diagnosticLogs = new Map<"writing" | "cpu" | "both" | "traffic", { at: number; suppressed: number }>();
 
   constructor(options: IoBudgetOptions = {}) {
     this.read = options.read ?? readProcess;
@@ -97,6 +101,7 @@ export class IoBudget {
     this.onMemoryWork = options.onMemoryWork;
     this.systemOverloaded = options.systemOverloaded ?? (() => systemLoad.reading());
     this.onSample = options.onSample;
+    this.netMinute = options.netMinute;
   }
 
   /** Replace the listener told when the scale changes. */
@@ -218,6 +223,8 @@ export class IoBudget {
     const previous = this.last;
     this.last = reading;
     const applicationBytes = this.sampleBytes();
+    let net: NetMinute | null = null;
+    try { net = this.netMinute?.() ?? null; } catch { /* traffic counts are diagnostics */ }
     if (!previous) { this.bytes.clear(); return null; }
     if (reading.at <= previous.at) return null;
     const minutes = (reading.at - previous.at) / 60_000;
@@ -236,6 +243,7 @@ export class IoBudget {
     const writing = writeBytesPerMinute > budget;
     const spinning = this.hotCpuMinutes >= this.cpuMinutes;
     const tripped = writing || spinning;
+    const traffic = net ? netText(net, reading.at - previous.at) : "";
     if (tripped) {
       this.calmMinutes = 0;
       const next = Math.min(IO_BUDGET_MAX_SCALE, this.scale * 2);
@@ -246,7 +254,7 @@ export class IoBudget {
       if (!lastLog || reading.at - lastLog.at >= IO_BUDGET_INTERVAL_MS) {
         const top = this.topStatements().map(cost => `${Math.round(cost.ms)}ms x${cost.calls} ${cost.sql}`).join(" | ") || "none recorded";
         const line = `[io-budget] ${writing ? `writing ${(writeBytesPerMinute / 1048576).toFixed(1)} MB/min (budget ${(budget / 1048576).toFixed(0)}${planned > 0 ? `, ${(planned / minutes / 1048576).toFixed(1)} MB/min planned not counted` : ""})` : ""}`
-          + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}`;
+          + `${writing && spinning ? ", " : ""}${spinning ? `cpu ${(cpu * 100).toFixed(0)}%${systemHot ? ` (computer: ${system!.why})` : ""} for ${this.hotCpuMinutes} min` : ""}; source: ${this.deferredSource}; top statements: ${top}; poll rate x1/${next}${traffic && `; ${traffic}`}`;
         // Bound diagnostics too: custom source names and load descriptions need not be short.
         this.log(`${line.length > 4096 ? `${line.slice(0, 4096)}…` : line}; suppressed=${lastLog?.suppressed ?? 0}`);
         this.diagnosticLogs.set(category, { at: reading.at, suppressed: 0 });
@@ -260,6 +268,14 @@ export class IoBudget {
       this.calmMinutes = 0;
       this.setScale(Math.max(1, this.scale / 2));
       if (this.scale === 1) this.deferredSource = null;
+    }
+    // A storm on the port that neither watchdog trips on still says what it was. Diagnostic only: it changes no scale and defers nothing.
+    if (!tripped && net && net.outBytes > NET_LINE_BYTES_PER_MINUTE * minutes) {
+      const lastLog = this.diagnosticLogs.get("traffic");
+      if (!lastLog || reading.at - lastLog.at >= IO_BUDGET_INTERVAL_MS) {
+        try { this.log(`[io-budget] traffic; ${traffic}; suppressed=${lastLog?.suppressed ?? 0}`); } catch { /* a line never changes the minute */ }
+        this.diagnosticLogs.set("traffic", { at: reading.at, suppressed: 0 });
+      } else lastLog.suppressed++;
     }
     if (this.onSample) {
       const intervalMs = reading.at - previous.at;
@@ -344,7 +360,7 @@ export function ioSourceClass(source: string | undefined): IoSourceClass {
   }
 }
 
-export const ioBudget = new IoBudget({ onSample: sample => recordFact({ kind: "io-minute", ...sample }) });
+export const ioBudget = new IoBudget({ onSample: sample => recordFact({ kind: "io-minute", ...sample }), netMinute: () => netMeter.take() });
 
 /** File growth is cumulative across truncation and recreation between samples.
  * Existing bytes form the baseline. In-place rewrites need explicit counters. */

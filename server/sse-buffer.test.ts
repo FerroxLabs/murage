@@ -219,3 +219,14 @@ describe("SSE replay", () => {
     writer.close();
   });
 });
+
+describe("SseWriter acceptedBytes", () => {
+  it("counts UTF-8 bytes, not characters, and leaves out a frame it refused", () => {
+    const response = Object.assign(new EventEmitter(), { destroyed: false, writableLength: 0, write: () => true, destroy() {} });
+    const writer = new SseWriter(response as never, () => {}, { maxFrameBytes: 16 });
+    writer.send("ééé");
+    expect(writer.acceptedBytes).toBe(6);
+    writer.send("x".repeat(17));
+    expect(writer.acceptedBytes).toBe(6);
+  });
+});

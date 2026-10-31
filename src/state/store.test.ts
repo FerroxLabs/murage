@@ -10,6 +10,7 @@ import {
   agentPlansAfterEvent,
   createStreamDeltaBuffer,
   configStatusFromFrame,
+  frameShowsViewedUnread,
   initialState,
   loadSnapshotBoundary,
   openNotificationTarget,
@@ -2212,5 +2213,22 @@ describe("a saved thread setting lands on the held row", () => {
       task: { threadId: "fb-t2", title: "Second thread", createdAt: 2, modelSelection: { instanceId: "x", model: "y" } },
     });
     expect(state.bots[0]).toBe(follower);
+  });
+});
+
+describe("LOG-CPU-LINEAGE: a stream frame and the open chat's read mark", () => {
+  const row = (threadId: string, unread: boolean) => ({ threadId, unread }) as NonNullable<Bot["tasks"]>[number];
+  it("fail-before: a delta about another chat of the open bot never reads the open chat (1.0.11 posted once per frame, and each post made a frame)", () => {
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true, tasksDelta: { upsert: [row("other", true)], count: 2, base: 1 } }, "open")).toBe(false);
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true, tasksDelta: { upsert: [], count: 2, base: 1 } }, "open")).toBe(false);
+  });
+  it("the open chat's own row decides, in either frame", () => {
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true, tasksDelta: { upsert: [row("open", true)], count: 2, base: 1 } }, "open")).toBe(true);
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true, tasks: [row("open", false), row("other", true)] }, "open")).toBe(false);
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true, tasks: [row("open", true), row("other", false)] }, "open")).toBe(true);
+  });
+  it("a frame with no task rows at all still answers from the bot, as an older server sends it", () => {
+    expect(frameShowsViewedUnread({ threadId: "open", unread: true }, "open")).toBe(true);
+    expect(frameShowsViewedUnread({ threadId: "other", unread: true }, "open")).toBe(false);
   });
 });
