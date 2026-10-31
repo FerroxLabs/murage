@@ -22,9 +22,15 @@ export type ProbeReason =
 
 export type LocalKind = "this-computer" | "local-network";
 
+/** How many tools a server has, as far as the probe knows: its whole first page, and "113+" when there is a further page. */
+export function probeToolCount(probe: { tools: unknown[]; toolsTotal?: number; toolsMore?: true }): number | string {
+  const count = probe.toolsTotal ?? probe.tools.length;
+  return probe.toolsMore ? `${count}+` : count;
+}
+
 /** What a probe said: fixed sentences and codes only, never a value. */
 export type ProbeView =
-  | { ok: true; tools: Array<{ name: string; description?: string }>; transport?: "http" | "sse" }
+  | { ok: true; tools: Array<{ name: string; description?: string }>; transport?: "http" | "sse"; toolsTotal?: number; toolsMore?: true }
   | {
     ok: false; error: string; reason?: ProbeReason;
     signIn?: { host: string };

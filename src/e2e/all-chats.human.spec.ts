@@ -37,6 +37,13 @@ test.beforeAll(async () => {
   ` });
   try {
     ids = JSON.parse(readFileSync(join(fixture.info.dataDir, "chats-fixture.json"), "utf8"));
+    // A workspace past its first run, before the app opens. On an unnamed one this bot is elected Chief and every setup read (a 3 s
+    // poll) moves the setup conversation into the open thread and titles a new chat "Getting you set up", so the New chat
+    // check below only passed when it looked first (ledger HUMAN-SETUP-FLAKE). This spec is about chats, not setup.
+    const { secret } = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json();
+    const named = await fetch(`${fixture.info.url}/api/config`, { method: "PUT", body: JSON.stringify({ profile: { name: "Chats owner" } }),
+      headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" } });
+    if (!named.ok) throw new Error(`Could not name the fixture owner: ${named.status}`);
     const root = fileURLToPath(new URL("../../", import.meta.url));
     vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "chats-vite-cache"),
       resolve: { alias: { "@": join(root, "src") } }, plugins: [react(), tailwindcss()],

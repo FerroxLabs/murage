@@ -97,6 +97,7 @@ server/backup-exfat.test.ts	extended
 server/backup-failure-naming.test.ts	extended
 server/backup-failure-notice-api.test.ts	extended
 server/backup-many-files.test.ts	extended
+server/backup-real-full-disk.test.ts	extended
 server/backup-waiting-api.test.ts	extended
 server/backup-waiting.test.ts	extended
 server/blake3.test.ts	extended
@@ -368,6 +369,7 @@ server/inbox-activity-writes.test.ts	extended
 server/inbox-fill-hold.test.ts	extended
 server/inbox-first-fill.test.ts	extended
 server/inbox-learning-paused.test.ts	extended
+server/inbox-needs-you-count.growth.test.ts	extended
 server/inbox-rollup.test.ts	extended
 server/inbox-version.test.ts	extended
 server/inbox.base-equivalence.test.ts	extended
@@ -1463,3 +1465,4 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/lib/clock-format.test.ts	extended
