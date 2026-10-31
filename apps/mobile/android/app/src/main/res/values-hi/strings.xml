@@ -26,7 +26,8 @@
     <string name="phone_sharing_generic">आपकी अनुमति से बॉट आपके फ़ोन से जो पढ़ता है, उसे आपके अपने Murage के ज़रिए उस बॉट की AI सेवा के साथ शेयर करें।</string>
     <string name="phone_provider_fallback">कोई दूसरी AI सेवा</string>
     <string name="phone_no_key">इस फ़ोन पर पासकोड सेट करें, फिर दोबारा पेयर करें</string>
-    <string name="phone_update">अपने कंप्यूटर पर Murage अपडेट करें</string>
+    <string name="phone_update">अपने कंप्यूटर पर यह सुविधा चालू करें या Murage अपडेट करें।</string>
+    <string name="phone_turned_off">आपके कंप्यूटर पर यह सुविधा अभी चालू नहीं है। कंप्यूटर पर Murage खोलें और सेटिंग → फ़ोन और अन्य डिवाइस में जाकर इसे चालू करें।</string>
     <string name="phone_failed">फ़ोन के टूल अपडेट नहीं हो सके। फिर से कोशिश करें।</string>
     <string name="phone_refused">फ़ोन का साइन-इन अस्वीकार कर दिया गया। इस फ़ोन को दोबारा पेयर करें।</string>
     <string name="phone_rate_limited">साइन-इन की बहुत ज़्यादा कोशिशें हुई हैं। थोड़ी देर में फिर कोशिश करें।</string>
@@ -68,7 +69,8 @@
     <string name="ask_setup_body">किसी भी ऐप से अपने बॉट को चीज़ें भेजें और पहले Murage खोले बिना उनसे सवाल पूछें। इस कंप्यूटर के लिए एक बार पुष्टि करें।</string>
     <string name="ask_turn_on">चालू करें</string>
     <string name="ask_not_now">अभी नहीं</string>
-    <string name="ask_update">इसे इस्तेमाल करने के लिए अपने कंप्यूटर पर Murage अपडेट करें।</string>
+    <string name="ask_update">अपने कंप्यूटर पर यह सुविधा चालू करें या Murage अपडेट करें।</string>
+    <string name="ask_turned_off">आपके कंप्यूटर पर यह सुविधा अभी चालू नहीं है। कंप्यूटर पर Murage खोलें और सेटिंग → फ़ोन और अन्य डिवाइस में जाकर इसे चालू करें।</string>
     <string name="ask_no_key">इस फ़ोन पर पासकोड सेट करें, फिर Murage खोलें।</string>
     <string name="ask_computer_off">इस फ़ोन के लिए शेयर करना और पूछना बंद है।</string>
     <string name="ask_setup_again">शेयरिंग फिर से सेट करने के लिए Murage खोलें।</string>
@@ -93,7 +95,8 @@
     <string name="share_offline">अभी आपके कंप्यूटर से संपर्क नहीं हो पा रहा है। संपर्क होने पर Murage इसे भेज देगा।</string>
     <string name="share_passcode">इस फ़ोन पर पासकोड सेट करें, फिर Murage खोलें।</string>
     <string name="share_again">शेयरिंग फिर से सेट करने के लिए Murage खोलें।</string>
-    <string name="share_update">इसे इस्तेमाल करने के लिए अपने कंप्यूटर पर Murage अपडेट करें।</string>
+    <string name="share_update">अपने कंप्यूटर पर यह सुविधा चालू करें या Murage अपडेट करें।</string>
+    <string name="share_turned_off">आपके कंप्यूटर पर यह सुविधा अभी चालू नहीं है। कंप्यूटर पर Murage खोलें और सेटिंग → फ़ोन और अन्य डिवाइस में जाकर इसे चालू करें।</string>
     <string name="share_outbox_waiting">भेजने का इंतज़ार है</string>
     <string name="share_outbox_sent">भेज दिया गया</string>
     <string name="share_outbox_failed">भेजा नहीं जा सका। फिर कोशिश करने के लिए टैप करें।</string>

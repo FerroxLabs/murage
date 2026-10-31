@@ -426,6 +426,8 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
+  /** Restart Murage after a Flux key change, so running engines pick up the saved key. */
+  restartForFluxKey: () => ipcRenderer.invoke("flux-connection:restart-app"),
   /** One-click Flux sign-in (PKCE in the main process). Resolves { ok, status } or { ok:false, code, message }; never carries the key. */
   fluxSignin: {
     start: (input) => ipcRenderer.invoke("flux-signin:start", input),

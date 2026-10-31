@@ -219,7 +219,7 @@ posixOnly("Auto operators created by the Chief still ask the person", () => {
       expect(credential.status).toBe(201);
       const { messageId } = (await credential.json()) as { messageId: string };
       const secretCard = (await messages(operator.threadId)).find((m) => m.id === messageId);
-      expect(secretCard).toMatchObject({ kind: "secret", secret: { target: "xaiApiKey", label: "xAI API key" } });
+      expect(secretCard).toMatchObject({ kind: "secret", secret: { target: "xaiApiKey", label: "xAI key" } });
       expect(secretCard.secret.answered ?? secretCard.secret.saved ?? undefined).toBeUndefined();
 
       // the person decides; only then does the turn move
