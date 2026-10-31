@@ -16,7 +16,6 @@ import {
   relayMcp,
   resetManagedBrokerState,
   BROKER_UNREACHABLE,
-  setFluxProbeBackoffMsForTests,
 } from "./composio.ts";
 import type { AppConfig } from "./config.ts";
 
@@ -75,14 +74,11 @@ beforeEach(() => {
   paths = [];
   mcp = (payload) => rpc(payload);
   resetManagedBrokerState();
-  // 1.0.10: the probe retries a failure with no answer; here it does so at once, so a drop settles within a flush
-  setFluxProbeBackoffMsForTests([0, 0]);
   stub();
   connect();
 });
 
 afterEach(() => {
-  setFluxProbeBackoffMsForTests();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   resetManagedBrokerState();
