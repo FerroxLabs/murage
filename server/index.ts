@@ -75,6 +75,7 @@ import { gitRemoteHosts } from "./git-remote-hosts.ts";
 import { skillCommandApplies } from "./skill-command-gate.ts";
 import { sidebarLineOf, type SidebarLine } from "../shared/sidebar-line.ts";
 import { ThreadVersions } from "./thread-versions.ts";
+import { meterResponse, netMeter } from "./net-meter.ts";
 import { createTaskDelta, TASK_DELTA_QUERY, TASK_DELTA_VALUE } from "./task-delta.ts";
 import { ROSTER_TASK_WINDOW, TASK_PAGE_DEFAULT, pageTasks, createTaskAggregateCache } from "./task-window.ts";
 import { promptQuoteTargets, type MessageLookup } from "./prompt-quotes.ts";
@@ -5858,11 +5859,16 @@ function broadcast(payload: Record<string, unknown>, deltaPayload?: Record<strin
   const scopedOutgoing = kind === "config" ? scopedConfigFrame(outgoing) : outgoing;
   const deltaFrame = deltaPayload && `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...deltaPayload, seq })}\n\n`;
   const besideFrame = besidePayload && `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...besidePayload, seq })}\n\n`;
+  let sent = 0;
   for (const client of [...sseClients]) {
     if (!wants(client, entry)) continue;
     const own = besideFrame && client.cardsBeside ? besideFrame : deltaFrame && client.taskDelta ? deltaFrame : outgoing;
-    client.writer.send(client.scoped ? scopedBotFrame(besideFrame && client.cardsBeside ? besideFrame : scopedOutgoing, store, client.owner, client.foreign) : own);
+    const framed = client.scoped ? scopedBotFrame(besideFrame && client.cardsBeside ? besideFrame : scopedOutgoing, store, client.owner, client.foreign) : own;
+    const before = client.writer.acceptedBytes;
+    client.writer.send(framed);
+    sent += client.writer.acceptedBytes - before;
   }
+  netMeter.noteFrame(kind, sent);
 }
 
 /** A bot or group frame that carries a page of its transcript, in the shape
@@ -24344,7 +24350,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           resumed: replay.resumed,
         })}\n\n`,
       )) return;
-      for (const frame of replay.frames) if (!client.writer.send(client.scoped ? scopedBotFrame(scopedConfigFrame(frame), store, client.owner, client.foreign) : frame)) return;
+      for (const frame of replay.frames) {
+        const before = client.writer.acceptedBytes;
+        if (!client.writer.send(client.scoped ? scopedBotFrame(scopedConfigFrame(frame), store, client.owner, client.foreign) : frame)) return;
+        netMeter.noteFrame("replay", client.writer.acceptedBytes - before);
+      }
 
       // Keep this long-lived response out of socket idle-timeout handling
       // without weakening timeouts for every other API request.
@@ -26199,9 +26209,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       const parsed = readStateRequestSchema.safeParse(body);
       if (!parsed.success) return json(res, 400, { error: "read state accepts only an optional unread boolean" });
-      const group = store.patchGroup(m[1], { unread: parsed.data.unread ?? false });
+      const unread = parsed.data.unread ?? false;
+      // As on a bot's chat: a read mark that changes nothing says nothing on the stream, whichever client sent it.
+      const changes = (store.group(m[1])?.unread ?? false) !== unread;
+      const group = changes ? store.patchGroup(m[1], { unread }) : store.group(m[1]);
       if (!group) return json(res, 404, { error: "no such room" });
-      broadcastGroup(group.id);
+      if (changes) broadcastGroup(group.id);
       return json(res, 200, { group: publicGroupState(group) });
     }
     m = path.match(/^\/api\/groups\/([\w-]+)$/);
@@ -26864,11 +26877,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const parsed = readStateRequestSchema.safeParse(readBodyFields);
       if (!parsed.success) return json(res, 400, { error: "read state accepts only an optional unread boolean" });
       const selected=requestedDirectBot(m[1],requestedThread);
-      store.patchTask(selected.id,selected.threadId,{unread:parsed.data.unread??false});
+      const unread=parsed.data.unread??false;
+      // A read mark that changes nothing says nothing on the stream: a frame answering a read is what a client that reads on a frame would answer again.
+      const changes=(store.taskByThread(selected.id,selected.threadId)?.unread??false)!==unread;
+      if(changes)store.patchTask(selected.id,selected.threadId,{unread});
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
       const visible = wireBot(bot, ROSTER_TASK_WINDOW);
-      broadcast({ kind: "bot", bot: visible });
+      if(changes)broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { bot: visible });
     }
     // 1.0.4 SL-K K1 "Switch them too": idle chats with a model of their own go back to following the bot. Desktop only (404 elsewhere).
@@ -31466,6 +31482,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
 const server = createServer((req, res) => {
   const source = routeSource(req.method, req.url);
   routeNames.set(res, source);
+  meterResponse(req, res);
   // The synchronous part of the handler runs inside a named step too: JS work (row parsing, wiring a bot, a big body) is a holder, not "unknown".
   return ioBudget.withSource(source, () => heldStep(source, () => handleRequest(req, res)));
 });

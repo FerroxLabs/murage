@@ -831,6 +831,7 @@ server/installation-windows-backup-transport.test.ts	all	Windows backup helper v
 server/internal-capabilities.test.ts	all	turn capability claims forged or expired refused
 server/internal-route-authority.test.ts	all	internal routes refuse channel people
 server/io-budget-log-noise.test.ts	all	I/O watchdog diagnostic bursts filling logs; one capped line per minute with suppressed counts
+server/io-budget-net.test.ts	all	the io-budget line names routes and frame kinds as fixed words, so no id, path or message reaches a log
 server/io-budget-planned.test.ts	all	the revoke marker's budgeted writes no longer trip the io watchdog and slow every poller
 server/job-launcher.test.ts	all	the Windows job launcher starts the engine only once it is in the job
 server/key-rejections.test.ts	all	credentials, pairing and access control
