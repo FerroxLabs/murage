@@ -1,0 +1,80 @@
+# Capability records: messaging and connected apps. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: apps.chat-approval-buttons
+    name: Answer approvals from Telegram, Slack or Discord
+    status: can
+    questions:
+      - Can I approve a bot's request from Telegram?
+      - Approve once from Slack
+      - Do Discord approval buttons work?
+      - Answer approval cards from my phone's chat app
+    answer: >
+      Yes. Telegram, Slack and Discord send approval cards to your private chat with Approve once and
+      Deny buttons, and only your own presses count.
+    limits: >
+      On Telegram a stop-line card also offers Allow for this task. A card about controlling a
+      computer offers Deny only; approve it in Murage. WhatsApp approvals stay in Murage.
+    settings_path: Settings → Messaging apps
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - file:server/telegram-approvals.ts#approvalButtonLabel("allowTask")
+      - 'file:server/channels/approval-labels.ts#allowTask: "Allow for this task"'
+      - file:server/channels/discord/transport.ts#input.denyOnly
+      - file:server/channels/slack/transport.ts#approvalButtonLabel("approveOnce")
+    verified: 1.0.10
+    doc: features/messaging-apps#what-messaging-apps-do
+    internal: CANNOT-ANSWERS-109 item d. Allow for this task is Telegram only (approval.taskAllow); Discord and Slack transports never render it.
+
+  - id: apps.bot-email
+    name: A bot's own email address
+    status: can
+    questions:
+      - Can my bot have its own email address?
+      - Give a bot an email address
+      - Can a bot send email for me?
+      - Does a bot need my approval to send email?
+    answer: >
+      Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose
+      who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person.
+    limits: >
+      Needs a Flux Router account with email on. Anything long, with attachments or with many
+      addresses still waits for you, and there is a daily limit.
+    settings_path: Settings → Connected apps → Bot email
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:connections/bot-email
+      - 'file:shared/email-copy.ts#Nobody. I approve every email'
+      - 'file:shared/email-copy.ts#Anything long, with attachments or with many addresses still waits for you'
+    verified: 1.0.11
+    doc: features/bot-tools#bot-email
+    internal: CHECK-AHEAD-1011 self-knowledge gap, docs patch in 1.0.12.
+
+  - id: apps.own-browser
+    name: A built-in browser for each bot
+    status: can
+    questions:
+      - Can my bot browse the web in its own browser?
+      - Give a bot a built-in browser
+      - Watch my bot use a browser and take over
+    answer: >
+      Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and
+      you can watch it and take over at any time. It is on by default. Switch it off for every bot
+      under Settings, Devices, Built-in browser, or for one bot in its Bot settings.
+    limits: >
+      It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines
+      without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.
+    settings_path: Settings → Devices → Built-in browser
+    platforms: [mac, windows, linux]
+    engines: [fuigo, claude, codex, grok, cursor, kimi, droid, opencode, qwen, hermes, gemini, cline]
+    anchors:
+      - settings-card:companion/browser
+      - tool:request_browser_connection
+      - file:server/config.ts#export function builtInBrowserEnabled
+      - "file:server/drivers/acp/core.ts#browserMcp: !support.ownTools"
+    verified: 1.0.10
+    doc: features/settings-guide#built-in-browser
+    internal: KB apps-30. Engine list from browserMcp (claude.ts, codex.ts true; ACP core true unless ownTools).
+retired: []

@@ -248,6 +248,9 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.FAKE_ACP_PID_FILE;
     delete process.env.FAKE_ACP_TERM;
     delete process.env.FAKE_ACP_TERM_MS;
+    delete process.env.FAKE_ACP_EXIT_GATE;
+    delete process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE;
+    delete process.env.FAKE_ACP_RPC_DUMP;
     delete process.env.MURAGE_PROVIDER_CLOSE_MS;
     delete process.env.XAI_API_KEY;
     delete process.env.OPENCODE_API_KEY;
@@ -369,6 +372,71 @@ describe("ACP turns (fake CLI)", () => {
     expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId)).toMatchObject({ ok: true });
     expect(passes).toBe(1);
     expect(JSON.parse(readFileSync(rpcFile, "utf8")) as string[]).toContain("session/prompt");
+  });
+
+  describe.each([["grokAgent", () => GrokAgentDriver], ["another ACP driver", () => SelectModelDriver]] as const)("a stop that is not a user's Stop: %s", (_name, driver) => {
+    // The fake rewrites this file on each request, so a poll can land between its truncate and its write.
+    const rpcs = (file: string): string[] => {
+      const text = existsSync(file) ? readFileSync(file, "utf8") : "";
+      return text ? JSON.parse(text) as string[] : [];
+    };
+    const until = async (seen: () => boolean) => { while (!seen()) await new Promise((resolve) => setTimeout(resolve, 10)); };
+    const errors = (turnId: string) => recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId);
+
+    it.each(["stopAll", "interrupt"] as const)("%s inside the submission fence writes no prompt and withdraws the fence's bookkeeping", async (how) => {
+      const rpcFile = join(scratch, "stopped-fence.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver());
+      const threadId = `t-fence-${how}`;
+      let notWritten = 0;
+      let stopping: Promise<unknown> | undefined;
+      const { turnId } = await instance.adapter.sendTurn({
+        threadId, text: "hi", notWritten: () => { notWritten++; },
+        beforeSubmit: () => { stopping = (how === "stopAll" ? instance.adapter.stopAll() : instance.adapter.interruptTurn(threadId)).catch(() => undefined); },
+      });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await stopping;
+      expect(notWritten).toBe(1);
+      expect(errors(turnId)).toEqual([]);
+      expect(rpcs(rpcFile)).not.toContain("session/prompt");
+    });
+
+    it("a request that fails after Stop All, its child still closing, is a cancelled turn", async () => {
+      const rpcFile = join(scratch, "stopped-setup.json");
+      const refuse = join(scratch, "refuse-session");
+      const exit = join(scratch, "exit");
+      Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_SESSION_NEW_REFUSE_GATE: refuse, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
+      await create(driver());
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-stopped", text: "hi" });
+      await until(() => rpcs(rpcFile).includes("session/new"));
+      const stopping = instance.adapter.stopAll().catch(() => undefined);
+      writeFileSync(refuse, "");
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      writeFileSync(exit, "");
+      await stopping;
+      expect(errors(turnId)).toEqual([]);
+    });
+
+    it("the same request failing with no stop stays an engine failure", async () => {
+      const refuse = join(scratch, "refuse-session");
+      writeFileSync(refuse, "");
+      process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE = refuse;
+      await create(driver());
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-failed", text: "hi" });
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      expect(errors(turnId)).toHaveLength(1);
+    });
+
+    it("Stop All while the prompt is open ends the turn as cancelled when the child closes", async () => {
+      const rpcFile = join(scratch, "stopped-prompt.json");
+      process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+      await create(driver(), "hang");
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-prompt-stopped", text: "hi" });
+      await until(() => rpcs(rpcFile).includes("session/prompt"));
+      await instance.adapter.stopAll();
+      expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(errors(turnId)).toEqual([]);
+    });
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -1108,7 +1176,8 @@ describe("ACP turns (fake CLI)", () => {
         await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
         const skips = fullAuto && !enforced;
-        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", skips ? "bypassPermissions" : "default"]);
+        // Grok runs `default` at every level, Full access included (Murage answers its asks; never bypass).
+        if (engine === "Grok") expect(argv.slice(0, 2)).toEqual(["--permission-mode", "default"]);
         if (engine === "Cursor") expect(argv.includes("--force")).toBe(skips);
         if (engine === "Droid") {
           const applied = JSON.parse(readFileSync(`${dump}.config.json`, "utf8"));
@@ -1214,7 +1283,9 @@ describe("ACP turns (fake CLI)", () => {
     await instance.adapter.respondToRequest("t-perm-deny-once", (opened as any).requestId, { behavior: "deny" });
     expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
     await recorder.until((e) => e.type === "turn.completed");
-    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" } });
+    // Grok ends a prompt on a bare reject, so the one-time reject carries the follow-up note (GROK-812MIN-STOPPED).
+    expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ outcome: { outcome: "selected", optionId: "reject-once" },
+      _meta: { followup_message: expect.stringMatching(/^The user denied this operation\./) } });
   });
 
   it.each(["allow", "deny", "full-auto"] as const)("never widens a one-request answer to always-only options: %s", async (behavior) => {
@@ -1260,7 +1331,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       : { outcome: { outcome: "cancelled" } });
   });
 
-  it.each(["deny", "allow", "cancel", "timeout", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
+  it.each(["deny", "allow", "cancel", "teardown", "other-engine", "question", "reject-always", "full-auto"] as const)(
     "Fuigo denial continuation wire boundary: %s", async (scenario) => {
       const dump = join(scratch, "fuigo-denial.json");
       const cli = join(scratch, "denial-cli.mjs");
@@ -1290,23 +1361,20 @@ createInterface({ input: process.stdin }).on("line", line => {
       chmodSync(cli, 0o755);
       const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT,
         driverKind: scenario === "other-engine" ? "other-test" : FuigoAgentDriver.driverKind,
+        // Fuigo and Grok declare it (fuigo.ts, grok.ts); an engine that does not gets a bare reject.
+        ...(scenario === "other-engine" ? {} : { rejectNeedsFollowup: true as const }),
         selectModel: undefined,
       });
       instance = await driver.create({ instanceId: "denial-test", displayName: "Denial Test", environment: {}, enabled: true,
         config: { cli, fullAuto: scenario === "full-auto" } });
       recorder = recordEvents(instance.adapter);
-      // Shorten only this exact production permission deadline; real child I/O
-      // and every other timer keep their ordinary behavior.
-      const originalTimeout = globalThis.setTimeout;
-      const timerSpy = scenario === "timeout" ? vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
-        originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args)) as typeof setTimeout) : null;
-      try {
+      {
         const { turnId } = await instance.adapter.sendTurn({ threadId: "denial-wire", text: "go" });
         if (scenario !== "full-auto") {
           const opened = await recorder.until(event => event.type === "request.opened");
           if (scenario === "cancel") await instance.adapter.interruptTurn("denial-wire", turnId);
           else if (scenario === "teardown") await instance.dispose();
-          else if (scenario !== "timeout") await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
+          else await instance.adapter.respondToRequest("denial-wire", (opened as any).requestId,
             { behavior: scenario === "allow" ? "allow" : "deny" });
         }
         await recorder.until(event => event.type === "turn.completed");
@@ -1324,19 +1392,12 @@ createInterface({ input: process.stdin }).on("line", line => {
         if (scenario === "deny") {
           expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } });
           expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "user" });
-        } else if (scenario === "timeout") {
-          // An unanswered card is not an engine failure: no error card (whose
-          // copy points at Provider settings), and Fuigo is told to carry on
-          // without the action instead of treating the deny as a Stop.
-          expect(observed.decision).toEqual({ ...expected, _meta: { followup_message: "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped." } });
-          expect(recorder.events.find(event => event.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "timeout" });
-          expect(recorder.events.filter(event => event.type === "runtime.error" && /answered/i.test(event.message))).toEqual([]);
         } else expect(observed.decision).toEqual(scenario === "reject-always" ? { outcome: { outcome: "cancelled" } } : expected);
-      } finally { timerSpy?.mockRestore(); }
+      }
     },
   );
 
-  it("a turn that holds its permission asks keeps the card open past 15 minutes (routine runs)", async () => {
+  it("a permission card waits past 15 minutes on every turn, direct chat included (Sean 10-29)", async () => {
     const dump = join(scratch, "hold-asks.json");
     const cli = join(scratch, "hold-asks-cli.mjs");
     writeFileSync(cli, `#!/usr/bin/env node
@@ -1370,8 +1431,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined });
     instance = await driver.create({ instanceId: "hold-test", displayName: "Hold Test", environment: {}, enabled: true, config: { cli, fullAuto: false } });
     recorder = recordEvents(instance.adapter);
-    // The production deadline would fire within 100 ms here; a held ask must
-    // never arm it.
+    // The old 15-minute deadline would fire within 100 ms here; no turn arms it any more.
     const originalTimeout = globalThis.setTimeout;
     const delays: number[] = [];
     const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
@@ -1379,7 +1439,7 @@ createInterface({ input: process.stdin }).on("line", line => {
       return originalTimeout(callback, delay === 15 * 60_000 ? 100 : delay, ...args);
     }) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go", holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "hold-wire", text: "go" });
       const opened = await recorder.until(event => event.type === "request.opened");
       await new Promise(resolve => originalTimeout(resolve, 400));
       expect(delays).toEqual([]);
@@ -1446,7 +1506,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true, holdPermissionAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -1929,6 +1989,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(settledAt).toBeGreaterThan(resultAt);
   });
 
+  it("a Stop the engine answers with end_turn and nothing to show is the person's stop, never \"finished without a reply\"", async () => {
+    // OpenCode answers session/cancel by ending the prompt with end_turn, not cancelled (upstream 4463ba7be).
+    const rpcFile = join(scratch, "cancel-end-turn.json");
+    process.env.FAKE_ACP_RPC_DUMP = rpcFile;
+    await create(GrokAgentDriver, "cancel-end-turn");
+    const threadId = `t-cancel-end-turn-${Date.now()}`;
+    const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+    await vi.waitFor(() => expect(JSON.parse(readFileSync(rpcFile, "utf8"))).toContain("session/prompt"), { timeout: 4000 });
+    await instance.adapter.interruptTurn(threadId);
+    const done = await recorder.until(event => event.type === "turn.completed", 4000);
+    expect(done).toMatchObject({ turnId, ok: true, stopReason: "cancelled" });
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([]);
+    const rows = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const cancelAt = rows.findIndex(row => row.dir === "out" && row.msg?.method === "session/cancel");
+    const resultAt = rows.findIndex(row => row.dir === "in" && row.msg?.result?.stopReason === "end_turn");
+    const settledAt = rows.findIndex(row => row.dir === "lifecycle" && row.msg?.event === "turn_settled");
+    expect(cancelAt).toBeGreaterThan(-1);
+    expect(resultAt).toBeGreaterThan(cancelAt);
+    // settled by the end_turn answer, not by the grace timer winning a race
+    expect(settledAt).toBeGreaterThan(resultAt);
+  });
+
   // The cancel guards are deliberately broad. `interruptTurn` is one call for
   // every interrupter: a user's Stop, the stall watchdog (server/index.ts
   // ~2507) and a provider-settings change (~512) all reach it identically, and
@@ -2378,7 +2460,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await create(GrokAgentDriver, "credit-exhausted");
     await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
-    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
   });
 
@@ -2394,7 +2476,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(await recorder.until(event=>event.type==="turn.completed")).toMatchObject({ok:false,stopReason:"rpc_error"});
     await expect(instance.adapter.awaitTurnTeardown!(threadId,turnId)).resolves.toEqual({closeConfirmed:true});
     const errors=recorder.events.filter(event=>event.type==="runtime.error");expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({message:"Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.",providerError:{kind:"payment",httpStatus:402},details:"ACP request: session/prompt\nProvider response: HTTP 402\nEngine error code: -32603"});
+    expect(errors[0]).toMatchObject({message:"Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.",providerError:{kind:"payment",httpStatus:402},details:"ACP request: session/prompt\nProvider response: HTTP 402\nEngine error code: -32603"});
     expect(errors[0].setup).not.toBe(true);expect(errors[0].providerError?.provider).toBeUndefined();
     expect(recorder.events.filter(event=>event.type==="turn.completed")).toHaveLength(1);
     expect(lifecycleRows(threadId).filter(row=>row.event==="rpc_requested"&&row.method==="session/prompt")).toHaveLength(1);
@@ -3091,9 +3173,9 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
-    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.");
+    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
     expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
-    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.");
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then try again, or pick another AI in Models & engines.");
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");
   });
 
@@ -3103,13 +3185,13 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("answers a monthly spending limit without the credits advice the provider contradicts", () => {
     const capped = "API error (status 402 Payment Required): This account has reached its $10.00 monthly spend ceiling. The ceiling rises automatically as your account builds payment history — adding credit will not lift it. Email support@fluxrouter.ai if you need it raised sooner.";
     const message = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: capped } });
-    expect(message).toBe("Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine.");
+    expect(message).toBe("Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or pick another AI.");
     expect(message.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
     expect(message).not.toMatch(/\$10|support@|Add credits in/);
     // Without a fluxrouter.ai locator the limit is still recognised, but the
     // provider is not named on the strength of provider prose alone.
     const bare = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "account_monthly_budget_exhausted" } });
-    expect(bare).toBe("This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.");
+    expect(bare).toBe("This account has reached its monthly spending limit with your AI service. Adding credit will not lift it: ask them to raise it, or pick another AI.");
     expect(bare.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
     // A ceiling is not an exhausted balance: the credits copy must not move.
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");

@@ -31,12 +31,12 @@ describe("runtime error recovery", () => {
     expect(markup).toContain("Retry");
     const [visible, details] = markup.split("<details");
     expect(visible).not.toContain("CLAUDE_SESSION_RESET_TIMEOUT");
-    expect(visible).not.toContain("choose another configured model");
+    expect(visible).not.toContain("pick another model");
     expect(details).toContain("CLAUDE_SESSION_RESET_TIMEOUT");
     // with no bot name, and with developer text after the code
     const unnamed = render({ message: "MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay", onRetry: () => {} }).split("<details")[0]!;
     // a setting must change first: the copy says where, and never advises Retry
-    expect(unnamed).toContain(rendered("The bot's current engine can't start a fresh conversation, which this message needs. Choose a different engine for the bot in Provider settings, or start a new conversation with the bot."));
+    expect(unnamed).toContain(rendered("The bot's current engine can't start a fresh conversation, which this message needs. Choose a different engine for the bot in Models & engines, or start a new conversation with the bot."));
     expect(unnamed).not.toContain("Select Retry");
     expect(unnamed).not.toContain("starting a fresh conversation and needed a moment longer");
     expect(unnamed).not.toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
@@ -49,11 +49,11 @@ describe("runtime error recovery", () => {
       { message: "Internal error", details: "safety_policy_violation" },
     ]) {
       const markup = render({ ...props, onRetry: () => {} });
-      expect(markup).toContain("The provider blocked this request");
-      expect(markup).toContain("Changing Murage permissions will not remove");
+      expect(markup).toContain("Your AI service blocked this request");
+      expect(markup).toContain("Changing the bot&#x27;s level will not lift that check");
       expect(markup).toContain("Technical details");
       expect(markup).not.toContain("<button");
-      expect(markup).not.toContain("choose another configured model");
+      expect(markup).not.toContain("pick another model");
     }
     expect(render({ message: "Discuss safety systems", onRetry: () => {} })).toContain("Retry");
   });
@@ -84,7 +84,7 @@ describe("runtime error recovery", () => {
     ]) {
       const markup = render({ ...props, onRetry: () => {} });
       expect(markup).not.toContain("resource-busy");
-      expect(markup).toContain("Provider settings");
+      expect(markup).toContain("Models &amp; engines");
     }
   });
 });
@@ -112,13 +112,13 @@ describe("typed engine failures", () => {
     ["session_unavailable", "The engine session stopped responding"],
     ["rate_limited", "limiting requests"],
     ["rate_limit", "limiting requests"],
-    ["auth", "did not accept the credentials"],
-    ["http", "could not reach the model provider"],
-    ["api", "rejected the request"],
+    ["auth", "did not accept the sign-in"],
+    ["http", "could not reach your AI service"],
+    ["api", "turned down the request"],
     ["max_tokens_truncation", "output limit"],
     ["doom_loop", "repeating the same steps"],
     ["doom_loop_detected", "repeating the same steps"],
-    ["serialization", "could not read the model provider response"],
+    ["serialization", "could not read the reply from your AI service"],
   ])("explains %s even when the engine's message is generic", (kind, explanation) => {
     const markup = render({ message: "Internal error", errorKind: kind, details: `Internal error\nEngine error kind: ${kind}\n${code}` });
     expect(markup).toContain(explanation);
@@ -153,7 +153,7 @@ describe("typed engine failures", () => {
       `Internal error\nEngine error kind: auth`,
     ]) {
       const markup = render({ message, details: `${message}\nACP request: session/prompt\n${code}` });
-      expect(markup).not.toContain("did not accept the credentials");
+      expect(markup).not.toContain("did not accept the sign-in");
       expect(markup).toContain("Engine error kind: auth");
     }
   });
@@ -260,7 +260,7 @@ describe("typed engine failures", () => {
   ])("keeps the generic explanation for %s", (_shape, errorKind) => {
     const markup = render({ message: "Internal error", errorKind, details: `Internal error\nEngine error kind: ${errorKind}\n${code}` });
     expect(markup).toContain("The engine reported an error without explaining what went wrong.");
-    expect(markup).not.toContain("did not accept the credentials");
+    expect(markup).not.toContain("did not accept the sign-in");
   });
 });
 
@@ -270,7 +270,7 @@ describe("typed engine failures", () => {
 // version check that timed out sent the person to the one place that could
 // not help.
 describe("local setup failures", () => {
-  const providerAdvice = /Provider settings|configured model|choose another/;
+  const providerAdvice = /Models &amp; engines|pick another model|Provider settings|configured model|choose another/;
 
   it.each([
     ["browser", "agent-browser command timed out", "The built-in browser could not start"],
@@ -282,7 +282,7 @@ describe("local setup failures", () => {
     expect(markup).toContain(`data-local-failure="${localFailure}"`);
     expect(markup).toContain(title);
     expect(markup).toContain(rendered(message));
-    expect(markup).toContain("not with your model provider");
+    expect(markup).toContain("not with your AI service");
     expect(markup).toMatch(/<\/svg> Retry<\/button>/);
     expect(markup).not.toMatch(providerAdvice);
     expect(markup).not.toContain("This request hit a problem");
@@ -330,7 +330,7 @@ describe("local setup failures", () => {
     ]) {
       const markup = render({ ...props, onRetry: () => {} });
       expect(markup, JSON.stringify(props)).not.toContain("local-setup");
-      expect(markup, JSON.stringify(props)).toContain("Provider settings");
+      expect(markup, JSON.stringify(props)).toContain("Models &amp; engines");
     }
   });
 

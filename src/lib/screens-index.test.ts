@@ -1,0 +1,86 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import fragment from "@/locales/en-ux/l4a.json";
+import screenWords from "@/locales/en-help/screens.json";
+import { SCREENS, screenEntry } from "./screens-index";
+import { SECTION_PAGES } from "./settings-pages";
+import { BOT_SETTINGS_SECTIONS } from "@/components/bot-settings-sections";
+import { SETUP_STEPS } from "../../shared/setup";
+
+const copy: Record<string, string> = { ...fragment, ...screenWords };
+const fill = (text: string) => text.replaceAll("{mod}", "Ctrl").replaceAll("{name}", "Assistant1");
+
+describe("screens index (House rule 7)", () => {
+  it("is regenerated from its sources, never edited by hand", () => {
+    const script = fileURLToPath(new URL("../../scripts/help/gen-screens-index.mjs", import.meta.url));
+    expect(() => execFileSync(process.execPath, [script, "--check"], { stdio: "pipe" })).not.toThrow();
+  });
+
+  it("declares every Phase 2 screen id and every FIRSTRUN board", () => {
+    const patterns = new Set(SCREENS.map((entry) => entry.pattern));
+    for (const id of ["today", "chats", "chat:<botId>", "group:<id>", "needs-you:<tab>", "routines", "routine:<id>", "new", "new-bot",
+      "connect-app:<slug>", "help", "phone-setup", "cloud", "files", "map", "apps",
+      "first-run:strip", "rail-fold", "client-header", "clients-card", "other-workspaces", "add-client"]) {
+      expect(patterns, id).toContain(id);
+    }
+  });
+
+  it("declares every view the 1.0.12 app can show", () => {
+    for (const key of ["chat", "group", "chats", "map", "routines", "skill-recorder", "computer", "inspector", "apps", "no-engines", "bot"]) {
+      expect(screenEntry(key), key).toBeDefined();
+    }
+  });
+
+  it("declares every Settings page, bot settings section and first-run step", () => {
+    for (const page of SECTION_PAGES) expect(screenEntry(`settings:${page.id}`), page.id).toBeDefined();
+    for (const section of BOT_SETTINGS_SECTIONS) expect(screenEntry(`bot:${section.id}`), section.id).toBeDefined();
+    for (const step of SETUP_STEPS) expect(screenEntry(`first-run:${step}`), step).toBeDefined();
+  });
+
+  it("gives each screen a title, an intro, one line of why and one to three tips of at most 80 characters", () => {
+    for (const entry of SCREENS) {
+      for (const key of [entry.title, entry.intro, entry.why, ...entry.tips]) expect(copy[key], key).toBeTruthy();
+      expect(entry.tips.length, entry.key).toBeGreaterThanOrEqual(1);
+      expect(entry.tips.length, entry.key).toBeLessThanOrEqual(3);
+      for (const tip of entry.tips) expect(fill(copy[tip]).length, tip).toBeLessThanOrEqual(80);
+    }
+  });
+
+  it("uses the mockup's words where the mockup has them", () => {
+    expect(copy["ux.l4a.screen.today.intro"]).toBe("What your bots did, what is waiting on you and what is coming. Nothing here is a setting; every card opens the place it came from.");
+    expect(copy["ux.l4a.screen.needs-you.tip1"]).toBe("Enter opens, 1 to 9 picks an option, Esc closes.");
+    expect(copy["ux.l4a.screen.routines.intro"]).toBe("Things your bots do on a schedule. Click a routine or a mark to open it.");
+  });
+
+  it("keeps the copy plain: no dashes, no banned words", () => {
+    for (const [key, value] of Object.entries(copy)) {
+      expect(value, key).not.toMatch(/[–—]/);
+      expect(value, key).not.toMatch(/\bsafe\b/i);
+      expect(value, key).not.toMatch(/\b(API|MCP|CLI|JSON|token|provider|payload|endpoint|webhook|config)\b/i);
+    }
+  });
+
+  it("keeps the feedback form's words as Sean set them", () => {
+    expect(copy["ux.l4a.feedback.open"]).toBe("Tell us what to make easier");
+    expect(copy["ux.l4a.feedback.wordsLabel"]).toBe("Anything that felt complicated, anything you couldn't do, or anything you couldn't find.");
+    expect(copy["ux.l4a.feedback.wordsNext"]).toBe("Feedback by words comes in the next update.");
+    expect(copy["ux.l4a.feedback.notSupport"]).toBe("This goes to the Murage team to improve the app. It is not a help request, so nobody will reply here. Need help now? Ask your bot.");
+    expect(copy["ux.l4a.feedback.sent"]).toBe("Thanks. This helps us make Murage clearer.");
+    expect(copy["ux.l4a.feedback.privacy"]).toBe("We send this screen's name and what it shows. Never your messages, files, keys or memory.");
+    // Nobody replies to feedback, so nothing promises a reply or asks for an email.
+    expect(Object.keys(copy).some((key) => key.startsWith("ux.l4a.feedback.") && /email/i.test(`${key} ${copy[key]}`))).toBe(false);
+  });
+
+  it("names controls only with static words and murage:// addresses", () => {
+    const source = readFileSync(fileURLToPath(new URL("./screens-index.ts", import.meta.url)), "utf8");
+    expect(source).toMatch(/^\/\/ GENERATED by scripts\/help\/gen-screens-index\.mjs/);
+    for (const entry of SCREENS) for (const control of entry.controls) {
+      expect(copy[control.label], control.id).toBeTruthy();
+      expect(control.address).toMatch(/^murage:\/\//);
+    }
+  });
+});

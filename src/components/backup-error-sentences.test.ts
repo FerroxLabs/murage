@@ -8,12 +8,17 @@
 // sentence, not "Backup settings could not be updated".
 import { describe, expect, it } from "vitest";
 import { scheduleError } from "./backup-schedule-ui";
-import { firstBackupError, runNowError } from "./backups-section-ui";
+import { firstBackupError, recoveryKeyError, runNowError } from "./backups-section-ui";
 
 const rejected = (channel: string, message: string) => new Error(`Error invoking remote method '${channel}': Error: ${message}`);
 const GENERIC = "Backup settings could not be updated. Your data is preserved. Refresh status before trying again.";
 
 describe("desktop refusals the Backups page names in plain words", () => {
+  it("an unavailable recovery-key location is shown as plain text across IPC", () => {
+    const text = recoveryKeyError(rejected("backup-schedule:set-up", "BACKUP_RECOVERY_KEY_LOCATION_INVALID"));
+    expect(text).toBe("That location can't be used. Choose another folder; nothing was saved.");
+    expect(text).not.toMatch(/[A-Z]{2,}_[A-Z_]+|—/);
+  });
   it("L1: the closed-app volume refusal main keeps across IPC", () => {
     const text = scheduleError(rejected("backup-closed:install", "BACKUP_CLOSED_VOLUME_UNREADABLE"));
     expect(text).not.toBe(GENERIC);

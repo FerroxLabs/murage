@@ -113,8 +113,8 @@ export function addBotMcpServer(current: Record<string, unknown>, body: unknown,
   const name = typeof record.name === "string" ? record.name : "";
   const nameError = mcpServerNameError(name, Object.keys(current));
   if (nameError) return refuse(nameError);
-  if (Object.hasOwn(current, name)) return refuse("An MCP server with that name already exists", 409);
-  if (Object.keys(current).length >= MAX_MCP_SERVERS) return refuse(`You can add at most ${MAX_MCP_SERVERS} MCP servers`);
+  if (Object.hasOwn(current, name)) return refuse("A connected tool with that name already exists. Pick another name.", 409);
+  if (Object.keys(current).length >= MAX_MCP_SERVERS) return refuse(`You can add up to ${MAX_MCP_SERVERS} connected tools. Remove one to add another.`);
   const hasCommand = record.command !== undefined;
   const hasUrl = record.url !== undefined;
   if (hasCommand === hasUrl) return refuse("Send either a command or a url");

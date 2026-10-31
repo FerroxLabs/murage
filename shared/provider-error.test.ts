@@ -53,7 +53,7 @@ describe("safe provider error details", () => {
       const info=classifyProviderError({data:{http_status:402,message}})!;
       expect(info).toEqual({kind:"payment",httpStatus:402});
       const display=providerErrorPresentation(info);
-      expect(display).toEqual({title:"Provider payment or account access required",summary:"The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",resolution:"Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying."});
+      expect(display).toEqual({title:"Payment or account access needed",summary:"Your AI service said payment or account access is needed. That does not always mean you are out of credit.",resolution:"Check billing and access with your AI service, including your own key if you use one, and that your account can use the model you picked. Then try again."});
       expect(JSON.stringify({info,display})).not.toMatch(/fake-secret-canary|billing\.invalid|fluxrouter\.ai/);
     }
     expect(providerErrorPresentation({kind:"payment",httpStatus:402,provider:"flux-router"}).billingUrl).toBeUndefined();
@@ -112,7 +112,7 @@ describe("safe provider error details", () => {
   });
   it("keeps malformed saved metadata on fixed fallback copy without a billing URL", () => {
     const presentation = providerErrorPresentation({ kind: "fake-secret-canary", billingUrl: "https://evil.invalid" } as unknown as ProviderErrorInfo);
-    expect(presentation.title).toBe("Provider request failed");
+    expect(presentation.title).toBe("Your AI service could not finish this");
     expect(presentation.billingUrl).toBeUndefined();
     expect(JSON.stringify(presentation)).not.toMatch(/fake-secret-canary|evil\.invalid/);
   });

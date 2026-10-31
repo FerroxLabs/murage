@@ -90,6 +90,38 @@ export function workspaceCredentialEnv(credentials) {
   return env;
 }
 
+/** Flux env names the desktop child must never inherit from the launching shell. */
+const INHERITED_FLUX_ENV = ["FLUX_API_KEY", "MURAGE_FLUX_AMBIENT_KEY", "MURAGE_FLUX_CONNECTION_ALIASES"];
+
+/** Boot precedence for the desktop child: the newest saved key wins.
+ *
+ * The child reads FLUX_API_KEY over config.json (server/config.ts loadConfig),
+ * so the value it sees must only ever come from the store. A shell
+ * FLUX_API_KEY spread in with process.env used to reach the child whenever the
+ * store held no key and then beat the key saved in config.json. Here the
+ * inherited names are removed (by any casing on Windows) and the shell key is
+ * handed over only as MURAGE_FLUX_AMBIENT_KEY, which Settings offers as a
+ * choice ("Existing environment key") and never uses by itself. A managed
+ * store (every save sets it) offers no ambient choice.
+ *
+ * Returns a new env: the base without inherited Flux names, plus the
+ * ambient value. workspaceCredentialEnv() is spread after it. */
+export function desktopFluxEnvironment(baseEnv, credentials, platform = process.platform) {
+  const env = { ...baseEnv };
+  const folded = new Set(INHERITED_FLUX_ENV);
+  let shellKey = "";
+  for (const name of Object.keys(env)) {
+    const normalized = platform === "win32" ? name.toUpperCase() : name;
+    if (!folded.has(normalized)) continue;
+    if (normalized === "FLUX_API_KEY" && typeof env[name] === "string" && env[name].trim()) shellKey = env[name].trim();
+    delete env[name];
+  }
+  const stored = typeof credentials?.fluxApiKey === "string" ? credentials.fluxApiKey.trim() : "";
+  const managed = credentials?.fluxConnectionManaged === "true";
+  env.MURAGE_FLUX_AMBIENT_KEY = !managed && shellKey && shellKey !== stored ? shellKey : "";
+  return env;
+}
+
 // ── servers added by link (spec MCP-LINK 3.4) ────────────────────────────
 
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);

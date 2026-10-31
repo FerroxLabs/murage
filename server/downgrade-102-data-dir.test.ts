@@ -55,6 +55,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "learning-paused-left.json"), "{}");
     writeFileSync(join(DATA_DIR, "pending-grants.json"), "{}");
     writeFileSync(join(DATA_DIR, "setup-backup.json"), "{}");
+    // the feedback id (1.0.12 feedback-relay.ts; random, made again when missing, 1.0.2 has no feedback form)
+    writeFileSync(join(DATA_DIR, "feedback-install-id"), "00000000-0000-4000-8000-000000000000\n", { mode: 0o600 });
     writeFileSync(join(DATA_DIR, "frozen-replies-recovery.json"), JSON.stringify({ rowid: 42, done: true })); // written on every 1.0.3 start
     mkdirSync(join(DATA_DIR, "env"), { recursive: true });
     writeFileSync(join(DATA_DIR, "env", "owner-env.0123456789abcdef"), "PATH=/bin\0HOME=/h\0");
@@ -81,6 +83,9 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "sentinel-delivery.json"), JSON.stringify({ version: 1 }), { mode: 0o600 });
     // the one-time power-guard line note (1.0.9 host-power.ts; a later start may show the line once more, 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, "power-guard-notice.json"), JSON.stringify({ cause: "userns-restricted" }), { mode: 0o600 });
+    // the last definitive bot email capability answer (1.0.11 email/caps-file.ts; re-read from Flux, 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "email-capabilities.json"), "{}", { mode: 0o600 });
+    writeFileSync(join(DATA_DIR, "email-capabilities.json.tmp"), "{", { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

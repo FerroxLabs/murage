@@ -8,7 +8,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { publishNoReplace } from "./publish-file.ts";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { validateMemorySchema } from "./memory/schema.ts";
+import { isDiskFullError, validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { discardInboxProjection, initializeInbox, isInboxProjectionObject } from "./inbox.ts";
@@ -22,12 +22,15 @@ import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { initializeOwnerSends } from "./send-store.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
+import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
 
 import { ensureIntegrityPassTable } from "./memory/integrity-state.ts";
 import { LEGACY_UPGRADE_TABLES, ensureUpgradeAppTables } from "./memory/upgrade-app-tables.ts";
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
+import { isNoSpaceError } from "./disk-space.ts";
+import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
 import { flushCoalesced } from "./atomic.ts";
 import { initializeAskRevocations } from "./phones/ask-revocations.ts";
 import { initializePhoneReceipts } from "./phones/receipts.ts";
@@ -172,10 +175,19 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // bot calls (server/bot-calls-schema.ts), new in 1.0.9; an older archive lacks them. The owed trigger on messages is created with them.
   bot_call_rules: { required: false, optional: [] },
   bot_calls: { required: false, optional: [] },
-  bot_call_sessions: { required: false, optional: [] },
+  // principal appended by ALTER (the authenticated device a call channel ticket is bound to)
+  bot_call_sessions: { required: false, optional: ["principal"] },
   bot_call_owed: { required: false, optional: [] },
   bot_call_watch_threads: { required: false, optional: [] },
   bot_call_settings: { required: false, optional: [] },
+  // connected-app triggers (server/app-trigger-store.ts), new in 1.0.11; an older archive lacks them.
+  app_trigger_bindings: { required: false, optional: [] },
+  app_trigger_policies: { required: false, optional: [] },
+  app_event_inbox: { required: false, optional: [] },
+  app_event_tombstones: { required: false, optional: [] },
+  app_event_batches: { required: false, optional: [] },
+  app_event_run_events: { required: false, optional: [] },
+  app_event_runs: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -207,7 +219,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   try {
     initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeEmailTables(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeEmailTables(db);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -343,7 +355,8 @@ function digestFile(path: string): string {
  * publishes without replacing any existing destination. No runtime Store,
  * migration, provider or scheduler is constructed. Other app-state components
  * must eventually share this offline epoch in the complete backup builder. */
-async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db", inspect: (db: DatabaseSync) => T) {
+async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db", inspect: (db: DatabaseSync) => T, onProgress?: BackupProgressReport) {
+  const report = safeBackupProgress(onProgress);
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   if (!destination || /[\r\n\0]/.test(destination) || [".", "..", ""].includes(basename(destination))) throw new InstallationSnapshotError("INVALID_DESTINATION");
   // Canonicalize the parent, not the file: an existing destination must be
@@ -384,6 +397,8 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     };
     scratch = mkdtempSync(join(dirname(target), ".murage-database-snapshot-"));
     const inputDirectory=join(scratch,"source");mkdirSync(inputDirectory,{mode:0o700});
+    const originalBytes=originals.reduce((total,held)=>total+held.identity.size,0);let readBytes=0;
+    report("database-read",0,originalBytes);
     for(const held of originals){
       const output=held.suffix==="-shm"?undefined:openSync(join(inputDirectory,component+held.suffix),"wx",0o600);
       try{
@@ -392,27 +407,34 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
           const size=readSync(held.fd,buffer,0,buffer.length,offset);if(!size)break;
           hash.update(buffer.subarray(0,size));
           if(output!==undefined){let written=0;while(written<size)written+=writeSync(output,buffer,written,size-written);}
-          offset+=size;
+          offset+=size;readBytes+=size;report("database-read",readBytes,originalBytes);
         }
         held.sha256=hash.digest("hex");
         if(offset!==held.identity.size)throw new InstallationSnapshotError("SOURCE_CHANGED");
         if(output!==undefined)fsyncSync(output);
       }finally{if(output!==undefined)closeSync(output);}
     }
+    report("source-recheck");
     assertOriginals();
     const staged = join(scratch, component);
     const fd = openSync(staged, "wx", 0o600);closeSync(fd);
     source = new DatabaseSync(join(inputDirectory,component), { readOnly: true, timeout: 1000 });
+    report("database-check");
     inspect(source);
-    await backup(source, staged, { rate: 128 });
+    report("database-copy",0,identity.size);
+    await backup(source, staged, { rate: 128, progress: ({ totalPages, remainingPages }) => { if (totalPages > 0) report("database-copy", Math.round(identity.size * (1 - remainingPages / totalPages)), identity.size); } });
     source.close();
     source = undefined;
+    report("database-clean");
     if (component === "messages.db") sanitizeStagedEmail(staged);
+    report("database-verify");
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
     try { counts = inspect(copied); }
     finally { copied.close(); }
+    report("source-recheck");
     assertOriginals();
+    report("database-digest");
     const sha256 = digestFile(staged);
     const bytes = statSync(staged).size;
     const flush = openSync(staged, "r+"); // Windows FlushFileBuffers requires a writable handle.
@@ -420,9 +442,10 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     publishNoReplace(staged, target);
     return { status: "copied" as const, ...counts, bytes, sha256 };
   } catch (error) {
-    throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError(
-      (error as NodeJS.ErrnoException).code === "EEXIST" ? "DESTINATION_EXISTS" : "DATABASE_SNAPSHOT_FAILED",
-    );
+    if (error instanceof InstallationSnapshotError) throw error;
+    // SQLite says a full disk its own way (errcode 13), and the copy of the file itself says ENOSPC.
+    if (isDiskFullError(error) || isNoSpaceError(error)) throw new InstallationSnapshotError("BACKUP_DISK_FULL", { cause: error });
+    throw new InstallationSnapshotError((error as NodeJS.ErrnoException).code === "EEXIST" ? "DESTINATION_EXISTS" : "DATABASE_SNAPSHOT_FAILED");
   } finally {
     try { source?.close(); }
     finally {
@@ -458,8 +481,8 @@ export function sanitizeStagedEmail(path: string): { payloads: number; events: n
   } finally { db.close(); }
 }
 
-function snapshotDatabaseWhileOwned(dataDir: string, destination: string) {
-  return snapshotSqliteWhileOwned(dataDir, destination, "messages.db", inspectInstallationDatabase);
+function snapshotDatabaseWhileOwned(dataDir: string, destination: string, onProgress?: BackupProgressReport) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "messages.db", inspectInstallationDatabase, onProgress);
 }
 // Preserve the projection in encrypted fidelity only. It is never activated or
 // migrated during restore; durable memory authority is already in messages.db.
@@ -486,7 +509,7 @@ function snapshotConnectedLedgerWhileOwned(dataDir: string, destination: string)
 export interface OfflineInstallation {
   readonly dataDir: string;
   snapshotConnectedLedger(destination: string): Promise<Awaited<ReturnType<typeof snapshotConnectedLedgerWhileOwned>>>;
-  snapshotDatabase(destination: string): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
+  snapshotDatabase(destination: string, onProgress?: BackupProgressReport): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
   snapshotMemoryIndex(destination: string): Promise<Awaited<ReturnType<typeof snapshotMemoryIndexWhileOwned>>>;
 }
 
@@ -503,9 +526,9 @@ export async function withOfflineInstallation<T>(dataDir: string, operation: (in
   try {
     return await operation(Object.freeze({
       dataDir: root,
-      snapshotDatabase(destination: string) {
+      snapshotDatabase(destination: string, onProgress?: BackupProgressReport) {
         if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
-        const result = snapshotDatabaseWhileOwned(root, destination);
+        const result = snapshotDatabaseWhileOwned(root, destination, onProgress);
         pending.add(result);
         // Attach a rejection handler without manufacturing an unhandled
         // finally() branch if an operation abandons its copy promise.

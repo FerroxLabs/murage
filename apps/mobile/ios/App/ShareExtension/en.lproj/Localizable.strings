@@ -18,5 +18,6 @@
 "share_offline" = "Your computer isn't reachable right now. Murage will send this when it is.";
 "share_passcode" = "Set a passcode on this phone, then open Murage.";
 "share_again" = "Open Murage to set up sharing again.";
-"share_update" = "Update Murage on your computer to use this.";
+"share_update" = "Turn this on, or update Murage, on your computer.";
+"share_turned_off" = "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.";
 "share_done" = "Done";

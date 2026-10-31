@@ -1,15 +1,15 @@
 ---
 title: Troubleshooting
-description: Find the failing layer first, then apply the smallest safe fix.
+description: Find which part is stuck first, then make the smallest fix that works.
 icon: Wrench
 ---
 
-Most Murage failures come from one of four layers: the desktop app, a local agent CLI, a connected service, or a computer backend.
+Most problems come from one of four parts: the desktop app, an AI app on this computer, a connected service, or a bot's computer.
 
 <Cards>
-  <Card title="App startup and ports" href="/docs/troubleshooting/startup-and-ports" description="App will not open, local server is unavailable, or a port is occupied." />
-  <Card title="Agent engines" href="/docs/providers/troubleshooting" description="CLI missing, model unavailable, authentication failure, or reconnect loop." />
-  <Card title="Connected apps" href="/docs/troubleshooting/connected-apps" description="OAuth completes but tools do not appear or an account disconnects." />
+  <Card title="App startup" href="/docs/troubleshooting/startup-and-ports" description="The app will not open, or its background service does not start." />
+  <Card title="Agent engines" href="/docs/providers/troubleshooting" description="AI app not found, model unavailable, sign-in failed, or it keeps reconnecting." />
+  <Card title="Connected apps" href="/docs/troubleshooting/connected-apps" description="Sign-in finishes but the tools do not appear, or an account disconnects." />
   <Card title="Desktop updates" href="/docs/troubleshooting/updates" description="Download spins, restart does nothing, or the new version does not launch." />
 </Cards>
 
@@ -20,7 +20,7 @@ Before opening an issue, record:
 - Murage version and operating system;
 - selected engine and model;
 - the exact visible error, not only “it failed”;
-- whether the same agent CLI works directly in a terminal;
+- whether the same AI app works when you open it yourself;
 - whether restarting only the affected task changes the result.
 
-Never post API keys, OAuth callback URLs, bearer tokens, or the contents of secure credential files.
+Never post keys, passwords, the web address you were sent back to after signing in, or anything from a file that stores sign-ins.

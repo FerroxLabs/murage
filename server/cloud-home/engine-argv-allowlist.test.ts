@@ -23,7 +23,7 @@ const FULL: Record<string, { args: string[]; render?: Record<string, unknown> }>
     render: { mcp: { muragebox: { proxy: "permission", socket: "/data/broker/perm-abcd1234.sock" } }, systemPrompt: "You are a bot.\n" } },
   codex: { args: ["app-server", "-c", "model_context_window=129024", "-c", "features.browser_use=false", "-c", "features.browser_use_external=false", "-c", "features.computer_use=false",
     "-c", plugins, "-c", "features.memories=false", "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", 'web_search="disabled"'] },
-  grokAgent: { args: ["--permission-mode", "bypassPermissions", "--no-memory", "agent", "--no-leader", "-m", "murage_0123456789abcdef01234567", "--reasoning-effort", "high", "stdio"] },
+  grokAgent: { args: ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_0123456789abcdef01234567", "--reasoning-effort", "high", "stdio"] },
   kimiAgent: { args: ["-m", "kimi-code/kimi-for-coding", "acp"] },
   opencodeGo: { args: ["acp"] },
   fuigoAgent: { args: ["--permission-mode", "default", "--trust", "--no-memory", "agent", "--no-leader", "-m", "murage_selected", "--reasoning-effort", "medium", "stdio"] },
@@ -92,6 +92,11 @@ it.each([
   ["kimiAgent", ["acp", "-m", "kimi"], "missing acp last"],
   ["fuigoAgent", ["--permission-mode", "default", "agent", "--no-leader", "stdio"], "missing --no-memory"],
   ["fuigoAgent", ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "--trust=1", "stdio"], "--trust"],
+  // Grok and Fuigo run `--permission-mode default` at every level: under any other mode the engine never asks Murage.
+  ["grokAgent", ["--permission-mode", "bypassPermissions", "--no-memory", "agent", "--no-leader", "stdio"], "--permission-mode"],
+  ["grokAgent", ["--permission-mode", "acceptEdits", "--no-memory", "agent", "--no-leader", "stdio"], "--permission-mode"],
+  ["fuigoAgent", ["--permission-mode", "bypassPermissions", "--no-memory", "agent", "--no-leader", "stdio"], "--permission-mode"],
+  ["fuigoAgent", ["--permission-mode", "plan", "--no-memory", "agent", "--no-leader", "stdio"], "--permission-mode"],
 ])("refuses %s argv %j naming only the flag", (engine, args, named) => {
   const result = rig.plan(rig.request(engine, { args }));
   expect(result.error).toBe(`Cloud engine argument is not allowed: ${named}`);

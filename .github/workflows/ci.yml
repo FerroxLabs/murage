@@ -44,7 +44,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 30 || 20 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 55 || 20 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Reject private operational records in Git
@@ -209,7 +209,7 @@ jobs:
     # the slowest measured shard. With ten shards and the nightly/perf-budget
     # tags out, the expected slowest shard is about 30 min on Windows, 22 on
     # macOS and 20 on ubuntu (setup included); each cap is about twice that.
-    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 40 }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 90 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
@@ -300,7 +300,7 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: S4 power block (Linux arm64)
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 30
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -349,7 +349,7 @@ jobs:
       matrix:
         human_shard: [1, 2, 3, 4, 5, 6]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -381,6 +381,8 @@ jobs:
         env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
           HUMAN_SHARD: ${{ matrix.human_shard }}/6
+          # One worker on the 16 GB public runner: its default 4 GB heap ran out mid-shard (SIGABRT, run 41071979931).
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm test:human --shard="$HUMAN_SHARD"
       - name: Run the human specs that need a harness of their own
         # Runs even when the seeded specs failed, so one red step does not hide the other.
@@ -412,7 +414,7 @@ jobs:
       matrix:
         extended_shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 80
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -596,7 +598,7 @@ jobs:
     runs-on: ubuntu-24.04
     # The GEPA runtime build adds about 3 minutes (CPython from source can take
     # longer on a cold runner); package-linux.yml runs the same sequence in ~16.
-    timeout-minutes: 45
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

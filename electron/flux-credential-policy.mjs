@@ -3,7 +3,7 @@ import { NOT_A_FLUX_KEY, assertProviderKey, isFluxKeyShape, keyIssuer, parseProv
 
 const fail = (message, status = 400) => { throw Object.assign(new Error(message), { status }); };
 /** A saved key picked as the Flux key must not name another provider. */
-const assertFluxIssuer = key => { const issuer = keyIssuer(key); if (issuer && issuer !== "flux") fail("This key appears to belong to a different provider. Choose its provider before saving."); if (!isFluxKeyShape(key)) fail(NOT_A_FLUX_KEY); };
+const assertFluxIssuer = key => { const issuer = keyIssuer(key); if (issuer && issuer !== "flux") fail("This key does not match the AI service you picked. Choose the right one before saving."); if (!isFluxKeyShape(key)) fail(NOT_A_FLUX_KEY); };
 /** A stored value that is not an sk-flux- key is not a Flux credential: it is not a choice, does not count as saved and does not block connect. */
 const usable = value => isFluxKeyShape(value) ? value : "";
 const validId = value => typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
