@@ -14,7 +14,7 @@
 //      `question-tool` row — never auto-approved, remembered or reviewed
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpus, loadavg, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -32,6 +32,7 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 let child: ChildProcess;
 let home: string;
 let stderr = "";
+let probeDump = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
@@ -92,14 +93,33 @@ async function waitForThreadCard(threadId: string, ms = 30_000) {
 
 /** The detached task a webhook delivery created. */
 async function waitForRunThread(runId: string, ms = 20_000) {
-  const deadline = Date.now() + ms;
-  while (Date.now() < deadline) {
+  const started = Date.now();
+  const deadline = started + ms;
+  const hardStop = started + 150_000; // PROBE: keep watching past the real wait, to measure
+  let said = false;
+  const dump: string[] = [];
+  const state = async () => {
     const { body } = await api("GET", "/api/routines");
-    const run = (body.runs ?? []).find((r: { id: string }) => r.id === runId);
-    if (run?.threadId) return run.threadId as string;
+    return (body.runs ?? []).find((r: { id: string }) => r.id === runId);
+  };
+  while (Date.now() < hardStop) {
+    const before = Date.now();
+    const run = await state();
+    const took = Date.now() - before;
+    if (took > 2_000) dump.push(`api took ${took} ms at +${before - started}`);
+    if (!said && Date.now() >= deadline) {
+      said = true;
+      dump.push(`DEADLINE +${Date.now() - started} ms run=${JSON.stringify(run)} loadavg=${loadavg().join("/")} cores=${cpus().length}`);
+    }
+    if (run?.threadId) {
+      dump.push(`THREAD at +${Date.now() - started} ms run=${JSON.stringify(run)} loadavg=${loadavg().join("/")} cores=${cpus().length}`);
+      break;
+    }
     await new Promise((r) => setTimeout(r, 250));
   }
-  return null;
+  probeDump = [...dump, ...stderr.split("\n").filter((l) => l.includes("PROBE")).slice(-160), "--stderr tail--", stderr.slice(-3_000)].join("\n");
+  console.error(probeDump);
+  return said ? null : (await state())?.threadId as string | null;
 }
 
 /** A bot whose fake engine asks permission to run `echo hi` (the ACP core
@@ -301,6 +321,7 @@ posixOnly("authorization decisions are logged", () => {
       const { runId } = (await delivered.json()) as { runId: string };
 
       const threadId = await waitForRunThread(runId);
+      if (process.platform === "darwin") throw new Error(`PROBE DUMP\n${probeDump}`);
       expect(threadId, "the webhook never started a task").toBeTruthy();
       const card = await waitForThreadCard(threadId!);
       expect(card, "the webhook turn auto-approved instead of asking").not.toBeNull();
@@ -312,7 +333,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(row!.unattended).toBe(true);
       expect(row!.botId).toBe(bot.id);
     },
-    90_000,
+    200_000,
   );
 
   it(

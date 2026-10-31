@@ -1450,10 +1450,10 @@ export class RoutineManager {
 
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
-  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal; notOwnerAudience?: true } | null {
+  activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal } | null {
     const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
     if (!run) return null;
-    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}), ...(run.notOwnerAudience === true ? { notOwnerAudience: true as const } : {}) };
+    return { triggerSource: run.triggerSource ?? (run.manual ? "manual" : "schedule"), ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}) };
   }
 
   /** One of the harness's own cards opened in this thread. In a scheduled or
@@ -2315,6 +2315,8 @@ export class RoutineManager {
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
+    const probeQueued = this.runs.filter(r => r.status === "queued" && r.triggerSource === "webhook").length;
+    if (probeQueued) process.stderr.write(`[PROBE tickBody] t=${Date.now()} ticking=${this.ticking} queuedWebhook=${probeQueued}\n`);
     if (this.ticking) return;
     this.ticking = true;
     try {
@@ -2485,7 +2487,7 @@ export class RoutineManager {
         // dispatch. Manual runs and webhook deliveries retain their exact
         // requested/received timestamps.
         const triggerSource = run.triggerSource ?? (run.manual ? "manual" : "schedule");
-        if((triggerSource==="schedule"||triggerSource==="webhook")&&this.options.automaticPaused?.())continue;
+        if((triggerSource==="schedule"||triggerSource==="webhook")&&this.options.automaticPaused?.()){process.stderr.write(`[PROBE held] t=${Date.now()} run=${run.id} why=automaticPaused\n`);continue;}
         let startupNote = "";
         if (triggerSource === "schedule" && run.target === "bot") {
           if (this.options.startupReady && !this.gateOpened) {
@@ -2546,6 +2548,7 @@ export class RoutineManager {
         // admission is unchanged; this only holds the run before it.
         const sameRoutineWorking = triggerSource === "schedule" && liveRoutines.has(run.routineId);
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
+        if (triggerSource === "webhook") process.stderr.write(`[PROBE state] t=${Date.now()} run=${run.id} state=${state} cap=${cap} automaticRunning=${automaticRunning} ceiling=${machineCeiling}\n`);
         if (state === "busy") continue;
         if (state === "missing") {
           this.failRun(run, this.missingTargetMessage(run.target));
@@ -2580,7 +2583,7 @@ export class RoutineManager {
           }
           const waitedMs = held.waitedMs;
           const aged = waitedMs >= agingMs;
-          if (cap !== undefined && automaticRunning >= admissionLimit(cap, aged)) { capHeld++; continue; }
+          if (cap !== undefined && automaticRunning >= admissionLimit(cap, aged)) { process.stderr.write(`[PROBE held] t=${Date.now()} run=${run.id} why=cap waitedMs=${waitedMs}\n`); capHeld++; continue; }
           if (this.options.admitAutomatic && !this.options.admitAutomatic(untracked(run), waitedMs)) continue;
         }
         if (run.target === "room-goal" && this.options.projectRoutine) {
@@ -2647,6 +2650,7 @@ export class RoutineManager {
         const wasLiveThread = liveThreads.has(task.threadId);
         const countedAutomatic = triggerSource === "schedule" || triggerSource === "webhook";
         run.threadId = task.threadId;
+        if (triggerSource === "webhook") process.stderr.write(`[PROBE started] t=${Date.now()} run=${run.id} queuedMs=${Date.now() - Number(run.createdAt)}\n`);
         run.startedAt = this.now();
         run.slotAt = this.slotAt(run, triggerSource);
         run.status = "running";
