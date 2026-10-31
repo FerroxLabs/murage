@@ -6,11 +6,21 @@
 // The first call is a preview; the second applies it only while nothing
 // changed in between (the preview id is a hash of everything it read).
 // Full access is copied only when the bot itself is on Full access.
+//
+// 1.0.13 UX-TRUST-L1B: the open-conversations preview also covers a level the
+// bot is not on yet (targetLevel) and everything that level would move: the
+// conversations and every routine of the bot. It keeps no state: previewId
+// binds the bot's state before the write (the default PATCH checks it), and
+// rosterId binds the conversations alone, so the apply that follows that PATCH
+// accepts the PATCH's own bump.
 
 import { createHash } from "node:crypto";
+import { botPermissionMode, effectiveRoutinePermissionMode, loadRoutinePermissionMode, type RoutinePermissionMode } from "./routine-permissions.ts";
 
-export interface PermissionHolder { autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean; alwaysAllow?: string[] }
+export interface PermissionHolder { autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean; alwaysAllow?: string[]; permissionRev?: number }
 export type PermissionLevel = "ask" | "auto" | "full" | "no-limits";
+/** The record's level and revision before its last level write; on a bot, also its routines at that write (the proof an exact step back needs). */
+export interface PermissionPrev { level: PermissionLevel; rev: number; routinesId?: string }
 
 export function permissionLevel(holder: PermissionHolder): PermissionLevel {
   if (holder.autoApprove !== true) return "ask";
@@ -50,26 +60,73 @@ export interface OpenPermissionCandidate extends PermissionHolder {
   binding: string;
   reason?: string;
 }
+/** What a preview reads of a routine. A routine awaiting migration has no ceiling yet and follows the bot. */
+export interface PreviewRoutine { id: string; name: string; permissionMode?: RoutinePermissionMode; updatedAt: number }
+export interface RoutineEffect { id: string; name: string; ceiling: PermissionLevel; from: PermissionLevel; to: PermissionLevel }
 export interface OpenRefreshPreview {
   previewId: string;
+  rosterId: string;
+  routinesId: string;
   targetLevel: PermissionLevel;
-  eligible: Array<{ threadId: string; from: PermissionLevel; to: PermissionLevel }>;
-  skipped: Array<{ threadId: string; reason: string }>;
+  botLevel: PermissionLevel;
+  botRev: number;
+  eligible: Array<{ threadId: string; from: PermissionLevel; to: PermissionLevel; rev: number }>;
+  skipped: Array<{ threadId: string; reason: string; from: PermissionLevel; rev: number }>;
+  routines: RoutineEffect[];
 }
 export function permissionLevelPatch(level: PermissionLevel) {
   return { autoApprove: level !== "ask", fullAccess: level === "full" || level === "no-limits", noLimits: level === "no-limits" };
 }
-export function openRefreshPreview(bot: PermissionHolder, candidates: readonly OpenPermissionCandidate[]): OpenRefreshPreview {
-  const targetLevel = permissionLevel(bot), eligible: OpenRefreshPreview["eligible"] = [], skipped: OpenRefreshPreview["skipped"] = [];
+const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const wireLevel = (mode: RoutinePermissionMode): PermissionLevel => mode === "unlimited" ? "no-limits" : mode;
+const byId = <T extends { id: string }>(routines: readonly T[]) => [...routines].sort((a, b) => a.id.localeCompare(b.id));
+
+/** Every routine of the bot, not only the ones a level moves: a ceiling edit that would newly raise one changes this too. */
+export function routinesId(routines: readonly PreviewRoutine[]): string {
+  return sha256(byId(routines).map(routine => [routine.id, routine.permissionMode ?? null, routine.updatedAt]));
+}
+/** The routines whose effective level differs at `targetLevel`. Through the one rule a run uses, so a draft-only bot's stay at Ask. */
+export function routineEffects(bot: PermissionHolder, routines: readonly PreviewRoutine[], targetLevel: PermissionLevel): RoutineEffect[] {
+  const after = { ...bot, ...permissionLevelPatch(targetLevel) };
+  return byId(routines).flatMap(routine => {
+    const from = effectiveRoutinePermissionMode(routine, bot), to = effectiveRoutinePermissionMode(routine, after);
+    if (from === to) return [];
+    const ceiling = loadRoutinePermissionMode(routine.permissionMode) ?? botPermissionMode(after);
+    return [{ id: routine.id, name: routine.name, ceiling: wireLevel(ceiling), from: wireLevel(from), to: wireLevel(to) }];
+  });
+}
+export function openRefreshPreview(bot: PermissionHolder, candidates: readonly OpenPermissionCandidate[], options: { targetLevel?: PermissionLevel; routines?: readonly PreviewRoutine[] } = {}): OpenRefreshPreview {
+  const botLevel = permissionLevel(bot), botRev = bot.permissionRev ?? 0, targetLevel = options.targetLevel ?? botLevel, routines = options.routines ?? [];
+  const eligible: OpenRefreshPreview["eligible"] = [], skipped: OpenRefreshPreview["skipped"] = [], bound: unknown[] = [];
   const roster = [...candidates].sort((a, b) => a.threadId.localeCompare(b.threadId));
   for (const task of roster) {
-    const from = permissionLevel(task);
+    const from = permissionLevel(task), rev = task.permissionRev ?? 0;
     const reason = task.reason ?? (PERMISSION_LEVELS.indexOf(from) >= PERMISSION_LEVELS.indexOf(targetLevel) ? "already-at-level" : undefined);
-    if (reason) skipped.push({ threadId: task.threadId, reason });
-    else eligible.push({ threadId: task.threadId, from, to: targetLevel });
+    if (reason) skipped.push({ threadId: task.threadId, reason, from, rev });
+    else eligible.push({ threadId: task.threadId, from, to: targetLevel, rev });
+    bound.push([task.threadId, from, rev, task.binding, reason ?? null]);
   }
-  const previewId = createHash("sha256").update(JSON.stringify({ scope: "open", targetLevel, roster })).digest("hex");
-  return { previewId, targetLevel, eligible, skipped };
+  const rosterId = sha256({ targetLevel, roster: bound }), routinesHash = routinesId(routines);
+  const previewId = sha256(["open", targetLevel, botLevel, botRev, rosterId, routinesHash]);
+  return { previewId, rosterId, routinesId: routinesHash, targetLevel, botLevel, botRev, eligible, skipped, routines: routineEffects(bot, routines, targetLevel) };
+}
+
+/** A body of POST /api/bots/:id/permissions/refresh. The apply binds to the revision the default PATCH returned (design section 2). */
+export type OpenRefreshRequest =
+  | { apply: false; targetLevel?: PermissionLevel }
+  | { apply: true; targetLevel: PermissionLevel; rosterId: string; afterRev: number };
+export const isPermissionRev = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+export function openRefreshRequest(body: unknown): OpenRefreshRequest | null {
+  const { scope, targetLevel, rosterId, afterRev, previewId } = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  if (scope !== "open" || previewId !== undefined) return null;
+  if (targetLevel !== undefined && !PERMISSION_LEVELS.includes(targetLevel as PermissionLevel)) return null;
+  if (rosterId === undefined && afterRev === undefined) return { apply: false, ...(targetLevel !== undefined ? { targetLevel: targetLevel as PermissionLevel } : {}) };
+  if (typeof rosterId !== "string" || !isPermissionRev(afterRev) || targetLevel === undefined) return null;
+  return { apply: true, rosterId, afterRev, targetLevel: targetLevel as PermissionLevel };
+}
+/** The apply's three checks; true when it may write. */
+export function openApplyCurrent(bot: PermissionHolder, request: { targetLevel: PermissionLevel; rosterId: string; afterRev: number }, preview: OpenRefreshPreview): boolean {
+  return permissionLevel(bot) === request.targetLevel && (bot.permissionRev ?? 0) === request.afterRev && preview.rosterId === request.rosterId;
 }
 
 /** One server-derived eligibility decision shared by preview and apply. */

@@ -16,6 +16,19 @@ export function isDesktopOnlyMode(mode: PermissionMode): boolean {
   return mode === "full" || mode === "unlimited";
 }
 
+const LEVEL_ORDER: readonly PermissionMode[] = ["ask", "auto", "full", "unlimited"];
+
+/** Ask, Auto, Full access, No limits, in that order. */
+export function levelRank(mode: PermissionMode): number {
+  return LEVEL_ORDER.indexOf(mode);
+}
+
+/** UX-TRUST-MOMENTS-1012 3.3: a pick of Full access or No limits above the
+ * current level shows the confirm card; every other pick goes direct. */
+export function needsLevelConfirm(current: PermissionMode, picked: PermissionMode): boolean {
+  return isDesktopOnlyMode(picked) && levelRank(picked) > levelRank(current);
+}
+
 /** What choosing an approval level as a bot's default does next: save it, or
  * first show the one-time Full access or No limits warning (which also covers
  * this computer when the bot drives it) or the Auto-on-this-computer warning.

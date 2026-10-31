@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -258,7 +259,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
     expect(unwarned.body.error).toContain("acknowledgeFullAccess");
     expect((await botState(bot.id)).fullAccess).not.toBe(true);
 
-    const set = await desktopApi("PATCH", `/api/bots/${bot.id}`, { ...defaults, acknowledgeFullAccess: true });
+    const set = await raiseLevel(desktopApi, bot.id, { ...defaults, acknowledgeFullAccess: true }, { conversations: false });
     expect(set.status).toBe(200);
     const profile = await botState(bot.id);
     expect(profile).toMatchObject({ autoApprove: true, fullAccess: true });
@@ -306,7 +307,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
     async () => {
       const bot = await makeBot("Setup", "holder");
       // one conversation: the level lands on it and on the default
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
       expect(storedBot(bot.id)).not.toHaveProperty("fullAccessSetupRequests");
 
       // default: both cards wait for the owner
@@ -347,7 +348,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       await stopTurn(bot.id, bot.threadId);
 
       // so does a routine's own turn (run by hand here), with nobody watching
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true })).status).toBe(200);
       const routine = (await api("GET", "/api/routines")).body.routines.find((r: any) => r.name === "Approved brief");
       rmSync(holderDump, { force: true });
       const started = await desktopApi("POST", `/api/routines/${routine.id}/run`);
@@ -372,7 +373,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
 
       // a webhook turn keeps asking whatever the options say
       const hooked = await makeBot("Hooked setup", "holder");
-      expect((await desktopApi("PATCH", `/api/bots/${hooked.id}`, { fullAccess: true, acknowledgeFullAccess: true, fullAccessSetupRequests: true, fullAccessChannelMessages: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, hooked.id, { fullAccess: true, acknowledgeFullAccess: true, fullAccessSetupRequests: true, fullAccessChannelMessages: true })).status).toBe(200);
       const hook = await desktopApi("POST", "/api/webhooks", { name: "Inbound setup", prompt: "Handle the event", botId: hooked.id, runOn: "ember" });
       expect(hook.status).toBe(201);
       rmSync(holderDump, { force: true });
@@ -404,7 +405,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
     "a folder's own instructions keep asking under Full access unless setup requests are allowed",
     async () => {
       const bot = await makeBot("Folder", "fuigo");
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
       const plant = (threadId: string) => {
         const workspace = join(home, ".murage", "workspaces", bot.id, "threads", threadId);
         mkdirSync(workspace, { recursive: true });
@@ -434,11 +435,11 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
   );
 
   it(
-    "the owner's Telegram messages run under Full access unless turned off; nobody else's ever run under it",
+    "the owner's Telegram messages keep asking under Full access unless allowed; nobody else's ever run under it",
     async () => {
       const chief = await makeBot("Chief", "protected");
       expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true, chiefScope: "workspace" })).status).toBe(200);
-      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, chief.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
       const updates: unknown[] = [];
       const arrives = (id: number, text: string) => {
         updates.push({ update_id: id, message: { message_id: id, date: 1_700_000_000 + id, text, from: { id: TELEGRAM_OWNER, is_bot: false }, chat: { id: TELEGRAM_OWNER, type: "private" } } });
@@ -458,28 +459,28 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       expect(bindings).toHaveLength(1);
       expect((await desktopApi("POST", "/api/memory/action", { action: "human-link", bindingId: bindings[0]!.id, expectedRevision: bindings[0]!.revision, as: "owner" })).status).toBe(200);
 
-      // default (1.0.10): the owner's verified Telegram DM runs under Full access unless the option is turned off
+      // default: the owner's message still asks
       arrives(2, "read my profile");
       const firstRun = await poll(async () => (await channelRuns()).find((run) => run.threadId), 20_000);
       expect(firstRun, `no channel run. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       const ownerThread = firstRun!.threadId as string;
       expect(ownerThread).not.toBe(chief.threadId);
       expect((await taskState(chief.id, ownerThread)).fullAccess).toBe(true);
+      const card = await poll(() => liveCard(ownerThread), 20_000);
+      expect(card, "the owner's Telegram message skipped its card by default").not.toBeNull();
+      expect(await fullAccessChip(ownerThread)).toBeNull();
+      await deny(ownerThread, card.card.requestId);
       expect(await settledRun(firstRun!.id)).not.toBeNull();
-      expect(await fullAccessChip(ownerThread), `no full-access chip by default. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-      expect(await liveCard(ownerThread)).toBeNull();
 
-      // the option turned off: the owner's next message asks again
-      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccessChannelMessages: false })).status).toBe(200);
+      // the option on: the owner's next message runs under Full access
+      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccessChannelMessages: true })).status).toBe(200);
       arrives(3, "read it again");
       const secondRun = await poll(async () => (await channelRuns()).find((run) => run.id !== firstRun!.id), 20_000);
       expect(secondRun).not.toBeNull();
-      expect((await channelRuns()).find((run) => run.id === secondRun!.id)?.threadId).toBe(ownerThread);
-      const card = await poll(() => liveCard(ownerThread), 20_000);
-      expect(card, "the owner's Telegram message skipped its card with the option off").not.toBeNull();
-      await deny(ownerThread, card.card.requestId);
       expect(await settledRun(secondRun!.id)).not.toBeNull();
-      expect((await desktopApi("PATCH", `/api/bots/${chief.id}`, { fullAccessChannelMessages: true })).status).toBe(200);
+      expect((await channelRuns()).find((run) => run.id === secondRun!.id)?.threadId).toBe(ownerThread);
+      expect(await fullAccessChip(ownerThread), `no full-access chip. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+      expect(await liveCard(ownerThread)).toBeNull();
 
       // the same account relinked to someone else: never Full access
       const relink = (await desktopApi("POST", "/api/memory/action", { action: "humans" })).body.bindings as Array<{ id: string; revision: number }>;
@@ -500,7 +501,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
     "a webhook turn still asks with both options on",
     async () => {
       const bot = await makeBot("Hooked channel", "protected");
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true, fullAccessChannelMessages: true, fullAccessSetupRequests: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true, fullAccessChannelMessages: true, fullAccessSetupRequests: true })).status).toBe(200);
       const hook = await desktopApi("POST", "/api/webhooks", { name: "Inbound", prompt: "Handle the event", botId: bot.id, runOn: "ember" });
       expect(hook.status).toBe(201);
       const delivered = await fetch(hook.body.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "ping" }) });

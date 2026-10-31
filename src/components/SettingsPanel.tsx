@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { notebookLastWrittenLine } from "../lib/notebook-last-written";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { stateForBot } from "@/lib/mascot";
 import { CloudBackendPicker } from "./CloudBackendPicker";
@@ -13,10 +13,11 @@ import { effortLabel } from "@/lib/effort-label";
 import { builtInBrowserEnabled } from "@/lib/feature-flags";
 import { requestNotificationPermission } from "@/lib/notify";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { computerHere } from "@/lib/computer-surface";
 import { usageCaption } from "@/lib/usage-card";
 import { botUsage, formatTokens, formatUsd, freshTokens, hasFiniteCost, usageDetail } from "@/lib/usage";
 import { shortPath } from "@/lib/short-path";
-import { autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
+import { autoMountsThisComputer, autoNeedsLocalComputerWarning, instanceSupportsLocalComputer, localAutoHostPlatform, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { BotProfileAvatarCard } from "./BotProfileAvatarCard";
 import { BotRoleControl } from "./BotRoleControl";
 import { CanTalkToControl } from "./CanTalkToControl";
@@ -33,6 +34,7 @@ import { BotPermissionDefault } from "./BotPermissionDefault";
 import { BotImageApproval } from "./BotImageApproval";
 import { RememberedApprovals } from "./RememberedApprovals";
 import { defaultModeStep, permissionModeOf, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
+import { useLevelChange } from "./approval/use-level-change";
 import { VoiceSettings } from "./VoiceSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
@@ -395,13 +397,15 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   // routes require the desktop marker and the browser door strips it, so from
   // a phone the segmented control was four buttons that 404. See below.
   const desktop = useDesktopSurface();
+  const computer = computerHere(desktop);
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
   const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
   const localSelectable = localComputerSelectable({ capabilities, providerSupportsLocal });
-  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "full" | "unlimited" | "local" | null>(null);
-  const [fullAccessWarning, setFullAccessWarning] = useState<{ onThisComputer: boolean; level: "full" | "unlimited" } | null>(null);
-  const permissionRequest = useRef<{ botId: string; mode: PermissionMode } | null>(null);
+  const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
+  const [fullAccessWarning, setFullAccessWarning] = useState<{ level: "full" | "unlimited" } | null>(null);
+  const hostPlatform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
+  const levelChange = useLevelChange({ bot, desktop, drivesComputer: autoMountsThisComputer({ platform: hostPlatform, computer: bot.computer }) });
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   // The roster carries the first lines of a long description (`descriptionCut`). The whole text is fetched before the field can be
   // edited, so an edit never writes the cut copy back over the rest.
@@ -443,22 +447,25 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       >
     > & { acknowledgeLocalAuto?: boolean; acknowledgeFullAccess?: boolean; acknowledgeNoLimits?: boolean; persona?: string },
   ) => {
-    // Record actual saves, after any warning was confirmed.
-    if (p.autoApprove !== undefined || p.fullAccess !== undefined || p.noLimits !== undefined) {
-      permissionRequest.current = { botId: bot.id, mode: permissionModeOf({ ...bot, ...p }) };
-    }
     dispatch({ type: "updateBot", botId: bot.id, patch: {...p,...(p.modelSelection!==undefined||p.autoApprove!==undefined||p.fullAccess!==undefined||p.noLimits!==undefined?{settingsScope:"defaults" as const}:{})} });
   };
-  // The bot's default approval level: the same warnings, in the same order,
-  // as the composer's switch (defaultModeStep). The platform is the
-  // harness's own (announced on /api/config), not this browser's UA.
+  // The bot's default approval level goes through useLevelChange: a higher
+  // pick to Full access or No limits is the confirm card, the rest saves at
+  // once with its status line. Two warnings stay here: Auto reaching this
+  // computer, and the one-time acknowledgement a bot already standing at Full
+  // access or No limits from an older build never gave, which the open
+  // conversations apply asks for. The platform is the harness's own
+  // (announced on /api/config), not this browser's UA.
   const chooseDefaultMode = (mode: PermissionMode) => {
-    const needsLocal = autoNeedsLocalComputerWarning({ platform: localAutoHostPlatform(capabilities, { harness: state.config?.harness }), computer: bot.computer, autoApprove: bot.autoApprove });
-    const step = defaultModeStep(bot, mode, needsLocal);
-    if (step.kind === "full-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer, level: "full" });
-    else if (step.kind === "no-limits-warning") setFullAccessWarning({ onThisComputer: step.onThisComputer, level: "unlimited" });
-    else if (step.kind === "local-warning") setLocalAutoWarning(step.mode);
-    else patch(step.patch);
+    const current = permissionModeOf(bot);
+    if (mode !== current) {
+      if (mode === "auto" && autoNeedsLocalComputerWarning({ platform: hostPlatform, computer: bot.computer, autoApprove: bot.autoApprove })) setLocalAutoWarning("auto");
+      else void levelChange.pick(mode);
+      return;
+    }
+    const step = defaultModeStep(bot, mode, false);
+    if (step.kind === "full-warning") setFullAccessWarning({ level: "full" });
+    else if (step.kind === "no-limits-warning") setFullAccessWarning({ level: "unlimited" });
   };
   // `persona` is validated, persisted and prompted server-side already
   // (shared/bot-profile.ts, server/bot-profile.ts, server/index.ts). The
@@ -885,8 +892,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <SettingsSection id="permissions" active={section}>
           <BotPermissionDefault
             botId={bot.id}
+            botName={bot.name}
             bot={bot}
-            requested={permissionRequest}
+            change={levelChange}
             onThisComputer={bot.computer === "local"}
             desktop={desktop}
             onChoose={chooseDefaultMode}
@@ -900,7 +908,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
             onAskAfter={(value) => patch({ imageAskAfter: value })}
           />
 
-          <RememberedApprovals bot={bot} desktop={desktop} />
+          <RememberedApprovals bot={bot} desktop={desktop} computer={computer} />
 
           <div className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.review.title")}</div>
@@ -982,12 +990,10 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
     </aside>
     <LocalComputerAutoWarning
       open={localAutoWarning !== null}
-      mode={localAutoWarning === "full" || localAutoWarning === "unlimited" ? localAutoWarning : "auto"}
+      mode="auto"
       onCancel={() => setLocalAutoWarning(null)}
       onConfirm={() => {
-        if (localAutoWarning === "auto") patch({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
-        if (localAutoWarning === "full") patch({ autoApprove: true, fullAccess: true, noLimits: false, acknowledgeLocalAuto: true });
-        if (localAutoWarning === "unlimited") patch({ autoApprove: true, fullAccess: true, noLimits: true, acknowledgeLocalAuto: true });
+        if (localAutoWarning === "auto") void levelChange.pick("auto");
         if (localAutoWarning === "local") patch({ computer: "local", acknowledgeLocalAuto: true });
         setLocalAutoWarning(null);
       }}
@@ -997,13 +1003,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       botName={bot.name}
       level={fullAccessWarning?.level ?? "full"}
       scope="bot"
-      onThisComputer={fullAccessWarning?.onThisComputer === true}
+      onThisComputer={false}
       onCancel={() => setFullAccessWarning(null)}
       onConfirm={() => {
         if (fullAccessWarning) patch({
           autoApprove: true, fullAccess: true,
           ...(fullAccessWarning.level === "unlimited" ? { noLimits: true, acknowledgeNoLimits: true } : { noLimits: false, acknowledgeFullAccess: true }),
-          ...(fullAccessWarning.onThisComputer ? { acknowledgeLocalAuto: true } : {}),
         });
         setFullAccessWarning(null);
       }}
