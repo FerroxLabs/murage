@@ -6,6 +6,7 @@ import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
+import { createBackupStepLog } from "../shared/backup-progress.mjs";
 import { readSetupBackupRecord } from "../shared/setup-backup-record.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
@@ -331,7 +332,9 @@ export function createBackupScheduleHost(host) {
       const output=path.join(b.destination,s.job.id+".age");
       const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
       coordinator.beginHandoffCapture(intent.id);
-      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs});
+      const stepLog=createBackupStepLog({job:String(s.job?.id??"").slice(0,8),log:note});
+      const onProgress=progress=>{try{stepLog(progress);host.reportWorkerProgress?.(progress);}catch{/* A progress note never changes the backup. */}};
+      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs,onProgress});
       stage("artifact-readback");captureStage="artifact-readback";
       // The worker reports the archive in its canonical spelling, which on
       // Windows is lower case; the file checked below is always our own path.

@@ -370,10 +370,10 @@ describe("GrokDriver key issuer guard", () => {
       return sseResponse(SSE_BODY("should not answer"));
     }) as typeof fetch;
     const instance = await GrokDriver.create({ instanceId: "grok-issuer", displayName: "Grok", environment: { XAI_API_KEY: key }, enabled: true, config: { url: "https://api.x.ai/v1", apiKeyEnv: "XAI_API_KEY" } });
-    expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("different provider") });
+    expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("does not match xAI") });
     const recorder = recordEvents(instance.adapter);
     const turn = instance.adapter.sendTurn({ threadId: "t-issuer", text: "hi" }).then(() => recorder.until((e) => e.type === "turn.completed"), (error: unknown) => error);
-    expect(String(await turn)).toContain("different provider");
+    expect(String(await turn)).toContain("does not match xAI");
     expect(auths).toEqual([]);
     recorder.stop();
     await instance.dispose();

@@ -14,7 +14,7 @@
 import { useId, useState } from "react";
 
 import { setEmailGateDone } from "@/lib/analytics";
-import { FIRST_RUN_COPY, greetingLine } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, greetingLine, probeLine } from "@/lib/first-run-copy";
 import { api } from "@/state/store";
 import {
   FIRST_RUN_FOCUS,
@@ -28,6 +28,7 @@ import {
   answerSetupStep,
   failureText,
   skipSetupStep,
+  useSetupView,
 } from "./FirstRunChrome";
 
 const copy = FIRST_RUN_COPY.hello.welcome;
@@ -195,6 +196,11 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
   // component did it, or the server says so.
   const [acted, setActed] = useState(false);
   const done = acted || settled;
+  // The look around runs while they type; once the view has landed, the
+  // footer says what it found instead of that it is looking (§1.3).
+  const { view } = useSetupView();
+  const found = probeLine(view);
+  const helperId = useId();
 
   const valid = helloAnswerReady(name, email);
   const emailNote = helloEmailNote(email, emailChecked);
@@ -237,8 +243,8 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
   return (
     <FirstRunBubble>
-      <div className="text-[15px] font-semibold text-ink">{copy.heading}</div>
-      <FirstRunLine>{copy.lead}</FirstRunLine>
+      <FirstRunLine>{copy.chief}</FirstRunLine>
+      <div className="mt-2 text-[15px] font-semibold text-ink">{copy.heading}</div>
 
       {!done && (
         <div className="mt-3 grid gap-2">
@@ -273,7 +279,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               value={email}
               disabled={busy}
               aria-invalid={emailNote ? true : undefined}
-              aria-describedby={emailNoteId}
+              aria-describedby={`${helperId} ${emailNoteId}`}
               onChange={(event) => setEmail(event.target.value)}
               onBlur={() => setEmailChecked(true)}
               onKeyDown={(event) => {
@@ -285,11 +291,16 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
             />
           </label>
+          <p id={helperId} className="-mt-1 text-[12.5px] leading-snug text-ink-secondary">{copy.emailHelper}</p>
           {/* Always in the page, so a screen reader hears the note when it appears. */}
           <p id={emailNoteId} aria-live="polite" className="text-[12.5px] leading-snug text-danger empty:hidden">
             {emailNote}
           </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          {/* One primary action, on the right; the ghost before it. */}
+          <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+            <button type="button" disabled={busy} onClick={() => void skip()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+              {copy.skip}
+            </button>
             {/* A wrong email holds Continue (dimmed, aria-disabled) yet leaves it
                 pressable, so pressing it says why. No name, and it is off. */}
             <button
@@ -301,9 +312,6 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
             >
               {busy ? copy.working : copy.submit}
             </button>
-            <button type="button" disabled={busy} onClick={() => void skip()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
-              {copy.skip}
-            </button>
           </div>
         </div>
       )}
@@ -314,7 +322,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
 
       {/* Detection is already running while they type, and saying so is the
           difference between a wait and a pause. One line, and quiet. */}
-      {!done && <FirstRunLine quiet>{copy.detecting}</FirstRunLine>}
+      {!done && <p aria-live="polite" className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{found ?? copy.detecting}</p>}
 
       {/* How learning works, once, where the owner is already reading. */}
       <FirstRunLine quiet>{copy.learnLine}</FirstRunLine>

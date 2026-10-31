@@ -104,6 +104,10 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx("/api/publish/netlify/check"), label: "Check a Netlify connection", summary: "none" },
   { methods: ["GET", "POST"], path: rx("/api/mcp-grants"), label: "Create script access for a bot", summary: "settings" },
   { methods: ["DELETE"], path: rx(`/api/mcp-grants/${ID}`), label: "Switch off a script access" },
+  // 1.0.9 bot calls: the owner's call settings, from a chat-only Cloud browser.
+  { methods: ["PUT"], path: rx(`/api/bots/${ID}/calls/rules`), label: "Change when a bot can call you", summary: "bot" },
+  { methods: ["POST"], path: rx("/api/calls/off-today"), label: "Turn bot calls off for today" },
+  { methods: ["POST"], path: rx("/api/calls/rearm"), label: "Turn bot calls back on" },
 
   // Routines, webhooks, connectors.
   { methods: ["POST"], path: rx("/api/routines"), label: "Create a routine", summary: "settings" },

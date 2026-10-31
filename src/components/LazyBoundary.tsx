@@ -68,6 +68,10 @@ export class LazyBoundary extends Component<
     onDismiss?: () => void;
     /** Inside a pane rather than over the whole app. */
     inline?: boolean;
+    /** Inline only: draws the retry (or the error) inside the surface's own
+     *  frame, so a panel that failed to load still looks like that panel and
+     *  keeps its own Close (the help panel, L4A). */
+    frame?: (alert: ReactNode) => ReactNode;
     /** Test seam; the page reload by default. */
     reload?: () => void;
   },
@@ -111,7 +115,7 @@ export class LazyBoundary extends Component<
         {LAZY_RETRY_TEXT}
       </button>
     );
-    if (this.props.inline) return <div role="alert">{button}</div>;
+    if (this.props.inline) return this.inlineAlert(button);
     const { onDismiss } = this.props;
     return (
       <div role="alert" className="overlay-inset fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-black/20">
@@ -123,6 +127,11 @@ export class LazyBoundary extends Component<
         )}
       </div>
     );
+  }
+
+  inlineAlert(content: ReactNode) {
+    const alert = <div role="alert">{content}</div>;
+    return this.props.frame ? this.props.frame(alert) : alert;
   }
 
   renderBroken() {
@@ -142,7 +151,7 @@ export class LazyBoundary extends Component<
         </div>
       </div>
     );
-    if (inline) return <div role="alert">{body}</div>;
+    if (inline) return this.inlineAlert(body);
     return <div role="alert" className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/20">{body}</div>;
   }
 }

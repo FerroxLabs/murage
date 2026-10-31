@@ -39,7 +39,7 @@ describe("the top of the screen", () => {
   it("shows the switch, the intro and the month line with undone", () => {
     const html = text(render(loaded()));
     expect(html).toContain("Learns from you");
-    expect(html).toContain("Dax learns from your feedback, edits and marks. Permissions still decide what it may do.");
+    expect(html).toContain("Dax learns from your feedback, edits and marks. Its level still decides what it may do.");
     expect(html).toContain("This month: learned 14, remembers 9, 2 undone");
     expect(render(loaded())).toMatch(/role="switch"[^>]*aria-checked="true"|aria-checked="true"[^>]*role="switch"/);
   });

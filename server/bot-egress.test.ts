@@ -131,7 +131,7 @@ describe("the hand-off boundary reaches the store only through its ports", () =>
   const source = readFileSync(new URL("./handoff-boundary.ts", import.meta.url), "utf8");
   const imports = [...source.matchAll(/^import (type )?(.*?) from "([^"]+)";$/gm)].map(match => ({ typeOnly: match[1] !== undefined, names: match[2], from: match[3] }));
   const ALLOWED = new Set([
-    "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegated-reply-check.ts", "./delegations.ts", "./event-limit.ts",
+    "./app-trigger-zero.ts", "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegated-reply-check.ts", "./delegations.ts", "./event-limit.ts",
     "./execution-audience.ts", "./fold-steps.ts", "./handoff-outcome.ts", "./handoff-reply.ts", "./handoff-replay.ts", "./human-principals.ts", "./internal-capabilities.ts", "./peer-approval.ts",
     "./project-prompt.ts", "./project-records.ts", "./project-review.ts", "./project-routines.ts", "./result-egress.ts", "./room-requests.ts", "./routine-permissions.ts",
     "./shared-work.ts", "./task-resolution.ts", "./released-text.ts", "./murage-status.ts", "./bot-egress.ts", "./store.ts", "./work-admission.ts", "node:crypto", "node:http",
@@ -160,6 +160,11 @@ describe("the hand-off boundary reaches the store only through its ports", () =>
   });
   it("the delegated-reply scheduler it listens to reaches no module at all, so it is no side door to the store", () => {
     expect(moduleReferences(readFileSync(new URL("./delegated-reply-check.ts", import.meta.url), "utf8"))).toEqual([]);
+  });
+  it("the app-run refusal it calls takes only types, so it is no side door to the store", () => {
+    const text = readFileSync(new URL("./app-trigger-zero.ts", import.meta.url), "utf8");
+    expect(moduleReferences(text)).toEqual(['"./app-trigger-store.ts"']);
+    expect(text).toMatch(/^import type \{[^}]*\} from "\.\/app-trigger-store\.ts";$/m);
   });
   it("takes no value from the store module, only types", () => {
     for (const entry of imports.filter(entry => entry.from === "./store.ts")) {

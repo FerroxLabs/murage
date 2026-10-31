@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { APPS_CLAIM, showOwnKeyRetiredLine } from "./ConnectedAppsLock";
+import { en } from "@/locales";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 
@@ -40,7 +41,8 @@ describe("the connected-apps catalog", () => {
   it("is 500+ apps, named by the apps people know", () => {
     expect(APPS_CLAIM).toBe("500+ apps, including Gmail, Slack, Notion and GitHub");
     // The panel's own headline sentence uses the constant, not a copy of it.
-    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}.");
+    expect(read("./PluginsPanel.tsx")).toContain('t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) })');
+    expect(en["ux.lcopyb.connected.subtitleDesktop"]).toBe("One Flux Router key connects {apps}. You can add your own connected tools too.");
     for (const file of SURFACES) {
       expect(visibleWords(read(file)).filter((text) => /hundreds of/i.test(text)), file).toEqual([]);
     }

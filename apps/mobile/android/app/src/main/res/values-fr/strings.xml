@@ -26,7 +26,8 @@
     <string name="phone_sharing_generic">Partagez ce qu’un bot lit sur votre téléphone, avec votre autorisation, avec le service d’IA qu’il utilise, via votre propre Murage.</string>
     <string name="phone_provider_fallback">un autre service d’IA</string>
     <string name="phone_no_key">Définissez un code sur ce téléphone, puis associez-le à nouveau</string>
-    <string name="phone_update">Mettez à jour Murage sur votre ordinateur</string>
+    <string name="phone_update">Activez cette fonction ou mettez à jour Murage sur votre ordinateur.</string>
+    <string name="phone_turned_off">Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.</string>
     <string name="phone_failed">Impossible de mettre à jour les outils du téléphone. Réessayez.</string>
     <string name="phone_refused">La connexion du téléphone a été refusée. Associez ce téléphone à nouveau.</string>
     <string name="phone_rate_limited">Trop de tentatives de connexion. Réessayez dans quelques instants.</string>
@@ -68,7 +69,8 @@
     <string name="ask_setup_body">Envoyez du contenu à vos bots depuis n’importe quelle app et posez-leur une question sans ouvrir Murage au préalable. Confirmez une fois pour cet ordinateur.</string>
     <string name="ask_turn_on">Activer</string>
     <string name="ask_not_now">Pas maintenant</string>
-    <string name="ask_update">Mettez à jour Murage sur votre ordinateur pour utiliser cette fonction.</string>
+    <string name="ask_update">Activez cette fonction ou mettez à jour Murage sur votre ordinateur.</string>
+    <string name="ask_turned_off">Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.</string>
     <string name="ask_no_key">Définissez un code sur ce téléphone, puis ouvrez Murage.</string>
     <string name="ask_computer_off">Le partage et les questions sont désactivés pour ce téléphone.</string>
     <string name="ask_setup_again">Ouvrez Murage pour configurer à nouveau le partage.</string>
@@ -93,7 +95,8 @@
     <string name="share_offline">Votre ordinateur est injoignable pour le moment. Murage enverra ceci dès qu’il sera joignable.</string>
     <string name="share_passcode">Définissez un code sur ce téléphone, puis ouvrez Murage.</string>
     <string name="share_again">Ouvrez Murage pour configurer à nouveau le partage.</string>
-    <string name="share_update">Mettez à jour Murage sur votre ordinateur pour utiliser cette fonction.</string>
+    <string name="share_update">Activez cette fonction ou mettez à jour Murage sur votre ordinateur.</string>
+    <string name="share_turned_off">Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.</string>
     <string name="share_outbox_waiting">En attente d’envoi</string>
     <string name="share_outbox_sent">Envoyé</string>
     <string name="share_outbox_failed">Envoi impossible. Touchez pour réessayer.</string>

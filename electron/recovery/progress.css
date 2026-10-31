@@ -5,7 +5,7 @@ body { margin:0; background:var(--color-app); color:var(--color-ink); font:15px/
 main { max-width:520px; margin:auto; padding:40px 28px; }
 .eyebrow { color:var(--color-ink-secondary); font-size:12px; letter-spacing:.08em; }
 h1 { font-size:26px; line-height:1.2; margin:8px 0 12px; }
-#lede,#status { color:var(--color-ink-secondary); }
+#lede,#detail,#status { color:var(--color-ink-secondary); }
 .bar { height:8px; border-radius:4px; background:var(--color-track); overflow:hidden; margin:22px 0; position:relative; }
 #fill { display:block; height:100%; width:6%; background:var(--color-accent); border-radius:4px; transition:width .5s ease; position:relative; overflow:hidden; }
 #fill::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.45),transparent); animation:sweep 1.4s linear infinite; }

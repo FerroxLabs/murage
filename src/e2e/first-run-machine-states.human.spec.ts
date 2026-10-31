@@ -197,7 +197,30 @@ async function phaseLabels(app: Page): Promise<string[]> {
   // (FirstRunPhases.tsx). That is a fact about the pill's status and not part
   // of its name, so it is cut here rather than asserted on: this helper
   // answers "which phases are on the bar", and the marks move every step.
-  return (await pills.allInnerTexts()).map((label) => label.replace(/\s+/g, " ").split(",")[0]!.trim());
+  // The tick or clock drawn before the number is the same kind of mark.
+  return (await pills.allInnerTexts()).map((label) =>
+    label.replace(/\s+/g, " ").split(",")[0]!.replace(/^[^\p{L}\p{N}]+/u, "").trim(),
+  );
+}
+
+/**
+ * THE FLUX CARD TAKES A KEY WHERE IT STANDS.
+ *
+ * 1.0.12 (UX-FIRSTRUN-SCALE-1012 section 1.5) moved the box onto the card, so
+ * Connect is the box's submit and waits for something to submit, the rule the
+ * paste screen's submit has always had. The way on is the box being live, and
+ * Connect waking up when a person types in it. Nothing is pressed here, so no
+ * key is saved.
+ */
+async function fluxCardTakesAKey(app: Page, why: string): Promise<void> {
+  const box = app.getByPlaceholder(/Paste your key here/i);
+  const connect = app.getByRole("button", { name: /Connect Flux Router/i });
+  await expect(box, why).toBeEditable();
+  await expect(connect, `${why}: Connect waits for a key`).toBeDisabled();
+  await box.fill("typed but never sent");
+  await expect(connect, `${why}: a typed key wakes Connect`).toBeEnabled();
+  await box.fill("");
+  await expect(connect, `${why}: an emptied box puts it back to sleep`).toBeDisabled();
 }
 
 /**
@@ -364,10 +387,16 @@ test.describe("an engine nobody is signed in to", () => {
       app.getByText(/nobody is signed in to/i),
       "the signed-out engine must be reported rather than counted as working",
     ).toBeVisible();
+    // THE FIX IS ON THE CARD, with no press to reveal it (section 1.4, Variant
+    // B). The command is what the driver told us, the Copy beside it works, and
+    // both ways on are live.
     await expect(
-      app.getByRole("button", { name: /Help me sign in/i }),
+      app.getByText("claude auth login", { exact: true }),
       "and the report must come with the one thing that fixes it",
-    ).toBeEnabled();
+    ).toBeVisible();
+    await expect(app.getByRole("button", { name: "Copy", exact: true }), "the command can be taken away").toBeEnabled();
+    await expect(app.getByRole("button", { name: /I have done it/i }), "and rechecked afterwards").toBeEnabled();
+    await expect(app.getByRole("button", { name: /Leave it for now/i }), "or left").toBeEnabled();
     await screenIsUsable(app, "a signed-out engine · the detection report");
   });
 
@@ -433,10 +462,14 @@ test.describe("a machine with an engine that can answer", () => {
 
     await harness("POST", "/api/setup/answer", { step: "hello", answer: OWNER });
     await reloadSettled(app);
+    // In the transcript, because that is where a person reads it. The rail's
+    // preview of this chat carries the card's title, which is the same words.
+    const chat = app.getByTestId("chat-scroll");
     await expect(
-      app.getByText(/You already had help on this computer|There is one in the box/i),
+      chat.getByText(/You already had help on this computer/i),
       "a machine that HAS something must be told what was found",
     ).toBeVisible();
+    await expect(chat.getByText("What is already here.", { exact: true }), "and shown it").toBeVisible();
     await screenIsUsable(app, "an engine that can answer · the detection report");
 
     // A WAY ON. The detection report is the one card whose step can ONLY be
@@ -445,13 +478,10 @@ test.describe("a machine with an engine that can answer", () => {
     // returns `detect` for ever and the Flux screen is never shown to anybody
     // with an engine — which is most installs, and is why
     // `FirstRunDetectOnward` exists.
-    const onward = app.getByRole("button", { name: /Show me the interesting part/i }).last();
+    const onward = app.getByRole("button", { name: "Next", exact: true }).last();
     await expect(onward, "the detection report must carry its own way out").toBeEnabled();
     await onward.click();
-    await expect(
-      app.getByRole("button", { name: /Connect Flux Router/i }),
-      "reading the report must lead somewhere",
-    ).toBeEnabled();
+    await fluxCardTakesAKey(app, "reading the report must lead somewhere");
 
     // A WAY BACK, on this machine too. Passing over the Flux step and then
     // reopening it is what the app itself does, and the card has to come back
@@ -459,10 +489,7 @@ test.describe("a machine with an engine that can answer", () => {
     await harness("POST", "/api/setup/skip", { step: "flux" });
     await harness("POST", "/api/setup/reopen", { step: "flux" });
     await reloadSettled(app);
-    await expect(
-      app.getByRole("button", { name: /Connect Flux Router/i }),
-      "a reopened Flux step must be answerable again",
-    ).toBeEnabled();
+    await fluxCardTakesAKey(app, "a reopened Flux step must be answerable again");
     await screenIsUsable(app, "an engine that can answer · the reopened Flux step");
   });
 });
@@ -494,9 +521,9 @@ test.describe("a machine with nothing on it", () => {
       "there is no honest \"here is what I found\" for a machine where nothing was found",
     ).toBe(false);
     expect(
-      phases.map((label) => label.replace(/^\d+\s*·\s*/, "")),
+      phases,
       "and the four that are left are renumbered one to four, not one, three, four, five",
-    ).toEqual(["who you are", "switch it on", "first chat", "do the thing"]);
+    ).toEqual(["1 · you", "2 · Flux Router", "3 · your first job", "4 · done"]);
   });
 
   // ── RELEASE BLOCK, FOUND HERE AND FIXED ────────────────────────────────
@@ -567,18 +594,45 @@ test.describe("a machine with nothing on it", () => {
       "the blank machine's Flux screen must say what was looked for",
     ).toBeVisible();
 
-    const connect = app.getByRole("button", { name: /Connect Flux Router/i });
-    await expect(connect, "the card that frames the blank machine must be the card that takes a key").toBeEnabled();
-    await expect(
-      app.getByRole("button", { name: /^Not now$/ }),
-      "and leaving without a key must be a real answer",
-    ).toBeEnabled();
+    await fluxCardTakesAKey(app, "the card that frames the blank machine must be the card that takes a key");
 
-    await connect.click();
+    // "NOT NOW" HERE IS A REAL ANSWER THAT LEAVES THE STEP OPEN (section 1.5).
+    // Nothing can think yet, so passing over would leave a window with nothing
+    // behind it: the Chief says so, the jobs show as waiting, and the card
+    // stays with the same controls.
+    const notNow = app.getByRole("button", { name: /^Not now$/ });
+    await expect(notNow, "and leaving without a key must be a real answer").toBeEnabled();
+    await notNow.click();
+    // Read off the live card itself. This file shares one transcript, and the
+    // earlier case that passed over Flux left its "no key" card in it, which
+    // now reads the same sentence because the machine has gone blank.
+    const liveCard = app
+      .locator("div")
+      .filter({ has: app.getByPlaceholder(/Paste your key here/i) })
+      .filter({ hasText: /These start the moment I have something to think with/i })
+      .last();
+    await expect(
+      liveCard.getByText(/Then I do need something else to think with/i),
+      "the Chief must say why it cannot just carry on",
+    ).toBeVisible();
+    await expect(
+      app.getByText(/These start the moment I have something to think with/i),
+      "and the jobs must be shown waiting on it",
+    ).toBeVisible();
+    await expect(app.getByPlaceholder(/Paste your key here/i), "the card stays, still taking a key").toBeEditable();
+    expect(stepOf(await harness("GET", "/api/setup"), "flux").skipped, "the step stays open").toBeFalsy();
+
+    const needKey = app.getByRole("button", { name: /I need a key/i });
+    await expect(needKey, "and somebody with no key has a way to get one").toBeEnabled();
+    await needKey.click();
+    await expect(
+      app.getByText("Your browser is open on the sign-up page.", { exact: true }),
+      "pressing it must say where the person has been sent",
+    ).toBeVisible();
     await expect(
       app.getByPlaceholder(/Paste your key here/i),
-      "pressing Connect on a blank machine must reach the box that takes the key",
-    ).toBeVisible();
+      "and keep a box to bring the key back to",
+    ).toBeEditable();
 
     await harness("POST", "/api/setup/skip", { step: "flux" });
     await reloadSettled(app);

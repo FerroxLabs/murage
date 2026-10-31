@@ -163,7 +163,7 @@ it("a goal member turn stopped by the host is provider_failed: retried once, the
     // the retry's refusal is the run's only error, and it names the cause
     const errors = await activities(room.threadId, "error:");
     expect(errors).toHaveLength(1);
-    expect(errors[0].tool.name).toMatch(/disabled or unavailable/);
+    expect(errors[0].tool.name).toMatch(/turned off or unavailable/);
   } finally {
     await setConnectionEnabled(true);
   }

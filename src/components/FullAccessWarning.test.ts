@@ -15,7 +15,7 @@ describe("FullAccessWarning", () => {
     const markup = render(false);
     expect(markup).toContain("will not ask before running commands, editing files or contacting other bots");
     expect(markup).toContain("still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords");
-    expect(markup).toContain("Turns started by webhooks still ask");
+    expect(markup).toContain("Work started by another app&#x27;s trigger link still asks");
     // routines follow a level of their own now (server/routine-permissions.ts)
     expect(markup).not.toContain("routines still ask");
     // images follow the level now: made without a card, with a record, and the setting says where to change it

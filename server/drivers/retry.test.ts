@@ -121,6 +121,22 @@ describe("classifyError", () => {
     });
   });
 
+  it.each([
+    "OAuth authentication failed: oauth_org_not_allowed",
+    "Your organization has disabled subscription access for Claude Code.",
+    "This organisation has disabled Claude subscription access",
+    "API Error: 403 OAuth authentication is currently not allowed for this organization.",
+  ])("reads an org-disabled login as a sign-in matter, never a quota: %s", (text) => {
+    expect(classifyError({ text })).toEqual({ transient: false, reason: "auth" });
+    expect(classifyError({ exitCode: 1, stderr: text })).toEqual({ transient: false, reason: "auth" });
+  });
+
+  it("still reads a real subscription or billing problem as quota", () => {
+    for (const text of ["Your subscription has expired", "billing problem on this account", "Your organization is out of quota for this subscription", "Your organization has disabled extra usage; subscription quota exceeded"]) {
+      expect(classifyError({ text })).toEqual({ transient: false, reason: "quota" });
+    }
+  });
+
   it("never retries auth, quota, unknown model, or invalid request", () => {
     expect(classifyError(new Error("unexpected status 401 Unauthorized: Missing bearer"))).toEqual({
       transient: false,

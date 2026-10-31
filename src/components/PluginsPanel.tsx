@@ -1352,7 +1352,7 @@ export function PluginsPanel() {
         <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? `One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}. You can add your own MCP tools too.` : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) }) : t("ux.lcopyb.connected.subtitleRemote")}</p>
           </div>
           <div className="flex items-center gap-1">
             {surface === "apps" && lockState === "unlocked" && (
@@ -1376,7 +1376,7 @@ export function PluginsPanel() {
         </header>
 
         <div className="border-b border-hairline/40 px-6 sm:px-8">
-          <div className="flex gap-6" role="tablist" aria-label="Connected apps and MCP servers">
+          <div className="flex gap-6" role="tablist" aria-label={t("ux.lcopyb.connected.tabsLabel")}>
             {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
               <button
                 key={item}
@@ -1389,7 +1389,7 @@ export function PluginsPanel() {
                   surface === item ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink",
                 )}
               >
-                {item === "apps" ? "Connected apps" : "MCP servers"}
+                {item === "apps" ? "Connected apps" : t("ux.lcopyb.connected.toolsTab")}
               </button>
             ))}
           </div>
