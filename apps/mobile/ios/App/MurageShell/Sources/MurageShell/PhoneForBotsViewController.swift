@@ -43,7 +43,9 @@ import MurageShellCore
     func checkAvailability() async throws {
         guard signer.keyId(origin: origin) != nil else { throw PhoneJobsMintError.noApprovalKey }
         let verdict = await ProbeClient.probe(origin, userAgent: ShellEnvironment.userAgentToken)
-        guard verdict.phoneJobsOk else { throw PhoneJobsMintError.updateComputer }
+        guard verdict.phoneJobsOk else {
+            throw verdict.phoneFlagsOk ? PhoneJobsMintError.turnedOff : PhoneJobsMintError.updateComputer
+        }
     }
     func refresh() { Task { try? await model.refresh() } }
     func close() { http.close() }

@@ -175,8 +175,45 @@ public class PhoneJobsMintTest {
         }
     }
 
+    @Test public void phoneFlagsWithoutFeatureShowsTurnedOffBeforeChallenge() throws Exception {
+        JSONObject v = vector();
+        for (int flags : new int[] {1, 2}) {
+            Key key = new Key(v); HTTP http = new HTTP(); Done done = new Done(); Writer writer = new Writer();
+            http.answers.add(response(new JSONObject().put("mobile", 1).put("phoneFlags", flags).put("phoneAsk", 1)));
+            client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
+            assertEquals(PhoneJobsMintClient.Failure.TURNED_OFF, done.failure);
+            assertEquals("Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.", done.failure.message);
+            assertEquals(R.string.phone_turned_off, done.failure.messageResource);
+            assertEquals(1, done.failures); assertEquals(0, done.successes);
+            assertEquals(1, http.calls.size()); assertEquals(0, key.prompts); assertEquals(0, writer.writes);
+        }
+    }
+
+    @Test public void missingPhoneFlagsShowsTurnOnOrUpdateBeforeChallenge() throws Exception {
+        JSONObject v = vector(); Key key = new Key(v); HTTP http = new HTTP(); Done done = new Done(); Writer writer = new Writer();
+        http.answers.add(response(new JSONObject().put("mobile", 1)));
+        client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
+        assertEquals(PhoneJobsMintClient.Failure.UPDATE_COMPUTER, done.failure);
+        assertEquals("Turn this on, or update Murage, on your computer.", done.failure.message);
+        assertEquals(R.string.phone_update, done.failure.messageResource);
+        assertEquals(1, done.failures); assertEquals(0, done.successes);
+        assertEquals(1, http.calls.size()); assertEquals(0, key.prompts); assertEquals(0, writer.writes);
+    }
+
+    @Test public void phoneFlagsWithFeatureStillMints() throws Exception {
+        JSONObject v = vector(); Key key = new Key(v); Writer writer = new Writer(); HTTP http = new HTTP(); Done done = new Done();
+        String token = fixture().getJSONObject("token").getJSONArray("valid").getString(0);
+        http.answers.add(response(hello().put("phoneFlags", 1)));
+        http.answers.add(response(challenge(v)));
+        http.answers.add(response(new JSONObject().put("token", token)));
+        client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
+        assertEquals(1, done.successes); assertEquals(0, done.failures);
+        assertEquals(3, http.calls.size()); assertEquals(1, key.prompts);
+        assertEquals(1, writer.writes); assertEquals(token, writer.token);
+    }
+
     @Test public void oldDoorAndMissingKeyShowExactCopyBeforeChallenge() throws Exception {
-        assertEquals("Update Murage on your computer", PhoneJobsMintClient.Failure.UPDATE_COMPUTER.message);
+        assertEquals("Turn this on, or update Murage, on your computer.", PhoneJobsMintClient.Failure.UPDATE_COMPUTER.message);
         assertEquals("Set a passcode on this phone, then pair again", PhoneJobsMintClient.Failure.NO_APPROVAL_KEY.message);
         JSONObject v = vector();
         for (String hello : Arrays.asList("{\"mobile\":1}", "{\"mobile\":1,\"phoneJobs\":0}", "{\"mobile\":1,\"phoneJobs\":true}", "{\"mobile\":1,\"phoneJobs\":\"1\"}", "{\"phoneJobs\":1}")) {

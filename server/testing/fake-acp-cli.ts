@@ -147,9 +147,31 @@
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
 //                        session/request_permission (id 9300) naming it; the
 //                        client's reply is appended to FAKE_ACP_LATE_REPLY_LOG
+//   FAKE_ACP_BARE_REJECT_CANCELS=1  Grok Build / Fuigo's rule: a permission
+//                        answered with a reject option and no
+//                        `_meta.followup_message` ends the prompt with
+//                        stopReason "cancelled"; with the follow-up note the
+//                        prompt answers "FOLLOWUP: <note>" and finishes
+//                        end_turn (the tool stays unexecuted).
+//                        =always: every reject ends the prompt "cancelled",
+//                        note or not (an engine that ignores the note)
 //   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
 //                        already live in this process (an engine that cannot
 //                        re-establish a resident session)
+//   FAKE_ACP_GROK_MODELS_CACHE=1  grok's model surface: advertise the bundled grok-4.6, grok-4.5 (current
+//                        grok-4.6) plus the ids of $GROK_HOME/models_cache.json (`models` as an array of {id}
+//                        or keyed by id), and answer session/set_model for an id not advertised with -32602
+//   FAKE_ACP_GROK_CATALOG_GATE=<file>  with FAKE_ACP_GROK_CATALOG_IDS, announce once this file exists (instead of the n ms below)
+//   FAKE_ACP_GROK_CATALOG_MS=<n> + FAKE_ACP_GROK_CATALOG_IDS=a,b  n ms after session/new, write those ids
+//                        into $GROK_HOME/models_cache.json, advertise them, and send `_x.ai/models/update`
+//                        (grok's background catalog fetch landing). Unset: never
+//   FAKE_ACP_SET_MODEL_STALL=1  never answer session/set_model (the request-timeout case)
+//   FAKE_ACP_SET_MODEL_DELAY_MS=<n>  with the grok surface, refuse the FIRST set_model (-32602) after n ms
+//   FAKE_ACP_SET_MODEL_GATE=<file>  hold the answer to the first session/set_model until this file exists
+//   FAKE_ACP_SET_MODEL_GATE_ANSWER=ok|refuse  that answer: accepted (default), or refused (-32602)
+//   FAKE_ACP_SESSION_NEW_REFUSE_GATE=<file>  hold session/new until this file exists, then fail it (-32000)
+//   FAKE_ACP_SET_MODE_REFUSE=1  session/set_mode answers -32601 while set_model works
+//   Every session/set_model attempt, refused ones included, is listed in $FAKE_ACP_DUMP.setmodel.json.
 //   FAKE_ACP_MCP_READY=1  announce `_fuigo/mcp_initialized {sessionId}` after
 //                        session/new or session/load hands it servers, and —
 //                        like Fuigo — after a resident load only when the
@@ -238,6 +260,9 @@
 //   FAKE_ACP_MODE=cancel-other-reason  hold session/prompt open like cancel-ack,
 //                        but answer session/cancel by RESOLVING the prompt with
 //                        a stop reason that is not "cancelled" ("refusal")
+//   FAKE_ACP_MODE=cancel-end-turn  hold session/prompt open with nothing sent
+//                        (no reply, image or tool), then answer session/cancel by
+//                        RESOLVING the prompt with end_turn, as OpenCode does
 //   FAKE_ACP_MODE=stderr-rpc-error|stderr-happy  write more than 8 KiB of stderr
 //                        (ANSI styling, a key-shaped canary, a known last line),
 //                        then fail session/prompt with -32603 or complete it
@@ -303,8 +328,24 @@ const acpModels = (process.env.FAKE_ACP_SESSION_MODELS ?? "")
     const [modelId, name] = entry.split("|");
     return name ? { modelId, name } : { modelId };
   });
-const sessionModels = () =>
-  acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+// grok-shaped surface (FAKE_ACP_GROK_MODELS_CACHE=1): the bundled list plus every id of $GROK_HOME/models_cache.json,
+// the way grok offers the fetched catalog only once its cache exists; plus the ids a late catalog announced.
+const grokLateIds: string[] = [];
+const grokCacheModels = (): string[] => {
+  try {
+    const cache = JSON.parse(readFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), "utf8")) as { models?: unknown };
+    const models = cache.models;
+    if (Array.isArray(models)) return models.map((m) => (m as { id?: unknown })?.id).filter((id): id is string => typeof id === "string");
+    return models && typeof models === "object" ? Object.keys(models) : [];
+  } catch { return []; }
+};
+const grokAdvertised = (): string[] => [...new Set([...grokCacheModels(), ...grokLateIds, "grok-4.6", "grok-4.5"])];
+const sessionModels = () => {
+  if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1") return { currentModelId: "grok-4.6", availableModels: grokAdvertised().map((modelId) => ({ modelId })) };
+  return acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
+};
+/** Every session/set_model attempt this run, refused ones included. */
+const setModelAttempts: string[] = [];
 
 const argv = process.argv.slice(2);
 // Explicit assertion fields only, never the inherited environment.
@@ -473,6 +514,8 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+/** A test's own gate: `then` runs once the file exists. */
+const whenFile = (file: string, then: () => void) => { if (existsSync(file)) then(); else setTimeout(() => whenFile(file, then), 10); };
 // `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
 // answered on its own `_x.ai/` rail). FAKE_ACP_INTERJECT:
 // "fallback" answers queued and echoes it, then runs it as its own
@@ -576,6 +619,10 @@ let pendingPermissionId: number | null = null;
 /** project-propose mode's own permission asks, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
+/** FAKE_ACP_BARE_REJECT_CANCELS: the newest permission answer was a reject with no follow-up note. */
+let bareRejectAnswered = false;
+/** FAKE_ACP_BARE_REJECT_CANCELS: the follow-up note a reject carried, which the prompt answers before end_turn. */
+let rejectFollowup: string | null = null;
 /** When the open permission ask was sent (FAKE_ACP_PERMISSION_TIMING_FILE). */
 let permissionAskedAt: number | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
@@ -1008,6 +1055,10 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
+    const chosen = msg.result?.outcome?.optionId;
+    bareRejectAnswered = typeof chosen === "string" && chosen.startsWith("reject")
+      && (process.env.FAKE_ACP_BARE_REJECT_CANCELS === "always" || typeof msg.result?._meta?.followup_message !== "string");
+    rejectFollowup = !bareRejectAnswered && typeof msg.result?._meta?.followup_message === "string" ? msg.result._meta.followup_message : null;
     if (process.env.FAKE_ACP_PERMISSION_TIMING_FILE && permissionAskedAt !== null) {
       appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
       permissionAskedAt = null;
@@ -1069,6 +1120,11 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      if (process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE) {
+        const id = msg.id;
+        whenFile(process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE, () => out({ jsonrpc: "2.0", id, error: { code: -32000, message: "The session could not start" } }));
+        break;
+      }
       if (mode === "auth-required") {
         out({
           jsonrpc: "2.0",
@@ -1108,6 +1164,20 @@ function handle(msg: any) {
         ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
       });
       announceMcpReady(newSessionId, servers);
+      const catalogMs = Number(process.env.FAKE_ACP_GROK_CATALOG_MS);
+      const catalogGate = process.env.FAKE_ACP_GROK_CATALOG_GATE;
+      if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && (catalogGate || (Number.isFinite(catalogMs) && catalogMs >= 0 && process.env.FAKE_ACP_GROK_CATALOG_MS))) {
+        const ids = (process.env.FAKE_ACP_GROK_CATALOG_IDS ?? "").split(",").filter(Boolean);
+        const announce = () => {
+          grokLateIds.push(...ids);
+          try { writeFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), JSON.stringify({ models: Object.fromEntries(ids.map((id) => [id, { id }])) })); } catch { /* the announcement still goes */ }
+          // SYNTHETIC frame: grok 1.0.70 sends `_x.ai/models/update` once its background fetch lands (live, 10-29), but its params
+          // were not captured yet; this is one of the shapes acpModelIdsIn reads. Replace with the captured shape at qualification.
+          out({ jsonrpc: "2.0", method: "_x.ai/models/update", params: { sessionId: newSessionId, models: grokAdvertised().map((id) => ({ id })) } });
+        };
+        if (catalogGate) whenFile(catalogGate, announce);
+        else setTimeout(announce, catalogMs);
+      }
       // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
       // session/new, before any prompt (session_setup.rs
       // send_available_commands_update). JSON array of ACP AvailableCommand.
@@ -1170,6 +1240,31 @@ function handle(msg: any) {
     case "session/set_model": {
       if (mode === "no-session-config") {
         // an older agent that predates these methods
+        return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+      }
+      if (msg.method === "session/set_model") {
+        setModelAttempts.push(String(msg.params?.modelId));
+        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.setmodel.json`, JSON.stringify(setModelAttempts));
+        if (process.env.FAKE_ACP_SET_MODEL_STALL === "1") break;
+        if (process.env.FAKE_ACP_SET_MODEL_GATE && setModelAttempts.length === 1) {
+          const id = msg.id;
+          whenFile(process.env.FAKE_ACP_SET_MODEL_GATE, () => process.env.FAKE_ACP_SET_MODEL_GATE_ANSWER === "refuse"
+            ? out({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } })
+            : result(id, {}));
+          break;
+        }
+        const delayMs = Number(process.env.FAKE_ACP_SET_MODEL_DELAY_MS) || 0;
+        if (delayMs > 0 && process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && setModelAttempts.length === 1) {
+          // the refusal grok gives after waiting on its fetch in flight (about 5 s live), whatever arrives meanwhile
+          const id = msg.id;
+          setTimeout(() => out({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }), delayMs);
+          break;
+        }
+        if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && !grokAdvertised().includes(String(msg.params?.modelId))) {
+          return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params" } });
+        }
+      }
+      if (msg.method === "session/set_mode" && process.env.FAKE_ACP_SET_MODE_REFUSE === "1") {
         return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
       }
       if (mode === "set-model-invalid-params" && msg.method === "session/set_model") {
@@ -1393,6 +1488,11 @@ function handle(msg: any) {
         }
         return;
       }
+      if (mode === "cancel-end-turn") {
+        pendingCancelAckPrompt = msg.id;
+        setInterval(() => {}, 1_000);
+        return;
+      }
       // cancel-ignore (U24): hold session/prompt open and never answer session/cancel, so only the driver's grace timer ends the turn.
       if (mode === "cancel-ack" || mode === "cancel-rpc-error" || mode === "cancel-reject" || mode === "cancel-other-reason" || mode === "cancel-ignore") {
         pendingCancelAckPrompt = msg.id;
@@ -1565,6 +1665,15 @@ function handle(msg: any) {
         recordMethod("session/prompt.result");
         setImmediate(runStrandedInterjection);
         scheduleLateFrames(msg.params?.sessionId);
+        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && bareRejectAnswered) {
+          bareRejectAnswered = false;
+          result(msg.id, { stopReason: "cancelled" });
+          return;
+        }
+        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && rejectFollowup !== null) {
+          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `FOLLOWUP: ${rejectFollowup}` } } } });
+          rejectFollowup = null;
+        }
         result(
           msg.id,
           // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at
@@ -2320,6 +2429,12 @@ function handle(msg: any) {
         const id = pendingCancelAckPrompt;
         pendingCancelAckPrompt = null;
         out({ jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error", data: { message: "turn cancelled by client", error_kind: "cancelled" } } });
+        break;
+      }
+      if (mode === "cancel-end-turn" && pendingCancelAckPrompt !== null) {
+        const id = pendingCancelAckPrompt;
+        pendingCancelAckPrompt = null;
+        result(id, { stopReason: "end_turn" });
         break;
       }
       if (mode === "cancel-other-reason" && pendingCancelAckPrompt !== null) {

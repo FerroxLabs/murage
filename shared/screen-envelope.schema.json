@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://murage.ai/schemas/screen-envelope.schema.json",
+  "title": "Murage screen envelope",
+  "description": "What a help ask or a feedback item says about the screen the owner is on. An allowlist: screen id, title, page, bot id, section, open folds, selected card id, gates with reasons, control ids and labels. Never message text, file contents, keys, memory, connected-app data or logs. Every object refuses unknown fields. Owned by lane L4A (src/lib/screen-envelope.ts builds and checks it); the desktop relay and the control plane check the same shape.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["screen", "title", "state", "controls"],
+  "properties": {
+    "screen": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^[a-z][a-z0-9-]*(:[A-Za-z0-9_.-]{1,128})*$" },
+    "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "page": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "botId": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_-]{1,128}$" },
+        "section": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+        "openFolds": {
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.-]{1,64}$" }
+        },
+        "selectedCard": { "type": "string", "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]{1,128}$" },
+        "gates": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "reason"],
+            "properties": {
+              "id": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]{1,64}$" },
+              "reason": { "type": "string", "maxLength": 200 }
+            }
+          }
+        }
+      }
+    },
+    "controls": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "address"],
+        "properties": {
+          "id": { "type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9_.:-]{1,64}$" },
+          "label": { "type": "string", "maxLength": 80 },
+          "address": { "type": "string", "maxLength": 200, "pattern": "^murage://[A-Za-z0-9_./:?=&-]{1,190}$" }
+        }
+      }
+    }
+  }
+}

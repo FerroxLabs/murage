@@ -133,6 +133,8 @@ export function scheduleAt(schedule: RoutineSchedule, occurrenceAt: number, next
   if (schedule.type === "once") return { type: "once", at: nextAt };
   // a limit reset is not a time: moving its marker changes nothing
   if (schedule.type === "limit_reset") return { ...schedule };
+  // a connected-app routine has no time: dragging it changes nothing (1.0.11 APP-TRIGGERS)
+  if (schedule.type === "app_event") return { ...schedule };
   if (schedule.type === "interval") {
     return {
       type: "interval",
@@ -215,6 +217,8 @@ export function projectedRoutineItems(
       }
       continue;
     }
+    // a connected-app routine runs when its app sends an event: it has no place on the grid
+    if (routine.schedule.type === "app_event") continue;
     for (let day = startOfDay(from); day < to; day = addDays(day, 1)) {
       if (!routine.schedule.weekdays.includes(new Date(day).getDay())) continue;
       const at = atLocalTime(day, routine.schedule.time);

@@ -10,7 +10,7 @@ import { AlertTriangle, Check, KeyRound, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { displayArgs, hostOf, installStage, secretsInArgs, type HeaderChoice } from "@/lib/mcp-add-flow";
+import { displayArgs, hostOf, installStage, probeToolCount, secretsInArgs, type HeaderChoice } from "@/lib/mcp-add-flow";
 import { connectedSentence, draftView, probeSentence, type DraftCardState } from "@/lib/mcp-card-view";
 
 export interface McpDraftCardActions {
@@ -257,7 +257,7 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
 
       {view === "connected" && (
         <div>
-          <Heading tone="ok" icon={<Check size={16} />}>{connectedSentence(toolCount)}</Heading>
+          <Heading tone="ok" icon={<Check size={16} />}>{connectedSentence(probe && probe.ok ? probeToolCount(probe) : 0)}</Heading>
           {probe && probe.ok && toolCount > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-[12.5px] text-ink-secondary hover:text-ink">{t("mcp.card.tools")}</summary>

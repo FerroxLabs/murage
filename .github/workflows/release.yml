@@ -436,7 +436,7 @@ jobs:
             test "$(lipo -archs "$cloudflared")" = "$expected_arch" || {
               echo "::error::$cloudflared is not the expected $expected_arch executable"; exit 1; }
             if [ "$(uname -m)" = "$expected_arch" ]; then
-              "$cloudflared" version | grep -Fq "cloudflared version 2026.8.2 " || {
+              "$cloudflared" version | grep -Fq "cloudflared version 2026.10.3 " || {
                 echo "::error::$cloudflared has the wrong version"; exit 1; }
             fi
           done
@@ -724,6 +724,7 @@ jobs:
           pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -812,10 +813,10 @@ jobs:
           [ -f "$res/cloudflared/cloudflared.exe" ] || { echo "::error::missing cloudflared.exe"; exit 1; }
           [ -f "$res/licenses/cloudflared-LICENSE.txt" ] || { echo "::error::missing cloudflared license"; exit 1; }
           [ -f "$res/licenses/cloudflared-README.md" ] || { echo "::error::missing cloudflared provenance"; exit 1; }
-          expected=c29eee2b121f5436a642eed69fd9767da7e7b8c510fa50aaa130337f931357b5
+          expected=$(node --input-type=module -e "import { CLOUDFLARED_ASSETS } from './scripts/prepare-cloudflared.mjs'; console.log(CLOUDFLARED_ASSETS['win32-x64'].binarySha256)")
           actual=$(sha256sum "$res/cloudflared/cloudflared.exe" | cut -d' ' -f1)
           [ "$actual" = "$expected" ] || { echo "::error::cloudflared hash is $actual"; exit 1; }
-          "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.8.2 " || {
+          "$res/cloudflared/cloudflared.exe" version | grep -Fq "cloudflared version 2026.10.3 " || {
             echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -Eq '^owner: FerroxLabs$' "$res/app-update.yml" || { echo "::error::wrong update owner"; exit 1; }
@@ -879,7 +880,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     # id-token and attestations let the provenance step below sign with the
     # workflow's identity; the job still cannot write contents.
     permissions:
@@ -935,6 +936,8 @@ jobs:
           set -euo pipefail
           node scripts/stage-memory-model.mjs --target linux-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
       - name: Package with the frozen GEPA manifest
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           export MURAGE_REQUIRE_BUNDLED_MODEL=1
@@ -968,6 +971,18 @@ jobs:
           grep -Eq '^owner: FerroxLabs$' "$update" || { echo "::error::wrong update owner"; exit 1; }
           grep -Eq '^repo: murage-releases$' "$update" || { echo "::error::wrong update repo"; exit 1; }
           node scripts/release-guard.mjs update-feed release/linux-unpacked/resources/app-update.yml
+      - name: "Gate: capability database checked and exported on the candidate sha"
+        # CAPABILITY-DB-1010 section 8: the export the site and the help read is
+        # built from the same sha as the packages, and verify-linux-package.mjs
+        # below matches its db_rev to the bundled server.
+        env:
+          CANDIDATE_SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          node scripts/build-capability-db.mjs --check
+          node scripts/build-capability-db.mjs --export "release/capability-db-$v.json" --sha "$CANDIDATE_SHA"
+          test "$(node -p "require('./release/capability-db-$v.json').sha")" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: "Gate: local and off-site backup tools are the pinned x64 builds"
@@ -1017,6 +1032,9 @@ jobs:
           v=$(node -p "require('./package.json').version")
           cp "release/Murage-$v-amd64.deb" release/Murage-amd64.deb
           cp "release/Murage-$v-x86_64.AppImage" release/Murage.AppImage
+          # The capability export is NOT listed here: every installed Linux app's updater
+          # (electron/update-signature.mjs verifyLinuxUpdate) refuses a sums file with any
+          # line other than the .deb and the AppImage, so one extra line would stop updates.
           (cd release && sha256sum Murage-$v-amd64.deb Murage-$v-x86_64.AppImage > SHA256SUMS-ubuntu-x64.txt)
       - name: Sign the checksums
         # Audit C8: a checksum file served from the same place as the files it
@@ -1078,6 +1096,7 @@ jobs:
           path: |
             release/*.deb
             release/*.AppImage
+            release/capability-db-*.json
             release/SHA256SUMS-ubuntu-x64.txt
             release/SHA256SUMS-ubuntu-x64.txt.asc
             release/latest-linux.yml
@@ -1151,6 +1170,7 @@ jobs:
             "Murage-$VERSION-x86_64.AppImage"
             Murage-amd64.deb Murage-intel.dmg Murage-setup.exe
             Murage.AppImage Murage.dmg SHA256SUMS-ubuntu-x64.txt
+            "capability-db-$VERSION.json"
           )
           # The Linux checksum signature (audit C8): required whenever the
           # Linux job made one, so a signed release cannot lose it on the way.
@@ -1161,6 +1181,37 @@ jobs:
           done
           test "$(find assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = "${#required[@]}" || {
             echo "::error::unexpected release asset set"; find assets -maxdepth 1 -type f -print; exit 1; }
+      - name: Diff the capability database against the previous release
+        # CAPABILITY-DB-1010 section 5: added, retired, status and fact changes
+        # for the MurageSite note. Fails when an id from the previous export is
+        # neither an entry nor retired. The 1.0.10 bootstrap has no previous
+        # export and reports every entry as added. The diff goes to the job
+        # summary and its own artifact, never into the asset directory.
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous="$RUNNER_TEMP/capability-db-previous.json"
+          # A failed lookup fails the step: only a release that was read and carries no export is the bootstrap.
+          latest="$RUNNER_TEMP/previous-release.json"
+          curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" \
+            https://api.github.com/repos/FerroxLabs/murage-releases/releases/latest -o "$latest"
+          url=$(node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));if(!r.tag_name||!Array.isArray(r.assets))process.exit(2);const a=r.assets.find(x=>/^capability-db-.*\.json$/.test(x.name));process.stdout.write(a?a.browser_download_url:"")' "$latest")
+          if [ -n "$url" ]; then
+            curl -fsSL --retry 3 "$url" -o "$previous"
+          else
+            # Bootstrap: 1.0.10 is the first release with an export. A later release with none is a broken baseline.
+            case "$VERSION" in 1.0.10) echo "no previous capability export: bootstrap diff" ;; *) echo "::error::the previous release has no capability export"; exit 1 ;; esac
+          fi
+          node scripts/build-capability-db.mjs --diff "$previous" --current "assets/capability-db-$VERSION.json" --diff-out "$RUNNER_TEMP/capability-db-diff.md"
+          cat "$RUNNER_TEMP/capability-db-diff.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: capability-db-diff
+          path: ${{ runner.temp }}/capability-db-diff.md
+          if-no-files-found: error
+          retention-days: 30
       - name: Verify every feed hash against the actual bytes
         env:
           VERSION: ${{ needs.prepare.outputs.version }}

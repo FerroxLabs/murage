@@ -18,6 +18,7 @@ import { murageTool, renderMurageTools, murageToolHowTo, NEUTRAL_TOOL_SURFACE, t
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { renderSkillInstructions, type BundledSkill } from "./skill-library.ts";
 import type { LearnedBlock } from "./memory/lessons.ts";
+import { daylightSavingNote, utcOffsetLabel } from "./owner-time-zone.ts";
 
 export type ShapeGroup = "rules" | "identity" | "tools" | "turn";
 /** Where a row's Edit link goes. */
@@ -209,7 +210,7 @@ export const speakAsLine = (name: string): string =>
 /** Sentences with no leading space; a direct turn puts one in front. */
 export const TURN_PROMPTS = {
   credential: `If a supported API key is missing, use ${murageTool("request_credential")} to show the secure in-app card. Never ask the user to paste credentials into chat. If the owner has already pasted a key or named a file that holds it, use it rather than refusing, and mention the secure card for next time.`,
-  routines: `If the user explicitly asks to list or review, schedule, run, or change routines, use ${murageTool("list_routines")} and ${murageTool("propose_routine")} or ${murageTool("propose_routine_action")}. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation.`,
+  routines: `If the user explicitly asks to list or review, schedule, run, or change routines, use ${murageTool("list_routines")} and ${murageTool("propose_routine")} or ${murageTool("propose_routine_action")}. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation. A scheduled or manual run of a bot's own routine works in the routine's own conversation, and when it finishes Murage posts its result, files and images in the chat where the routine was set up (or the bot's main chat if it has none), unless the owner chose Routines list only in the routine editor; room and project routines, webhooks and messaging-app routines report where they always have. Never promise results go anywhere else.`,
   learn: `If the user sends /learn or asks you to save a reusable procedure from this work, use ${murageTool("skills_list")} and ${murageTool("skill_manage")}. Create new skills; update an existing learned skill only when the user explicitly asks to revise that exact name. Include source provenance and wait for the review card decision.`,
   /** Before the IMAGE_DELIVERY_PROMPT sentence for the turn. */
   imageTools: `To create or edit an image, use ${murageTool("generate_image")}; ${murageTool("list_image_models")} shows the configured connections, models and each model's own limits (prompt budget, sizes, references), so read it before writing a long prompt. Ask for a shape with aspect_ratio and resolution, or width and height. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with ${murageTool("resolve_image_reference")}. A prompt part or a set of references you reuse can be saved with ${murageTool("save_prompt_block")} and ${murageTool("save_reference_pack")}, then sent by name in prompt_blocks and reference_pack.`,
@@ -357,9 +358,35 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
  *  (withNowLine), where it is new every turn anyway. */
 export function nowPrompt(at: Date, timeZone: string): string {
   const parts = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...options }).format(at);
-  const offset = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
   const time = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hour12: true }).format(at).toLowerCase();
-  return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${offset.replace("GMT", "UTC") || "UTC"}).`;
+  // 1.0.8: a daylight saving change in the next 30 days or the last 7 gets one
+  // clause, so a time booked across it carries the offset it will have
+  // (a 10 November event at the October offset was an hour out on the dry run).
+  const dst = daylightSavingNote(at, timeZone);
+  return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${utcOffsetLabel(at, timeZone)}).${dst ? ` ${dst}` : ""} ${comingDaysLine(at, timeZone)}`;
+}
+
+const COMING_DAYS = 14;
+// Spelled here, not by Intl: ICU versions differ on short English months ("Sep" or "Sept").
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** "Coming days: Tue 27 Oct, Wed 28 Oct, ..." for the 14 days after today in
+ *  the owner's zone. 1.0.8 gate: given only today's weekday a bot worked the
+ *  rest out itself and called 28 October 2026 a Tuesday. Each day is counted
+ *  on the owner's calendar date (no hours added), so a daylight saving change
+ *  or a turn at 23:30 never shifts a weekday onto the wrong date. Fixed size:
+ *  it never grows with the chat. */
+export function comingDaysLine(at: Date, timeZone: string): string {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at);
+  const part = (type: string) => Number(today.find((item) => item.type === type)?.value);
+  const days: string[] = [];
+  for (let ahead = 1; ahead <= COMING_DAYS; ahead++) {
+    // that calendar date, stepped and read in UTC: a pure calendar step, no hours involved
+    const day = new Date(Date.UTC(part("year"), part("month") - 1, part("day") + ahead));
+    days.push(`${WEEKDAYS[day.getUTCDay()]} ${day.getUTCDate()} ${MONTHS[day.getUTCMonth()]}`);
+  }
+  return `Coming days: ${days.join(", ")}.`;
 }
 
 /** The turn's message with the date line on top. An engine command ("/name

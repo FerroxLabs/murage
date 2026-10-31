@@ -15,7 +15,7 @@ describe("browser unavailable note", () => {
     expect(markup).not.toContain("Browser unavailable this turn");
     expect(markup).toMatch(/<details[^>]*><summary[^>]*>Details<\/summary>[^]*agent-browser command timed out[^]*<\/details>/);
     expect(markup).not.toContain("<button");
-    expect(markup).not.toMatch(/Provider settings|hit a problem|Retry/);
+    expect(markup).not.toMatch(/Models &amp; engines|Provider settings|hit a problem|Retry/);
   });
 
   it("wraps at word boundaries, breaking only a token too long for the line", () => {

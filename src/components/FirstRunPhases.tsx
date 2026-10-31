@@ -39,9 +39,12 @@ import { X } from "lucide-react";
 import {
   FIRST_RUN_PHASES,
   closeFirstRun,
+  dismissFirstRunAllSet,
+  firstRunAllSet,
   firstRunPhaseRows,
   firstRunPhasesVisible,
   useFirstRunPhaseLatch,
+  useOnline,
 } from "@/lib/first-run";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
@@ -59,7 +62,8 @@ import { useSetupView } from "./FirstRunChrome";
  * adds no second request and no second opinion.
  */
 export function FirstRunPhases() {
-  const { dispatch } = useStore();
+  const { state, dispatch } = useStore();
+  const online = useOnline();
   const { view } = useSetupView();
   const bar = useFirstRunPhaseLatch();
   // ASKED HERE TOO, not only by the caller.
@@ -86,8 +90,22 @@ export function FirstRunPhases() {
     dispatch({ type: "select", id: chiefBotId });
   }, [bar.requests, chiefBotId, dispatch]);
 
+  // "All set" stays until the next navigation, then the bar closes itself
+  // (§1.8). The place they were on when it was said is remembered; moving
+  // anywhere else dismisses it.
+  const allSet = firstRunAllSet(view);
+  const allSetAt = useRef<string | null>(null);
+  useEffect(() => {
+    if (!allSet) {
+      allSetAt.current = null;
+      return;
+    }
+    if (allSetAt.current === null) allSetAt.current = state.selectedId;
+    else if (allSetAt.current !== state.selectedId) dismissFirstRunAllSet();
+  }, [allSet, state.selectedId]);
+
   if (desktop !== true || !view || !firstRunPhasesVisible(view, bar)) return null;
-  return <FirstRunPhasesBody view={view} onClose={closeFirstRun} macInset={capabilities.windowChrome === "mac-inset"} />;
+  return <FirstRunPhasesBody view={view} online={online} onClose={closeFirstRun} macInset={capabilities.windowChrome === "mac-inset"} />;
 }
 
 // A finished phase should LOOK finished at a glance, without reading it, and
@@ -108,8 +126,9 @@ const DESCRIPTION_ID = "first-run-phases-description";
  * The bar with nothing wired to it, so a test can hand it a view and read
  * what a person would read. Same split as the rest of this app's panels.
  */
-export function FirstRunPhasesBody({ view, onClose, macInset = false }: { view: SetupView; onClose: () => void; macInset?: boolean }) {
-  const rows = firstRunPhaseRows(view);
+export function FirstRunPhasesBody({ view, onClose, macInset = false, online = true }: { view: SetupView; onClose: () => void; macInset?: boolean; online?: boolean }) {
+  const rows = firstRunPhaseRows(view, online);
+  const allSet = firstRunAllSet(view);
   // On a Mac this bar is the top of the window, and the window's own buttons
   // sit inset over its left edge (the sidebar header clears them the same
   // way). Leave their width free and let the bar move the window; the pills
@@ -136,6 +155,7 @@ export function FirstRunPhasesBody({ view, onClose, macInset = false }: { view: 
         {FIRST_RUN_PHASES.footer}
       </p>
 
+      <span className="shrink-0 text-[12px] font-semibold text-ink" style={noDrag}>{FIRST_RUN_PHASES.title}</span>
       <ol className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5" style={noDrag}>
         {rows.map((row) => (
           <li
@@ -144,18 +164,32 @@ export function FirstRunPhasesBody({ view, onClose, macInset = false }: { view: 
             // word ARIA has for it rather than only in a border colour.
             aria-current={row.mark === "now" ? "step" : undefined}
             className={`rounded-full border px-2.5 py-1 text-[11.5px] leading-none ${PILL_TONE[row.mark] ?? "border-hairline/40 text-ink-secondary"}`}
+            // What a waiting pill is waiting on. A plain title until the Tip
+            // component lands (1.0.13); the same words are read out below.
+            title={row.waiting || undefined}
+            data-mark={row.mark}
           >
+            {/* The mark goes before the number: a tick for done, a small
+                clock for waiting. Decorative; the state is said in words. */}
+            {row.mark === "done" ? <span aria-hidden="true" className="mr-1">{"\u2713"}</span> : null}
+            {row.mark === "blocked" ? <span aria-hidden="true" className="mr-1">{"\u23F1"}</span> : null}
             {row.label}
-            {row.state ? <span className="sr-only">{`, ${row.state}`}</span> : null}
+            {row.state ? <span className="sr-only">{`, ${row.state}${row.waiting ? `: ${row.waiting}` : ""}`}</span> : null}
           </li>
         ))}
       </ol>
+      {allSet ? (
+        <span role="status" className="shrink-0 text-[12px] text-ink-secondary" style={noDrag}>
+          {FIRST_RUN_PHASES.allSet}
+        </span>
+      ) : null}
 
       <button
         type="button"
         onClick={onClose}
         style={noDrag}
         aria-label={FIRST_RUN_PHASES.close}
+        title={FIRST_RUN_PHASES.close}
         className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
       >
         <X size={14} aria-hidden="true" />

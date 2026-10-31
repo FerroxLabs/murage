@@ -19,20 +19,20 @@ Choose your computer below. Each link always downloads the latest published buil
   The Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing **More info → Run anyway**.
 </Callout>
 
-## Install an agent CLI
+## Install an AI app
 
-Murage needs at least one supported agent engine installed and signed in. Claude and Codex are the most common starting points.
+Murage needs at least one supported AI app installed on this computer and signed in. Claude and Codex are the most common starting points.
 
-1. Install the CLI from its official provider.
-2. Run it once in a terminal and complete sign-in.
+1. Install the AI app from the company that makes it.
+2. Open it once in a terminal and finish signing in.
 3. Restart Murage.
-4. Open the model picker. Available engines appear normally; unavailable engines explain what is missing.
+4. Open the model picker. Engines that are ready appear as usual; the others say what is missing.
 
-See [Agent engines](../providers/index.mdx) for the complete list and explicit path overrides.
+See [Agent engines](../providers/index.mdx) for the full list and for choosing an engine's location yourself.
 
 ## Build from source
 
-Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one authenticated agent CLI.
+For developers. Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one supported AI app you are signed in to (a CLI, or command-line app).
 
 ```bash
 git clone https://github.com/FerroxLabs/murage.git
@@ -41,7 +41,7 @@ corepack enable
 pnpm install --frozen-lockfile
 ```
 
-Run the harness, web UI, and Electron shell in separate terminals:
+Run the background service, the web screens and the desktop window in separate terminals:
 
 ```bash
 pnpm dev:server

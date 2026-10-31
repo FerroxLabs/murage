@@ -47,11 +47,16 @@ const TRANSIENT_PATTERNS: Array<{ pattern: RegExp; reason: TransientReason }> = 
   { pattern: /\btimeout(ed)?\b|\btimed? out\b/i, reason: "timeout" },
 ];
 
+/** Claude turned a login down because its organization switched plan access off. The text says "subscription", but
+ * nothing here is out of quota: another login is the way forward, so it reads as a sign-in matter. */
+export const ORG_LOGIN_OFF = /\boauth_org_not_allowed\b|\boauth authentication is currently not allowed\b|\borgani[sz]ation\b[^.\n]{0,60}\bdisabled\b[^.\n]{0,40}\bsubscription access\b/i;
+
 const TERMINAL_PATTERNS: Array<{ pattern: RegExp; reason: TerminalReason }> = [
   {
     pattern: /\b(?:40[13]|unauthorized|forbidden|invalid api key|missing bearer|authentication required|not logged in|logged out)\b/i,
     reason: "auth",
   },
+  { pattern: ORG_LOGIN_OFF, reason: "auth" },
   { pattern: /\b402\b|\bquota\b|\bbilling\b|\bsubscription\b/i, reason: "quota" },
   { pattern: /\bmodel not found\b|\bunknown model\b|\bdoes not exist for model\b|\bunsupported model\b/i, reason: "unknown_model" },
   { pattern: /\b400\b|\b422\b|\binvalid request\b|\bmalformed\b|\bunexpected status\b/i, reason: "invalid_request" },

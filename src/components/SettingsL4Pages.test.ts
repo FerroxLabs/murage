@@ -90,7 +90,10 @@ describe("the regrouped pages", () => {
   });
 
   it("keeps the About items 1.0.3 already built", () => {
-    for (const id of ["AboutVersionCard", "UpdatesRow", "WhatsNewRow", "SetupAgainRow", "ShortcutsRow", "SourceCodeRow", "DiagnosticsRow"]) expect(modal, id).toContain(`<${id} />`);
+    for (const id of ["AboutVersionCard", "WhatsNewRow", "SetupAgainRow", "ShortcutsRow", "SourceCodeRow", "DiagnosticsRow"]) expect(modal, id).toContain(`<${id} />`);
+    // 1.0.10: one update control on the page, in the version card (as the sidebar footer has one), not a second Updates card
+    expect(modal).not.toContain("<UpdatesRow />");
+    expect(modal).toContain('<Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>');
     expect(modal).toContain("versionCopy");
   });
 

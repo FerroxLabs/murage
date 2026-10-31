@@ -91,7 +91,7 @@ describe("Fuigo 1.0.32: acceptEdits approves workspace edits, so Murage never pa
     ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }, "default"],
     ["Auto routing asks to Murage", { fullAuto: true, enforced: { routeAsks: true as const } }, "default"],
     ["an asking instance", { fullAuto: false }, "default"],
-    ["Full access", { fullAuto: true }, "bypassPermissions"],
+    ["Full access", { fullAuto: true }, "default"],
   ])("%s spawns --permission-mode %s and never acceptEdits", async (_label, options, expected) => {
     const { argv } = await turn(options);
     expect(argv.filter((arg) => arg === "--permission-mode")).toHaveLength(1);
@@ -99,10 +99,12 @@ describe("Fuigo 1.0.32: acceptEdits approves workspace edits, so Murage never pa
     expect(argv).not.toContain("acceptEdits");
   }, 30000);
 
-  it("the Cloud launcher accepts only default and bypassPermissions for Fuigo", () => {
+  it("the Cloud launcher accepts only default for Fuigo and Grok", () => {
     const launcher = readFileSync(fileURLToPath(new URL("../../../deploy/cloud-home/murage-turn-launch.py", import.meta.url)), "utf8");
-    expect(launcher).toMatch(/^PERMISSION_MODES = one_of\("default", "bypassPermissions"\)$/m);
+    expect(launcher).toMatch(/^PERMISSION_MODES = one_of\("default"\)$/m);
     expect(launcher).toMatch(/"fuigoAgent": ArgvRule\(\{"--permission-mode": PERMISSION_MODES,/);
+    expect(launcher).toMatch(/"grokAgent": ArgvRule\(\{"--permission-mode": PERMISSION_MODES,/);
+    expect(launcher).not.toContain("fuigo_full_access");
   });
 });
 
@@ -148,7 +150,7 @@ describe("Fuigo subagents are off on every bot turn: a subagent definition canno
   });
 });
 
-describe("Fuigo 1.0.32: the bypass is client-side only, and Murage never sends it below Full access", () => {
+describe("Fuigo 1.0.32: the bypass is client-side only, and Murage never sends it, Full access included", () => {
   // set_mode resolves any id, "default" included, through the workspace's .fuigo/agents/<id>.md first (session_mode.rs,
   // discovery.rs), so even an advertised mode is never switched to. The other client-side bypasses: --always-approve,
   // --permission-mode bypassPermissions, and _meta.startupHints.permissionMode = alwaysAllow (resolution.rs).
@@ -158,6 +160,7 @@ describe("Fuigo 1.0.32: the bypass is client-side only, and Murage never sends i
     ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }],
     ["Auto routing asks to Murage", { fullAuto: true, enforced: { routeAsks: true as const } }],
     ["an asking instance", { fullAuto: false }],
+    ["Full access", { fullAuto: true }],
   ])("%s: no set_mode, no always-approve flag, no bypass mode, no startupHints", async (_label, options) => {
     const logs = mkdtempSync(join(tmpdir(), "murage-fuigo-rpc-"));
     homes.push(logs);

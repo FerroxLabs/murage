@@ -220,7 +220,7 @@ test("no registration endpoint gives the API key sentence", async () => {
     const h = harness({ fake, entries: { comfy: { url: fake.mcpUrl, auth: "oauth", local: "this-computer" } } });
     const result = await h.service.signIn("comfy");
     assert.equal(result.error, "no-registration");
-    assert.equal(result.message, "127.0.0.1 does not let apps sign in this way. Use an API key instead.");
+    assert.equal(result.message, "127.0.0.1 does not let apps sign in this way. Use a key instead.");
   } finally { await fake.close(); }
 });
 
