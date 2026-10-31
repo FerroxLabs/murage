@@ -1142,7 +1142,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Computers → Cloud computer and your own VPS",
     "where": "Murage docs → Computers → Cloud computer and your own VPS",
     "url": "https://murage.ai/docs/computers/cloud-and-vps#box-cloud-computer",
-    "text": "Add a Box API key in App Settings to provision an isolated hosted Linux desktop. The computer can sleep and wake, and supported sessions provide a live viewer for temporary human control. Trial accounts automatically retry creation with the provider's shorter auto-stop ceiling when required.\n\nBox is a third-party paid service after its trial. Murage stores the configured credential locally and does not expose it to the renderer."
+    "text": "Add a Box key in Settings to set up a separate Linux desktop that runs online. The computer can sleep and wake, and supported sessions provide a live viewer for temporary human control. On a Box trial account, Murage retries with Box's shorter automatic stop time when it needs to.\n\nBox is a third-party paid service after its trial. Murage stores the configured credential locally and does not expose it to the renderer."
   },
   {
     "id": "computers/cloud-and-vps#bring-your-own-vps",
@@ -1210,7 +1210,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
     "url": "https://murage.ai/docs/computers/local-computer#ubuntu",
-    "text": "Ubuntu 24.04 GNOME host control is temporarily disabled while the real-seat input-safety blocker in issue #345 is resolved. Packaged builds retain the pinned runtime for reproducible review, but Murage does not start it and clears legacy opt-ins. Chat, screen preview, Cloud, and Local VM remain available. Do not start the bundled driver manually as a workaround."
+    "text": "Local control works on Ubuntu 24.04 GNOME with Xorg, as a Beta. Open the Computer panel, press Enable local control (Beta) and let the Cua Driver checks finish. Every local action asks you first. On Wayland, local control stays off until its input protection is validated: sign out, choose Ubuntu on Xorg at the login screen, and This computer is ready to use. Chat, screen preview, Cloud and Local VM work on both."
   },
   {
     "id": "computers/local-computer#safety-model",
@@ -1274,26 +1274,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "connected-apps#overview",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Sidebar → Apps",
     "url": "https://murage.ai/docs/connected-apps",
-    "text": "Open Connected apps from the sidebar (Sidebar → Apps, in the row under Needs you), choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use."
+    "text": "Open Connected apps from the sidebar (Sidebar → Apps, in the row under Needs you), choose a service, and sign in to it in your normal browser. Murage then lets your bots use that service, on every engine that supports connected apps."
   },
   {
     "id": "connected-apps#connecting-an-app",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "Connecting an app",
     "breadcrumb": "Murage docs → Connected apps",
-    "where": "Settings → Models",
+    "where": "Sidebar → Apps",
     "url": "https://murage.ai/docs/connected-apps#connecting-an-app",
-    "text": "Connected apps run through Flux Router. Add your Flux Router key under Settings → Models and the apps unlock. There is no separate key to find or paste.\n\n1. Open Connected apps.\n2. Search for Gmail, GitHub, Slack, Notion, or another toolkit.\n3. Select Connect.\n4. Finish OAuth in the browser window that opens.\n5. Return to the app and ask a bot to use the service.\n\nThe installation identity is stored using Electron's operating-system-backed secure storage. Provider sign-in tokens stay with the connected-apps service and are not written into bot prompts or the renderer."
+    "text": "1. Open Sidebar → Apps (Connected apps).\n2. Search for Gmail, GitHub, Slack, Notion, or another app.\n3. Select Connect.\n4. Sign in on the service's own page in the browser window that opens. Murage never sees your password.\n5. Return to the app and ask a bot to use the service.\n\nConnected apps run through Flux Router. Add your Flux Router key under Settings → Models & engines and the apps unlock. There is no separate key to find or paste.\n\nMurage keeps its own sign-in in your computer's secure storage. Your sign-ins to each service stay with the connected-apps service: they are never put into a bot's instructions or shown on screen."
   },
   {
     "id": "connected-apps#if-you-used-a-key-of-your-own-before",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "If you used a key of your own before",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
@@ -1303,7 +1303,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "connected-apps#letting-a-bot-use-connected-apps",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "Letting a bot use connected apps",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Bot settings → Access → Allow this bot to use connected apps",
@@ -1313,32 +1313,32 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "connected-apps#bots-stay-connected",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "Bots stay connected",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Troubleshooting → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#bots-stay-connected",
-    "text": "Each bot's turn checks the connected-apps service again before it starts, so a short network blip no longer leaves your bots without their apps until Murage restarts. This was fixed in 0.1.60. If a bot still says it has no connected apps, see Troubleshooting → Connected apps."
+    "text": "Each bot checks the connected-apps service again before every reply, so your bots get their apps back on their own after a short network drop. If a bot says it has no connected apps, see Troubleshooting → Connected apps."
   },
   {
     "id": "connected-apps#multiple-accounts",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "Multiple accounts",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#multiple-accounts",
-    "text": "Connect more than one account for the same toolkit and give each a clear alias such as work, personal, or client-acme. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection."
+    "text": "Connect more than one account for the same app and give each a clear alias such as work, personal, or client-acme. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection."
   },
   {
     "id": "connected-apps#disconnecting",
     "title": "Connected apps",
-    "description": "Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.",
+    "description": "Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.",
     "heading": "Disconnecting",
     "breadcrumb": "Murage docs → Connected apps",
     "where": "Murage docs → Connected apps",
     "url": "https://murage.ai/docs/connected-apps#disconnecting",
-    "text": "Disconnecting an account revokes the upstream grant. It does not only hide the account in the local UI. Other accounts for the same toolkit remain connected.\n\nYour Flux Router key is all connected apps need."
+    "text": "Disconnecting an account takes back the permission you gave that service. It does not only hide the account in Murage. Other accounts for the same app stay connected.\n\nYour Flux Router key is all connected apps need."
   },
   {
     "id": "connected-apps/multiple-accounts#overview",
@@ -1545,7 +1545,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
-    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through Finder, scripts and code;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
+    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through code in the command itself;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
   },
   {
     "id": "features/approvals-and-inspector#no-limits",
@@ -1685,7 +1685,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Attachments, search, and message tools",
     "where": "Murage docs → Features → Attachments, search, and message tools",
     "url": "https://murage.ai/docs/features/attachments-and-search#message-actions",
-    "text": "- Pin durable decisions or instructions.\n- Copy a response without selecting the message manually.\n- React to leave lightweight feedback in shared conversations.\n- Retry when a transient provider or connection failure interrupts a response.\n- Read aloud when voice output is configured.\n\nCrop tokens, email addresses, private repository names, and customer data before attaching an image to any cloud-backed model."
+    "text": "- Pin durable decisions or instructions.\n- Copy a response without selecting the message manually.\n- React to leave lightweight feedback in shared conversations.\n- Retry when a short problem with your AI service or your connection stops a response.\n- Read aloud when voice output is configured.\n\nCrop out keys, sign-in codes, email addresses, private project names, and customer data before attaching an image to any cloud-backed model."
   },
   {
     "id": "features/automation#routines",
@@ -1706,6 +1706,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Features → Routines and webhooks",
     "url": "https://murage.ai/docs/features/automation#one-conversation-per-routine",
     "text": "Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now."
+  },
+  {
+    "id": "features/automation#where-results-go",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Where results go",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Advanced → Send results to",
+    "url": "https://murage.ai/docs/features/automation#where-results-go",
+    "text": "When a routine run finishes, its result comes back to the chat where you set the routine up: the bot's final reply, the files and images it saved, and Open run for the whole run. A routine with no chat of its own (one made on the calendar), or whose chat was deleted, posts to the bot's main chat instead. A run that fails or is missed posts one line that says what to do next.\n\nTo keep results out of chat, open the routine editor and set Advanced → Send results to to Routines list only. Each run still stays in the routine's own conversation and on the Routines list. Room and project routines, webhooks and messaging-app routines keep their own delivery."
   },
   {
     "id": "features/automation#routine-approval-level",
@@ -1765,7 +1775,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
     "url": "https://murage.ai/docs/features/automation#webhook-triggers",
-    "text": "Webhooks start the same queued task executor from an external HTTP request. They are independent from schedules and use a dedicated receiver on 127.0.0.1:8800 by default. A turn started by a webhook asks for approvals the way Auto does, because someone other than you wrote its input.\n\nThe receiver exposes only health and secret hook routes. It does not expose the broader Murage API.\n\nBearer authentication is preferred because it keeps the secret out of URLs and most access logs. A capability URL is available for senders that cannot set headers."
+    "text": "A webhook is a trigger link: a private web address another app calls to start work for a bot. It runs the same kind of task as a routine, without a schedule. By default Murage listens for these calls only on this computer (127.0.0.1:8800). Work started by another app's trigger link asks for approvals the way Auto does, because someone other than you wrote what it says.\n\nThat listener answers only a status check and your private trigger links. Nothing else in Murage can be reached through it.\n\nFor developers: prefer sending the secret in a Bearer header, which keeps it out of web addresses and most logs. If the sending app cannot set headers, use the link with the secret inside it instead."
   },
   {
     "id": "features/automation#reaching-a-local-webhook",
@@ -1775,7 +1785,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Routines and webhooks",
     "where": "Murage docs → Features → Routines and webhooks",
     "url": "https://murage.ai/docs/features/automation#reaching-a-local-webhook",
-    "text": "To accept events from the public internet, proxy only the webhook receiver through a narrowly configured relay or tunnel. Do not expose the main harness port.\n\nLocal routines and webhook deliveries are not hosted jobs. Closing the desktop app stops the local executor and receiver."
+    "text": "For developers: to accept calls from the internet, pass only the trigger link listener through a tightly set up relay or tunnel. Never open Murage's main connection (port) to the internet.\n\nRoutines and trigger links on this computer do not run online. Closing the desktop app stops them until you open it again."
   },
   {
     "id": "features/bot-tools#how-bots-use-tools",
@@ -2035,7 +2045,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Bots working together",
     "where": "Murage docs → Features → Bots working together",
     "url": "https://murage.ai/docs/features/bots-working-together#full-access-and-contacting-bots",
-    "text": "Under Full access or No limits, the card is skipped in conversations you start and in routines at that level, even if Ask me before contacting other bots is on. Webhook turns still stop and ask. Switch the bot to Auto to be asked every time."
+    "text": "Under Full access or No limits, the card is skipped in conversations you start and in routines at that level, even if Ask me before contacting other bots is on. Work started by another app's trigger link still stops and asks. Switch the bot to Auto to be asked every time."
   },
   {
     "id": "features/bots-working-together#can-talk-to",
@@ -2134,7 +2144,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "url": "https://murage.ai/docs/features/chat-and-teams#bots-and-tasks",
-    "text": "A bot is a durable agent identity. A task is one conversation with that bot and has its own transcript, provider session, approvals, costs, and state.\n\nUse separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported providers can be steered while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing."
+    "text": "A bot is a lasting helper with its own name and settings. A task is one conversation with that bot, with its own messages, session with your AI service, approvals, costs and status.\n\nUse separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported AI apps can take new directions while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing."
   },
   {
     "id": "features/chat-and-teams#rooms",
@@ -2144,7 +2154,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "+ → New Channel",
     "url": "https://murage.ai/docs/features/chat-and-teams#rooms",
-    "text": "Rooms (channels) bring several bots into one conversation. Make one from + → New Channel, name it, and pick its bots. Each participant keeps its own agent process and provider state, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.\n\nIn a room's details, Instructions are followed by every bot in it, Who answers decides where a plain message goes, and Folder is where every bot in it runs file and shell tools. Who answers is Lead (one named bot), Everyone responds, or Only when mentioned. Naming a bot with @ always beats this setting.\n\nA room can have its own team heading in the sidebar, or none.…"
+    "text": "Rooms (channels) bring several bots into one conversation. Make one from + → New Channel, name it, and pick its bots. Each bot keeps its own AI app and its own session with its AI service, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.\n\nIn a room's details, Instructions are followed by every bot in it, Who answers decides where a plain message goes, and Folder is where every bot in it runs file and shell tools. Who answers is Lead (one named bot), Everyone responds, or Only when mentioned. Naming a bot with @ always beats this setting.…"
   },
   {
     "id": "features/chat-and-teams#delegation",
@@ -2164,7 +2174,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "where": "Murage docs → Features → Chat, tasks, rooms, and teams",
     "url": "https://murage.ai/docs/features/chat-and-teams#rewind-and-branches",
-    "text": "Editing an earlier message creates a new conversation path. Murage avoids resuming stale provider sessions after a rewind, so the next turn follows the visible branch rather than hidden abandoned state."
+    "text": "Editing an earlier message starts a new branch of the conversation. After a rewind, Murage does not pick up the old session with your AI service, so the next turn follows the visible branch rather than hidden abandoned state."
   },
   {
     "id": "features/chat-and-teams#memory-and-working-folders",
@@ -2274,7 +2284,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → House rules and About me",
     "where": "Murage docs → Features → House rules and About me",
     "url": "https://murage.ai/docs/features/house-rules-and-about-me#built-in-protections",
-    "text": "Murage's built-in protections are not part of the house rules text and always apply, even with house rules off. The page lists them under \"Always on, even with house rules off\":\n- In Ask and Auto, bots stop and ask you before they delete things, read your keys and passwords, move money or message people for you. They never ask you to paste a key into chat.\n- A message from a channel, a webhook or a web page can't approve anything or give a bot more access.\n\nTo leave house rules out for one bot, switch off the House rules row in What shapes (bot name)."
+    "text": "Murage's built-in protections are not part of the house rules text and always apply, even with house rules off. The page lists them under \"Always on, even with house rules off\":\n- In Ask and Auto, bots stop and ask you before they delete things, read your keys and passwords, move money or message people for you. They never ask you to paste a key into chat.\n- A message from a channel, another app's trigger link or a web page can't approve anything or give a bot more access.\n\nTo leave house rules out for one bot, switch off the House rules row in What shapes (bot name)."
   },
   {
     "id": "features/house-rules-and-about-me#about-me",
@@ -2403,7 +2413,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
     "url": "https://murage.ai/docs/features",
-    "text": "Murage turns agent CLIs into a messaging-style workspace. The harness normalizes each provider into one event stream, so the interface can treat different agents consistently while preserving their native strengths."
+    "text": "Murage turns the AI apps on your computer into one chat workspace. It shows every AI app's work the same way, while each one keeps its own strengths."
   },
   {
     "id": "features#agents-and-conversations",
@@ -2423,7 +2433,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
     "url": "https://murage.ai/docs/features#computers-and-tools",
-    "text": "- Local computer control with explicit opt-in and approval boundaries on supported hosts; Ubuntu currently fails closed under an input-safety hold\n- Isolated Local VM desktops through Docker or Podman\n- Hosted Box cloud computers\n- A self-hosted Linux VPS backend over Docker's SSH transport\n- Live previews and in-app desktop takeover where the backend supports it\n- USB Android control through the Phone Harness skill\n- Connected apps, including multiple labeled accounts per toolkit"
+    "text": "- Local computer control with explicit opt-in and approval boundaries on supported hosts, including Ubuntu 24.04 GNOME on Xorg as a Beta\n- Isolated Local VM desktops through Docker or Podman\n- Hosted Box cloud computers\n- A self-hosted Linux VPS backend over Docker's SSH transport\n- Live previews and in-app desktop takeover where the backend supports it\n- USB Android control through the Phone Harness skill\n- Connected apps, including multiple labeled accounts per toolkit"
   },
   {
     "id": "features#automation",
@@ -2433,7 +2443,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
     "url": "https://murage.ai/docs/features#automation",
-    "text": "- One-time and recurring routines, each with its own approval level\n- Approval levels Ask, Auto, Full access and No limits, with Always allow choices you can review and remove\n- An Inbox for everything that needs you, and approvals from the tray menu\n- Webhook-triggered tasks with dedicated secret endpoints\n- Fresh task context and durable run receipts for each automated run\n- Notifications for work that needs attention"
+    "text": "- One-time and recurring routines, each with its own approval level\n- Approval levels Ask, Auto, Full access and No limits, with Always allow choices you can review and remove\n- An Inbox for everything that needs you, and approvals from the tray menu\n- Tasks another app can start with its own private trigger link\n- Fresh task context and durable run receipts for each automated run\n- Notifications for work that needs attention"
   },
   {
     "id": "features#voice-and-access",
@@ -2451,106 +2461,106 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "A map of the capabilities currently available in Murage.",
     "heading": "Desktop experience",
     "breadcrumb": "Murage docs → Feature overview",
-    "where": "Murage docs → Feature overview",
+    "where": "Settings → Devices",
     "url": "https://murage.ai/docs/features#desktop-experience",
-    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, while host control is temporarily disabled under an input-safety hold. Windows installers are not yet signed. Reaching your bots from a phone is on the roadmap, over your own tailnet in a browser; the iOS companion was retired before release."
+    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, and local control works on Ubuntu 24.04 Xorg as a Beta. Windows release installers are signed. To reach your bots from your phone, pair it under Settings → Devices."
   },
   {
     "id": "features/mcp-servers#overview",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Connected apps → MCP servers",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Connected apps → Connected tools",
     "url": "https://murage.ai/docs/features/mcp-servers",
-    "text": "An MCP server gives your bots extra tools, such as running a workflow in ComfyUI or searching your notes. You add one in Connected apps → MCP servers. Tool calls still follow your normal approval settings, and new servers stay off until you turn them on."
+    "text": "A connected tool lets your bots use another app, such as running a workflow in ComfyUI or searching your notes. Many services call this an MCP server. You add one in Connected apps → Connected tools. Each tool still follows your normal approval settings, and a new one stays off until you turn it on."
   },
   {
     "id": "features/mcp-servers#add-a-server",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Add a server",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#add-a-server",
-    "text": "Press Add server and paste one of three things into the box, then press Continue.\n- A link. Most services give you one, for example https://cloud.comfy.org/mcp. Murage connects to it and works out what it needs.\n- A config snippet. Paste the JSON from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.\n- A command. Paste a command such as npx -y @scope/server. It runs on this computer.\n\nYou do not choose the type. Murage works it out from what you paste."
+    "text": "Press Add server and paste one of three things into the box, then press Continue.\n- A link. Most services give you one, for example https://cloud.comfy.org/mcp. Murage connects to it and works out what it needs.\n- Settings text. Paste the block of settings from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.\n- A command. Paste a command such as npx -y @scope/server. It runs on this computer.\n\nYou do not choose the type. Murage works it out from what you paste."
   },
   {
-    "id": "features/mcp-servers#sign-in-or-use-an-api-key",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
-    "heading": "Sign in or use an API key",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.ai/docs/features/mcp-servers#sign-in-or-use-an-api-key",
-    "text": "If a link needs you to sign in, Murage shows a \"Sign in to (site)\" button. It opens your browser, you sign in there, and Murage takes it from there. Murage keeps the sign-in, renews it when it can, and never gives it to a bot.\n\nIf the service takes an API key instead, press Use an API key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat."
+    "id": "features/mcp-servers#sign-in-or-use-a-key",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
+    "heading": "Sign in or use a key",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
+    "url": "https://murage.ai/docs/features/mcp-servers#sign-in-or-use-a-key",
+    "text": "If a link needs you to sign in, Murage shows a \"Sign in to (site)\" button. It opens your browser, you sign in there, and Murage takes it from there. Murage keeps the sign-in, renews it when it can, and never gives it to a bot.\n\nIf the service gives you a key instead (often called an API key), press Use a key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat."
   },
   {
     "id": "features/mcp-servers#servers-on-this-computer-or-your-network",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Servers on this computer or your network",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#servers-on-this-computer-or-your-network",
     "text": "A link that points at this computer, or at a device on your local network, asks you to confirm first. Only continue if you started that server yourself or you know what runs there. Murage checks the address again on every connection."
   },
   {
     "id": "features/mcp-servers#what-test-tells-you",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "What Test tells you",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#what-test-tells-you",
-    "text": "Test connects and lists the tools it finds. When it cannot, it says why in plain words.\n- Needs you to sign in. Press Sign in.\n- Needs an API key, or did not accept it. Check the key and try again.\n- Sign-in has ended. Sign in again. Some services end a sign-in after a while.\n- Could not find it, or did not accept the connection. Check the link and your internet connection.\n- Nothing answers as an MCP server. Check that you copied the whole link.\n- Has moved. Murage offers the new link.\n- Did not answer in time. Try again in a moment.\n\nThe first time you run a command that downloads before it starts, such as npx or uvx, Test waits longer and shows how far it got.…"
+    "text": "Test connects and lists the tools it finds. When it cannot, it says why in plain words.\n- Needs you to sign in. Press Sign in.\n- Needs a key, or did not accept it. Check the key and try again.\n- Sign-in has ended. Sign in again. Some services end a sign-in after a while.\n- Could not find it, or did not accept the connection. Check the link and your internet connection.\n- Nothing answers as a connected tool. Check that you copied the whole link.\n- Has moved. Murage offers the new link.\n- Did not answer in time. Try again in a moment.\n\nThe first time you run a command that downloads before it starts, such as npx or uvx, Test waits longer and shows how far it got.…"
   },
   {
     "id": "features/mcp-servers#turn-it-on-and-who-can-use-it",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Turn it on, and who can use it",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#turn-it-on-and-who-can-use-it",
-    "text": "When Test passes, press Turn on for my bots. Bots that can use your own MCP servers get the tools in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.\n\nOnly you can use them. People who message your bots on Telegram, Slack or Discord never get your servers.\n\nIf a sign-in ends while a bot is working, the chat shows a Sign in card. On the computer running Murage the button signs you in and the bot carries on. On your phone the card says to finish sign-in on the computer running Murage."
+    "text": "When Test passes, press Turn on for my bots. Bots that can use your own connected tools get them in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.\n\nOnly you can use them. People who message your bots on Telegram, Slack or Discord never get your connected tools.\n\nIf a sign-in ends while a bot is working, the chat shows a Sign in card. On the computer running Murage the button signs you in and the bot carries on. On your phone the card says to finish sign-in on the computer running Murage."
   },
   {
     "id": "features/mcp-servers#secrets-in-a-command-server",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Secrets in a command server",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#secrets-in-a-command-server",
     "text": "A command server's environment values, such as a token, are kept by the Murage desktop app, not in your settings file. If you change the command or its arguments, Murage asks whether to keep those saved values for the new command or clear them. It never decides for you. Do not put a key in a command's arguments: they are saved as plain text. If you paste one there, Murage warns you and offers to move it to an environment value."
   },
   {
     "id": "features/mcp-servers#antigravity-and-your-own-servers",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Antigravity and your own servers",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#antigravity-and-your-own-servers",
     "text": "Antigravity reads its tools from one file shared by everything on this computer: the Antigravity config file in your home folder (.gemini/config/mcp_config.json). When Antigravity runs with full auto, Murage writes your servers into that file for the length of the turn, and that includes their environment values and the turn's own access token. Any Antigravity session you start yourself during that turn can read them. Murage puts the file back when the turn ends, and it removes anything it left behind if a turn ended in a crash. Entries of yours whose names start with murage-custom- are treated as Murage's and are not kept.…"
   },
   {
-    "id": "features/mcp-servers#script-access-for-one-bot",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
-    "heading": "Script access for one bot",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.ai/docs/features/mcp-servers#script-access-for-one-bot",
-    "text": "A script or an outside agent on your computer, such as the Murage MCP server or the control command line, can reach one of your bots when you make script access for it. In Settings, switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. Turn the switch off, or remove a single access, and that token stops working at once.\n\nScript access reaches only the bot you picked. It cannot open other bots, rooms or search."
+    "id": "features/mcp-servers#use-murage-from-claude-code-codex-and-other-apps",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
+    "heading": "Use Murage from Claude Code, Codex and other apps",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Settings → Devices",
+    "url": "https://murage.ai/docs/features/mcp-servers#use-murage-from-claude-code-codex-and-other-apps",
+    "text": "Murage includes its own MCP server, so Claude Code, Codex or any other MCP app on this computer can talk to one of your bots. First make script access for that bot: open Settings → Devices, then Advanced, then Scripts and other apps. Switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. On a headless install, the same card is under Settings → General in your browser.\n\nIn the other app, add Murage's MCP server as a command server. The command is the Murage app itself with the bundled script as its argument:…"
   },
   {
     "id": "features/mcp-servers#remove-a-server",
-    "title": "MCP servers",
-    "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
+    "title": "Connected tools (MCP servers)",
+    "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Remove a server",
-    "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
+    "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
+    "where": "Murage docs → Features → Connected tools (MCP servers)",
     "url": "https://murage.ai/docs/features/mcp-servers#remove-a-server",
     "text": "Press Remove and confirm. Your bots lose its tools. Murage also signs you out of the service when the service allows it. When it does not, Murage forgets the sign-in on this computer and tells you how to cut access completely from the service's own account settings."
   },
@@ -2573,6 +2583,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Memory",
     "url": "https://murage.ai/docs/features/memory-and-learning#memory",
     "text": "Each bot keeps plain-text memory that you can read, correct and delete. Open Settings → Memory to search saved knowledge, see where each item came from and choose who can use it. Memory mode is Off, Capture only, Capture and recall, or Paused. Recalled context is sent to the engine you choose. Learning needs memory to be on."
+  },
+  {
+    "id": "features/memory-and-learning#learn-about-me",
+    "title": "Memory and learning",
+    "description": "What bots remember, how a bot learns from your feedback, the Learned chip, the Learning screen, suggestions, marking wins and losses, and how to undo or turn learning off.",
+    "heading": "Learn about me",
+    "breadcrumb": "Murage docs → Features → Memory and learning",
+    "where": "Settings → Memory → Learn about me",
+    "url": "https://murage.ai/docs/features/memory-and-learning#learn-about-me",
+    "text": "Bring over what another assistant already knows about you. Open Settings → Memory → Learn about me as the owner: in the Murage desktop app, or on your Murage Cloud home from your own signed-in phone or browser. A phone paired with a computer at home does not show it. Copy the prompt, run it in the assistant you used before, and paste its answer back. Murage sorts the answer into lines under Instructions for every bot, About me, and Projects and preferences, and you decide line by line: Keep, Keep all or Skip. Only the lines you keep become memories, each labelled with the assistant it came from. Memory needs to be on to keep lines.…"
   },
   {
     "id": "features/memory-and-learning#learning-from-your-feedback",
@@ -2672,7 +2692,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps",
     "url": "https://murage.ai/docs/features/messaging-apps#what-messaging-apps-do",
-    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Approvals that matter stay in Murage."
+    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Telegram, Slack and Discord bring approval cards to you with buttons, so you can answer from your phone. WhatsApp approvals stay in Murage."
   },
   {
     "id": "features/messaging-apps#what-you-need-first",
@@ -2682,7 +2702,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#what-you-need-first",
-    "text": "Each connection pairs with your Chief of Staff, so pick one first. Every connection is private to you: only the owner account you name can pair and send messages. Tokens are stored encrypted on this computer and are never shown again."
+    "text": "Each connection pairs with your Chief of Staff, so pick one first. Every connection is private to you: only the owner account you name can pair and send messages. The private codes you paste are kept encrypted on this computer and never shown again."
   },
   {
     "id": "features/messaging-apps#telegram-set-up",
@@ -2692,7 +2712,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps → Telegram",
     "url": "https://murage.ai/docs/features/messaging-apps#telegram-set-up",
-    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.\n2. In Settings → Messaging apps → Telegram, paste the token and press Save token.\n3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot."
+    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. BotFather gives you a private code for your new bot, which Telegram calls the bot token. Copy it.\n2. In Settings → Messaging apps → Telegram, paste it into Bot token and press Save token.\n3. Press Pair with Chief to get a pairing code. Send /pair followed by that code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Buttons only you can use let you allow once or deny what a bot is waiting on (see Approvals from your phone). Use Revoke to disconnect, or Replace token to paste a new code from BotFather for the same bot."
   },
   {
     "id": "features/messaging-apps#slack-set-up",
@@ -2712,7 +2732,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#discord-set-up",
-    "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
+    "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name, not server messages.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
   },
   {
     "id": "features/messaging-apps#whatsapp-set-up",
@@ -2720,9 +2740,19 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "WhatsApp: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "where": "Settings → Channels → WhatsApp",
+    "where": "Settings → Messaging apps → WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#whatsapp-set-up",
-    "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Channels → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
+    "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Messaging apps → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
+  },
+  {
+    "id": "features/messaging-apps#approvals-from-your-phone",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "heading": "Approvals from your phone",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "url": "https://murage.ai/docs/features/messaging-apps#approvals-from-your-phone",
+    "text": "When a bot needs your OK, Telegram, Slack and Discord send the approval card to your private chat with buttons, and only your own presses count. Every card offers Approve once and Deny. On Telegram, a stop-line card (deleting outside the bot's folder, paying, messaging someone new) also offers Allow for this task, for the same kind of action in the same place. A card about controlling a computer offers Deny only, and you approve it in Murage. A card too long to show in full stays in Murage."
   },
   {
     "id": "features/messaging-apps#if-a-connection-stops",
@@ -3196,51 +3226,51 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "getting-started/configuration#overview",
     "title": "Configuration",
-    "description": "Understand engine paths, credentials, and the local configuration boundary.",
+    "description": "Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
     "url": "https://murage.ai/docs/getting-started/configuration",
-    "text": "Most users configure Murage from the app. The packaged desktop validates credentials before saving them and stores supported secrets with the operating system's secure storage."
+    "text": "Most people set Murage up from the app. The desktop app checks what you enter before saving it (for some services, such as Box and voice, it also tests the key), and keeps keys in your computer's own secure storage."
   },
   {
     "id": "getting-started/configuration#engine-discovery",
     "title": "Configuration",
-    "description": "Understand engine paths, credentials, and the local configuration boundary.",
+    "description": "Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.",
     "heading": "Engine discovery",
     "breadcrumb": "Murage docs → Getting started → Configuration",
-    "where": "Settings → Engines",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/getting-started/configuration#engine-discovery",
-    "text": "Murage checks the inherited process path, common install locations, and the login shell. If an engine is installed somewhere unusual, open Settings → Engines and choose its executable explicitly.\n\nExplicit paths are useful when you:\n- keep multiple CLI versions;\n- use a wrapper script;\n- installed an engine in a directory desktop apps cannot discover; or\n- launch Murage from a Windows shortcut or Linux application menu with a different environment from your terminal."
+    "text": "Murage looks for your AI apps in the usual install places and in the same places your terminal looks. If an engine is installed somewhere unusual, open Settings → Models & engines and use Choose location… on that engine.\n\nChoosing the location yourself helps when you:\n- keep more than one version of an AI app;\n- start the app through your own wrapper;\n- installed it in a folder desktop apps cannot see; or\n- open Murage from a Windows shortcut or a Linux app menu, which can see different settings from your terminal."
   },
   {
-    "id": "getting-started/configuration#optional-credentials",
+    "id": "getting-started/configuration#optional-keys",
     "title": "Configuration",
-    "description": "Understand engine paths, credentials, and the local configuration boundary.",
-    "heading": "Optional credentials",
+    "description": "Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.",
+    "heading": "Optional keys",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
-    "url": "https://murage.ai/docs/getting-started/configuration#optional-credentials",
-    "text": "| Credential | Enables |\n|---|---|\n| Flux Router key | Models and connected apps |\n| Box API key | Hosted Linux computers |\n| ElevenLabs API key | Spoken replies and voice mode |\n| OpenCode API key | Optional alternative to an existing OpenCode provider login |\n\nLocal agent chat works without these credentials."
+    "url": "https://murage.ai/docs/getting-started/configuration#optional-keys",
+    "text": "| Key | What it turns on |\n|---|---|\n| Flux Router key | Models and connected apps |\n| Box key | Linux computers that run online |\n| ElevenLabs key | Spoken replies and voice mode |\n| OpenCode key | Another way to use OpenCode, instead of your OpenCode sign-in |\n\nChatting with the AI apps on this computer works without any of these keys."
   },
   {
     "id": "getting-started/configuration#environment-configuration",
     "title": "Configuration",
-    "description": "Understand engine paths, credentials, and the local configuration boundary.",
+    "description": "Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.",
     "heading": "Environment configuration",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
     "url": "https://murage.ai/docs/getting-started/configuration#environment-configuration",
-    "text": "Source and headless runs can set supported environment variables before starting the harness. The app-level settings are preferable for normal packaged use because they validate inputs and keep secret values out of the renderer."
+    "text": "For developers who run Murage from source or without a window: you can set supported startup settings (environment variables, settings a program reads when it starts) before starting Murage's background service. In the normal desktop app, use Settings instead: it checks what you enter and keeps keys out of the window's own code."
   },
   {
     "id": "getting-started/configuration#per-instance-claude-tool-scope",
     "title": "Configuration",
-    "description": "Understand engine paths, credentials, and the local configuration boundary.",
+    "description": "Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.",
     "heading": "Per-instance Claude tool scope",
     "breadcrumb": "Murage docs → Getting started → Configuration",
     "where": "Murage docs → Getting started → Configuration",
     "url": "https://murage.ai/docs/getting-started/configuration#per-instance-claude-tool-scope",
-    "text": "Source and headless installations can give separate Claude instances different built-in tool sets in ~/.murage/config.json:\n\ntools selects Claude's available built-ins; an explicit empty array disables every built-in, while omitting it keeps Claude's default set. disallowedTools applies Claude tool-name patterns as an additional deny list. These settings do not grant or pre-approve MCP integrations, which remain controlled by the instance's mounted integrations and Murage permission flow.\n\nA prompt becomes conversation history and may be sent to an agent provider. Use App Settings or environment configuration for credentials."
+    "text": "For developers who run Murage from source or without a window: separate Claude engines can get different built-in tools in Murage's settings file (~/.murage/config.json, a text file in JSON format):\n\ntools picks which of Claude's built-in tools it gets: an empty list turns them all off, and leaving it out keeps Claude's usual set. disallowedTools lists Claude tool names, or name patterns, it may never use. These settings do not give or pre-approve connected tools (MCP servers, the add-on tools a bot can use); those still follow that engine's connected tools and Murage's approval cards.\n\nA message becomes part of the conversation and may be sent to your AI service.…"
   },
   {
     "id": "getting-started/first-bot#before-you-start",
@@ -3248,9 +3278,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Choose an engine, folder, and working style for a useful first agent.",
     "heading": "Before you start",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
-    "where": "App settings → Agent engines",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/getting-started/first-bot#before-you-start",
-    "text": "Install and sign in to at least one supported agent CLI. Murage detects installed engines during onboarding and again from App settings → Agent engines."
+    "text": "Install at least one supported AI app on this computer, such as Claude or Codex, and sign in to it. Murage finds installed engines when you first open it, and again in Settings → Models & engines."
   },
   {
     "id": "getting-started/first-bot#create-the-bot",
@@ -3278,9 +3308,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Choose an engine, folder, and working style for a useful first agent.",
     "heading": "Tune the bot",
     "breadcrumb": "Murage docs → Getting started → Create your first bot",
-    "where": "Murage docs → Getting started → Create your first bot",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/getting-started/first-bot#tune-the-bot",
-    "text": "Open Bot settings to change its name, avatar, instructions, engine, model, working folder, and computer setup. Different bots can use different engines and folders at the same time.\n\nMurage launches agent tools you installed. If an engine returns a 401 or asks you to sign in, finish that engine's own CLI login, then refresh detection in App settings."
+    "text": "Open Bot settings to change its name, picture, instructions, engine, model, working folder and computer. Different bots can use different engines and folders at the same time.\n\nMurage starts the AI apps you installed. If an engine says you are not signed in, sign in to that AI app itself, then check again in Settings → Models & engines."
   },
   {
     "id": "getting-started/installation#download-a-released-build",
@@ -3293,14 +3323,14 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Choose your computer below. Each link always downloads the latest published build.\n\n| Platform | Recommended package | Notes |\n|---|---|---|\n| macOS Apple silicon | Download .dmg | Signed and notarized. Drag to Applications. |\n| macOS Intel | Download .dmg | Signed and notarized. |\n| Windows x64 | Download installer | Per-user installer; Windows signing is not yet available. |\n| Ubuntu 24.04 x64 | Download .deb · AppImage | The .deb is recommended; the AppImage is portable. |\n\nThe Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing More info → Run anyway."
   },
   {
-    "id": "getting-started/installation#install-an-agent-cli",
+    "id": "getting-started/installation#install-an-ai-app",
     "title": "Installation",
     "description": "Install Murage on macOS, Windows, or Ubuntu.",
-    "heading": "Install an agent CLI",
+    "heading": "Install an AI app",
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Murage docs → Getting started → Installation",
-    "url": "https://murage.ai/docs/getting-started/installation#install-an-agent-cli",
-    "text": "Murage needs at least one supported agent engine installed and signed in. Claude and Codex are the most common starting points.\n\n1. Install the CLI from its official provider.\n2. Run it once in a terminal and complete sign-in.\n3. Restart Murage.\n4. Open the model picker. Available engines appear normally; unavailable engines explain what is missing.\n\nSee Agent engines for the complete list and explicit path overrides."
+    "url": "https://murage.ai/docs/getting-started/installation#install-an-ai-app",
+    "text": "Murage needs at least one supported AI app installed on this computer and signed in. Claude and Codex are the most common starting points.\n\n1. Install the AI app from the company that makes it.\n2. Open it once in a terminal and finish signing in.\n3. Restart Murage.\n4. Open the model picker. Engines that are ready appear as usual; the others say what is missing.\n\nSee Agent engines for the full list and for choosing an engine's location yourself."
   },
   {
     "id": "getting-started/installation#build-from-source",
@@ -3310,7 +3340,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Murage docs → Getting started → Installation",
     "url": "https://murage.ai/docs/getting-started/installation#build-from-source",
-    "text": "Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one authenticated agent CLI.\n\nRun the harness, web UI, and Electron shell in separate terminals:"
+    "text": "For developers. Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one supported AI app you are signed in to (a CLI, or command-line app).\n\nRun the background service, the web screens and the desktop window in separate terminals:"
   },
   {
     "id": "getting-started/installation#where-data-lives",
@@ -3360,7 +3390,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
     "url": "https://murage.ai/docs/getting-started/quick-tour#4-model-picker",
-    "text": "Pick an agent engine and model per bot. The picker separates cloud-backed agent CLIs from local engines and shows what is installed on this machine."
+    "text": "Pick an engine and model for each bot. The picker keeps AI apps that run online apart from models that run on this computer, and shows what is installed here."
   },
   {
     "id": "getting-started/quick-tour#5-computer-and-inspector",
@@ -3370,7 +3400,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
     "url": "https://murage.ai/docs/getting-started/quick-tour#5-computer-and-inspector",
-    "text": "Open Bot's computer to choose where visual work runs. Open Inspector to follow lower-level activity when a task is executing."
+    "text": "Open Bot's computer to choose where visual work runs. Open Inspector to follow each step while a task runs."
   },
   {
     "id": "getting-started/quick-tour#6-connected-apps-and-automations",
@@ -3380,7 +3410,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Getting started → Quick tour",
     "where": "Murage docs → Getting started → Quick tour",
     "url": "https://murage.ai/docs/getting-started/quick-tour#6-connected-apps-and-automations",
-    "text": "Connected apps give bots authenticated tools. Automations turn a good prompt into scheduled or webhook-triggered work."
+    "text": "Connected apps let bots use services you signed in to, such as Gmail. Automations turn a good request into work that runs on a schedule, or when another app's trigger link starts it."
   },
   {
     "id": "index#overview",
@@ -3389,7 +3419,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs",
     "where": "Murage docs",
     "url": "https://murage.ai/docs",
-    "text": "Local-first agent workspace\n\nMurage turns agent CLIs into a familiar desktop chat app. Each bot can have its own model, instructions, working folder, connected apps, computer, and recurring work.\n\nMany enginesClaude, Codex, Grok, Cursor, local models, and more\nReal toolsApps, files, terminals, browsers, VMs, and cloud desktops\nYour machineLocal data and bring-your-own agent subscriptions"
+    "text": "Local-first agent workspace\n\nMurage turns the AI apps on your computer into a familiar desktop chat app. Each bot can have its own model, instructions, working folder, connected apps, computer, and recurring work.\n\nMany enginesClaude, Codex, Grok, Cursor, local models, and more\nReal toolsApps, files, terminals, browsers, VMs, and cloud desktops\nYour machineYour workspace is saved on this computer, and you use your own AI subscriptions"
   },
   {
     "id": "index#how-the-pieces-fit",
@@ -3399,101 +3429,121 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs",
     "where": "Murage docs",
     "url": "https://murage.ai/docs#how-the-pieces-fit",
-    "text": "| Layer | What it does | Where to configure it |\n|---|---|---|\n| Bot | Holds the identity, conversation, memory, and defaults | Bot settings |\n| Agent engine | Runs the reasoning loop and tools | Model picker and App settings |\n| Working folder | Gives the bot project context and a safe place to work | Bot settings |\n| Connected apps | Authorizes services such as Gmail or GitHub | Connected apps |\n| Computer | Gives visual control of a desktop environment | Computer panel |\n| Automation | Runs a task later, on a schedule, or from a webhook | Automations |"
+    "text": "| Layer | What it does | Where to configure it |\n|---|---|---|\n| Bot | Holds the identity, conversation, memory, and defaults | Bot settings |\n| Agent engine | Runs the reasoning loop and tools | Model picker and App settings |\n| Working folder | Gives the bot its project files and one folder to work in | Bot settings |\n| Connected apps | Authorizes services such as Gmail or GitHub | Connected apps |\n| Computer | Gives visual control of a desktop environment | Computer panel |\n| Automation | Runs a task later, on a schedule, or when another app's trigger link starts it | Automations |"
   },
   {
-    "id": "index#choose-your-path",
+    "id": "index#where-to-start",
     "title": "Murage documentation",
     "description": "Build a team of AI agents that can talk, use tools, operate computers, and keep working on a schedule.",
-    "heading": "Choose your path",
+    "heading": "Where to start",
     "breadcrumb": "Murage docs",
     "where": "QR code from Settings → Phone and other devices.",
-    "url": "https://murage.ai/docs#choose-your-path",
+    "url": "https://murage.ai/docs#where-to-start",
     "text": "| I want to… | Start here |\n|---|---|\n| Understand the app in five minutes | Quick tour |\n| Pick Claude, Codex, Cursor, Grok, or a local model | Agent engines |\n| Organize bots, tasks, rooms, and delegations | Bots and tasks |\n| Control a browser or desktop | Computers |\n| Run work every morning | Automations |\n| Reach my bots from a phone | The Murage phone app: pair it with a QR code from Settings → Phone and other devices. |\n| Back up or move my data | Data and backups |\n| Build from source or contribute | Contributing |\n\nMurage moves quickly. The changelog records shipped releases; proposed or unfinished work stays on GitHub until it lands."
   },
   {
     "id": "providers#overview",
     "title": "Agent engines",
-    "description": "Use the agent subscriptions and CLIs you already have.",
+    "description": "Use the AI apps and subscriptions you already have.",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
     "url": "https://murage.ai/docs/providers",
-    "text": "Murage does not proxy every message through its own model account. It starts supported agent CLIs on your computer and normalizes their output through the local harness."
+    "text": "Murage does not send every message through its own AI account. It starts the AI apps you installed on this computer, such as Claude or Codex, and shows their work in one chat."
   },
   {
     "id": "providers#built-in-engines",
     "title": "Agent engines",
-    "description": "Use the agent subscriptions and CLIs you already have.",
+    "description": "Use the AI apps and subscriptions you already have.",
     "heading": "Built-in engines",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
     "url": "https://murage.ai/docs/providers#built-in-engines",
-    "text": "| Engine | Authentication shape | Notes |\n|---|---|---|\n| Claude | Claude CLI login | Strong support for tools, approvals, sessions, and local computer use |\n| Codex | Codex CLI login | Model discovery, approvals, steering, and computer tools |\n| Grok | Grok CLI login | ACP-based local model catalog and session support |\n| Cursor | Cursor Agent CLI login or API key | ACP driver with live model discovery |\n| Kimi | Kimi CLI login | ACP integration |\n| Droid | Factory Droid CLI login | ACP integration |\n| Antigravity | Google Antigravity CLI login | Default Google consumer engine |…"
+    "text": "Each engine is an AI app on this computer. You sign in to it once, with your own account, and Murage uses that sign-in.\n\n| Engine | How you sign in | Notes |\n|---|---|---|\n| Claude | Sign in to the Claude app | Strong support for tools, approvals, saved sessions and using this computer |\n| Codex | Sign in to the Codex app | Lists its models, asks for approval, takes new directions mid-task, uses computer tools |\n| Grok | Sign in to the Grok app | Lists its models and keeps sessions |\n| Cursor | Sign in to the Cursor Agent app, or use your own Cursor key | Lists its models as they change |\n| Kimi | Sign in to the Kimi app | Works through the common AI app connection |…"
+  },
+  {
+    "id": "providers#use-a-plan-you-already-have",
+    "title": "Agent engines",
+    "description": "Use the AI apps and subscriptions you already have.",
+    "heading": "Use a plan you already have",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Models & engines",
+    "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
+    "text": "Sign in with the plan you already pay for and your bots can use the models that come with it. Open Settings → Models & engines in the Murage desktop app and press Continue with ChatGPT or Continue with Grok under Use a plan you already have. Plan limits apply. On a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial: xAI has not published it for other apps yet, it needs a SuperGrok or X Premium plan, and an xAI API key works instead if it is ever turned off."
+  },
+  {
+    "id": "providers#grok-images",
+    "title": "Agent engines",
+    "description": "Use the AI apps and subscriptions you already have.",
+    "heading": "Grok images",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Tools → Image generation",
+    "url": "https://murage.ai/docs/providers#grok-images",
+    "text": "Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open Settings → Tools → Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself."
   },
   {
     "id": "providers#detection",
     "title": "Agent engines",
-    "description": "Use the agent subscriptions and CLIs you already have.",
+    "description": "Use the AI apps and subscriptions you already have.",
     "heading": "Detection",
     "breadcrumb": "Murage docs → Agent engines",
-    "where": "Settings → Engines",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/providers#detection",
-    "text": "Murage checks common installation directories and the login shell in the background. Restart the app after installing or authenticating a CLI.\n\nIf detection fails, use Settings → Engines to set an explicit executable path. This is supported for every engine and is the most reliable solution for version managers, wrappers, custom builds, and Windows installations outside the normal path."
+    "text": "Murage looks for your AI apps in the usual places, in the background. After you install an AI app or sign in to it, restart Murage.\n\nIf Murage still cannot find one, open Settings → Models & engines and use Choose location… on that engine to point it at the app. This works for every engine and helps when you keep several versions, use a version manager or a wrapper, or installed the app somewhere unusual on Windows."
   },
   {
     "id": "providers#model-selection",
     "title": "Agent engines",
-    "description": "Use the agent subscriptions and CLIs you already have.",
+    "description": "Use the AI apps and subscriptions you already have.",
     "heading": "Model selection",
     "breadcrumb": "Murage docs → Agent engines",
     "where": "Murage docs → Agent engines",
     "url": "https://murage.ai/docs/providers#model-selection",
-    "text": "The model picker groups models by provider and marks defaults. Supported engines can refresh their model catalog from the installed CLI. Changing the model affects future turns; it does not rewrite earlier transcript history.\n\nYour existing CLI login or provider API key determines access and billing. Murage does not turn one subscription into access to another provider."
+    "text": "The model picker groups models by the AI service they come from and marks the defaults. Engines that support it can refresh their list of models from the app. A new model choice applies to the next replies; earlier messages stay as they were.\n\nYour sign-in to the AI app, or your own key, decides what you can use and who bills you. Murage does not turn one subscription into access to another AI service."
   },
   {
     "id": "providers/troubleshooting#cli-not-found",
     "title": "Engine troubleshooting",
-    "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
+    "description": "Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.",
     "heading": "“CLI not found”",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
-    "where": "Settings → Engines",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/providers/troubleshooting#cli-not-found",
-    "text": "1. Open a terminal and run the CLI directly.\n2. Confirm the command is an executable, not only a shell alias or function.\n3. Restart Murage after installation.\n4. Set the exact executable in Settings → Engines if automatic detection still fails.\n\nDesktop applications often inherit a different environment than a terminal. This is common on Windows shortcuts, macOS Finder launches, and Linux application menus."
+    "text": "This message means Murage could not find the AI app on this computer. (CLI is short for command-line app: an AI app you start by typing its name in a terminal.)\n\n1. Open a terminal and type the app's name, for example claude or codex, to check it starts.\n2. Make sure it is the app itself, not a shortcut you set up only inside your terminal.\n3. Restart Murage after you install it.\n4. If Murage still cannot find it, open Settings → Models & engines and use Choose location… on that engine.\n\nApps opened from the desktop do not always see the same settings as your terminal. This happens with Windows shortcuts, apps opened from the macOS Finder, and Linux app menus."
   },
   {
     "id": "providers/troubleshooting#authentication-failures",
     "title": "Engine troubleshooting",
-    "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
+    "description": "Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.",
     "heading": "Authentication failures",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
     "url": "https://murage.ai/docs/providers/troubleshooting#authentication-failures",
-    "text": "Run the provider's own status or login command in a terminal. Murage uses the CLI's authenticated session; installing the binary alone is not enough.\n\nA 401 Unauthorized response from api.openai.com means the launched Codex process did not receive valid authentication. Confirm codex login status, sign in again if needed, then restart Murage. Do not paste a ChatGPT password into Murage."
+    "text": "Sign in again with the AI app itself, in a terminal or in the app. Murage uses the app's own sign-in; installing the app is not enough.\n\nIf Codex says it is not authorized (the details show 401 Unauthorized from OpenAI), run codex login status, sign in again if needed, then restart Murage. Never paste your ChatGPT password into Murage."
   },
   {
     "id": "providers/troubleshooting#a-selected-model-fails",
     "title": "Engine troubleshooting",
-    "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
+    "description": "Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.",
     "heading": "A selected model fails",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
     "url": "https://murage.ai/docs/providers/troubleshooting#a-selected-model-fails",
-    "text": "- Refresh the model picker after updating the CLI.\n- Choose a model actually available to that provider account.\n- Confirm a custom wrapper forwards the model argument and preserves the provider's expected environment.\n- Try the provider CLI directly with the same model to separate an account problem from an Murage integration problem."
+    "text": "- Refresh the model picker after you update the AI app.\n- Choose a model your account with that AI service can actually use.\n- If you start the app through your own wrapper, make sure it passes the model choice and its settings through.\n- Try the same model in the AI app directly. If it fails there too, the problem is outside Murage: read the error the AI app shows, and check your account, your internet connection and the AI service's status."
   },
   {
     "id": "providers/troubleshooting#windows-notes",
     "title": "Engine troubleshooting",
-    "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
+    "description": "Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.",
     "heading": "Windows notes",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Murage docs → Providers → Engine troubleshooting",
     "url": "https://murage.ai/docs/providers/troubleshooting#windows-notes",
-    "text": "Use a real .exe, .cmd, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper."
+    "text": "When you choose an engine's location on Windows, pick the real program file (it ends in .exe or .cmd). An AI app installed inside WSL (Linux on Windows) is a Linux program, so the Windows app cannot start it directly without a wrapper."
   },
   {
     "id": "security#overview",
     "title": "Security model",
-    "description": "The boundaries that keep agents, credentials, computers, and paired devices scoped.",
+    "description": "The limits that keep bots, keys, computers and paired devices to what you allow.",
     "breadcrumb": "Murage docs → Security model",
     "where": "Murage docs → Security model",
     "url": "https://murage.ai/docs/security",
@@ -3502,37 +3552,37 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "security#core-boundaries",
     "title": "Security model",
-    "description": "The boundaries that keep agents, credentials, computers, and paired devices scoped.",
+    "description": "The limits that keep bots, keys, computers and paired devices to what you allow.",
     "heading": "Core boundaries",
     "breadcrumb": "Murage docs → Security model",
     "where": "Murage docs → Security model",
     "url": "https://murage.ai/docs/security#core-boundaries",
-    "text": "- The harness owns agent processes and listens on loopback.\n- The renderer receives configured-or-not credential state, not secret values.\n- Provider-specific credentials are injected only into the process that needs them.\n- Risky actions become approval cards rather than implicit permission.\n- Local computer control is a separate opt-in and per-bot selection.\n- Paired phones use a default-deny API allowlist and per-device bearer tokens.\n- Cloud and VPS backends are validated before reuse."
+    "text": "- Murage's background service runs the AI apps and only accepts connections from this computer.\n- The app's screens learn only whether a key is saved, never the key itself.\n- Each AI service's key goes only to the AI app that needs it.\n- Risky actions become approval cards rather than implicit permission.\n- Local computer control is a separate opt-in and per-bot selection.\n- A paired phone can use only a short list of allowed actions, and each device has its own private sign-in.\n- Cloud and VPS backends are validated before reuse."
   },
   {
     "id": "security#your-responsibility",
     "title": "Security model",
-    "description": "The boundaries that keep agents, credentials, computers, and paired devices scoped.",
+    "description": "The limits that keep bots, keys, computers and paired devices to what you allow.",
     "heading": "Your responsibility",
     "breadcrumb": "Murage docs → Security model",
     "where": "Settings → Phone and other devices.",
     "url": "https://murage.ai/docs/security#your-responsibility",
-    "text": "- Review approvals, especially shell commands, file writes, and actions in connected services.\n- Use dedicated environments for untrusted or destructive work.\n- Keep provider accounts and connected apps scoped to what a bot needs.\n- Revoke a lost phone or other paired device immediately, in Settings → Phone and other devices.\n- Keep Murage and agent CLIs updated.\n\nSecurity reports should be filed through the repository's documented security channel rather than disclosed in a public issue before a fix is available."
+    "text": "- Review approvals, especially shell commands, file writes, and actions in connected services.\n- Use dedicated environments for untrusted or destructive work.\n- Give each bot only the AI service accounts and connected apps it needs.\n- Revoke a lost phone or other paired device immediately, in Settings → Phone and other devices.\n- Keep Murage and your AI apps up to date.\n\nSecurity reports should be filed through the repository's documented security channel rather than disclosed in a public issue before a fix is available."
   },
   {
     "id": "security/permissions-and-secrets#approval-cards",
     "title": "Permissions and secrets",
-    "description": "How approvals, operating-system grants, and provider credentials are handled.",
+    "description": "How approvals, your computer's own permissions, and your AI service keys are handled.",
     "heading": "Approval cards",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
     "url": "https://murage.ai/docs/security/permissions-and-secrets#approval-cards",
-    "text": "Supported providers emit permission requests and questions through the local harness. Murage displays these inline and records the outcome. Cancellation closes outstanding requests so stale approvals cannot be answered after a turn has ended.\n\n“Always allow” is narrow: it is tied to a server-issued key and a pending request rather than granting arbitrary execution from a paired device."
+    "text": "Supported AI apps send their permission requests and questions to Murage. Murage displays these inline and records the outcome. Cancellation closes outstanding requests so stale approvals cannot be answered after a turn has ended.\n\n“Always allow” is narrow: it is tied to a server-issued key and a pending request rather than granting arbitrary execution from a paired device."
   },
   {
     "id": "security/permissions-and-secrets#operating-system-permissions",
     "title": "Permissions and secrets",
-    "description": "How approvals, operating-system grants, and provider credentials are handled.",
+    "description": "How approvals, your computer's own permissions, and your AI service keys are handled.",
     "heading": "Operating-system permissions",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
@@ -3542,17 +3592,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "security/permissions-and-secrets#secret-handling",
     "title": "Permissions and secrets",
-    "description": "How approvals, operating-system grants, and provider credentials are handled.",
+    "description": "How approvals, your computer's own permissions, and your AI service keys are handled.",
     "heading": "Secret handling",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
     "url": "https://murage.ai/docs/security/permissions-and-secrets#secret-handling",
-    "text": "- For a provider Murage supports, save its key in Settings or on the secure card your bot shows, rather than pasting it into chat.\n- For any other service, give your bot the key, or put it in a file git does not track, such as a .env in the project, and tell the bot where it is. The bot keeps it only where you say, sends it only to that service, and never saves it to its memory, its replies or committed files.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Secret values are scrubbed from public configuration responses and mobile APIs.…"
+    "text": "- For an AI service Murage supports, save its key in Settings or on the secure card your bot shows, rather than pasting it into chat.\n- For any other service, give your bot the key, or put it in a file git does not track, such as a .env in the project, and tell the bot where it is. The bot keeps it only where you say, sends it only to that service, and never saves it to its memory, its replies or committed files.\n- Packaged builds use write-only settings and operating-system-backed encryption where supported.\n- Saved keys are left out of the settings Murage shows on screen and sends to your phone. A key you paste into a message stays in that message, so add keys in Settings instead.…"
   },
   {
     "id": "security/permissions-and-secrets#shared-machines",
     "title": "Permissions and secrets",
-    "description": "How approvals, operating-system grants, and provider credentials are handled.",
+    "description": "How approvals, your computer's own permissions, and your AI service keys are handled.",
     "heading": "Shared machines",
     "breadcrumb": "Murage docs → Security → Permissions and secrets",
     "where": "Murage docs → Security → Permissions and secrets",
@@ -3656,7 +3706,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Self hosting → Data and backups",
     "where": "Murage docs → Self hosting → Data and backups",
     "url": "https://murage.ai/docs/self-hosting/data-and-backups#do-not-copy-secrets-casually",
-    "text": "Packaged desktop builds may protect credentials using operating-system secure storage. Copying the JSON directory to another machine does not necessarily make protected credentials usable there, and it should not be treated as a portable credential export."
+    "text": "The desktop app can keep your keys and sign-ins in your computer's own secure storage. Copying Murage's data folder to another computer does not always make those keys work there, so do not use a copy of the folder as a way to move your keys. Add them again on the new computer instead."
   },
   {
     "id": "self-hosting/data-and-backups#disposable-computer-filesystems",
@@ -3739,7 +3789,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/connected-apps#connected-apps-not-working-a-bot-says-it-has-no-connected-apps",
     "title": "Connected apps",
-    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "description": "Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.",
     "heading": "Connected apps not working: a bot says it has no connected apps",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Sidebar → Apps",
@@ -3749,7 +3799,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/connected-apps#connection-completes-but-the-app-still-shows-disconnected",
     "title": "Connected apps",
-    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "description": "Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.",
     "heading": "Connection completes but the app still shows disconnected",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
@@ -3759,17 +3809,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/connected-apps#the-account-is-connected-but-the-agent-cannot-use-it",
     "title": "Connected apps",
-    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "description": "Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.",
     "heading": "The account is connected but the agent cannot use it",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
     "url": "https://murage.ai/docs/troubleshooting/connected-apps#the-account-is-connected-but-the-agent-cannot-use-it",
-    "text": "Start a new task after connecting the app so the engine receives a fresh tool catalog. Name the service and account explicitly in the request. If several accounts are connected, select or mention the intended alias.\n\nSome engines expose connected tools differently. Verify the chosen engine supports MCP or the connected-tool bridge used by the app."
+    "text": "Start a new task after connecting the app so the engine receives a fresh tool catalog. Name the service and account explicitly in the request. If several accounts are connected, select or mention the intended alias.\n\nEngines handle connected tools in different ways. Check that the engine you chose supports connected tools (MCP, the common way apps share tools with AI)."
   },
   {
     "id": "troubleshooting/connected-apps#official-build-says-the-service-is-unavailable",
     "title": "Connected apps",
-    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "description": "Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.",
     "heading": "Official build says the service is unavailable",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
     "where": "Murage docs → Troubleshooting → Connected apps",
@@ -3779,84 +3829,84 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/connected-apps#it-says-connected-apps-run-through-flux-router",
     "title": "Connected apps",
-    "description": "Fix OAuth loops, missing tools, and connections that appear to vanish.",
+    "description": "Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.",
     "heading": "It says connected apps run through Flux Router",
     "breadcrumb": "Murage docs → Troubleshooting → Connected apps",
-    "where": "Settings → Models",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/troubleshooting/connected-apps#it-says-connected-apps-run-through-flux-router",
-    "text": "If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under Settings → Models, then connect your apps again from the Connected apps page. Nothing you saved was deleted."
+    "text": "If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under Settings → Models & engines, then connect your apps again from the Connected apps page. Nothing you saved was deleted."
   },
   {
     "id": "troubleshooting#overview",
     "title": "Troubleshooting",
-    "description": "Find the failing layer first, then apply the smallest safe fix.",
+    "description": "Find which part is stuck first, then make the smallest fix that works.",
     "breadcrumb": "Murage docs → Troubleshooting",
     "where": "Murage docs → Troubleshooting",
     "url": "https://murage.ai/docs/troubleshooting",
-    "text": "Most Murage failures come from one of four layers: the desktop app, a local agent CLI, a connected service, or a computer backend."
+    "text": "Most problems come from one of four parts: the desktop app, an AI app on this computer, a connected service, or a bot's computer."
   },
   {
     "id": "troubleshooting#collect-useful-evidence",
     "title": "Troubleshooting",
-    "description": "Find the failing layer first, then apply the smallest safe fix.",
+    "description": "Find which part is stuck first, then make the smallest fix that works.",
     "heading": "Collect useful evidence",
     "breadcrumb": "Murage docs → Troubleshooting",
     "where": "Murage docs → Troubleshooting",
     "url": "https://murage.ai/docs/troubleshooting#collect-useful-evidence",
-    "text": "Before opening an issue, record:\n- Murage version and operating system;\n- selected engine and model;\n- the exact visible error, not only “it failed”;\n- whether the same agent CLI works directly in a terminal;\n- whether restarting only the affected task changes the result.\n\nNever post API keys, OAuth callback URLs, bearer tokens, or the contents of secure credential files."
+    "text": "Before opening an issue, record:\n- Murage version and operating system;\n- selected engine and model;\n- the exact visible error, not only “it failed”;\n- whether the same AI app works when you open it yourself;\n- whether restarting only the affected task changes the result.\n\nNever post keys, passwords, the web address you were sent back to after signing in, or anything from a file that stores sign-ins."
   },
   {
     "id": "troubleshooting/startup-and-ports#overview",
-    "title": "App startup and ports",
+    "title": "App startup",
     "description": "Diagnose launch failures and local server conflicts.",
-    "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
-    "where": "Murage docs → Troubleshooting → App startup and ports",
+    "breadcrumb": "Murage docs → Troubleshooting → App startup",
+    "where": "Murage docs → Troubleshooting → App startup",
     "url": "https://murage.ai/docs/troubleshooting/startup-and-ports",
-    "text": "The Electron app starts a local harness and serves the interface from the same machine. The normal port is 8799. If another process already owns it, packaged builds may select a fallback port automatically."
+    "text": "The desktop app starts Murage's background service and shows its screens from this same computer. The service normally listens on connection number 8799 (a port). If another program already uses it, the desktop app picks another one by itself."
   },
   {
     "id": "troubleshooting/startup-and-ports#app-opens-but-never-becomes-ready",
-    "title": "App startup and ports",
+    "title": "App startup",
     "description": "Diagnose launch failures and local server conflicts.",
     "heading": "App opens but never becomes ready",
-    "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
-    "where": "Murage docs → Troubleshooting → App startup and ports",
+    "breadcrumb": "Murage docs → Troubleshooting → App startup",
+    "where": "Murage docs → Troubleshooting → App startup",
     "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#app-opens-but-never-becomes-ready",
     "text": "1. Quit every Murage window.\n2. Confirm no old Murage process remains.\n3. Start the app once and wait for the local harness.\n4. If it still fails, inspect the desktop log.\n\nOn macOS, packaged logs are under ~/Library/Logs/Murage. On Windows they are under the Murage log directory in %APPDATA%."
   },
   {
     "id": "troubleshooting/startup-and-ports#development-port-overrides",
-    "title": "App startup and ports",
+    "title": "App startup",
     "description": "Diagnose launch failures and local server conflicts.",
     "heading": "Development port overrides",
-    "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
-    "where": "Murage docs → Troubleshooting → App startup and ports",
+    "breadcrumb": "Murage docs → Troubleshooting → App startup",
+    "where": "Murage docs → Troubleshooting → App startup",
     "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#development-port-overrides",
     "text": "Use MURAGE_PORT for a source-run harness. A packaged desktop build owns its server lifecycle and may choose a fallback if the preferred port is unavailable."
   },
   {
     "id": "troubleshooting/startup-and-ports#isolate-a-test-profile",
-    "title": "App startup and ports",
+    "title": "App startup",
     "description": "Diagnose launch failures and local server conflicts.",
     "heading": "Isolate a test profile",
-    "breadcrumb": "Murage docs → Troubleshooting → App startup and ports",
-    "where": "Murage docs → Troubleshooting → App startup and ports",
+    "breadcrumb": "Murage docs → Troubleshooting → App startup",
+    "where": "Murage docs → Troubleshooting → App startup",
     "url": "https://murage.ai/docs/troubleshooting/startup-and-ports#isolate-a-test-profile",
     "text": "Developers can set MURAGE_DATA_DIR to run against a clean Murage data directory. This is useful for reproduction and screenshots without touching a real workspace."
   },
   {
     "id": "troubleshooting/updates#overview",
     "title": "Desktop updates",
-    "description": "Recover from a stuck download or restart and understand supported update paths.",
+    "description": "Fix a stuck download or restart, and see how each kind of install updates.",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
     "url": "https://murage.ai/docs/troubleshooting/updates",
-    "text": "Murage checks for updates in the background and offers the download in a card at the bottom of the window. How the download is applied depends on what you installed.\n\n| Build | What the button does |\n|---|---|\n| macOS, Windows, Linux AppImage | Restart to update: the app replaces itself and reopens. An AppImage is always rewritten at the path you launch, so your launcher, symlink or dock pin keeps working. |\n| Ubuntu .deb (and rpm/pacman) | Install: Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |…"
+    "text": "Murage checks for updates in the background and offers the download in a card at the bottom of the window. How the download is applied depends on what you installed.\n\n| Build | What the button does |\n|---|---|\n| macOS, Windows, Linux AppImage | Restart to update: the app replaces itself and reopens. An AppImage is always rewritten in the place you open it from, so your launcher, symlink or dock pin keeps working. |\n| Ubuntu .deb (and rpm/pacman) | Install: Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |…"
   },
   {
     "id": "troubleshooting/updates#the-download-keeps-spinning",
     "title": "Desktop updates",
-    "description": "Recover from a stuck download or restart and understand supported update paths.",
+    "description": "Fix a stuck download or restart, and see how each kind of install updates.",
     "heading": "The download keeps spinning",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
@@ -3866,7 +3916,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/updates#restart-to-update-does-nothing",
     "title": "Desktop updates",
-    "description": "Recover from a stuck download or restart and understand supported update paths.",
+    "description": "Fix a stuck download or restart, and see how each kind of install updates.",
     "heading": "Restart to update does nothing",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
@@ -3876,7 +3926,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/updates#no-terminal-opened",
     "title": "Desktop updates",
-    "description": "Recover from a stuck download or restart and understand supported update paths.",
+    "description": "Fix a stuck download or restart, and see how each kind of install updates.",
     "heading": "No terminal opened",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
@@ -3886,11 +3936,11 @@ export const HELP_INDEX: readonly HelpEntry[] = [
   {
     "id": "troubleshooting/updates#verify-the-installed-version",
     "title": "Desktop updates",
-    "description": "Recover from a stuck download or restart and understand supported update paths.",
+    "description": "Fix a stuck download or restart, and see how each kind of install updates.",
     "heading": "Verify the installed version",
     "breadcrumb": "Murage docs → Troubleshooting → Desktop updates",
     "where": "Murage docs → Troubleshooting → Desktop updates",
     "url": "https://murage.ai/docs/troubleshooting/updates#verify-the-installed-version",
-    "text": "Open App settings and check the displayed version. A commit merged to main is not in the desktop app until a release workflow publishes a new version.\n\nDo not install update files forwarded through chat or uploaded to an unrelated repository. Use the Murage releases repository and its checksums."
+    "text": "Open App settings and check the displayed version. A change the team has made reaches the desktop app only when a new version is published.\n\nDo not install update files forwarded through chat or uploaded to an unrelated repository. Use the Murage releases repository and its checksums."
   }
 ];

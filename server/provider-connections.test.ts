@@ -18,11 +18,11 @@ function fixture(preset:ProviderPreset="openai",now?:()=>number) {
 it("binds ten presets to fixed issuer endpoints, never arbitrary caller URLs",()=>{
  expect(Object.keys(PROVIDER_PRESETS)).toHaveLength(10);
  expect(PROVIDER_PRESETS.google).toEqual({label:"Google",baseUrl:"https://generativelanguage.googleapis.com/v1beta/openai",catalogUrl:"https://generativelanguage.googleapis.com/v1beta/openai/models",protocol:"openai"});
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`AIza${"k".repeat(35)}`},()=>"fixture")).toThrow("different provider");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`AIza${"k".repeat(35)}`},()=>"fixture")).toThrow("does not match the AI service");
  expect(mutateProviderBank("[]",{action:"create",preset:"google",key:`AIza${"k".repeat(35)}`},()=>"fixture")[0]).toMatchObject({preset:"google",label:"Google"});
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-proj-fixture-key-private",url:"https://untrusted.invalid"},()=>"fixture")).toThrow("Only a provider");
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openrouter",key:"sk-proj-fixture-key-private"},()=>"fixture")).toThrow("different provider");
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-admin-fixture-key-private"},()=>"fixture")).toThrow("inference API key");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-proj-fixture-key-private",url:"https://untrusted.invalid"},()=>"fixture")).toThrow("Only an AI service");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openrouter",key:"sk-proj-fixture-key-private"},()=>"fixture")).toThrow("does not match the AI service");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:"sk-admin-fixture-key-private"},()=>"fixture")).toThrow("not an admin key");
 });
 it("keeps distinct named accounts and excludes every key from public snapshots",async()=>{
  const f=fixture();await f.mutate({action:"create",preset:"openai",label:"Second account",key:"another-fixture-private-key"});expect(f.service.list()).toHaveLength(2);
@@ -217,11 +217,11 @@ it("reads Google's OpenAI-compatible catalog as bare ids and keeps only its chat
 });
 it("checks the trimmed key against its provider at every door, and never takes a key as a label",()=>{
  const google=`AIza${"k".repeat(35)}`;
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`  ${google}  `},()=>"fixture")).toThrow("different provider");
- expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:" sk-admin-fixture-key-private"},()=>"fixture")).toThrow("inference API key");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:`  ${google}  `},()=>"fixture")).toThrow("does not match the AI service");
+ expect(()=>mutateProviderBank("[]",{action:"create",preset:"openai",key:" sk-admin-fixture-key-private"},()=>"fixture")).toThrow("not an admin key");
  expect(()=>mutateProviderBank("[]",{action:"create",preset:"google",label:`Mine ${google}`,key:google},()=>"fixture")).toThrow("not its key");
  const bank=JSON.stringify(mutateProviderBank("[]",{action:"create",preset:"google",key:google},()=>"fixture"));
  expect(()=>mutateProviderBank(bank,{action:"update",id:"fixture",revision:"fixture",label:google},()=>"next")).toThrow("not its key");
- for(const patch of [{imageGen:{key:google}},{imageGen:{key:"xai-fixture-key-private-000"}},{xai:{key:"sk-proj-fixture-key-private"}},{xai:{key:` ${google}`}}] as Parameters<typeof parseConfigPatch>[0][])expect(()=>parseConfigPatch(patch)).toThrow("different provider");
+ for(const patch of [{imageGen:{key:google}},{imageGen:{key:"xai-fixture-key-private-000"}},{xai:{key:"sk-proj-fixture-key-private"}},{xai:{key:` ${google}`}}] as Parameters<typeof parseConfigPatch>[0][])expect(()=>parseConfigPatch(patch)).toThrow("does not match the AI service");
  expect(parseConfigPatch({imageGen:{key:"sk-proj-fixture-key-private"},xai:{key:"xai-fixture-key-private-000"}})).toBeTruthy();
 });

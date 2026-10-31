@@ -52,9 +52,16 @@ describe("0.1.60 copy flags", () => {
     for (const file of ["./components/BotPermissionDefault.tsx", "./components/FullAccessWarning.tsx", "./lib/permission-mode.ts"]) {
       expect(source(file), file).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still/i);
     }
-    expect(source("./components/BotPermissionDefault.tsx")).toContain("Webhook turns still ask. Routines use this level unless a routine has its own.");
+    // the level texts live in the L-COPY-B fragment since 1.0.12
+    for (const [key, value] of Object.entries(en).filter(([key]) => key.startsWith("ux.lcopyb.level.") || key === "ux.lcopyb.fullAccess.stillAsks")) {
+      expect(value, key).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still|trigger links? (and|or) routines? still/i);
+    }
+    for (const key of ["ux.lcopyb.level.unlimitedHere", "ux.lcopyb.level.unlimited", "ux.lcopyb.level.fullHere", "ux.lcopyb.level.full"] as const) {
+      expect(source("./components/BotPermissionDefault.tsx")).toContain(`t("${key}")`);
+      expect(en[key]).toContain("Work started by another app's trigger link still asks. Routines use this level unless a routine has its own.");
+    }
     const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
-    expect(hint).toContain("in routines at that level; webhook turns still stop and ask");
+    expect(hint).toContain("in routines at that level; work started by another app's trigger link still stops and asks");
   });
 
   // Linux and Windows pass copy flags

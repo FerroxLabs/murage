@@ -232,6 +232,8 @@ export function nextActionFor(server: LocalServerView, model: LocalModelView): L
 export function engineLocalLine(driver: string): string {
   const support = localEngineSupport(driver);
   if (support === "tools") return `Works with ${LOCAL_MODELS_TITLE.toLowerCase()}. Manage them under Models → ${LOCAL_MODELS_TITLE}`;
-  if (support === "chat-only") return `${LOCAL_MODELS_TITLE}: chat only (no tools)`;
+  // openai-compat sends tools to local models too (1.0.9) and lists every
+  // model, tested or not; one that refuses tools still chats.
+  if (support === "any-model") return `Works with ${LOCAL_MODELS_TITLE.toLowerCase()}, tools included. Manage them under Models → ${LOCAL_MODELS_TITLE}`;
   return "";
 }

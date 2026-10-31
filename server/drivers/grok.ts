@@ -70,8 +70,8 @@ export const GrokDriver: ProviderDriver<GrokConfig> = {
         ...(stream ? { stream_options: { include_usage: true } } : {}),
       }),
       httpErrorLabel: "xAI",
-      missingKeyError: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "This engine has no xAI key yet. Add one in App Settings → Models.",
-      unavailableReason: mismatch ? "The saved xAI key belongs to a different provider. Replace it in App Settings → Models." : "No xAI key yet: add one in App Settings → Models.",
+      missingKeyError: mismatch ? "The saved key does not match xAI. Replace it in Settings, Models & engines." : "This engine has no xAI key yet. Add one in App Settings → Models.",
+      unavailableReason: mismatch ? "The saved key does not match xAI. Replace it in Settings, Models & engines." : "No xAI key yet: add one in App Settings → Models.",
       // No provider idle cut of its own (0.1.61): the thread's silence watch,
       // on the owner's setting, decides when a quiet turn stops.
       retryScale: Number(process.env.FAKE_GROK_RETRY_SCALE ?? "1"),

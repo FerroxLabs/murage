@@ -18,15 +18,20 @@
 // `--check` fails when the committed file is stale; the test suite runs it.
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(root, "shared", "help-capabilities.ts");
 const read = (path) => readFileSync(join(root, path), "utf8").replace(/\r\n/g, "\n");
-const en = JSON.parse(read("src/locales/en.json"));
 
+/** The inventory, recomputed from the sources every call and never read back
+ * from the committed help-capabilities.ts. scripts/build-capability-db.mjs
+ * resolves its tool, bot-settings, place and route anchors against this, so a
+ * stale committed file cannot vouch for an anchor (CAPABILITY-DB-1010 M6). */
+export function buildInventory() {
+const en = JSON.parse(read("src/locales/en.json"));
 const items = [];
-const add = (kind, name, term, source) => items.push({ kind, name, term, source });
+const add = (kind, name, term, source, alt) => items.push(alt ? { kind, name, term, alt, source } : { kind, name, term, source });
 
 // 1. Bot tools. Top-level entries of TOOLS look like `{ name: "x", ...` or
 // `{\n    name: "x",`; the project tools live in their own schema file.
@@ -40,10 +45,26 @@ for (const match of proxy.matchAll(/const PROJECT_PROPOSE_TOOL = \{\s*name: "([a
 for (const match of read("server/drivers/project-tool-schemas.ts").matchAll(/^ {2}\{\s*name: "([a-z_]+)"/gm)) add("tool", match[1], match[1], "server/drivers/project-tool-schemas.ts");
 
 // 2. App settings pages: the id is a contract, the label is what people read.
-for (const match of read("src/lib/settings-sections.ts").matchAll(/^ {2}\{ id: "([A-Za-z]+)", group:/gm)) {
+// The sidebar shows settingsPageLabel() = settings.page.<id> for each
+// SECTION_PAGES entry (settings-sections.ts settingsPageLabel), so that is the
+// term. The older settings.section.<id> word, where a page has one, is kept as
+// `alt`: the docs may still use it. The 1.0.3 aliases (aboutMe, houseRules,
+// engines, ...) are not pages; each keeps its own settings.section.<id> word.
+const pagesSource = read("src/lib/settings-pages.ts");
+const pagesStart = pagesSource.indexOf("export const SECTION_PAGES");
+const aliasesStart = pagesSource.indexOf("export const SECTION_ALIASES");
+if (pagesStart < 0 || aliasesStart < 0) throw new Error("settings-pages.ts: cannot find SECTION_PAGES or SECTION_ALIASES");
+for (const match of pagesSource.slice(pagesStart, aliasesStart).matchAll(/^ {2}\{ id: "([A-Za-z]+)", group:/gm)) {
+  const label = en[`settings.page.${match[1]}`];
+  if (!label) throw new Error(`settings page ${match[1]} has no settings.page.${match[1]} label`);
+  const legacy = en[`settings.section.${match[1]}`];
+  add("settings-page", match[1], label, "src/lib/settings-pages.ts", legacy && legacy !== label ? legacy : undefined);
+}
+const aliasesEnd = pagesSource.indexOf("\n};", aliasesStart);
+for (const match of pagesSource.slice(aliasesStart, aliasesEnd).matchAll(/^ {2}([A-Za-z]+): \{ section: "/gm)) {
   const label = en[`settings.section.${match[1]}`];
-  if (!label) throw new Error(`settings section ${match[1]} has no settings.section.${match[1]} label`);
-  add("settings-page", match[1], label, "src/lib/settings-sections.ts");
+  if (!label) throw new Error(`settings alias ${match[1]} has no settings.section.${match[1]} label`);
+  add("settings-page", match[1], label, "src/lib/settings-pages.ts");
 }
 
 // 3. Bot settings sections. A GATED section (GATED_BOT_SETTINGS: shown only while a server feature says it is on, e.g. bot email's dark
@@ -73,6 +94,7 @@ for (const match of read("src/lib/permission-mode.ts").matchAll(/^export const (
 // (ROUTE_PLUMBING). A new family is neither, which fails this script until
 // someone decides which it is: that decision is the point.
 const ROUTE_TERMS = {
+  feedback: ["send feedback", "tester feedback"],
   "about-me": "about me",
   publish: "publishing sites",
   artifacts: "files",
@@ -146,13 +168,22 @@ const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);
 const unmapped = [...seenFamilies].filter((family) => !(family in ROUTE_TERMS) && !ROUTE_PLUMBING.has(family)).sort();
 if (unmapped.length) {
-  console.error(`New route families need a place in scripts/build-capabilities.mjs (ROUTE_TERMS if a person can reach it, ROUTE_PLUMBING if not): ${unmapped.join(", ")}`);
-  process.exit(1);
+  throw new Error(`New route families need a place in scripts/build-capabilities.mjs (ROUTE_TERMS if a person can reach it, ROUTE_PLUMBING if not): ${unmapped.join(", ")}`);
 }
 for (const family of [...seenFamilies].filter((name) => name in ROUTE_TERMS).sort()) add("route", `/api/${family}`, ROUTE_TERMS[family], "server/index.ts");
 
 const key = (item) => `${item.kind}\u0000${item.name}`;
-const unique = [...new Map(items.map((item) => [key(item), item])).values()];
+return [...new Map(items.map((item) => [key(item), item])).values()];
+}
+
+function main() {
+let unique;
+try {
+  unique = buildInventory();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
 
 const generated = `// GENERATED by scripts/build-capabilities.mjs — do not edit by hand.
 // Source: the tool lists, settings sections, locale labels and route families
@@ -167,6 +198,8 @@ export interface Capability {
   readonly name: string;
   /** The words the help index has to contain, as a person would say them. */
   readonly term: string;
+  /** An older word for the same thing the help may use instead (a page's pre-1.0.3 section name). */
+  readonly alt?: string;
   /** Where the code says so. */
   readonly source: string;
 }
@@ -185,3 +218,6 @@ if (process.argv.includes("--check")) {
   writeFileSync(OUT, generated);
   console.log(`wrote ${relative(root, OUT)} (${unique.length} entries)`);
 }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) main();

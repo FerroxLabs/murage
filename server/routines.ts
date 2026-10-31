@@ -28,6 +28,8 @@ import { turnAskStopped, turnStopped, turnSucceeded } from "./turn-outcome.ts";
 import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
 import { isUnseenRoutineProblem } from "../shared/routine-problems.ts";
 import { ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TARGETS } from "../shared/record-values.ts";
+import { appEventScheduleSchema } from "../shared/app-triggers.ts";
+import type { AppEventRunStore } from "./app-trigger-store.ts";
 import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 export type RoutineSchedule =
@@ -35,7 +37,10 @@ export type RoutineSchedule =
   | { type: "daily"; time: string; weekdays: number[] }
   | { type: "interval"; everyMinutes: number; anchorAt: number }
   /** 1.0.4 SL-I I3: runs once, five minutes after the named engine's limit resets (limit-state.json). */
-  | { type: "limit_reset"; engineKey: string };
+  | { type: "limit_reset"; engineKey: string }
+  /** 1.0.11 APP-TRIGGERS (design GAP-APP-TRIGGERS-109 section 4.1): started by connected-app events, never by a clock.
+   * Exactly these two keys; nextRunAt is always null; the kind never changes after the first save. */
+  | { type: "app_event"; triggerId: string };
 
 /** 1.0.4 SL-I I3: when the named engine's limit resets, read from limit-state.json (never kept in memory). Set by the host. */
 let limitResetReader: (engineKey: string) => number | null = () => null;
@@ -189,9 +194,27 @@ export interface Routine {
   /** Conversation that created this routine in chat. Calendar/import-created
    * routines intentionally have no source, and older files migrate in place. */
   sourceThreadId?: string;
+  /** Where a run's result goes (ROUTINE-DELIVER-1010). Absent means the chat
+   * it was made in (or the bot's main chat when there is none), which is the
+   * default for every routine, old or new. "list": the Routines list only. */
+  deliverTo?: "list";
   nextRunAt: number | null;
   createdAt: number;
   updatedAt: number;
+}
+
+/** How long the run cap keeps a settled run whose result is still owed (index.ts retries it every minute while it is pending). */
+export const ROUTINE_DELIVERY_KEEP_MS = 24 * 60 * 60_000;
+
+export interface RoutineRunDelivery { state: "pending" | "sent" | "off"; threadId?: string }
+
+/** A delivery marker read back from disk: a valid one, or none. */
+function loadRunDelivery(value: unknown): RoutineRunDelivery | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { state, threadId } = value as { state?: unknown; threadId?: unknown };
+  if (state !== "pending" && state !== "sent" && state !== "off") return undefined;
+  const thread = typeof threadId === "string" ? persistedSourceThreadId.safeParse(threadId) : undefined;
+  return thread?.success && thread.data ? { state, threadId: thread.data } : { state };
 }
 
 /** The most history lines one run keeps. */
@@ -246,6 +269,13 @@ export interface RoutineRun {
   /** Snapshot the routine's reporting destination. Execution remains on the
    * separate `threadId` so recurring work never contaminates chat context. */
   sourceThreadId?: string;
+  /** ROUTINE-DELIVER-1010: the durable delivery marker of a schedule or manual
+   * bot run. "pending" until its result card has been written in a chat
+   * (`threadId`, recorded before the write when it is not the source chat),
+   * then "sent"; "off" when the routine sends results to the Routines list
+   * only. Absent on runs from before 1.0.10 and on webhook, channel and room
+   * runs, which keep their own delivery. */
+  delivery?: RoutineRunDelivery;
   threadId?: string;
   /** Provider identity for a Telegram turn in a reused conversation. */
   channelTurnId?: string;
@@ -453,6 +483,8 @@ export interface RoutineInput {
   carryLastReport?: boolean;
   /** A ceiling, or `inherit` / null to pin the bot's current level. */
   permissionMode?: RoutinePermissionMode | "inherit" | null;
+  /** Where results go: "chat" (the default) or "list" (the Routines list only). */
+  deliverTo?: "chat" | "list";
 }
 
 interface RoutineFile {
@@ -476,6 +508,9 @@ function routineRequestOwnerKey(owner: RoutineRequestOwner): string {
 }
 
 export interface RoutineManagerOptions {
+  /** 1.0.11 APP-TRIGGERS: the indexed store of connected-app event runs (server/app-trigger-store.ts). App runs never enter
+   * the legacy run collection, its cloning, retained-run dedupe or history-wide permission lookup (section 4.3). */
+  appRunStore?: AppEventRunStore;
   /** The bot's current level when a routine's ceiling is pinned. */
   botMode?: (botId: string) => RoutinePermissionMode | undefined;
   /** Host evaluator must validate the retained receipt, exact candidate and current source authority. */
@@ -491,6 +526,9 @@ export interface RoutineManagerOptions {
    * (server/index.ts opens it as its last step, right before start()). Work that arrives meanwhile is kept, queued,
    * for the first tick after. Absent: always open. */
   dispatchOpen?: () => boolean;
+  /** 1.0.8 owner zone: true while no new run may start because daily next times are still to be worked out in the
+   *  owner's zone (index.ts ownerZoneReconciler). Unlike a closed dispatchOpen, run limits are still enforced. */
+  dispatchHeld?: () => boolean;
   /** Startup gate: true once the connected-apps inventory has loaded and the
    * MCP mounts have settled. Scheduled runs (including catch-up runs for
    * occurrences missed while the app was closed) wait for it, bounded by
@@ -682,10 +720,13 @@ function loadAttachments(value: unknown): RoutineContextAttachment[] {
 function cloneSchedule(schedule: RoutineSchedule): RoutineSchedule {
   if (schedule.type === "once") return { type: "once", at: schedule.at };
   if (schedule.type === "limit_reset") return { type: "limit_reset", engineKey: schedule.engineKey };
+  if (schedule.type === "app_event") return { type: "app_event", triggerId: schedule.triggerId };
   if (schedule.type === "interval") {
     return { type: "interval", everyMinutes: schedule.everyMinutes, anchorAt: schedule.anchorAt };
   }
-  return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
+  if (schedule.type === "daily") return { type: "daily", time: schedule.time, weekdays: [...schedule.weekdays] };
+  // Exhaustive: a variant this build does not know is never copied as if it were a calendar.
+  throw new Error(`Unknown routine schedule: ${String((schedule as { type?: unknown }).type)}`);
 }
 
 /** Whether two sanitized schedules describe the same occurrences. Weekdays
@@ -693,6 +734,7 @@ function cloneSchedule(schedule: RoutineSchedule): RoutineSchedule {
 function sameSchedule(a: RoutineSchedule, b: RoutineSchedule): boolean {
   if (a.type === "once" && b.type === "once") return a.at === b.at;
   if (a.type === "limit_reset" && b.type === "limit_reset") return a.engineKey === b.engineKey;
+  if (a.type === "app_event" || b.type === "app_event") return a.type === "app_event" && b.type === "app_event" && a.triggerId === b.triggerId;
   if (a.type === "interval" && b.type === "interval") {
     return a.everyMinutes === b.everyMinutes && a.anchorAt === b.anchorAt;
   }
@@ -780,6 +822,7 @@ function cloneRun(tracked: RoutineRun): RoutineRun {
     ...(run.humanPrincipal ? { humanPrincipal: plainCopy(run.humanPrincipal) } : {}),
     ...(run.channelOrigin ? { channelOrigin: plainCopy(run.channelOrigin) } : {}),
     ...(run.limitWait ? { limitWait: { ...run.limitWait } } : {}),
+    ...(run.delivery ? { delivery: { ...run.delivery } } : {}),
     attachments: cloneAttachments(run.attachments),
     denials: run.denials ? [...run.denials] : undefined,
     ...(Array.isArray(run.notes) ? { notes: run.notes.filter((note): note is string => typeof note === "string").slice(0, RUN_NOTES_MAX) } : {}),
@@ -845,10 +888,25 @@ function cleanSchedule(schedule: RoutineSchedule): RoutineSchedule {
     if (!/^(?:connection|engine):[\w.:-]{1,200}$/.test(engineKey)) throw new Error("Choose the engine whose limit this routine waits for");
     return { type: "limit_reset", engineKey };
   }
+  if (schedule?.type === "app_event") {
+    // New input is strict: any other key (a time, a weekday, an engine reset) is refused, not dropped.
+    const parsed = appEventScheduleSchema.safeParse(schedule);
+    if (!parsed.success) throw new Error("A connected-app routine takes only its trigger");
+    return { type: "app_event", triggerId: parsed.data.triggerId };
+  }
   throw new Error("Choose a supported schedule");
 }
 
+/** A stored connected-app schedule normalizes to its two keys: mixed stored fields (a stale time, weekdays) are dropped,
+ * so nothing calendar-shaped survives the load (section 4.1). Null when the trigger id itself is not valid. */
+function loadAppEventSchedule(value: unknown): Extract<RoutineSchedule, { type: "app_event" }> | null {
+  const triggerId = (value as { triggerId?: unknown } | null)?.triggerId;
+  const parsed = appEventScheduleSchema.safeParse({ type: "app_event", triggerId });
+  return parsed.success ? { type: "app_event", triggerId: parsed.data.triggerId } : null;
+}
+
 function loadSchedule(value: unknown): RoutineSchedule | null {
+  if ((value as { type?: unknown } | null)?.type === "app_event") return loadAppEventSchedule(value);
   try {
     return cleanSchedule(value as RoutineSchedule);
   } catch {
@@ -858,6 +916,8 @@ function loadSchedule(value: unknown): RoutineSchedule | null {
 
 /** Next wall-clock occurrence in this computer's timezone, strictly after `after`. */
 export function nextOccurrence(schedule: RoutineSchedule, after: number): number | null {
+  // Connected-app routines have no next time: they are refused before any date is read.
+  if (schedule.type === "app_event") return null;
   if (schedule.type === "once") return schedule.at > after ? schedule.at : null;
   if (schedule.type === "limit_reset") {
     const resetsAt = limitResetReader(schedule.engineKey);
@@ -921,6 +981,10 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
   if (input.overlap !== undefined && input.overlap !== "skip" && input.overlap !== "queue") {
     throw new Error("Choose skip or queue for overlapping runs");
   }
+  const deliverTo: unknown = input.deliverTo ?? "chat";
+  if (deliverTo !== "chat" && deliverTo !== "list") {
+    throw new Error("Choose where this routine sends its results");
+  }
   const permissionMode = input.permissionMode === undefined ? null : routinePermissionModeInput(input.permissionMode);
   const schedule = cleanSchedule(input.schedule);
   return {
@@ -936,8 +1000,10 @@ function sanitizeInput(input: RoutineInput): Omit<Routine, "id" | "createdAt" | 
     ...(timeoutMinutes === undefined ? {} : { timeoutMinutes }),
     attachments,
     ...(input.overlap === "queue" ? { overlap: "queue" as const } : {}),
-    ...(input.carryLastReport === true && target === "bot" && schedule.type !== "once" ? { carryLastReport: true as const } : {}),
+    // An event run starts from bounded context: no carried report chain (section 4.3).
+    ...(input.carryLastReport === true && target === "bot" && schedule.type !== "once" && schedule.type !== "app_event" ? { carryLastReport: true as const } : {}),
     ...(permissionMode ? { permissionMode } : {}),
+    ...(deliverTo === "list" && target === "bot" ? { deliverTo: "list" as const } : {}),
   };
 }
 
@@ -1084,8 +1150,9 @@ export class RoutineManager {
         ? diskRoutines.flatMap((routine) => {
             const cleanedSchedule = loadSchedule(routine.schedule);
             if (!cleanedSchedule) return this.keepUnloaded(routine, "schedule");
-            // A field a person or tool added to the schedule rides along unchanged (104 S4).
-            const schedule = { ...(routine.schedule as unknown as object), ...cleanedSchedule } as RoutineSchedule;
+            // A field a person or tool added to the schedule rides along unchanged (104 S4). Not for a connected-app
+            // schedule: it is exactly its two keys, so a stale time or weekday can never ride along (section 4.1).
+            const schedule = cleanedSchedule.type === "app_event" ? cleanedSchedule : { ...(routine.schedule as unknown as object), ...cleanedSchedule } as RoutineSchedule;
             const target = loadTarget(routine.target);
             const loaded: Routine = {
               ...routine,
@@ -1098,14 +1165,16 @@ export class RoutineManager {
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
               threadId: persistedSourceThreadId.parse(routine.threadId),
               overlap: routine.overlap === "queue" ? "queue" : undefined,
+              deliverTo: routine.deliverTo === "list" ? "list" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
               alwaysAllow: routineGrantKeys(routine.alwaysAllow),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
+            if (schedule.type === "app_event") { loaded.nextRunAt = null; loaded.carryLastReport = undefined; }
             // Keep optional metadata absent when it has no stored value.
-            for (const key of ["overlap", "carryLastReport", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
+            for (const key of ["overlap", "deliverTo", "carryLastReport", "threadId", "skippedRuns", "lastSkippedAt"] as const) if (loaded[key] === undefined) delete loaded[key];
             if (!loaded.alwaysAllow?.length) delete loaded.alwaysAllow;
             delete loaded.failureStreak;
             if (routine.watch !== undefined) {
@@ -1146,8 +1215,10 @@ export class RoutineManager {
               timeoutMinutes: loadTimeoutMinutes(run.timeoutMinutes),
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
+              delivery: loadRunDelivery(run.delivery),
             };
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            if (loaded.delivery === undefined) delete loaded.delivery;
             loaded.event = routineEventForRun(loaded);
             const budget = eventActionBudgetSchema.safeParse(run.eventBudget);
             loaded.eventBudget = budget.success ? budget.data : undefined;
@@ -1564,7 +1635,15 @@ export class RoutineManager {
     return this.routineWithHealth(routine);
   }
 
-  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {
+  /** The indexed connected-app run store, or null before the host wires one. */
+  get appRunStore(): AppEventRunStore | null { return this.options.appRunStore ?? null; }
+
+  /** `appEventSetup`: only the owner-reviewed connected-app setup (a later slice) creates an app_event routine. A chat card,
+   * a bot tool or the public calendar API cannot, so a routine started from outside is never made without that review. */
+  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, internal?: { appEventSetup: true }): Routine {
+    if ((input.schedule as { type?: unknown } | undefined)?.type === "app_event" && internal?.appEventSetup !== true) {
+      throw new Error("Connected-app routines are set up from the app's own review");
+    }
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);
       if (receipt?.resultId !== undefined) {
@@ -1637,8 +1716,13 @@ export class RoutineManager {
       attachments: patch.attachments ?? routine.attachments,
       overlap: Object.hasOwn(patch, "overlap") ? patch.overlap : routine.overlap,
       permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
+      deliverTo: Object.hasOwn(patch, "deliverTo") ? patch.deliverTo : routine.deliverTo,
     });
     clean.permissionMode ??= this.options.botMode?.(clean.botId) ?? "ask";
+    // A connected-app routine keeps its kind and its trigger for life; nothing else becomes one (section 4.1). A different
+    // trigger is a new setup: delete this routine and set the new one up.
+    if ((routine.schedule.type === "app_event") !== (clean.schedule.type === "app_event")) throw new Error("A routine cannot switch between a schedule and a connected-app trigger");
+    if (routine.schedule.type === "app_event" && clean.schedule.type === "app_event" && routine.schedule.triggerId !== clean.schedule.triggerId) throw new Error("Set up a new connected-app routine to use a different trigger");
     if (this.targetState(clean) === "missing") throw new Error(this.missingTargetMessage(clean.target));
     if (routine.watch && (clean.target !== "bot" || clean.botId !== routine.botId || clean.runOn !== "ember" || clean.schedule.type !== "interval" || clean.attachments?.length)) throw new Error("A file watch must keep its approved bot, local interval and source");
     if (routine.watch && patch.enabled === true) {
@@ -1676,6 +1760,7 @@ export class RoutineManager {
       }
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
+      if (clean.deliverTo !== "list") delete routine.deliverTo;
       if (patch.enabled === false || reassigned) {
         for (const run of this.runs) {
           if (run.routineId !== routine.id || run.status !== "queued") continue;
@@ -1888,6 +1973,8 @@ export class RoutineManager {
     }
     const routine = this.routines.find((r) => r.id === id);
     if (!routine) return null;
+    // A connected-app routine starts only from an admitted event, never from Run now (section 4.1).
+    if (routine.schedule.type === "app_event") throw Object.assign(new Error("This routine runs when its connected app sends an event"), { status: 409 });
     // F2: a closed or ended project's routine does not start (an Error, so the route keeps this message)
     if (routine.target === "room-goal" && routine.groupId && this.options.projectOpen?.(routine.groupId) === false) {
       throw Object.assign(new Error(PROJECT_CLOSED_COPY), { status: 409 });
@@ -2184,8 +2271,59 @@ export class RoutineManager {
     return cloneRun(run);
   }
 
+  /** ROUTINE-DELIVER-1010: one run by id (a copy), or null. */
+  runById(id: string): RoutineRun | null {
+    const run = this.runs.find((item) => item.id === id);
+    return run ? cloneRun(run) : null;
+  }
+
+  /** Records the chat a pending run's result goes to, before the result is first written there, so a retry or a restart writes
+   * to the same chat (routine-delivery.ts decides when a deleted chat may be replaced). Saves this run only, at once; no frame. */
+  recordRunDelivery(runId: string, threadId: string): RoutineRun | null {
+    const run = this.runs.find((item) => item.id === runId);
+    if (!run || run.delivery?.state !== "pending") return run ? cloneRun(run) : null;
+    if (run.delivery.threadId !== threadId) {
+      const before = run.delivery;
+      run.delivery = { state: "pending", threadId };
+      // on disk before the card is written, or not at all: a failed save leaves the old marker and the card unwritten
+      try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; throw error; }
+    }
+    return cloneRun(run);
+  }
+
+  /** When the next run of the same routine started after this one, if one has: a run's files window never reaches into it. */
+  nextRunStartAfter(run: Pick<RoutineRun, "id" | "routineId" | "startedAt">): number | undefined {
+    if (run.startedAt === undefined) return undefined;
+    let next: number | undefined;
+    for (const item of this.runs) {
+      if (item.routineId !== run.routineId || item.id === run.id || item.startedAt === undefined || item.startedAt <= run.startedAt) continue;
+      if (next === undefined || item.startedAt < next) next = item.startedAt;
+    }
+    return next;
+  }
+
+  /** The run's result has been written (or there was nowhere left to write it): never delivered again. */
+  markRunDelivered(runId: string): void {
+    const run = this.runs.find((item) => item.id === runId);
+    if (!run || run.delivery?.state !== "pending" || isOpen(run.status)) return;
+    const before = run.delivery;
+    run.delivery = { ...run.delivery, state: "sent" };
+    try { this.save({ runs: [run] }); } catch (error) { run.delivery = before; throw error; }
+  }
+
+  /** Settled runs whose result was not written yet (a crash between the run's end and its delivery). Read once at start-up. */
+  pendingDeliveries(): RoutineRun[] {
+    return this.runs.filter((run) => run.delivery?.state === "pending" && !isOpen(run.status)).map(cloneRun);
+  }
+
+  /** Set by stop() (server shutdown, a restore, a Cloud home pause) and cleared by start(): a tick already in flight
+   * dispatches nothing more once it is set, and its queued runs stay queued for the next start (adapted from
+   * OpenMausBot d5a85c700). */
+  private halted = false;
+
   start() {
     if (this.timer) return;
+    this.halted = false;
     this.startedAt = this.now();
     this.gateOpened = false;
     this.gateForced = false;
@@ -2195,6 +2333,7 @@ export class RoutineManager {
   }
 
   stop() {
+    this.halted = true;
     if (this.busyRetry) clearTimeout(this.busyRetry);
     this.busyRetry = null;
     if (this.timer) clearInterval(this.timer);
@@ -2312,9 +2451,12 @@ export class RoutineManager {
   }
 
   private async tickBody(): Promise<void> {
+    if (this.halted) return;
     if (this.options.dispatchOpen && !this.options.dispatchOpen()) return;
     // Before the guard, on purpose — see enforceRunLimits.
     await this.enforceRunLimits();
+    // After the limits, on purpose: runs already going still stop at their limit while new ones wait.
+    if (this.options.dispatchHeld?.()) return;
     if (this.ticking) return;
     this.ticking = true;
     try {
@@ -2350,6 +2492,8 @@ export class RoutineManager {
           }
           continue;
         }
+        // A connected-app routine is never due on a clock, even with a stale stored time (section 4.1).
+        if (routine.schedule.type === "app_event") continue;
         if (!routine.enabled || routine.nextRunAt == null || routine.nextRunAt > now) continue;
         const pendingAt = routine.nextRunAt;
         const late = now - pendingAt;
@@ -2390,6 +2534,12 @@ export class RoutineManager {
         }
         routine.nextRunAt =
           routine.schedule.type === "once" ? null : nextOccurrence(routine.schedule, Math.max(now, scheduledFor));
+        // 1.0.8 owner zone: one daily occurrence per calendar day in the owner's zone now in force. An occurrence
+        // kept due through a zone change (rescheduleForZoneChange) was worked out in the old zone, so the new zone's
+        // time can fall later on the same day (09:00 UTC ran, Chicago's 09:00 is 14:00 UTC): the day after is taken.
+        // In an unchanged zone the next daily time is always a later day, so this moves nothing.
+        if (routine.schedule.type === "daily" && routine.nextRunAt !== null && new Date(routine.nextRunAt).toDateString() === new Date(scheduledFor).toDateString())
+          routine.nextRunAt = nextOccurrence(routine.schedule, routine.nextRunAt);
         // `updatedAt` is the optimistic definition revision carried by
         // routine confirmation cards. Moving the scheduler cursor is runtime
         // progress, not a definition edit, so recurring ticks must not make a
@@ -2447,8 +2597,9 @@ export class RoutineManager {
       // a fault on a run that had already left the queue: reported as this tick's own fault once the pass is over, so it
       // still counts in schedulerStatus() (tickFailures) and is never hidden behind a good tick
       let laterFault: unknown;
+      // a stop() while this pass awaited ends it the same way: nothing more leaves the queue
       const recheck = (run: RoutineRun): "go" | "skip" | "replaced" =>
-        this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
+        this.halted || this.runsGeneration !== generation ? "replaced" : run.status === "queued" ? "go" : "skip";
       for (const run of dispatchOrder) {
         // F2: one bad run never holds the queue. Any non-busy throw before the run starts fails THAT run (failRun never
         // throws) and the loop goes on; a run another path settled meanwhile, or one already running, is left as it is.
@@ -2752,6 +2903,45 @@ export class RoutineManager {
     }
   }
 
+  /** 1.0.8 owner zone: a daily routine's next time is its wall-clock time in the owner's zone as it stood when that
+   *  time was worked out (nextOccurrence), and the tick only works out the one after it once it fires. Called after
+   *  the owner's zone changed (desktop and Cloud), with the new zone already in force: every enabled daily routine
+   *  whose next time is still ahead gets it worked out again from now, in the new zone, so "09:00" means 09:00 there
+   *  and nothing fires at the old zone's 09:00 first. A next time already due is kept, so the tick still runs (or
+   *  records as missed) the occurrence that came due. An occurrence that already ran keeps its day: when the new
+   *  time falls on the same calendar day, in the new zone, as the last scheduled occurrence, the day after is taken.
+   *  One commit, so the fleet's earliest due time is worked out again too. Returns the routines that moved.
+   *  `offWallClockOnly` (at boot, index.ts reconcileOwnerZone): only a routine whose next time is not its own
+   *  wall-clock time in the zone now in force, so a change whose routine write failed before a restart is still
+   *  carried over, and a routine already worked out in this zone is left as it is.
+   *  `since` (a retry of a change whose write failed, owner-zone-reconcile.ts): the moment the zone changed. Everything
+   *  is worked out as of then, so a next time that came due during the failed writes moves too. */
+  rescheduleForZoneChange(options: { offWallClockOnly?: boolean; since?: number } = {}): Routine[] {
+    const now = options.since ?? this.now();
+    const lastScheduled = new Map<string, number>();
+    for (const run of this.runs) {
+      if ((run.triggerSource ?? (run.manual ? "manual" : "schedule")) !== "schedule") continue;
+      lastScheduled.set(run.routineId, Math.max(lastScheduled.get(run.routineId) ?? -Infinity, run.scheduledFor));
+    }
+    const dayOf = (at: number) => new Date(at).toDateString();
+    const moves: Array<{ routine: Routine; next: number | null }> = [];
+    for (const routine of this.routines) {
+      if (!routine.enabled || routine.schedule.type !== "daily" || routine.nextRunAt == null || routine.nextRunAt <= now) continue;
+      if (options.offWallClockOnly) {
+        const at = new Date(routine.nextRunAt);
+        if (`${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` === routine.schedule.time) continue;
+      }
+      let next = nextOccurrence(routine.schedule, now);
+      const last = Math.max(lastScheduled.get(routine.id) ?? -Infinity, routine.lastSkippedAt ?? -Infinity);
+      if (next !== null && Number.isFinite(last) && dayOf(next) === dayOf(last)) next = nextOccurrence(routine.schedule, next);
+      if (next !== routine.nextRunAt) moves.push({ routine, next });
+    }
+    if (!moves.length) return [];
+    this.commitMutation(() => { for (const { routine, next } of moves) routine.nextRunAt = next; });
+    for (const { routine } of moves) this.emitRoutine(routine);
+    return moves.map(({ routine }) => routine);
+  }
+
   /** min(nextRunAt of enabled routines, watch expiry of watched ones): nothing in the fleet walk can happen before it. */
   private nextFleetDue(): number {
     if (this.fleetDueAt !== null) return this.fleetDueAt;
@@ -2762,7 +2952,7 @@ export class RoutineManager {
         if (routine.watch.state.checks.length >= routine.watch.state.definition.maxChecks) return (this.fleetDueAt = -Infinity);
         due = Math.min(due, routine.watch.state.definition.expiresAt);
       }
-      if (routine.enabled && routine.nextRunAt != null) due = Math.min(due, routine.nextRunAt);
+      if (routine.enabled && routine.nextRunAt != null && routine.schedule.type !== "app_event") due = Math.min(due, routine.nextRunAt);
     }
     return (this.fleetDueAt = due);
   }
@@ -3086,6 +3276,9 @@ export class RoutineManager {
   }
 
   private newRun(routine: Routine, scheduledFor: number, manual: boolean): RoutineRun {
+    // The one place a legacy run (and its EventActionBudget) is made. A connected-app routine never reaches it: its runs
+    // live in appRunStore with a literal-zero child ceiling (section 7.1).
+    if (routine.schedule.type === "app_event") throw new Error("A connected-app routine has no scheduled or manual runs");
     const instruction = routine.instructionHistory?.find(item => item.id === routineInstructionRevision(routine));
     const run: RoutineRun = {
       id: randomUUID(),
@@ -3109,6 +3302,8 @@ export class RoutineManager {
       sourceThreadId: routine.sourceThreadId,
       createdAt: this.now(),
     };
+    // ROUTINE-DELIVER-1010: a bot routine's schedule and manual runs report their result in a chat (index.ts deliverRoutineRun).
+    if (routine.target === "bot" && !routine.watch) run.delivery = { state: routine.deliverTo === "list" ? "off" : "pending" };
     if (routine.watch) run.watch = { watchId: routine.id, ownerBotId: routine.watch.ownerBotId, source: plainCopy(routine.watch.state.definition.source), outcome: "pending" };
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
@@ -3324,6 +3519,7 @@ export class RoutineManager {
     const ids = new Set([...this.routines, ...this.unloadedRoutines].map(routine => routine.id));
     for (const routine of additions) {
       if (ids.has(routine.id) || routine.enabled || routine.nextRunAt !== null) throw new Error("A package routine must be new and switched off");
+      if ((routine.schedule as { type?: unknown } | undefined)?.type === "app_event") throw new Error("A package cannot bring a connected-app routine; set it up from the app's own review");
       ids.add(routine.id);
     }
     // An imported routine arrives with its ceiling pinned: imported bots start at Ask, so does the routine.
@@ -3371,7 +3567,9 @@ export class RoutineManager {
     let excess = this.runsRaw.length - MAX_RUNS;
     // on the raw list: the cap's own removals are accounted for (`trimmed`), so the list watch must not see them
     for (let index = 0; index < this.runsRaw.length && excess > 0;) {
-      if (isOpen(this.runsRaw[index]!.status)) {
+      // a settled run whose result is still owed to a chat is kept like a live one until it is delivered, for at most a day (ROUTINE-DELIVER-1010)
+      const owed = this.runsRaw[index]!.delivery?.state === "pending" && (this.runsRaw[index]!.finishedAt ?? this.runsRaw[index]!.createdAt) > this.now() - ROUTINE_DELIVERY_KEEP_MS;
+      if (isOpen(this.runsRaw[index]!.status) || owed) {
         index += 1;
         continue;
       }

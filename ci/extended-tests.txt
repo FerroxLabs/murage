@@ -97,6 +97,7 @@ server/backup-exfat.test.ts	extended
 server/backup-failure-naming.test.ts	extended
 server/backup-failure-notice-api.test.ts	extended
 server/backup-many-files.test.ts	extended
+server/backup-real-full-disk.test.ts	extended
 server/backup-waiting-api.test.ts	extended
 server/backup-waiting.test.ts	extended
 server/blake3.test.ts	extended
@@ -144,7 +145,6 @@ server/browser-extension-read-wiring.test.ts	extended
 server/browser-extension-refusals.test.ts	extended
 server/browser-extension-round2.test.ts	extended
 server/browser-extension-round5.test.ts	delete (pending review; runs here until then)
-server/browser-extension-setup.test.ts	extended
 server/browser-extension-snapshot.test.ts	extended
 server/browser-floor-recipients.test.ts	extended
 server/browser-is-the-place.test.ts	extended
@@ -369,6 +369,7 @@ server/inbox-activity-writes.test.ts	extended
 server/inbox-fill-hold.test.ts	extended
 server/inbox-first-fill.test.ts	extended
 server/inbox-learning-paused.test.ts	extended
+server/inbox-needs-you-count.growth.test.ts	extended
 server/inbox-rollup.test.ts	extended
 server/inbox-version.test.ts	extended
 server/inbox.base-equivalence.test.ts	extended
@@ -880,7 +881,6 @@ shared/error-diagnostic.test.ts	extended
 shared/first-run-chief.test.ts	extended
 shared/flux-desktop-signin-default.test.ts	delete (pending review; runs here until then)
 shared/flux-stream-contract.test.ts	extended
-shared/help-capabilities.test.ts	extended
 shared/help-coverage.test.ts	extended
 shared/host-stop.test.ts	extended
 shared/image-capabilities.test.ts	extended
@@ -944,7 +944,6 @@ src/components/BotTeamsSection.test.ts	extended
 src/components/BrowserActivityLog.test.ts	extended
 src/components/BrowserApprovalMode.test.ts	extended
 src/components/BrowserApprovedSites.test.ts	extended
-src/components/BrowserExtensionPanel.test.ts	extended
 src/components/BrowserExternalClients.test.ts	extended
 src/components/BrowserPanel.test.ts	extended
 src/components/BrowserSetupCard.test.ts	extended
@@ -1153,7 +1152,6 @@ src/hooks/use-warm-intent.test.ts	extended
 src/hooks/use-window-drag.test.ts	extended
 src/lib/about-version.test.ts	extended
 src/lib/account-localisation.test.ts	extended
-src/lib/activity-runs.test.ts	extended
 src/lib/anchor-wait.test.ts	extended
 src/lib/app-catalog.test.ts	extended
 src/lib/assemblyai-transcription.test.ts	extended
@@ -1467,3 +1465,4 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/lib/clock-format.test.ts	extended

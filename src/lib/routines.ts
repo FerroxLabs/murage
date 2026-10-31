@@ -3,7 +3,9 @@ export type RoutineSchedule =
   | { type: "daily"; time: string; weekdays: number[] }
   | { type: "interval"; everyMinutes: number; anchorAt: number }
   /** 1.0.4 SL-I I3: runs once each time this engine's limit resets (server/routines.ts) */
-  | { type: "limit_reset"; engineKey: string };
+  | { type: "limit_reset"; engineKey: string }
+  /** 1.0.11 APP-TRIGGERS: started by connected-app events, never by a clock; nextRunAt is always null. */
+  | { type: "app_event"; triggerId: string };
 
 export type RoutineRunOn = "ember" | "cloud";
 
@@ -25,7 +27,7 @@ export interface RoutineContextAttachment {
   size: number;
 }
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "channel" | "app";
 
 export type RoutineRunStatus =
   | "queued"
@@ -64,6 +66,8 @@ export interface Routine {
   overlap?: "skip" | "queue";
   /** Set once at creation: each run starts with the last run's report. Absent means off. No control. */
   carryLastReport?: true;
+  /** Absent: results go to the chat it was made in (or the bot's main chat). "list": the Routines list only. */
+  deliverTo?: "list";
   /** The approval level its runs are judged at; absent means the bot's own
    * level when a run starts (server/routine-permissions.ts). */
   permissionMode?: import("./permission-mode").PermissionMode;
@@ -141,6 +145,7 @@ export interface RoutineInput {
   overlap?: "skip" | "queue";
   /** Creation only (the editor); an edit never changes it. */
   carryLastReport?: boolean;
+  deliverTo?: "chat" | "list";
   /** A level, or `inherit` to follow the bot's level. */
   permissionMode?: import("./permission-mode").PermissionMode | "inherit";
 }

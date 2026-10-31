@@ -122,31 +122,31 @@ export function classifyLocalSetupFailure(message: unknown, details?: unknown, t
 
 /** The renderer consumes fixed copy, never provider-supplied details or URLs. */
 export function providerErrorPresentation(info: ProviderErrorInfo): { title: string; summary: string; resolution: string; billingUrl?: string } {
-  const provider = info?.provider === "flux-router" ? "Flux Router" : "Your model provider";
+  const provider = info?.provider === "flux-router" ? "Flux Router" : "Your AI service";
   switch (info?.kind) {
     case "payment": return {
-      title: "Provider payment or account access required",
-      summary: "The provider rejected this request with HTTP 402. This response does not establish that credits are exhausted.",
-      resolution: "Check the provider's billing, account and selected-model access, including bring-your-own-key (BYOK) settings, before retrying.",
+      title: "Payment or account access needed",
+      summary: "Your AI service said payment or account access is needed. That does not always mean you are out of credit.",
+      resolution: "Check billing and access with your AI service, including your own key if you use one, and that your account can use the model you picked. Then try again.",
     };
     // No billing link: the whole point of this case is that buying something
     // does not clear it.
     case "spend-cap": return {
       title: `${provider} has reached its monthly spending limit`,
-      summary: "The account reached the spending limit set for it this month, so no further requests will run until that limit resets or is raised.",
-      resolution: "The limit rises on its own as the account builds up payment history, so adding credit will not lift it. Ask the provider to raise it sooner, or choose another configured engine.",
+      summary: "The account reached the spending limit set for it this month, so no more requests will run until that limit resets or is raised.",
+      resolution: "The limit rises on its own as the account builds up payment history, so adding credit will not lift it. Ask your AI service to raise it sooner, or pick another AI in Models & engines.",
     };
     case "credits": return {
       title: `${provider} needs credits`,
-      summary: "The provider reported that its available credit balance was exhausted. The model could not complete this request.",
-      resolution: "If you have already added credits, retry once the updated balance is available. You can also choose another configured engine.",
+      summary: "Your AI service says the account has run out of credit, so this reply could not finish.",
+      resolution: "If you have already added credits, try again once the new balance shows. You can also pick another AI in Models & engines.",
       ...(info.provider === "flux-router" ? { billingUrl: "https://fluxrouter.ai/home/billing" } : {}),
     };
-    case "authentication": return { title: `${provider} could not authenticate`, summary: "The provider rejected the credentials used for this request.", resolution: "Review this engine's sign-in or API-key configuration in Engines & Models, then retry." };
-    case "permission": return { title: `${provider} denied access`, summary: "The provider refused permission for this request. This does not necessarily mean you are signed out.", resolution: "Check that the account has access to the selected model and service, or choose another configured engine." };
-    case "rate-limit": return { title: `${provider} request limit reached`, summary: "The provider reported a request limit. This may be a short-term rate limit or an account quota.", resolution: "Check the provider's limit and reset time before retrying, or choose another configured engine." };
-    case "unavailable": return { title: `${provider} is temporarily unavailable`, summary: "The provider returned a service-unavailable response.", resolution: "Retry later or choose another configured engine." };
-    default: return { title: "Provider request failed", summary: "Detailed provider information is unavailable for this saved error.", resolution: "Review the selected engine's configuration before retrying." };
+    case "authentication": return { title: `${provider} did not accept the sign-in`, summary: "Your AI service did not accept the sign-in or key used for this request.", resolution: "Check this AI's sign-in or key in Models & engines, then try again." };
+    case "permission": return { title: `${provider} denied access`, summary: "Your AI service refused this request. You may still be signed in.", resolution: "Check that your account can use the model you picked, or pick another AI in Models & engines." };
+    case "rate-limit": return { title: `${provider} request limit reached`, summary: "Your AI service is limiting requests right now. This can be a short pause or a limit on the account.", resolution: "Check your AI service's limit and when it resets, then try again, or pick another AI in Models & engines." };
+    case "unavailable": return { title: `${provider} is temporarily unavailable`, summary: "Your AI service is busy right now.", resolution: "Wait a moment, then try again, or pick another AI in Models & engines." };
+    default: return { title: "Your AI service could not finish this", summary: "There are no more details saved for this error.", resolution: "Try again. If it happens again, check the AI you picked in Models & engines." };
   }
 }
 

@@ -263,16 +263,50 @@ export function researchNote(routing: FirstRunSearchRouting): string | null {
   return routing === "anonymous" ? null : FIRST_RUN_COPY.chat.jobs.searchNotes[routing];
 }
 
+/**
+ * The tag a job ROW carries (§1.6), in that job's own words.
+ *
+ * Nothing missing, no tag. Flux missing is said first, because nothing else
+ * on the row can be acted on before it. Otherwise the row says what this job
+ * will ask for: the day needs the calendar, and the business job asks for apps
+ * as it goes. The brief takes the counted tag from `jobTag`, because pressing
+ * it opens the connect screen and that screen counts the same accounts, so the
+ * row and the screen say the same thing.
+ */
+export function jobRowTag(
+  id: FirstRunJobId,
+  missing: readonly FirstRunJobNeed[],
+  world: Pick<FirstRunJobWorld, "connected">,
+): FirstRunJobTag | null {
+  const words = FIRST_RUN_COPY.chat.jobs.tags;
+  // Nothing to think with yet: that is the one thing every row is waiting
+  // on, so it is the one thing each row says (§1.6, blank machine).
+  if (missing.includes("flux")) return { text: words.flux, tone: "accent" };
+  if (id === "business") {
+    return SETUP_JOB_APPS.every((app) => world.connected.includes(app))
+      ? null
+      : { text: words.business, tone: "neutral" };
+  }
+  if (missing.length === 0) return null;
+  if (id === "day") return { text: words.day, tone: "accent" };
+  return jobTag(missing);
+}
+
 // ── the rows, joined to their words ────────────────────────────────────
 
 export interface FirstRunJobRow {
   id: FirstRunJobId;
   title: string;
   sub: string;
-  /** True for the first row, which is visually led. */
+  /** True for the first row, which is visually led and carries the
+   *  Recommended mark (§1.6). */
   lead: boolean;
+  /** The Recommended mark's words on the led row, "" on the rest. */
+  recommended: string;
   missing: readonly FirstRunJobNeed[];
-  tag: FirstRunJobTag;
+  /** The needs tag, or null when nothing is missing: §1.6 shows a tag only
+   *  when a connection is missing. */
+  tag: FirstRunJobTag | null;
   /** Where pressing it goes: the connect screen when anything is missing,
    *  the job's own input when not, and straight to the work for the one job
    *  that has no input. */
@@ -290,8 +324,9 @@ export function firstRunJobRows(world: FirstRunJobWorld): readonly FirstRunJobRo
       title: row.title,
       sub: row.sub,
       lead: index === 0,
+      recommended: index === 0 ? FIRST_RUN_COPY.chat.jobs.tags.recommended : "",
       missing,
-      tag: jobTag(missing),
+      tag: jobRowTag(row.id, missing, world),
       press: missing.length > 0 ? "connect" : shape.input === null ? "working" : "input",
       note: row.id === "research" ? researchNote(world.search) : null,
     };
@@ -317,6 +352,11 @@ export interface FirstRunConnectScreen {
   /** The store could not be read, so these rows may be asking for something
    *  already connected. Said on the screen, never folded into a tag. */
   appsUnreadable: boolean;
+  /** What to say when the store could not be read, for this job. */
+  unreadable: string;
+  /** Each row's button, saying what it connects. Optional so a screen
+   *  built by hand still draws, with the plain "Connect". */
+  connectLabel?: (need: FirstRunJobNeed) => string;
 }
 
 /**
@@ -340,6 +380,8 @@ export function firstRunConnectScreen(
     skipToInput: job.input === null ? null : words.skipToInput,
     elsewhere: words.elsewhere,
     appsUnreadable: world.appsUnreadable,
+    unreadable: job.id === "brief" ? words.unreadableBrief : words.unreadable,
+    connectLabel: (need) => (need === "flux" ? FIRST_RUN_COPY.apps.apps.connect : words.connectLabels[need]),
   };
 }
 
@@ -473,4 +515,3 @@ export function typedReply(world: FirstRunJobWorld): string | null {
   return typedOutcome(world) === "keep" ? FIRST_RUN_COPY.chat.jobs.kept : null;
 }
 
-void SETUP_JOB_APPS;

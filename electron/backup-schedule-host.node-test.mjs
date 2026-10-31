@@ -49,9 +49,34 @@ function fixture(overrides={}){
     async arm(){await this.enable();now=Date.parse("2026-09-13T09:01:00Z");await controller.tick();},
     cleanup(){controller.stopPolling();safeWipeSync(root);}};
 }
+test("destination permission failure keeps its named code through the host and coordinator",async()=>{
+  const f=fixture();try{
+    await f.arm();
+    const host=f.create({capture:async()=>{throw Object.assign(new Error("BACKUP_FOLDER_NOT_WRITABLE"),{code:"BACKUP_FOLDER_NOT_WRITABLE"});}});
+    await assert.rejects(host.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
+    const failure=f.coordinator().status().captureFailure;
+    assert.equal(failure.code,"BACKUP_FOLDER_NOT_WRITABLE");
+    assert.equal(failure.stage,"capture");
+    assert.equal(captureFailureSentence(failure),"The last backup stopped while copying your workspace. Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.");
+  }finally{f.cleanup();}
+});
 test("disabled selection never enables, exposes only labels/refs, and needs explicit consent",async()=>{
   const f=fixture();try{await f.controller.tick();assert.deepEqual(f.calls,[]);const s=await f.controller.selectReferences();assert.equal(s.enabled,false);const encoded=JSON.stringify(s);assert.equal(encoded.includes(f.root),false);assert.equal(encoded.includes("AGE-SECRET"),false);assert.equal(encoded.includes("age1"),false);
     await assert.rejects(f.controller.configure(0,{...choices,...s.refs}),/CONSENT/);assert.equal(f.coordinator().status().enabled,false);
+  }finally{f.cleanup();}
+});
+test("1.0.12: the worker's notes become one timed log line per step and reach the window, and a broken window changes nothing",async()=>{
+  const f=fixture();try{await f.arm();const lines=[],shown=[];
+    const host=f.create({reportOutcome:line=>lines.push(line),reportWorkerProgress:note=>{shown.push(note.step);throw Error("window gone");},capture:async request=>{
+      request.onProgress({step:"encrypt",elapsedMs:10,done:5,total:9});request.onProgress({step:"encrypt",elapsedMs:40,done:9,total:9});request.onProgress({step:"readback",elapsedMs:70});request.onProgress({step:"nonsense",elapsedMs:80});request.onProgress({step:"done",elapsedMs:100});
+      return f.host.capture(request);}});
+    assert.deepEqual(await host.resumeOffline(),{verified:true});
+    const steps=lines.filter(line=>line.startsWith("backup step "));
+    assert.equal(steps.length,2);
+    assert.match(steps[0],/^backup step \{"job":"[^"]{1,8}","step":"encrypt","ms":60,"bytes":9\}$/);
+    assert.match(steps[1],/^backup step \{"job":"[^"]{1,8}","step":"readback","ms":30\}$/);
+    assert.deepEqual(shown,["encrypt","encrypt","readback","nonsense","done"]);
+    assert.equal(lines.filter(line=>line.startsWith("backup local verified")).length,1);
   }finally{f.cleanup();}
 });
 test("a backup run logs one outcome line per step: started, local written, verified with bytes and how, and no paths",async()=>{
@@ -173,7 +198,7 @@ for(const preUpgrade of [false,true])test(`Return keeps Backup mode and explains
       const response=await pressReturn();
       assert.equal(response.state.error,"BACKUP_STATE_SAVE_FAILED");
       assert.equal(response.state.busy,false);assert.equal(response.hidden,false);
-      assert.equal(response.sentence,"Murage could not save its backup state. Check the disk space and permissions, then press Return to workspace again.");
+      assert.equal(response.sentence,"Murage could not save its backup state. Check free disk space and folder permissions, then choose Return to workspace again.");
       assert.doesNotMatch(response.sentence,/—|\b(?:safe|unsafe|safety)\b/i);
       assert.equal(returns,0);assert.equal(workspace,false);
       assert.equal(coordinator.status().phase,"handoff-armed");

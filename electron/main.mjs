@@ -28,6 +28,7 @@ import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
 import { createCloudLinkQueue } from "./cloud-link-queue.mjs";
 import { handOffDoorLink, needsDoorHandoff, takeStashedDoorLink } from "./cloud-link-handoff.mjs";
+import { configureLinuxPasswordStore } from "./linux-password-store.mjs";
 import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
 import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
@@ -36,7 +37,7 @@ import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeControll
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
-import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { cloudNoticeStore, createRecoveryKeyFlow, defaultRecoveryKeyFolder, hostCloudFolder, recoveryKeyAutomaticExclusions, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -90,7 +91,7 @@ import {
   createRendererMemorySampler,
   readSafeLogTail,
 } from "./diagnostics.mjs";
-import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
@@ -205,6 +206,8 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 }
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+// Keep this outside the profile-isolation slice, but before Electron is ready.
+configureLinuxPasswordStore({ commandLine: app.commandLine });
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -542,7 +545,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
-  defaultFolder:()=>app.getPath("documents"),
+  defaultFolder:()=>defaultRecoveryKeyFolder(name=>app.getPath(name)),
   // Where a key is written when nobody is asked: the person's home folder,
   // then (Windows) the local app data folder. Never Documents: that is the
   // folder sync clients take over (OneDrive on Windows, iCloud Desktop and
@@ -558,7 +561,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   rebindKeyFile:file=>backupScheduleHost.rebindKeyFile(file),
   noticeStore:cloudNoticeStore(path.join(app.getPath("userData"),"backup-key-cloud-notice.json")),
   // Never written to without asking, even when an earlier key went there.
-  neverAutomatic:()=>{try{return [app.getPath("documents")];}catch{return [];}},
+  neverAutomatic:()=>recoveryKeyAutomaticExclusions(name=>app.getPath(name)),
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
@@ -569,14 +572,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // The second copy: somewhere other than the backup folder.
   chooseCopyFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Save this copy somewhere other than your backup folder: a USB drive, another computer, or your password manager. Without this key nobody, including you, can open your backups."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
   // `suggested` is a name not yet taken in that folder.
   chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
@@ -2133,7 +2136,10 @@ async function startServerOn(port) {
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
   // (audit P1, S1b R8).
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
-    ...restoredHarnessEnvironment(process.env, restoredConnections),
+    // The shell's FLUX_API_KEY never reaches the child as a key: only the
+    // store's does (workspaceCredentialEnv below), and the shell value is
+    // offered as MURAGE_FLUX_AMBIENT_KEY, a choice, when the store is not managed.
+    ...desktopFluxEnvironment(restoredHarnessEnvironment(process.env, restoredConnections), secureCredentials),
     // A packaged utility child must never fall back to a descriptor inherited
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
@@ -2173,7 +2179,6 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
-    MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
@@ -3233,6 +3238,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+    ...(operation==="backup-encrypted"&&typeof parameters.onProgress==="function"?{onProgress:parameters.onProgress}:{}),
   });
     // Undoing the restore of a separate installation leaves nothing for the
     // selection to open: hand the next start back to the original (D2).
@@ -3903,10 +3909,12 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 });
 
 // Connector login, plugin/team links and browser-panel "open in browser" all
-// come from the owned main window's top frame. Any other sender is refused
-// before the address is parsed; the address must be credential-free http(s).
+// come from the owned main window's top frame. A Cloud-home window's top frame
+// may ask too, https only. Any other sender is refused before the address is
+// parsed; the address must be credential-free http(s).
 ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
+  isCloudSender: (event) => cloudHome?.isCloudSender(event) === true,
   openExternal: (url) => shell.openExternal(url),
 }));
 
@@ -4186,6 +4194,15 @@ async function mutateFluxConnectionInMain(input) {
   });
 }
 ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnectionInMain(input));
+// Settings: after a Flux key change, running engines keep the key they were
+// spawned with until Murage restarts. The same relaunch-then-quit pair backup
+// mode uses; refused where Murage cannot reopen itself.
+ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
+  if (args.length) throw new Error("Invalid restart request.");
+  if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
+  relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
+  app.quit();
+});
 
 // One-click Flux sign-in. The key is minted by the token endpoint and stored by
 // the SAME road a pasted key takes; it never reaches the renderer.
@@ -4194,7 +4211,7 @@ ipcMain.handle("flux-signin:start", async (_event, input) => {
   const revision = typeof input?.revision === "string" ? input.revision : "";
   try {
     let config = null;
-    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config follows the default (on) */ }
     assertFluxDesktopSigninEnabled(config);
     const { key } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url) });
     const status = await mutateFluxConnectionInMain({ action, revision, key });
@@ -4209,12 +4226,13 @@ ipcMain.handle("flux-signin:cancel", () => { cancelFluxDesktopSignin(); });
 // Bot email (BOT-EMAIL-MURAGE-109 2.4): the owner act of turning email on obtains the email:owner token from the same PKCE desktop flow,
 // stores it encrypted and hands it to the server over the private port. The token never reaches the renderer, an engine or config.flux.
 ipcMain.handle("email-owner-signin:start", async () => {
-  const gate = await modelSignInGate();
-  if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
   try {
     let config = null;
-    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config means the switch is off */ }
+    try { config = JSON.parse(fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8")); } catch { /* unreadable config follows the default (on) */ }
+    // the explicit-off switch answers first, before the storage gate (Astra 1.0.11 L)
     assertFluxDesktopSigninEnabled(config);
+    const gate = await modelSignInGate();
+    if (gate) return { ok: false, code: gate.error, message: "Murage could not keep the sign-in on this computer." };
     const { key: owner } = await runFluxDesktopSignin({ openExternal: (url) => shell.openExternal(url), scope: EMAIL_OWNER_SCOPE, readToken: readEmailOwnerToken });
     await updateSecureCredentialDocument((current) => withEmailOwner(current, owner), undefined, { skipUnchanged: true });
     serverProc?.postMessage({ type: EMAIL_OWNER_MESSAGE, owner });
@@ -4695,6 +4713,7 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
+    reportWorkerProgress:progress=>backupProgress?.worker(progress),
     reportCaptureFailure:(failure,handoff)=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -4990,6 +5009,9 @@ void androidDevice.reclaimOrphan().catch(() => {});
   if(cloudHome?.client?.settleUnfinished)void cloudHome.client.settleUnfinished().catch(()=>console.log("[cloud] door: settle-failed"));
   powerMonitor.on("suspend",()=>backgroundLifecycle?.setSuspended(true));
   powerMonitor.on("resume",()=>backgroundLifecycle?.setSuspended(false));
+  // 1.0.10 C3: the server counts the suspension as sleep, so an open card's deadline and the stall watchdog do not read it as silence.
+  // The server also measures a frozen process itself; this covers a suspension it kept running through (Windows modern standby).
+  for(const state of ["suspend","resume"])powerMonitor.on(state,()=>{try{serverProc?.postMessage({type:"murage:power",state});}catch{/* the server is restarting; its own tick covers a freeze */}});
   // 1.0.9 Sentinel: sleep pauses sampling (no missed-window catch-up); registration and proof run in the background.
   powerMonitor.on("suspend",()=>sentinelHost?.suspend());
   powerMonitor.on("resume",()=>sentinelHost?.resume());

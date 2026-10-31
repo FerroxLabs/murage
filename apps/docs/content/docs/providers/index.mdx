@@ -1,43 +1,53 @@
 ---
 title: Agent engines
-description: Use the agent subscriptions and CLIs you already have.
+description: Use the AI apps and subscriptions you already have.
 icon: BrainCircuit
 ---
 
-Murage does not proxy every message through its own model account. It starts supported agent CLIs on your computer and normalizes their output through the local harness.
+Murage does not send every message through its own AI account. It starts the AI apps you installed on this computer, such as Claude or Codex, and shows their work in one chat.
 
-<ProductScreenshot name="docs-engine-detection" alt="Murage checking which agent engines are installed" caption="The official app checks installation and sign-in state without asking users to find executable paths first." />
+<ProductScreenshot name="docs-engine-detection" alt="Murage checking which AI apps are installed" caption="Murage checks what is installed and signed in for you. You do not need to find any files." />
 
 ## Built-in engines
 
-| Engine | Authentication shape | Notes |
-|---|---|---|
-| Claude | Claude CLI login | Strong support for tools, approvals, sessions, and local computer use |
-| Codex | Codex CLI login | Model discovery, approvals, steering, and computer tools |
-| Grok | Grok CLI login | ACP-based local model catalog and session support |
-| Cursor | Cursor Agent CLI login or API key | ACP driver with live model discovery |
-| Kimi | Kimi CLI login | ACP integration |
-| Droid | Factory Droid CLI login | ACP integration |
-| Antigravity | Google Antigravity CLI login | Default Google consumer engine |
-| OpenCode | Existing OpenCode provider login or optional API key | Live Zen, Go, third-party, and local model discovery through ACP |
-| Qwen | Qwen CLI login | ACP integration |
-| Hermes | Hermes CLI login | ACP integration |
-| Pi | Pi CLI login | Native driver |
+Each engine is an AI app on this computer. You sign in to it once, with your own account, and Murage uses that sign-in.
 
-Additional driver instances can be declared in local configuration. Unavailable engines remain visible with a reason instead of crashing the provider fleet.
+| Engine | How you sign in | Notes |
+|---|---|---|
+| Claude | Sign in to the Claude app | Strong support for tools, approvals, saved sessions and using this computer |
+| Codex | Sign in to the Codex app | Lists its models, asks for approval, takes new directions mid-task, uses computer tools |
+| Grok | Sign in to the Grok app | Lists its models and keeps sessions |
+| Cursor | Sign in to the Cursor Agent app, or use your own Cursor key | Lists its models as they change |
+| Kimi | Sign in to the Kimi app | Works through the common AI app connection |
+| Droid | Sign in to the Factory Droid app | Works through the common AI app connection |
+| Antigravity | Sign in to the Google Antigravity app | The default engine for a personal Google account |
+| OpenCode | Your existing OpenCode sign-in, or your own OpenCode key | Lists Zen, Go, other services' and local models |
+| Qwen | Sign in to the Qwen app | Works through the common AI app connection |
+| Hermes | Sign in to the Hermes app | Works through the common AI app connection |
+| Pi | Sign in to the Pi app | Built-in connection |
+
+The "common AI app connection" is a shared language Murage uses to talk to many AI apps the same way. An engine that is not ready stays in the list with the reason and the next step, and the others keep working. If you run Murage from source, you can add more engines in its settings file.
+
+## Use a plan you already have
+
+Sign in with the plan you already pay for and your bots can use the models that come with it. Open **Settings → Models & engines** in the Murage desktop app and press Continue with ChatGPT or Continue with Grok under Use a plan you already have. Plan limits apply. On a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial: xAI has not published it for other apps yet, it needs a SuperGrok or X Premium plan, and an xAI API key works instead if it is ever turned off.
+
+## Grok images
+
+Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open **Settings → Tools → Image generation**, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself.
 
 ## Detection
 
-Murage checks common installation directories and the login shell in the background. Restart the app after installing or authenticating a CLI.
+Murage looks for your AI apps in the usual places, in the background. After you install an AI app or sign in to it, restart Murage.
 
-If detection fails, use **Settings → Engines** to set an explicit executable path. This is supported for every engine and is the most reliable solution for version managers, wrappers, custom builds, and Windows installations outside the normal path.
+If Murage still cannot find one, open **Settings → Models & engines** and use **Choose location…** on that engine to point it at the app. This works for every engine and helps when you keep several versions, use a version manager or a wrapper, or installed the app somewhere unusual on Windows.
 
 ## Model selection
 
-The model picker groups models by provider and marks defaults. Supported engines can refresh their model catalog from the installed CLI. Changing the model affects future turns; it does not rewrite earlier transcript history.
+The model picker groups models by the AI service they come from and marks the defaults. Engines that support it can refresh their list of models from the app. A new model choice applies to the next replies; earlier messages stay as they were.
 
 <ProductScreenshot name="docs-model-picker" alt="The Murage model picker with several cloud and local engines" caption="Every bot can use a different engine and model." />
 
-<Callout type="info" title="Subscriptions stay with the provider">
-  Your existing CLI login or provider API key determines access and billing. Murage does not turn one subscription into access to another provider.
+<Callout type="info" title="Your plan stays with your AI service">
+  Your sign-in to the AI app, or your own key, decides what you can use and who bills you. Murage does not turn one subscription into access to another AI service.
 </Callout>
