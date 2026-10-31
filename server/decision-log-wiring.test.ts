@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { DecisionRow } from "./decision-log.ts";
+import { OWNER_FIRST_MAX_DEFER_MS } from "./owner-first.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
@@ -31,6 +32,7 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 
 let child: ChildProcess;
 let home: string;
+let stdout = "";
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
@@ -90,8 +92,15 @@ async function waitForThreadCard(threadId: string, ms = 30_000) {
   return null;
 }
 
+/** Automatic routine starts (webhooks included) wait while the whole computer is overloaded, and are admitted anyway once they have
+ * waited OWNER_FIRST_MAX_DEFER_MS (owner-first.ts). Measured on a macOS runner (3 cores, load 9 to 14): "system-load" held the run
+ * on every tick, it was admitted at 125 s, and the wait here was 20 s. Same wait and same reason as unattended.test.ts. */
+const RUN_START_WAIT_MS = OWNER_FIRST_MAX_DEFER_MS + 30_000;
+/** The server's own account of why a run has not started: its owner-first deferral lines. */
+const deferralLog = () => `${stdout}\n${stderr}`.split("\n").filter(line => line.includes("[owner-first]")).slice(-5).join("\n") || "(no owner-first deferral logged)";
+
 /** The detached task a webhook delivery created. */
-async function waitForRunThread(runId: string, ms = 20_000) {
+async function waitForRunThread(runId: string, ms = RUN_START_WAIT_MS) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const { body } = await api("GET", "/api/routines");
@@ -159,6 +168,7 @@ posixOnly("authorization decisions are logged", () => {
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    child.stdout!.on("data", (c) => (stdout += c)); // the owner-first deferral lines go here
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
     for (;;) {
@@ -301,7 +311,7 @@ posixOnly("authorization decisions are logged", () => {
       const { runId } = (await delivered.json()) as { runId: string };
 
       const threadId = await waitForRunThread(runId);
-      expect(threadId, "the webhook never started a task").toBeTruthy();
+      expect(threadId, `the webhook never started a task. ${deferralLog()}`).toBeTruthy();
       const card = await waitForThreadCard(threadId!);
       expect(card, "the webhook turn auto-approved instead of asking").not.toBeNull();
 
@@ -312,7 +322,7 @@ posixOnly("authorization decisions are logged", () => {
       expect(row!.unattended).toBe(true);
       expect(row!.botId).toBe(bot.id);
     },
-    90_000,
+    RUN_START_WAIT_MS + 90_000,
   );
 
   it(
