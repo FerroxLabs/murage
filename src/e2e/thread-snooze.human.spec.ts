@@ -182,7 +182,7 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   await card.getByRole("checkbox", { name: /Intro/ }).click();
   await card.getByRole("button", { name: "Send answer" }).click();
   await expect.poll(async () => (await api("/api/inbox?view=decisions")).questions, { timeout: 20_000 }).toBe(0);
-  await page.getByRole("button", { name: "Close Inbox", exact: true }).click();
+  // UX 1.0.13: Needs you is a page beside the rail, not a dialog, so there is nothing to close.
   await openSidebar(page);
   await expect(page.locator(`[data-sidebar-bot-row="${botId}"] [data-question-badge]`)).toHaveCount(0, { timeout: 12_000 });
   await expect(row(page)).not.toHaveAttribute("aria-label", /question/);

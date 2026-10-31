@@ -13,6 +13,24 @@ export const BACKUP_PROGRESS_STEPS = Object.freeze({ references: 1, capture: 2, 
 
 export const BACKUP_PROGRESS_KINDS = Object.freeze(["first", "backup", "update"]);
 
+/** Where each step of the worker sits: the window's step, what it shows, and the bar's range in percent. */
+const WORKER_VIEWS = Object.freeze({
+  records: [2, "copy", 25, 26], "database-read": [2, "copy", 26, 30], "source-recheck": [2, "copy", 30, 31], "database-check": [2, "copy", 31, 32],
+  "database-copy": [2, "copy", 32, 36], "database-clean": [2, "copy", 36, 37], "database-verify": [2, "copy", 37, 38], "database-digest": [2, "copy", 38, 39], ledger: [2, "copy", 39, 40],
+  inventory: [2, "prepare", 40, 42], encrypt: [2, "encrypt", 42, 60],
+  readback: [3, "check", 60, 70], "readback-entries": [3, "check", 70, 73], "readback-hash": [3, "check", 73, 74], flush: [3, "check", 74, 75], publish: [3, "check", 75, 75], done: [3, "check", 75, 75],
+});
+
+/** What the window shows for a note from the worker, or null. */
+export function backupWorkerView(note) {
+  const view = note && typeof note === "object" && Object.hasOwn(WORKER_VIEWS, note.step) ? WORKER_VIEWS[note.step] : null;
+  if (!view) return null;
+  const [step, phase, from, to] = view;
+  const counted = Number.isSafeInteger(note.done) && Number.isSafeInteger(note.total) && note.total > 0 && note.done >= 0;
+  const share = counted ? Math.min(1, note.done / note.total) : 0;
+  return { step, phase, percent: Math.round(from + (to - from) * share), ...(counted ? { done: note.done, total: note.total } : {}) };
+}
+
 /** Which heading the window shows, from the coordinator's status: a backup
  * before an in-app update, the very first backup (no verified one yet), or any
  * other backup (Back up now, daily). Anything unreadable reads as "backup". */
@@ -45,6 +63,14 @@ export function openBackupProgressWindow({ BrowserWindow, baseDir, skin = "dark"
     window: win,
     /** A stage name from the capture; unknown names and steps backwards are ignored. */
     stage(name) { const step = BACKUP_PROGRESS_STEPS[name]; if (!step || step <= last) return; last = step; show(step); },
+    /** A note from the worker. "Checking" starts when the worker's own check
+     * does, so the later stage("artifact-readback") is then a repeat. */
+    worker(note) {
+      const view = backupWorkerView(note);
+      if (!view || view.step < last || win.isDestroyed()) return;
+      if (view.step > last) { last = view.step; show(view.step); }
+      void loaded.then(() => win.webContents.executeJavaScript(`window.setBackupDetail(${JSON.stringify(view)})`)).catch(() => {});
+    },
     destroy,
     close: destroy,
   };

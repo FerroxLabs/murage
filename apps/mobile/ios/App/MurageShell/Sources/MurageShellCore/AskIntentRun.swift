@@ -49,7 +49,7 @@ public enum AskDialog: String, CaseIterable, Sendable {
     case sentChat = "Sent to %@. The answer will be in your chat."
     case targetGone = "That chat is no longer available. Open Murage to pick another."
     case setup = "Open Murage to set up asking."
-    case update = "Update Murage on your computer to use this."
+    case update = "Turn this on, or update Murage, on your computer."
     case unreachable = "Murage can't reach your computer right now."
 
     public static func question(botName: String?, bundle: Bundle = .main) -> String {
