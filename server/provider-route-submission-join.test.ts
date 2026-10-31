@@ -22,7 +22,7 @@ it("actual direct and room submission callbacks reject changed provider revision
       const callback = (current: unknown, route: unknown, receipt: unknown, opts: unknown) => compileBody(body)(current, route, receipt, opts, { mark() {} }, ...liveRoom());
       const current = (route?: { connectionId: string; revision: string }) => !route || service.isCurrent(route.connectionId, route.revision);
       const accepted = vi.fn(); const boundary = new TurnSubmissionBoundary(); boundary.started(); revision = "r2";
-      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed before submission");
+      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed just before sending");
       expect(accepted).not.toHaveBeenCalled(); expect(() => boundary.assertNotRefused()).toThrow();
       const valid = new TurnSubmissionBoundary(); valid.started(); valid.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r2" }, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(1);
       // The new provider guard must not break memory acceptance on native/no-route turns.

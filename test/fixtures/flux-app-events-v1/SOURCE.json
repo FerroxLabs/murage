@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "repository": "Flux (read-only copy /Volumes/Scratch/dev-mac/flux-contract-ro)",
+  "commit": "4f6221ba679a61628e54c2a4348ed3103a3f0173",
+  "path": "contracts/app-events/v1",
+  "contractRevision": 1,
+  "copiedAt": "2026-10-29",
+  "copy": "byte-identical; app-trigger tests compare nothing but these bytes",
+  "final": ["errors.json", "limits.json", "jcs/cases.json", "jcs/SOURCE.json", "jcs/input/*.json", "jcs/output/*.json", "idempotency/cases.json"],
+  "draft": ["catalog/gmail.message.new.json", "catalog/github.issue.opened.json", "catalog/slack.channel.message.json"],
+  "draftUse": "projection shapes only, never acceptance evidence (design GAP-APP-TRIGGERS-109 section 13.1)",
+  "notCopied": {
+    "catalog/google_calendar.event.created.json": "reserve type, never offered (D-12): v1 knows exactly three event types",
+    "grants/": "owner review and grants are outside slice AT-S1",
+    "signing/": "DRAFT and only used by Flux ingress, which Murage never calls",
+    "routing/cases.json": "provider-envelope to subscription routing happens inside Flux, never in Murage; its synthetic account ids also read as keys to the secret scan"
+  }
+}

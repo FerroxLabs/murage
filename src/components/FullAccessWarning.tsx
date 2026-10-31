@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { t } from "@/lib/i18n";
 import { AlertTriangle } from "lucide-react";
 
 /** Shown once per bot, on the desktop, before Full access is switched on. */
@@ -9,8 +10,6 @@ export const FULL_ACCESS_WARNING =
 export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
-export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks still ask, as they do in Auto.";
 
 /** Images follow the level now (server/image-approval.ts): made without a card in
  * the owner's own conversations and routines, with a record, unless the bot's Images setting says otherwise. */
@@ -101,7 +100,7 @@ export function FullAccessWarning({
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}
-              <p>{FULL_ACCESS_STILL_ASKS}</p>
+              <p>{t("ux.lcopyb.fullAccess.stillAsks")}</p>
               <p>{FULL_ACCESS_IMAGES}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
               <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>

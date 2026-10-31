@@ -326,6 +326,13 @@ if (process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS && process.env.FAKE_CLAUDE_STA
 // and the reply so a test can steer into it.
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 const sessionId = argAfter("--resume") ?? argAfter("--session-id") ?? "fake-session";
+// THREAD-SEAL: both arrival orders. FAKE_CLAUDE_INIT_AT_START=1 emits `init` at startup, before stdin is read, and not again on the first
+// turn (the real CLI 2.1.310 emits it only after the prompt; a held or early init must still bind). FAKE_CLAUDE_RESUME_NEW_ID=<id> reports
+// that id on a --resume launch instead of the one it was asked for.
+const reportedSessionId = argAfter("--resume") && process.env.FAKE_CLAUDE_RESUME_NEW_ID ? process.env.FAKE_CLAUDE_RESUME_NEW_ID : sessionId;
+// FAKE_CLAUDE_NO_REINIT=1: a kept process announces its session on its first turn only.
+let earlyInitOwed = process.env.FAKE_CLAUDE_INIT_AT_START === "1";
+let initAnnounced = false;
 const model = argAfter("--model") ?? "claude-fake";
 let dumped = false;
 let turnRunning = false;
@@ -922,8 +929,9 @@ const playTurn = (prompt: JsonValue) => {
     return;
   }
 
-  // the real CLI re-announces init on every turn of a live process
-  out({ type: "system", subtype: "init", session_id: sessionId, model });
+  // the real CLI re-announces init on every turn of a live process (2.1.310: also only then, after it read the prompt)
+  if (!earlyInitOwed && !(process.env.FAKE_CLAUDE_NO_REINIT === "1" && initAnnounced)) out({ type: "system", subtype: "init", session_id: reportedSessionId, model });
+  earlyInitOwed = false; initAnnounced = true;
 
   // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): every turn calls the first
   // tool of that owner server, started from --mcp-config as the CLI would.
@@ -1074,6 +1082,12 @@ const playTurn = (prompt: JsonValue) => {
 
   // Upstream signed-out protocol capture; the success-result variant ensures
   // a flagged auth failure cannot be mislabeled as successful completion.
+  if (mode === "org-login-off") {
+    out({ type: "assistant", error: "api_error", is_api_error_message: true,
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Your organization has disabled subscription access for Claude Code. (oauth_org_not_allowed)" }] } });
+    out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
   if (mode === "not-logged-in" || mode === "not-logged-in-success-result") {
     out({ type: "assistant", error: "authentication_failed", is_api_error_message: true,
       message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in · Please run /login" }] } });
@@ -1247,6 +1261,8 @@ if (Number.isFinite(startDelayMs) && startDelayMs > 0) {
     process.stdin.resume();
   }, startDelayMs);
 }
+
+if (earlyInitOwed) process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: reportedSessionId, model: "fake" })}\n`);
 
 // MCP start-up as Claude Code 2.1.280+ reports it (rig, 2026-10-10): every
 // --mcp-config server starts "pending" and becomes "connected" after
