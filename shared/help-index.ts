@@ -576,6 +576,46 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Steady on a patchy connection. Murage tries again before it calls your connected apps out of reach, so your routines keep their apps."
   },
   {
+    "id": "changelog/v1-0-11#approvals-in-1-0-11",
+    "title": "What changed in Murage 1.0.11",
+    "description": "Approval cards wait for you on every engine, and Sign in with Flux, file patches and Grok model picks each get clearer.",
+    "heading": "Approvals in 1.0.11",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "url": "https://murage.ai/docs/changelog/v1-0-11#approvals-in-1-0-11",
+    "text": "- Your answer is always welcome. A tool approval card in a chat waits for you on every engine until you answer or the turn stops.\n- Not answered is its own record. A card that closes without your answer reads Not answered.\n- File patches are read for what they change. When Fuigo applies a patch, your level applies to what the patch really does. A patch Murage cannot read in full asks first, at every level including No limits."
+  },
+  {
+    "id": "changelog/v1-0-11#flux-in-1-0-11",
+    "title": "What changed in Murage 1.0.11",
+    "description": "Approval cards wait for you on every engine, and Sign in with Flux, file patches and Grok model picks each get clearer.",
+    "heading": "Flux in 1.0.11",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "url": "https://murage.ai/docs/changelog/v1-0-11#flux-in-1-0-11",
+    "text": "- Sign in with Flux is on by default. It is ready in Models & engines."
+  },
+  {
+    "id": "changelog/v1-0-11#engines-in-1-0-11",
+    "title": "What changed in Murage 1.0.11",
+    "description": "Approval cards wait for you on every engine, and Sign in with Flux, file patches and Grok model picks each get clearer.",
+    "heading": "Engines in 1.0.11",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "url": "https://murage.ai/docs/changelog/v1-0-11#engines-in-1-0-11",
+    "text": "- Grok starts on the model you picked. Murage sets the model once, waits for Grok's model list when it is still loading, and leaves a session that already runs your pick alone.\n- Local models run your tools on the OpenAI-compatible engine.\n- Gemini tool calls run whole through the OpenAI-compatible engine."
+  },
+  {
+    "id": "changelog/v1-0-11#routines-and-chats-in-1-0-11",
+    "title": "What changed in Murage 1.0.11",
+    "description": "Approval cards wait for you on every engine, and Sign in with Flux, file patches and Grok model picks each get clearer.",
+    "heading": "Routines and chats in 1.0.11",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.11",
+    "url": "https://murage.ai/docs/changelog/v1-0-11#routines-and-chats-in-1-0-11",
+    "text": "- Results come back to the chat. A routine's result lands in the chat it was made in. The routine editor can switch this to the Routines list.\n- Bots read their own folders freely. SOUL.md, skills and memory open without a card at any level.\n- The answering model is visible. The chat shows a quiet line when the model that answered differs from the one you picked.\n- Obsidian links open Obsidian."
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
@@ -1210,7 +1250,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Computers → This computer",
     "where": "Murage docs → Computers → This computer",
     "url": "https://murage.ai/docs/computers/local-computer#ubuntu",
-    "text": "Ubuntu 24.04 GNOME host control is temporarily disabled while the real-seat input-safety blocker in issue #345 is resolved. Packaged builds retain the pinned runtime for reproducible review, but Murage does not start it and clears legacy opt-ins. Chat, screen preview, Cloud, and Local VM remain available. Do not start the bundled driver manually as a workaround."
+    "text": "Local control works on Ubuntu 24.04 GNOME with Xorg, as a Beta. Open the Computer panel, press Enable local control (Beta) and let the Cua Driver checks finish. Every local action asks you first. On Wayland, local control stays off until its input protection is validated: sign out, choose Ubuntu on Xorg at the login screen, and This computer is ready to use. Chat, screen preview, Cloud and Local VM work on both."
   },
   {
     "id": "computers/local-computer#safety-model",
@@ -1545,7 +1585,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Murage docs → Features → Approvals and inspector",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#full-access-and-the-stop-line",
-    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through Finder, scripts and code;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
+    "text": "Under Full access a bot runs commands, edits files and contacts other bots without asking. It still stops and asks at a few lines that matter:\n- deleting anything outside its own folder, including through code in the command itself;\n- paying for anything;\n- messaging someone new or posting in public, such as a first comment, issue or release on a GitHub repository;\n- reading your keys and passwords.\n\nMessages to you, your own linked accounts and the person a channel conversation is with never stop. Engines under Full access send their permission asks to Murage, so these checks hold for Claude Code, Codex, Pi and ACP engines alike.…"
   },
   {
     "id": "features/approvals-and-inspector#no-limits",
@@ -1706,6 +1746,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Features → Routines and webhooks",
     "url": "https://murage.ai/docs/features/automation#one-conversation-per-routine",
     "text": "Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now."
+  },
+  {
+    "id": "features/automation#where-results-go",
+    "title": "Routines and webhooks",
+    "description": "Run a bot on a schedule or from an outside event, choose each routine's approval level, and answer a routine that is waiting on you.",
+    "heading": "Where results go",
+    "breadcrumb": "Murage docs → Features → Routines and webhooks",
+    "where": "Advanced → Send results to",
+    "url": "https://murage.ai/docs/features/automation#where-results-go",
+    "text": "When a routine run finishes, its result comes back to the chat where you set the routine up: the bot's final reply, the files and images it saved, and Open run for the whole run. A routine with no chat of its own (one made on the calendar), or whose chat was deleted, posts to the bot's main chat instead. A run that fails or is missed posts one line that says what to do next.\n\nTo keep results out of chat, open the routine editor and set Advanced → Send results to to Routines list only. Each run still stays in the routine's own conversation and on the Routines list. Room and project routines, webhooks and messaging-app routines keep their own delivery."
   },
   {
     "id": "features/automation#routine-approval-level",
@@ -2423,7 +2473,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Feature overview",
     "where": "Murage docs → Feature overview",
     "url": "https://murage.ai/docs/features#computers-and-tools",
-    "text": "- Local computer control with explicit opt-in and approval boundaries on supported hosts; Ubuntu currently fails closed under an input-safety hold\n- Isolated Local VM desktops through Docker or Podman\n- Hosted Box cloud computers\n- A self-hosted Linux VPS backend over Docker's SSH transport\n- Live previews and in-app desktop takeover where the backend supports it\n- USB Android control through the Phone Harness skill\n- Connected apps, including multiple labeled accounts per toolkit"
+    "text": "- Local computer control with explicit opt-in and approval boundaries on supported hosts, including Ubuntu 24.04 GNOME on Xorg as a Beta\n- Isolated Local VM desktops through Docker or Podman\n- Hosted Box cloud computers\n- A self-hosted Linux VPS backend over Docker's SSH transport\n- Live previews and in-app desktop takeover where the backend supports it\n- USB Android control through the Phone Harness skill\n- Connected apps, including multiple labeled accounts per toolkit"
   },
   {
     "id": "features#automation",
@@ -2451,9 +2501,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "A map of the capabilities currently available in Murage.",
     "heading": "Desktop experience",
     "breadcrumb": "Murage docs → Feature overview",
-    "where": "Murage docs → Feature overview",
+    "where": "Settings → Devices",
     "url": "https://murage.ai/docs/features#desktop-experience",
-    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, while host control is temporarily disabled under an input-safety hold. Windows installers are not yet signed. Reaching your bots from a phone is on the roadmap, over your own tailnet in a browser; the iOS companion was retired before release."
+    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, and local control works on Ubuntu 24.04 Xorg as a Beta. Windows release installers are signed. To reach your bots from your phone, pair it under Settings → Devices."
   },
   {
     "id": "features/mcp-servers#overview",
@@ -2535,14 +2585,14 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Antigravity reads its tools from one file shared by everything on this computer: the Antigravity config file in your home folder (.gemini/config/mcp_config.json). When Antigravity runs with full auto, Murage writes your servers into that file for the length of the turn, and that includes their environment values and the turn's own access token. Any Antigravity session you start yourself during that turn can read them. Murage puts the file back when the turn ends, and it removes anything it left behind if a turn ended in a crash. Entries of yours whose names start with murage-custom- are treated as Murage's and are not kept.…"
   },
   {
-    "id": "features/mcp-servers#script-access-for-one-bot",
+    "id": "features/mcp-servers#use-murage-from-claude-code-codex-and-other-apps",
     "title": "MCP servers",
     "description": "Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.",
-    "heading": "Script access for one bot",
+    "heading": "Use Murage from Claude Code, Codex and other apps",
     "breadcrumb": "Murage docs → Features → MCP servers",
-    "where": "Murage docs → Features → MCP servers",
-    "url": "https://murage.ai/docs/features/mcp-servers#script-access-for-one-bot",
-    "text": "A script or an outside agent on your computer, such as the Murage MCP server or the control command line, can reach one of your bots when you make script access for it. In Settings, switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. Turn the switch off, or remove a single access, and that token stops working at once.\n\nScript access reaches only the bot you picked. It cannot open other bots, rooms or search."
+    "where": "Settings → Devices",
+    "url": "https://murage.ai/docs/features/mcp-servers#use-murage-from-claude-code-codex-and-other-apps",
+    "text": "Murage includes its own MCP server, so Claude Code, Codex or any other MCP app on this computer can talk to one of your bots. First make script access for that bot: open Settings → Devices, then Advanced, then Scripts and other apps. Switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. On a headless install, the same card is under Settings → General in your browser.\n\nIn the other app, add Murage's MCP server as a command server. The command is the Murage app itself with the bundled script as its argument:…"
   },
   {
     "id": "features/mcp-servers#remove-a-server",
@@ -2573,6 +2623,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Memory",
     "url": "https://murage.ai/docs/features/memory-and-learning#memory",
     "text": "Each bot keeps plain-text memory that you can read, correct and delete. Open Settings → Memory to search saved knowledge, see where each item came from and choose who can use it. Memory mode is Off, Capture only, Capture and recall, or Paused. Recalled context is sent to the engine you choose. Learning needs memory to be on."
+  },
+  {
+    "id": "features/memory-and-learning#learn-about-me",
+    "title": "Memory and learning",
+    "description": "What bots remember, how a bot learns from your feedback, the Learned chip, the Learning screen, suggestions, marking wins and losses, and how to undo or turn learning off.",
+    "heading": "Learn about me",
+    "breadcrumb": "Murage docs → Features → Memory and learning",
+    "where": "Settings → Memory → Learn about me",
+    "url": "https://murage.ai/docs/features/memory-and-learning#learn-about-me",
+    "text": "Bring over what another assistant already knows about you. Open Settings → Memory → Learn about me as the owner: in the Murage desktop app, or on your Murage Cloud home from your own signed-in phone or browser. A phone paired with a computer at home does not show it. Copy the prompt, run it in the assistant you used before, and paste its answer back. Murage sorts the answer into lines under Instructions for every bot, About me, and Projects and preferences, and you decide line by line: Keep, Keep all or Skip. Only the lines you keep become memories, each labelled with the assistant it came from. Memory needs to be on to keep lines.…"
   },
   {
     "id": "features/memory-and-learning#learning-from-your-feedback",
@@ -2672,7 +2732,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps",
     "url": "https://murage.ai/docs/features/messaging-apps#what-messaging-apps-do",
-    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Approvals that matter stay in Murage."
+    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Telegram, Slack and Discord bring approval cards to you with buttons, so you can answer from your phone. WhatsApp approvals stay in Murage."
   },
   {
     "id": "features/messaging-apps#what-you-need-first",
@@ -2692,7 +2752,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Settings → Messaging apps → Telegram",
     "url": "https://murage.ai/docs/features/messaging-apps#telegram-set-up",
-    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.\n2. In Settings → Messaging apps → Telegram, paste the token and press Save token.\n3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot."
+    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. Copy the bot token.\n2. In Settings → Messaging apps → Telegram, paste the token and press Save token.\n3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you answer approval cards there (see Approvals from your phone). Use Revoke to disconnect, or Replace token to move to a new token for the same bot."
   },
   {
     "id": "features/messaging-apps#slack-set-up",
@@ -2712,7 +2772,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#discord-set-up",
-    "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
+    "text": "Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name, not server messages.\n\n1. Save credentials: paste the bot token.\n2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.\n3. Press Pair with Chief and send the code to your Discord app in a direct message.\n\nLong replies show as a preview, with the full result in Murage. Messages sent while Murage is stopped may not be recovered."
   },
   {
     "id": "features/messaging-apps#whatsapp-set-up",
@@ -2723,6 +2783,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Channels → WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#whatsapp-set-up",
     "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Channels → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
+  },
+  {
+    "id": "features/messaging-apps#approvals-from-your-phone",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "heading": "Approvals from your phone",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "url": "https://murage.ai/docs/features/messaging-apps#approvals-from-your-phone",
+    "text": "When a bot needs your OK, Telegram, Slack and Discord send the approval card to your private chat with buttons, and only your own presses count. Every card offers Approve once and Deny. On Telegram, a stop-line card (deleting outside the bot's folder, paying, messaging someone new) also offers Allow for this task, for the same kind of action in the same place. A card about controlling a computer offers Deny only, and you approve it in Murage. A card too long to show in full stays in Murage."
   },
   {
     "id": "features/messaging-apps#if-a-connection-stops",
@@ -3429,6 +3499,26 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Agent engines",
     "url": "https://murage.ai/docs/providers#built-in-engines",
     "text": "| Engine | Authentication shape | Notes |\n|---|---|---|\n| Claude | Claude CLI login | Strong support for tools, approvals, sessions, and local computer use |\n| Codex | Codex CLI login | Model discovery, approvals, steering, and computer tools |\n| Grok | Grok CLI login | ACP-based local model catalog and session support |\n| Cursor | Cursor Agent CLI login or API key | ACP driver with live model discovery |\n| Kimi | Kimi CLI login | ACP integration |\n| Droid | Factory Droid CLI login | ACP integration |\n| Antigravity | Google Antigravity CLI login | Default Google consumer engine |…"
+  },
+  {
+    "id": "providers#use-a-plan-you-already-have",
+    "title": "Agent engines",
+    "description": "Use the agent subscriptions and CLIs you already have.",
+    "heading": "Use a plan you already have",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Models & engines",
+    "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
+    "text": "Sign in with the plan you already pay for and your bots can use the models that come with it. Open Settings → Models & engines in the Murage desktop app and press Continue with ChatGPT or Continue with Grok under Use a plan you already have. Plan limits apply. On a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial: xAI has not published it for other apps yet, it needs a SuperGrok or X Premium plan, and an xAI API key works instead if it is ever turned off."
+  },
+  {
+    "id": "providers#grok-images",
+    "title": "Agent engines",
+    "description": "Use the agent subscriptions and CLIs you already have.",
+    "heading": "Grok images",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Settings → Tools → Image generation",
+    "url": "https://murage.ai/docs/providers#grok-images",
+    "text": "Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open Settings → Tools → Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself."
   },
   {
     "id": "providers#detection",

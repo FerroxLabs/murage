@@ -29,6 +29,10 @@
 //                  extension_ui_response ({uiResponse}) are appended too.
 //   FAKE_PI_COMMAND_LOG  path to append every command received, one JSON line each (new_session, switch_session with its
 //                  sessionPath, prompt with its message), so a test can see whether a session was resumed
+//   FAKE_PI_VERSION    the version `--version` reports (default 0.84.2)
+//   FAKE_PI_SCRIPT     path to a JSON array of frames played on prompt (playScript)
+//   FAKE_PI_PROMPT_RESPONSE  JSON merged into the prompt's response, then nothing more: {"success":false,"error":..} or {"data":{"disposition":"handled"}}
+//   FAKE_PI_ABORT_DIALOG=1  a gate ask lands between the abort and its reply
 //   FAKE_PI_PID_FILE   write this child's pid (close-confirmed stop tests)
 //   FAKE_PI_UNIQUE  set: each happy reply ends with a fresh word ("Hello from
 //                  pi 3f9a2c"), so a test can tell replies apart and find one's
@@ -69,7 +73,7 @@ const argv = process.argv.slice(2);
 
 // The driver probes `<cli> --version` for snapshot(); answer and exit clean.
 if (argv.includes("--version") || argv.includes("-v")) {
-  process.stdout.write("pi 0.84.2 (fake)\n");
+  process.stdout.write(`pi ${process.env.FAKE_PI_VERSION ?? "0.84.2"} (fake)\n`);
   process.exit(0);
 }
 
@@ -153,40 +157,56 @@ const fixtureRequested = (text: string, marker: string) => {
 let sessionCounter = 0;
 let currentSessionFile: string | null = null;
 
+// The end of a run as real pi writes it (pi 1.4.0 traces, reports-1012/pi-settle/r2-evidence).
+const finishRun = (input: number, output: number) => {
+  const message = { role: "assistant", stopReason: "stop", usage: { input, output } };
+  send({ type: "message_end", message });
+  send({ type: "turn_end", message, toolResults: [] });
+  send({ type: "agent_end", willRetry: false });
+  send({ type: "agent_settled", aborted: false });
+};
+
+// FAKE_PI_SCRIPT: a JSON array played on prompt. Each entry is a pi frame, or {wait: ms}, {exit: code},
+// {closeStdout: true}. The arrays in pi-settle.test.ts are recorded real pi orders.
+const playScript = async (file: string) => {
+  for (const step of JSON.parse(readFileSync(file, "utf8")) as Array<Record<string, unknown>>) {
+    if (typeof step.wait === "number") await new Promise((resolve) => setTimeout(resolve, step.wait as number));
+    else if (typeof step.exit === "number") { process.exit(step.exit); }
+    else if (step.closeStdout === true) { process.stdout.end(); }
+    else send(step);
+  }
+};
+
 // A faithful happy turn: a couple of text deltas then a terminal turn_end.
 const streamTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
   for (const delta of ["Hello", " from", " pi", ...(process.env.FAKE_PI_UNIQUE ? [` ${randomUUID().slice(0, 6)}`] : [])]) {
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
   }
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
-  send({ type: "agent_end" });
+  finishRun(12, 3);
 };
 
 /** A whole turn that says `text` (project-propose mode's outcome). */
 const streamTextTurn = (text: string) => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: text } });
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
-  send({ type: "agent_end" });
+  finishRun(12, 3);
 };
 
 const streamErrorTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
-  send({
-    type: "turn_end",
-    message: {
-      stopReason: "error",
-      errorMessage: "Invalid schema for function 'computer_browser_prepare'",
-      usage: { input: 0, output: 0 },
-    },
-    usage: { input: 0, output: 0 },
-  });
-  send({ type: "agent_end" });
+  send({ type: "message_start", message: { role: "assistant" } });
+  const message = { role: "assistant", stopReason: "error", errorMessage: "Invalid schema for function 'computer_browser_prepare'", usage: { input: 0, output: 0 } };
+  send({ type: "message_end", message });
+  send({ type: "turn_end", message, toolResults: [] });
+  send({ type: "agent_end", willRetry: false });
+  send({ type: "agent_settled", aborted: false });
 };
 
 // tooluse: one tool turn (stopReason toolUse, pi auto-continues) then a text
@@ -194,14 +214,17 @@ const streamErrorTurn = () => {
 const streamToolTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
+  const toolRound = { role: "assistant", stopReason: "toolUse", usage: { input: 5, output: 1 } };
+  send({ type: "message_end", message: toolRound });
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
-  send({ type: "turn_end", message: { stopReason: "toolUse", usage: { input: 5, output: 1 } }, usage: { input: 5, output: 1 } });
+  send({ type: "turn_end", message: toolRound, toolResults: [{}] });
   // pi auto-continues within the same prompt to synthesize the reply
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "done" } });
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 2 } }, usage: { input: 12, output: 2 } });
-  send({ type: "agent_end" });
+  finishRun(12, 2);
 };
 
 // permission: open a select ask, hold the turn until extension_ui_response
@@ -209,6 +232,7 @@ const streamToolTurn = () => {
 const streamPermissionTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "extension_ui_request", id: "ask-1", method: "select", title: "Run bash: echo hi?", options: ["Allow once", "Deny"] });
   // wait for the answer before finishing
 };
@@ -219,6 +243,7 @@ const streamPermissionTurn = () => {
 const streamHostConfirmTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "extension_ui_request", id: "ask-host", method: "confirm", title: "Allow click on your computer?", message: "Run computer:click" });
 };
 
@@ -230,6 +255,7 @@ const streamHostConfirmTurn = () => {
 const streamGateTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   const secret = process.env.FAKE_PI_GATE_FORGE ? "not-the-secret" : process.env.MURAGE_PI_GATE ?? "";
   const call = process.env.FAKE_PI_GATE_CALL ?? JSON.stringify({ tool: "bash", input: { command: [["r", "m"].join(""), "-rf", "~/Documents/old"].join(" ") } });
   // FAKE_PI_GATE_FORGE is any other extension's `confirm` carrying the gate's title shape (Rule 13).
@@ -242,6 +268,7 @@ const sendGateAsk = (id: string, call: string) => send({ type: "extension_ui_req
 const streamQuestionTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "extension_ui_request", id: "ask-q", method: "input", title: "Which branch should I use?", placeholder: "branch name" });
 };
 
@@ -249,6 +276,7 @@ const streamQuestionTurn = () => {
 const streamEditorTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "extension_ui_request", id: "ask-e", method: "editor", title: "Edit the release notes", prefill: "Line 1\nLine 2" });
 };
 
@@ -256,6 +284,7 @@ const streamEditorTurn = () => {
 const streamInterleaveTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "before one" } });
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo one" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
@@ -263,8 +292,7 @@ const streamInterleaveTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_2", toolName: "bash", args: { command: "echo two" } });
   send({ type: "tool_execution_end", toolCallId: "call_2", toolName: "bash", isError: false });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "after" } });
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
-  send({ type: "agent_end" });
+  finishRun(12, 3);
 };
 
 /** A local model writing its to-do list into the answer (issue #7), split
@@ -272,14 +300,14 @@ const streamInterleaveTurn = () => {
 const streamTodoTurn = () => {
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   for (const delta of ["On it.\n\n<to", "do>\n- [ ] List the folder\n- [ ] Rep", "ort back\n</todo>\n\nListing now."]) {
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta } });
   }
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "ls" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "<todo>\n- [x] List the folder\n- [ ] Report back\n</todo>\nFound two files." } });
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
-  send({ type: "agent_end" });
+  finishRun(12, 3);
 };
 
 /** stream: a long reply that keeps working, a delta at a steady beat, then
@@ -292,6 +320,7 @@ const streamLongTurn = () => {
   const startedAt = Date.now();
   send({ type: "agent_start" });
   send({ type: "turn_start" });
+  send({ type: "message_start", message: { role: "assistant" } });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
   const beat = setInterval(() => {
     if (aborted) { clearInterval(beat); return; }
@@ -301,8 +330,7 @@ const streamLongTurn = () => {
     }
     clearInterval(beat);
     send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " long reply done" } });
-    send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 12, output: 3 } }, usage: { input: 12, output: 3 } });
-    send({ type: "agent_end" });
+    finishRun(12, 3);
   }, every);
 };
 
@@ -310,8 +338,7 @@ const finishPermissionTurn = () => {
   send({ type: "tool_execution_start", toolCallId: "call_1", toolName: "bash", args: { command: "echo hi" } });
   send({ type: "tool_execution_end", toolCallId: "call_1", toolName: "bash", isError: false });
   send({ type: "message_update", usage: { input: 0, output: 0 }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "ok" } });
-  send({ type: "turn_end", message: { stopReason: "end_turn", usage: { input: 8, output: 1 } }, usage: { input: 8, output: 1 } });
-  send({ type: "agent_end" });
+  finishRun(8, 1);
 };
 
 let buf = "";
@@ -436,8 +463,10 @@ function handle(cmd: any) {
           /* never let dumping break a run */
         }
       }
-      // acknowledge acceptance; the completion comes via events
-      send({ type: "response", command: "prompt", success: true });
+      // acknowledge acceptance; the completion comes via events. FAKE_PI_PROMPT_RESPONSE replaces the answer, as a refused or handled prompt.
+      send({ type: "response", command: "prompt", success: true, ...(process.env.FAKE_PI_PROMPT_RESPONSE ? JSON.parse(process.env.FAKE_PI_PROMPT_RESPONSE) : {}) });
+      if (process.env.FAKE_PI_PROMPT_RESPONSE) return;
+      if (process.env.FAKE_PI_SCRIPT) { void playScript(process.env.FAKE_PI_SCRIPT); return; }
       // Bounded-ingress fixtures (A4), keyed on the prompt text.
       if (fixtureRequested(String(cmd.message ?? ""), "__fixture_oversize_frame__")) {
         // a VALID frame one KiB over the limit, then a clean turn_end
@@ -547,7 +576,15 @@ function handle(cmd: any) {
       return;
     case "abort":
       aborted = true;
-      send({ type: "turn_end", message: { stopReason: "cancelled", usage: { input: 0, output: 0 } }, usage: { input: 0, output: 0 } });
+      {
+        const message = { role: "assistant", stopReason: "aborted", usage: { input: 0, output: 0 } };
+        send({ type: "message_end", message });
+        send({ type: "turn_end", message, toolResults: [] });
+        send({ type: "agent_end", willRetry: false });
+      }
+      // FAKE_PI_ABORT_DIALOG: a gate ask lands in the abort grace, as a tool hook already in flight would.
+      if (process.env.FAKE_PI_ABORT_DIALOG === "1") sendGateAsk("ask-late", JSON.stringify({ tool: "bash", input: { command: "ls" } }));
+      send({ type: "agent_settled", aborted: true });
       if (process.env.FAKE_PI_ABORT_SILENT === "1") return;
       setTimeout(() => {
         if (process.env.FAKE_PI_ABORT_MARKER) writeFileSync(process.env.FAKE_PI_ABORT_MARKER, "session flushed");

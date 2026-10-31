@@ -75,14 +75,14 @@ function modelRefusal(text: string): "CHECKER_MODEL_NOT_ALLOWED" | "CHECKER_MODE
 }
 
 /** One text-only Flux request. Sends the no-retain header and refuses any reply that does not confirm it. */
-async function fluxCall(input: { apiKey: string; req: Parameters<CheckerTransport>[0]; record?: CheckerConnectionInput["record"]; requireEcho: boolean }): Promise<string> {
+async function fluxCall(input: { apiKey: string; req: Parameters<CheckerTransport>[0]; record?: CheckerConnectionInput["record"]; requireEcho: boolean; botId?: string }): Promise<string> {
   const { apiKey, req } = input;
   if (!isPinnedFluxModel(req.model)) throw new Error("CHECKER_UNPINNED_MODEL");
   const url = new URL(`${FLUX_OPENAI_BASE.replace(/\/+$/, "")}/chat/completions`);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("CHECKER_UNAVAILABLE");
   const response = await fetch(url, {
     method: "POST", redirect: "error", signal: AbortSignal.any([req.signal, AbortSignal.timeout(60000)]),
-    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, [NO_RETAIN_HEADER]: "1", ...fluxCallHeaders("browser-checker") },
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, [NO_RETAIN_HEADER]: "1", ...fluxCallHeaders("browser-checker", { usage: { botId: input.botId } }) },
     body: JSON.stringify({ model: req.model, messages: [{ role: "system", content: req.system }, { role: "user", content: req.user }], max_tokens: req.maxTokens, stream: false }),
   });
   if (!response.ok || !response.body) {
@@ -138,7 +138,7 @@ export function resolveCheckerConnection(input: CheckerConnectionInput): Checker
     const apiKey = readKey();
     if (!apiKey) throw new Error("CHECKER_UNAVAILABLE");
     try {
-      const out = await fluxCall({ apiKey, req, record: input.record, requireEcho: input.requireNoRetainEcho ?? fluxLive });
+      const out = await fluxCall({ apiKey, req, record: input.record, requireEcho: input.requireNoRetainEcho ?? fluxLive, botId: input.botId });
       input.record?.({ kind: "call", model: req.model, ok: true });
       return out;
     } catch (error) { input.record?.({ kind: "call", model: req.model, ok: false }); throw error; }

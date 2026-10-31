@@ -189,7 +189,7 @@ export async function buildMurageCage({ arch = process.arch, platform = process.
     const libcapSourceSha256 = verifyLibcapSource(libcapSource);
     writeFileSync(path.join(work, "build.sh"), CAGE_BUILD_SCRIPT);
     run("docker", floorDockerArgs({ arch, mounts: [{ source: work, target: "/work" }] }),
-      { timeout: 20 * 60 * 1000, stdio: "inherit" });
+      { timeout: 40 * 60 * 1000, stdio: "inherit" });
     const source = path.join(work, `bubblewrap-${BUBBLEWRAP_VERSION}`);
     const build = path.join(work, "build");
     const stage = path.join(work, "stage");
