@@ -134,7 +134,7 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
   await expect.poll(async()=>(await state()).tasks.find((task:any)=>task.threadId===first).busy).toBe(true);
   await choose(page,"Second thread");
   await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);
-  await expectApprovalLevel(page,"Auto mode","Auto");
+  await expectApprovalLevel(page,"Auto","Auto");
   await send(page,"__fixture_hold_authority__ second UI conversation",second);
   await expect.poll(async()=>(await state()).tasks.filter((task:any)=>task.busy).length).toBe(2);
   // A busy-thread send may use native steering or the server queue. Its
@@ -153,7 +153,7 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
   const snapshot=await state();expect(snapshot.tasks.find((task:any)=>task.threadId===second)).toMatchObject({busy:true,unread:true});
   await expect(model).toBeEnabled();await expect(page.getByRole("button",{name:"Stop this turn",exact:true})).toHaveCount(0);
   for(const skin of ["light","dark"]){await page.evaluate(skin=>{document.documentElement.dataset.skin=skin;},skin);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await page.screenshot({path:info.outputPath(`independent-${skin}-${info.project.name}.png`)});}
-  await choose(page,"Second thread");await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);await expectApprovalLevel(page,"Auto mode","Auto");
+  await choose(page,"Second thread");await expect(model).toHaveAttribute("aria-label",`Thread model: ${labelTwo}`);await expectApprovalLevel(page,"Auto","Auto");
   await headerStop(page).click();
   await expect.poll(async()=>(await state()).tasks.some((task:any)=>task.busy)).toBe(false);
 });

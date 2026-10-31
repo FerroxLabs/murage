@@ -90,7 +90,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
 
     // the decisions and the send box are on screen with the long prompt pending
     await expectOnScreen(page, "Allow once", allow);
-    await expectOnScreen(page, "Deny", page.getByRole("button", { name: "Deny", exact: true }));
+    await expectOnScreen(page, "Don't allow", page.getByRole("button", { name: "Don't allow", exact: true }));
     await expectOnScreen(page, "composer", composer);
     // the card is a few lines, not the whole screen, and the conversation keeps room
     expect((await region.boundingBox())!.height).toBeLessThan(height * 0.5);

@@ -19,6 +19,8 @@ import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { useDecisionFeedback } from "@/lib/approval-feedback";
 import { ApprovalBusyLabel, approvalButton } from "@/components/ApprovalFeedback";
+import { GrantAddedLine } from "@/components/approval/GrantAddedLine";
+import { useGrantAdded } from "@/lib/grant-added";
 
 /** A browser card whose `onAnswer` does not say when it is done is shown as
  * working this long at most, so a lost answer never leaves dead buttons. */
@@ -335,6 +337,7 @@ export function ApprovalCard({
   // the plain words load after the first paint; re-render when they arrive
   const plainReady = usePlainApprovalReady();
   const card = message.card;
+  const grantAdded = useGrantAdded(card?.requestId);
   if (!card) return null;
   const browser = browserCardData(card);
   if (browser) return <BrowserApprovalBody message={message} data={browser} onAnswer={onAnswer} />;
@@ -412,27 +415,35 @@ export function ApprovalCard({
 
       {/* The decision lives in the composer (one place to answer, and it
           can't be scrolled past); here we only record what happened. */}
-      <div className="mt-3 flex items-center gap-1.5 text-[13px] text-ink-secondary">
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[13px] text-ink-secondary" data-card-outcome={settled ?? "waiting"}>
         {settled === "allow" && isRoutineRequest && card.undone ? (
           <>
             <Undo2 size={14} /> {t("automations.undone")}
           </>
         ) : settled === "allow" && automationUndoOffered(card) ? (
           <AutomationUndo message={message} />
-        ) : settled === "allow" ? (
+        ) : settled === "allow" && (isRoutineRequest || isSkillRequest) ? (
           <>
             <Check size={14} className="text-success" />
-            {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : isSkillRequest ? "Skill confirmed" : "Allowed")}
+            {skillSettledLabel ?? routineSettledLabel ?? (isRoutineRequest ? "Routine confirmed" : "Skill confirmed")}
+          </>
+        ) : settled === "allow" ? (
+          // UX-TRUST-MOMENTS-1012 1.1: what the server knows (the answer was
+          // delivered); the tool result says Sent or Paid when the engine does.
+          // After a fold row, the line names what was added, with Undo (1.3).
+          <>
+            <Check size={14} className="text-success" />
+            {grantAdded && card.requestId ? <GrantAddedLine requestId={card.requestId} bot={bot?.name ?? t("ux.l1.outcome.botFallback")} /> : t("ux.l1.outcome.approved")}
           </>
         ) : settled === "unavailable" ? (
           // closed by nobody: the turn stopped, the request was revoked, or
-          // the wait ran out — never the owner's own decision
+          // the wait ran out — never the owner's own decision (H08)
           <>
-            <X size={14} /> Not answered
+            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Not answered" : t("ux.l1.outcome.stopped", { bot: bot?.name ?? t("ux.l1.outcome.botFallback") })}
           </>
         ) : settled ? (
           <>
-            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : "Denied"}
+            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : t("ux.l1.outcome.denied")}
           </>
         ) : (
           <>

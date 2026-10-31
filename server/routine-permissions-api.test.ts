@@ -228,7 +228,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect((await threadMessages(run!.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
   }, 90_000);
 
-  it("a delete it cannot place still asks, and its card offers this task and this routine", async () => {
+  it("a delete it cannot place still asks, and its card offers this routine", async () => {
     const bot = await makeBot("Unp", "unplaced");
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
@@ -237,8 +237,9 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     const card = await poll(() => liveCard(threadId!), 20_000);
     expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(card.card.held).toContain("cannot place");
-    expect(card.card.taskAllowKey).toMatch(/^stop:delete:unplaced:/);
-    expect(card.card.routineAllowKey).toBe(card.card.taskAllowKey);
+    // a routine's card offers the routine's own row: the task allowance reader ignores automated turns (design 1.2)
+    expect(card.card.routineAllowKey).toMatch(/^stop:delete:unplaced:/);
+    expect(card.card.taskAllowKey).toBeUndefined();
     expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
     expect(await settled(runId)).toMatchObject({ status: "completed" });

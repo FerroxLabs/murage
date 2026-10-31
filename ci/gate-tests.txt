@@ -44,6 +44,7 @@ companion/test/shared-lockout.test.ts	all	credentials, pairing and access contro
 companion/test/stream-upgrade-device.test.ts	all	phone-to-desktop door and its auth
 companion/test/stream-upgrade.test.ts	all	phone-to-desktop door and its auth
 companion/test/strip-types-guard.test.ts	all	the phone door failing to start because the sidecar uses syntax node cannot strip
+companion/test/task-allow-routes.test.ts	all	A phone can reach the allow routes only with its own approval key
 companion/test/terms-door.test.ts	all	cloud home, enrolment and key custody
 companion/test/upstream-failure.test.ts	all	phone-to-desktop door and its auth
 companion/test/wire.test.ts	all	phone-to-desktop door and its auth
@@ -105,8 +106,16 @@ scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
 scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under the power block on Ubuntu 23.10 and later
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
+server/approval-card-class.test.ts	all	An approval card is classed by what it really lets the bot do
+server/approval-grant-fix-l1a.test.ts	all	A durable grant is refused at the store unless the owner chose it
+server/approval-grant-routes.test.ts	all	Grant routes answer the card they belong to and no other
+server/bot-grant-computer-l1a.test.ts	all	A bot-level Always belongs to the owner's computer alone
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/grant-migrations-l1.test.ts	all	Existing grants survive the upgrade with the same reach
+server/grant-state-l1.test.ts	all	Grant state is kept per holder and Undo removes exactly that grant
+server/l1-copy.test.ts	all	The grant card wording stays plain and matches what the grant does
+server/route-policy-l1a.test.ts	all	Grant routes follow the route policy for who may call them
 server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
 server/health/counters.test.ts	all	health counters stay bounded and never publish a raw thread or message id
 server/health/publisher.test.ts	all	health metadata stays in its own owner-only folder and never appears mid-backup
@@ -1450,11 +1459,15 @@ server/workspace-files-write.test.ts	all	workspace file read/write safety checks
 server/workspace-files.test.ts	all	workspace root resolution path safety
 server/workspace-revision.test.ts	all	same-tick rewrite never overwrites file
 server/workspace.test.ts	all	Workspace file access boundaries
+shared/durable-grant-allowed.test.ts	all	Only allowed actions can be granted for good
+shared/fold-scopes.test.ts	all	Folded approval scopes never widen past what the card showed
 shared/phone-ai-provider.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-ask-contract.test.ts	all	security boundary or path/file access
 shared/phone-jobs-contract.test.ts	all	security boundary or path/file access
 shared/web-safe-imports.test.ts	all	the web app failing to load because it imports server-only code
+src/components/approval/l1a-card.test.ts	all	The approval card shows the verb and the fold the owner agrees to
+src/components/approval/l1a-settings.test.ts	all	The list of things said yes to for good is complete and removable
 src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
@@ -1516,6 +1529,7 @@ src/components/RoutineSchedulerNotice.test.ts	all	late routine scheduler warning
 src/components/ServerLifecycleBanner.test.ts	all	banner when engine not running
 src/components/SettingsSurface.test.ts	all	credential panes withheld from phone surface
 src/components/SlackSettings.test.ts	all	status strips undeclared secret fields
+src/components/ui/UndoToast.test.ts	all	Undo shows once, says Could not undo when it fails, and never leaves the window
 src/components/UpdateStaleNotice.test.ts	all	update-check failure notice appears once and can be dismissed
 src/components/app-grant-a13-r1.test.ts	all	Always allow saves and answers in one request
 src/components/app-grant-a13-r2.test.ts	all	voice reads every operation the grant card shows
@@ -1544,6 +1558,7 @@ src/lib/cloud-door.test.ts	all	cloud key store bounded, sign-in retries
 src/lib/companion-pairing.test.ts	all	pairing link carries one-time token, refuses stale
 src/lib/composer-upload-auth.test.ts	all	desktop proof only to same-origin upload
 src/lib/composer-uploads.test.ts	all	send waits for uploads; no cross-thread leak
+src/lib/computer-surface.test.ts	all	The owner's computer surface is never offered on Cloud
 src/lib/connect-app.test.ts	all	connect app only on desktop, waits for the account under the confirmed label
 src/lib/connected-apps-cache.test.ts	all	cache never holds a credential (secrets)
 src/lib/conversation-cache.test.ts	all	withheld/forgotten message carries its new state (withheld)
@@ -1567,6 +1582,7 @@ src/lib/flux-key-paste.test.ts	all	Flux key recognised on paste, sentences rejec
 src/lib/fresh-auth.test.ts	all	fresh auth signs challenge before sensitive answer
 src/lib/group-call.test.ts	all	spoken message routed to correct room member
 src/lib/group-routing.test.ts	all	room message routes to the right bot
+src/lib/help-level-lint.test.ts	all	Help text names the real Ask Auto and Full access levels
 src/lib/i18n-intl-locale.test.ts	all	an owner who picks Portuguese sees app dates and numbers from a bare "pt" tag, a "pt_BR" setting falls back to English, or the voice cue cache and send-key default change key with the date format
 src/lib/live-events.test.ts	all	live events replay delivers without dropping
 src/lib/local-vm-viewer.test.ts	all	is removed from the status a page keeps
@@ -1588,6 +1604,7 @@ src/lib/stream-uplink.test.ts	all	voice ticket request refuses redirects
 src/lib/team-import.test.ts	all	team import preview rejects bad files
 src/lib/terms.test.ts	all	terms accepted once, reprompt on version change
 src/lib/trusted-html.test.ts	all	Trusted Types policy restricts script URLs
+src/lib/undo.test.ts	all	Undo is local to the window and holds survive a newer offer
 src/lib/webhook-message.test.ts	all	untrusted webhook data cannot forge task markers
 src/lib/workspace-links.test.ts	all	relative link cannot climb out of folder
 src/locales/locale-copy.test.ts	all	German or French copy addresses the reader formally (Sie, vous imperatives) beside informal lines
@@ -1668,5 +1685,3 @@ server/drivers/openai-chat-tools.test.ts	all	chat engine tool calls ask before t
 server/memory-late-tool-started-api.test.ts	linux+mac	a turn that ran a tool is never re-run after a memory refusal
 server/reload-retain.test.ts	all	engine reload keeps a folder lease while an engine child still runs
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
-server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
-server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated

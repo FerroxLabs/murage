@@ -240,8 +240,8 @@ describe("Always allow for this routine", () => {
     expect(autoVerdict(ask, "Bash", "git push origin a1b2c3d4", { ...routine, exactCommand: { ...exact, command: "git push origin a1b2c3d4" }, routineAllow: [granted] }).source).toBe("prompt-guard");
   });
 
-  it("keeps only exact-command and stop-line keys", () => {
-    expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1"]);
+  it("keeps only exact-command and stop-line keys, never a payment (UX-TRUST-MOMENTS-1012 2.3.4)", () => {
+    expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x"]);
     expect(isRoutineGrantKey("Bash:git")).toBe(false);
   });
 });

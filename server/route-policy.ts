@@ -337,7 +337,8 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   // one bot's administration
   { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", cloudWrite: "body", why: "bot authority, engine, working folder and deletion" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/access`), class: "desktop", cloudWrite: "step-up", why: "review scoped connected-app authority" },
-  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove|/undo)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants, and the card's Undo of one save by holder (UX-TRUST-MOMENTS-1012 1.3)" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/task-allow/(?:remove|clear)`), class: "companion", cloudWrite: "step-up", why: "take back a 12-hour task allowance (the card's Undo) or clear them all (Settings), from the desktop or the paired phone, as the owner (UX-TRUST-MOMENTS-1012 2.3.8, 2.5)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/(?:assistant-profile|skills|skills/library)`), class: "desktop", cloudWrite: "step-up", why: "install executable instructions" },
   { methods: "*", path: re(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), class: "desktop", cloudWrite: "step-up", why: "read, enable, change, roll back or delete an installed skill" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/memory`), class: "desktop", cloudWrite: "ordinary", why: "the bot's notebook" },
@@ -378,7 +379,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };
