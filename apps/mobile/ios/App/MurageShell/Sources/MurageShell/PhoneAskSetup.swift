@@ -79,6 +79,7 @@ final class PhoneAskSetup {
     static func errorKey(_ error: Error) -> String {
         switch error as? PhoneJobsMintError {
         case .updateComputer: return "ask_update"
+        case .turnedOff: return "ask_turned_off"
         case .noApprovalKey: return "ask_no_key"
         case .refused: return "ask_computer_off"
         case .notOffered: return "ask_cloud"

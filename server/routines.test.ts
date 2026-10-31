@@ -2598,3 +2598,130 @@ describe("SL-L: a routine run waiting in line for a busy folder, computer or bro
     expect(failed).toMatchObject({ status: "failed", error: "Murage restarted while this routine was running", seatGrantedAt: h.nowValue() });
   });
 });
+
+// 1.0.8 owner zone: changing the owner's zone moves process.env.TZ (owner-time-zone.ts), and daily routines' next
+// times, worked out in the old zone, are worked out again in the new one (index.ts ownerZoneChanged).
+describe("a daily routine when the owner's time zone changes", () => {
+  const bootTz = process.env.TZ;
+  afterEach(() => { if (bootTz === undefined) delete process.env.TZ; else process.env.TZ = bootTz; });
+  const everyDay = { type: "daily" as const, time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] };
+  const runsOf = (h: ReturnType<typeof harness>, id: string) => h.manager.listRuns().filter((run) => run.routineId === id);
+
+  it("runs at 09:00 in the new zone, not once more at the old zone's 09:00 first", async () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    expect(routine.nextRunAt).toBe(Date.parse("2026-10-26T09:00:00Z"));
+    process.env.TZ = "America/Chicago";
+    expect(h.manager.rescheduleForZoneChange().map((item) => item.id)).toEqual([routine.id]);
+    // 09:00 in Chicago (CDT) is 14:00 UTC
+    expect(h.manager.listRoutines()[0].nextRunAt).toBe(Date.parse("2026-10-26T14:00:00Z"));
+    h.setNow(Date.parse("2026-10-26T09:30:00Z"));
+    await h.manager.tick();
+    expect(runsOf(h, routine.id)).toHaveLength(0);
+    h.setNow(Date.parse("2026-10-26T14:01:00Z"));
+    await h.manager.tick();
+    expect(runsOf(h, routine.id).map((run) => run.scheduledFor)).toEqual([Date.parse("2026-10-26T14:00:00Z")]);
+    expect(h.manager.listRoutines()[0].nextRunAt).toBe(Date.parse("2026-10-27T14:00:00Z"));
+  });
+
+  it("keeps a day that already ran: no second run on the same calendar day in the new zone", async () => {
+    process.env.TZ = "Asia/Bangkok";
+    const h = harness(Date.parse("2026-10-26T01:00:00Z"));
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    // 09:00 in Bangkok is 02:00 UTC; it runs
+    h.setNow(Date.parse("2026-10-26T02:01:00Z"));
+    await h.manager.tick();
+    expect(runsOf(h, routine.id)).toHaveLength(1);
+    // 03:00 in London on 26 October: 09:00 there today would be a second brief on a day that had one
+    h.setNow(Date.parse("2026-10-26T03:00:00Z"));
+    process.env.TZ = "Europe/London";
+    h.manager.rescheduleForZoneChange();
+    expect(h.manager.listRoutines()[0].nextRunAt).toBe(Date.parse("2026-10-27T09:00:00Z"));
+  });
+
+  it("leaves a next time that is already due for the tick, and moves nothing when no daily routine is ahead", () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    h.setNow(Date.parse("2026-10-26T09:05:00Z"));
+    process.env.TZ = "America/Chicago";
+    expect(h.manager.rescheduleForZoneChange()).toEqual([]);
+    expect(h.manager.listRoutines().find((item) => item.id === routine.id)?.nextRunAt).toBe(Date.parse("2026-10-26T09:00:00Z"));
+  });
+});
+
+// Astra r2: an occurrence kept due through a zone change, then run, takes the next day in the new zone, never a
+// second run later the same calendar day; and a change whose routine write failed before a restart is carried over.
+describe("a daily routine due through a change of the owner's time zone", () => {
+  const bootTz = process.env.TZ;
+  afterEach(() => { if (bootTz === undefined) delete process.env.TZ; else process.env.TZ = bootTz; });
+  const everyDay = { type: "daily" as const, time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] };
+
+  it("runs the due 09:00 UTC occurrence once and takes tomorrow's 09:00 in Chicago, not today's", async () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    // automations paused: no tick while 09:00 UTC comes due; the zone changes at 09:05 UTC
+    h.setNow(Date.parse("2026-10-26T09:05:00Z"));
+    process.env.TZ = "America/Chicago";
+    expect(h.manager.rescheduleForZoneChange()).toEqual([]);
+    // resumed: the kept occurrence runs
+    h.setNow(Date.parse("2026-10-26T09:10:00Z"));
+    await h.manager.tick();
+    const runs = () => h.manager.listRuns().filter((run) => run.routineId === routine.id);
+    expect(runs().map((run) => run.scheduledFor)).toEqual([Date.parse("2026-10-26T09:00:00Z")]);
+    // 04:00 in Chicago ran on 26 October; 09:00 there (14:00 UTC) would be a second run that day
+    expect(h.manager.listRoutines()[0].nextRunAt).toBe(Date.parse("2026-10-27T14:00:00Z"));
+  });
+
+  it("a retried change still moves a next time that came due while the write kept failing", async () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    // the zone changes at 08:55 UTC, the routine file cannot be written until 09:01 UTC
+    const since = Date.parse("2026-10-26T08:55:00Z");
+    process.env.TZ = "America/Chicago";
+    h.setNow(Date.parse("2026-10-26T09:01:00Z"));
+    expect(h.manager.rescheduleForZoneChange({ since }).map((item) => item.id)).toEqual([routine.id]);
+    expect(h.manager.listRoutines()[0].nextRunAt).toBe(Date.parse("2026-10-26T14:00:00Z"));
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toEqual([]);
+  });
+
+  it("while new runs wait for a zone change, a run already going still stops at its limit", async () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    let held = false;
+    h.options.dispatchHeld = () => held;
+    const routine = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay, timeoutMinutes: 5 });
+    h.manager.runNow(routine.id);
+    await h.manager.tick();
+    expect(h.manager.listRuns()[0]).toMatchObject({ status: "running" });
+    held = true;
+    h.setNow(Date.parse("2026-10-26T06:06:00Z"));
+    await h.manager.tick();
+    expect(h.interruptedTurns.map((entry) => entry.botId)).toEqual(["ember-1"]);
+    // and a due occurrence waits
+    h.setNow(Date.parse("2026-10-26T09:05:00Z"));
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(1);
+    held = false;
+    await h.manager.tick();
+    expect(h.manager.listRuns()).toHaveLength(2);
+  });
+
+  it("at boot moves only a routine whose next time is off its wall-clock time in the zone now in force", () => {
+    process.env.TZ = "UTC";
+    const h = harness(Date.parse("2026-10-26T06:00:00Z"));
+    const stale = h.manager.create({ name: "Morning brief", prompt: "Brief me", botId: "ember-1", schedule: everyDay });
+    process.env.TZ = "America/Chicago";
+    // made in Chicago: already at its own 09:00 there
+    const current = h.manager.create({ name: "Evening brief", prompt: "Brief me", botId: "ember-1", schedule: { ...everyDay, time: "18:00" } });
+    const currentAt = h.manager.listRoutines().find((item) => item.id === current.id)?.nextRunAt;
+    expect(h.manager.rescheduleForZoneChange({ offWallClockOnly: true }).map((item) => item.id)).toEqual([stale.id]);
+    expect(h.manager.listRoutines().find((item) => item.id === stale.id)?.nextRunAt).toBe(Date.parse("2026-10-26T14:00:00Z"));
+    expect(h.manager.listRoutines().find((item) => item.id === current.id)?.nextRunAt).toBe(currentAt);
+    expect(h.manager.rescheduleForZoneChange({ offWallClockOnly: true })).toEqual([]);
+  });
+});

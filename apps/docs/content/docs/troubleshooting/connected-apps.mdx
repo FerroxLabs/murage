@@ -1,6 +1,6 @@
 ---
 title: Connected apps
-description: Fix OAuth loops, missing tools, and connections that appear to vanish.
+description: Fix a sign-in that keeps looping, missing tools, and connections that seem to disappear.
 icon: Unplug
 ---
 
@@ -27,7 +27,7 @@ Before 0.1.60, one failed check of the connected-apps service could leave every 
 
 Start a new task after connecting the app so the engine receives a fresh tool catalog. Name the service and account explicitly in the request. If several accounts are connected, select or mention the intended alias.
 
-Some engines expose connected tools differently. Verify the chosen engine supports MCP or the connected-tool bridge used by the app.
+Engines handle connected tools in different ways. Check that the engine you chose supports connected tools (MCP, the common way apps share tools with AI).
 
 ## Official build says the service is unavailable
 
@@ -35,4 +35,4 @@ Check internet connectivity and try again later before reconnecting every accoun
 
 ## It says connected apps run through Flux Router
 
-If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under **Settings → Models**, then connect your apps again from the Connected apps page. Nothing you saved was deleted.
+If you used a key of your own in an earlier version, it is no longer used. Add your Flux Router key under **Settings → Models & engines**, then connect your apps again from the Connected apps page. Nothing you saved was deleted.

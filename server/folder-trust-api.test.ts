@@ -516,7 +516,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect((await status(project, routed.id, "elsewhere")).status).toBe(400);
       await setEnabled(false);
       const refusedStatus = (await status(project, routed.id)).body;
-      expect(refusedStatus).toMatchObject({ refused: "Selected provider connection is disabled or unavailable", upstreamTrusted: false, upstreamStore: "none", engineGates: false, instanceId: null });
+      expect(refusedStatus).toMatchObject({ refused: "The AI service picked for this bot is turned off or unavailable. Check it in Models & engines.", upstreamTrusted: false, upstreamStore: "none", engineGates: false, instanceId: null });
       // ... which is exactly what the turn says
       const sent = await request("POST", `/api/bots/${routed.id}/messages`, { threadId: routed.threadId, text: "go" });
       expect(sent).toMatchObject({ status: 409, body: { error: refusedStatus.refused } });

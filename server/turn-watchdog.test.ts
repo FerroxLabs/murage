@@ -485,4 +485,61 @@ describe("TurnWatchdog from admission", () => {
       expect(stalls).toHaveLength(0);
     });
   });
+  // LONGWORK-STALL-60: the production limits after the default moved from 20 to 60 minutes.
+  describe("production limits (one hour default; rooms keep their own shorter setting)", () => {
+    const MIN = 60_000;
+    function prod() {
+      let now = 0;
+      const stalls: WatchedTurn[] = [];
+      const dog = new TurnWatchdog({ stallMs: 60 * MIN, setupStallMs: 60 * MIN, heartbeatOnlyMs: 60 * MIN, checkMs: MIN, onStall: (t) => stalls.push(t), now: () => now });
+      return { dog, stalls, tick: (ms: number) => { now += ms; } };
+    }
+
+    it("a quiet direct turn lives past 20 minutes and is stopped at 60", () => {
+      const { dog, stalls, tick } = prod();
+      dog.watch("t1", "bot1", { generation: "g1", setup: true });
+      dog.dispatched("t1", "bot1", "g1");
+      tick(21 * MIN);
+      dog.sweep();
+      expect(stalls).toHaveLength(0);
+      tick(38 * MIN);
+      dog.sweep();
+      expect(stalls).toHaveLength(0);
+      tick(1 * MIN);
+      dog.sweep();
+      expect(stalls).toEqual([expect.objectContaining({ threadId: "t1", stalledBy: "silence" })]);
+    });
+
+    it("a room set to 20 minutes still stops at 20, not 60", () => {
+      const { dog, stalls, tick } = prod();
+      dog.watch("room", "bot1", { generation: "g1", setup: true });
+      dog.dispatched("room", "bot1", "g1", { stallMs: 20 * MIN });
+      tick(19 * MIN);
+      dog.sweep();
+      expect(stalls).toHaveLength(0);
+      tick(1 * MIN);
+      dog.sweep();
+      expect(stalls).toEqual([expect.objectContaining({ threadId: "room", stallMs: 20 * MIN })]);
+    });
+
+    it("heartbeats alone keep a turn alive for the same hour as before (the cap did not move)", () => {
+      const { dog, stalls, tick } = prod();
+      dog.watch("t1", "bot1", { generation: "g1", setup: true });
+      dog.dispatched("t1", "bot1", "g1");
+      for (let t = 0; t < 59 * MIN; t += 30_000) { tick(30_000); dog.touch("t1", { heartbeat: true }); dog.sweep(); }
+      expect(stalls).toHaveLength(0);
+      tick(MIN);
+      dog.touch("t1", { heartbeat: true });
+      dog.sweep();
+      expect(stalls).toEqual([expect.objectContaining({ threadId: "t1", stalledBy: "heartbeat-only" })]);
+    });
+
+    it("a room set to 30 minutes keeps its hour of heartbeat room, as before", () => {
+      const { dog, stalls, tick } = prod();
+      dog.watch("room", "bot1", { generation: "g1", setup: true });
+      dog.dispatched("room", "bot1", "g1", { stallMs: 30 * MIN });
+      for (let t = 0; t < 59 * MIN; t += 30_000) { tick(30_000); dog.touch("room", { heartbeat: true }); dog.sweep(); }
+      expect(stalls).toHaveLength(0);
+    });
+  });
 });

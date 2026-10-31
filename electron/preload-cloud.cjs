@@ -1,10 +1,11 @@
 // B3 WP4: the Cloud-home window's own bridge. It is NOT the main preload and exposes none of window.muragebox:
-// a page on murage-home:// gets `window.muragecloud` with exactly five things, each a channel classed cloud-safe or
+// a page on murage-home:// gets `window.muragecloud` with exactly six things, each a channel classed cloud-safe or
 // cloud-only (ipc-channel-classes.mjs) and re-checked in main before its listener runs:
 //   setUnreadCount          desktop:unread-count          (cloud-safe: a number for the Dock/taskbar badge)
 //   approvalNotifications   approval-notification:*       (cloud-safe: an OS notification main validates against the HOME)
 //   reachable               cloud-home:reachable          (cloud-only: is the home answering right now)
 //   disconnectThisComputer  cloud-home:disconnect-this    (cloud-only: revoke this computer from this window's own home)
+//   openExternal            desktop:open-external         (cloud-safe: an https link in the default browser; main validates it)
 //   homeId, platform        constants
 // Sandboxed preloads cannot require sibling files, so everything is inline. It exposes nothing unless the document
 // really is murage-home://<the home main opened this window for>/.
@@ -26,6 +27,11 @@ function documentIsOurHome(homeId) {
   }
 }
 
+/** Main's error text is plain copy; Electron's "Error invoking remote method ..." wrapper is taken off. */
+function plainError(error) {
+  throw new Error(String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
+}
+
 const homeId = expectedHomeId();
 if (documentIsOurHome(homeId)) {
   contextBridge.exposeInMainWorld("muragecloud", {
@@ -41,9 +47,7 @@ if (documentIsOurHome(homeId)) {
       },
     },
     reachable: () => ipcRenderer.invoke("cloud-home:reachable"),
-    // Main's error text is plain copy; Electron's "Error invoking remote method ..." wrapper is taken off.
-    disconnectThisComputer: () => ipcRenderer.invoke("cloud-home:disconnect-this").catch((error) => {
-      throw new Error(String(error?.message ?? error).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
-    }),
+    disconnectThisComputer: () => ipcRenderer.invoke("cloud-home:disconnect-this").catch(plainError),
+    openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url).catch(plainError),
   });
 }

@@ -4,7 +4,7 @@
 "Sent to %@. The answer will be in your chat." = "%@に送信しました。返答はチャットに届きます。";
 "Murage can't reach your computer right now." = "現在、Murageはコンピューターに接続できません。";
 "Open Murage to set up asking." = "Murageを開いて質問の設定をしてください。";
-"Update Murage on your computer to use this." = "この機能を使うには、コンピューターのMurageを更新してください。";
+"Turn this on, or update Murage, on your computer." = "コンピューターでこの機能を有効にするか、Murageを更新してください。";
 "That chat is no longer available. Open Murage to pick another." = "そのチャットは利用できなくなりました。Murageを開いて別のチャットを選んでください。";
 "Say open Murage to continue." = "続けるには「Murageを開いて」と言ってください。";
 "Open in Murage" = "Murageで開く";

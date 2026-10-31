@@ -9,8 +9,9 @@ export const MAX_CONCURRENT_BOT_THREADS = 3;
  * stopped, replaced or the process ends, with its place in line shown. */
 export const RESOURCE_WAIT_TIMEOUT_MS = 60 * 60_000;
 /** SL-L L3: after this long in line a turn writes one "still waiting" line
- * (never repeated; the live chip carries the position). Longer than the
- * 20-minute inactivity watchdog that interrupts a stalled holder. */
+ * (never repeated; the live chip carries the position). The same hour as the
+ * inactivity watchdog that interrupts a stalled holder (60 minutes since 1.0.12); the notice is
+ * one line and the wait itself is not on that clock. */
 export const RESOURCE_STILL_WAITING_MS = 60 * 60_000;
 /** What is left of the "still waiting" hour for a wait that began at `firstWaitAt` (at least 1 ms, so the notice still fires). */
 export function stillWaitingRemainingMs(firstWaitAt: number | undefined, now: number): number {

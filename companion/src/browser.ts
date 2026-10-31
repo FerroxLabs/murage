@@ -1744,7 +1744,9 @@ export function createBrowserHandler(options: BrowserDoorOptions) {
       // `phoneJobs` is additive and present only while the harness offers phone tools, so the app can tell
       // "update Murage on your computer" from a 403.
       // `phoneAsk` is additive too, present only while the harness offers share and ask (its own flag, independent of phoneJobs).
-      const hello = (phoneJobs: boolean, phoneAsk: boolean) => sendJson(res, 200, { ok: true, name, mobile: 1, mobileFeatures: 1, approvalProof: 1, ...(phoneJobs ? { phoneJobs: 1 } : {}), ...(phoneAsk ? { phoneAsk: 1 } : {}) });
+      // `phoneFlags` (1.0.12) is additive and always present: this computer has the Settings preview switches, so a phone that sees no
+      // `phoneJobs` or `phoneAsk` can say "not turned on yet" rather than "update Murage on your computer".
+      const hello = (phoneJobs: boolean, phoneAsk: boolean) => sendJson(res, 200, { ok: true, name, mobile: 1, mobileFeatures: 1, approvalProof: 1, phoneFlags: 1, ...(phoneJobs ? { phoneJobs: 1 } : {}), ...(phoneAsk ? { phoneAsk: 1 } : {}) });
       if (method === "HEAD") return hello(false, false);
       Promise.all([phonesOffered().then((v) => v === true, () => false), shareAskOffered().then((v) => v === true, () => false)]).then(([jobs, ask]) => hello(jobs, ask));
       return;

@@ -29,7 +29,7 @@ export const IOS_ACTIONS: Record<string, { id: string; title: string; options: s
     { id: "NOT_NOW", title: "Not now", options: ["authenticationRequired"] },
   ],
 };
-export const ANDROID_CHANNEL: Record<PushCategory, string> = { approval: "approvals", "approval-open": "approvals", question: "questions", done: "finished", resolved: "finished", "device-job": "requests", call: "calls", "call-note": "questions" };
+export const ANDROID_CHANNEL: Record<PushCategory, string> = { approval: "approvals", "approval-open": "approvals", question: "questions", done: "finished", resolved: "finished", "device-job": "requests", call: "calls_v2", "call-note": "questions" };
 export const GENERIC: Record<PushCategory, { title: string; body: string }> = {
   approval: { title: "Murage", body: "Your attention is needed." },
   "approval-open": { title: "Murage", body: "Your attention is needed." },

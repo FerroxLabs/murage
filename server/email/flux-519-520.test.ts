@@ -62,7 +62,7 @@ describe("email_scope_required", () => {
     expect(result.row).toMatchObject({ state: "refused", code: "email_scope_required" });
     expect(logs.some(line => line === "[email] Flux asked for scope email:bot")).toBe(true);
     expect(logs.join("\n")).not.toContain("bot-fixture");
-    expect(ownerRouteLine("email_scope_required")).toMatch(/Reconnect email/);
+    expect(ownerRouteLine("email_scope_required")).toBe("Sign in with Flux to connect email.");
   });
 });
 
