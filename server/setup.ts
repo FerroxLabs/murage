@@ -137,6 +137,35 @@ function runnable(instance: SetupInstanceReading): boolean {
     && (instance.models?.default ?? "").trim().length > 0;
 }
 
+/** A base URL whose host is this computer itself: 127.0.0.0/8, ::1 or
+ *  localhost. Anything else, including a LAN address, is someone else's box. */
+export function isLoopbackBase(baseUrl: string): boolean {
+  let host: string;
+  try { host = new URL(baseUrl).hostname.toLowerCase(); } catch { return false; }
+  return host === "localhost" || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/**
+ * The local model the Chief's OWN turns run on, or undefined.
+ *
+ * Resolved the way a real Chief turn resolves it: the bot's own
+ * `modelSelection.model` (never the engine's default, which the Chief may
+ * have changed), with no provider connection on the selection (a connection
+ * routes the turn elsewhere), decoded as `host::model` against a host Murage
+ * knows, and that host on loopback. A LAN server is another computer, so
+ * "running on this computer" would be false there. Anything short of all
+ * four is undefined, and the card says the generic line.
+ */
+export function chiefLocalModelOf(
+  selection: { instanceId: string; model: string; connectionId?: string | null } | undefined,
+): { model: string; host: string } | undefined {
+  if (!selection?.instanceId || selection.connectionId) return undefined;
+  const decoded = decodeInjectId((selection.model ?? "").trim());
+  if (!decoded) return undefined;
+  const host = localHost(decoded.host);
+  return host && isLoopbackBase(host.baseUrl) ? { model: decoded.model, host: host.label } : undefined;
+}
+
 /**
  * The model on this person's own hard disk, named the way they name it.
  *
@@ -160,7 +189,7 @@ function localModelOf(instance: SetupInstanceReading): { model: string; host: st
   const decoded = decodeInjectId((instance.models?.default ?? "").trim());
   if (!decoded) return undefined;
   const host = localHost(decoded.host);
-  return host ? { model: decoded.model, host: host.label } : undefined;
+  return host && isLoopbackBase(host.baseUrl) ? { model: decoded.model, host: host.label } : undefined;
 }
 
 /** One engine, as a card may describe it. */
@@ -264,7 +293,7 @@ export interface SetupBotReading {
   hidden?: boolean;
   threadId: string;
   /** The bot's OWN engine selection, not a task's. */
-  modelSelection: { instanceId: string; model: string };
+  modelSelection: { instanceId: string; model: string; connectionId?: string | null };
   tasks?: readonly SetupTaskReading[];
 }
 
@@ -351,7 +380,7 @@ export function setupThreadFacts(messages: readonly SetupMessageReading[]): Setu
 export function readWorkspace(
   workspace: SetupWorkspaceReading,
   chiefBotId?: string,
-): Pick<SetupLiveState, "chiefInstanceId" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> & { threadFactsUnknown?: true } {
+): Pick<SetupLiveState, "chiefInstanceId" | "chiefLocalModel" | "chiefAnsweredBy" | "chiefRefusal" | "chiefUsesFlux" | "crewSize" | "botReplyExists"> & { threadFactsUnknown?: true } {
   const chief = chiefBotId ? workspace.bots.find((bot) => bot.id === chiefBotId) : undefined;
   const chiefAnsweredBy = new Set<string>();
   let botReplyExists = false, threadFactsUnknown = false;
@@ -378,8 +407,10 @@ export function readWorkspace(
       if (isChief && task.lastInstanceId) chiefAnsweredBy.add(task.lastInstanceId);
     }
   }
+  const chiefLocal = chiefLocalModelOf(chief?.modelSelection);
   return {
     chiefInstanceId: chief?.modelSelection.instanceId ?? "",
+    ...(chiefLocal ? { chiefLocalModel: chiefLocal } : {}),
     chiefAnsweredBy: [...chiefAnsweredBy],
     chiefRefusal: chiefRefusal?.refusal ?? null,
     chiefUsesFlux: chief ? workspace.routesThroughFlux(chief.modelSelection.model) : false,

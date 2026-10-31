@@ -11,6 +11,7 @@
 // here nor declared not-pending-work, so a store added later cannot skip the fence.
 import type { DatabaseSync } from "node:sqlite";
 import { fenceRestoredBotCalls } from "./bot-calls-schema.ts";
+import { fenceRestoredAppTriggers } from "./app-trigger-store.ts";
 
 export const RESTORE_HOLDS_DDL = "CREATE TABLE IF NOT EXISTS restore_holds (kind TEXT NOT NULL, row_id TEXT NOT NULL, generation TEXT NOT NULL, PRIMARY KEY (kind, row_id))";
 
@@ -84,6 +85,9 @@ export const RESTORE_FENCED_STORES: readonly RestoreFencedStore[] = [
   { store: "bot calls", medium: "sqlite", tables: ["bot_calls", "bot_call_sessions"], mode: "terminalized", consumers: ["boot reconcile", "call deadline timer", "answer route"],
     note: "intents not done end done(restored) with the active slot freed; open call sessions end 'restore'",
     proof: ["SELECT COUNT(*) AS n FROM bot_calls WHERE state <> 'done'", "SELECT COUNT(*) AS n FROM bot_call_sessions WHERE ended_at IS NULL"] },
+  { store: "connected-app triggers", medium: "sqlite", tables: ["app_trigger_bindings", "app_event_inbox", "app_event_batches", "app_event_runs"], mode: "paused", consumers: ["AppTriggerDelivery.pollOnce", "AppTriggerDelivery.batchPass", "AppTriggerDelivery.runPass"],
+    note: "every live binding needs a fresh owner review; unstarted runs are cancelled, a run that may have started keeps Review outcome and is never resubmitted; open batches close and ready events are kept as stale",
+    proof: ["SELECT COUNT(*) AS n FROM app_trigger_bindings WHERE sync_state NOT IN ('needs_review','deleting','deleted')", "SELECT COUNT(*) AS n FROM app_event_runs WHERE state IN ('sealed','budget_wait','reserved','starting','running')", "SELECT COUNT(*) AS n FROM app_event_inbox WHERE disposition='ready'"] },
   { store: "call admissions owed", medium: "sqlite", tables: ["bot_call_owed"], mode: "dropped", consumers: ["drainOwed"], note: "owed call admissions are dropped: the facts they name happened before the backup",
     proof: ["SELECT COUNT(*) AS n FROM bot_call_owed"] },
   { store: "call rules", medium: "sqlite", tables: ["bot_call_rules"], mode: "paused", consumers: ["call admission", "decide()"],
@@ -186,6 +190,11 @@ export function fenceRestoredSql(db: DatabaseSync, generation: string): Array<{ 
     if (calls.calls + calls.sessions > 0) notes.push({ component: "messages.db", action: `${calls.calls} bot call(s) and ${calls.sessions} call session(s) were ended by the restore` });
     if (calls.owed > 0) notes.push({ component: "messages.db", action: `${calls.owed} call admission(s) that were waiting were dropped` });
     if (calls.rules > 0) notes.push({ component: "messages.db", action: `${calls.rules} call rule(s) are paused after the restore: turn calls back on to use them` });
+  }
+  {
+    const apps = fenceRestoredAppTriggers(db);
+    if (apps.bindings > 0) notes.push({ component: "messages.db", action: `${apps.bindings} connected-app trigger(s) wait for your review after the restore: review each one to turn it back on` });
+    if (apps.runs > 0) notes.push({ component: "messages.db", action: `${apps.runs} connected-app run(s) that had not finished were stopped by the restore; nothing was sent again` });
   }
   if (hasTable(db, "push_relay_removals")) {
     let kept = 0;

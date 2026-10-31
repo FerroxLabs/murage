@@ -30,6 +30,7 @@
 // in, so it is table-tested without touching a disk.
 import { actionGrantSet, resolveCall, stampedToolCall, type GrantCall } from "../shared/app-action-grant.ts";
 import { requiredFields } from "./drivers/contracts.ts";
+import { parseApplyPatch } from "./drivers/codex-hook.ts";
 import { canonicalConnectedAppToolName } from "../shared/connected-app-names.ts";
 import { posix } from "node:path";
 import { EXACT_COMMAND_MAX_CHARS, normalizeCommand } from "../shared/exact-command.ts";
@@ -1726,7 +1727,8 @@ function appHit(call: ToolCall, place: StopLinePlace): StopHit | null {
  * home, whose commands are read as PowerShell. */
 export function deletesPlacedInside(command: string, given: StopLinePlace): boolean {
   const place = canonPlace(given);
-  if (WIN_CANON.test(place.home)) return false;
+  // ISSUE-PERMS-1010 G3: a command that names the patch helper deletes what its patch says, which this reader never places
+  if (WIN_CANON.test(place.home) || APPLY_PATCH_WORD.test(command)) return false;
   const real = (path: string) => realIn(place, path);
   const realHome = real(clean(place.home));
   if (realHome === null) return false;
@@ -1763,6 +1765,9 @@ export function deletesPlacedInside(command: string, given: StopLinePlace): bool
     return placed !== null && roots.some((root) => within(root, placed));
   });
 }
+
+/** ISSUE-PERMS-1010 G3: the patch helper, in any spelling an engine runs (`apply_patch`, `applypatch`, any case). */
+const APPLY_PATCH_WORD = /apply_?patch/i;
 
 function commandText(tool: string, input: unknown, summary: string): string | undefined {
   const bare = tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!;
@@ -1827,6 +1832,13 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   const command = commandText(tool, input, summary);
   // a Windows engine's commands run in PowerShell, and so do a PowerShell tool's anywhere
   const powershell = POWERSHELL_TOOLS.has(tool.toLowerCase().replace(/^mcp__.+__/, "").split(/[./]/).pop()!);
+  // ISSUE-PERMS-1010 G3 (1.0.10, designs/ISSUE-PERMS-DESIGN-1010.md section 3 item 4): Codex keeps an apply_patch helper on
+  // the shell's PATH, and which input it applies depends on the shell around it. So any shell text that names it, in any
+  // spelling and on any OS, is a delete nobody can place. No form is accepted; this only adds a stop to the 1.0.9 reader.
+  if (command !== undefined && APPLY_PATCH_WORD.test(command)) {
+    const hit = deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
+    return hit ? { ...hit, what: `Run a patch that can change or delete files Murage cannot place, so it may reach outside its folder: ${short(command)}` } : hit;
+  }
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {
@@ -1853,10 +1865,30 @@ export function classifyAsk(
 ): StopHit | null {
   const stamped = stampedToolCall(ask);
   if (stamped === null) return { kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." };
+  // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
+  // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
+  // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
+  // (Astra/GrokBuild subset M1): Codex's edit contract reads `changes`, so a contract miss would otherwise answer first
+  // and the card would say "could not read this call" instead of naming the outside delete. Only the Codex route answers
+  // first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds a stop last.
+  const editInput = ask.toolCall?.name === "edit" && ask.toolCall.input && typeof ask.toolCall.input === "object"
+    ? ask.toolCall.input as { removed?: unknown; cwd?: unknown } : undefined;
+  const editRemoved = editInput && "removed" in editInput
+    ? (Array.isArray(editInput.removed) && editInput.removed.length && editInput.removed.every((p) => typeof p === "string" && p !== "") ? editInput.removed as string[] : [])
+    : undefined;
+  const editHit = editRemoved
+    ? classifyStopLine("delete", { paths: editRemoved }, ask.summary, typeof editInput!.cwd === "string" && editInput!.cwd ? { ...given, cwd: editInput!.cwd } : given)
+    : null;
+  if (editHit && ask.engine === "codex") return editHit;
   // Rule 25: a call its driver's contract cannot read whole stops too.
   if (!requiredFields(ask.engine, resolveCall(ask), ask).ok) return { kind: "delete", what: "Murage could not read this call whole, so it is waiting for you." };
   const first = stamped ? classifyStopLine(stamped.name, stamped.input, ask.summary, given) : null;
-  return first ?? classifyStopLine(ask.toolCall?.name ?? ask.tool, ask.toolCall?.input, ask.summary, given);
+  // ISSUE-PERMS-1010 B: a stamped codex apply_patch is judged by what it does to each path: every file it deletes, and the
+  // old name of every file it moves, is a delete for the stop line (an unreadable patch already stopped on its contract)
+  const removed = !first && stamped?.name === "apply_patch" && ask.toolIdentity?.namespace === "codex" && stamped.input && typeof stamped.input === "object"
+    ? parseApplyPatch((stamped.input as { patch?: unknown }).patch)?.removed : undefined;
+  const patchHit = removed?.length ? classifyStopLine("delete", { paths: removed }, ask.summary, given) : null;
+  return first ?? patchHit ?? editHit ?? classifyStopLine(ask.toolCall?.name ?? ask.tool, ask.toolCall?.input, ask.summary, given);
 }
 
 /** Whether a hit's place names several recipients at once. */

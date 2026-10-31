@@ -39,7 +39,7 @@ export const CLOUD_REFUSED_PATTERNS = Object.freeze([
 
 /** Cloud-safe channels. Keep this list short; promote a channel only with a reason. */
 export const CLOUD_SAFE_CHANNELS = Object.freeze([
-  "desktop:open-external", // main re-validates: a credential-free web URL, opened in the default browser
+  "desktop:open-external", // main re-validates: a credential-free web URL (https only from a Cloud-home window), opened in the default browser
   "desktop:unread-count", // a number; main applies it to the main window only
   "approval-notification:show", // an OS notification; main validates the payload
 ]);
@@ -187,6 +187,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   "engine:open-terminal",
   // flux-connection, and the desktop Flux sign-in (opens the browser, saves the key in main)
   "flux-connection:mutate",
+  "flux-connection:restart-app",
   "flux-signin:cancel",
   "flux-signin:start",
   // mcp-servers

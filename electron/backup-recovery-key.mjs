@@ -3,10 +3,28 @@
 // byte the format age-keygen writes, and it is accepted only after the same
 // reader scheduled backups use (readBackupIdentity) parses it back.
 import { createPrivateKey, createPublicKey, generateKeyPairSync } from "node:crypto";
-import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, constants, existsSync, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
+
+/** Documents is optional on Linux, especially under a window manager. */
+export function defaultRecoveryKeyFolder(getPath) {
+  try {
+    const documents = getPath("documents");
+    if (statSync(documents).isDirectory()) return documents;
+  } catch { /* No configured or existing Documents folder. */ }
+  return getPath("home");
+}
+
+// An unconfigured XDG Documents directory can resolve to home itself.
+// Do not exclude home from automatic setup in that case.
+export function recoveryKeyAutomaticExclusions(getPath) {
+  try {
+    const documents = defaultRecoveryKeyFolder(getPath);
+    return realpathSync(documents) === realpathSync(getPath("home")) ? [] : [documents];
+  } catch { return []; }
+}
 
 // ---- Bech32 (BIP-173). age uses the original checksum constant, not bech32m.
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";

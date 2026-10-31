@@ -49,18 +49,22 @@ describe("Settings in a Cloud window", () => {
     }
   });
 
-  it("SettingsModal routes blocked sections through the classifier and hides this computer's cards", () => {
+  it("SettingsModal routes blocked sections through the classifier and stubs this computer's cards", () => {
     const source = read("SettingsModal.tsx");
     expect(source).toContain("cloudSectionBlocked(requested)");
     // 1.0.3: the 20 ids land on 12 pages (settings-pages.ts); a blocked id lands on none of them.
     expect(source).toContain('const section = (blocked ? "" : resolveSettingsSection(requested).section) as SettingsPage;');
     expect(source).toContain("const pageComputerOnly = !blocked && cloudSectionBlocked(section);");
     expect(source).toContain("ON_YOUR_COMPUTER_ONLY");
-    expect(source).toContain('{desktop === true && !cloudCardHidden("startup-heading", cloud) && <Anchor id="startup-heading"><StartupSettings /></Anchor>}');
-    expect(source).toContain('{!cloudCardHidden("diagnostics-heading", cloud) && <Anchor id="diagnostics-heading"><DiagnosticsRow /></Anchor>}');
-    expect(source).toContain('{desktop === true && !cloudCardHidden("setup-heading", cloud) && <Anchor id="setup-heading"><SetupAgainRow /></Anchor>}');
-    // 1.0.3 moved the MCP servers button into the Connected apps Advanced; a Cloud window gets none of it.
-    expect(source).toMatch(/\{!cloudCardHidden\("mcp-servers-heading"\) && \(\s*<AdvancedSection section="connections"[\s\S]*?openPanel\("mcp"\)/);
+    // SETTINGS-UX-1011 S1: a Cloud window renders each of this computer's cards as the "set this on your computer" stub, never nothing.
+    expect(source).toContain('{desktop === true && <Anchor id="startup-heading">{cloudCardHidden("startup-heading", cloud) ? <ComputerOnlyStub anchor="startup-heading" /> : <StartupSettings />}</Anchor>}');
+    expect(source).toContain('<Anchor id="diagnostics-heading">{cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />}</Anchor>');
+    expect(source).toContain('{desktop === true && <Anchor id="setup-heading">{cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />}</Anchor>}');
+    // 1.0.10 copy moved the one update control into the version card; on a Cloud window it is the stub there (int/1011)
+    expect(source).toContain('<Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>');
+    // 1.0.3 moved the MCP servers button into the Connected apps Advanced; a Cloud window gets the stub in its place.
+    expect(source).toMatch(/\{cloudCardHidden\("mcp-servers-heading"\) \? <ComputerOnlyStub anchor="mcp-servers-heading" \/> : \(\s*<Card[\s\S]*?openPanel\("mcp"\)/);
+    expect(source).not.toContain("!cloudCardHidden(");
     expect(source.match(/openPanel\("mcp"\)/g)).toHaveLength(1);
     // every page body reads `section`, which is "" for a blocked id, and the nav and redirect read `requested`
     for (const entry of SECTION_PAGES) expect(source, entry.id).toContain(`section === "${entry.id}"`);
@@ -77,9 +81,9 @@ describe("Settings in a Cloud window", () => {
       const aliasOnly = CLOUD_SETTINGS_CLASS[alias] === "computer-only";
       const pageOnly = CLOUD_SETTINGS_CLASS[target.section] === "computer-only";
       if (aliasOnly && !pageOnly) {
-        // The page renders in a Cloud window, so the alias's card is hidden there.
+        // The page renders in a Cloud window, so the alias's card is the "set this on your computer" stub there.
         expect(alias).toBe("experimental");
-        expect(modal).toContain('{!cloudCardHidden("skill-recorder-heading", cloud) && <Anchor id="skill-recorder-heading"><WorkspaceFeatureRow feature="skillRecorder" /></Anchor>}');
+        expect(modal).toContain('<Anchor id="skill-recorder-heading">{cloudCardHidden("skill-recorder-heading", cloud) ? <ComputerOnlyStub anchor="skill-recorder-heading" /> : <WorkspaceFeatureRow feature="skillRecorder" />}</Anchor>');
       } else if (!aliasOnly && pageOnly) {
         // The alias may be used but its page may not: only the alias's card renders.
         expect(alias).toBe("images");
@@ -110,14 +114,14 @@ describe("Settings search in a Cloud window", () => {
   });
 
   // The modal and search read one list: every card the modal hides on a page a Cloud window renders.
-  it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal gates it by that list", () => {
+  it("each of this computer's cards on a Cloud-usable page is a registered card, and the modal stubs it by that list", () => {
     const modal = read("SettingsModal.tsx");
     expect([...CLOUD_COMPUTER_ONLY_CARDS].sort()).toEqual(["diagnostics-heading", "mcp-servers-heading", "setup-heading", "skill-recorder-heading", "startup-heading", "updates-heading"]);
     for (const anchor of CLOUD_COMPUTER_ONLY_CARDS) {
       const card = cards.find((entry) => entry.anchor === anchor);
       expect(card, anchor).toBeDefined();
       expect(cloudSectionBlocked(card!.section, true), anchor).toBe(false);
-      expect(modal, anchor).toMatch(new RegExp(`!cloudCardHidden\\("${anchor}"(, cloud)?\\) &&`));
+      expect(modal, anchor).toMatch(new RegExp(`cloudCardHidden\\("${anchor}"(, cloud)?\\) \\? <ComputerOnlyStub anchor="${anchor}" />`));
       expect(cloudCardHidden(anchor, true)).toBe(true);
       expect(cloudCardHidden(anchor, false)).toBe(false);
     }

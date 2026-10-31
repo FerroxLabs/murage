@@ -613,7 +613,8 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
   if (operation.action === "create") return operation.routine;
   const existing = manager.listRoutines().find((routine) => routine.id === operation.routineId);
   // 1.0.4 SL-I I3: a routine that waits for an engine's limit is changed in the app, not through a bot's request
-  if (!existing || existing.schedule.type === "limit_reset") return null;
+  // 1.0.11 APP-TRIGGERS: so is a connected-app routine (its kind and trigger never change through a request)
+  if (!existing || existing.schedule.type === "limit_reset" || existing.schedule.type === "app_event") return null;
   const base: RoutineRequestDefinition = {
     ...(existing.watch ? { watch: routineWatchInput(existing.watch) } : {}),
     name: existing.name,

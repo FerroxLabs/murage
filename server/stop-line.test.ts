@@ -507,3 +507,11 @@ it("holds a Composio send for the owner at Ask and Auto, and lets a read through
   expect(autoVerdict({ autoApprove: true }, tool, "Gmail fetch", { stopLine: readStop }).source).toBe("unread-call");
   expect(autoVerdict({ autoApprove: false }, tool, "Gmail fetch", { stopLine: readStop }).approve).toBeNull();
 });
+
+describe("a shell text that names the patch helper", () => {
+  it("says what it is on the card, and still stops", () => {
+    const hit = classifyStopLine("Bash", { command: "echo apply_patch gate" }, "echo apply_patch gate", place());
+    expect(hit?.kind).toBe("delete");
+    expect(hit?.what).toBe("Run a patch that can change or delete files Murage cannot place, so it may reach outside its folder: echo apply_patch gate");
+  });
+});

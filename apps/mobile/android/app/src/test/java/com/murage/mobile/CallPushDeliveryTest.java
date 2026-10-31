@@ -181,7 +181,7 @@ public class CallPushDeliveryTest {
     @Test public void callActionsRequireAuthenticationSupportAndAnswerRouteRemainsValid() {
         for (int sdk : new int[] {29, 30, 31, 34}) {
             NotificationPlan.Plan plan = NotificationPlan.of(PushContract.Category.CALL, sdk, true);
-            assertEquals("calls", plan.channel);
+            assertEquals("calls_v2", plan.channel);
             assertEquals(sdk >= 31 ? Arrays.asList("ANSWER", "NOT_NOW") : Arrays.asList("OPEN"), plan.actions);
             assertEquals(sdk >= 31, plan.authRequired);
             assertFalse(plan.silent);

@@ -65,7 +65,11 @@ export class BrowserExtensionSetup {
       } else {
         if(setup.decision!=='accepted')refusal("Choose Set up before continuing with your browser.");
         const status=this.options.status();const chosen=profileId??setup.profileId??(status.profiles.length===1?status.profiles[0].profileId:undefined);
-        if(!chosen||!status.profiles.some(profile=>profile.profileId===chosen))refusal("Connect the extension and choose its browser profile before continuing.");
+        if(!chosen||!status.profiles.some(profile=>profile.profileId===chosen)){
+          // The remembered profile is gone but another is live (the extension was reinstalled): point the owner at the Browser panel, where they confirm the new one. Never rebound here.
+          if(chosen&&!profileId&&status.profiles.length>0)refusal("Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.");
+          refusal("Connect the extension and choose its browser profile before continuing.");
+        }
         // Only the newest task counts. One the owner stopped is final: Continue here starts a new one (RES-003), it never asks for a Resume the extension would refuse.
         const newest=status.bindings.filter(binding=>binding.botId===setup.botId&&binding.threadId===threadId&&binding.profileId===chosen).at(-1);
         if(newest?.state==='stopped'){

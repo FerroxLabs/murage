@@ -94,7 +94,9 @@ export interface Refusal { at: number; runId: string; state: string; reason: str
 export interface ReflectState {
   threads: Record<string, ThreadCursor>; run?: RunRecord; cooldownUntil: number;
   dailyRuns: { day: string; count: number; dreamCalls: number }; excludedThreads: string[];
-  support: Record<string, SupportEntry>; refusals: Refusal[]; lastTraceDay?: string; lastEngine?: string; lastFingerprint?: string;
+  support: Record<string, SupportEntry>; refusals: Refusal[]; lastTraceDay?: string;
+  /** The last instant the last trace day's window held (1.0.8 owner zone): the next window starts right after it. */
+  lastTraceEnd?: number; lastEngine?: string; lastFingerprint?: string;
   reportedOverLimit?: boolean;
   dream?: unknown;
 }
@@ -1137,6 +1139,28 @@ function persistedReflectStates(): Map<string, ReflectState> {
   }));
 }
 
+/** 1.0.8 owner zone: a last trace day written before 1.0.8 has no lastTraceEnd, and the next window would start at
+ *  that day's end worked out in whatever zone is in force then. Called just before the owner's zone changes (index.ts
+ *  PUT /api/owner/timezone), with the old zone still in force, so the end recorded is the one that day was read to.
+ *  Answers the number of bots pinned. */
+export function pinTraceDayEnds(): number {
+  let pinned = 0;
+  for (const [botId, state] of persistedReflectStates()) {
+    if (!state.lastTraceDay || (typeof state.lastTraceEnd === "number" && Number.isFinite(state.lastTraceEnd))) continue;
+    const date = new Date(state.lastTraceDay + "T00:00:00");
+    if (!Number.isFinite(date.getTime())) continue;
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() + 1);
+    const end = date.getTime() - 1;
+    mutateReflect(botId, (s) => {
+      if (s.lastTraceDay !== state.lastTraceDay || (typeof s.lastTraceEnd === "number" && Number.isFinite(s.lastTraceEnd))) return;
+      s.lastTraceEnd = end;
+      pinned++;
+    });
+  }
+  return pinned;
+}
+
 /** Startup and idle-tick reconciliation (A.2). Orphan discovery is requested separately from run recovery. */
 interface ReconcileOptions { discoverOrphans?: boolean; persisted?: Map<string, ReflectState>; signal?: AbortSignal }
 type ReconcileCounts = Awaited<ReturnType<typeof reconcilePipRunsOnce>>;
@@ -1249,9 +1273,14 @@ export async function maybeTraceEpisodeSliced(deps: ReflectDeps, bot: ReflectBot
   date.setHours(0, 0, 0, 0);
   if (state.lastTraceDay) date.setDate(date.getDate() + 1);
   if (date.getTime() >= today.getTime()) return false;
-  const start = date.getTime(), dayKey = dayOf(start);
+  const dayStart = date.getTime(), dayKey = dayOf(dayStart);
   date.setDate(date.getDate() + 1);
   const end = date.getTime() - 1;
+  // 1.0.8 owner zone: days are local calendar days, and the owner's zone can change between two of them. The window
+  // starts right after the last one ended, so a move west (Bangkok to Chicago) leaves no hours between two days and a
+  // move east never reads the same hours twice. A day the last window already covered whole has nothing left to read.
+  const start = state.lastTraceDay && typeof state.lastTraceEnd === "number" && Number.isFinite(state.lastTraceEnd) ? state.lastTraceEnd + 1 : dayStart;
+  if (start > end) { mutateReflect(bot.id, (s) => { if (s.lastTraceDay === state.lastTraceDay) s.lastTraceDay = dayKey; }); return false; }
   const byThread: TraceThread[] = [];
   for (const threadId of bot.threadIds.filter(t => !state.excludedThreads.includes(t))) {
     await between();
@@ -1268,10 +1297,10 @@ export async function maybeTraceEpisodeSliced(deps: ReflectDeps, bot: ReflectBot
   const wrote = transaction(tx => {
     if (readReflectState(tx, bot.id).lastTraceDay !== state.lastTraceDay) return null;
     if (stampMoved(tx, deps, bot.id, stamp) !== "none") return null;
-    return writeTraceEpisode(tx, { botId: bot.id, scopeId, day: start, byThread }).written;
+    return writeTraceEpisode(tx, { botId: bot.id, scopeId, day: dayStart, byThread }).written;
   });
   if (wrote === null) return false;
-  mutateReflect(bot.id, (s) => { s.lastTraceDay = dayKey; });
+  mutateReflect(bot.id, (s) => { s.lastTraceDay = dayKey; s.lastTraceEnd = end; });
   return wrote;
 }
 

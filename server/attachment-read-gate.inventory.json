@@ -1449,6 +1449,13 @@
   "count": 1
  },
  {
+  "file": "server/email/caps-file.ts",
+  "function": "readCapsFile",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/engine-commands.ts",
   "function": "load",
   "callee": "readFileSync",
@@ -1577,6 +1584,13 @@
  {
   "file": "server/env-path.ts",
   "function": "readKept",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/feedback-relay.ts",
+  "function": "feedbackInstallId",
   "callee": "readFileSync",
   "root": "data-dir",
   "count": 1

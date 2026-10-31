@@ -5,7 +5,7 @@
 // Claude projection generated from it (Rule 63, T90a).
 
 import { describe, expect, it } from "vitest";
-import { claudeSensitiveAskRules, SENSITIVE_PATHS, SENSITIVE_RULES, SENSITIVE_TEXT, sensitivePathRow, TEMPLATE_BASENAMES } from "./sensitive-paths.ts";
+import { claudeSensitiveAskRules, SENSITIVE_PATHS, SENSITIVE_RULES, SENSITIVE_TEXT, sensitiveNameRow, sensitivePathRow, TEMPLATE_BASENAMES } from "./sensitive-paths.ts";
 import { looksSensitive } from "../server/auto-approve.ts";
 
 describe("Rule 35 rows", () => {
@@ -67,5 +67,36 @@ describe("09-B1: environment dumps and $HOME profile reads are sensitive text an
     const row = SENSITIVE_TEXT.find((r) => r.id === "env-dump")!;
     for (const text of ["env", "printenv", "printenv HOME", "export -p", "declare -p", "set", "ls; env", "env > /tmp/x", "sudo env"]) expect(row.re.test(text), text).toBe(true);
     for (const text of ["env FOO=1 ls", "export FOO=1", "set -e", "the environment is fine", "node --env-file x"]) expect(row.re.test(text), text).toBe(false);
+  });
+});
+
+describe("NOLIMITS-KEY-TEXT Part A rows", () => {
+  const rowsOf = (text: string) => [...SENSITIVE_PATHS, ...SENSITIVE_TEXT].filter((row) => row.re.test(text)).map((row) => row.id);
+  it("A3: the dot file is a whole basename", () => {
+    for (const text of ["cat user.profile.json", "bot.profile", "ls src/api.profile.test.ts"]) expect(rowsOf(text), text).toEqual([]);
+    for (const text of ["cat ~/.zshrc", "cat ~/.zshrc.bak", "cat .profile", "cat ./.profile", "cat $HOME/.bash_profile", "cat ${HOME}/.zshenv", "type %USERPROFILE%\\.bashrc", "X=~/.profile"]) expect(rowsOf(text), text).toContain("shell-rc");
+  });
+  it("A4: npmrc is the key place, the shims are tooling", () => {
+    expect(rowsOf("type C:\\Users\\ada\\AppData\\Roaming\\npm\\etc\\npmrc")).toEqual(["windows-credential-files"]);
+    expect(rowsOf("type %APPDATA%\\npm\\etc\\npmrc")).toEqual(["windows-credential-files"]);
+    expect(rowsOf("C:\\Users\\ada\\AppData\\Roaming\\npm\\codex.cmd --version")).toEqual(["project-tooling"]);
+    expect(rowsOf("cat C:/Users/ada/AppData/Roaming/gcloud/x")).toEqual(["windows-credential-files"]);
+  });
+  it("A7: a key has length", () => {
+    expect(rowsOf("pip install sk-learn")).toEqual([]);
+    expect(rowsOf(`x sk-${"a".repeat(16)}`)).toEqual(["key-literal"]);
+  });
+  it("A8: a print of one variable or of PowerShell's whole environment joins the dump row", () => {
+    for (const text of ["declare -p OPENAI_API_KEY", "typeset -p HOME", "export -p HOME", "declare -xp HOME", "gci env:", "Get-ChildItem Env:", "dir env:", "ls; gci env:\\*"]) expect(rowsOf(text), text).toContain("env-dump");
+    for (const text of ["declare -x FOO", "declare FOO=1", "export FOO=1", "gci src", "dir"]) expect(rowsOf(text), text).not.toContain("env-dump");
+  });
+  it("the Claude projection changes by exactly A4's spellings", () => {
+    const rules = claudeSensitiveAskRules();
+    for (const added of ["Read(~/AppData/Roaming/npm/etc/npmrc)", "Read(~/AppData/Roaming/npm/**)", "Bash(*AppData*Roaming*npm*)"]) expect(rules).toContain(added);
+  });
+  it("sensitiveNameRow is the one row test", () => {
+    expect(sensitiveNameRow(".env")).toBe("env");
+    expect(sensitiveNameRow("user.profile.json")).toBeNull();
+    expect(sensitiveNameRow("config.toml")).toBeNull();
   });
 });

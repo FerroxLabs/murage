@@ -57,6 +57,7 @@ import {
   type PhonePairingAttemptLock,
   type PhonePairingAttemptQueue,
 } from "../lib/phone-setup";
+import { companionBridge } from "../lib/companion-bridge";
 import { t } from "../lib/i18n";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
@@ -309,9 +310,7 @@ export const REMOTE_ACCESS_UNKNOWN: CompanionRemoteAccess = {
   problem: null,
 };
 
-export const companionBridge = (): CompanionBridge | null =>
-  // SAFETY: the preload owns this narrow bridge; browser builds are guarded by the optional lookup.
-  (globalThis as { muragebox?: { companion?: CompanionBridge } }).muragebox?.companion ?? null;
+export { companionBridge };
 
 export const companionAccountBridge = (): AccountBridge | null =>
   // SAFETY: Electron exposes only these account operations and never sends credentials to the renderer.

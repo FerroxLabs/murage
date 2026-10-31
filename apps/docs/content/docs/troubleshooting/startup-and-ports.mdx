@@ -1,10 +1,10 @@
 ---
-title: App startup and ports
+title: App startup
 description: Diagnose launch failures and local server conflicts.
 icon: Power
 ---
 
-The Electron app starts a local harness and serves the interface from the same machine. The normal port is `8799`. If another process already owns it, packaged builds may select a fallback port automatically.
+The desktop app starts Murage's background service and shows its screens from this same computer. The service normally listens on connection number `8799` (a port). If another program already uses it, the desktop app picks another one by itself.
 
 ## App opens but never becomes ready
 

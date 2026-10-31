@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { capabilitiesPrimer as authoredCapabilitiesPrimer, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
+import { capabilitiesPrimer as authoredCapabilitiesPrimer, CODEX_WINDOWS_PIPE_LINE, turnCapabilityFacts, INTEGRATION_FACTS, type PrimerFacts } from "./capabilities-primer.ts";
 import { TURN_PROMPTS } from "./bot-shapes.ts";
 import { chiefOfStaffSystemPrompt, individualAssistantSystemPrompt, type ChiefTeamMember } from "./chief-of-staff.ts";
 import { canReach, isIndividualAssistant } from "./store.ts";
@@ -655,6 +655,34 @@ describe("the owner's own MCP servers (MCP-LINK T14)", () => {
     const text = primer({ ownerAudience: true, customMcpEngine: false });
     expect(text).not.toContain("\u2014");
     expect(text).not.toMatch(/\b(safe|safely|safety|unsafe)\b|composio|price/i);
+  });
+});
+
+describe("Codex on Windows and named pipes", () => {
+  const instance = { driverKind: "codex", displayName: "Codex", models: { default: "m", options: [] }, adapter: { capabilities: {} } };
+  const base = { instance, integrations: {}, peers: 0, memory: "off" as const, imageProvider: false, canAskOwner: true };
+  const line = "through a named pipe";
+  it("tells a Codex bot on Windows what a refusal means and what to offer", () => {
+    const text = capabilitiesPrimer(turnCapabilityFacts({ ...base, platform: "win32" }));
+    expect(text).toContain(CODEX_WINDOWS_PIPE_LINE);
+    expect(text).toContain("say so in plain words");
+    expect(text).toContain("on a Claude bot");
+  });
+  it("says nothing on any other computer or engine", () => {
+    for (const platform of ["darwin", "linux"] as const) expect(capabilitiesPrimer(turnCapabilityFacts({ ...base, platform }))).not.toContain(line);
+    for (const driverKind of ["claudeCode", "fuigoAgent", "codexAcp"]) expect(capabilitiesPrimer(turnCapabilityFacts({ ...base, platform: "win32", instance: { ...instance, driverKind } }))).not.toContain(line);
+    expect(primer()).not.toContain(line);
+  });
+  it("is cache-stable, follows the copy rules and promises no version", () => {
+    const facts = turnCapabilityFacts({ ...base, platform: "win32" });
+    expect(capabilitiesPrimer(facts)).toBe(capabilitiesPrimer(facts));
+    expect(CODEX_WINDOWS_PIPE_LINE).not.toMatch(/\u2014|\b(safe|safely|safety|unsafe)\b|\d+\.\d+|next (version|release)|soon/i);
+  });
+  it("adds one line and leaves the rest of the block alone", () => {
+    const off = capabilitiesPrimer(turnCapabilityFacts({ ...base, platform: "linux" })).split("\n");
+    const on = capabilitiesPrimer(turnCapabilityFacts({ ...base, platform: "win32" })).split("\n");
+    expect(on.filter((row) => row !== CODEX_WINDOWS_PIPE_LINE)).toEqual(off);
+    expect(on.length).toBe(off.length + 1);
   });
 });
 

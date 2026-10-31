@@ -22,5 +22,5 @@ it("says one short sentence, and nothing when there is nothing to say", () => {
 it("sits after the setup action on the Overview, desktop only", () => {
   const panel = readFileSync(join(HERE, "SettingsPanel.tsx"), "utf8");
   expect(panel).toMatch(/<BotSetupAction bot=\{bot\} \/>\s*\{desktop === true && <LearningOverviewLine /);
-  expect(panel).toMatch(/<SettingsSection id="learning" active=\{section\}>\s*\{desktop === true && <LearningSettings key=\{`learning-\$\{bot\.id\}`\} bot=\{bot\} \/>\}/);
+  expect(panel).toMatch(/<SettingsSection id="learning" active=\{section\}>\s*(?:<div id="bot-setting-learning"[^>]*>)?\{desktop === true && <LearningSettings key=\{`learning-\$\{bot\.id\}`\} bot=\{bot\} \/>\}/);
 });
