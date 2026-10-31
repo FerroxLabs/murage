@@ -80,7 +80,7 @@ describe("decide() over the matrix (4.3)", () => {
   });
   it("live call, bot switch, held rule and late facts text; caps and cooldown hold Emergency too (F48, F49, F54)", async () => {
     const db = fresh();
-    openOwnerSession(db, { botId: "atlas", threadId: "x", device: "desktop:d" }, NO_CALL_EFFECTS, T0);
+    openOwnerSession(db, { botId: "atlas", threadId: "x", device: "desktop:d", principal: "desktop" }, NO_CALL_EFFECTS, T0);
     const live = intent(db, A_RING, { emergency: true }); await run(db, live, world({ quiet: true }), T0 + 1000);
     expect(last(db, live)).toEqual({ check: "live", result: "on_call" });
     const late = intent(db, A_RING, { at: T0 - 11 * 60_000 }); await run(db, late, world(), T0 + 120_000);
@@ -115,7 +115,7 @@ describe("decide() over the matrix (4.3)", () => {
     // Emergency during calls off still needs a clear calendar, and never rings over a live call
     const busyUnsure = intent(db, A_RING, { emergency: true }); await run(db, busyUnsure, world({ cal: "unsure" }));
     expect(outcome(db, busyUnsure)).toBe("texted");
-    openOwnerSession(db, { botId: "atlas", threadId: "x", device: "desktop:d" }, NO_CALL_EFFECTS, T0);
+    openOwnerSession(db, { botId: "atlas", threadId: "x", device: "desktop:d", principal: "desktop" }, NO_CALL_EFFECTS, T0);
     const live = intent(db, A_RING, { emergency: true }); await run(db, live, world());
     expect(last(db, live)).toEqual({ check: "live", result: "on_call" });
     // quiet hours named first when both hold

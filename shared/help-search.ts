@@ -10,6 +10,7 @@
 // the public docs URL. A repository path is never a result field, because the
 // person reading the answer cannot open one.
 import { HELP_INDEX, type HelpEntry } from "./help-index.ts";
+import { CAPABILITY_ENTRIES, type CapabilityEntry } from "./capability-db.ts";
 
 export type { HelpEntry };
 
@@ -25,6 +26,20 @@ export interface HelpResult {
   /** Short, quotable prose lifted verbatim from the docs. */
   readonly text: string;
   readonly score: number;
+  /** Set on a capability record (id "cap:<id>", shared/capability-db.ts): the
+   * status, the limits and where it applies travel with the answer. */
+  readonly status?: CapabilityEntry["status"];
+  readonly limits?: string;
+  readonly applies?: string;
+}
+
+/** What murage_help hands a bot for one result. A capability hit carries its
+ * status, limits and applicability (platforms and engines), so an answer about
+ * something desktop only cannot reach the bot as a plain yes (CAPABILITY-DB-1010
+ * H1). Never a repository or filesystem path. */
+export function helpResultForBot(result: HelpResult): Record<string, string | undefined> {
+  const { title, heading, where, url, text, status, limits, applies } = result;
+  return status ? { title, heading, where, url, text, status, limits: limits || undefined, applies } : { title, heading, where, url, text };
 }
 
 /** Words that carry no signal in a product-help question. Deliberately small:
@@ -165,6 +180,14 @@ function expand(token: string, byStem: ReadonlyMap<string, readonly string[]>): 
 }
 
 let defaultIndex: ReturnType<typeof buildIndex> | undefined;
+/** Indexes of an explicit corpus, built once per corpus array (the facts
+ * block searches CAPABILITY_ENTRIES on every turn without an agents mount). */
+const corpusIndexes = new WeakMap<readonly HelpEntry[], ReturnType<typeof buildIndex>>();
+function indexFor(corpus: readonly HelpEntry[]) {
+  let index = corpusIndexes.get(corpus);
+  if (!index) corpusIndexes.set(corpus, index = buildIndex(corpus));
+  return index;
+}
 
 /** A result below this is noise: BM25 will happily rank a section that shares
  * one incidental word. Answering "I could not find that in the docs" is more
@@ -174,21 +197,25 @@ const MIN_SCORE = 1;
 export interface HelpSearchOptions {
   /** How many sections to return (1-5). */
   limit?: number;
-  /** Override the corpus. Tests use it; production always takes the default. */
+  /** Override the corpus. Tests and the capability facts block use it. */
   corpus?: readonly HelpEntry[];
+  /** Skip the loose second pass: only results that cover the question. */
+  strict?: boolean;
 }
 
 export function searchHelp(query: string, options: HelpSearchOptions = {}): HelpResult[] {
   const tokens = [...new Set(tokenize(query))];
   if (!tokens.length) return [];
-  const index = options.corpus ? buildIndex(options.corpus) : (defaultIndex ??= buildIndex(HELP_INDEX));
+  // The docs and the capability records rank together: a question phrased like
+  // a capability finds its record with status and limits, not only prose.
+  const index = options.corpus ? indexFor(options.corpus) : (defaultIndex ??= buildIndex([...HELP_INDEX, ...CAPABILITY_ENTRIES]));
   const strict = rank(index, tokens, 1.5, MIN_SCORE);
   // A question whose wording the docs do not share ("take a screenshot of my
   // computer" — the docs say "computer", never "screenshot") would otherwise
   // answer nothing at all. Fall back to the sections that match what the
   // question DOES share, so the bot gets the right page and can say the rest
   // is not documented, rather than inventing it.
-  const results = strict.length ? strict : rank(index, tokens, 0.5, MIN_SCORE / 3);
+  const results = strict.length || options.strict ? strict : rank(index, tokens, 0.5, MIN_SCORE / 3);
   return results.slice(0, Math.min(Math.max(options.limit ?? 3, 1), 5));
 }
 
@@ -228,6 +255,7 @@ function rank(
     // voice call mode just because "call" is rare there.
     score *= (matched / tokens.length) ** coverageExponent;
     if (score < minimumScore) continue;
+    const capability = "capability" in document.entry ? document.entry as CapabilityEntry : undefined;
     scored.push({
       id: document.entry.id,
       title: document.entry.title,
@@ -236,6 +264,7 @@ function rank(
       url: document.entry.url,
       text: document.entry.text,
       score: Number(score.toFixed(4)),
+      ...(capability ? { status: capability.status, limits: capability.limits, applies: capability.applies } : {}),
     });
   }
   scored.sort((left, right) => right.score - left.score || left.id.localeCompare(right.id));

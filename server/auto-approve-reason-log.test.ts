@@ -22,6 +22,8 @@ describe("approval ask reason logging", () => {
       ["pin", `PAGER=${sentinel} git log`, { handedPins: new Map([["PAGER", "cat"]]) }],
       ["stop", `echo ${sentinel}`, { stopLine: { kind: "pay", what: sentinel, place: `/private/path/${sentinel}` } }],
       ["cut", `echo ${sentinel}`, { call: { ...context("echo fixture").call, truncated: true } }],
+      ["stamp", `echo ${sentinel}`, { call: { ...context("echo fixture").call, toolIdentity: { namespace: "mcp ", name: "browser__open" } } }],
+      ["identity", `echo ${sentinel}`, { call: { ...context("echo fixture").call, toolIdentity: { namespace: "elsewhere", name: "browser__open" } } }],
     ];
     for (const [id, command, patch] of rows) expect(autoVerdict({ ...full, id }, "shell", sentinel, context(command, patch)).approve).toBeNull();
     expect(log.mock.calls.map(([line]) => line)).toEqual([
@@ -31,6 +33,8 @@ describe("approval ask reason logging", () => {
       "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell suppressed=0",
       "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell suppressed=0",
       "approvals: asked bot=cut tool=shell reason=unread-call:truncated origin=owner unattended=0 cmd=shell suppressed=0",
+      "approvals: asked bot=stamp tool=shell reason=unread-call:stamp-spelling origin=owner unattended=0 cmd=shell suppressed=0",
+      "approvals: asked bot=identity tool=shell reason=unread-call:identity origin=owner unattended=0 cmd=shell suppressed=0",
     ]);
     autoVerdict({ id: "no-grant" }, "shell", sentinel, context(`echo ${sentinel}`));
     expect(log.mock.calls.at(-1)?.[0]).toContain("reason=no-grant");

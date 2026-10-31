@@ -34,7 +34,8 @@ describe("classifyKeyHealth (section 8)", () => {
   });
   it("a bot key without the email scope is refused; recipient refusals and lost answers say nothing about the key", () => {
     expect(classifyKeyHealth(BOT_REF, classifyResponse(403, (scopeRequired() as { body: unknown }).body, "k"))).toBe("rejected");
-    expect(classifyKeyHealth(OWNER_REF, refused(403, "email_scope_required"))).toBeNull();
+    // 1.0.11: the owner token without email scope is a sign-in, never a dead key
+    expect(classifyKeyHealth(OWNER_REF, refused(403, "email_scope_required"))).toBe("scope");
     expect(classifyKeyHealth(BOT_REF, refused(400, "recipient_blocked"))).toBeNull();
     expect(classifyKeyHealth(BOT_REF, { kind: "uncertain", reason: "network" })).toBeNull();
     expect(classifyKeyHealth(BOT_REF, classifyResponse(200, { ok: true }, "key_b1"))).toBe("ok");

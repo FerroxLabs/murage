@@ -78,8 +78,18 @@ describe("respondFromPush", () => {
   });
 
   it("answered elsewhere since the push is already answered", async () => {
-    const { deps } = setup({ card: () => ({ pending: false }) });
+    const { deps } = setup({ card: () => ({ pending: false, answered: true }) });
     expect((await respond(deps, body("deny"))).body).toMatchObject({ code: "already_answered" });
+  });
+
+  // MurageMobile PushOutcome (iOS PushOutcome.swift, Android PushOutcome.java): 404 "unavailable" reads "Open Murage to
+  // answer this."; 409 "already_answered" reads "This was already answered."; a 200 reads "Approved."/"Denied.".
+  it.each(["allow", "deny"] as const)("a card the system closed (dismissed, expired, turn ended) is unavailable, never already answered or a 200: %s", async (decision) => {
+    const { deps, store, db } = setup({ card: () => ({ pending: false, answered: false }) });
+    store.rateRisk("t1", "req-1", "low", 1, 1);
+    expect(await respond(deps, body(decision))).toEqual({ status: 404, body: { code: "unavailable", error: "This request is no longer available. Open Murage to see what is waiting." } });
+    expect(deps.answer).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM push_decisions").get()).toEqual({ n: 0 });
   });
 
   it("a request never pushed to this binding, or expired, is unavailable", async () => {
@@ -319,16 +329,16 @@ describe("respondFromPush", () => {
   });
 
   it("after the desk answered, even a low-risk allow is 409 already_answered and records nothing", async () => {
-    const { deps, store, db } = setup({ card: () => ({ pending: false }) });
+    const { deps, store, db } = setup({ card: () => ({ pending: false, answered: true }) });
     store.rateRisk("t1", "req-1", "low", 1, 1);
     expect(await respond(deps, body("allow"))).toEqual({ status: 409, body: { code: "already_answered", error: "This was already answered." } });
     expect(deps.answer).not.toHaveBeenCalled();
     expect(db.prepare("SELECT COUNT(*) AS n FROM push_decisions").get()).toEqual({ n: 0 });
   });
 
-  it("a card that is gone counts as already answered", async () => {
+  it("a card that is gone is unavailable, not already answered", async () => {
     const { deps } = setup({ card: () => null });
-    expect((await respond(deps, body("deny"))).body).toMatchObject({ code: "already_answered" });
+    expect(await respond(deps, body("deny"))).toMatchObject({ status: 404, body: { code: "unavailable" } });
     expect(deps.answer).not.toHaveBeenCalled();
   });
 
@@ -341,6 +351,16 @@ describe("respondFromPush", () => {
   it("a resolved event is already answered", async () => {
     const { deps } = setup({}, { category: "resolved" });
     expect((await respond(deps, body("deny"))).body).toMatchObject({ code: "already_answered" });
+    for (const where of ["desktop", "elsewhere"] as const) {
+      const { deps: answered } = setup({}, { category: "resolved", resolvedBy: where });
+      expect(await respond(answered, body("deny"))).toMatchObject({ status: 409, body: { code: "already_answered" } });
+    }
+  });
+
+  it.each(["dismissed", "expired"] as const)("a resolved event the system closed (%s) is unavailable, not already answered", async (where) => {
+    const { deps } = setup({}, { category: "resolved", resolvedBy: where });
+    expect(await respond(deps, body("allow"))).toEqual({ status: 404, body: { code: "unavailable", error: "This request is no longer available. Open Murage to see what is waiting." } });
+    expect(deps.answer).not.toHaveBeenCalled();
   });
 
   it("another binding's request is unavailable", async () => {

@@ -74,3 +74,10 @@ it("Fable M8: bots on the extension are told the real controls, not Take control
   expect(text).toMatch(/There is no Take control button/); expect(text).not.toMatch(/ask the owner in chat to use Take control/i);
   expect(text).not.toMatch(/—|\bsafe\b|safely|safety|unsafe|Composio|price/i);
 });
+
+describe("a reinstalled extension makes a new profile (#20 a)",()=>{
+ const remember=(f:ReturnType<typeof fixture>)=>{Object.assign(f.bot,{useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"old"});};
+ it("Continue never rebinds by itself: it points the owner to the Browser panel and changes nothing",async()=>{const f=fixture();remember(f);const request=f.request();f.setStatus({profiles:[{profileId:"fresh",browser:"Chrome"}],bindings:[]});await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow(/new browser profile.*Browser panel/);expect(f.optIn).not.toHaveBeenCalled();expect(f.continueTask).not.toHaveBeenCalled();});
+ it("the owner's explicit choice of the new profile continues the task",async()=>{const f=fixture();remember(f);const request=f.request();f.setStatus({profiles:[{profileId:"fresh",browser:"Chrome"}],bindings:[]});await f.setup.answer("thread",request.messageId,"continue","fresh");expect(f.optIn).toHaveBeenCalledWith("bot","fresh",undefined,false);});
+ it("with no live profile the old connect message stays",async()=>{const f=fixture();remember(f);const request=f.request();await expect(f.setup.answer("thread",request.messageId,"continue")).rejects.toThrow(/Connect the extension and choose its browser profile/);});
+});

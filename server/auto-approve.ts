@@ -11,7 +11,7 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-names.ts";
-import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
+import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
@@ -542,6 +542,8 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The bot reading its own files (server/own-file-reads.ts). */
+  | "own-files"
   /** The bot reading back its OWN saved tool result: a read-only command or
    * read tool on a file in this session's own result folder
    * (server/own-tool-results.ts). Not a grant and not a mode. */
@@ -730,6 +732,12 @@ export interface AutoContext {
    * behind the guards, ahead of the unattended and host blocks, because an
    * engine reading what it was just given is not something a person grants. */
   ownToolResults?: boolean;
+  /** The bot reading its own files: its SOUL.md, skills, memory and
+   * conversation folders, never credentials/. Decided in
+   * server/own-file-reads.ts (a read tool or a strictly read-only command,
+   * every path inside the bot's own folders by real path) and set only for a
+   * turn the workspace owner is behind; placed like `ownToolResults`. */
+  ownFileRead?: boolean;
   projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
@@ -892,6 +900,7 @@ function askReasonClass(verdict: AutoVerdict): string {
     if (rule.startsWith(U19_WORDS)) return "unread-call:U19";
     if (rule === "the call was cut before it could be checked") return "unread-call:truncated";
     if (rule === "the call's arguments run past what the key guard reads") return "unread-call:scan";
+    if (rule.endsWith(STAMP_SPELLING_WHY)) return "unread-call:stamp-spelling";
     if (rule.startsWith("the tool this runs cannot be proven:")) return "unread-call:identity";
     if (rule.startsWith("the call does not carry what this tool needs")) return "unread-call:contract";
     return "unread-call:actions";
@@ -1117,7 +1126,11 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
-    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
+    // ISSUE-PERMS-1010 A: a check that could not finish is waived wherever Full access covers the turn (the owner's own
+    // turn, stated as such, and a routine run judged at Full access or No limits), never at Ask or Auto, never for "other"; the
+    // owner's channel message and an unstated origin keep the 1.0.8 E1 hold. Rev 3 #7(a): the stored origin is read first
+    // here, so a turn whose record says someone else started it is never waived, whatever its routine level
+    : context?.envUnchecked && !((context.fullAccessOrigin === "owner" || (origin === "routine" && context.fullAccessOrigin !== "other" && context.fullAccessOrigin !== "owner-channel")) && fullAccessCovers(bot, origin)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
     // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path
@@ -1257,6 +1270,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
     return { approve: "read its own saved tool result", source: "own-tool-results" };
+  }
+  if (context?.ownFileRead === true && !destructive && !sensitive && !context.scope) {
+    return { approve: `auto-approved ${tool} (its own files)`, source: "own-files" };
   }
   // Murage's own tools that never ask on Claude or Codex (OWN_UNASKED) reach
   // here from an ACP engine (Fuigo, Grok Build), whose dispatcher asks for
