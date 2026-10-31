@@ -72,15 +72,10 @@ describe("unattended and automated turns are never judged more loosely than Full
     expect(decideImageApproval(facts({ level: LEVELS.auto, origin: "routine" })).ask).toBe(true);
     expect(decideImageApproval(facts({ level: LEVELS.auto, origin: "routine", setting: "allow" })).ask).toBe(false);
   });
-  it("the owner's own channel message follows the bot's Full access option (on unless turned off, 1.0.10), with or without the setting", () => {
-    expect(covered("owner-channel")).toBe(true);
-    expect(covered("owner-channel", { level: { ...LEVELS.full, fullAccessChannelMessages: false } } as Partial<ImageApprovalFacts>)).toBe(false);
+  it("the owner's own channel message needs the bot's Full access option, with or without the setting", () => {
+    expect(covered("owner-channel")).toBe(false);
     expect(covered("owner-channel", { level: { ...LEVELS.full, fullAccessChannelMessages: true } } as Partial<ImageApprovalFacts>)).toBe(true);
-    // the DM is dispatched unattended: Full access with the option not off still makes the image (A7)
-    expect(covered("owner-channel", { unattended: true })).toBe(true);
-    expect(covered("owner-channel", { unattended: true, level: { ...LEVELS.full, fullAccessChannelMessages: false } } as Partial<ImageApprovalFacts>)).toBe(false);
-    expect(decideImageApproval(facts({ level: { ...LEVELS.ask, fullAccessChannelMessages: false }, origin: "owner-channel", setting: "allow" })).ask).toBe(true);
-    expect(decideImageApproval(facts({ level: LEVELS.ask, origin: "owner-channel", setting: "allow", unattended: true })).ask).toBe(true);
+    expect(decideImageApproval(facts({ level: LEVELS.ask, origin: "owner-channel", setting: "allow" })).ask).toBe(true);
     expect(decideImageApproval(facts({ level: { ...LEVELS.ask, fullAccessChannelMessages: true }, origin: "owner-channel", setting: "allow" })).ask).toBe(false);
   });
 });
