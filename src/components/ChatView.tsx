@@ -2,6 +2,7 @@ import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { loopNoticeLabel } from "@/lib/loop-notice";
+import { ServedModelNote } from "@/components/ServedModelNote";
 import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
 import { readPublishCard } from "../../shared/publish-card";
 import { readBrowserSetupCard } from "../../shared/browser-setup-card";
@@ -107,6 +108,8 @@ import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { FolderPromptRow } from "./FolderPromptRow";
+import { folderPromptShowing } from "../../shared/mac-folder-prompt";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -814,6 +817,7 @@ function Bubble({
               ) : null}
               {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
               {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)
                 <div className="mt-1 text-[11px] text-ink-secondary/70">{withheldNote(message)}</div>
@@ -1274,6 +1278,8 @@ const MessagesList = memo(function MessagesList({
               // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
               // plain tool runs stay out unless Settings → Tool calls is on.
+              // macOS's folder prompt is holding the turn: said until the wait ends, then nothing
+              if (m.folderPrompt) return folderPromptShowing(m, Date.now()) && m.tool ? <FolderPromptRow text={m.tool.name} /> : null;
               // Full access approvals, folded into one quiet line per run
               if (isApprovedStepsLine(m)) return <ApprovedStepsRow message={m} />;
               // an image made without an approval card: what and the whole prompt

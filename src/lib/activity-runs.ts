@@ -7,7 +7,7 @@
 // separate one run from the next.
 import type { Message } from "@/state/store";
 import { formatElapsed } from "@/lib/working-time";
-import { isStoppedMidDesktopAction } from "../../shared/host-stop";
+import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { folderTrustNotice } from "../../shared/folder-trust";
 import { browserUnavailableReason } from "../../shared/browser-unavailable";
 import { imagesLeftOutCount } from "../../shared/images-left-out";
@@ -57,6 +57,7 @@ function foldable(message: Message): boolean {
  * the rest did. */
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
+  if (message?.folderPrompt) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
 }
@@ -66,6 +67,29 @@ function workedLabel(elapsed: number): string {
 }
 
 type TurnFold = Extract<TranscriptItem, { kind: "turn" }>;
+
+/** A turn-less row that closed an earlier turn (a host-stop or stopped note): the walk back never crosses it (GROK-STOPPED F5). */
+function closesTurn(row: Message): boolean {
+  const name = row.kind === "activity" ? row.tool?.name : undefined;
+  return Boolean(hostStoppedReason(name)) || isStoppedMidDesktopAction(name) || name === TURN_STOPPED_NOTE;
+}
+
+/** When the turn closing at `closingIndex` began: the owner message that started it, else the turn's own first row.
+ * The walk back starts at the turn's first row (any row carrying its turnId) and crosses only rows that belong to no
+ * turn (a notice, a card). It stops at another turn's row, a bot reply, or a host-stop notice (that notice closed an
+ * earlier turn, GROK-STOPPED F5), so a turn the owner did not start here (a delegation, a queued prompt, a peer's
+ * ask) never counts the idle gap back to an unrelated older message. */
+function turnStartedAt(messages: readonly Message[], closingIndex: number, turnId: string): number {
+  let first = closingIndex;
+  for (let i = closingIndex - 1; i >= 0; i -= 1) if (messages[i].turnId === turnId) first = i;
+  for (let i = first - 1; i >= 0; i -= 1) {
+    const row = messages[i];
+    if (row.role === "user") return row.at;
+    if (row.turnId || (row.role === "bot" && row.kind === "text")) break;
+    if (closesTurn(row)) break;
+  }
+  return messages[first].at;
+}
 
 /** Settled providers may emit several ordinary assistant messages around
  * tool calls. Keep the terminal answer in the transcript and replace the
@@ -97,15 +121,7 @@ function assistantTurnFolds(messages: Message[]): {
     if (!narration.length) return;
 
     const anchor = narration[0];
-    const anchorIndex = messages.findIndex((message) => message.id === anchor.id);
-    let startedAt = anchor.at;
-    for (let i = anchorIndex - 1; i >= 0; i -= 1) {
-      if (messages[i].role === "user") {
-        startedAt = messages[i].at;
-        break;
-      }
-    }
-    const elapsed = Math.max(0, terminal.at - startedAt);
+    const elapsed = Math.max(0, terminal.at - turnStartedAt(messages, terminalIndex, terminal.turnId));
     const label = workedLabel(elapsed);
     const fold: TurnFold = {
       kind: "turn",
@@ -212,10 +228,14 @@ export function attachHelperRuns(items: TranscriptItem[], runs: Subtask[][] | un
       out[index - 1] = { ...before, helpers };
       continue;
     }
+    // The owner message that started this turn: the walk crosses this turn's own rows and turn-less rows only, never
+    // another turn, so a turn nobody typed into here does not count the gap back to an older message.
     let userAt: number | undefined;
+    const ownRow = (message: Message) => message.turnId ? Boolean(reply.turnId) && message.turnId === reply.turnId : !(message.role === "bot" && message.kind === "text") && !closesTurn(message);
     for (let back = index - 1; back >= 0 && userAt === undefined; back -= 1) {
       const prior = out[back];
       if (prior.kind === "message" && prior.message.role === "user") userAt = prior.message.at;
+      else if (prior.kind === "message" ? !ownRow(prior.message) : prior.kind !== "run" || !prior.messages.every(ownRow)) break;
     }
     const elapsed = userAt === undefined ? Math.max(...helpers.map((row) => (row.endedAt ?? 0) - row.startedAt)) : reply.at - userAt;
     out.splice(index, 0, { kind: "helpers", id: `helpers:${reply.id}`, at: reply.at, label: workedLabel(elapsed), helpers });

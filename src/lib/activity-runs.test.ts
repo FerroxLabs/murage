@@ -160,6 +160,35 @@ describe("groupTranscript", () => {
     expect(groupTranscript([only])).toEqual([{ kind: "message", message: only }]);
   });
 
+  // GROK-812MIN-STOPPED: a turn the owner did not start here (a delegation, a queued prompt) read "Worked for 812m"
+  // because the walk back reached an owner message from the evening before, past other turns' rows.
+  it("counts a turn from its own first row, never back past another turn to an older owner message", () => {
+    const evening: Message = { id: "u-evening", at: 1_000, role: "user", kind: "text", text: "make three pictures" };
+    const earlier = assistant("Here they are.", "turn-evening", true, 2_000);
+    const chip: Message = { id: "t-edit", at: 50_000_000, role: "bot", kind: "activity", tool: { name: "image_edit", ok: true }, turnId: "turn-image" };
+    const progress = assistant("Editing the second picture.", "turn-image", false, 50_005_000);
+    const final = assistant("Done.", "turn-image", true, 50_065_000);
+    const fold = groupTranscript([evening, earlier, chip, progress, final]).find((item) => item.kind === "turn");
+    expect(fold).toMatchObject({ kind: "turn", turnId: "turn-image", label: "Worked for 1m 05s" });
+  });
+
+  it("still counts from the owner message that started the turn, across rows that belong to no turn", () => {
+    const ask: Message = { id: "u-ask", at: 10_000, role: "user", kind: "text", text: "check todoist" };
+    const notice: Message = { id: "n1", at: 11_000, role: "bot", kind: "options", card: { title: "Allow?", options: ["Allow", "Deny"], requestId: "r1" } } as Message;
+    const progress = assistant("Reading your tasks.", "turn-2", false, 12_000);
+    const final = assistant("Three tasks.", "turn-2", true, 20_000);
+    expect(groupTranscript([ask, notice, progress, final]).find((item) => item.kind === "turn")).toMatchObject({ label: "Worked for 10s" });
+  });
+
+  // GROK-STOPPED F5: a host-stop notice closed the owner's turn; a later background turn never counts the idle gap.
+  it("never counts back past a host-stop notice to the owner message before it", () => {
+    const ask: Message = { id: "u-ask", at: 10_000, role: "user", kind: "text", text: "make a picture" };
+    const stop: Message = { id: "n-stop", at: 20_000, role: "bot", kind: "activity", tool: { name: "stopped: a request went unanswered", ok: false } };
+    const progress = assistant("Checking the schedule.", "turn-bg", false, 40_000_000);
+    const final = assistant("Done.", "turn-bg", true, 40_010_000);
+    expect(groupTranscript([ask, stop, progress, final]).find((item) => item.kind === "turn")).toMatchObject({ label: "Worked for 10s" });
+  });
+
   it("does not fold narration from a different turn", () => {
     const older = assistant("Previous answer.", "turn-old");
     const progress = assistant("Checking.", "turn-new");

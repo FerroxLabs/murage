@@ -253,6 +253,9 @@ mac:
     - from: dist-native/fuigo/darwin-${arch}/fuigo
       to: fuigo/fuigo
   extendInfo:
+    NSDocumentsFolderUsageDescription: Murage needs this so your bots can work with files in your Documents folder when you ask.
+    NSDesktopFolderUsageDescription: Murage needs this so your bots can work with files in your Desktop folder when you ask.
+    NSDownloadsFolderUsageDescription: Murage needs this so your bots can work with files in your Downloads folder when you ask.
     NSMicrophoneUsageDescription: Murage uses the microphone for voice dictation into the composer.
     NSSpeechRecognitionUsageDescription: Murage transcribes your voice on-device to type messages for you.
     NSAccessibilityUsageDescription: Murage uses Accessibility when you let a bot control this Mac.
