@@ -589,6 +589,27 @@ function projectBot(bot: Record<string, any>) {
   };
 }
 
+/** The target of a wait: the bot or channel with its status fields, and only the waited task instead of every
+ *  task the owner has (a big bot lists hundreds; list_bots and list_channels still list them). */
+async function waitTarget(
+  fetcher: (path: string, options?: RequestInit) => Promise<any>,
+  kind: "bot" | "channel",
+  owner: Record<string, any>,
+  taskId: string,
+) {
+  const projected = kind === "bot" ? projectBot(owner) : projectChannel(owner);
+  const { tasks, totalTasks: _total, tasksListed: _listed, ...status } = projected as typeof projected & { totalTasks?: number; tasksListed?: string };
+  let task: ReturnType<typeof projectTask> | undefined = tasks.find((candidate) => candidate.taskId === taskId);
+  // A task older than the listed ones still has its record: the same lookup taskBelongsTo makes.
+  if (!task) {
+    try {
+      const found = await fetcher(`/api/${kind === "bot" ? "bots" : "groups"}/${encodeURIComponent(String(owner.id))}/tasks/${encodeURIComponent(taskId)}`);
+      if (isRecord(found?.task) && found.task.threadId === taskId) task = projectTask(found.task, owner.threadId);
+    } catch { /* the wait answers without the task record */ }
+  }
+  return { ...status, ...(task ? { task } : {}) };
+}
+
 function projectChannel(channel: Record<string, any>) {
   return {
     id: channel.id,
@@ -1072,7 +1093,7 @@ export async function handleToolCall(
         if (!(await taskBelongsTo(fetcher, targetType === "bot" ? "bot" : "channel", target, taskId))) {
           throw new Error(`Task '${taskId}' no longer belongs to ${targetType} '${targetId}'`);
         }
-        const projectedTarget = targetType === "bot" ? projectBot(target) : projectChannel(target);
+        const liveTarget = target;
         const terminal = async (status: string, existingTail?: Awaited<ReturnType<typeof conversationTail>>) => {
           const tail = existingTail ?? await conversationTail(fetcher, taskId);
           const needsInput = tail.raw.some(messageNeedsInput);
@@ -1084,7 +1105,7 @@ export async function handleToolCall(
             targetType,
             targetId,
             taskId,
-            target: projectedTarget,
+            target: await waitTarget(fetcher, targetType, liveTarget, taskId),
             messages: tail.messages,
             hasMore: tail.hasMore,
           };

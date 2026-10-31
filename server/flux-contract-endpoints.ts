@@ -61,6 +61,9 @@ export const FLUX_CALLER_FILES: Readonly<Record<string, readonly string[]>> = {
   "server/flux-key-health.ts": ["key.info"],
   // Recognises a Flux host so callers attach the memory headers; no request of its own.
   "server/flux-memory-headers.ts": [],
+  // Builds the usage tags (bot, feature, thread) and reads the served-model headers; recognises a Flux host so callers attach
+  // them only there. No request of its own.
+  "server/flux-usage-tags.ts": [],
   "server/flux-routing.ts": ["chat.completions", "messages", "messages.anthropic-base", "messages.count_tokens", "responses", "models"],
   "server/image-generation.ts": ["images.generations", "images.edits", "models"],
   "server/index.ts": ["search"],

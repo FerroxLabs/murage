@@ -7,14 +7,23 @@
 //   - BotEmailSection: the bot's Email section: the state line (section 6), the setup steps (2.5), Retry / Pause / Resume / Remove /
 //     Reconnect, the 3.3 policy row, the trusted and Never email lists (3.5) and the Activity list;
 //   - BotEmailFluxLine: the section 8 line, shown in Access only when the server says this install had email and lost its Flux key.
-// Nothing renders unless the status route said enabled: true. Words come from shared/email-copy.ts verbatim.
+// While the status route does not say enabled: true, the card and the section render a stub (SETTINGS-UX-1011 S1): the title and one
+// line saying why and how to turn it on; "Checking" while a saved key has no definitive answer yet (EMAIL-CAPS-CACHE-1011: never shown as
+// off). Words come from shared/email-copy.ts verbatim; the stub lines from SettingsStub.tsx.
 import { useEffect, useState } from "react";
 import { Mail } from "lucide-react";
 import { Card, Switch } from "./SettingsPrimitives";
+import { SETTINGS_STUB_COPY, SettingsStub, chiefName } from "./SettingsStub";
+import { useBotSettingsNavigation } from "./bot-settings-drafts";
+import { useStore } from "@/state/store";
+import { useDesktopSurface } from "@/lib/use-surface";
+import { isCloudOrigin } from "@/lib/cloud-workspace";
 import { inNativeShell } from "@/lib/native-shell";
-import { emailOwnerAct, emailSectionActions, priceLine, readBotEmail, readEmailStatus, removeOtherSetup, setEmailAccount, signInEmailOwner, useEmailStatus, type EmailStatusState } from "@/lib/bot-email";
-import { EMAIL_FILTERED_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
+import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
+import { emailOwnerAct, emailSectionActions, priceLine, readBotEmail, readEmailStatus, removeOtherSetup, setEmailAccount, signInEmailOwner, signInFluxAgain, useEmailStatus, type EmailStatusState } from "@/lib/bot-email";
+import { EMAIL_FILTERED_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_STATUS_COPY, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 
+const SETUP_REREAD_MS = 15_000;
 const button = "min-h-9 rounded-lg px-3 text-[13px] font-medium disabled:opacity-60";
 const message = (error: unknown) => (error instanceof Error && error.message ? error.message : EMAIL_OWNER_COPY.actionFailed);
 
@@ -23,12 +32,91 @@ export function BotEmailFluxLine({ status }: { status: EmailStatusState }) {
   return <p className="rounded-xl bg-card p-4 text-[13px] text-ink-secondary" data-testid="bot-email-flux-off">{status.line}</p>;
 }
 
+/** What a stub says while bot email is not on: still checking, needs a Flux Router account, the saved Flux key stopped working (Flux
+ *  answered 401, 1.0.11), or not on for this account yet. */
+export type EmailGate = "checking" | "could-not-check" | "needs-account" | "key-refused" | "needs-email-scope" | "not-yet";
+/** `fluxReady`: a Flux key is saved and Flux accepts it (a saved key Flux refused is still a missing account); undefined while unknown. */
+export function emailGate(status: EmailStatusState, fluxReady: boolean | undefined): EmailGate | null {
+  if (status.kind === "on") return null;
+  if (status.kind === "loading" || status.kind === "checking") return "checking";
+  if (status.kind === "error") return "could-not-check";
+  // section 8: the install had email and lost its Flux key
+  if (status.kind === "flux-off") return "needs-account";
+  // 1.0.11: Flux answered 401 on the saved key (revoked or unknown): sign in again, never a hidden card
+  if (status.kind === "flux-refused") return "key-refused";
+  // 1.0.11: a valid key without email scope (403 email_scope_required): Sign in with Flux mints the email:owner key. Not a dead key.
+  if (status.kind === "flux-sign-in") return "needs-email-scope";
+  // a 200 with eligible: false (not rolled out, not funded, full) or an account state: Flux's reason, no sign-in
+  if (status.kind === "flux-line") return "not-yet";
+  // a 404 with Flux connected is the dark launch; without Flux the account is what is missing
+  if (fluxReady === undefined) return "checking";
+  return fluxReady ? "not-yet" : "needs-account";
+}
+
+/** The stub the Bot email card and the bot's Email section render while email is not on. Never nothing. */
+export function BotEmailStub({ status, testId, onStatus }: { status: EmailStatusState; testId: string; onStatus?: (next: EmailStatusState) => void }) {
+  const { state, dispatch } = useStore();
+  const desktop = useDesktopSurface();
+  const navigate = useBotSettingsNavigation();
+  const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
+  const flux = state.config?.flux;
+  const fluxReady = state.config == null ? undefined : flux?.configured === true && (flux.keyState === undefined || flux.keyState === "ok");
+  const gate = emailGate(status, fluxReady) ?? "checking";
+  const line = gate === "checking" ? SETTINGS_STUB_COPY.checking(SETTINGS_STUB_COPY.botEmail)
+    : gate === "could-not-check" ? SETTINGS_STUB_COPY.couldNotCheck(SETTINGS_STUB_COPY.botEmail)
+      : gate === "not-yet" && status.kind !== "flux-line" ? SETTINGS_STUB_COPY.notYet
+        // section 8: the server's own line for an install that had email and lost its Flux key
+        : status.kind === "flux-off" || status.kind === "flux-refused" || status.kind === "flux-sign-in" || status.kind === "flux-line" ? status.line
+          : SETTINGS_STUB_COPY.needsAccount(chiefName(state.bots));
+  const onComputer = desktop === true && !isCloudOrigin();
+  const openModels = { label: SETTINGS_STUB_COPY.openModels, onClick: () => navigate(() => dispatch({ type: "toggleAppSettings", open: true, section: "models" })) };
+  // key-refused: the same Sign in with Flux flow as Models & engines, right here; then a fresh capability read on the new key
+  const signIn = async () => {
+    setBusy(true); setError(null);
+    try {
+      const refused = await signInFluxAgain(undefined, undefined, connected => {
+        if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: connected.configured } } });
+      });
+      if (refused) { setError(refused); return; }
+      const next = await readEmailStatus(undefined, true);
+      onStatus?.(next);
+    } catch (caught) { setError(message(caught)); } finally { setBusy(false); }
+  };
+  // needs-email-scope: the email:owner sign-in (it mints the email key), then a fresh capability read, which now goes on that key
+  const signInEmail = async () => {
+    setBusy(true); setError(null);
+    try {
+      const refused = await signInEmailOwner();
+      if (refused) { setError(refused); return; }
+      onStatus?.(await readEmailStatus(undefined, true));
+    } catch (caught) { setError(message(caught)); } finally { setBusy(false); }
+  };
+  const canSignInEmail = onComputer && !inNativeShell() && fluxDesktopSigninEnabled(state.config) && typeof window !== "undefined" && Boolean(window.muragebox?.emailOwnerSignin);
+  const canSignInFlux = onComputer && fluxDesktopSigninEnabled(state.config) && typeof window !== "undefined" && Boolean(window.muragebox?.fluxSignin);
+  // Flux Router is set on this computer (Models & engines); a phone or the Cloud window cannot, so there the line's
+  // "Ask {Chief}" is the next step
+  // key-refused and needs-account both get the real Sign in with Flux row on this computer (the Models & engines flow); Open Models &
+  // engines only when the switch is explicitly off or the shell has no sign-in bridge
+  const signInAction = { label: busy ? EMAIL_SETUP_COPY.fluxSignIn + "…" : EMAIL_SETUP_COPY.fluxSignIn, onClick: () => { if (!busy) void signIn(); } };
+  const emailSignInAction = { label: busy ? EMAIL_SETUP_COPY.fluxSignIn + "…" : EMAIL_SETUP_COPY.fluxSignIn, onClick: () => { if (!busy) void signInEmail(); } };
+  const action = gate === "key-refused" || gate === "needs-account"
+    ? canSignInFlux ? signInAction : onComputer ? openModels : undefined
+    : gate === "needs-email-scope" ? canSignInEmail ? emailSignInAction : onComputer ? openModels : undefined
+      : undefined;
+  return <>
+    <SettingsStub title={SETTINGS_STUB_COPY.botEmailTitle} state={gate === "key-refused" || gate === "needs-email-scope" ? "needs-account" : gate} line={line} action={action} testId={testId} />
+    {error && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger" data-testid={`${testId}-error`}>{error}</p>}
+  </>;
+}
+
 export function BotEmailAccountCard({ status: given }: { status?: EmailStatusState }) {
+  const config = useStore().state.config;
   const read = useEmailStatus(true);
   const [status, setStatus] = useState<EmailStatusState>(given ?? read);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   useEffect(() => { if (!given) setStatus(read); }, [read, given]);
-  if (status.kind !== "on") return null;
+  if (status.kind === "checking") return <Card title={EMAIL_OWNER_COPY.sectionTitle}><p className="text-[13px] text-ink-secondary" data-testid="bot-email-checking">{status.note ?? EMAIL_STATUS_COPY.checking}</p></Card>;
+  if (status.kind !== "on") return <BotEmailStub status={status} testId="bot-email-account-stub" onStatus={setStatus} />;
   const view = status.view;
   const on = view.accountState === "active" || view.accountState === "on";
   const change = async (next: boolean) => {
@@ -51,7 +139,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
     try { const refused = await signInEmailOwner(); if (refused) setError(refused); else setStatus(await readEmailStatus()); } catch (caught) { setError(message(caught)); } finally { setBusy(false); }
   };
   const price = priceLine(view, inNativeShell());
-  const canSignIn = !inNativeShell() && typeof window !== "undefined" && Boolean(window.muragebox?.emailOwnerSignin);
+  const canSignIn = !inNativeShell() && fluxDesktopSigninEnabled(config) && typeof window !== "undefined" && Boolean(window.muragebox?.emailOwnerSignin);
   return (
     <Card title={EMAIL_OWNER_COPY.sectionTitle}>
       <div className="flex items-center justify-between gap-3" data-testid="bot-email-account">
@@ -59,7 +147,9 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
         <Switch checked={on} disabled={busy} aria-label={on ? EMAIL_OWNER_COPY.accountOffAction : EMAIL_OWNER_COPY.accountOn} onClick={() => void change(!on)} />
       </div>
       {price && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-price">{price}</p>}
+      {view.staleNote && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-stale">{view.staleNote}</p>}
       {view.ownerKeyLine && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-owner-key">{view.ownerKeyLine}</p>}
+      {view.reasonLine && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-reason">{view.reasonLine}</p>}
       {on && canSignIn && (view.ownerKeyLine || !view.ownerSignedIn) && <button type="button" className={`${button} mt-2 bg-control text-ink`} disabled={busy} onClick={() => void signIn()}>{EMAIL_SETUP_COPY.signInAction}</button>}
       {view.accountSends && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-account-sends">{EMAIL_OWNER_COPY.accountSentToday(view.accountSends.today, view.accountSends.perDay)}</p>}
       {view.removing.map(item => <p key={item.botId} className="mt-2 text-[12.5px] text-ink-secondary">{EMAIL_OWNER_COPY.removingLine(item.address ?? "an address")}</p>)}
@@ -79,20 +169,37 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
   );
 }
 
-/** The bot's Email section. `status` is the parent's read (the section is offered only while on). */
-export function BotEmailSection({ bot, status }: { bot: { id: string; name: string; threadId: string }; status: EmailStatusState }) {
+/** The bot's Email section. `status` is the parent's read; while it is not on, the section body is the stub. */
+export function BotEmailSection({ bot, status: given }: { bot: { id: string; name: string; threadId: string }; status: EmailStatusState }) {
+  // a sign-in from the stub (key-refused) re-reads the status here, so the section opens without a reload
+  const [fresh, setFresh] = useState<EmailStatusState | null>(null);
+  useEffect(() => { setFresh(null); }, [given]);
+  const status = fresh ?? given;
   const [view, setView] = useState<EmailBotView | null>(null);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   const [username, setUsername] = useState(""), [displayName, setDisplayName] = useState(bot.name);
   const [note, setNote] = useState(""), [trustDraft, setTrustDraft] = useState(""), [blockDraft, setBlockDraft] = useState("");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   useEffect(() => {
     if (status.kind !== "on") return;
     let live = true;
-    void readBotEmail(bot.id).then(next => { if (live) setView(next); });
+    setReadFailed(false);
+    void readBotEmail(bot.id).then(next => { if (!live) return; setView(next); setReadFailed(next === null); });
     return () => { live = false; };
   }, [bot.id, status.kind]);
-  if (status.kind !== "on" || !view) return null;
+  // a setup the server finishes on its own shows here without reopening the section
+  useEffect(() => {
+    if (status.kind !== "on" || view?.state !== "provisioning") return;
+    let live = true;
+    const timer = setTimeout(() => { void readBotEmail(bot.id).then(next => { if (live && next) setView(next); }); }, SETUP_REREAD_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [bot.id, status.kind, view]);
+  if (status.kind === "checking") return <div data-testid="bot-email-section"><Card title={EMAIL_OWNER_COPY.sectionTitle}><p className="text-[13px] text-ink-secondary" data-testid="bot-email-checking">{status.note ?? EMAIL_STATUS_COPY.checking}</p></Card></div>;
+  if (status.kind !== "on") return <BotEmailStub status={status} testId="bot-email-section-stub" onStatus={setFresh} />;
+  if (!view) return readFailed
+    ? <SettingsStub title={SETTINGS_STUB_COPY.botEmailTitle} state="could-not-check" line={SETTINGS_STUB_COPY.couldNotRead(bot.name)} testId="bot-email-section-stub" />
+    : <SettingsStub title={SETTINGS_STUB_COPY.botEmailTitle} state="checking" line={SETTINGS_STUB_COPY.readingBot(bot.name)} testId="bot-email-section-stub" />;
   const act = async (action: EmailOwnerAction, body: Record<string, unknown> = {}) => {
     setBusy(true); setError(null);
     try { setView(await emailOwnerAct(bot.id, bot.threadId, action, body)); return true; } catch (caught) { setError(message(caught)); return false; } finally { setBusy(false); }
@@ -183,7 +290,7 @@ function EntryList({ title, hint, entries, draft, setDraft, busy, add, remove, t
   );
 }
 
-/** The bot settings `email` section body: reads the status when it mounts; nothing while off. */
+/** The bot settings `email` section body: reads the status when it mounts; the stub while off. */
 export function BotEmailSectionHost({ bot }: { bot: { id: string; name: string; threadId: string } }) {
   const status = useEmailStatus();
   return <BotEmailSection bot={bot} status={status} />;

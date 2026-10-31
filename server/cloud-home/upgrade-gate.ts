@@ -3,7 +3,7 @@ import { ServerResponse, type IncomingMessage, type Server } from "node:http";
 import type { Socket } from "node:net";
 import { cloudHomeCopy } from "./copy.ts";
 
-/** The only WebSocket route is the engine sign-in relay (engine-login.ts).
+/** The WebSocket routes are the engine sign-in relay (engine-login.ts), the own-server relay and the bot call channel.
  * Authenticate before anything else; a relay runs only after this same gate,
  * and an upgrade no relay takes is rejected. */
 export function attachCloudUpgradeGate(server: Server, auth: (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>,

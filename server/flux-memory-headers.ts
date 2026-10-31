@@ -26,6 +26,10 @@
 import { createHmac } from "node:crypto";
 
 import type { DriverKind, SendTurnInput } from "./contracts.ts";
+import {
+  assertFluxUsageHeaders, engineUsageTagsAllowed, FLUX_FEATURE_HEADER, fluxUsageForTurn, fluxUsageHeaders, isFluxUsageHeader, withoutFluxUsageHeaders,
+  type FluxFeature, type ServedModel,
+} from "./flux-usage-tags.ts";
 
 export {
   FLUX_CODEX_PROVIDER_BASE, FLUX_CODEX_PROVIDER_NOINJECT, FLUX_CODEX_PROVIDER_OFF, FLUX_CODEX_TABLE_HEADERS,
@@ -52,6 +56,7 @@ export function assertNoForbiddenFluxHeaders(headers: Record<string, string>): v
     if ((FLUX_MEMORY_FORBIDDEN_HEADERS as readonly string[]).includes(lower)) throw new Error(`Flux header ${lower} is never sent`);
     if (lower.startsWith("x-flux-memory-") && !ALLOWED_MEMORY_HEADERS.has(lower)) throw new Error(`Flux header ${lower} is not a Murage memory header`);
   }
+  assertFluxUsageHeaders(headers);
 }
 
 // ---------------------------------------------------------------- settings --
@@ -313,6 +318,32 @@ function decisionOf(context: FluxMemoryContext, settings: FluxMemorySettings, ca
   return { headers, capture, inject, reason, audience: context.audience, signature: signatureOf(headers) };
 }
 
+const onlyUsageHeaders = (headers: Record<string, string>): Record<string, string> =>
+  Object.fromEntries(Object.entries(headers).filter(([name]) => isFluxUsageHeader(name)));
+
+/** The decision with the usage tags added to its headers (and so to its signature: a warm process is never reused across them). */
+export function withFluxUsage(decision: FluxMemoryDecision, usage: Record<string, string>): FluxMemoryDecision {
+  const tags = onlyUsageHeaders(usage);
+  if (!Object.keys(tags).length) return decision;
+  const headers = { ...tags, ...decision.headers };
+  assertNoForbiddenFluxHeaders(headers);
+  return { ...decision, headers, signature: signatureOf(headers) };
+}
+
+/**
+ * The Flux headers of one engine turn whose CLI carries them (ANTHROPIC_CUSTOM_HEADERS, FUIGO_CONFIG, GROK_CONFIG, Hermes, Qwen,
+ * OpenCode): the memory decision plus the turn's usage tags. On a Cloud home the launcher accepts only the memory headers in those
+ * overlays, so a home's engine turn carries the memory decision alone (flux-usage-tags.ts engineUsageTagsAllowed).
+ */
+export function fluxTurnDecision(
+  turn: Parameters<typeof fluxMemoryContextForTurn>[0] & Partial<Pick<SendTurnInput, "threadId" | "usageFeature">>,
+  extra: Parameters<typeof fluxMemoryContextForTurn>[1] = {},
+  env: NodeJS.ProcessEnv = process.env,
+): FluxMemoryDecision {
+  const decision = fluxMemoryDecision(fluxMemoryContextForTurn(turn, extra));
+  return engineUsageTagsAllowed(env) ? withFluxUsage(decision, fluxUsageHeaders(fluxUsageForTurn(turn))) : decision;
+}
+
 // ------------------------------------------------------------- per send --
 
 /**
@@ -326,11 +357,15 @@ export interface FluxMemorySend {
   dispatched: { capture: "on" | "off"; inject: "on" | "off" };
   envelope?: import("./flux-memory-envelope.ts").FluxMemoryEnvelope;
   onResponse?: (report: import("./flux-memory-envelope.ts").FluxMemoryReport) => void;
+  /** The turn's usage tags (flux-usage-tags.ts), sent on every request of the turn beside the memory headers. */
+  usage?: Record<string, string>;
+  /** A Flux response named the model that served it and the one asked for (read when the response headers arrive). */
+  onServedModel?: (served: ServedModel) => void;
 }
 
 export function fluxMemorySend(
   context: FluxMemoryContext = FLUX_MEMORY_UNKNOWN,
-  extra: Pick<FluxMemorySend, "envelope" | "onResponse"> = {},
+  extra: Pick<FluxMemorySend, "envelope" | "onResponse" | "usage" | "onServedModel"> = {},
 ): FluxMemorySend {
   const dispatched = fluxMemoryDecision(context);
   return { context, dispatched: { capture: dispatched.capture, inject: dispatched.inject }, ...extra };
@@ -351,7 +386,10 @@ export function fluxMemoryAtSend(
   const inject = decision.inject === "on" && send.dispatched.inject === "on" ? "on" : "off";
   if (capture !== decision.capture || inject !== decision.inject) decision = decisionOf(send.context, settings, capture, inject, decision.reason);
   const envelope = send.envelope && capture === "on" && inject === "on" && settings.external !== false ? send.envelope : undefined;
-  return { decision, headers: decision.headers, ...(envelope ? { envelope } : {}) };
+  // Every Flux request names its feature: a send made with no turn (a one-off helper such as generateText) is metered as "other".
+  const usage = { [FLUX_FEATURE_HEADER]: "other", ...(send.usage ? onlyUsageHeaders(send.usage) : {}) };
+  assertFluxUsageHeaders(usage);
+  return { decision, headers: { ...usage, ...decision.headers }, ...(envelope ? { envelope } : {}) };
 }
 
 /** Header names that carry no secret: safe to log. */
@@ -439,15 +477,42 @@ export const FLUX_CALL_SITES = {
 } as const satisfies Record<string, "background">;
 export type FluxCallSiteId = keyof typeof FLUX_CALL_SITES;
 
-/** The headers for one direct Murage call to Flux. Every such call is background work: off/off. */
-export function fluxCallHeaders(site: FluxCallSiteId, options: { settings?: FluxMemorySettings } = {}): Record<string, string> {
-  void FLUX_CALL_SITES[site];
-  return fluxMemoryDecision({ audience: "background" }, options).headers;
+/** The x-flux-feature usage tag of every direct call site (flux-usage-tags.ts). A new site cannot be added without one. */
+export const FLUX_CALL_SITE_FEATURES = {
+  decider: "other",
+  "browser-checker": "other",
+  "image-generation": "image",
+  "avatar-image": "image",
+  "voice-transcribe": "voice",
+  "voice-speech": "voice",
+  "voice-stream": "voice",
+  "memory-extraction": "memory",
+  "pip-reflection": "memory",
+  "composio-broker": "other",
+  "voice-host": "voice",
+  "dictation-cleanup": "voice",
+  "web-search": "other",
+} as const satisfies Record<FluxCallSiteId, FluxFeature>;
+
+/** Who a direct call is made for, when the caller knows: the bot and the conversation (validated and hashed in flux-usage-tags.ts). */
+export interface FluxCallUsage { botId?: string | null; threadId?: string | null }
+
+/**
+ * The headers for one direct Murage call to Flux: background memory headers (off/off) and the site's usage tags. `overlay`: the
+ * headers go into an engine CLI's config overlay (FUIGO_CONFIG, GROK_CONFIG), which a Cloud home's launcher accepts only with the
+ * memory headers in it, so a home's overlay carries no usage tags (flux-usage-tags.ts engineUsageTagsAllowed).
+ */
+export function fluxCallHeaders(site: FluxCallSiteId, options: { settings?: FluxMemorySettings; usage?: FluxCallUsage; overlay?: boolean } = {}): Record<string, string> {
+  const memory = fluxMemoryDecision({ audience: "background" }, options).headers;
+  if (options.overlay && !engineUsageTagsAllowed()) return memory;
+  const headers = { ...fluxUsageHeaders({ feature: FLUX_CALL_SITE_FEATURES[site] ?? "other", ...options.usage }), ...memory };
+  assertNoForbiddenFluxHeaders(headers);
+  return headers;
 }
 
 /** `fluxCallHeaders` for an endpoint that may or may not be Flux (`via` names it): none when it is not. */
-export function fluxCallHeadersVia(site: FluxCallSiteId, via: string | undefined | null): Record<string, string> {
-  return via === "flux" ? fluxCallHeaders(site) : {};
+export function fluxCallHeadersVia(site: FluxCallSiteId, via: string | undefined | null, usage?: FluxCallUsage): Record<string, string> {
+  return via === "flux" ? fluxCallHeaders(site, usage ? { usage } : {}) : {};
 }
 
 /**
@@ -459,17 +524,18 @@ export function fluxFetch(
   input: string | URL,
   init: RequestInit = {},
   fetchImpl: typeof fetch = globalThis.fetch,
+  usage?: FluxCallUsage,
 ): Promise<Response> {
   const headers = new Headers(init.headers);
-  for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-flux-memory")) headers.delete(name);
-  for (const [name, value] of Object.entries(fluxCallHeaders(site))) headers.set(name, value);
+  for (const name of [...headers.keys()]) if (name.toLowerCase().startsWith("x-flux-memory") || isFluxUsageHeader(name)) headers.delete(name);
+  for (const [name, value] of Object.entries(fluxCallHeaders(site, usage ? { usage } : {}))) headers.set(name, value);
   return fetchImpl(input, { ...init, headers });
 }
 
 /** Header record merged for a WebSocket handshake or a hand-built request. */
-export function withFluxCallHeaders(site: FluxCallSiteId, headers: Record<string, string> = {}): Record<string, string> {
-  const kept = Object.fromEntries(Object.entries(headers).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
-  return { ...kept, ...fluxCallHeaders(site) };
+export function withFluxCallHeaders(site: FluxCallSiteId, headers: Record<string, string> = {}, usage?: FluxCallUsage): Record<string, string> {
+  const kept = withoutFluxUsageHeaders(Object.fromEntries(Object.entries(headers).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory"))));
+  return { ...kept, ...fluxCallHeaders(site, usage ? { usage } : {}) };
 }
 
 // ------------------------------------------------- engine header renderers --
@@ -497,7 +563,7 @@ export function fuigoConfigOverlay(headers: Record<string, string>, existing?: s
   }
   const models = base.models && typeof base.models === "object" && !Array.isArray(base.models) ? base.models as Record<string, unknown> : {};
   const extra = models.extra_headers && typeof models.extra_headers === "object" && !Array.isArray(models.extra_headers) ? models.extra_headers as Record<string, unknown> : {};
-  const kept = Object.fromEntries(Object.entries(extra).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
+  const kept = Object.fromEntries(Object.entries(extra).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory") && !isFluxUsageHeader(name)));
   return JSON.stringify({ ...base, models: { ...models, extra_headers: { ...kept, ...headers } } });
 }
 
@@ -527,6 +593,6 @@ export function opencodeConfigOverlay(provider: string, headers: Record<string, 
   const entry = providers[provider] && typeof providers[provider] === "object" ? providers[provider] as Record<string, unknown> : {};
   const options = entry.options && typeof entry.options === "object" ? entry.options as Record<string, unknown> : {};
   const oldHeaders = options.headers && typeof options.headers === "object" ? options.headers as Record<string, unknown> : {};
-  const kept = Object.fromEntries(Object.entries(oldHeaders).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory")));
+  const kept = Object.fromEntries(Object.entries(oldHeaders).filter(([name]) => !name.toLowerCase().startsWith("x-flux-memory") && !isFluxUsageHeader(name)));
   return JSON.stringify({ ...base, provider: { ...providers, [provider]: { ...entry, options: { ...options, headers: { ...kept, ...headers } } } } });
 }

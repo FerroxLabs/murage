@@ -150,7 +150,7 @@ export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner =>
   timer.unref?.();
   try {
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true });
+    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory" });
     // sendTurn may stay pending until the turn ends: the wait is on the turn's own end, never on it.
     sending.catch(error => { state.failure ??= engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
     await finished;

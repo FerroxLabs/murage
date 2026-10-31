@@ -39,6 +39,7 @@ import { CLAUDE_SIGNIN_ANSWERS_FILE, ClaudeSigninAnswers, type ClaudeSigninScope
 import { writeFileAtomic } from "../atomic.ts";
 import { augmentedPath, envGeneration } from "../env-path.ts";
 import { engineLaunchFile } from "./isolation-cache.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { CLAUDE_ACCOUNT_ENV_KEYS, claudeAccountEnvironment,resolveClaudeConfigDir } from "../claude-accounts.ts";
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { toolFilePaths } from "../own-workspace-approval.ts";
@@ -46,7 +47,7 @@ import { engineToolFields } from "./contracts.ts";
 import { claudeToolResultDirs, sessionFolders } from "../own-tool-results.ts";
 import { fluxKey } from "../flux-config.ts";
 import { applyFluxSurface, isFluxModel } from "../flux-routing.ts";
-import { claudeCustomHeadersValue, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
+import { claudeCustomHeadersValue, fluxMemoryDecision, fluxTurnDecision, logFluxMemoryHeaders, type FluxMemoryDecision } from "../flux-memory-headers.ts";
 import { mergeFluxCatalog } from "../flux-surface.ts";
 import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, brokerSocketPath, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
@@ -93,6 +94,7 @@ import {
   createAttemptBoundary,
   interruptibleDelay,
   isPreAcceptFailure,
+  ORG_LOGIN_OFF,
   RETRY_MAX_ATTEMPTS,
   type AttemptBoundary,
 } from "./retry.ts";
@@ -151,8 +153,21 @@ export function claudeSignedIn(
  * own words (stderr or the spawn error) when it gave no status at all. */
 export interface ClaudeAuthStatus {
   signedIn: boolean;
+  /** How the login is billed, from the CLI's own `authMethod`; absent when the CLI did not say or said something new. */
+  billing?: "metered" | "subscription";
   refusal?: ClaudeLaunchRefusal;
   error?: string;
+}
+
+/** `claude auth status --json` names the login in `authMethod` (Claude Code 2.1.312 `auth status`, read from the
+ *  CLI's own source): "claude.ai" (a Pro/Max/Team sign-in) and "oauth_token" (`claude setup-token`, the same
+ *  subscription) are a subscription; "api_key" (ANTHROPIC_API_KEY or a Console "/login managed key"),
+ *  "api_key_helper" and "third_party" (Bedrock, Vertex, Foundry) are billed per use. "none", a missing field or a
+ *  value a newer CLI adds says nothing, so the display claims neither. */
+export function claudeBillingOf(authMethod: unknown): "metered" | "subscription" | undefined {
+  if (authMethod === "claude.ai" || authMethod === "oauth_token") return "subscription";
+  if (authMethod === "api_key" || authMethod === "api_key_helper" || authMethod === "third_party") return "metered";
+  return undefined;
 }
 
 export function claudeAuthStatus(
@@ -166,7 +181,9 @@ export function claudeAuthStatus(
       try {
         const status: unknown = JSON.parse(stdout);
         if (typeof status === "object" && status !== null && "loggedIn" in status) {
-          resolve({ signedIn: status.loggedIn === true });
+          const signedIn = status.loggedIn === true;
+          const billing = signedIn ? claudeBillingOf((status as { authMethod?: unknown }).authMethod) : undefined;
+          resolve({ signedIn, ...(billing ? { billing } : {}) });
           return;
         }
       } catch { /* no status: read the failure below */ }
@@ -189,6 +206,10 @@ export function claudeAuthFailure(frame: { error?: unknown; is_api_error_message
   if (frame.is_api_error_message !== true && typeof frame.error !== "string") return false;
   return frame.error === "authentication_failed" || classifyError({ text }).reason === "auth";
 }
+
+/** What the owner reads when Claude reports the login's organization has plan access turned off. The way forward comes
+ * first. It names Settings, not the chat card: the CLI still reports this login as signed in, so that card can clear itself. */
+export const CLAUDE_ORG_LOGIN_LINE = "To carry on with Claude, sign in with another account: open Settings, then Models, Advanced, Claude accounts. Claude says this login's organization has turned off plan access.";
 
 /** Adapted from OpenMausBot 95a94daa (#1840, Apache-2.0). A model newer
  * than the installed Claude Code: the API refuses it and the CLI relays that
@@ -546,8 +567,9 @@ function removePrivateTempDir(filePath: string | null | undefined): boolean {
 // A headless run that hits a permission acceptEdits doesn't cover should
 // neither stall silently NOR get blanket-denied — it should ask the user.
 // The broker is a net server on a per-turn socket; the proxy (spawned by
-// the claude CLI) forwards asks over it and waits. Unanswered permission
-// asks deny after timeoutMs with a keep-moving note. Unanswered questions
+// the claude CLI) forwards asks over it and waits. A permission ask waits
+// for the owner until it is answered or the turn ends (Sean 10-29: cards
+// wait on every engine, direct chat included). Unanswered questions
 // wait up to 30 minutes and then receive an honest "nobody answered" —
 // never an invented answer presented as the owner's (0.1.52 ASK2).
 interface Ask {
@@ -567,8 +589,6 @@ type AskResolutionSource = "user" | "timeout" | "system" | "auto";
  * false: the CLI withdrew it, or the process is gone) and why. */
 type ElicitEnd = (outcome: "accept" | "decline" | "cancel", source: AskResolutionSource, answers?: readonly QuestionAnswer[], write?: boolean) => void;
 
-const DENY_TIMEOUT_NOTE =
-  "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 /** The engine wait for a question, overridable per instance
  * (`config.questionTimeoutMs`) and bounded so a typo cannot hold a turn for
  * days or expire a card before a person could read it. */
@@ -697,16 +717,10 @@ export async function createPermissionBroker(opts: {
   onAsk: (ask: Ask) => void;
   onResolve: (resolved: Ask & { behavior: AskBehavior; source: AskResolutionSource }) => void;
   isActive?: () => boolean;
-  timeoutMs?: number;
   /** How long a question waits for the owner (default 30 min). */
   questionTimeoutMs?: number;
-  /** Read when a permission ask arrives: true for a routine run's turn,
-   * whose cards wait until answered or the turn stops instead of the
-   * timeoutMs deny (SendTurnInput.holdPermissionAsks). */
-  holdPermissionAsks?: () => boolean;
   holdProjectAsks?: () => boolean;
 }) {
-  const timeoutMs = opts.timeoutMs ?? 15 * 60_000;
   const questionTimeoutMs = questionTimeoutFor(opts.questionTimeoutMs);
   const pending = new Map<
     string,
@@ -809,7 +823,7 @@ export async function createPermissionBroker(opts: {
         updatedInput?: Record<string, unknown>,
       ) => {
         if (!pending.delete(askId)) return;
-        clearTimeout(timer);
+        timer?.clear();
         try {
           conn.write(JSON.stringify({ t: "answer", id: askId, behavior, message, ...(answers ? { answers } : {}), ...(updatedInput ? { updatedInput } : {}) }) + "\n");
         } catch {}
@@ -818,14 +832,12 @@ export async function createPermissionBroker(opts: {
       // A question left unanswered gets an honest non-answer: Claude sees a
       // deny whose note says nobody answered, never a guess in the owner's
       // name. The card stays behind as Expired with "Send as a message".
-      const timer = opts.holdProjectAsks?.() || (kind === "permission" && opts.holdPermissionAsks?.()) ? undefined : setTimeout(
-        () =>
-          kind === "question"
-            ? finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout")
-            : finish("deny", DENY_TIMEOUT_NOTE, "timeout"),
-        kind === "question" ? questionTimeoutMs : timeoutMs,
+      // A permission card has no deadline: it waits for the owner.
+      // Awake time (1.0.10 C3): a sleep with a question card open does not count toward its deadline.
+      const timer = kind === "permission" || opts.holdProjectAsks?.() ? undefined : wakeAwareTimeout(
+        () => finish("deny", QUESTION_NOTES.timeout(Math.max(1, Math.round(questionTimeoutMs / 60_000))), "timeout"),
+        questionTimeoutMs,
       );
-      timer?.unref?.();
       pending.set(askId, { ask, finish });
       opts.onAsk(ask);
     };
@@ -2800,8 +2812,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * so that text is shown when the turn produced none of its own. */
       engineCommand?: boolean;
       answered?: boolean;
-      /** A routine run: its permission cards wait for the owner. */
-      holdPermissionAsks?: boolean;
       holdProjectAsks?: boolean;
       /** The engine's background sub agents for this turn (see handleLine). */
       bg?: BackgroundState;
@@ -3351,12 +3361,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       return new Promise<{ allowed: boolean; byOwner: boolean }>((resolve) => {
         const finish = (allowed: boolean, source: AskResolutionSource) => {
           if (!signinAsks.delete(key)) return;
-          clearTimeout(timer);
+          timer?.clear();
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allowed ? "answer" : "deny", source });
           resolve({ allowed, byOwner: source === "user" });
         };
-        const timer = holds ? undefined : setTimeout(() => finish(false, "timeout"), questionTimeoutFor(config.questionTimeoutMs));
-        timer?.unref?.();
+        // awake time (1.0.10 C3)
+        const timer = holds ? undefined : wakeAwareTimeout(() => finish(false, "timeout"), questionTimeoutFor(config.questionTimeoutMs));
         signinAsks.set(key, finish);
         void stopped.then(() => finish(false, "system"));
         emit({
@@ -3413,7 +3423,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         if (elicitations.get(cliRequestId) !== end) return;
         elicitations.delete(cliRequestId);
         elicitAsks.delete(key);
-        clearTimeout(timer);
+        timer?.clear();
         const answered = outcome === "accept" && answers?.length ? answers : null;
         const action = answered ? "accept" : outcome === "accept" ? "decline" : outcome;
         if (write) {
@@ -3425,8 +3435,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
       };
-      const timer = turn.holdProjectAsks ? undefined : setTimeout(() => end("cancel", "timeout"), questionTimeoutFor(config.questionTimeoutMs));
-      timer?.unref?.();
+      // awake time (1.0.10 C3)
+      const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => end("cancel", "timeout"), questionTimeoutFor(config.questionTimeoutMs));
       elicitations.set(cliRequestId, end);
       elicitAsks.set(key, { end, questions });
       const first = questions[0]!.question;
@@ -3821,8 +3831,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
 
       // Flux Memory headers are decided per thread audience and are part of the
       // spawn contract: a change of audience, purpose or memory choice differs
-      // in the warm key below and forces a respawn.
-      const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
+      // in the warm key below and forces a respawn. The usage tags (bot, feature, conversation) ride the same header value.
+      const fluxMemory = fluxTurnDecision(turn);
       const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
       // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
       // the CLI's own first-prompt hold is off, and a connect or reconnect ends
@@ -4004,6 +4014,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         settingsRev: claudeSettingsRevision(env, cwd),
         // S4 power (design section 7): a constant on a key whose spawn is under the block (Windows only for Claude).
         ...hostPowerKeyField({ posixHostPower: false }),
+        // 1.0.8 owner zone: the zone the process was handed (engine-env.ts withOwnerTimeZone); a change respawns it
+        timeZone: handed.env.TZ ?? null,
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session
@@ -4117,7 +4129,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             boundary: createAttemptBoundary(),
             submission: null,
             engineCommand: Boolean(turn.engineCommand),
-            holdPermissionAsks: turn.holdPermissionAsks === true,
             holdProjectAsks: turn.holdProjectAsks === true,
           };
           startedTurn = started;
@@ -4258,7 +4269,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             // never while an earlier turn's continuation is playing: its asks
             // are not this turn's to open a card for
             isActive: () => { const t = sessions.get(threadId)?.turn; return Boolean(t && !t.lateContinuation); },
-            holdPermissionAsks: () => sessions.get(threadId)?.turn?.holdPermissionAsks === true,
             holdProjectAsks: () => sessions.get(threadId)?.turn?.holdProjectAsks === true,
             questionTimeoutMs: config.questionTimeoutMs,
             onAsk: (ask) => {
@@ -4459,7 +4469,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         boundary: createAttemptBoundary(),
         submission: null,
         engineCommand: Boolean(turn.engineCommand),
-        holdPermissionAsks: turn.holdPermissionAsks === true,
           holdProjectAsks: turn.holdProjectAsks === true,
       };
       const session: Session = {
@@ -4851,8 +4860,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (claudeAuthFailure(o, text)) {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
-                message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings."
-                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : text || "Claude needs you to sign in. Open engine setup to continue.",
+                message: injected.injected ? "Your AI service did not accept the saved sign-in. Check its connection in Settings, Models & engines, then try again."
+                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : ORG_LOGIN_OFF.test(text) ? CLAUDE_ORG_LOGIN_LINE : text || "Claude needs you to sign in. Open engine setup to continue.",
                 setup: !injected.injected, ...(!injected.injected ? { authRequired: true } : { details: text }),
               });
               break;
@@ -5584,14 +5593,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (auth.refusal) return { state: "unavailable", version, reason: auth.refusal.message };
       // A probe that gave no status at all (a spawn error, a crash, a launch the OS refused) is not
       // a lost login: the CLI's own words, and "not verified" rather than "sign in", so chat stays open.
-      if (auth.error) return { state: "available", version, reason: auth.error, billing: "subscription" };
+      // How it bills is unknown too, so neither "subscription" nor "API key" is claimed.
+      if (auth.error) return { state: "available", version, reason: auth.error };
       const authenticated = auth.signedIn;
       // Cloud home: the launcher holds a long-lived token; offer its renewal before it lapses.
       const renewSignIn = await cloudClaudeRenewalDue(authenticated);
-      // claudeEnvironment strips ANTHROPIC_API_KEY, so turns run on the
-      // CLI's own login (Pro/Max): the cost it reports is what the call
-      // WOULD bill, not a charge
-      return { state: "available", version, authenticated, billing: "subscription", ...(renewSignIn ? { renewSignIn: true } : {}) };
+      // claudeEnvironment strips ANTHROPIC_API_KEY, but the CLI's own login can still be an API key (a Console
+      // "/login managed key", apiKeyHelper, Bedrock/Vertex): the probe runs on the turn's environment, so its
+      // authMethod is the login a turn bills to. Unknown leaves billing unset ("as reported by the engine").
+      return { state: "available", version, authenticated, ...(auth.billing ? { billing: auth.billing } : {}), ...(renewSignIn ? { renewSignIn: true } : {}) };
     };
 
     /** One-shot Claude call with the prompt on stdin, never argv. Approval

@@ -105,7 +105,7 @@ describe("the card", () => {
     const [card] = consentCards(store, bot.threadId);
     cancelHostComputerConsentForThread(bot.threadId);
     expect(await waiting).toBe("waiting");
-    expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "deny", dismissed: true });
+    expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "unavailable", dismissed: true });
     expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", () => { throw new Error("must not remember"); })).toBe(false);
     // the next action asks again with a fresh card
     void awaitHostComputerConsent(bus(store), bot, bot.threadId, 10);
@@ -118,7 +118,7 @@ describe("the card", () => {
     const bot = store.createBot({}, { seedMessages: false });
     store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: { title: "Let @x use this computer?", subtitle: "", options: ["Allow", "Deny"], requestId: "stale", tool: HOST_CONSENT_TOOL } });
     expect(dismissStaleHostConsentCards(bus(store))).toBe(1);
-    expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "deny", dismissed: true });
+    expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "unavailable", dismissed: true });
   });
 });
 
@@ -168,6 +168,30 @@ describe("grandfathering on load", () => {
 // In a scheduled or manual routine run the card is held open like a
 // permission card (no 15-minute close), and the run hears when it opens and
 // is answered, so a turn that ended meanwhile carries on once it is.
+// GROK-STOPPED F1 (1.0.10): the owner's card never expires, in a direct chat too.
+describe("the card in a direct chat", () => {
+  beforeEach(() => { removeTempDirSync(DATA_DIR); });
+
+  it("stays open past a day after the action's own wait ends, and the owner's answer still lands", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = new Store(selection);
+      const bot = store.createBot({}, { seedMessages: false });
+      const bus: ApprovalBus = { store, broadcast: () => {} };
+      const waiting = awaitHostComputerConsent(bus, bot, bot.threadId, 20);
+      vi.advanceTimersByTime(20);
+      expect(await waiting).toBe("waiting");
+      vi.advanceTimersByTime(15 * 60_000 + 1);
+      vi.advanceTimersByTime(24 * 60 * 60_000);
+      const [card] = consentCards(store, bot.threadId);
+      expect(card!.card!.answered).toBeUndefined();
+      let remembered: string | undefined;
+      expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", (_id, consent) => { remembered = consent; })).toBe(true);
+      expect(remembered).toBe("allowed");
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("the card in a routine run", () => {
   beforeEach(() => { removeTempDirSync(DATA_DIR); });
 

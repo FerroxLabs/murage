@@ -138,15 +138,20 @@ describe("peer approval card lifecycle", () => {
     expect(store.messagesFor(from.threadId).find((m) => m.id === card.id)?.card?.answered).toBe("deny");
   });
 
-  it("reports an unanswered card as expired, not as the user's denial", async () => {
+  // GROK-STOPPED F1 (1.0.10): the owner's card never expires; a restored timer fails here.
+  it("an unanswered card stays open past a day and the owner's late answer still lands", async () => {
     vi.useFakeTimers();
     try {
-      const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot");
+      let settled: string | undefined;
+      const verdict = requestPeerApproval(bus, from, target, "ping", "ask_bot").then((v) => (settled = v));
       const card = pendingCard(store, from)!;
       await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
-      expect(await verdict).toBe("expired");
-      const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
-      expect(settled?.card?.dismissed).toBe(true);
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(settled).toBeUndefined();
+      expect(pendingCard(store, from)?.id).toBe(card.id);
+      expect(store.messagesFor(from.threadId).find((m) => m.id === card.id)?.card?.answered).toBeUndefined();
+      expect(resolvePeerComms(bus, card.card!.requestId!, "allow")).toBe(true);
+      expect(await verdict).toBe("allow");
     } finally {
       vi.useRealTimers();
     }
@@ -187,7 +192,7 @@ describe("peer approval card lifecycle", () => {
     // nobody said no: this is a cancellation, not the user's denial (upstream #1526)
     expect(await verdict).toBe("cancelled");
     const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
-    expect(settled?.card?.answered).toBe("deny");
+    expect(settled?.card?.answered).toBe("unavailable");
     expect(settled?.card?.dismissed).toBe(true); // not the user's answer
   });
 
@@ -199,7 +204,7 @@ describe("peer approval card lifecycle", () => {
 
     expect(await verdict).toBe("cancelled");
     const settled = store.messagesFor(from.threadId).find((m) => m.id === card.id);
-    expect(settled?.card?.answered).toBe("deny");
+    expect(settled?.card?.answered).toBe("unavailable");
     expect(settled?.card?.dismissed).toBe(true);
     expect(pendingCard(store, from)).toBeUndefined();
   });

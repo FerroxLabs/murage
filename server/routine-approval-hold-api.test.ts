@@ -4,12 +4,11 @@
 // An unanswered approval in a routine run, end to end over real HTTP with the
 // fake ACP agent asking to run a command (0.1.60 Mac pass, defect 1):
 //
-//   - a routine run's card is never auto-denied by the engine's deny deadline
-//     (shrunk here with MURAGE_PERMISSION_DENY_MS): the run stays waiting on
-//     the owner and answering the card later carries the same run on;
-//   - an ordinary chat card that does time out is not reported as an engine
-//     failure: no error row, so no "choose another configured model in
-//     Provider settings" card.
+//   - a routine run's card is never auto-denied: the run stays waiting on the
+//     owner and answering the card later carries the same run on;
+//   - an ordinary chat card waits the same way (Sean 10-29: no card has a
+//     deny deadline on any engine): no deny, no error row, and answering it
+//     later carries the turn on.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -23,7 +22,8 @@ import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
-const DENY_MS = 1_500;
+/** Comfortably past the old fixture deadline (1.5 s), which no longer exists. */
+const WAIT_MS = 4_500;
 
 let base: string;
 let desktopHeaders: Record<string, string>;
@@ -74,7 +74,6 @@ async function startServer() {
       MURAGE_PORT: String(serverPort),
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
-      MURAGE_PERMISSION_DENY_MS: String(DENY_MS),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -122,7 +121,7 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     await removeTempDir(home);
   });
 
-  it("keeps a routine run's card open past the deny deadline, and answering it finishes the run", async () => {
+  it("keeps a routine run's card open while the owner is away, and answering it finishes the run", async () => {
     const bot = await makeBot("Ember");
     const created = await request("POST", "/api/routines", {
       name: "Log tick", prompt: "Log the time", botId: bot.id, enabled: false,
@@ -135,7 +134,7 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
     const card = await poll(() => cardFor(threadId!), 20_000);
     expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-    await sleep(DENY_MS * 3);
+    await sleep(WAIT_MS);
     const still = await cardFor(threadId!);
     expect(still.card.answered).toBeUndefined();
     expect(await runState(runId)).toMatchObject({ status: "waiting" });
@@ -148,19 +147,20 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
     expect(done).toMatchObject({ status: "completed" });
   }, 90_000);
 
-  it("an ordinary card that times out is not shown as an engine failure", async () => {
+  it("an ordinary chat card waits for the owner too: no deny, no error, and a late answer carries the turn on", async () => {
     const bot = await makeBot("Rae");
     expect((await request("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: "log the time" })).status).toBe(202);
     const card = await poll(() => cardFor(bot.threadId), 20_000);
     expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-    const resolved = await poll(async () => {
+    await sleep(WAIT_MS);
+    expect((await cardFor(bot.threadId))?.card?.answered).toBeUndefined();
+    expect(errorRows(await threadMessages(bot.threadId))).toEqual([]);
+    expect((await request("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
+    const answered = await poll(async () => {
       const current = await cardFor(bot.threadId);
       return current?.card?.answered !== undefined ? current : null;
     }, 20_000);
-    expect(resolved, "the card never timed out").not.toBeNull();
-    await sleep(1_000);
-    const errors = errorRows(await threadMessages(bot.threadId));
-    expect(errors.filter((m) => /answered|permission request/i.test(String(m.tool?.name)))).toEqual([]);
+    expect(answered?.card?.answered).toBe("allow");
   }, 60_000);
 
   // Answering after the run ended (here: Murage restarted under it) used to

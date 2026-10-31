@@ -60,7 +60,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
     runAdmissionFence(turn.transport?.fence);
     response = await (o.fetchImpl ?? fetch)(endpoint, {
       method: "POST", redirect: "error", signal,
-      headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}`, ...(isFluxUrl(o.baseUrl) ? fluxCallHeaders("pip-reflection") : {}) },
+      headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}`, ...(isFluxUrl(o.baseUrl) ? fluxCallHeaders("pip-reflection", { usage: { botId: turn.context?.botId } }) : {}) },
       body: request, dispatcher: providerDispatcher(endpoint),
     } as RequestInit);
   } catch (error) {

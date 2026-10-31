@@ -114,6 +114,13 @@ export const BOT_CALLS_109_INDEXES = ["bot_call_rules_bot", "bot_calls_fact", "b
 export const BOT_CALLS_109_OBJECTS: readonly string[] = Object.freeze([...BOT_CALLS_109_TABLES, ...BOT_CALLS_109_TRIGGERS, ...BOT_CALLS_109_INDEXES]);
 
 /** Creates the call tables, indexes and the owed trigger on messages (the messages table must exist). Idempotent. */
+/** The principal of a session made before principals were recorded: callCaller never returns it (it has no `cloud:` prefix
+ *  and is not `desktop`). */
+export const LEGACY_SESSION_PRINCIPAL = "legacy:none";
+/** The only shapes a call principal takes (bot-calls-caller.ts): the desktop, or a Cloud device. LEGACY_SESSION_PRINCIPAL is
+ *  neither, so no caller can ever be it. */
+export const CALL_PRINCIPAL = /^(?:desktop|cloud:[\w.:-]{1,200})$/;
+
 export function initializeBotCalls(db: DatabaseSync): void {
   db.exec(RULES_DDL);
   db.exec(CALLS_DDL);
@@ -121,6 +128,35 @@ export function initializeBotCalls(db: DatabaseSync): void {
   db.exec(OWED_DDL);
   db.exec(SETTINGS_DDL);
   db.exec(OWED_TRIGGER_DDL);
+  migrateSessionPrincipals(db);
+}
+
+/** The marker an earlier build of this migration wrote (bot_call_settings). Nothing reads it any more; it is removed. */
+const OLD_SESSION_PRINCIPAL_MARKER = "sessions_principal_v1";
+
+/** The authenticated device that opened or answered a session (bot-calls-routes.ts): only it gets a ticket and only it redeems
+ * one. The column is an ALTER, never in the CREATE text (installation-database-snapshot lists it as optional).
+ *
+ * At every open, in one transaction and before any session is inserted, every session still without a principal is marked
+ * with one no caller can ever be, so it never binds and never gets a ticket. A live
+ * session does outlive a restart (bootReconcile gives it 60 s to reconnect with a new ticket), but only a bound one can
+ * reconnect, and this build writes the principal in the INSERT itself (bot-calls-machine.ts insertSession, which refuses a
+ * row without one), so a NULL only ever comes from a build without principals (1.0.9, or a desktop downgraded to it and
+ * upgraded again). A second open in the same process finds no NULL of its own to touch. No marker: a downgrade and a
+ * re-upgrade cannot skip it. */
+export function migrateSessionPrincipals(db: DatabaseSync): void {
+  const nested = db.isTransaction;
+  db.exec(nested ? "SAVEPOINT bot_call_principals" : "BEGIN IMMEDIATE");
+  try {
+    const columns = db.prepare("PRAGMA table_info(bot_call_sessions)").all() as Array<{ name: string }>;
+    if (!columns.some(column => column.name === "principal")) db.exec("ALTER TABLE bot_call_sessions ADD COLUMN principal TEXT");
+    db.prepare("UPDATE bot_call_sessions SET principal=? WHERE principal IS NULL").run(LEGACY_SESSION_PRINCIPAL);
+    db.prepare("DELETE FROM bot_call_settings WHERE key=?").run(OLD_SESSION_PRINCIPAL_MARKER);
+    db.exec(nested ? "RELEASE bot_call_principals" : "COMMIT");
+  } catch (error) {
+    try { db.exec(nested ? "ROLLBACK TO bot_call_principals; RELEASE bot_call_principals" : "ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
 }
 
 const hasTable = (db: DatabaseSync, name: string) => !!db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(name);

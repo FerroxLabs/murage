@@ -609,6 +609,8 @@ process.stdin.on("data", (chunk) => {
       case "turn/start": {
         nativeThreadId = msg.params.threadId;
         noteExecutionPolicy(msg.params);
+        // Plan usage: an account rate-limit notification on the connection, as Codex sends after a model response.
+        if (process.env.FAKE_CODEX_RATE_LIMITS_EVENT) out({ jsonrpc: "2.0", method: "account/rateLimits/updated", params: JSON.parse(process.env.FAKE_CODEX_RATE_LIMITS_EVENT) });
         if (warmMode) nativeTurnId = `turn-${++turnSeq}`;
         if (process.env.FAKE_CODEX_STOP_RACE) {
           const heldId = msg.id;
@@ -690,6 +692,13 @@ process.stdin.on("data", (chunk) => {
           if (mode === "parent-early") frames = [...parent, ack];
           else if (mode === "parent-overflow") frames = [...Array.from({ length: 257 }, () => parent[0]), ack];
           else if (mode === "parent-invalid-ack") frames = [ack, ...parent];
+          // a tool item announced ahead of a turn/start that then fails (OpenMausBot 7045f15a1, adapted)
+          else if (mode === "parent-early-tool-fail" || mode === "parent-early-text-fail") {
+            const early = mode === "parent-early-tool-fail"
+              ? notification("item/started", { item: { id: "early-tool", type: "commandExecution", command: "touch report.md" } })
+              : notification("item/agentMessage/delta", { itemId: "early-text", delta: "early words" });
+            frames = [early, { jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "turn could not start" } }];
+          }
           else {
             frames = [
               ...foreign("helper-thread", "helper-turn"),
@@ -990,6 +999,15 @@ process.stdin.on("data", (chunk) => {
       // Command turns (codex-cli 0.156 v2 protocol, `codex app-server
       // generate-ts`). skills/list answers `{}` unless FAKE_CODEX_SKILLS
       // (a JSON SkillMetadata[]) is set, so older tests see no report.
+      // Plan usage (codex-cli >= 0.100 v2 protocol): FAKE_CODEX_RATE_LIMITS is the JSON result, "absent" answers as a
+      // Codex without the method does, "hang" never answers.
+      case "account/rateLimits/read": {
+        const mode = process.env.FAKE_CODEX_RATE_LIMITS;
+        if (mode === "hang") break;
+        if (mode === "absent") { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: "Invalid request: unknown variant `account/rateLimits/read`" } }); break; }
+        out({ jsonrpc: "2.0", id: msg.id, result: mode ? JSON.parse(mode) : { rateLimits: { limitId: "codex", limitName: null, primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1900000000 }, secondary: { usedPercent: 7, windowDurationMins: 10080, resetsAt: 1900500000 }, credits: null, planType: "plus" }, rateLimitsByLimitId: null } });
+        break;
+      }
       case "skills/list":
         if (process.env.FAKE_CODEX_SKILLS_BATCHED) batched = [];
         out({
