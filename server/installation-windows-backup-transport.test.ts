@@ -181,3 +181,8 @@ it("output fd is closed before validation begins", async () => {
     expect(() => closeSync(fd)).toThrow(); return { value: "closed", ciphertextSha256: digest };
   } }, { ...f.dependencies, openExclusiveOutput: path => { fd = f.dependencies.openExclusiveOutput(path); return fd; } });
 });
+
+it.skipIf(!existsSync("/dev/full"))("1.0.12: a full disk while the backup is decrypted for its check is named as a full disk", async () => {
+  const f = fixture();
+  await expect(runWindowsBackupTransport(f.request, { ...f.dependencies, openExclusiveOutput: () => openSync("/dev/full", "w") })).rejects.toMatchObject({ code: "BACKUP_DISK_FULL" });
+});

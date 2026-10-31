@@ -602,8 +602,38 @@ export interface GroupRecord {
 /** Thread recall (design S1): recall output was released on this thread. */
 export const threadSealed = (task: Pick<TaskRecord, "sealGeneration"> | undefined | null): boolean => (task?.sealGeneration ?? 0) > 0;
 
+type SealRead = Pick<TaskRecord, "sealGeneration" | "resumeSeals"> & Partial<Pick<TaskRecord, "resumeCursors">>;
+
+/** Thread recall (THREAD-SEAL 3.4 item 2): is this cursor a session started at the task's current seal? Unsealed: every cursor is
+ * clean, and no cursor is clean on any task. A sealed task holds a cursor to it only through an entry bound to that exact value at
+ * a generation no lower than the seal. Every missing or malformed shape refuses. */
+export const cursorStartedBelowSeal = (task: SealRead | undefined | null, instanceId: string, cursor: unknown): boolean => {
+  const seal = Number(task?.sealGeneration ?? 0);
+  if (!(seal > 0) || cursor === undefined) return false;
+  const entry = task?.resumeSeals?.[instanceId];
+  return entry === undefined || entry.cursor !== String(cursor) || !(Number(entry.generation) >= seal);
+};
+
+/** Thread recall (THREAD-SEAL 3.1): the session this task would resume on this engine may not be resumed. The session that received
+ * recall output is below the seal, and so is every session started before the seal moved; a sealed task with nothing to resume, or a
+ * cursor with no binding, starts fresh. */
+/** Thread recall (THREAD-SEAL 3.2): the seal generation the session of this dispatch starts under. A fresh session takes the task's at
+ * this instant; a resumed one inherits what is bound to its snapshotted cursor, never the current number, and an entry for another id
+ * lends it nothing. */
+export const dispatchSealStart = (task: SealRead | undefined | null, instanceId: string, resumeCursor: unknown): number => {
+  if (resumeCursor === undefined) return task?.sealGeneration ?? 0;
+  const entry = task?.resumeSeals?.[instanceId];
+  return entry?.cursor === String(resumeCursor) ? entry.generation : 0;
+};
+
+export const sessionTainted = (task: SealRead | undefined | null, instanceId: string): boolean => {
+  if (!threadSealed(task)) return false;
+  const cursor = task?.resumeCursors?.[instanceId];
+  return cursor === undefined || cursorStartedBelowSeal(task, instanceId, cursor);
+};
+
 /** 1.0.4 SL-K K4: a task copy whose session was reset forgets what its engine was last sent. */
-function withoutEffortSent<T extends { effortSent?: unknown }>(task: T): T { const { effortSent: _effortSent, ...rest } = task; return rest as T; }
+function withoutEffortSent<T extends { effortSent?: unknown; resumeSeals?: unknown }>(task: T): T { const { effortSent: _effortSent, resumeSeals: _resumeSeals, ...rest } = task; return rest as T; }
 
 export interface TaskRecord {
   /** Server-owned: what this conversation's hand-offs still owe it (asker-wake.ts), kept so a restart still continues the work. */
@@ -638,6 +668,9 @@ export interface TaskRecord {
   /** The incarnation each cursor's session was started under (lineage S6 rule 27, memory/session-incarnation.ts), from 2 on: the memory
    * session key is formed from the cursor and this. Absent for n = 1 and for a cursor from before. */
   resumeIncarnations?: Record<string, number>;
+  /** Thread recall (THREAD-SEAL 3.1), per engine: the cursor this entry is bound to and the task's `sealGeneration` at the START of
+   * that session. For one native id the number only ever goes down. Never on the wire. */
+  resumeSeals?: Record<string, { cursor: string; generation: number }>;
   /** This chat's own model, set only when the owner picked one in this chat
    * (1.0.4 SL-K K1). Absent: the chat follows its bot's model. */
   modelSelection?: ModelSelection;
@@ -4510,7 +4543,25 @@ export class Store {
     return { ok: true, bot };
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number) {
+  /** Thread recall (THREAD-SEAL 3.1): bind this native id to the generation its session started under. A later write for the same
+   * id can never raise what is stored; another id replaces the entry. */
+  private writeResumeSeal(task: TaskRecord, instanceId: string, cursor: string, sealStart: number) {
+    const prev = task.resumeSeals?.[instanceId];
+    const generation = prev !== undefined && prev.cursor === cursor ? Math.min(prev.generation, sealStart) : sealStart;
+    task.resumeSeals = { ...task.resumeSeals, [instanceId]: { cursor, generation } };
+  }
+
+  /** The acceptance step of the fold (THREAD-SEAL 3.3): a `session.started` that reached the fold before the dispatch knew its own
+   * provider turn is bound here, once that turn proved to be this dispatch's. Nothing happens when the slot moved on to another id. */
+  bindResumeSeal(botId: string, instanceId: string, threadId: string, cursor: string, sealStart: number) {
+    const task = this.taskByThread(botId, threadId);
+    const held = task?.resumeCursors[instanceId];
+    if (!task || held === undefined || String(held) !== cursor) return;
+    this.writeResumeSeal(task, instanceId, cursor, sealStart);
+    this.saveBots(this.bots, { defer: true });
+  }
+
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
@@ -4538,6 +4589,13 @@ export class Store {
       else if (task.resumeIncarnations && Object.hasOwn(task.resumeIncarnations, instanceId)) {
         const { [instanceId]: _dropped, ...rest } = task.resumeIncarnations;
         task.resumeIncarnations = rest;
+      }
+      // and to the seal generation its session started under (THREAD-SEAL 3.1). An unbound save of the same id leaves the entry: it
+      // says what that id started under, which nothing later changes. Any other id, or no cursor, ends it.
+      if (cursor !== undefined && sealStart !== undefined) this.writeResumeSeal(task, instanceId, String(cursor), sealStart);
+      else if (task.resumeSeals && Object.hasOwn(task.resumeSeals, instanceId) && (cursor === undefined || task.resumeSeals[instanceId]!.cursor !== String(cursor))) {
+        const { [instanceId]: _dropped, ...rest } = task.resumeSeals;
+        task.resumeSeals = rest;
       }
     }
     // The legacy mirror follows the task visible in chat, never a detached
@@ -5025,6 +5083,8 @@ export class Store {
     if(patch.modelSelection&&patch.modelSelection.connectionId!==(task.modelSelection??bot.modelSelection)?.connectionId)next.resumeCursors={};
     // 1.0.4 SL-K K4: what the engine was last sent belongs to the session; a cursor reset ends it (unless this patch records the new one)
     if(Object.keys(next.resumeCursors??{}).length===0&&Object.keys(task.resumeCursors??{}).length>0&&!Object.hasOwn(patch,"effortSent"))delete next.effortSent;
+    // The seal record is bound to the cursors it describes (THREAD-SEAL 3.1): emptied with them in this same write.
+    if(Object.keys(next.resumeCursors??{}).length===0)next.resumeSeals=undefined;
     // The first pick adopts.
     //
     // A bot made before any engine could answer carries the honest-empty
@@ -5103,7 +5163,7 @@ export class Store {
       if(task.busy||isBusy(task.threadId)){busy++;return task;}
       switched.push(task.threadId);if(task.limitFailover)endedFailovers.push(task.limitFailover);
       const {modelSelection:_modelSelection,effortSent:_effortSent,limitFailover:_limitFailover,...rest}=task;
-      const next={...rest,resumeCursors:{}};changed.set(task,next);return next;
+      const next={...rest,resumeCursors:{},resumeSeals:undefined};changed.set(task,next);return next;
     });
     if(!switched.length)return {switched,busy,endedFailovers};
     const mirrors=switched.includes(bot.threadId)?{resumeCursors:{}}:{};

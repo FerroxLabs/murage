@@ -227,6 +227,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
             seen.add(task.threadId); claim(task.threadId);
             const copy = { ...task, autoApprove: false, alwaysAllow: [], resumeCursors: {} };
             delete (copy as RecordValue).lastInstanceId;
+            delete (copy as RecordValue).resumeSeals;
             // The bot's own working folder for this conversation names the old installation's data directory: the next turn pins this one's.
             const deskPath = (task as RecordValue).cwd;
             if (path === "bots.json" && typeof deskPath === "string" && isManagedDesk(deskPath, String(value.id), String(task.threadId))) delete (copy as RecordValue).cwd;
