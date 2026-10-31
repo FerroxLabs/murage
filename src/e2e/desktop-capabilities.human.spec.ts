@@ -358,7 +358,7 @@ test("engine enablement requires confirmation, stays pending, then reflects veri
   release();
   await expect(page.getByRole("status")).toHaveText("Engine enabled.");
   await expect(page.getByRole("button", { name: "Disable", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Set CLI…", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose location…", exact: true })).toHaveCount(0);
   expect(writes).toBe(1);
   await page.screenshot({ path: testInfo.outputPath("engine-enabled.png") });
 });
@@ -388,7 +388,7 @@ test("engine settings stay usable when the Claude account list cannot be read", 
 test("remote Plugins omits the unavailable MCP tab", async ({ page }) => {
   await mount(page, "plugins");
   await expect(page.getByRole("dialog", { name: "Connected apps", exact: true })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "MCP servers" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Connected tools" })).toHaveCount(0);
 });
 
 test("remote profile is readable and does not submit a configuration write", async ({ page }) => {
@@ -465,8 +465,8 @@ test("confirmed desktop retains persistent approvals, MCP and routine editing", 
   await page.getByRole("button", { name: "Always allow any git command", exact: true }).click();
   expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest').alwaysAllow")).toEqual({ botId: "bot-a", key: "Bash:git" });
   await mount(page, "plugins", true);
-  await page.getByRole("tab", { name: "MCP servers" }).click();
-  await expect(page.getByRole("tab", { name: "MCP servers" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Connected tools" }).click();
+  await expect(page.getByRole("tab", { name: "Connected tools" })).toHaveAttribute("aria-selected", "true");
   await mount(page, "calendar", true);
   // The sidebar's Create below lg is the floating "New routine" button.
   await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ })).toBeVisible();

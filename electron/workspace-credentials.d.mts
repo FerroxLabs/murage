@@ -16,3 +16,8 @@ export function migrateWorkspaceCredentials(
   credentialsChanged: boolean;
 };
 export function workspaceCredentialEnv(credentials: Record<string, string>): Record<string, string>;
+export function desktopFluxEnvironment(
+  baseEnv: Record<string, string | undefined>,
+  credentials: Record<string, string> | undefined,
+  platform?: NodeJS.Platform,
+): Record<string, string | undefined>;
