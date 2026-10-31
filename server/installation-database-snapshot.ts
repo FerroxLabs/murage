@@ -172,7 +172,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // bot calls (server/bot-calls-schema.ts), new in 1.0.9; an older archive lacks them. The owed trigger on messages is created with them.
   bot_call_rules: { required: false, optional: [] },
   bot_calls: { required: false, optional: [] },
-  bot_call_sessions: { required: false, optional: [] },
+  // principal appended by ALTER (the authenticated device a call channel ticket is bound to)
+  bot_call_sessions: { required: false, optional: ["principal"] },
   bot_call_owed: { required: false, optional: [] },
   bot_call_watch_threads: { required: false, optional: [] },
   bot_call_settings: { required: false, optional: [] },

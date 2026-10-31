@@ -25,6 +25,9 @@ export interface EngineFence {
   /** Told of a refusal before it is thrown: the fence runs ahead of the caller's own beforeSubmit, so the turn's submission boundary (which
    * proves "nothing was written, safe to rebuild once") would otherwise never hear that this write was refused. */
   readonly onRefused?: (error: unknown) => void;
+  /** Told right before the adapter is called (index.ts sendProjectUsageTurn): from here the engine may act before its first write, so the
+   * turn's submission boundary marks the attempt started. A throw before this point, in Murage's own prompt build, sent nothing (1.0.10 C1). */
+  readonly invoked?: () => void;
 }
 
 /** The error a refused fence throws (the adapter writes nothing). */

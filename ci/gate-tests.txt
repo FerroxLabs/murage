@@ -104,7 +104,9 @@ scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (
 scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
 scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under the power block on Ubuntu 23.10 and later
+scripts/cloudflared-pins.test.mjs	all	packaging, upgrade and release integrity
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
+server/capability-facts.test.ts	all	a bot with no help tool (OpenClaw, a tool-less or draft-only chat) answers a product question from the checked facts, platforms and limits included
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
 server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
@@ -594,10 +596,14 @@ server/drivers/acp/fuigo-write-readable.test.ts	all	plain file writes from Fuigo
 server/drivers/acp/fuigo.test.ts	all	Fuigo engine turn behaviour
 server/drivers/acp/gemini-qwen-isolation.test.ts	all	Gemini personal setup isolated per bot
 server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands and writes files with no approval card
+server/drivers/acp/grok-full-access.test.ts	linux+mac	Grok at Full access launched with bypassPermissions, so no call reached the guard, or left a standing allow-always grant
+server/drivers/acp/grok-setmodel.test.ts	all	a fresh grok process pins the chosen model once its model list loads, or fails with a next step
 server/drivers/acp/grok-isolation.test.ts	all	Grok personal plugins and compat closed
 server/drivers/acp/grok-own-tools.test.ts	all	Murage own tools on Grok Build never hold an approval card at Auto or Full access
 server/drivers/acp/grok-provider.test.ts	all	Grok provider identity and history replay
 server/drivers/acp/grok-steer.test.ts	all	a message sent mid-reply reaches Grok once, or is queued
+server/drivers/acp/hermes-ask-normal.test.ts	all	A Hermes shell command a bot asks to run is judged by its real, whole command (not a placeholder)
+server/drivers/acp/grok-deny-continues.test.ts	all	a denied or unanswered Grok card never ends the turn as the owner's Stop
 server/drivers/acp/hermes-own-tools.test.ts	linux+mac	Hermes runs Murage's own unasked tools with no card; a look-alike server still asks
 server/drivers/acp/hermes.test.ts	all	routeAsks overrides skip-all permissions; bearer token private; upgrade pin
 server/drivers/acp/hook-isolation-106.test.ts	all	a Fuigo or Grok bot turn or reflection on Windows runs the owner's personal hooks or plugins
@@ -644,6 +650,7 @@ server/drivers/codex.test.ts	all	Codex engine turn behaviour
 server/drivers/engine-stderr-capture.test.ts	all	secrets in engine output never reach the owner (credentials)
 server/drivers/flux-header-matrix.test.ts	all	Flux headers identity, user headers never ride
 server/drivers/flux-memory-at-send.test.ts	all	memory kill switch honoured at every send
+server/drivers/flux-usage-openai-chat.test.ts	all	Flux usage tags on every request and the model Flux answered with
 server/drivers/grok.test.ts	all	Grok turn, redirect into Flux never followed
 server/drivers/headless-browser-proxy.test.ts	all	headless MCP refuses human-held authority
 server/drivers/headless-claude-env.test.ts	all	the reflection Claude child losing the Flux privacy headers its route set (credentials and headers)
@@ -736,6 +743,7 @@ server/flux-key-shape.test.ts	all	only valid Flux keys handed out
 server/flux-memory-direct-calls.test.ts	all	Direct Flux calls send memory off
 server/flux-memory-envelope.test.ts	all	openai-chat Flux turns keep Murage recall and send no envelope Flux ignores
 server/flux-memory-headers.test.ts	all	Who gets which Flux memory headers
+server/flux-usage-tags.test.ts	all	Flux usage tags well formed on every path; no malformed or content-bearing value sent
 server/flux-routing.test.ts	all	Flux surface mapping denies by default
 server/folder-trust-api.test.ts	all	folder trust card before engine starts
 server/folder-trust.test.ts	all	Untrusted folder markers raise trust card
@@ -1093,10 +1101,12 @@ server/openai-compat-endpoint-switch.test.ts	all	Replacement key never reaches p
 server/openclaw-delegation.test.ts	all	delegate to OpenClaw teammate reply folds back
 server/output-destination.test.ts	all	task output reaches correct room or desk
 server/output-publication.test.ts	all	Reports from turns published verified
+server/own-file-reads.test.ts	all	unattended routine run stalls asking to read its own SOUL.md or skills
 server/own-tool-results-wiring.test.ts	all	engine reading own tool result still asks otherwise
 server/own-workspace-approval-wiring.test.ts	linux+mac	bot's own bookkeeping edits answered correctly
 server/own-workspace-approval.test.ts	all	Paths approved from structured args only
 server/owner-audience.test.ts	all	owner audience predicate for privacy
+server/owner-card-closers-wiring.test.ts	all	Stop closes every peer, consent, image and publish card as Not answered
 server/owner-sends-turn-id.test.ts	all	steer turn stamped; uncertain steer recovered
 server/package-export-bundle.test.ts	all	withholds contents when a supporting file has a secret
 server/package-export-files.test.ts	all	Export refuses unsafe file selections
@@ -1274,10 +1284,12 @@ server/route-policy-api.test.ts	all	unproven callers refused on desktop routes
 server/route-policy.test.ts	all	Every cloud write has reviewed policy
 server/routes/phones.test.ts	all	credentials, pairing and access control
 server/routine-approval-hold-api.test.ts	linux+mac	routine approval card stays open and answerable
+server/grok-deny-unanswered-api.test.ts	linux+mac	an unanswered card reads Not answered and never says Stopped by you
 server/routine-authority.test.ts	all	routine authority levels
 server/routine-brief-approval-diagnosis.test.ts	all	scheduled routine approvals not unattended
 server/routine-carry.test.ts	all	routine run carries the last report
 server/routine-carveout-record.test.ts	all	Passwords never stored in carveout records
+server/routine-delivery.test.ts	all	a routine's result, files and failures reach the chat it was made in, exactly once across restarts
 server/routine-due-at-boot.e2e.test.ts	all	due routine runs after boot
 server/routine-event-admission.test.ts	all	webhook run admission durable
 server/routine-event-budget.test.ts	all	event action budget survives restart
@@ -1450,6 +1462,8 @@ server/workspace-files-write.test.ts	all	workspace file read/write safety checks
 server/workspace-files.test.ts	all	workspace root resolution path safety
 server/workspace-revision.test.ts	all	same-tick rewrite never overwrites file
 server/workspace.test.ts	all	Workspace file access boundaries
+shared/capability-db.test.ts	all	the capability records the concierge, docs and site read are valid, fresh and point at settings paths the app really shows
+shared/help-capabilities.test.ts	all	the help names every tool, Settings page and place the code has, so a bot never invents a setting
 shared/phone-ai-provider.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-ask-contract.test.ts	all	security boundary or path/file access
@@ -1529,7 +1543,9 @@ src/components/first-run-settled.test.ts	all	first run card settled state from s
 src/components/routine-grant-82.test.ts	all	grant card describes operations in plain words
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
 src/components/settings-search-keeps-page.test.ts	all	a Settings search throws away an unsaved skill draft, or Tab leaves the Settings dialog through the hidden page
+src/components/settings-stubs.test.ts	all	a Settings card or bot section for a feature that is off renders nothing, so the owner cannot find it or learn how to turn it on
 src/components/widget/WidgetMessage.test.ts	all	a bot widget draws its form, sends what the owner filled and folds once answered
+src/lib/activity-runs.test.ts	all	Worked for counts the turn, not the gap back to an older message
 src/lib/all-chats.test.ts	all	All chats asks, pages, groups and matches messages correctly, at any scale
 src/lib/analytics.test.ts	all	analytics opt-in/out honoured (privacy)
 src/lib/approval-detail.test.ts	all	approval shows true path and command being approved
@@ -1572,6 +1588,7 @@ src/lib/live-events.test.ts	all	live events replay delivers without dropping
 src/lib/local-vm-viewer.test.ts	all	is removed from the status a page keeps
 src/lib/markdown-drafts.test.ts	all	markdown drafts bounds and persistence
 src/lib/markdown-fidelity.test.ts	all	Markdown corpus bytes preserved on open
+src/lib/served-model.test.ts	all	answered-by line only when Flux served another model
 src/lib/mcp-add-flow.test.ts	all	never saves secrets when the entry was refused (secrets)
 src/lib/media-resolve.test.ts	all	only files inside conversation root resolve
 src/lib/memory-integrity-feed.test.ts	all	memory health feed shared reader
@@ -1627,8 +1644,10 @@ server/bot-calls-runtime.test.ts	all	call routes are owner-only, a ring is sent 
 server/compound-read-109.test.ts	all	new compound spellings get their existing twin's verdict at every level; other shapes still ask
 server/drain-via.test.ts	all	via rows drain alone; a share line never joins an owner turn
 server/drivers/agents-proxy-needs-owner-now.test.ts	all	the needs-owner-now tool is offered only when the harness allows it and never on a proposal turn
+server/email/caps-cache.test.ts	all	a launch or a network failure never hides bot email or turns it off; only a definitive Flux answer changes it
 server/email/dark-lists.test.ts	all	with email off no engine is handed an email tool on a pre-allow list or an ask-free matcher
 server/email/email-api.test.ts	all	bot email stays dark: with the capability probe off nothing mounts, shows or polls, and an email card answers over HTTP only when on
+server/email/flux-answer-codes-1011.test.ts	all	a valid Flux key without email scope, an account state or a Flux outage is never shown as a dead key, and the owner sees what to do for each Flux email answer
 server/email/key-health.test.ts	all	a revoked email key unmounts the tools and Reconnect rotates it; a pause is never read as a key problem
 server/email/memory-origin.test.ts	all	a memory a bot saves after reading outside mail is held for the owner and stays fenced in later turns
 server/email/owner-routes.test.ts	all	a bot or engine credential never reaches an email owner route; phone acts need a fresh device proof
@@ -1670,3 +1689,18 @@ server/reload-retain.test.ts	all	engine reload keeps a folder lease while an eng
 server/memory/memindex-busy-109.test.ts	all	a backup or reader holding the memory index during start-up no longer gets a healthy index set aside, and a set-aside copy holding deleted conversations' words is removed once the new index is open
 server/nolimits-cards-1010.test.ts	all	No limits bots stop raising cards on the owner's own routines and DMs; the never-list, key guard and Full access stop line still card
 server/composio-retry-1010.test.ts	all	connected apps survive a jittery link: the probe and a never-sent call retry, a maybe-sent call is never repeated
+server/browser-extension-setup.test.ts	all	after a Chrome extension reinstall, Continue never rebinds the profile by itself
+src/components/BrowserExtensionPanel.test.ts	all	after a Chrome extension reinstall, the owner can pick the new browser profile
+src/components/chat-obsidian-links.test.ts	all	an obsidian:// note link in a reply opens the note instead of rendering dead
+server/drivers/codex-early-tool-warning.test.ts	all	a Codex turn that failed to start after a tool began says the action may have run
+server/drivers/pi-usage-rounds.test.ts	all	a Pi turn that ran a tool reports every round's tokens, not only the last
+server/drivers/acp/grok-same-model.test.ts	all	Grok keeps its tools when the conversation already runs the picked model
+server/routines-stop-fence.test.ts	all	no routine starts into a shutdown, restore or Cloud home pause; its run waits for the next start
+server/container-browser-locks.test.ts	linux+mac	the bot desktop browser keeps running when only its Cua driver restarts
+server/drivers/openai-chat-gemini-calls.test.ts	all	Gemini (OpenAI-compatible) tool calls run instead of failing every tool turn
+server/drivers/claude-sleep-deadline.test.ts	linux+mac	Claude question card not timed out because the laptop slept; permission card waits
+server/longwork-c1-window-api.test.ts	linux+mac	turn refused before the engine call is rebuilt, never "Context changed"
+server/longwork-sleep-api.test.ts	linux+mac	permission card not denied at wake after a sleep, nor later
+server/sleep-clock.test.ts	all	sleep not counted as silence or toward a card deadline
+server/drivers/acp/issue-perms-1010.test.ts	all	ISSUE-PERMS-1010: a Full access routine applies Fuigo codex apply_patch edits and runs commands after a slow environment check with no card; key files, the stop line and unreadable patches still wait
+server/stop-line-bypass-corpus.test.ts	linux	ISSUE-PERMS-1010: every reviewer bypass form keeps its card, and nothing shipped 1.0.9 held is let through
