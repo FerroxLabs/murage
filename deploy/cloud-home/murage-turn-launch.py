@@ -2226,13 +2226,18 @@ def validate_request(request, manifest_path=ENGINE_MANIFEST, manifest_uid=0, eng
         raise ValueError("Invalid cloud engine environment")
     scratch = scratch_paths(engine, home, request.get("scratch", []))
     render = validate_render(engine, request.get("render"), render_unit_hex(request), login, manifest_path, manifest_uid, cache_root)
+    if render["fuigoTrusted"] or render["fuigoDeclined"]:
+        # R4: only a home made for this turn is seeded, and the engine home is never a key.
+        if not scratch:
+            raise Refusal("Cloud turn seeds a Fuigo home it did not create")
+        if home in render["fuigoTrusted"] or home in render["fuigoDeclined"]:
+            raise Refusal("Cloud turn render seeds the engine home")
     # The argv grammar runs on the request's tokens; placeholders become the paths of
     # the files rendered for this turn.
     args = check_argv(engine, args, render, login)
     if engine == "fuigoAgent":
-        # Every Fuigo shell command asks Murage on every spawn, Full access included (fuigo_config_text): the
-        # driver always runs `--permission-mode default`, and the server answers a Full access turn's asks itself.
-        render["bashAsk"] = True
+        # Every Fuigo shell command asks Murage, on every spawn but Full access (fuigo_config_text).
+        render["bashAsk"] = not fuigo_full_access(args)
     # A probe (--version, auth status) runs outside any bot: without a bot it stages and
     # collects nothing. Every other non-login turn names its bot (r5 R5.2).
     if bot is None and not login and args not in [list(probe) for probe in ARGV_PROBES.get(engine, ())]:
@@ -2323,7 +2328,7 @@ BROKER_DIR = "/data/broker"
 # The turn's private render directory: the two plain or per-turn files that are not
 # config in the engine home (Claude's --mcp-config file and system prompt) live in the
 # turn's own /tmp tmpfs at a launcher-composed path, so nothing outlives the turn.
-RENDER_PATTERN = re.compile(r"^/tmp/murage-render-[0-9a-f]{16}/(mcp\.json|prompt\.txt)$")
+RENDER_PATTERN = re.compile(r"^/tmp/murage-render-[0-9a-f]{16}/(mcp\.json|prompt\.txt|trusted_folders\.seed)$")
 SCRATCH_PATTERN = re.compile(r"^native/provider-turns/(hermesAgent|fuigoAgent)-[A-Za-z0-9]{6,32}$")
 def scratch_paths(engine, home, scratch):
     # Per-turn routed homes are fresh tmpfs mounts inside the namespace, so the
@@ -2685,7 +2690,7 @@ RENDER_PARTS = {
     "grokAgent": frozenset(),
     "kimiAgent": frozenset(),
     "opencodeGo": frozenset({"route"}),
-    "fuigoAgent": frozenset({"route", "memoryTools"}),
+    "fuigoAgent": frozenset({"route", "memoryTools", "fuigoTrustedFolders", "fuigoDeclinedFolders"}),
 }
 ROUTE_KEYS = frozenset({"provider", "baseUrl", "model", "apiKey", "protocol", "contextSize", "label", "models", "headers"})
 STANZA_KEYS = frozenset({"proxy", "socket", "server", "url", "env", "ask"})
@@ -2762,6 +2767,57 @@ def validate_route(engine, route):
             raise Refusal("Cloud turn render route models are not allowed")
         out["models"] = list(models)
     return out
+
+# FUIGO-TRUST-V2 R4: the seeds of a routed Fuigo turn. The core applied the path-of-cwd and
+# skipped-decline rules before rendering and counted these declines as written, so a path
+# this launcher would drop ends the turn before Fuigo starts (d4.1), never a thinner store.
+FUIGO_SEED_MAX_PATHS = 1024
+FUIGO_SEED_MAX_PATH_BYTES = 4096
+FUIGO_TRUST_FILE = "trusted_folders.toml"
+FUIGO_SEED_FILE = "trusted_folders.seed"
+FUIGO_SEED_BAD_CHAR = re.compile(r"[\x00-\x1f\x7f]")
+
+def fuigo_seed_paths(paths, what):
+    if not isinstance(paths, list) or not paths or len(paths) > FUIGO_SEED_MAX_PATHS or len(set(map(repr, paths))) != len(paths):
+        raise Refusal("Cloud turn render " + what + " is not allowed")
+    for path in paths:
+        try:
+            size = len(path.encode("utf-8")) if isinstance(path, str) else None
+        except UnicodeEncodeError:
+            size = None
+        if size is None or size > FUIGO_SEED_MAX_PATH_BYTES or FUIGO_SEED_BAD_CHAR.search(path) is not None \
+                or not path.startswith("/") or path.startswith("//") or os.path.normpath(path) != path or path == "/":
+            raise Refusal("Cloud turn render " + what + " holds a path that is not allowed")
+    return list(paths)
+
+def fuigo_seed_text(render):
+    """One table per path, as Fuigo's own store writes them. Raw UTF-8: a validated path is a
+    valid TOML basic string, and a surrogate-pair escape would not be."""
+    table = lambda path, trusted: "[folders.%s]\ntrusted = %s\nconsent = 2\n" % (json.dumps(path, ensure_ascii=False), trusted)
+    return "\n".join([table(path, "false") for path in render["fuigoDeclined"]] + [table(path, "true") for path in render["fuigoTrusted"]])
+
+def write_fuigo_seed(source, home):
+    """Runs as the turn user inside the namespace, the only place the turn's tmpfs Fuigo home
+    exists. Any failure raises, so the turn fails before Fuigo starts and no partial store is left."""
+    target = home + "/" + FUIGO_TRUST_FILE
+    if os.path.lexists(target):
+        raise ValueError("Cloud Fuigo home already holds a trust file")
+    with open(source, "rb") as stream:
+        data = stream.read()
+    temp = target + "." + secrets.token_hex(8) + ".tmp"
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, target)
+    except BaseException:
+        try:
+            os.unlink(temp)
+        except FileNotFoundError:
+            pass
+        raise
 
 def validate_mcp(engine, mcp):
     if not isinstance(mcp, dict):
@@ -2853,7 +2909,7 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
     """The request's `render` (design 2.3), validated as a whole before any filesystem
     work. Returns the launcher's own copy; any unknown key, wrong type or value outside
     its shape refuses the turn."""
-    out = {"engine": engine, "unit": unit, "login": bool(login), "route": None, "mcp": {}, "systemPrompt": None, "memoryTools": False, "resume": None, "codexPolicy": None}
+    out = {"engine": engine, "unit": unit, "login": bool(login), "route": None, "mcp": {}, "systemPrompt": None, "memoryTools": False, "resume": None, "codexPolicy": None, "fuigoTrusted": [], "fuigoDeclined": []}
     if render is None:
         return out
     if login:
@@ -2873,7 +2929,7 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
         return out
     for key in render:
         if key not in parts:
-            raise Refusal("Cloud turn render part is not allowed: " + key if key in {"route", "mcp", "systemPrompt", "memoryTools", "resume", "codexPolicy"} else "Cloud turn render has an unknown key")
+            raise Refusal("Cloud turn render part is not allowed: " + key if key in {"route", "mcp", "systemPrompt", "memoryTools", "resume", "codexPolicy", "fuigoTrustedFolders", "fuigoDeclinedFolders"} else "Cloud turn render has an unknown key")
     if "route" in render:
         out["route"] = validate_route(engine, render["route"])
     if "mcp" in render:
@@ -2906,6 +2962,12 @@ def validate_render(engine, render, unit, login=False, manifest_path=ENGINE_MANI
         out["codexPolicy"] = {"approval": policy["approval"], "sandbox": policy["sandbox"]}
     if out["resume"] is not None and out["codexPolicy"] is None:
         raise Refusal("Cloud turn names no Codex policy")
+    if "fuigoTrustedFolders" in render:
+        out["fuigoTrusted"] = fuigo_seed_paths(render["fuigoTrustedFolders"], "fuigoTrustedFolders")
+    if "fuigoDeclinedFolders" in render:
+        out["fuigoDeclined"] = fuigo_seed_paths(render["fuigoDeclinedFolders"], "fuigoDeclinedFolders")
+    if set(out["fuigoTrusted"]) & set(out["fuigoDeclined"]):
+        raise Refusal("Cloud turn render seeds one path twice")
     return out
 
 def merged_proxy_env(render):
@@ -3065,6 +3127,10 @@ def codex_config_text(render):
         text += "tool_timeout_sec = " + str(CODEX_MCP_TOOL_TIMEOUT_SEC) + "\n"
         text += ("startup_timeout_sec = " + str(CODEX_CUSTOM_MCP_STARTUP_TIMEOUT_SEC) + "\n") if stanza["ask"] else "default_tools_approval_mode = \"auto\"\n"
     return text
+
+def fuigo_full_access(args):
+    """Full access is exactly `--permission-mode bypassPermissions` (the owner's own choice); anything else asks."""
+    return any(arg == "--permission-mode" and args[i + 1:i + 2] == ["bypassPermissions"] for i, arg in enumerate(args))
 
 def fuigo_config_text(render):
     text = "[cli]\nuse_leader = false\n" + FUIGO_PINS
@@ -3476,9 +3542,7 @@ class ArgvRule:
     def __init__(self, flags, required=(), repeat=(), literals=(), tail=(), first=None):
         self.flags, self.required, self.repeat, self.literals, self.tail, self.first = dict(flags), tuple(required), frozenset(repeat), tuple(literals), tuple(tail), first
 
-# Grok and Fuigo run `--permission-mode default` at every level (grok.ts, fuigo.ts spawnArgs): under
-# bypassPermissions the engine never asks, so Murage's guard would never see a call. Nothing else is accepted.
-PERMISSION_MODES = one_of("default")
+PERMISSION_MODES = one_of("default", "bypassPermissions")
 
 # grok.ts grokPluginStub: <tmpdir>/murage-grok-isolation-<6 mkdtemp chars>/<plugin name>, the name being
 # PLUGIN_NAME there. Anchored, no "..", one level under the stub directory. Only Grok 1.0.50+ with a personal
@@ -4676,7 +4740,16 @@ def turn_mount_args(engine, mounts, home, cwd, command, args, render=None, scrat
     # Exactly one nameserver line, no search line (no suffix expansion).
     blobs["resolv"] = "nameserver " + PASTA_DNS + "\n"
     argv += ["--ro-bind-data", FD_TOKEN + "resolv", "/etc/resolv.conf"]
-    argv += ["--chdir", cwd, "--", "/usr/bin/python3", "-I", "/usr/local/libexec/murage-turn-launch", "--child", command] + args
+    entry = ["--child", command]
+    if engine == "fuigoAgent" and (render["fuigoTrusted"] or render["fuigoDeclined"]):
+        # R4: Fuigo must keep writing its own store, so a read-only bind cannot be the store.
+        # This is validated paths, not a config: --child-fuigo-seed writes the real file
+        # inside the namespace, the only place the turn's tmpfs home exists.
+        seed = render_dir(render) + "/" + FUIGO_SEED_FILE
+        blobs["fuigoseed"] = fuigo_seed_text(render)
+        argv += ["--dir", os.path.dirname(seed), "--perms", "0600", "--ro-bind-data", FD_TOKEN + "fuigoseed", seed]
+        entry = ["--child-fuigo-seed", seed, fuigo_home(home, scratch), command]
+    argv += ["--chdir", cwd, "--", "/usr/bin/python3", "-I", "/usr/local/libexec/murage-turn-launch"] + entry + args
     return argv, blobs
 
 # Known credential stores used by the offered home engines. Config, history,
@@ -5976,9 +6049,13 @@ def main():
         os.execve(BROWSER_BINARY, [BROWSER_BINARY] + args, os.environ)
     if len(sys.argv) == 3 and sys.argv[1] == "--pasta-child":
         pasta_child(sys.argv[2])
-    if len(sys.argv) >= 3 and sys.argv[1] == "--child":
+    seeding = len(sys.argv) >= 5 and sys.argv[1] == "--child-fuigo-seed"
+    if seeding or (len(sys.argv) >= 3 and sys.argv[1] == "--child"):
         if os.getuid() != pwd.getpwnam("murage-turn").pw_uid or os.geteuid() == 0:
             raise ValueError("Cloud child requires the turn user")
+        if seeding:
+            write_fuigo_seed(sys.argv[2], sys.argv[3])
+            del sys.argv[1:3]
         # bwrap retains inherited descriptors. Close the pinned host-directory
         # handles before untrusted code can use openat(fd, "../other-engine").
         maximum = resource.getrlimit(resource.RLIMIT_NOFILE)[1]

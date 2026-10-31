@@ -69,7 +69,9 @@ export interface CloudTurnRoute { provider: string; baseUrl: string; model: stri
   /** Flux Memory headers the launcher renders as the Codex provider table's http_headers. */ headers?: Record<string, string> }
 /** `resume`: the Codex thread id a fresh process will `thread/resume`, so the launcher stages that one
  * rollout file into the turn's home (its state allowlist) and no other session. */
-export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy }
+export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy;
+  /** R4 on a routed Fuigo turn: the seeds for its tmpfs home, after the core's path-of-cwd and skipped-decline rules. */
+  fuigoTrustedFolders?: string[]; fuigoDeclinedFolders?: string[] }
 /** The approval policy and sandbox a resumed Codex thread must run under. The launcher renders
  * them as the effective policy (REQUIRED whenever `resume` is set), because a resumed thread
  * otherwise keeps whatever policy the stored rollout started with. */

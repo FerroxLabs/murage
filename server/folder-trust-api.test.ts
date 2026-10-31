@@ -509,6 +509,10 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
       expect((await status(project, native.id)).body).toMatchObject({ upstreamTrusted: true, upstreamStore: "own", engineGates: true, instanceId: "fuigo", refused: null });
       // provider-routed: a temporary home, the user's store does not apply
       expect((await status(project, routed.id)).body).toMatchObject({ upstreamTrusted: false, upstreamStore: "temporary", engineGates: true, instanceId: "fuigo", refused: null, record: { decision: "trust", source: "picker" } });
+      // ...so it has no trust file for Settings to name (N11 19), even with a "no" in the user's store
+      writeFileSync(join(home, ".fuigo", "trusted_folders.toml"), `${readFileSync(join(home, ".fuigo", "trusted_folders.toml"), "utf8")}[folders."/stored/no"]\ntrusted = false\n`);
+      expect((await status(project, native.id)).body).toMatchObject({ upstreamDeclines: ["/stored/no"], upstreamTrustFile: join(home, ".fuigo", "trusted_folders.toml") });
+      expect((await status(project, routed.id)).body).toMatchObject({ upstreamTrustFile: null, upstreamDeclines: [], upstreamUnreadable: false });
       // a cloud run borrows the Box runner, which gates no folder — and is
       // never provider-routed, so the disabled connection below does not
       // refuse it either

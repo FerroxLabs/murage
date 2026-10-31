@@ -12,6 +12,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { FolderTrustRow } from "./FolderTrustRow";
+import { folderTrustLabel, folderTrustNotice } from "@/lib/folder-trust";
+import { folderTrustPassedName } from "../../shared/folder-trust";
 import { FolderTrustNoteView, folderTrustStatusKind, folderTrustStatusLabel, folderTrustVerdicts, type FolderTrustResult, type FolderTrustStatus } from "./FolderTrustNote";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
@@ -162,5 +164,20 @@ describe("undoing a Don't trust (1.0.4)", () => {
     expect(withButton).toContain(">Trust this folder<");
     expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "withheld", sources: "AGENTS.md" }))).not.toContain("Trust this folder");
     expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "late", sources: "AGENTS.md", botId: "b1", threadId: "t1" }))).not.toContain("Trust this folder");
+  });
+});
+
+describe("the chip for a decline passed to Fuigo (S5a, U2)", () => {
+  const key = "/work/main";
+  const U2 = "You chose not to trust /work/main, and Murage passed that answer to Fuigo for this folder. To change it, forget /work/main in this conversation's folder settings.";
+  it("reads U2's text byte for byte in the row and the sidebar, with no Trust button", () => {
+    const notice = folderTrustNotice(folderTrustPassedName(key))!;
+    const html = renderToStaticMarkup(createElement(FolderTrustRow, { kind: notice.kind, sources: notice.sources, forgetKey: notice.key, botId: "b1", threadId: "t1" }));
+    const text = html.replaceAll("&#x27;", "'");
+    expect(text.replace(/<[^>]*>/gu, "")).toBe(U2);
+    expect(text).toContain(`title="${U2}"`);
+    expect(html).not.toContain("Trust this folder");
+    expect(html).not.toContain("folder-trust-row-trust");
+    expect(folderTrustLabel(folderTrustPassedName(key))).toBe(U2);
   });
 });

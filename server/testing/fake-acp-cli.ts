@@ -70,7 +70,23 @@
 //                     although Murage's own reader may have accepted it.
 //                     With FAKE_ACP_TRUST_FAIL_PROMPT=1 the prompt FAILS
 //                     with a JSON-RPC error while its trust request is
-//                     still open — a turn that fails under a late card)
+//                     still open — a turn that fails under a late card.
+//                     FAKE_ACP_TRUST_V=2 is the 1.0.35 protocol: it asks only a
+//                     client that advertised `v2`, whenever its store has no
+//                     consent-2 trust and no stored decline at the key; the
+//                     request carries `workspace`, `scope` and `reason` ("new",
+//                     or "upgrade" for an unstamped trust); a grant persists
+//                     consent 2 for exactly that key; a reject is not saved and
+//                     silences that key for the rest of this process. Without
+//                     FAKE_ACP_VERSION it reports a version on the matching side
+//                     of 1.0.35, so an unset V is generation 1.
+//                     FAKE_ACP_TRUST_WORKSPACE names any key for any cwd (default
+//                     the cwd). FAKE_ACP_TRUST_DISABLED=1 is Fuigo's trust switch
+//                     off: trusted, no request. FAKE_ACP_TRUST_KINDS is a comma
+//                     list of configKinds (default instructions; empty for none).
+//                     FAKE_ACP_TRUST_SCOPE replaces `scope` ("none" leaves it out,
+//                     the request a 1.0.34 engine sends). FAKE_ACP_TRUST_LOG gets
+//                     one JSON line per request and per raw reply.)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -147,31 +163,9 @@
 //                        "LATE FRAME FROM THE EARLIER SESSION") and a
 //                        session/request_permission (id 9300) naming it; the
 //                        client's reply is appended to FAKE_ACP_LATE_REPLY_LOG
-//   FAKE_ACP_BARE_REJECT_CANCELS=1  Grok Build / Fuigo's rule: a permission
-//                        answered with a reject option and no
-//                        `_meta.followup_message` ends the prompt with
-//                        stopReason "cancelled"; with the follow-up note the
-//                        prompt answers "FOLLOWUP: <note>" and finishes
-//                        end_turn (the tool stays unexecuted).
-//                        =always: every reject ends the prompt "cancelled",
-//                        note or not (an engine that ignores the note)
 //   FAKE_ACP_REJECT_LIVE_LOAD  refuse session/load of a session that is
 //                        already live in this process (an engine that cannot
 //                        re-establish a resident session)
-//   FAKE_ACP_GROK_MODELS_CACHE=1  grok's model surface: advertise the bundled grok-4.6, grok-4.5 (current
-//                        grok-4.6) plus the ids of $GROK_HOME/models_cache.json (`models` as an array of {id}
-//                        or keyed by id), and answer session/set_model for an id not advertised with -32602
-//   FAKE_ACP_GROK_CATALOG_GATE=<file>  with FAKE_ACP_GROK_CATALOG_IDS, announce once this file exists (instead of the n ms below)
-//   FAKE_ACP_GROK_CATALOG_MS=<n> + FAKE_ACP_GROK_CATALOG_IDS=a,b  n ms after session/new, write those ids
-//                        into $GROK_HOME/models_cache.json, advertise them, and send `_x.ai/models/update`
-//                        (grok's background catalog fetch landing). Unset: never
-//   FAKE_ACP_SET_MODEL_STALL=1  never answer session/set_model (the request-timeout case)
-//   FAKE_ACP_SET_MODEL_DELAY_MS=<n>  with the grok surface, refuse the FIRST set_model (-32602) after n ms
-//   FAKE_ACP_SET_MODEL_GATE=<file>  hold the answer to the first session/set_model until this file exists
-//   FAKE_ACP_SET_MODEL_GATE_ANSWER=ok|refuse  that answer: accepted (default), or refused (-32602)
-//   FAKE_ACP_SESSION_NEW_REFUSE_GATE=<file>  hold session/new until this file exists, then fail it (-32000)
-//   FAKE_ACP_SET_MODE_REFUSE=1  session/set_mode answers -32601 while set_model works
-//   Every session/set_model attempt, refused ones included, is listed in $FAKE_ACP_DUMP.setmodel.json.
 //   FAKE_ACP_MCP_READY=1  announce `_fuigo/mcp_initialized {sessionId}` after
 //                        session/new or session/load hands it servers, and —
 //                        like Fuigo — after a resident load only when the
@@ -260,9 +254,6 @@
 //   FAKE_ACP_MODE=cancel-other-reason  hold session/prompt open like cancel-ack,
 //                        but answer session/cancel by RESOLVING the prompt with
 //                        a stop reason that is not "cancelled" ("refusal")
-//   FAKE_ACP_MODE=cancel-end-turn  hold session/prompt open with nothing sent
-//                        (no reply, image or tool), then answer session/cancel by
-//                        RESOLVING the prompt with end_turn, as OpenCode does
 //   FAKE_ACP_MODE=stderr-rpc-error|stderr-happy  write more than 8 KiB of stderr
 //                        (ANSI styling, a key-shaped canary, a known last line),
 //                        then fail session/prompt with -32603 or complete it
@@ -276,7 +267,7 @@
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -328,24 +319,8 @@ const acpModels = (process.env.FAKE_ACP_SESSION_MODELS ?? "")
     const [modelId, name] = entry.split("|");
     return name ? { modelId, name } : { modelId };
   });
-// grok-shaped surface (FAKE_ACP_GROK_MODELS_CACHE=1): the bundled list plus every id of $GROK_HOME/models_cache.json,
-// the way grok offers the fetched catalog only once its cache exists; plus the ids a late catalog announced.
-const grokLateIds: string[] = [];
-const grokCacheModels = (): string[] => {
-  try {
-    const cache = JSON.parse(readFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), "utf8")) as { models?: unknown };
-    const models = cache.models;
-    if (Array.isArray(models)) return models.map((m) => (m as { id?: unknown })?.id).filter((id): id is string => typeof id === "string");
-    return models && typeof models === "object" ? Object.keys(models) : [];
-  } catch { return []; }
-};
-const grokAdvertised = (): string[] => [...new Set([...grokCacheModels(), ...grokLateIds, "grok-4.6", "grok-4.5"])];
-const sessionModels = () => {
-  if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1") return { currentModelId: "grok-4.6", availableModels: grokAdvertised().map((modelId) => ({ modelId })) };
-  return acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
-};
-/** Every session/set_model attempt this run, refused ones included. */
-const setModelAttempts: string[] = [];
+const sessionModels = () =>
+  acpModels.length ? { currentModelId: acpModels[0].modelId, availableModels: acpModels } : null;
 
 const argv = process.argv.slice(2);
 // Explicit assertion fields only, never the inherited environment.
@@ -446,7 +421,7 @@ if (argv.includes("--version")) {
   // FAKE_ACP_VERSION sets the reported version (the default is past every engine's scoped-home floor, so a turn is not rejected as too old); FAKE_ACP_VERSION_LOG counts probes; FAKE_ACP_VERSION_FAIL=1 makes `--version` fail (a working CLI with a broken probe).
   if (process.env.FAKE_ACP_VERSION_LOG) appendFileSync(process.env.FAKE_ACP_VERSION_LOG, "probe\n");
   if (process.env.FAKE_ACP_VERSION_FAIL === "1") process.exit(1);
-  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? "fake-acp 1.0.62");
+  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? (mode === "folder-trust" && process.env.FAKE_ACP_TRUST_V !== "2" ? "fake-acp 1.0.32" : "fake-acp 1.0.62"));
 }
 // Cursor's driver probes `agent status` / `agent models` on the same binary
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
@@ -514,8 +489,6 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
-/** A test's own gate: `then` runs once the file exists. */
-const whenFile = (file: string, then: () => void) => { if (existsSync(file)) then(); else setTimeout(() => whenFile(file, then), 10); };
 // `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
 // answered on its own `_x.ai/` rail). FAKE_ACP_INTERJECT:
 // "fallback" answers queued and echoes it, then runs it as its own
@@ -619,16 +592,63 @@ let pendingPermissionId: number | null = null;
 /** project-propose mode's own permission asks, answered by id. */
 const proposalAsks = new Map<number, (result: any) => void>();
 let onPermissionAnswered: (() => void) | null = null;
-/** FAKE_ACP_BARE_REJECT_CANCELS: the newest permission answer was a reject with no follow-up note. */
-let bareRejectAnswered = false;
-/** FAKE_ACP_BARE_REJECT_CANCELS: the follow-up note a reject carried, which the prompt answers before end_turn. */
-let rejectFollowup: string | null = null;
 /** When the open permission ask was sent (FAKE_ACP_PERMISSION_TIMING_FILE). */
 let permissionAskedAt: number | null = null;
 // folder-trust mode: what the client advertised and whether the folder was
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
 let folderTrustInteractive = false;
+const trustV2 = process.env.FAKE_ACP_TRUST_V === "2";
+let folderTrustClientV2 = false;
+/** Keys a reject silenced: Fuigo keeps these for the life of the process, nowhere else. */
+const trustRejected = new Set<string>();
+/** The raw reply line, for byte-exact assertions. */
+let lastInboundLine = "";
+const trustLog = (entry: Record<string, unknown>) => { if (process.env.FAKE_ACP_TRUST_LOG) appendFileSync(process.env.FAKE_ACP_TRUST_LOG, `${JSON.stringify({ pid: process.pid, ...entry })}\n`); };
+const fuigoHomeDir = () => process.env.FUIGO_HOME || join(process.env.HOME || process.env.USERPROFILE || homedir(), ".fuigo");
+/** The key the engine names: the override, else the canonical cwd. */
+const trustWorkspace = (): string => {
+  if (process.env.FAKE_ACP_TRUST_WORKSPACE) return process.env.FAKE_ACP_TRUST_WORKSPACE;
+  try { return realpathSync.native(process.cwd()); } catch { return process.cwd(); }
+};
+/** The store's table for `key`, read fresh: the file a home holds, seeded or the owner's. */
+const storedTrust = (key: string): { trusted: boolean; consent: number | null } | null => {
+  try {
+    const text = readFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), "utf8");
+    const table = text.indexOf(`[folders.${JSON.stringify(key)}]`);
+    if (table < 0) return null;
+    const body = text.slice(table).split("\n").slice(1).join("\n");
+    const next = body.search(/^\[/m);
+    const own = next < 0 ? body : body.slice(0, next);
+    const consent = /^consent = (\d+)$/m.exec(own);
+    return { trusted: /^trusted = true$/m.test(own), consent: consent ? Number(consent[1]) : null };
+  } catch {
+    return null;
+  }
+};
+/** Store coverage (F5): the deepest record on the cwd's path that shares the key decides
+ * when it is a "no", so a declined subfolder beats a trusted parent with no question. A
+ * strict ancestor of the key shares no key with it. Otherwise the record of the key decides. */
+const trustCoverage = (key: string): { trusted: boolean; consent: number | null } | null => {
+  for (let folder = realpathSync.native(process.cwd()); ; folder = dirname(folder)) {
+    const entry = key.startsWith(`${folder}/`) ? null : storedTrust(folder);
+    if (entry) return entry.trusted ? storedTrust(key) : entry;
+    if (folder === dirname(folder)) return storedTrust(key);
+  }
+};
+/** What the 1.0.35 precedence says for this process's key. */
+const trustVerdict = (): "trusted" | "declined" | "new" | "upgrade" => {
+  if (process.env.FAKE_ACP_TRUST_DISABLED === "1") return "trusted";
+  const entry = trustCoverage(trustWorkspace());
+  if (!entry) return "new";
+  if (!entry.trusted) return "declined";
+  return (entry.consent ?? 0) >= 2 ? "trusted" : "upgrade";
+};
+/** A grant persists consent 2 for exactly the key the client was shown. */
+const persistGrant = (key: string) => {
+  mkdirSync(fuigoHomeDir(), { recursive: true });
+  appendFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), `[folders.${JSON.stringify(key)}]\ntrusted = true\nconsent = 2\ndecided_at = ${Math.floor(Date.now() / 1000)}\n`);
+};
 // the engine's own store (fuigo-workspace/src/trust.rs): an exact match on
 // the workspace key is enough for a fixture — the server's reader mirrors
 // the real cascade. The key is the cwd's git root, collapsed onto the main
@@ -665,7 +685,7 @@ const storeTrustsCwd = (): boolean => {
     return false;
   }
 };
-const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && storeTrustsCwd());
+const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && (trustV2 ? trustVerdict() === "trusted" : storeTrustsCwd()));
 const agentsMdForReply = () => {
   if (!folderTrustedAtBuild) return "withheld";
   try {
@@ -945,6 +965,7 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
+    lastInboundLine = line;
     handle(msg);
   }
 });
@@ -960,6 +981,24 @@ process.stdin.on("data", (c) => {
 // timing-dependent.)
 function afterSessionBuilt() {
   if (mode !== "folder-trust") return;
+  if (trustV2) {
+    const key = trustWorkspace();
+    const verdict = trustVerdict();
+    const asks = (verdict === "new" || verdict === "upgrade") && folderTrustClientV2 && !trustRejected.has(key);
+    let storeText: string | null = null;
+    try { storeText = readFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), "utf8"); } catch { /* no store */ }
+    trustLog({ event: "start", key, verdict, asks, home: fuigoHomeDir(), store: storeText });
+    dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, v2: folderTrustClientV2, verdict, requested: asks };
+    if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+    if (!asks) return;
+    pendingPermissionId = 9006;
+    const scope = process.env.FAKE_ACP_TRUST_SCOPE ?? "configAndCommands";
+    const kinds = process.env.FAKE_ACP_TRUST_KINDS ?? "instructions";
+    const params = { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: key, configKinds: kinds ? kinds.split(",") : [], ...(scope === "none" ? {} : { scope }), reason: verdict };
+    trustLog({ event: "request", params });
+    out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_fuigo/folder_trust/request", params });
+    return;
+  }
   dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
   if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
   if (!folderTrustedAtBuild && folderTrustInteractive) {
@@ -1055,13 +1094,14 @@ function handle(msg: any) {
   // client's response to our permission request
   if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined) && msg.id === pendingPermissionId) {
     pendingPermissionId = null;
-    const chosen = msg.result?.outcome?.optionId;
-    bareRejectAnswered = typeof chosen === "string" && chosen.startsWith("reject")
-      && (process.env.FAKE_ACP_BARE_REJECT_CANCELS === "always" || typeof msg.result?._meta?.followup_message !== "string");
-    rejectFollowup = !bareRejectAnswered && typeof msg.result?._meta?.followup_message === "string" ? msg.result._meta.followup_message : null;
     if (process.env.FAKE_ACP_PERMISSION_TIMING_FILE && permissionAskedAt !== null) {
       appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
       permissionAskedAt = null;
+    }
+    if (trustV2 && msg.id === 9006) {
+      trustLog({ event: "reply", raw: lastInboundLine });
+      if (msg.result?.outcome === "trust" && msg.result?.scope === "configAndCommands") persistGrant(trustWorkspace());
+      else trustRejected.add(trustWorkspace());
     }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
@@ -1105,6 +1145,7 @@ function handle(msg: any) {
       // provider ids, item 175); unset keeps the one cached_token method.
       const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
+      folderTrustClientV2 = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.v2 === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1120,11 +1161,6 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
-      if (process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE) {
-        const id = msg.id;
-        whenFile(process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE, () => out({ jsonrpc: "2.0", id, error: { code: -32000, message: "The session could not start" } }));
-        break;
-      }
       if (mode === "auth-required") {
         out({
           jsonrpc: "2.0",
@@ -1164,20 +1200,6 @@ function handle(msg: any) {
         ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
       });
       announceMcpReady(newSessionId, servers);
-      const catalogMs = Number(process.env.FAKE_ACP_GROK_CATALOG_MS);
-      const catalogGate = process.env.FAKE_ACP_GROK_CATALOG_GATE;
-      if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && (catalogGate || (Number.isFinite(catalogMs) && catalogMs >= 0 && process.env.FAKE_ACP_GROK_CATALOG_MS))) {
-        const ids = (process.env.FAKE_ACP_GROK_CATALOG_IDS ?? "").split(",").filter(Boolean);
-        const announce = () => {
-          grokLateIds.push(...ids);
-          try { writeFileSync(join(process.env.GROK_HOME ?? "", "models_cache.json"), JSON.stringify({ models: Object.fromEntries(ids.map((id) => [id, { id }])) })); } catch { /* the announcement still goes */ }
-          // SYNTHETIC frame: grok 1.0.70 sends `_x.ai/models/update` once its background fetch lands (live, 10-29), but its params
-          // were not captured yet; this is one of the shapes acpModelIdsIn reads. Replace with the captured shape at qualification.
-          out({ jsonrpc: "2.0", method: "_x.ai/models/update", params: { sessionId: newSessionId, models: grokAdvertised().map((id) => ({ id })) } });
-        };
-        if (catalogGate) whenFile(catalogGate, announce);
-        else setTimeout(announce, catalogMs);
-      }
       // Fuigo 1.0.x and Grok Build advertise their "/" commands right after
       // session/new, before any prompt (session_setup.rs
       // send_available_commands_update). JSON array of ACP AvailableCommand.
@@ -1240,31 +1262,6 @@ function handle(msg: any) {
     case "session/set_model": {
       if (mode === "no-session-config") {
         // an older agent that predates these methods
-        return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
-      }
-      if (msg.method === "session/set_model") {
-        setModelAttempts.push(String(msg.params?.modelId));
-        if (process.env.FAKE_ACP_DUMP) writeFileSync(`${process.env.FAKE_ACP_DUMP}.setmodel.json`, JSON.stringify(setModelAttempts));
-        if (process.env.FAKE_ACP_SET_MODEL_STALL === "1") break;
-        if (process.env.FAKE_ACP_SET_MODEL_GATE && setModelAttempts.length === 1) {
-          const id = msg.id;
-          whenFile(process.env.FAKE_ACP_SET_MODEL_GATE, () => process.env.FAKE_ACP_SET_MODEL_GATE_ANSWER === "refuse"
-            ? out({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } })
-            : result(id, {}));
-          break;
-        }
-        const delayMs = Number(process.env.FAKE_ACP_SET_MODEL_DELAY_MS) || 0;
-        if (delayMs > 0 && process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && setModelAttempts.length === 1) {
-          // the refusal grok gives after waiting on its fetch in flight (about 5 s live), whatever arrives meanwhile
-          const id = msg.id;
-          setTimeout(() => out({ jsonrpc: "2.0", id, error: { code: -32602, message: "Invalid params" } }), delayMs);
-          break;
-        }
-        if (process.env.FAKE_ACP_GROK_MODELS_CACHE === "1" && !grokAdvertised().includes(String(msg.params?.modelId))) {
-          return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params" } });
-        }
-      }
-      if (msg.method === "session/set_mode" && process.env.FAKE_ACP_SET_MODE_REFUSE === "1") {
         return out({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
       }
       if (mode === "set-model-invalid-params" && msg.method === "session/set_model") {
@@ -1488,11 +1485,6 @@ function handle(msg: any) {
         }
         return;
       }
-      if (mode === "cancel-end-turn") {
-        pendingCancelAckPrompt = msg.id;
-        setInterval(() => {}, 1_000);
-        return;
-      }
       // cancel-ignore (U24): hold session/prompt open and never answer session/cancel, so only the driver's grace timer ends the turn.
       if (mode === "cancel-ack" || mode === "cancel-rpc-error" || mode === "cancel-reject" || mode === "cancel-other-reason" || mode === "cancel-ignore") {
         pendingCancelAckPrompt = msg.id;
@@ -1665,15 +1657,6 @@ function handle(msg: any) {
         recordMethod("session/prompt.result");
         setImmediate(runStrandedInterjection);
         scheduleLateFrames(msg.params?.sessionId);
-        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && bareRejectAnswered) {
-          bareRejectAnswered = false;
-          result(msg.id, { stopReason: "cancelled" });
-          return;
-        }
-        if (process.env.FAKE_ACP_BARE_REJECT_CANCELS && rejectFollowup !== null) {
-          out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `FOLLOWUP: ${rejectFollowup}` } } } });
-          rejectFollowup = null;
-        }
         result(
           msg.id,
           // FAKE_ACP_USAGE_ROOT reproduces opencode 1.18.18's shape: usage at
@@ -1744,7 +1727,9 @@ function handle(msg: any) {
           return;
         }
         if (pendingPermissionId === 9006 && !process.env.FAKE_ACP_TRUST_PROMPT_FIRST) {
-          onPermissionAnswered = answer;
+          // FAKE_ACP_TRUST_HOLD_MS: the turn keeps running this long after the reply
+          const hold = Number(process.env.FAKE_ACP_TRUST_HOLD_MS ?? 0);
+          onPermissionAnswered = hold > 0 ? () => { setTimeout(answer, hold); } : answer;
           return;
         }
         answer();
@@ -2429,12 +2414,6 @@ function handle(msg: any) {
         const id = pendingCancelAckPrompt;
         pendingCancelAckPrompt = null;
         out({ jsonrpc: "2.0", id, error: { code: -32603, message: "Internal error", data: { message: "turn cancelled by client", error_kind: "cancelled" } } });
-        break;
-      }
-      if (mode === "cancel-end-turn" && pendingCancelAckPrompt !== null) {
-        const id = pendingCancelAckPrompt;
-        pendingCancelAckPrompt = null;
-        result(id, { stopReason: "end_turn" });
         break;
       }
       if (mode === "cancel-other-reason" && pendingCancelAckPrompt !== null) {
