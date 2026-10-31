@@ -443,6 +443,15 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(parseUpstreamTrustedFolders(`[meta]\nversion = 2\n[folders."/p"]\ntrusted = true\n`)).toEqual(new Map([["/p", true]]));
   });
 
+  it("reads a Fuigo 1.0.35 store: the consent stamp is accepted in every spelling and ignored (FUIGO-TRUST-V2 R7)", () => {
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\ndecided_at = 1780000000\nconsent = 2\n`)).toEqual(new Map([["/r", true]]));
+    expect(parseUpstreamTrustedFolders(`[folders]\n"/a" = { trusted = true, decided_at = 1, consent = 2 }\n"/b".trusted = false\n"/b".consent = 2\n`))
+      .toEqual(new Map([["/a", true], ["/b", false]]));
+    // a stamp that is not plain decimal digits is a document the engine would reject too
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\nconsent = -1\n`)).toBeNull();
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\nconsent = "2"\n`)).toBeNull();
+  });
+
   it("treats a document it cannot read exactly as empty: never a grant the engine might not give", () => {
     for (const bad of [
       `[folders."/p"]\ntrusted = yes\n`,

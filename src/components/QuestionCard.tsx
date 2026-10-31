@@ -221,6 +221,14 @@ export function QuestionCardView({
         )}
       </div>
 
+      {(card.folderTrust?.declines?.length ?? 0) > 0 && (
+        <details className="mb-3 text-[12px] text-ink-secondary" data-testid="folder-trust-declines">
+          <summary className="cursor-pointer">{t("folderTrust.moreDeclines")}</summary>
+          <ul className="mt-1 flex flex-col gap-0.5">
+            {card.folderTrust!.declines!.map((decline) => <li key={decline} className="break-all font-mono">{decline}</li>)}
+          </ul>
+        </details>
+      )}
       <div className="flex flex-col gap-3">
         {questions.map((question, questionIndex) => {
           const draft = drafts[question.id] ?? emptyDraft;

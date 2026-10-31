@@ -12,7 +12,9 @@ export { folderTrustNotice };
 export function folderTrustLabel(name: string | undefined | null): string | undefined {
   const notice = folderTrustNotice(name);
   if (!notice) return undefined;
-  return notice.kind === "withheld"
-    ? t("folderTrust.withheldLabel", { sources: notice.sources })
-    : t("folderTrust.lateLabel", { sources: notice.sources });
+  if (notice.kind === "passed") return t("folderTrust.passedLabel", { key: notice.key! });
+  if (notice.kind === "chosen") return t("folderTrust.chosenLabel", { sources: notice.sources });
+  if (notice.kind === "late") return t("folderTrust.lateLabel", { sources: notice.sources });
+  const withheld = t("folderTrust.withheldLabel", { sources: notice.sources });
+  return notice.key ? `${withheld} ${t("folderTrust.forgetToAsk", { key: notice.key })}` : withheld;
 }
