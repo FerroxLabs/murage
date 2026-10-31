@@ -1835,7 +1835,10 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   // ISSUE-PERMS-1010 G3 (1.0.10, designs/ISSUE-PERMS-DESIGN-1010.md section 3 item 4): Codex keeps an apply_patch helper on
   // the shell's PATH, and which input it applies depends on the shell around it. So any shell text that names it, in any
   // spelling and on any OS, is a delete nobody can place. No form is accepted; this only adds a stop to the 1.0.9 reader.
-  if (command !== undefined && APPLY_PATCH_WORD.test(command)) return deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
+  if (command !== undefined && APPLY_PATCH_WORD.test(command)) {
+    const hit = deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
+    return hit ? { ...hit, what: `Run a patch that can change or delete files Murage cannot place, so it may reach outside its folder: ${short(command)}` } : hit;
+  }
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {

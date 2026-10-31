@@ -1641,6 +1641,35 @@ export const ASK_UNELEVATED_REMOTE_RUN = false;
 
 /** The detail of the ask for downloaded text run elevated; the card names it. */
 export const REMOTE_ELEVATED = "runs downloaded text elevated";
+/** The detail of a throw that carries something the reader FOUND, as opposed to
+ * something it could not follow. These stay a card at every level. */
+export const DELETE_OPTION_VALUE = "a delete option from a value";
+export const RUNS_CATASTROPHE = "runs a catastrophe";
+export const NAMES_CATASTROPHE = "names a catastrophe";
+
+/** Did this failure carry a finding, rather than an end to what the reader could follow? */
+export function isFoundUnreadable(error: Unreadable): boolean {
+  return [REMOTE_ELEVATED, DELETE_OPTION_VALUE, RUNS_CATASTROPHE, NAMES_CATASTROPHE].some((detail) => error.message.endsWith(detail));
+}
+
+let passFailures = false;
+
+/** NOLIMITS-MEANS-IT 3.3 (c): run a read in which a failure ends one statement, not the read. The state the text
+ * fixed so far stays, and a found failure still ends the read. Off, every walk is as it always was. */
+export function withFailuresPassed<T>(run: () => T): T {
+  const before = passFailures;
+  passFailures = true;
+  try {
+    return run();
+  } finally {
+    passFailures = before;
+  }
+}
+
+/** Under `withFailuresPassed`: is this a failure the next statement may step past? */
+export function failurePassed(error: unknown): boolean {
+  return passFailures && error instanceof Unreadable && !isFoundUnreadable(error);
+}
 
 /** Downloaded text is about to run: elevated it asks; unelevated it follows
  * `ASK_UNELEVATED_REMOTE_RUN`. */
@@ -2191,7 +2220,7 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
   // the same text elsewhere in the code. The words after the code are never one
   const separators = new Set<number>();
   ranges.forEach(([from, to], r) => { if (separatorArgument(code, from, to, strings[tops[r]!]!, key)) separators.add(tops[r]!); });
-  if ((runs || deletes) && judged.some((s, i) => visitor.catastrophic?.(s) && (stemOnly || !separators.has(i)))) throw new Unreadable("opaque", "names a catastrophe");
+  if ((runs || deletes) && judged.some((s, i) => visitor.catastrophic?.(s) && (stemOnly || !separators.has(i)))) throw new Unreadable("opaque", NAMES_CATASTROPHE);
   // (5) the rules for what a run or delete call is given, read in the call's
   // own span: code that reads the environment to print it and runs a
   // literal elsewhere is ordinary
@@ -2216,12 +2245,12 @@ function scanOpaque<H>(text: string, elevated: boolean, visitor: Visitor<H>, ctx
         try {
           hit = walkScript(s, fork(ctx, true), visitor);
         } catch (error) {
-          if (!(error instanceof Unreadable)) throw error;
+          if (!(error instanceof Unreadable) || isFoundUnreadable(error)) throw error;
           // a string that is no shell text (`it's`) is data; one-word dialect names (`end`) too
           if (NOT_SHELL.has(error.reason) || (error.reason === "dialect" && !/\s/.test(s.trim()))) continue;
           throw new Unreadable("opaque", `runs shell text the reader cannot read (${error.reason})`);
         }
-        if (hit) throw new Unreadable("opaque", "runs a catastrophe");
+        if (hit) throw new Unreadable("opaque", RUNS_CATASTROPHE);
       }
     }
   }
@@ -2482,7 +2511,7 @@ function scanWritten<H>(text: string, visitor: Visitor<H>): void {
       if (text[j] === "\\" && (text[j + 1] === "\\" || text[j + 1] === "'" || text[j + 1] === '"')) { s += text[j + 1]; j++; continue; }
       s += text[j];
     }
-    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", "names a catastrophe");
+    if (visitor.catastrophic?.(s) || deviceInWord(s) !== undefined) throw new Unreadable("opaque", NAMES_CATASTROPHE);
     i = j;
   }
   if (STRICT_HOME.test(text)) throw new Unreadable("opaque", "looks up the home folder");
@@ -2580,7 +2609,13 @@ function walkList<H>(script: Script, ctx: WalkContext, visitor: Visitor<H>): H |
   for (const item of script.items) {
     // `cmd &` runs in a subshell of its own: what it binds or moves to may
     // or may not reach what follows (zsh and bash differ), so it is a branch
-    const hit = item.background ? branches(ctx, [(branch) => walkAndOr(item.andOr, branch, visitor)]) : walkAndOr(item.andOr, ctx, visitor);
+    let hit: H | null;
+    try {
+      hit = item.background ? branches(ctx, [(branch) => walkAndOr(item.andOr, branch, visitor)]) : walkAndOr(item.andOr, ctx, visitor);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      continue;
+    }
     if (hit) return hit;
   }
   return null;
@@ -2594,7 +2629,15 @@ function walkList<H>(script: Script, ctx: WalkContext, visitor: Visitor<H>): H |
  * what failed, so each one from there is a branch of its own. */
 function walkAndOr<H>(andOr: AndOr, ctx: WalkContext, visitor: Visitor<H>): H | null {
   const [first, ...rest] = andOr.pipelines;
-  let hit = walkPipeline(first!, ctx, visitor);
+  const step = (pipeline: Pipeline, state: WalkContext): H | null => {
+    try {
+      return walkPipeline(pipeline, state, visitor);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      return null;
+    }
+  };
+  let hit = step(first!, ctx);
   if (hit) return hit;
   let chain: WalkContext | undefined;
   let exact = true;
@@ -2604,7 +2647,7 @@ function walkAndOr<H>(andOr: AndOr, ctx: WalkContext, visitor: Visitor<H>): H | 
       if (chain) merge(ctx, [chain]);
       chain = fork(ctx);
     }
-    hit = walkPipeline(pipeline, chain, visitor);
+    hit = step(pipeline, chain);
     if (hit) return hit;
   }
   if (chain) merge(ctx, [chain]);

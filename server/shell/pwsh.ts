@@ -19,7 +19,7 @@
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
-import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
+import { attachedInlineCode, candidatesOf, expandWord, failurePassed, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
 const CMDS = new Set(["cmd", "cmd.exe"]);
@@ -918,13 +918,20 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   const { statements, nested } = lexPwsh(text);
   for (const inner of nested) {
     const branch = fork(ctx, true);
-    const hit = walkPwsh(inner, branch, visitor);
+    let hit: H | null;
+    try {
+      hit = walkPwsh(inner, branch, visitor);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      hit = null;
+    }
     if (hit) return hit;
     keepBranchWrites(ctx, branch);
   }
   // what the statement before writes down the pipe, when one joins them
   let carried: Provenance | undefined;
   for (const statement of statements) {
+    try {
     // a statement no pipe feeds reads what this shell was given (a nested
     // `pwsh -Command` or `cmd /c` reached by a pipe, UPSEC 10.6)
     const stdin = statement.piped ? carried : ctx.stdin;
@@ -959,6 +966,10 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
     recordPwshWrites(words, ctx);
     // `$null = Set-Content c.txt …`: the right side's command writes too
     if (rhs) recordPwshWrites(rhs, ctx);
+    } catch (error) {
+      if (!failurePassed(error)) throw error;
+      carried = valueOutput("a statement the reader could not follow");
+    }
   }
   return null;
 }
@@ -1385,7 +1396,17 @@ export function walkCmd<H>(text: string, ctx: WalkContext, visitor: Visitor<H>):
         pos++;
         return null;
       }
-      const hit = statement(state, piped);
+      const start = pos;
+      let hit: H | null;
+      try {
+        hit = statement(state, piped);
+      } catch (error) {
+        if (!failurePassed(error)) throw error;
+        // on to the next separator; a block a failed header opened is read as a block
+        if (pos === start) pos++;
+        while (tokens[pos] && tokens[pos]!.kind !== "op") pos++;
+        hit = null;
+      }
       if (hit) return hit;
     }
   };

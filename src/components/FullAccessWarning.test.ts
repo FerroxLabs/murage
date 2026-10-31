@@ -15,7 +15,7 @@ describe("FullAccessWarning", () => {
     const markup = render(false);
     expect(markup).toContain("will not ask before running commands, editing files or contacting other bots");
     expect(markup).toContain("still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords");
-    expect(markup).toContain("Turns started by webhooks still ask");
+    expect(markup).toContain("Work started by another app&#x27;s trigger link still asks");
     // routines follow a level of their own now (server/routine-permissions.ts)
     expect(markup).not.toContain("routines still ask");
     // images follow the level now: made without a card, with a record, and the setting says where to change it
@@ -31,10 +31,23 @@ describe("FullAccessWarning", () => {
     expect(render(true)).toContain("your own screen, mouse and keyboard");
   });
 
+  it("the new terms: one line above the warning, Accept and Not now, for every bot and no one name", () => {
+    const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "", level: "unlimited", terms: true, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
+    expect(markup).toContain("No limits changed. Read this once and it applies to every bot.");
+    expect(markup).toContain(">Accept<");
+    expect(markup).toContain(">Not now<");
+    expect(markup).not.toContain("Give @");
+    expect(markup).not.toContain("Turn on no limits");
+    expect(markup).not.toContain("You are asked this once");
+  });
+
   it("has its own wording for No limits", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(markup).toContain("Give @Vega no limits?");
-    expect(markup).toContain("will do everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first");
+    expect(markup).toContain("In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking");
+    expect(markup).toContain("That includes reading and sending your keys and passwords");
+    expect(markup).toContain("before text downloaded from an https address goes to an administrator run");
+    expect(markup).toContain("your own Telegram, Slack and Discord messages keep the cards they have now");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
     expect(markup).not.toMatch(/\u2014|\bsafe\b/);

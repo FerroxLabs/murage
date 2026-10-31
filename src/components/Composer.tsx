@@ -56,6 +56,7 @@ import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/li
 import type { EngineCommand, EngineCommandsView } from "../../shared/engine-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
+import { noLimitsTermsPending } from "./NoLimitsTermsPrompt";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
 import { RefreshPermissionsButton } from "./ThreadFollowControls";
 import { fullAccessRefusalMessage, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
@@ -804,7 +805,7 @@ export function Composer({
       // When it is shown it also covers this computer, so the owner is never
       // asked twice in a row.
       const acknowledged = mode === "unlimited" ? autoBot.noLimitsAcknowledgedAt : autoBot.fullAccessAcknowledgedAt;
-      if (acknowledged === undefined) {
+      if (acknowledged === undefined || (mode === "unlimited" && noLimitsTermsPending(state.config))) {
         setFullWarn({ onThisComputer: needsLocal, level: mode });
         return;
       }
@@ -1736,6 +1737,7 @@ export function Composer({
               threadId,
               patch: { ...(fullWarn.level === "unlimited" ? { noLimits: true, acknowledgeNoLimits: true } : { fullAccess: true, acknowledgeFullAccess: true }), ...(fullWarn.onThisComputer ? { acknowledgeLocalAuto: true } : {}) },
             });
+            if (fullWarn.level === "unlimited") dispatch({ type: "noLimitsTermsAccepted" });
           }
           setFullWarn(false);
         }}

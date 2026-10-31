@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 import { api, useStoreActions, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { FULL_ACCESS_DESKTOP_ONLY, isDesktopOnlyMode, permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
 import { Switch } from "./SettingsPrimitives";
 
-export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord";
+export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord. Reading keys still asks.";
+export const NO_LIMITS_TERMS_NOTE = "No limits changed. This bot keeps asking as it did until you accept.";
 export const FULL_ACCESS_SETUP_OPTION = "Also approve setup requests: installing skills, proposing routines and trusting folders";
 
 type FullAccessOption = "fullAccessChannelMessages" | "fullAccessSetupRequests";
@@ -19,13 +21,13 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "unlimited") {
     return onThisComputer
-      ? "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? t("ux.lcopyb.level.unlimitedHere")
+      : t("ux.lcopyb.level.unlimited");
   }
   if (mode === "full") {
     return onThisComputer
-      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? t("ux.lcopyb.level.fullHere")
+      : t("ux.lcopyb.level.full");
   }
   if (mode === "auto") {
     return onThisComputer
@@ -46,6 +48,8 @@ export function BotPermissionDefault({
   onThisComputer,
   desktop,
   requested,
+  termsPending = false,
+  onReviewTerms,
   onChoose,
   onOption,
 }: {
@@ -57,6 +61,9 @@ export function BotPermissionDefault({
    * or the browser door, where Full access and its options are refused */
   desktop?: boolean;
   requested?: { current: { botId: string; mode: PermissionMode } | null };
+  /** the owner has not accepted No limits as it now stands */
+  termsPending?: boolean;
+  onReviewTerms?: () => void;
   onChoose: (mode: PermissionMode) => void;
   onOption: (key: FullAccessOption, value: boolean) => void;
 }) {
@@ -64,7 +71,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "On unless you turn it off. Group chats, other people and webhooks still ask. Routines use their own level." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: t("ux.lcopyb.level.channelHint") },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (
@@ -101,6 +108,12 @@ export function BotPermissionDefault({
         acknowledged={current === "unlimited" ? bot.noLimitsAcknowledgedAt !== undefined : current !== "full" || bot.fullAccessAcknowledgedAt !== undefined || bot.noLimitsAcknowledgedAt !== undefined}
         onConfirmLevel={() => onChoose(current)} />}
       {remote && <div className="mt-1 text-[12.5px] text-ink-secondary">{FULL_ACCESS_DESKTOP_ONLY}</div>}
+      {desktop === true && termsPending && current === "unlimited" && (
+        <div className="mt-2 flex items-center justify-between gap-3 text-[12.5px] text-ink-secondary">
+          <span>{NO_LIMITS_TERMS_NOTE}</span>
+          <button type="button" onClick={onReviewTerms} className="shrink-0 rounded-md px-2 py-1 font-medium text-ink hover:bg-raised">Review</button>
+        </div>
+      )}
       <div className="mt-3 flex flex-col gap-2">
         {!full && <div className="text-[12px] text-ink-secondary">Only used when the default is Full access or No limits.</div>}
         {options.map(({ key, label, hint }) => (
