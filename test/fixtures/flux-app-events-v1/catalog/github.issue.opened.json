@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "grade": "DRAFT",
+  "spec": {
+    "eventType": "github.issue.opened",
+    "toolkit": "github",
+    "triggerSlug": "GITHUB_ISSUE_ADDED_EVENT",
+    "kind": "webhook",
+    "candidate": true,
+    "reserve": false,
+    "qualified": false,
+    "grade": "DRAFT",
+    "sourceKeyPrefix": "github-issue:",
+    "sourceKeyFields": [
+      "issue_id"
+    ],
+    "occurredAtField": "createdAt",
+    "occurredAtFormat": "iso8601",
+    "maxAgeSec": 3600,
+    "triggerConfigSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "repo"
+      ],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "repo": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "filterSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "projectionFields": [
+      "action",
+      "createdAt",
+      "createdBy"
+    ],
+    "resourceRefFields": [
+      {
+        "field": "issue_id",
+        "kind": "github.issue_id"
+      },
+      {
+        "field": "number",
+        "kind": "github.issue_number"
+      }
+    ],
+    "matchedResourceRead": "GITHUB_GET_AN_ISSUE",
+    "matchedResourceArgs": {
+      "owner": "config.owner",
+      "repo": "config.repo",
+      "issue_number": "payload.number"
+    },
+    "docUrl": "https://docs.composio.dev/toolkits/github.md",
+    "notes": "One trigger instance per repository. title and description never enter a projection. The pull request trigger has no stable identity and is not a candidate."
+  },
+  "example": {
+    "data": {
+      "action": "opened",
+      "createdAt": "2026-10-26T08:00:00Z",
+      "createdBy": "example-user",
+      "description": "synthetic issue description",
+      "issue_id": 3500000001,
+      "number": 42,
+      "title": "synthetic issue title",
+      "url": "https://github.com/example-org/example-repo/issues/42"
+    },
+    "projection": {
+      "fields": {
+        "action": "opened",
+        "createdAt": "2026-10-26T08:00:00Z",
+        "createdBy": "example-user"
+      },
+      "resourceRefs": [
+        {
+          "kind": "github.issue_id",
+          "id": "3500000001"
+        },
+        {
+          "kind": "github.issue_number",
+          "id": "42"
+        }
+      ]
+    },
+    "sourceKey": "github-issue:3500000001",
+    "occurredAt": "2026-10-26T08:00:00Z"
+  }
+}

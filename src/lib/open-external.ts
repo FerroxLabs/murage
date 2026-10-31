@@ -1,6 +1,8 @@
 // Leaving the page, on each surface.
 //
 //   desktop  window.muragebox.openExternal — the system browser, via Electron.
+//   Cloud    window.muragecloud.openExternal — the same, from a Cloud-home window
+//            (https only). Its window.open answers null for a blank tab.
 //   phone    murageNative.openExternal — the system browser, via the app.
 //            The workspace WebView has no tabs: window.open answers null and
 //            a target=_blank link does nothing at all (spec §3.2, §3.6).
@@ -16,6 +18,10 @@ import { reportSaveFailure, saveSource, saveUrl } from "./save-file";
 export async function openExternalPage(url: string, blockedMessage: string): Promise<void> {
   if (window.muragebox?.openExternal) {
     await window.muragebox.openExternal(url);
+    return;
+  }
+  if (window.muragecloud?.openExternal) {
+    await window.muragecloud.openExternal(url);
     return;
   }
   if (nativeHas("openExternal")) {
