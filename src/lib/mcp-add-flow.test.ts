@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parsePaste, type PasteRemoteDraft, type PasteStdioDraft } from "../../shared/mcp-paste";
 import type { McpBridge } from "./mcp-bridge";
 import {
-  defaultHeaderChoice, envForBody, headerFor, headerValues, inspectInput, installStage, removeServer, saveCommand, saveRemote, signInTo, splitValues, testServer,
+  defaultHeaderChoice, envForBody, headerFor, headerValues, inspectInput, installStage, probeToolCount, removeServer, saveCommand, saveRemote, signInTo, splitValues, testServer,
 } from "./mcp-add-flow";
 
 const KEY = "sk-live-THE-SECRET-KEY-0042";
@@ -238,5 +238,15 @@ describe("a secret in a command's arguments (review L5)", () => {
   });
   it("never draws the value: the displayed command hides it", () => {
     expect(displayArgs(["-y", "pkg", "--api-key", "abc123", "--token=zzz999"])).toEqual(["-y", "pkg", "--api-key", "••••", "--token=••••"]);
+  });
+});
+
+describe("probeToolCount", () => {
+  const tools = new Array(100).fill({ name: "t" });
+  it("shows the server's size, not the probe's limit", () => {
+    expect(probeToolCount({ tools })).toBe(100);
+    expect(probeToolCount({ tools, toolsTotal: 113 })).toBe(113);
+    expect(probeToolCount({ tools, toolsTotal: 113, toolsMore: true })).toBe("113+");
+    expect(probeToolCount({ tools, toolsMore: true })).toBe("100+");
   });
 });

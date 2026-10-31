@@ -11,7 +11,7 @@
 // sandbox and the bot's own computer, not a regex.
 
 import { CONNECTED_APPS_SERVER, sameToolGrant } from "../shared/connected-app-names.ts";
-import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
+import { actionGrantKey, actionGrantRead, actionGrantSet, commandArgument, placeArgumentScan, resolveCall, STAMP_SPELLING_WHY, type GrantCall, type ResolvedCall } from "../shared/app-action-grant.ts";
 import { isStopLineKey, stopFindings, stopLineKey, stopLineKeyCovers, type StopHit } from "./stop-line.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTarget, unreadableHit, type AlwaysAskHit, type UnseenOptions } from "./always-ask.ts";
@@ -542,6 +542,8 @@ export type AutoVerdictSource =
    * folder. Not a grant and not a mode — the action was never the person's
    * to authorize (see the comment on `ownWorkspace` below). */
   | "own-workspace"
+  /** The bot reading its own files (server/own-file-reads.ts). */
+  | "own-files"
   /** The bot reading back its OWN saved tool result: a read-only command or
    * read tool on a file in this session's own result folder
    * (server/own-tool-results.ts). Not a grant and not a mode. */
@@ -730,6 +732,12 @@ export interface AutoContext {
    * behind the guards, ahead of the unattended and host blocks, because an
    * engine reading what it was just given is not something a person grants. */
   ownToolResults?: boolean;
+  /** The bot reading its own files: its SOUL.md, skills, memory and
+   * conversation folders, never credentials/. Decided in
+   * server/own-file-reads.ts (a read tool or a strictly read-only command,
+   * every path inside the bot's own folders by real path) and set only for a
+   * turn the workspace owner is behind; placed like `ownToolResults`. */
+  ownFileRead?: boolean;
   projectWorkRoots?: boolean;
   /** What the stop line (server/stop-line.ts) found, computed by the caller
    * from the engine's structured input and the bot's own folders and
@@ -880,6 +888,25 @@ const askedWindows = new Map<string, { at: number; suppressed: number }>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
 
+const LOCAL_HOLD_WORDS = "the engine's own check held this as a key file";
+const REAL_PATH_WORDS = "a path this call names could not be followed to where it lands, so it is held as a key file";
+const HOME_GLOB_WORDS = " could name a key file";
+
+/** The bot's own level. A turn it does not cover shows as origin= beside it. */
+function askLevel(bot: AutoApprover): "ask" | "auto" | "full" | "no-limits" {
+  return hasNoLimits(bot) ? "no-limits" : hasFullAccess(bot) ? "full" : bot.autoApprove === true ? "auto" : "ask";
+}
+
+/** What held the call at the key guard or the reader, by fixed name only; undefined for every other card. */
+function askHeldClass(verdict: AutoVerdict): "key-row" | "home-glob" | "local-hold" | "real-path" | "unread" | undefined {
+  if (verdict.source === "unread-call" || (verdict.source === "always-ask" && verdict.rule === "unreadable")) return "unread";
+  if (verdict.source !== "sensitive-guard") return undefined;
+  const rule = verdict.rule ?? "";
+  if (rule.startsWith(LOCAL_HOLD_WORDS)) return "local-hold";
+  if (rule.startsWith(REAL_PATH_WORDS)) return "real-path";
+  return rule.endsWith(HOME_GLOB_WORDS) && !rule.startsWith("a glob too deep") ? "home-glob" : "key-row";
+}
+
 /** No free-text rule, note, argument, path or grant key enters a log line. */
 function askReasonClass(verdict: AutoVerdict): string {
   if (verdict.source === "always-ask") {
@@ -892,6 +919,7 @@ function askReasonClass(verdict: AutoVerdict): string {
     if (rule.startsWith(U19_WORDS)) return "unread-call:U19";
     if (rule === "the call was cut before it could be checked") return "unread-call:truncated";
     if (rule === "the call's arguments run past what the key guard reads") return "unread-call:scan";
+    if (rule.endsWith(STAMP_SPELLING_WHY)) return "unread-call:stamp-spelling";
     if (rule.startsWith("the tool this runs cannot be proven:")) return "unread-call:identity";
     if (rule.startsWith("the call does not carry what this tool needs")) return "unread-call:contract";
     return "unread-call:actions";
@@ -905,7 +933,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   if (verdict.approve !== null) return;
   const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
   const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
-  const reason = askReasonClass(verdict), key = JSON.stringify([botId, toolName, reason]), now = Date.now();
+  const reason = askReasonClass(verdict), held = askHeldClass(verdict), key = JSON.stringify([botId, toolName, reason, held]), now = Date.now();
   const previous = askedWindows.get(key);
   if (previous && now - previous.at < ASK_LOG_MS && now >= previous.at) { previous.suppressed++; return; }
   askedWindows.set(key, { at: now, suppressed: 0 });
@@ -914,7 +942,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const origin = fullAccessOriginOf(context);
   const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
   const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} suppressed=${previous?.suppressed ?? 0}`);
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}`);
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
@@ -1039,6 +1067,15 @@ function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, 
   return { approve: null, source: "always-ask", rule: `own-always-ask ${own}`, note: OWN_ALWAYS_ASK_NOTE };
 }
 
+/** A check that could not start or timed out does not hold a command at Full access or No limits on a turn the owner
+ * started, or on a routine's run judged at that level: the owner set the level for the routine, and `routineLevel` says
+ * the routine's own level is what `bot` carries here. Nothing else is waived: a channel, webhook or unproven turn holds. */
+function envCheckWaived(bot: AutoApprover, context: AutoContext): boolean {
+  if (!hasFullAccess(bot)) return false;
+  return context.fullAccessOrigin === "owner"
+    || (context.fullAccessOrigin === "routine" && context.routineLevel === true && !context.unattended && !context.channelOwner);
+}
+
 /** Who started this turn, as Full access reads it. */
 function fullAccessOriginOf(context: AutoContext | undefined): FullAccessOrigin {
   if (context?.routineLevel && !context.unattended && !context.channelOwner) return "routine";
@@ -1117,7 +1154,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   const pinShell = isPowerShellTool(tool) || (isCommandTool(tool) && context?.call?.commandShell === "pwsh") ? "pwsh" : undefined;
   const pinUnknown = promptText === undefined ? null : pinOverrideIn(promptText, context?.handedPins ?? NO_PINS, pinShell) ?? windowsBash?.map(payload => pinOverrideIn(payload, context?.handedPins ?? NO_PINS)).find(Boolean) ?? null;
   const unread = context?.envUnread ? `${U20_WORDS}: ${context.envUnread}`
-    : context?.envUnchecked && !(context.fullAccessOrigin === "owner" && hasFullAccess(bot)) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
+    : context?.envUnchecked && !envCheckWaived(bot, context) ? `${U20_WORDS}: ${context.envUnchecked.reason === "launch-failed" ? "Murage could not start the shell to check its environment" : "the environment check took too long"}`
     : pinUnknown ? `${U19_WORDS}: ${pinUnknown}`
     // 1.0.10 (NOLIMITS-CARDS 1C, narrowed by A3): at Full access and No limits, on a turn they cover, a cut call is not
     // held for what nobody read only where the cut part cannot be a path this computer reads: a file edit whose path
@@ -1131,8 +1168,8 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     : contract.ok ? null
     : `the call does not carry what this tool needs (${contract.field})`;
   const keyText = [guarded, scan.text, ...(context?.realPaths ?? [])].join("\n");
-  const localHold = context?.localHold ? `the engine's own check held this as a key file (${context.localHold})`
-    : context?.realPathCannot ? `a path this call names could not be followed to where it lands, so it is held as a key file (${context.realPathCannot.slice(0, 200)})` : null;
+  const localHold = context?.localHold ? `${LOCAL_HOLD_WORDS} (${context.localHold})`
+    : context?.realPathCannot ? `${REAL_PATH_WORDS} (${context.realPathCannot.slice(0, 200)})` : null;
   // 09-1: a glob in the command text that could match a key file
   // (`cat ~/.aw?/credentials`, `Get-Content ~\.aws\cred*`) is a read of it
   const commandGlobText = isCommandTool(tool) || commandParts.length || wholeText !== undefined ? [isCommandTool(tool) ? summary : "", ...commandParts, wholeText ?? "", context?.commandText ?? ""].join("\n") : "";
@@ -1147,7 +1184,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     return read.length ? { text: read.map((one) => one.text).join("\n"), globText: read.map((one) => one.globText).join("\n"), homeGlob: read.find((one) => one.homeGlob)?.homeGlob } : undefined;
   })();
   const keyHit = (): string | null => unread ?? localHold ?? matchFirst(SENSITIVE, keyText) ?? globKeyRead(commandGlobText)
-    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob} could name a key file` : null) : null);
+    ?? (dequoted ? matchFirst(SENSITIVE, dequoted.text) ?? globKeyRead(dequoted.globText) ?? (dequoted.homeGlob ? `${dequoted.homeGlob}${HOME_GLOB_WORDS}` : null) : null);
   const sensitive = destructive ? null : keyHit();
   const sensitiveSource: AutoVerdictSource = unread ? "unread-call" : "sensitive-guard";
   // The stop line outranks every mode, Full access included: deleting
@@ -1257,6 +1294,9 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   }
   if (context?.ownToolResults === true && !destructive && !sensitive && !context.scope) {
     return { approve: "read its own saved tool result", source: "own-tool-results" };
+  }
+  if (context?.ownFileRead === true && !destructive && !sensitive && !context.scope) {
+    return { approve: `auto-approved ${tool} (its own files)`, source: "own-files" };
   }
   // Murage's own tools that never ask on Claude or Codex (OWN_UNASKED) reach
   // here from an ACP engine (Fuigo, Grok Build), whose dispatcher asks for

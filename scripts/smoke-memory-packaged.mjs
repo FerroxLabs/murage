@@ -120,10 +120,11 @@ async function probe(configPath) {
   async function stop() {
     const child = worker;
     if (!child) return;
-    assert(child.exitCode === null && child.signalCode === null, "Worker exited before disconnect");
+    assert(child.exitCode === null && child.signalCode === null, `Worker exited before disconnect: ${child.exitCode}/${child.signalCode}\n${workerOutput}`);
     const exited = new Promise((done, reject) => {
       const timer = setTimeout(() => { child.kill("SIGKILL"); reject(Error("Worker failed graceful disconnect deadline")); }, 10000);
-      child.once("exit", (code, signal) => { clearTimeout(timer); code === 0 && signal === null ? done() : reject(Error(`Worker exit ${code}/${signal}`)); });
+      // close, not exit: the worker's last stderr lines have arrived by then, and they are the reason it failed
+      child.once("close", (code, signal) => { clearTimeout(timer); code === 0 && signal === null ? done() : reject(Error(`Worker exit ${code}/${signal}\n${workerOutput}`)); });
     });
     child.disconnect();
     await exited;

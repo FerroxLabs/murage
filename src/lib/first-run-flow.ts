@@ -22,6 +22,7 @@ import {
   FIRST_RUN_BRIEF_TIME,
   FIRST_RUN_COPY,
   botsEyebrowLine,
+  briefSavedLine,
   clockLabel,
 } from "./first-run-copy.ts";
 import {
@@ -273,6 +274,8 @@ export interface FirstRunMorningOffer {
   heading: string;
   body: string;
   button: string;
+  /** The ghost beside it (§1.7). */
+  dismiss: string;
   working: string;
   failure: string;
   /** Said in place of the button once it is set. Built from the same
@@ -281,9 +284,8 @@ export interface FirstRunMorningOffer {
   taken: string | null;
 }
 
-export function morningOffer(taken: boolean): FirstRunMorningOffer {
+export function morningOffer(taken: boolean, now: Date = new Date()): FirstRunMorningOffer {
   const words = FIRST_RUN_COPY.flow["do-it"].morning;
-  const spoken = clockLabel(FIRST_RUN_BRIEF_TIME);
   return {
     heading: words.heading,
     // `bodyNow` is not optional decoration. The button schedules the routine
@@ -291,11 +293,15 @@ export function morningOffer(taken: boolean): FirstRunMorningOffer {
     // on the card said so: the offer talked about every morning, the button
     // said a time, and the person got a turn they had not agreed to. Said
     // before the press, and said again in the confirmation.
-    body: `${words.bodyPrefix} ${spoken} ${words.bodyTail} ${words.bodyNow}`,
-    button: `${spoken}${words.buttonTail}`,
+    //
+    // §1.7 (1.0.12): one line and two buttons. The line is this one, because
+    // it is the part the buttons cannot say for themselves.
+    body: words.bodyNow,
+    button: words.yes,
+    dismiss: words.no,
     working: words.working,
     failure: words.failure,
-    taken: taken ? `${words.takenPrefix} ${spoken}. ${words.takenNow}` : null,
+    taken: taken ? `${briefSavedLine(FIRST_RUN_BRIEF_TIME, now)} ${words.takenNow}` : null,
   };
 }
 
@@ -584,5 +590,9 @@ export function escapeHatchScreen(world: FirstRunJobWorld): FirstRunInputScreen 
   // fallback. If it ever stops having one, the escape hatch has nowhere to
   // go and that should be loud rather than quietly rendering nothing.
   if (!screen) throw new Error("The notes job lost its input, so there is nowhere for the escape hatch to go.");
-  return screen;
+  // "Or just tell me what is on today." (§1.6) asks for today, so the box it
+  // opens is worded as today's box: the notes job underneath asks nothing and
+  // needs nothing, which is why the escape goes there.
+  const today = FIRST_RUN_COPY.flow["do-it"].input.day;
+  return { ...screen, heading: today.heading, lead: today.lead, placeholder: today.placeholder };
 }

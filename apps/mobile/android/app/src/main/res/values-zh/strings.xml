@@ -26,7 +26,8 @@
     <string name="phone_sharing_generic">在你允许时，将机器人从手机读取的内容通过你自己的 Murage 共享给该机器人使用的 AI 服务。</string>
     <string name="phone_provider_fallback">其他 AI 服务</string>
     <string name="phone_no_key">请为这部手机设置密码，然后重新配对</string>
-    <string name="phone_update">请更新电脑上的 Murage</string>
+    <string name="phone_update">请在电脑上开启此功能，或更新 Murage。</string>
+    <string name="phone_turned_off">电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。</string>
     <string name="phone_failed">无法更新手机工具，请重试。</string>
     <string name="phone_refused">手机登录被拒绝，请重新配对这部手机。</string>
     <string name="phone_rate_limited">登录尝试次数过多，请稍后重试。</string>
@@ -68,7 +69,8 @@
     <string name="ask_setup_body">从任何应用向你的机器人发送内容，无需先打开 Murage 就能提问。为这台电脑确认一次即可。</string>
     <string name="ask_turn_on">开启</string>
     <string name="ask_not_now">暂时不要</string>
-    <string name="ask_update">请更新电脑上的 Murage 以使用此功能。</string>
+    <string name="ask_update">请在电脑上开启此功能，或更新 Murage。</string>
+    <string name="ask_turned_off">电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。</string>
     <string name="ask_no_key">请在这部手机上设置锁屏密码，然后打开 Murage。</string>
     <string name="ask_computer_off">这部手机的分享和提问功能已关闭。</string>
     <string name="ask_setup_again">请打开 Murage 重新设置分享功能。</string>
@@ -93,7 +95,8 @@
     <string name="share_offline">目前无法连接到你的电脑。连接恢复后，Murage 会发送此内容。</string>
     <string name="share_passcode">请先在此手机上设置锁屏密码，然后打开 Murage。</string>
     <string name="share_again">请打开 Murage 重新设置共享。</string>
-    <string name="share_update">请更新电脑上的 Murage 以使用此功能。</string>
+    <string name="share_update">请在电脑上开启此功能，或更新 Murage。</string>
+    <string name="share_turned_off">电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。</string>
     <string name="share_outbox_waiting">等待发送</string>
     <string name="share_outbox_sent">已发送</string>
     <string name="share_outbox_failed">无法发送。轻点以重试。</string>

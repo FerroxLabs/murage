@@ -295,14 +295,15 @@ const admissionListeners = new Set<() => void>();
 /** True while the cleanup of the old stand-in records has not succeeded: no hand-off is admitted, started or drained meanwhile (a stand-in
  * record that is still running means its hand-off may already have run). */
 export function ownerRecordMigrationPending(): boolean { return ownerRecordsPending; }
-/** Boot settling of the started hand-offs reads them a page at a time; nothing is admitted until the last page is done (settle before drain). */
+/** Boot settling of the started hand-offs reads them a page at a time; nothing is admitted until the last page is done (settle before drain). The server's
+ * first shutdown step holds too, for good: a closing server starts nothing and the next one settles what is left. */
 let reconcileHolds = 0;
 export function holdForReconcile(): () => void {
   reconcileHolds++;
   let released = false;
   return () => { if (!released) { released = true; reconcileHolds = Math.max(0, reconcileHolds - 1); } };
 }
-/** The one gate every dispatch asks (server/handoff-dispatch.ts gate): closed while the owner-record migration is pending or the boot settling is still paging. */
+/** The one gate every dispatch asks (server/handoff-dispatch.ts gate): closed while the owner-record migration is pending, the boot settling is still paging or the server is closing. */
 export function delegationAdmissionHeld(): boolean { return ownerRecordsPending || reconcileHolds > 0; }
 /** Called once the held admission opens (the cleanup succeeded after an earlier failure): the server settles and drains what waited. */
 export function onDelegationAdmissionOpen(listener: () => void): void { admissionListeners.add(listener); }

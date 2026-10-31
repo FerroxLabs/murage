@@ -107,6 +107,25 @@ public class ProbeVerdictTest {
         assertFalse(ProbeVerdict.classify(401, null, null).isFull());
     }
 
+    @Test public void phoneFlagsIsReadOnlyAsAnIntegerOnFullProbes() {
+        ProbeVerdict absent = ProbeVerdict.classify(200, "{\"mobile\":1}", null);
+        assertNull(absent.phoneFlags); assertFalse(absent.phoneFlagsOk());
+        for (long flags : new long[] {-1, 0, 1, 2, Long.MAX_VALUE}) {
+            ProbeVerdict verdict = ProbeVerdict.classify(200, "{\"mobile\":1,\"phoneFlags\":" + flags + "}", null);
+            assertEquals(Long.valueOf(flags), verdict.phoneFlags);
+            assertEquals(flags >= 1, verdict.phoneFlagsOk());
+            assertFalse(verdict.phoneJobsOk()); assertFalse(verdict.phoneAskOk());
+        }
+        for (String value : new String[] {"null", "true", "false", "\"1\"", "1.0", "1e0", "1.5", "[]", "{}", "9223372036854775808"}) {
+            ProbeVerdict verdict = ProbeVerdict.classify(200, "{\"mobile\":1,\"phoneFlags\":" + value + "}", null);
+            assertTrue(value, verdict.isFull());
+            assertNull(value, verdict.phoneFlags); assertFalse(value, verdict.phoneFlagsOk());
+        }
+        ProbeVerdict basic = ProbeVerdict.classify(200, "{\"phoneFlags\":1}", null);
+        assertEquals(ProbeVerdict.Kind.BASIC, basic.kind);
+        assertNull(basic.phoneFlags); assertFalse(basic.phoneFlagsOk());
+    }
+
     @Test public void approvalProofIsReadOnlyAsAnInteger() {
         ProbeVerdict ok = ProbeVerdict.classify(200, "{\"ok\":true,\"mobile\":1,\"approvalProof\":1}", null);
         assertTrue(ok.approvalProofOk());

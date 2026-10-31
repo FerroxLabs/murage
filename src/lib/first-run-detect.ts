@@ -86,18 +86,18 @@ export function engineRowTitle(agent: SetupAgentReading): string {
 /**
  * One runnable engine, as a row.
  *
- * THE TAG NEVER SAYS "using this", AND THAT IS DELIBERATE. The approved flow
- * marks one row as the engine currently answering, and the setup view does not
- * carry which one that is: `SetupLiveState.chiefInstanceId` knows, and it is
- * not on `SetupView`. Putting "using this" on every local row would be a claim
- * that is false the moment somebody has two models on their machine, which is
- * the ordinary case for the exact person who has any. So every runnable engine
- * says the thing that is true of all of them, and the stronger claim waits for
- * the field that can prove it.
+ * THE TAG SAYS "using this now" ON ONE ROW AT MOST, AND ONLY WHEN IT CAN
+ * PROVE IT. The view carries `chiefInstanceId` (1.0.12), so the row whose id
+ * is the Chief's own engine says so and every other runnable row says the
+ * thing that is true of all of them. With two local models on the machine,
+ * exactly one is tagged, and with no Chief engine none is.
  */
-function runnableRow(agent: SetupAgentReading): FirstRunEngineRow {
+function runnableRow(agent: SetupAgentReading, chiefInstanceId: string): FirstRunEngineRow {
+  // The one row the Chief is on, proven by the view (§1.4). Every other
+  // runnable row is ready when wanted.
+  const tag = chiefInstanceId && agent.id === chiefInstanceId ? copy.usingTag : copy.readyTag;
   if (agent.localModel) {
-    return { id: agent.id, icon: "local", title: engineRowTitle(agent), detail: copy.localDetail, tag: copy.readyTag };
+    return { id: agent.id, icon: "local", title: engineRowTitle(agent), detail: copy.localDetail, tag };
   }
   return {
     id: agent.id,
@@ -108,7 +108,7 @@ function runnableRow(agent: SetupAgentReading): FirstRunEngineRow {
     // credit for an account that does not exist. `installed` is exactly the
     // field that separates the two sentences.
     detail: agent.installed ? copy.cloudDetail : copy.bundledDetail,
-    tag: copy.readyTag,
+    tag,
   };
 }
 
@@ -125,7 +125,8 @@ function signedOutRow(agent: SetupAgentReading): FirstRunEngineRow {
  * on half the machines it ships to.
  */
 export function firstRunDetection(view: SetupView | null | undefined): FirstRunDetection {
-  const rows = (view?.agents ?? []).map(runnableRow);
+  const chief = view?.chiefInstanceId ?? "";
+  const rows = (view?.agents ?? []).map((agent) => runnableRow(agent, chief));
   const collapsed = (view?.signedOutAgents ?? []).map(signedOutRow);
   return { rows, collapsed, moreLabel: collapsed.length > 0 ? copy.more(collapsed.length) : "" };
 }

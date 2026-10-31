@@ -26,7 +26,8 @@
     <string name="phone_sharing_generic">あなたが許可したときにボットがスマートフォンから読み取る内容を、あなた自身のMurageを通じて、そのボットが使うAIサービスと共有します。</string>
     <string name="phone_provider_fallback">別のAIサービス</string>
     <string name="phone_no_key">このスマートフォンにパスコードを設定してから、もう一度ペアリングしてください</string>
-    <string name="phone_update">コンピューターのMurageを更新してください</string>
+    <string name="phone_update">コンピューターでこの機能を有効にするか、Murageを更新してください。</string>
+    <string name="phone_turned_off">コンピューターでこの機能がまだ有効になっていません。コンピューターのMurageで、設定 → スマートフォンとその他のデバイスを開いて有効にしてください。</string>
     <string name="phone_failed">スマートフォンのツールを更新できませんでした。もう一度お試しください。</string>
     <string name="phone_refused">スマートフォンでのサインインが拒否されました。このスマートフォンをもう一度ペアリングしてください。</string>
     <string name="phone_rate_limited">サインインの試行回数が多すぎます。しばらくしてからもう一度お試しください。</string>
@@ -68,7 +69,8 @@
     <string name="ask_setup_body">どのアプリからでもボットにコンテンツを送信でき、Murageを先に開かなくても質問できます。このコンピューターとの連携には、一度だけ確認が必要です。</string>
     <string name="ask_turn_on">オンにする</string>
     <string name="ask_not_now">今はしない</string>
-    <string name="ask_update">この機能を使うには、コンピューターのMurageを更新してください。</string>
+    <string name="ask_update">コンピューターでこの機能を有効にするか、Murageを更新してください。</string>
+    <string name="ask_turned_off">コンピューターでこの機能がまだ有効になっていません。コンピューターのMurageで、設定 → スマートフォンとその他のデバイスを開いて有効にしてください。</string>
     <string name="ask_no_key">このスマートフォンにパスコードを設定してから、Murageを開いてください。</string>
     <string name="ask_computer_off">このスマートフォンでは共有と質問がオフになっています。</string>
     <string name="ask_setup_again">共有をもう一度設定するには、Murageを開いてください。</string>
@@ -93,7 +95,8 @@
     <string name="share_offline">現在コンピューターに接続できません。接続できるようになったらMurageが送信します。</string>
     <string name="share_passcode">このスマートフォンにパスコードを設定してから、Murageを開いてください。</string>
     <string name="share_again">共有をもう一度設定するには、Murageを開いてください。</string>
-    <string name="share_update">この機能を使うには、コンピューターのMurageを更新してください。</string>
+    <string name="share_update">コンピューターでこの機能を有効にするか、Murageを更新してください。</string>
+    <string name="share_turned_off">コンピューターでこの機能がまだ有効になっていません。コンピューターのMurageで、設定 → スマートフォンとその他のデバイスを開いて有効にしてください。</string>
     <string name="share_outbox_waiting">送信待ち</string>
     <string name="share_outbox_sent">送信済み</string>
     <string name="share_outbox_failed">送信できませんでした。タップして再試行してください。</string>

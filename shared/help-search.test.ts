@@ -145,7 +145,7 @@ describe("the shipped index", () => {
     }
     const page = HELP_INDEX.filter((entry) => entry.id.startsWith("features/mcp-servers#"));
     expect(page.length).toBeGreaterThan(3);
-    expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → MCP servers");
+    expect(page.map((entry) => entry.where).join(" ")).toContain("Connected apps → Connected tools");
   });
 
   it("places the graduated browser and recorder in regular Settings with their defaults", () => {
@@ -166,5 +166,14 @@ describe("the shipped index", () => {
   it("is regenerated from the docs, never edited by hand", () => {
     const script = fileURLToPath(new URL("../scripts/build-help-index.mjs", import.meta.url));
     expect(() => execFileSync(process.execPath, [script, "--check"], { stdio: "pipe" })).not.toThrow();
+  });
+});
+
+describe("the named pipe limit on Codex on Windows", () => {
+  it("answers from the real help index, with no version promise", () => {
+    const [top] = searchHelp("codex refused a named pipe on windows");
+    expect(top?.heading).toBe("Codex and named pipes on Windows");
+    expect(top?.text).toContain("Use a Claude bot for that command.");
+    expect(top?.text).not.toMatch(/\d+\.\d+/);
   });
 });

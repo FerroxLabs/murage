@@ -36,6 +36,7 @@ import {
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
+import { CodexAccountChannel, codexPlanUsageLeanRead, codexPlanUsageSupported } from "../plan-usage.ts";
 import { HookProof, TurnRefusal, hookDidNotStartLine } from "./turn-refusal.ts";
 import { appendDecision } from "../decision-log.ts";
 import { awaitScopeStart } from "./scoped-cli-home.ts";
@@ -44,6 +45,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
@@ -67,6 +69,7 @@ import { FLUX_CODEX_TABLE_HEADERS } from "../flux-memory-wire.ts";
 import { applyFluxSurface, FLUX_CODEX_ENV_KEY, FLUX_CODEX_PROVIDER, FLUX_RESPONSES_BASE } from "../flux-routing.ts";
 import { codexFluxProviderFor, codexHttpHeaderArgs, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../flux-memory-headers.ts";
 import { fluxIdIsRoutable } from "../flux-surface.ts";
+import { engineUsageTagsAllowed, FLUX_FEATURE_HEADER, fluxUsageForTurn, fluxUsageHeaders } from "../flux-usage-tags.ts";
 import { augmentedPath } from "../env-path.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { appendNative } from "./native.ts";
@@ -147,6 +150,8 @@ interface Conn {
   onOverflow: (overflow: any) => void;
   /** Bytes of a frame the splitter has begun but not finished. Non-zero means a frame started under one owner would finish under the next. */
   buffered: () => number;
+  /** Plan usage (server/plan-usage.ts): takes this process's account frames before any handler or log sees them. */
+  account: CodexAccountChannel;
 }
 
 /** The credential file's path, bound into already-serialized `-c` values:
@@ -384,6 +389,9 @@ export class CodexRpcErrorAnswer extends Error {
 }
 
 /** The turn/start answer bound; tests shorten it (MURAGE_CODEX_RPC_TIMEOUT_MS). */
+/** Codex item types that act on the machine or the world (a command, a file edit, an MCP tool, a web search). */
+const CODEX_ACTING_ITEM_TYPES: ReadonlySet<unknown> = new Set(["commandExecution", "fileChange", "mcpToolCall", "webSearch"]);
+export const CODEX_TOOL_MAY_HAVE_RUN = "A tool action may have run. Check its effects before trying again.";
 const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -699,6 +707,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
+        // Usage tags (flux-usage-tags.ts): the argv tables are shared by every thread of this app-server, so the tags ride the
+        // `config` of thread/start and thread/resume, which codex applies to that one thread (probed on codex-cli 0.163.0: a
+        // thread started with the override sent its headers; the next thread, started without it, sent the table's alone).
+        // The override replaces the table's http_headers, so it repeats the table's memory headers. A Cloud home renders its
+        // tables through the launcher, which accepts only the memory headers (engineUsageTagsAllowed).
+        const usageTags = engineUsageTagsAllowed() ? fluxUsageHeaders(fluxUsageForTurn(turn)) : {};
         // A Flux connection (a named provider route) carries the headers on its own table.
         // Cloud home: the launcher renders every provider table into config.toml from a typed
         // route and refuses `-c model_providers.*` (CLOUD-ENGINES-DESIGN.md 4.1). A home has no
@@ -966,6 +980,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           model: turn.model ?? null,
           providerRoute: turn.providerRoute ? [turn.providerRoute.connectionId, turn.providerRoute.revision] : null,
           fluxMemory: flux?.applied ? fluxProvider : null,
+          // a thread's tags are fixed when it starts or resumes: a feature change recycles, so the next turn resumes under the new tags
+          fluxUsage: usageTags[FLUX_FEATURE_HEADER] ?? null,
           cwd: turnCwd,
           mcp: Object.fromEntries(Object.entries(stableServers).map(([name, server]) => [name, digest(server)])),
           // the bot's connected-app access: a change relists the tools by recycling
@@ -1133,8 +1149,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // stays intact, and one frame never holds more than
         // ENGINE_FRAME_MAX_BYTES of the shared process.
         const conn: Conn = reuse?.conn ?? (() => {
-          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0 };
-          const lines = createBoundedLineSplitter({ onLine: (line) => made.onLine(line), onOverflow: (overflow) => made.onOverflow(overflow) });
+          // Plan usage: a native reporter only on the account's own ChatGPT sign-in, off a Cloud home (its native
+          // context is qualified by the Cloud owner first), on a Codex that reports every bucket. Otherwise the
+          // channel still takes account frames out of the logs and the turn, and reads nothing.
+          const planBinding = !providerBinding && !flux?.applied && !cloudHome && codexPlanUsageSupported(codexVersion || undefined)
+            ? { subjectKey: `codex:${instanceId}:${turn.warmIdentity?.botId ?? "owner"}`, credentialRevision: digest({ home: env.CODEX_HOME ?? null }).slice(0, 16) }
+            : null;
+          const account = new CodexAccountChannel({
+            write: (line) => { child.stdin.write(line); },
+            binding: planBinding,
+            leanRead: codexPlanUsageLeanRead(codexVersion || undefined),
+          });
+          child.once("exit", () => account.close());
+          child.once("error", () => account.close());
+          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0, account };
+          const lines = createBoundedLineSplitter({ onLine: (line) => { if (!account.intercept(line)) made.onLine(line); }, onOverflow: (overflow) => made.onOverflow(overflow) });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
           registerIntake(threadId, child.stdout, child);
@@ -1185,6 +1214,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       let adoptFirstTurn = false;
       let earlyNotificationBytes = 0;
       const earlyNotifications: any[] = [];
+      // A tool item Codex announced before its turn/start answer: if the turn then fails to start, that action may already
+      // have run (adapted from OpenMausBot 7045f15a1). Kept apart from the buffer, which an invalid answer clears first.
+      let earlyToolActivity = false;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
       const send = (obj: unknown) => {
@@ -1432,7 +1464,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const finish: AskFinish = (behavior, message, source = "user", _answers, extra) => {
             behavior = refusal.verdict(behavior);
             if (!asks.delete(requestId)) return;
-            clearTimeout(timer);
+            timer.clear();
             const rewritten = extra?.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
             resolveAnswer(behavior === "allow"
               ? refusal.allow({ decision: "allow", ...(rewritten ? { updatedInput: rewritten } : {}) })
@@ -1441,8 +1473,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           };
           finish.narrowKey = { tool: route.tool, text: JSON.stringify(route.toolCall.input ?? route.summary) };
           // The hook's own timeout is the ask bound plus 30 s and the script gives up at the bound: a card cannot outlive the hook.
-          const timer = setTimeout(() => finish("deny", DENY_TIMEOUT_NOTE, "timeout"), HOOK_ASK_BOUND_MS);
-          timer.unref?.();
+          // awake time (1.0.10 C3): the server's own bound does not count a sleep. The script and Codex handler bounds derive from
+          // HOOK_ASK_BOUND_MS; separating the hook transport lifetime from the card lifetime is follow-up F3.
+          const timer = wakeAwareTimeout(() => finish("deny", DENY_TIMEOUT_NOTE, "timeout"), HOOK_ASK_BOUND_MS);
           asks.set(requestId, finish);
           emit({
             ...base(threadId, turnId),
@@ -1622,7 +1655,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const finish: AskFinish = (behavior, _message, source = "user", answers) => {
           behavior = refusal.verdict(behavior);
           if (!asks.delete(requestId)) return;
-          clearTimeout(timer);
+          timer?.clear();
           if (questions) {
             // Only the owner's validated answers reach Codex. A skip, the
             // timeout or the turn ending is the honest no-answer — empty
@@ -1653,14 +1686,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
         };
         // A question waits for the owner up to 30 minutes (the shared
-        // question timeout); a permission keeps its 15-minute deny, except in
-        // a routine run, whose cards wait until answered or the turn stops
-        // (SendTurnInput.holdPermissionAsks).
-        const timer = turn.holdProjectAsks || (!questions && turn.holdPermissionAsks) ? undefined : setTimeout(
-          () => (questions ? finish("deny", undefined, "timeout") : finish("deny", DENY_TIMEOUT_NOTE, "timeout")),
-          questions ? QUESTION_TIMEOUT_MS : 15 * 60_000,
+        // question timeout). A permission card has no deadline on any turn:
+        // it waits until answered or the turn stops (Sean 10-29).
+        // awake time (1.0.10 C3): a sleep with the question card open does not count toward its deadline
+        const timer = !questions || turn.holdProjectAsks ? undefined : wakeAwareTimeout(
+          () => finish("deny", undefined, "timeout"),
+          QUESTION_TIMEOUT_MS,
         );
-        timer?.unref?.();
         asks.set(requestId, finish);
         const openCard = (execEnv?: ExecEnv) => emit({
           ...base(threadId, turnId),
@@ -1796,6 +1828,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             }
             earlyNotifications.push(msg);
             earlyNotificationBytes += bytes;
+            if (CODEX_ACTING_ITEM_TYPES.has(p.item?.type)) earlyToolActivity = true;
             return;
           }
           if (eventTurnId !== codexTurnId) return;
@@ -2146,6 +2179,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await request("initialize", { clientInfo: { name: "murage", version: "1" } });
           if (cancelledBeforeStart()) return;
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
+          // the handshake is done: this process may now answer plan usage reads (idempotent; released when it exits)
+          conn.account.ready();
         }
         // Rule 68b: both handlers listed, trusted and enabled before anything is asked of the model; any other listing refuses the
         // turn before a model request. Checked again on a retained process (the trust record lives in the scope's config).
@@ -2199,6 +2234,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
         const fluxSelected = Boolean(flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER);
         if (fluxSelected) selection.modelProvider = fluxProvider;
+        const usageTable = !Object.keys(usageTags).length || process.env.MURAGE_CLOUD_ROLE === "home" ? null
+          : fluxSelected ? { provider: fluxProvider, headers: FLUX_CODEX_TABLE_HEADERS[fluxProvider] }
+          : providerBinding?.modelProvider && turn.providerRoute?.preset === "flux" ? { provider: providerBinding.modelProvider, headers: fluxMemory.headers }
+          : null;
+        const threadConfig = usageTable ? { config: { [`model_providers.${usageTable.provider}.http_headers`]: { ...usageTable.headers, ...usageTags } } } : {};
         if (cursor) {
           let resumed: any;
           try {
@@ -2207,7 +2247,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // Cloud home names the same codexPolicy the launcher renders as the effective one.
             const resumePolicy = process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy();
             resumed = await request("thread/resume", {
-              threadId: cursor, ...resumePolicy,
+              threadId: cursor, ...resumePolicy, ...threadConfig,
               ...(selection.model ? { model: selection.model } : {}),
               ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             });
@@ -2249,6 +2289,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             model: selection.model,
             ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
             ...(process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy()),
+            ...threadConfig,
             // the Chief's proposal turn leaves no session in the owner's Codex home
             ephemeral: turn.proposalOnly === true,
           });
@@ -2488,7 +2529,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "runtime.error",
-            message,
+            message: earlyToolActivity ? `${message} ${CODEX_TOOL_MAY_HAVE_RUN}` : message,
             ...(needsAuth ? { setup: true } : {}),
           });
           settle(false, needsAuth ? "auth_required" : "rpc_error");
@@ -2546,6 +2587,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     driverKind: DRIVER_KIND,
     displayName: input.displayName,
     enabled: input.enabled,
+    planUsageReporter: "native-rpc",
     get models() {
       return models;
     },

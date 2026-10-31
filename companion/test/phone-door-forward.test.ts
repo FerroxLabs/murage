@@ -206,6 +206,16 @@ describe("at the door", () => {
       expect(askOnly).not.toHaveProperty("phoneJobs");
     } finally { offeredNow = true; askNow = false; }
   });
+  it("hello always shows phoneFlags: 1 (this computer has the preview switches), with either feature on or off", async () => {
+    expect(JSON.parse((await knock("GET", "/healthz")).body).phoneFlags).toBe(1);
+    offeredNow = false;
+    try {
+      const off = JSON.parse((await knock("GET", "/healthz")).body);
+      expect(off.phoneFlags).toBe(1);
+      expect(off).not.toHaveProperty("phoneJobs");
+      expect(off).not.toHaveProperty("phoneAsk");
+    } finally { offeredNow = true; }
+  });
   it("hello shows phoneJobs: 1 only when offered", async () => {
     const on = JSON.parse((await knock("GET", "/healthz")).body);
     expect(on.phoneJobs).toBe(1);

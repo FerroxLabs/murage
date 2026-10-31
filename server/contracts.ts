@@ -131,6 +131,8 @@ export type RuntimeEvent = RuntimeEventBase &
         delayMs: number;
         /** Why this failure was judged retry-worthy (classifyError's reason). */
         reason: string;
+        /** All attempts, the first try included, when the engine counts them itself. */
+        maxAttempts?: number;
       }
     | {
         type: "turn.completed";
@@ -154,6 +156,9 @@ export type RuntimeEvent = RuntimeEventBase &
          * up (it does not report per-server status); the bot was told they may
          * still be loading. Absent when they were checked. */
         mcpReadiness?: "unknown";
+        /** The engine ended the prompt `cancelled` on its own right after a permission ask was denied, with no Stop or
+         *  host interrupt: who denied it. The person did not press Stop, so the turn's line says why it ended instead. */
+        deniedBy?: "user" | "timeout" | "system";
       }
     /** `summary` is a short human read of the tool's arguments, for engines
      * that hide the real call inside a wrapper tool — without it every chip
@@ -328,6 +333,9 @@ export type RuntimeEvent = RuntimeEventBase &
         folderTrustLate?: "finished" | "stopped" | "failed" | "timeout";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
+    /** A Flux response named the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model), read at
+     * the start of the response. The reply this turn writes next stores it (Message.servedModel). */
+    | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
     | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
@@ -416,6 +424,9 @@ export interface SendTurnInput {
   /** The thread holds a bank, card or id number (flux-capture-hold.ts), or this turn's text does: Flux Memory capture off, inject on.
    * Set by the server where the turn is sent (index.ts sendProjectUsageTurn). */
   fluxCaptureHold?: boolean;
+  /** What this turn is for, on the x-flux-feature usage tag of its Flux requests (flux-usage-tags.ts). Stamped by the server where
+   * the turn is dispatched; absent = "chat", or "other" for background work. */
+  usageFeature?: import("./flux-usage-tags.ts").FluxFeature;
   text: string;
   model?: string;
   /** Exact server-authorized incoming bytes; never resolve paths in drivers. */
@@ -537,12 +548,9 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
-  /** A scheduled or manual routine run. Its permission cards wait until the
-   * owner answers them or the turn stops, instead of the drivers' 15-minute
-   * deny: the routine manager ends the run as "waiting on you" at its run
-   * limit and answering the card later carries the same run on. Absent: the
-   * ordinary 15-minute deny. */
-  holdPermissionAsks?: true;
+  /* Permission cards carry no deadline on any turn (Sean 10-29, LONGWORK H4): a card waits until the owner answers
+   * it or the turn stops, on every engine, direct chat and routine alike. A routine run still ends as "waiting on
+   * you" at its run limit (RoutineManager.enforceRunLimits). */
   holdProjectAsks?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents
@@ -849,6 +857,10 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */

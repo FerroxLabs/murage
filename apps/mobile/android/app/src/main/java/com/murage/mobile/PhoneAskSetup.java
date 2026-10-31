@@ -103,6 +103,7 @@ final class PhoneAskSetup {
     static int errorResource(PhoneJobsMintClient.Failure failure) {
         switch (failure) {
             case UPDATE_COMPUTER: return R.string.ask_update;
+            case TURNED_OFF: return R.string.ask_turned_off;
             case NO_APPROVAL_KEY: return R.string.ask_no_key;
             case REFUSED: return R.string.ask_computer_off;
             case NOT_OFFERED: return R.string.ask_cloud;
