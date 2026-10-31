@@ -8,6 +8,7 @@ import { formerChiefOutcome } from "../../shared/chief-handover";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
 import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
 import { CALL_EVENT } from "@/lib/bot-call-event";
+import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -314,6 +315,8 @@ export interface Message {
   actionCheck?: import("../../shared/reply-action-claims").ActionCheck;
   /** Which engine wrote this reply, when the server stamped it. */
   engine?: import("../../shared/engine-switch").MessageEngine;
+  /** The model Flux Router served this reply with and the one asked for (server store.ts Message.servedModel). */
+  servedModel?: { routed: string; requested: string };
   /** On a closing message: the turn's helpers (sub agents), summarised by the server. Owner threads only. */
   turnHelpers?: TurnHelper[];
   /** screen messages: a frame of the bot's computer (base64) */
@@ -6072,6 +6075,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Bot calls 1.0.9: call.ring / call.answered / call.ended are hints; the ring banner and the Calls settings re-read
       // GET /api/calls/active on each one (calls-109.yaml sse).
       if (frame.kind === "call") { window.dispatchEvent(new CustomEvent(CALL_EVENT, { detail: frame })); return; }
+      if (frame.kind === "emailStatus") { window.dispatchEvent(new CustomEvent(EMAIL_STATUS_EVENT)); return; }
       if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);

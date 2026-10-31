@@ -339,6 +339,7 @@ export const KNOWN_FRAME_KINDS = [
   "project.strip",
   "sidebar.order",
   "inbox.changed",
+  "emailStatus",
   "learning.remembered",
   "learning.improved",
   "memory.waiting",
@@ -429,6 +430,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // Content-free: tells the owner's desktop the Inbox changed. Nothing to leak,
     // and nothing a phone or browser would use, so it stays off the scoped streams.
     case "inbox.changed":
+      return { scope: "desktop" };
+    // Content-free: tells the owner's desktop to read email status again. A phone or browser reads GET /api/email/status when it opens.
+    case "emailStatus":
       return { scope: "desktop" };
     // A memory the bot just kept (B5m): carries the entry's own words, so it
     // stays on the owner's desktop stream. A phone or browser reads the same

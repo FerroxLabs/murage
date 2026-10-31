@@ -9,13 +9,20 @@ import type { ResolvedBy } from "../shared/mobile-push.ts";
 
 type Where = "desktop" | "elsewhere";
 
+/** A card someone really answered. A card the system closed (a cancelled turn, a closed engine) is written
+ *  `answered: "unavailable", dismissed: true` (index.ts, browser-extension-approvals.ts): nobody answered it. */
+export function answeredByOwner(card: { answered?: string | null }): boolean {
+  return card.answered !== undefined && card.answered !== null && card.answered !== "unavailable";
+}
+
 /** Who settled a card that just stopped waiting (B10): an answer keeps where
  *  it came from; a dismissed or expired card was answered by nobody, and must
  *  not read "Answered on another device." */
 export function settledBy(card: { answered?: string | null; dismissed?: boolean; expired?: boolean }, answeredWhere: Where): ResolvedBy {
-  if (card.answered !== undefined && card.answered !== null) return answeredWhere;
+  if (answeredByOwner(card)) return answeredWhere;
   if (card.dismissed) return "dismissed";
   if (card.expired) return "expired";
+  if (card.answered === "unavailable") return "dismissed";
   return answeredWhere;
 }
 

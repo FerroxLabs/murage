@@ -19,7 +19,7 @@ esac
 # TLS that equal the md5 Google Cloud Storage publishes for the same object.
 declare -A node_sha256=([x86_64]=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 [aarch64]=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2)
 declare -A caddy_sha256=([x86_64]=527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9 [aarch64]=52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904)
-declare -A cloudflared_sha256_by_arch=([x86_64]=fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2 [aarch64]=7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790)
+declare -A cloudflared_sha256_by_arch=([x86_64]=053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0 [aarch64]=89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8)
 declare -A docker_sha256_by_arch=([x86_64]=4f798b3ee1e0140eab5bf30b0edc4e84f4cdb53255a429dc3bbae9524845d640 [aarch64]=e6b53725a73763ab3f988c73f8772eaed429754c1a579db5ff11f21990fd1817)
 declare -A claude_sha256_by_arch=([x86_64]=a967e7b1d8b4e47ee421d5433027880347952b0c0857abf880e2c942a4ec93b3 [aarch64]=24caa9e6ff13bf227049a2626f1c816fc895023050f0ec3b12dbf14d897367e0)
 declare -A codex_sha256_by_arch=([x86_64]=86f268d81b898f3e144c5ecff2ad2fda2c5802e042d6195b72538fe0fa125057 [aarch64]=bf3ca2719f1143b1440fbd85c149379e696c782c50ad7991f8bfcec60b2600c1)
@@ -131,11 +131,11 @@ tar -xzf "$stage/caddy.tar.gz" -C "$stage" caddy
 install -o root -g root -m 0755 "$stage/caddy" /usr/local/bin/caddy
 install -d /usr/local/share/licenses/caddy
 curl -fsSL https://raw.githubusercontent.com/caddyserver/caddy/v2.11.4/LICENSE -o /usr/local/share/licenses/caddy/LICENSE
-# cloudflared 2026.8.2: the SAME version and digest the desktop app pins in
+# cloudflared 2026.10.3: the SAME version and digest the desktop app pins in
 # scripts/prepare-cloudflared.mjs and third_party/cloudflared/README.md (Linux x64
 # release asset, which is the executable itself). A mismatch is fatal (set -e).
 # The home dials out with it; no inbound port is ever opened.
-cloudflared_version=2026.8.2
+cloudflared_version=2026.10.3
 cloudflared_sha256=${cloudflared_sha256_by_arch[$machine]}
 curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/$cloudflared_version/cloudflared-linux-$cloudflared_arch" -o "$stage/cloudflared"
 printf '%s  %s\n' "$cloudflared_sha256" "$stage/cloudflared" | sha256sum -c -

@@ -81,6 +81,9 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "sentinel-delivery.json"), JSON.stringify({ version: 1 }), { mode: 0o600 });
     // the one-time power-guard line note (1.0.9 host-power.ts; a later start may show the line once more, 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, "power-guard-notice.json"), JSON.stringify({ cause: "userns-restricted" }), { mode: 0o600 });
+    // the last definitive bot email capability answer (1.0.11 email/caps-file.ts; re-read from Flux, 1.0.2 never reads it)
+    writeFileSync(join(DATA_DIR, "email-capabilities.json"), "{}", { mode: 0o600 });
+    writeFileSync(join(DATA_DIR, "email-capabilities.json.tmp"), "{", { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });

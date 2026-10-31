@@ -31,20 +31,16 @@ interface Pending { threadId: string; botId: string; messageId: string; settle: 
   detached?: boolean;
   /** Its late Allow had nothing to carry it on, so it made no image. */
   unused?: boolean }
-/** How long an image approval card waits for the owner: the same 15 minutes
- * every engine permission request gets (drivers/acp/core.ts, drivers/codex.ts)
- * before the harness closes it as unanswered. The generate_image MCP call in
- * drivers/agents-proxy.ts keeps its HTTP request open past this bound plus
- * generation time, so the proxy never gives up on a card first. */
-export const IMAGE_APPROVAL_TIMEOUT_MS = 15 * 60_000;
+/* An image approval card waits for the owner until it is answered or its
+ * turn ends (cards-wait 1.0.8, GROK-STOPPED F1): there is no expiry timer.
+ * The generate_image MCP call in drivers/agents-proxy.ts keeps its HTTP
+ * request open for as long as the harness holds it. */
 const error = (status: number, message: string) => Object.assign(new Error(message), { status });
 /** How an approval card ended, and what the bot is told for each: the
- * owner's own answer, a card that closed unanswered on the shared bound, or
- * a turn that went away under it. */
-type ApprovalAnswer = "allow" | "deny" | "unanswered" | "gone";
+ * owner's own answer, or a turn that went away under it. */
+type ApprovalAnswer = "allow" | "deny" | "gone";
 const NOT_APPROVED: Record<Exclude<ApprovalAnswer, "allow">, string> = {
   deny: "Image generation was not approved by the owner, so nothing was sent.",
-  unanswered: `Nobody answered the approval card within ${IMAGE_APPROVAL_TIMEOUT_MS / 60_000} minutes, so it was closed and nothing was sent. If the owner still wants this image, ask for it again; a new card will show.`,
   gone: "Image generation was not approved; no image request was sent.",
 };
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -555,9 +551,8 @@ export class ImageOperations {
     return new Promise<ApprovalAnswer>(resolve => {
       let settled = false;
       let answered = false;
-      let expired = false;
       // Only the owner's own answer is recorded as allow/deny. A card nobody
-      // answered (turn cancelled, request revoked, the shared bound elapsed)
+      // answered (turn cancelled, request revoked)
       // settles as "unavailable", the same closing the harness gives every
       // other approval its turn abandoned, so it never reads as a denial.
       const finish = (allow: boolean, source: "user" | "system" = "system") => {
@@ -578,12 +573,12 @@ export class ImageOperations {
           if (resumed && allow && source === "user") this.lateAllows.add(actor.threadId);
           return;
         }
-        if (settled) return; settled = true; clearTimeout(timer); actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
+        if (settled) return; settled = true; actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
         if (held) { try { this.routineCard?.closed(actor.threadId, requestId, source === "user" ? (allow ? "allow" : "deny") : "none"); } catch { /* delivery never changes authority */ } }
         const current = this.store.messageById(actor.threadId, card.id);
         if (current?.card && !current.card.answered) this.store.patchMessage(actor.threadId, card.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
         this.waiting(actor.threadId, false, requestId, undefined, actor.botId);
-        resolve(source === "user" ? (allow ? "allow" : "deny") : expired ? "unanswered" : "gone");
+        resolve(source === "user" ? (allow ? "allow" : "deny") : "gone");
       };
       const abort = () => {
         // A routine run holds the card: the tool call gave up (its turn is
@@ -597,7 +592,6 @@ export class ImageOperations {
         }
         finish(false);
       };
-      const timer = held || projectHeld ? undefined : setTimeout(() => { expired = true; abort(); }, IMAGE_APPROVAL_TIMEOUT_MS); timer?.unref();
       this.pending.set(requestId, { threadId: actor.threadId, botId: actor.botId, messageId: card.id, settle: finish, active: actor.assertActive });
       actor.signal.addEventListener("abort", abort, { once: true });
       if (actor.signal.aborted) abort();

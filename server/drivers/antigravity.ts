@@ -58,6 +58,7 @@ import { writeFileAtomic } from "../atomic.ts";
 import { ASK_STOP_NOTE, ASK_STOP_PROMPT, ASK_STOP_REASON, replyCarriesAskStopNote } from "./ask-stop.ts";
 import { ANTIGRAVITY_RELAY_ASK_MS, antigravityMountRecords, antigravityRelayAsk, antigravityWorkspaceHookFiles, awaitRelayHookLoaded, openAntigravityRelay, type AntigravityRelay } from "./antigravity-relay.ts";
 import type { HookAnswer, HookDelivery } from "./codex-hook.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 
 /** What the owner reads when agy ends a turn with a status other than SUCCESS: agy's own words when it gave any, else
  * the status in plain words that name the AI, as the ACP engines say it (acpStopReasonMessage), never a bare
@@ -677,13 +678,13 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           const requestId = newId();
           const finish = (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => {
             if (!relayAsks.delete(requestId)) return false;
-            clearTimeout(timer);
+            timer.clear();
             answer(behavior === "allow" ? { decision: "allow" } : { decision: "deny", reason: message?.trim() || (source === "timeout" ? "nobody answered in time, so it did not run" : "the owner did not allow it") });
             emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
             return true;
           };
-          const timer = setTimeout(() => finish("deny", "timeout"), ANTIGRAVITY_RELAY_ASK_MS);
-          timer.unref?.();
+          // awake time (1.0.10 C3): a sleep with the card open does not count toward the relay ask bound
+          const timer = wakeAwareTimeout(() => finish("deny", "timeout"), ANTIGRAVITY_RELAY_ASK_MS);
           relayAsks.set(requestId, finish);
           emit({
             ...base(threadId, turnId),
