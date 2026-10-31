@@ -2,7 +2,7 @@
 // Source: the tool lists, settings sections, locale labels and route families
 // named in each entry. Run `node scripts/build-capabilities.mjs` after changing
 // them; `--check` in the test suite fails when this file is stale.
-export type CapabilityKind = "tool" | "settings-page" | "bot-settings" | "place" | "label" | "route";
+export type CapabilityKind = "tool" | "settings-page" | "bot-settings" | "place" | "label" | "route" | "limit";
 
 /** One thing the product can do, and the word the help must use for it. */
 export interface Capability {
@@ -921,5 +921,11 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "name": "/api/whatsapp",
     "term": "WhatsApp",
     "source": "server/index.ts"
+  },
+  {
+    "kind": "limit",
+    "name": "CODEX_WINDOWS_PIPE_LINE",
+    "term": "named pipe",
+    "source": "server/capabilities-primer.ts"
   }
 ];

@@ -29,3 +29,7 @@ A `401 Unauthorized` response from `api.openai.com` means the launched Codex pro
 ## Windows notes
 
 Use a real `.exe`, `.cmd`, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper.
+
+## Codex and named pipes on Windows
+
+A command that talks to another app on this PC through a named pipe can be refused on Codex bots on Windows. Use a Claude bot for that command.

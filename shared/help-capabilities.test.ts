@@ -32,13 +32,13 @@ describe("help covers what the code can do", () => {
 
   it("derives a real list, not an empty one", () => {
     const kinds = new Set(HELP_CAPABILITIES.map((capability) => capability.kind));
-    expect([...kinds].sort()).toEqual(["bot-settings", "label", "place", "route", "settings-page", "tool"]);
+    expect([...kinds].sort()).toEqual(["bot-settings", "label", "limit", "place", "route", "settings-page", "tool"]);
     expect(HELP_CAPABILITIES.filter((capability) => capability.kind === "tool").map((capability) => capability.name)).toEqual(
       expect.arrayContaining(["murage_help", "list_bots", "ask_bot", "delegate_bot", "project_assign"]),
     );
   });
 
-  for (const kind of ["tool", "settings-page", "bot-settings", "place", "label", "route"] as const) {
+  for (const kind of ["tool", "settings-page", "bot-settings", "place", "label", "route", "limit"] as const) {
     it(`mentions every ${kind} in the help index`, () => {
       const missing = HELP_CAPABILITIES.filter((capability) => capability.kind === kind && !searchable.includes(needle(capability)));
       expect(

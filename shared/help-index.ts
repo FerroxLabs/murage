@@ -3491,6 +3491,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Use a real .exe, .cmd, or resolvable command path in the engine override. If a CLI was installed in WSL, the Windows desktop app cannot treat that Linux binary as a native Windows executable without an explicit bridge or wrapper."
   },
   {
+    "id": "providers/troubleshooting#codex-and-named-pipes-on-windows",
+    "title": "Engine troubleshooting",
+    "description": "Fix missing CLIs, failed authentication, model errors, and path differences.",
+    "heading": "Codex and named pipes on Windows",
+    "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
+    "where": "Murage docs → Providers → Engine troubleshooting",
+    "url": "https://murage.ai/docs/providers/troubleshooting#codex-and-named-pipes-on-windows",
+    "text": "A command that talks to another app on this PC through a named pipe can be refused on Codex bots on Windows. Use a Claude bot for that command."
+  },
+  {
     "id": "security#overview",
     "title": "Security model",
     "description": "The boundaries that keep agents, credentials, computers, and paired devices scoped.",
