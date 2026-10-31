@@ -83,3 +83,41 @@ describe("locale copy rules", () => {
     });
   }
 });
+
+// 1.0.12 to 1.0.14: the UX lanes' English fragments (src/locales/en-ux). Each lane writes only
+// its own `<lane>.json`, every key prefixed `ux.<lane>.`; ../index.ts merges them under en.json.
+const FRAGMENT_DIR = join(LOCALES_DIR, "en-ux");
+const fragmentFiles = readdirSync(FRAGMENT_DIR).filter((file) => file.endsWith(".json")).sort();
+
+describe("English UX fragments", () => {
+  it("registers every fragment file in the loader, and loads nothing that is not a file", async () => {
+    const { enUxFragments } = await import("./en-ux");
+    expect(Object.keys(enUxFragments).sort()).toEqual(fragmentFiles.map((file) => file.slice(0, -".json".length)).sort());
+  });
+
+  for (const file of fragmentFiles) {
+    const lane = file.slice(0, -".json".length);
+    it(`${file} holds only strings under ux.${lane}., none of them already in en.json`, () => {
+      const fragment = JSON.parse(readFileSync(join(FRAGMENT_DIR, file), "utf8")) as Record<string, unknown>;
+      const catalogue = load("en");
+      const problems = Object.entries(fragment).flatMap(([key, value]) => [
+        ...(key.startsWith(`ux.${lane}.`) && key.length > `ux.${lane}.`.length ? [] : [`${key}: must start ux.${lane}.`]),
+        ...(typeof value === "string" && value.trim() ? [] : [`${key}: must be a non-empty string`]),
+        ...(Object.hasOwn(catalogue, key) ? [`${key}: already in en.json (ask the copy lane to change it)`] : []),
+        ...(typeof value === "string" && DASH.test(value) ? [`${key}: em dash or spaced dash`] : []),
+        ...(typeof value === "string" && SAFE.test(value) ? [`${key}: "safe" wording`] : []),
+      ]);
+      expect(problems).toEqual([]);
+    });
+  }
+
+  it("merges the fragments into the English pack the app reads, without changing an en.json string", async () => {
+    const { en } = await import("./index");
+    const catalogue = load("en");
+    for (const [key, value] of Object.entries(catalogue)) expect(en[key as keyof typeof en]).toBe(value);
+    for (const file of fragmentFiles) {
+      const fragment = JSON.parse(readFileSync(join(FRAGMENT_DIR, file), "utf8")) as Record<string, string>;
+      for (const [key, value] of Object.entries(fragment)) expect(en[key as keyof typeof en]).toBe(value);
+    }
+  });
+});

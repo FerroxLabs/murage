@@ -102,6 +102,14 @@ describe("the first paint", () => {
     expect(silero.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
   });
 
+  it("leaves the level table, the card fold and the Undo toast host to the first time they open (1.0.13)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/approval/LevelExamples.tsx", "shared/level-examples.ts", "src/lib/undo.ts", "src/components/approval/GrantFold.tsx"]) {
+      expect(reached, file).not.toContain(file);
+    }
+    expect(reached).toContain("src/lib/undo-window.ts");
+  });
+
   it("opens Settings, a bot's settings and the computer panel on first use", () => {
     const reached = staticallyReached(graph);
     for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {

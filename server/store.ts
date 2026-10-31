@@ -72,7 +72,9 @@ import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutBareCommandGrants, withoutQuestionGrants } from "./auto-approve.ts";
+import { permissionLevel, type PermissionHolder, type PermissionLevel, type PermissionPrev } from "./thread-permissions-refresh.ts";
 import { withoutPreSchemaGrants, withoutStaleGrants } from "../shared/app-action-words.ts";
+import { durableGrantAllowed, withoutRefusedGrants } from "../shared/durable-grant-allowed.ts";
 import { parseAcpToolKey } from "../shared/mount-identity.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
 import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
@@ -157,6 +159,12 @@ export interface OptionCardData {
   grantRequest?: ApprovalGrantRequest;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
+  /** UX-TRUST-MOMENTS-1012 1.2: the card's class, written once when it opens
+   * (server/approval-card-grants.ts); shared/fold-scopes.ts reads it with the
+   * keys above. Absent on a card an older build wrote. */
+  cardClass?: import("../shared/fold-scopes.ts").CardClass;
+  /** 1.4: the why-line, a locale key and its params (server/approval-card-why.ts). */
+  why?: import("./approval-card-why.ts").CardWhy;
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
   lowRisk?: boolean;
@@ -391,10 +399,6 @@ export interface Message {
    * so no schema change. Absent on older rows and on rows no provider turn
    * wrote (user, Murage, copies): readers treat absence as unlabelled. */
   engine?: MessageEngine;
-  /** A bot reply Flux Router answered: the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model),
-   * read at the start of the response (flux-usage-tags.ts readServedModel). Stored in the row's JSON for Settings > Usage; the chat
-   * shows a quiet line when the two differ. Absent when the engine could not see Flux's response headers. */
-  servedModel?: { routed: string; requested: string };
   /** On a turn's closing message: its helpers (sub agents), summarised
    * (label, status, duration, tool count; never tool content). Owner threads
    * only. Source of the folded "Worked for" rows after a reload. */
@@ -603,6 +607,15 @@ export interface GroupRecord {
 export const threadSealed = (task: Pick<TaskRecord, "sealGeneration"> | undefined | null): boolean => (task?.sealGeneration ?? 0) > 0;
 
 /** 1.0.4 SL-K K4: a task copy whose session was reset forgets what its engine was last sent. */
+/** UX-TRUST-MOMENTS-1012 2.3.3: a bot patch's remembered lists (its own and
+ * each task's) keep only what durableGrantAllowed keeps. */
+function durableGrantsOnly(patch: Partial<BotRecord>): Partial<BotRecord> {
+  return {
+    ...patch,
+    ...(patch.alwaysAllow ? { alwaysAllow: withoutRefusedGrants(patch.alwaysAllow).kept } : {}),
+    ...(patch.tasks ? { tasks: patch.tasks.map((task) => task.alwaysAllow ? { ...task, alwaysAllow: withoutRefusedGrants(task.alwaysAllow).kept } : task) } : {}),
+  };
+}
 function withoutEffortSent<T extends { effortSent?: unknown }>(task: T): T { const { effortSent: _effortSent, ...rest } = task; return rest as T; }
 
 export interface TaskRecord {
@@ -651,6 +664,10 @@ export interface TaskRecord {
   /** 1.0.9 phone tools X3: when the first accepted phone call of this thread was made. Set once, cleared only with the task
    * (deleteTask). Server bookkeeping, never on the wire (wireTask strips it). */
   phoneUsedAt?: number;
+  /** 1.0.13 UX-TRUST-L1B: moves only with this conversation's level, in the same write; absent on older records and read as 0. */
+  permissionRev?: number;
+  /** The level and revision before the last level write. Server bookkeeping, never on the wire. */
+  permissionPrev?: PermissionPrev;
   autoApprove?: boolean;
   /** Full access for this task: above Auto, and only while autoApprove is on. */
   fullAccess?: boolean;
@@ -1034,6 +1051,10 @@ export interface BotRecord {
    * working instead of stopping to ask. Questions it asks YOU still come
    * through, and a short list of destructive commands still stops it. */
   autoApprove?: boolean;
+  /** 1.0.13 UX-TRUST-L1B: moves only with this bot's level, in the same write; absent on older records and read as 0. */
+  permissionRev?: number;
+  /** The level, revision and routines before the last level write, the proof an exact step back needs. Never on the wire. */
+  permissionPrev?: PermissionPrev;
   /** Full access, the level above Auto: no approval card at all for turns
    * the owner starts (webhook turns are judged as Auto, a routine run at its
    * routine's level, and images are made without a card only in the owner's own turns:
@@ -1508,6 +1529,12 @@ const messageBytes = (m: Message): number => 512 + (m.text?.length ?? 0) * 2 + (
 /** bots.json never carries runtime activity: `busy`/`activity` are transient
  * per bot and per task, so every writer (ordinary saves and the package
  * transaction) serializes the same durable shape. */
+/** The fields a level write adds to a record, in the same write as the level. */
+function levelMove(record: PermissionHolder, from: PermissionLevel, routinesId?: string): { permissionRev: number; permissionPrev: PermissionPrev } {
+  const rev = record.permissionRev ?? 0;
+  return { permissionRev: rev + 1, permissionPrev: { level: from, rev, ...(routinesId !== undefined ? { routinesId } : {}) } };
+}
+
 function persistedBotsJson(bots: readonly BotRecord[]): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
@@ -1932,6 +1959,9 @@ export class Store {
     // permission card), so strip any such remembered grant — from the bot
     // and from every task that inherited or recorded one. Runs after task
     // adoption above so a freshly inherited copy is cleaned too.
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a
+    // payment, a browser stop) is never kept for good; counted once, no payee
+    let refusedGrants = 0;
     for (const b of this.bots) {
       for (const holder of [b, ...(b.tasks ?? [])] as { alwaysAllow?: string[] }[]) {
         if (!holder.alwaysAllow?.length) continue;
@@ -1940,12 +1970,15 @@ export class Store {
         // (shared/app-action-grant.ts). The owner is asked again, per action.
         // ...and a command tool's bare name (an older PowerShell grant): its
         // next command asks again and is remembered by program (1.0.4 G09-3)
-        const kept = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const cleaned = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const { kept, dropped } = withoutRefusedGrants(cleaned);
+        refusedGrants += dropped;
         if (kept.length === holder.alwaysAllow.length) continue;
         holder.alwaysAllow = kept;
         botsMigrated = true;
       }
     }
+    if (refusedGrants) console.warn(`[grants] dropped ${refusedGrants} remembered ${refusedGrants === 1 ? "approval" : "approvals"} that are never kept for good (payments, browser stops)`);
     // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
     const followCleanup = !followCleanupDone(DATA_DIR);
     if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
@@ -3127,11 +3160,6 @@ export class Store {
     return mdb.artifactRows(threadId).map(sanitizeMessageDiagnostic);
   }
 
-  /** ROUTINE-DELIVER-1010: saved-file rows of one window of a conversation (message-db.ts artifactRowsBetween). */
-  artifactRowsBetween(threadId: string, from: number, to: number, limit: number): Message[] {
-    return mdb.artifactRowsBetween(threadId, from, to, limit).map(sanitizeMessageDiagnostic);
-  }
-
   /** The first row of this thread that attaches `path`, by the message_image
    * index (boundAttachments' rule while that index is still being filled). */
   rowAttaching(threadId: string, path: string): Message | undefined {
@@ -4147,6 +4175,8 @@ export class Store {
     const bot = this.bot(id);
     if (!bot) return null;
     if (Object.hasOwn(patch, "section")) { assertSectionUnlocked(); assertHomeMove(bot, patch.section); }
+    // UX-TRUST-MOMENTS-1012 2.3.3: a remembered list keeps only what durableGrantAllowed keeps, whoever writes it
+    if (patch.alwaysAllow || patch.tasks?.some((task) => task.alwaysAllow)) patch = durableGrantsOnly(patch);
     // 1.0.4 SL-K K1: a bot's account change resets the session of every chat that follows the bot; a chat's own pick is left alone.
     if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
@@ -4157,7 +4187,10 @@ export class Store {
     const formerName = bot.name;
     const continuityChanged = (bot.continuity === true || patch.continuity === true) && ["continuity", "continuityOptions", "modelSelection"].some(key => Object.hasOwn(patch, key) && JSON.stringify(bot[key as keyof BotRecord]) !== JSON.stringify(patch[key as keyof BotRecord]));
     const continuityGeneration = bot.continuityGeneration ?? 0;
+    const levelBefore = permissionLevel(bot);
     Object.assign(bot, patch);
+    // an internal caller's level move counts like any other (the routes' level writes use setPermissionLevel)
+    if (permissionLevel(bot) !== levelBefore) Object.assign(bot, levelMove(bot, levelBefore));
     if (continuityChanged) bot.continuityGeneration = continuityGeneration + 1;
     // an owner's edit of the voice makes it theirs
     if ((Object.hasOwn(patch, "voice") || Object.hasOwn(patch, "voiceProvider"))) delete bot.voiceAssigned;
@@ -4167,12 +4200,32 @@ export class Store {
     }
     if (partitionedAt !== undefined) bot.partitionedAt = partitionedAt;
     if(bot.tasks?.length===1){
-      const task=bot.tasks[0];
+      const task=bot.tasks[0],taskLevel=permissionLevel(task);
       // 1.0.4 SL-K K1: the model is no longer mirrored onto the one task (it follows the bot unless picked); the permission mirror stays.
       for(const key of ["autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      if(permissionLevel(task)!==taskLevel)Object.assign(task,levelMove(task,taskLevel));
     }
     this.saveBots();
     this.emit({ type: "bot", botId: id });
+    return bot;
+  }
+
+  /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
+   * write leaves the old level, revision and no event. Level flags, acknowledgements and the revision travel in one write. With `ifRev`
+   * a different revision answers null and writes nothing. `mirrorSoleTask` keeps a legacy PATCH's one-conversation mirror in this write;
+   * a PATCH of the default alone never sets it, so the conversation stays out of the change. */
+  setPermissionLevel(botId: string, change: { flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean }): BotRecord | null {
+    const bot = this.bot(botId);
+    if (!bot || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
+    const next = { ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
+    const sole = change.mirrorSoleTask && bot.tasks?.length === 1 ? bot.tasks[0] : undefined;
+    const soleNext = sole && { ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    const revision = this.recordRevision;
+    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, ...(sole ? { tasks: [{ ...sole, ...soleNext }] } : {}) } : current)); }
+    catch (error) { this.recordRevision = revision; throw error; }
+    Object.assign(bot, next);
+    if (sole) Object.assign(sole, soleNext);
+    this.emit({ type: "bot", botId });
     return bot;
   }
 
@@ -4197,6 +4250,8 @@ export class Store {
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a payment) is never saved, whoever asks
+    if (keys.some((key) => !durableGrantAllowed(key))) throw Object.assign(new Error("This approval can only be allowed once."), { status: 400 });
     const unique = [...new Set(keys)];
     const addBot = unique.filter((key) => !(bot.alwaysAllow ?? []).includes(key));
     const addTask = task ? unique.filter((key) => !(task.alwaysAllow ?? []).includes(key)) : [];
@@ -4204,6 +4259,25 @@ export class Store {
       throw Object.assign(new Error("This bot already remembers 200 approvals. Remove some in Settings, Permissions, then try again."), { status: 409 });
     }
     return { bot, task, added: { bot: addBot, task: addTask } };
+  }
+
+  /** UX-TRUST-MOMENTS-1012 1.3, M06: Undo of one card's "Always" takes back
+   * exactly what that save added, by holder: `bot` from the bot's defaults,
+   * `task` from the one task it was saved on, nothing anywhere else. One
+   * durable write, staged like rememberBotGrants. Returns what it removed. */
+  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: { bot: readonly string[]; task: readonly string[] }): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
+    const bot = this.bot(botId);
+    if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
+    if (keys.task.length && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    const fromBot = (bot.alwaysAllow ?? []).filter((key) => keys.bot.includes(key));
+    const fromTask = task ? (task.alwaysAllow ?? []).filter((key) => keys.task.includes(key)) : [];
+    const removed = { bot: [...new Set(fromBot)], task: [...new Set(fromTask)] };
+    if (!removed.bot.length && !removed.task.length) return { bot, removed };
+    const botKeys = (bot.alwaysAllow ?? []).filter((key) => !removed.bot.includes(key));
+    const taskKeys = task && removed.task.length ? (task.alwaysAllow ?? []).filter((key) => !removed.task.includes(key)) : undefined;
+    const staged = this.stageBotGrants(bot, taskKeys ? task : undefined, botKeys, taskKeys, undefined, removed);
+    return { bot: staged.bot, removed: staged.added };
   }
 
   private stageBotGrants<T>(bot: BotRecord, task: TaskRecord | undefined, botKeys: string[], taskKeys: string[] | undefined, grantSchema: 2 | undefined, result: T): { bot: BotRecord; added: T } {
@@ -5017,7 +5091,10 @@ export class Store {
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
+    // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
+    if(rest.alwaysAllow)rest.alwaysAllow=withoutRefusedGrants(rest.alwaysAllow).kept;
     const next:TaskRecord={...task,...structuredClone(rest)};
+    if(permissionLevel(next)!==permissionLevel(task))Object.assign(next,levelMove(task,permissionLevel(task)));
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
     for(const key of ["modelSelection","effortSent","limitFailover"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
     if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
@@ -5062,24 +5139,25 @@ export class Store {
   }
 
   /** Persist one candidate roster before publishing any changed task or event. */
-  raiseTaskPermissions(botId: string, threadIds: readonly string[], patch: { autoApprove: boolean; fullAccess: boolean; noLimits: boolean }): number {
+  raiseTaskPermissions(botId: string, threadIds: readonly string[], patch: { autoApprove: boolean; fullAccess: boolean; noLimits: boolean }): Array<{ threadId: string; from: PermissionLevel; to: PermissionLevel; rev: number }> {
     const bot = this.bot(botId);
-    if (!bot) return 0;
+    if (!bot) return [];
     const rank = (v: { autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean }) => !v.autoApprove ? 0 : !v.fullAccess ? 1 : v.noLimits ? 3 : 2;
     const selected = new Set(threadIds), changed = new Map<TaskRecord, TaskRecord>();
     const tasks = (bot.tasks ?? []).map(task => {
       if (!selected.has(task.threadId) || rank(task) >= rank(patch)) return task;
-      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits };
+      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits, ...levelMove(task, permissionLevel(task)) };
       changed.set(task, next); return next;
     });
-    if (!changed.size) return 0;
+    if (!changed.size) return [];
     const revision = this.recordRevision;
     try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, tasks } : current)); }
     catch (error) { this.recordRevision = revision; throw error; }
+    const moved = [...changed].map(([task, next]) => ({ threadId: task.threadId, from: permissionLevel(task), to: permissionLevel(next), rev: next.permissionRev! }));
     for (const [task, next] of changed) Object.assign(task, next);
     // Permission defaults belong to the bot; its active task is projected separately.
     this.emit({ type: "bot", botId });
-    return changed.size;
+    return moved;
   }
 
   /** After a turn: the last pull or merge request the bot's reply named becomes the thread's link, unless

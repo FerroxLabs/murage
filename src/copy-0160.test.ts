@@ -52,7 +52,9 @@ describe("0.1.60 copy flags", () => {
     for (const file of ["./components/BotPermissionDefault.tsx", "./components/FullAccessWarning.tsx", "./lib/permission-mode.ts"]) {
       expect(source(file), file).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still/i);
     }
-    expect(source("./components/BotPermissionDefault.tsx")).toContain("Webhook turns still ask. Routines use this level unless a routine has its own.");
+    // UX-TRUST-MOMENTS-1012 section 8 row 10: routines keep their own level (T10); the line under the table says so
+    expect(source("./components/BotPermissionDefault.tsx")).toContain("Webhook turns still ask.");
+    expect(source("./components/BotPermissionDefault.tsx")).not.toContain("Routines use this level");
     const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
     expect(hint).toContain("in routines at that level; webhook turns still stop and ask");
   });
