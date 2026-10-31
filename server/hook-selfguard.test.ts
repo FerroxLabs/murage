@@ -360,3 +360,47 @@ describe("agy-workspace-hooks reads the root folder only as a path", () => {
     }
   });
 });
+
+// 1.0.10 (HERMES-BUGS-1010): DATA_DIR/native/hermes-ask holds the Hermes ask hook and the managed overlay
+// (overlay-<hash>/config.yaml) Hermes loads it from. A bot editing the overlay could remove Murage's ask hook, so a
+// read or a write that names the folder is held at every level: Ask, Auto, Full, No limits and with a grant.
+describe("a call that names Murage's Hermes overlay folder is held at every level", () => {
+  const askLevel: AutoApprover = { autoApprove: false, alwaysAllow: [] };
+  const autoLevel: AutoApprover = { autoApprove: true, alwaysAllow: [] };
+  const grantAll: AutoApprover = { autoApprove: true, fullAccess: true, alwaysAllow: ["read_file", "write_file", "patch", "terminal", "Bash:cat", "Bash:cp"] };
+  const overlay = `${data}/native/hermes-ask/overlay-0123456789abcdef/config.yaml`;
+  const winOverlay = "C:\\Users\\Jo\\.murage\\native\\hermes-ask\\overlay-0123456789abcdef\\config.yaml";
+  const calls: readonly (readonly [string, string, Record<string, unknown>])[] = [
+    ["read_file", `read_file ${overlay}`, { path: overlay }],
+    ["read_file", `read_file ${winOverlay}`, { path: winOverlay }],
+    ["write_file", `write_file ${overlay}`, { path: overlay, content: "hooks: {}\n" }],
+    ["patch", `patch ${overlay}`, { path: overlay, old_string: "pre_tool_call", new_string: "x" }],
+    ["terminal", `cat ${overlay}`, { command: `cat ${overlay}` }],
+    ["terminal", `cp /tmp/x ${overlay}`, { command: `cp /tmp/x ${overlay}` }],
+    ["terminal", `rm -rf ${data}/native/hermes-ask`, { command: `rm -rf ${data}/native/hermes-ask` }],
+    ["terminal", `cd ${data}/native/hermes-ask/ && sed -i '' d overlay-0123456789abcdef/config.yaml`, { command: `cd ${data}/native/hermes-ask/ && sed -i '' d overlay-0123456789abcdef/config.yaml` }],
+  ];
+
+  it("reads and writes of the overlay, by tool or shell, never run unasked", () => {
+    for (const [tool, summary, input] of calls) {
+      expect(autoVerdict(askLevel, tool, summary, at(tool, input)).approve, `ask ${summary}`).toBeNull();
+      for (const bot of [autoLevel, full, unlimited, grantAll]) {
+        const v = autoVerdict(bot, tool, summary, at(tool, input));
+        // `rm -rf …/native/hermes-ask` is held by the destructive guard before the sensitive guard sees it: either holds.
+        if (summary.startsWith("rm -rf")) expect(v.approve, `${summary} ${JSON.stringify(bot)}`).toBeNull();
+        else expect(v, `${summary} ${JSON.stringify(bot)}`).toMatchObject({ approve: null, source: "sensitive-guard" });
+      }
+    }
+  });
+
+  it("is a row of the never-list (path, Read and Bash rules), and a test file named like it is ordinary", () => {
+    const row = SENSITIVE_PATHS.find((r) => r.id === "murage-engine-hooks")!;
+    expect(row.read).toContain("**/native/hermes-ask/**");
+    expect(row.bash).toContain("*native/hermes-ask*");
+    expect(row.re.test(overlay)).toBe(true);
+    expect(row.re.test(winOverlay)).toBe(true);
+    expect(row.re.test("server/drivers/acp/hermes-ask-normal.test.ts")).toBe(false);
+    const ordinary = "npx vitest run server/drivers/acp/hermes-ask-normal.test.ts";
+    expect(autoVerdict(full, "terminal", ordinary, at("terminal", { command: ordinary })).approve).toBeTruthy();
+  });
+});

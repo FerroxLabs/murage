@@ -663,9 +663,10 @@ describe("fuigo argv — the ordering trap", () => {
     expect(dump("agent").argv[1]).toBe("default");
   });
 
-  it("bypasses permissions only under fullAuto", async () => {
+  it("asks for permission under fullAuto too: never bypassPermissions (Murage answers a fullAuto turn's asks)", async () => {
     await runTurn({ model: "flux-auto", fullAuto: true });
-    expect(dump("agent").argv[1]).toBe("bypassPermissions");
+    expect(dump("agent").argv[1]).toBe("default");
+    expect(dump("agent").argv).not.toContain("bypassPermissions");
   });
 
   it("omits -m entirely when the turn names no model", async () => {
