@@ -17,13 +17,16 @@
 //     session id the engine gave it), never from the model's text, and name
 //     only this turn's own session: another conversation's results, another
 //     bot's, or any other folder of the engine still ask;
-//   - a shell command must pass shared/readonly-shell.ts in full: a pipeline
-//     of cat/head/tail/wc/grep/jq/python -c with allow-listed options, no
-//     chaining, substitution, globs or redirection (bar `2>/dev/null`), and a
-//     python script that reads STDIN ONLY (a few safe modules, no `open`, no
-//     `sys.argv`, no file argument). Anything that could write, run another
-//     program or reach the network is not understood, and not understood
-//     means ask;
+//   - a shell command counts only where a POSIX shell runs it: an engine's
+//     own bare POSIX shell tool, never on Windows, never PowerShell (its `\`
+//     and `,` would name other paths than the ones parsed here);
+//   - it must pass shared/readonly-shell.ts in full (allow-listed options, no
+//     chaining, substitution, globs or redirection bar `2>/dev/null`) AND be
+//     made of cat/head/tail/wc/grep/jq alone. Never `python -c`, however
+//     safe its script: CPython puts the folder it runs in first on sys.path,
+//     and the bot can write a `json.py` there without a card, so the module
+//     that runs is not the script that was checked (1.0.11 OWN-TOOL-RESULTS,
+//     GrokBuild). A python read raises the card;
 //   - EVERY path the command reads is a literal word of cat/head/tail/wc/
 //     grep/jq and must be strictly inside one of those folders, compared the
 //     way own-workspace-approval.ts compares a bot's own folders (real paths,
@@ -75,6 +78,13 @@ export function claudeToolResultDirs(configDir: string | undefined, cwds: readon
   return keys.map((key) => join(configDir, "projects", key, sessionId, "tool-results"));
 }
 
+/** An engine's own shell tools whose command a POSIX shell runs, by their exact bare names (auto-approve.ts COMMAND_TOOLS
+ * without PowerShell and the remote computer's runner; the same list as own-file-reads.ts). */
+const POSIX_SHELL_TOOLS = new Set(["Bash", "bash", "shell", "execute", "exec_command", "run_command", "terminal"]);
+
+/** The pipeline programs that only read the files they name. python is not one (see above). */
+const SHELL_READERS = new Set(["cat", "head", "tail", "wc", "grep", "jq"]);
+
 /** Read-only file tools, by the engine's own bare name or ACP kind. */
 const READ_TOOLS = new Set(["read", "read_file", "read_text_file", "view", "view_file"]);
 
@@ -87,6 +97,10 @@ export interface OwnToolResultRequest {
   filePaths?: readonly string[];
   /** This turn's own result folders, from the driver. */
   dirs?: readonly string[];
+  /** "pwsh" when the engine runs this command under PowerShell. */
+  commandShell?: unknown;
+  /** For tests; defaults to this process's platform. */
+  platform?: NodeJS.Platform;
 }
 
 /** A link at or above a result folder cancels out of the real-path
@@ -115,8 +129,12 @@ export function isOwnToolResultRead(request: OwnToolResultRequest): boolean {
   if (!dirs.length || typeof request.tool !== "string") return false;
   const tool = request.tool.trim();
   if (typeof request.command === "string") {
+    // Allow-listed, never deny-listed: only an engine's own bare POSIX shell tool off Windows. A namespaced or dotted
+    // name, PowerShell under any name or marker, and any command tool on Windows ask.
+    if ((request.platform ?? process.platform) === "win32" || request.commandShell === "pwsh" || !POSIX_SHELL_TOOLS.has(request.tool)) return false;
     const parsed = parseReadOnlyCommand(request.command);
-    return Boolean(parsed && parsed.paths.length && parsed.paths.every((path) => insideOwn(dirs, path)));
+    if (!parsed?.paths.length || !parsed.programs.every((program) => SHELL_READERS.has(program))) return false;
+    return parsed.paths.every((path) => insideOwn(dirs, path));
   }
   if (!READ_TOOLS.has(tool.toLowerCase())) return false;
   const paths = request.filePaths;

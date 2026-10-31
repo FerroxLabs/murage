@@ -139,7 +139,8 @@ export function externalWebUrl(rawUrl) {
 
 /**
  * Decide what a main-window `window.open` does. Every popup is denied; a
- * credential-free web URL opens in the default browser, and the startup error
+ * credential-free web URL opens in the default browser, an obsidian:// note
+ * link opens Obsidian, and the startup error
  * page's exact server-log link (a data: page, see buildErrorPage) opens that
  * one log file. Anything else is refused.
  *
@@ -157,7 +158,26 @@ export function mainWindowOpenAction(url, { currentUrl, diagnosticsLogHref } = {
   try {
     return { kind: "external", url: externalWebUrl(url) };
   } catch {
-    return { kind: "refuse" };
+    // An obsidian:// note link from a chat reply opens the owner's Obsidian (adapted from OpenMausBot #3687).
+    // Only that one app scheme, only from a click (window.open); navigation and the IPC door stay web-only.
+    const note = obsidianNoteUrl(url);
+    return note ? { kind: "external", url: note } : { kind: "refuse" };
+  }
+}
+
+const OBSIDIAN_OPEN_PARAMS = new Set(["vault", "file", "path"]);
+
+/** A read-only obsidian://open note link naming only a vault, file or path, normalized, or null. Every other Obsidian
+ *  action (new, search, clipboard, plugin handlers) and every other app scheme is refused. */
+export function obsidianNoteUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !/^obsidian:\/\/open\?/i.test(rawUrl)) return null;
+  try {
+    const url = new URL(rawUrl);
+    const keys = [...url.searchParams.keys()];
+    if (url.protocol !== "obsidian:" || url.host !== "open" || url.username || url.password || (url.pathname && url.pathname !== "/")) return null;
+    return keys.length > 0 && keys.every((key) => OBSIDIAN_OPEN_PARAMS.has(key)) ? url.toString() : null;
+  } catch {
+    return null;
   }
 }
 

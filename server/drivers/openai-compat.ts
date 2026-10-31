@@ -122,8 +122,9 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
       : DEFAULT_MODELS;
 
     // Local models rows (spec E4): a server added in Settings → Models is
-    // offered here as a chat-only model, whatever its tools test said —
-    // this driver never sends tools, so a role-play model that failed the
+    // offered here whatever its tools test said. Its turns get the mounted
+    // tools like any other model (OPENAI-TOOLS-109); a model that refuses
+    // them is remembered as text-only, so a role-play model that failed the
     // test still chats. Kept apart from the endpoint's own catalog.
     let localOptions: ModelCatalog["options"] = [];
     const withLocal = (base: ModelCatalog): ModelCatalog => {
