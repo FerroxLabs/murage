@@ -10,7 +10,7 @@
 // store refuses a hand-off's prompt id unless the same transaction moved the hand-off's row to started (handoff-stamp.ts). `handoff-dispatch.structure.test.ts` reads the sources
 // and fails if any other code starts a hand-off.
 //
-//   gate     one gate, closed while the owner-record migration is pending OR the boot settling is still paging: nothing is admitted, the row is untouched.
+//   gate     one gate, closed while the owner-record migration is pending, the boot settling is still paging OR the server is closing: nothing is admitted, the row is untouched.
 //   admit    one synchronous decision from the row's own state: start | wait | cancel | settled | gaveUp.
 //   dispatch admit, the origin's pre-steps (the peer approval, or the shared request's dispatch and owner approval), admit AGAIN after every wait, then the
 //            start on the STORED destination with the ticket.

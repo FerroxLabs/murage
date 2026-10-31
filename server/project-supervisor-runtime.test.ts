@@ -53,12 +53,12 @@ it("F3 refuses an ask from the lead reply at the project budget line", () => {
 });
 it("F4 accounting lineage preserves a non-owner room audience", async () => {
   const f = usageFixture();
-  await seam("sendProjectUsageTurn", f.deps)({ driverKind: "fake", adapter: { sendTurn: async () => ({ turnId: "turn" }) } }, { threadId: "thread" });
+  await seam("sendProjectUsageTurn", f.deps)({ driverKind: "fake", adapter: { sendTurn: async () => ({ turnId: "turn" }) } }, { threadId: "thread" }, {});
   expect(f.insert.mock.calls[0]![1]).toMatchObject({ lineage: { notOwnerAudience: true } });
 });
 it("F5 a send failure finishes the synthetic request without continuation", async () => {
   const f = usageFixture();
-  await expect(seam("sendProjectUsageTurn", f.deps)({ driverKind: "fake", adapter: { sendTurn: async () => { throw new Error("send failed"); } } }, { threadId: "thread" })).rejects.toThrow("send failed");
+  await expect(seam("sendProjectUsageTurn", f.deps)({ driverKind: "fake", adapter: { sendTurn: async () => { throw new Error("send failed"); } } }, { threadId: "thread" }, {})).rejects.toThrow("send failed");
   expect(f.complete).toHaveBeenCalledWith(expect.anything(), "usage-request", expect.objectContaining({ state: "failed" }), expect.anything(), { continuation: false });
   expect(f.pending.size).toBe(0);
 });
@@ -90,8 +90,8 @@ it("shared-owner accounting holds asks and settles a failed send", async () => {
   const settleSharedOwner = vi.fn(), sharedOwnerUsage = createSharedOwnerUsage(settleSharedOwner);
   const sendTurn = vi.fn(async () => { throw Error("shared send failed"); });
   const send = seam("sharedOwnerUsageTurn", { sharedOwnerUsage, store: { bot: () => ({ tasks: [{ threadId: "work", sharedWork: { teamId: "sales" } }] }), messagesFor: () => [{ id: "message", role: "user" }], newestMatching: () => ({ id: "message", role: "user" }) } });
-  await expect(send({ driverKind: "fake", adapter: { sendTurn } }, { threadId: "work" }, { botId: "bot", generation: "gen" })).rejects.toThrow("shared send failed");
-  expect(sendTurn).toHaveBeenCalledWith({ threadId: "work", holdPermissionAsks: true, holdProjectAsks: true });
+  await expect(send({ driverKind: "fake", adapter: { sendTurn } }, { threadId: "work" }, { botId: "bot", generation: "gen" }, {})).rejects.toThrow("shared send failed");
+  expect(sendTurn).toHaveBeenCalledWith({ threadId: "work", holdProjectAsks: true });
   expect(settleSharedOwner).toHaveBeenCalledTimes(1);
   expect(settleSharedOwner).toHaveBeenCalledWith("work", expect.objectContaining({ generation: "gen", teamId: "sales", messageId: "message" }), { ok: false });
   expect(sharedOwnerUsage.has("work")).toBe(false);

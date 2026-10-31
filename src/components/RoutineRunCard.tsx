@@ -12,6 +12,7 @@ import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
 import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
+import { ArtifactCards } from "./ArtifactCards";
 
 const DETAIL_LIMIT = 280;
 
@@ -142,6 +143,7 @@ export function RoutineRunCard({
             </span>
           </div>
           {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail === CLOUD_ROUTINE_NOT_YET ? t("routines.cloudAskOnly") : detail === PROJECT_CLOSED_COPY ? t("routines.projectClosed") : detail}</p>}
+          {run.nextStep && <p className="mt-1 text-[12px] leading-relaxed text-ink">{run.nextStep}</p>}
         </div>
         {onOpen && run.executionThreadId && (
           <button
@@ -160,6 +162,13 @@ export function RoutineRunCard({
           </button>
         )}
       </div>
+      {/* ROUTINE-DELIVER-1010: the files and images the run saved, drawn as a normal turn draws them */}
+      {message.artifactIds?.length ? (
+        <div className="mt-2.5">
+          <ArtifactCards ids={message.artifactIds} />
+          {run.moreFiles && <p className="mt-1 text-[11.5px] text-ink-secondary">More files from this run are in Files.</p>}
+        </div>
+      ) : null}
     </section>
   );
 }

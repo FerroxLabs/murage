@@ -33,6 +33,11 @@ describe("help covers what the code can do", () => {
   it("derives a real list, not an empty one", () => {
     const kinds = new Set(HELP_CAPABILITIES.map((capability) => capability.kind));
     expect([...kinds].sort()).toEqual(["bot-settings", "label", "place", "route", "settings-page", "tool"]);
+    // The sidebar's own page names (settings.page.*), not the pre-1.0.3 section names (CAPABILITY-DB-1010 section 5).
+    const pages = new Map(HELP_CAPABILITIES.filter((capability) => capability.kind === "settings-page").map((capability) => [capability.name, capability.term]));
+    expect(pages.get("botDefaults")).toBe("Bots");
+    expect(pages.get("companion")).toBe("Devices");
+    expect(pages.get("aboutMe")).toBe("About me");
     expect(HELP_CAPABILITIES.filter((capability) => capability.kind === "tool").map((capability) => capability.name)).toEqual(
       expect.arrayContaining(["murage_help", "list_bots", "ask_bot", "delegate_bot", "project_assign"]),
     );
@@ -40,7 +45,8 @@ describe("help covers what the code can do", () => {
 
   for (const kind of ["tool", "settings-page", "bot-settings", "place", "label", "route"] as const) {
     it(`mentions every ${kind} in the help index`, () => {
-      const missing = HELP_CAPABILITIES.filter((capability) => capability.kind === kind && !searchable.includes(needle(capability)));
+      const missing = HELP_CAPABILITIES.filter((capability) => capability.kind === kind && !searchable.includes(needle(capability))
+        && !(capability.alt && searchable.includes(capability.alt.toLowerCase())));
       expect(
         missing.map((capability) => `${capability.name} (${capability.source}): the help never says "${needle(capability)}"`),
         "add a docs sentence for each, then run node scripts/build-help-index.mjs",
