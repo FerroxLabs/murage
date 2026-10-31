@@ -78,7 +78,7 @@ describe("what is already here: one row", () => {
     expect(engineRowTitle(agent({ id: "claude", name: "Claude Code" }))).toBe("Claude Code");
   });
 
-  it("marks a local model local and promises nothing leaves the machine", () => {
+  it("marks a local model local with the neutral line", () => {
     const [row] = firstRunDetection(view({
       agents: [agent({ id: "ollama", name: "generic", localModel: { model: "qwen3:8b", host: "Ollama" } })],
     })).rows;
@@ -118,22 +118,19 @@ describe("what is already here: one row", () => {
     expect(`${row.detail} ${row.tag}`).not.toMatch(/broken|error|fail|wrong|cannot/i);
   });
 
-  // NO ROW CLAIMS TO BE THE ONE ANSWERING.
+  // ONE ROW SAYS "using this now", AND ONLY THE ONE THE VIEW PROVES.
   //
-  // The approved flow tags one row "using this". Which engine the Chief is
-  // actually on lives on `SetupLiveState.chiefInstanceId` and is not carried
-  // on the view, so this build cannot prove it. Put on every local row it
-  // would be false the moment somebody has two models on their machine, which
-  // is the ordinary case for the exact person who has any. If the field ever
-  // reaches the view, this is the test that says what to do with it.
-  it("never claims an engine is the one answering, because it cannot prove which", () => {
-    const detection = firstRunDetection(view({
-      agents: [
-        agent({ id: "a", localModel: { model: "qwen3:8b", host: "Ollama" } }),
-        agent({ id: "b", localModel: { model: "llama3", host: "llama.cpp" } }),
-      ],
-    }));
-    for (const row of detection.rows) expect.soft(row.tag).not.toMatch(/using this/i);
+  // 1.0.12 carries `chiefInstanceId` on the view. With two local models on
+  // the machine exactly one is the Chief's, and with no Chief engine none is.
+  it("tags only the Chief's own engine as the one in use", () => {
+    const agents = [
+      agent({ id: "a", localModel: { model: "qwen3:8b", host: "Ollama" } }),
+      agent({ id: "b", localModel: { model: "llama3", host: "llama.cpp" } }),
+    ];
+    const tagged = firstRunDetection(view({ agents, chiefInstanceId: "b" })).rows;
+    expect(tagged.map((row) => row.tag)).toEqual([copy.readyTag, copy.usingTag]);
+    const unknown = firstRunDetection(view({ agents })).rows;
+    for (const row of unknown) expect.soft(row.tag).not.toMatch(/using this/i);
   });
 });
 
@@ -150,10 +147,9 @@ describe("what is already here: the words around the rows", () => {
     // What was found can answer questions. What it cannot do is reach their
     // mail, their calendar or their apps, and saying both halves is what makes
     // the next screen an offer rather than a pitch.
-    expect(copy.closing).toBe(
-      "That is enough for me to answer you. It is not enough for me to do the interesting part.",
-    );
-    expect(copy.action).toBe("Show me the interesting part");
+    // §1.4: what it found keeps working as it did, and answers to them here.
+    expect(copy.closing).toBe("They answer to you in here now, and they still work exactly as they did on their own.");
+    expect(copy.action).toBe("Next");
     expect(copy.heading).toBe("What is already here.");
     expect(copy.more(15)).toBe("and 15 more on this computer");
     expect(copy.hide).toBe("Hide them");

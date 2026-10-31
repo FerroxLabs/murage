@@ -46,7 +46,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
       <div className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger" aria-hidden="true"><AlertTriangle size={19} /></span>
         <div className="min-w-0 flex-1">
-          <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? "The provider blocked this request" : "This request hit a problem"}</h3>
+          <h3 id={titleId} className="break-words text-[16px] font-semibold leading-snug">{setup ? "This engine needs setup" : safetyBlocked ? t("ux.lcopyb.runtimeError.blockedTitle") : "This request hit a problem"}</h3>
           <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{explanation ?? (generic
             ? "The engine reported an error without explaining what went wrong. Any available diagnostic information is below."
             : plain ?? message)}</p>
@@ -54,12 +54,12 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
         </div>
       </div>
       {setup || <p className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[13px] leading-relaxed text-ink-secondary">{safetyBlocked
-        ? "The provider's content checks stopped this request. Review your request before sending a new message. Changing Murage permissions will not remove the provider's restriction."
+        ? t("ux.lcopyb.runtimeError.blockedBody")
         : coded?.recovery === "retry" || coded?.recovery === "contact" ? "If it keeps happening, open Technical details and send them to support."
         : coded ? "Once that is done, your next message will go through. Technical details has what support needs if it does not."
-        : "Review the details, then retry or choose another configured model in Provider settings."}</p>}
+        : t("ux.lcopyb.runtimeError.recovery", { page: t("settings.page.models") })}</p>}
       {!safetyBlocked && <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> Provider settings</button>
+        <button type="button" onClick={onOpenProviderSettings} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg border border-hairline/70 bg-control px-3 py-2 text-[13px] font-medium text-ink " + focus}><Settings2 size={15} aria-hidden="true" /> {t("settings.page.models")}</button>
         {onRetry && !setup && <button type="button" onClick={onRetry} className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised " + focus}><RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? "Retry"}</button>}
       </div>}
       <details className="mt-3 text-[11px] text-ink-secondary">

@@ -17,7 +17,7 @@ import * as procs from "../procs.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
-import { HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -1210,6 +1210,8 @@ describe("CodexDriver turns (fake app-server)", () => {
       await recorder.until((e) => e.type === "turn.completed");
       const resumed = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: { method: string }) => c.method === "thread/resume");
       expect(resumed.params).toEqual({ threadId: "codex-thread-9", sandbox: "workspace-write", approvalPolicy: "on-request" });
+      // CARDS-WAIT-CODEX-1013: not on a Cloud home yet, row CARDS-WAIT-CODEX-CLOUD
+      expect(JSON.parse(readFileSync(dump, "utf8")).argv.join(" ")).not.toContain("code_mode");
       const first = spawned.at(-1)!;
       expect(first[TURN_BOT]).toBe("bot-atlas");
       expect(JSON.parse(first[TURN_RENDER]!)).toMatchObject({ resume: "codex-thread-9", codexPolicy: { approval: "on-request", sandbox: "workspace-write" } });
@@ -2646,6 +2648,66 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       expect(argv.includes('mcp_servers.computer.default_tools_approval_mode="auto"')).toBe(!gated);
       expect(argv).not.toContain("mcp_servers.notes.default_tools_approval_mode");
     }
+  });
+
+  // CARDS-WAIT-CODEX-1013: every current model runs tools in code cells, and a yielding cell lets the model end the turn under an open card
+  it("keeps the code cell in flight from the version that has the setting, with a bound equal to the hook's", async () => {
+    const override = `features.code_mode.default_exec_yield_time_ms=${HOOK_ASK_BOUND_MS}`;
+    for (const [version, sent] of [["codex-cli 0.129.0", false], ["codex-cli 0.147.0", false], ["codex-cli 0.148.0", true], ["codex-cli 0.166.0", true]] as const) {
+      await recreate(version);
+      const r = await run(`t-yield-${version}`, [], () => null);
+      expect(r.done).toMatchObject({ ok: true });
+      const argv = r.dump().argv as string[];
+      // below 0.148.0 the nested key stops Codex before it starts ("invalid type: map, expected a boolean")
+      expect(argv.includes(override)).toBe(sent);
+      expect(argv.filter((a) => a.includes("code_mode"))).toHaveLength(sent ? 1 : 0);
+    }
+  });
+
+  it("holds a turn the model ended under an open card, and goes on with the answer", async () => {
+    process.env.FAKE_CODEX_STOP_GATE = join(scratch, "stop-gate");
+    onTestFinished(() => { delete process.env.FAKE_CODEX_STOP_GATE; });
+    await recreate("codex-cli 0.166.0");
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "c1", command: "cat /etc/hostname", cwd: scratch, concurrent: true }]);
+    const dumpPath = join(scratch, "dump-t-barrier.json");
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    const sent = await instance.adapter.sendTurn({ threadId: "t-barrier", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const card: any = await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened");
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "done from fake codex");
+    writeFileSync(process.env.FAKE_CODEX_STOP_GATE!, "go");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // the model is done and the card is still open: nothing closed it, nothing ended the turn
+    expect(recorder.events.some((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toBe(false);
+    expect(recorder.events.some((e: any) => e.type === "request.resolved" && e.requestId === card.requestId)).toBe(false);
+    await instance.adapter.respondToRequest("t-barrier", card.requestId, { behavior: "allow" } as never);
+    expect(await recorder.until((e: any) => e.type === "request.resolved" && e.requestId === card.requestId)).toMatchObject({ behavior: "allow", source: "user" });
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "went on 2");
+    expect(await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+    const stops = JSON.parse(readFileSync(dumpPath, "utf8")).hookLog.filter((h: any) => h.name === "Stop");
+    expect(stops).toHaveLength(1);
+    expect(stops[0].reason).toContain("what really happened");
+  });
+
+  it("ends at once when no card is open at the end of the turn", async () => {
+    await recreate("codex-cli 0.166.0");
+    const r = await run("t-barrier-none", [], () => null);
+    expect(r.done).toMatchObject({ ok: true });
+    expect(r.dump().hookLog.filter((h: any) => h.name === "Stop")).toEqual([]);
+  });
+
+  it("the owner's Stop wakes the barrier and the turn ends as that Stop", async () => {
+    process.env.FAKE_CODEX_STOP_GATE = join(scratch, "stop-gate-2");
+    onTestFinished(() => { delete process.env.FAKE_CODEX_STOP_GATE; });
+    await recreate("codex-cli 0.166.0");
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "c1", command: "cat /etc/hostname", cwd: scratch, concurrent: true }]);
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump-t-barrier-stop.json");
+    const sent = await instance.adapter.sendTurn({ threadId: "t-barrier-stop", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened");
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "done from fake codex");
+    writeFileSync(process.env.FAKE_CODEX_STOP_GATE!, "go");
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await instance.adapter.interruptTurn("t-barrier-stop");
+    expect(await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
   });
 
   // T91

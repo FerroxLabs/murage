@@ -119,6 +119,11 @@ export const HOOK_ENV_FILE = "murage-hook.env";
 export const HOOK_ENV_DIR = "hook-env";
 export const HOOK_ENV_VAR = "MURAGE_CODEX_HOOK_ENV";
 
+/** CARDS-WAIT-CODEX-1013: every current Codex model runs its tools in code cells (`tool_mode: code_mode_only`), and a cell that yields
+ *  hands the turn back to the model, which can end it while a card waits. The setting keeps `exec` in flight instead. Below this version
+ *  the nested key stops Codex before it starts (0.147.0: "data did not match any variant of untagged enum FeatureToml"). */
+export const CODEX_EXEC_YIELD_MIN = [0, 148, 0] as const;
+
 /** The longest a hook waits for the owner's answer to its card (codex.ts, antigravity.ts). Cards wait for the owner on
  *  every engine (Sean 10-29), so this is only the hook's own ceiling, never a 15-minute deny: 20 days keeps the
  *  script's deadline (below) under Node's longest timer (2^31-1 ms, about 24.8 days). Codex applies no ceiling of its
@@ -153,6 +158,8 @@ const print = (value) => {
 const block = (why) => {
   const reason = "Murage blocked this call: " + String(why).slice(0, 300);
   try { writeSync(2, reason + "\\n"); } catch {}
+  // A Stop fails open: the turn ends as it would without this hook, and it never answers a tool call.
+  if (hookEvent === "Stop" || hookEvent === "SubagentStop") process.exit(0);
   if (hookEvent === "SessionStart") hardBlock();
   // Any other call: the documented deny on stdout with a clean exit, which Codex blocks on whatever the shell does to an exit code
   // (Windows: Codex's PowerShell -Command wrapper turns exit 2 into 1, a non-blocking failure). Written synchronously.
@@ -199,7 +206,9 @@ try {
     ? { kind: "session", token: env.TOKEN, session_id: input.session_id }
     : event === "PreToolUse"
       ? { kind: "pretool", token: env.TOKEN, tool_name: input.tool_name, tool_input: input.tool_input, tool_use_id: input.tool_use_id, turn_id: input.turn_id, cwd: input.cwd }
-      : null;
+      : event === "Stop" || event === "SubagentStop"
+        ? { kind: "stop", token: env.TOKEN }
+        : null;
   if (!message) block("unknown event");
   const answer = await new Promise((resolve, reject) => {
     const socket = net.connect(env.SOCKET);
@@ -212,6 +221,11 @@ try {
   });
   clearTimeout(timer);
   if (event === "SessionStart") process.exit(0);
+  if (event === "Stop" || event === "SubagentStop") {
+    // A printed block keeps the turn going with the reason as the model's next input; silence ends it.
+    if (answer && answer.decision === "block" && typeof answer.reason === "string") print({ decision: "block", reason: answer.reason.slice(0, 2000) });
+    process.exit(0);
+  }
   if (answer && answer.decision === "allow") {
     // A plain allow prints nothing and exits 0: rig, Codex 0.163.0 lists a printed permissionDecision allow as "unsupported" and marks
     // the run failed, while a silent clean exit is a completed run and the call proceeds. Only a rewrite (Rule 73) prints.
@@ -294,7 +308,7 @@ export const hookWindowsLaunchValue = (launcherPath: string): string => `@"${lau
 export function codexHooksJson(execPath: string, scriptPath: string): string {
   const command = hookLaunchLine(execPath, scriptPath);
   const handler = { type: "command", command, command_windows: codexHookWindowsCommand(), timeout: HOOK_TIMEOUT_SEC };
-  return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }] } }, null, 2) + "\n";
+  return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }], Stop: [{ hooks: [handler] }], SubagentStop: [{ hooks: [handler] }] } }, null, 2) + "\n";
 }
 
 export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string }
@@ -487,8 +501,11 @@ export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string, o
   if ("failed" in first) return first.failed;
   let hooks = first.hooks;
   const ours = (list: ListedHook[], event: string) => list.filter((h) => samePath(h.sourcePath, hooksJsonPath) && h.eventName === event);
-  const needed = (list: ListedHook[]) => [...ours(list, "preToolUse"), ...ours(list, "sessionStart")];
-  if (ours(hooks, "preToolUse").length !== 1 || ours(hooks, "sessionStart").length !== 1) return { ok: false, kind: "refused", why: "Murage's two handlers are not listed" };
+  // CARDS-WAIT-CODEX-1013: the Stop handlers are the card barrier, not the gate: trusted when a Codex lists them, never required.
+  const needed = (list: ListedHook[]) => [...ours(list, "preToolUse"), ...ours(list, "sessionStart"), ...ours(list, "stop"), ...ours(list, "subagentStop")];
+  // Exactly the handlers Murage wrote: one of each gate event, at most one of each barrier event, on the listing that decides.
+  const asWritten = (list: ListedHook[]) => ours(list, "preToolUse").length === 1 && ours(list, "sessionStart").length === 1 && ours(list, "stop").length <= 1 && ours(list, "subagentStop").length <= 1;
+  if (!asWritten(hooks)) return { ok: false, kind: "refused", why: "Murage's two handlers are not listed" };
   const stale = needed(hooks).filter((h) => h.trustStatus === "untrusted" || h.trustStatus === "modified");
   if (stale.length) {
     const state: Record<string, { trusted_hash: string }> = {};
@@ -505,7 +522,7 @@ export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string, o
     hooks = again.hooks;
   }
   const mine = needed(hooks);
-  if (mine.length !== 2 || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, kind: "refused", why: "Murage's handlers are not trusted and enabled" };
+  if (!asWritten(hooks) || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, kind: "refused", why: "Murage's handlers are not trusted and enabled" };
   const other = hooks.filter((h) => !mine.includes(h) && !h.isManaged && h.mayRun && h.trustStatus === "trusted");
   if (other.length) return { ok: false, kind: "refused", why: "another hook would run in this scope" };
   return { ok: true, managed: hooks.filter((h) => h.isManaged && h.enabled).length };
@@ -526,10 +543,14 @@ export type HookAnswer =
   | { decision: "allow"; updatedInput?: Record<string, unknown>; additionalContext?: string }
   | { decision: "deny"; reason: string };
 
+export type HookStopAnswer = { decision: "end" } | { decision: "block"; reason: string };
+
 export interface HookTurn {
   token: string;
   onSession(sessionId: string): void;
   onPreTool(delivery: HookDelivery): Promise<HookAnswer>;
+  /** CARDS-WAIT-CODEX-1013: the model wants to end the turn. Resolves when it may: `end`, or `block` to keep the turn going. */
+  onStop?(): Promise<HookStopAnswer>;
 }
 
 export const hookSocketPath = (id = randomBytes(6).toString("hex")): string =>
@@ -642,6 +663,14 @@ export class CodexHookGate {
       if (message.kind === "session") {
         turn.onSession(typeof message.session_id === "string" ? message.session_id : "");
         return reply({ ok: true });
+      }
+      if (message.kind === "stop") {
+        // Fails open, as the script does: any turn but the armed one, and any failure, ends as it would without the hook.
+        const generation = this.generation;
+        const end = { decision: "end" };
+        if (!turn.onStop) return reply(end);
+        turn.onStop().then((answer) => reply(this.turn === turn && this.generation === generation ? answer : end), () => reply(end));
+        return;
       }
       if (message.kind !== "pretool") return reply({ error: "kind" });
       // The decision is delivered only while this turn is still the armed one: a Stop, a settle or a newer turn in between turns it into a deny.

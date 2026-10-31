@@ -29,13 +29,14 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCodexHome } from "./codex-isolation.ts";
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
-  CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
+  CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
   HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
-  type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
+  type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
+import { CodexAccountChannel, codexPlanUsageLeanRead, codexPlanUsageSupported } from "../plan-usage.ts";
 import { HookProof, TurnRefusal, hookDidNotStartLine } from "./turn-refusal.ts";
 import { appendDecision } from "../decision-log.ts";
 import { awaitScopeStart } from "./scoped-cli-home.ts";
@@ -119,6 +120,8 @@ function decodeConfig(raw: unknown): CodexConfig {
   };
 }
 
+/** Read by the model, not the owner: a Stop hook's block reason. */
+const CARD_ANSWERED_NOTE = "The owner has now answered the approval you were waiting for. If a code cell is still running, call wait on it to get the result. Then report what really happened, and correct anything you said earlier that turned out not to be true.";
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
@@ -149,6 +152,8 @@ interface Conn {
   onOverflow: (overflow: any) => void;
   /** Bytes of a frame the splitter has begun but not finished. Non-zero means a frame started under one owner would finish under the next. */
   buffered: () => number;
+  /** Plan usage (server/plan-usage.ts): takes this process's account frames before any handler or log sees them. */
+  account: CodexAccountChannel;
 }
 
 /** The credential file's path, bound into already-serialized `-c` values:
@@ -890,6 +895,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const versionNow = probedVersion ?? (providerBinding ? codexVersion || undefined : undefined);
           gatePlan = cloudHome ? { mode: "legacy" } : codexGatePlan(versionNow);
           if (gatePlan.mode === "refuse") throw engineUpdateRequired(ENGINE, versionNow, CODEX_GATE_MIN);
+          // CARDS-WAIT-CODEX-1013: a cell that does not yield keeps the turn waiting on an open card, on the hook and the native path.
+          // The value is HOOK_ASK_BOUND_MS (codex.test.ts holds them equal). Not on a Cloud home: row CARDS-WAIT-CODEX-CLOUD.
+          if (!cloudHome && versionAtLeast(versionNow, CODEX_EXEC_YIELD_MIN)) appServerArgs.push("-c", "features.code_mode.default_exec_yield_time_ms=1728000000");
           // Rule 68a: the gate lives in the scoped home, so a gated provider-route turn gets one (or is refused as scope_unavailable);
           // a legacy provider-route turn keeps the provider's own home as before.
           scopedHome = cloudHome || (providerBinding && gatePlan.mode !== "gated") ? null : await withScopeRetry(() => scopedCodexHome(env, versionNow, turn.warmIdentity?.botId), ENGINE);
@@ -1146,8 +1154,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // stays intact, and one frame never holds more than
         // ENGINE_FRAME_MAX_BYTES of the shared process.
         const conn: Conn = reuse?.conn ?? (() => {
-          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0 };
-          const lines = createBoundedLineSplitter({ onLine: (line) => made.onLine(line), onOverflow: (overflow) => made.onOverflow(overflow) });
+          // Plan usage: a native reporter only on the account's own ChatGPT sign-in, off a Cloud home (its native
+          // context is qualified by the Cloud owner first), on a Codex that reports every bucket. Otherwise the
+          // channel still takes account frames out of the logs and the turn, and reads nothing.
+          const planBinding = !providerBinding && !flux?.applied && !cloudHome && codexPlanUsageSupported(codexVersion || undefined)
+            ? { subjectKey: `codex:${instanceId}:${turn.warmIdentity?.botId ?? "owner"}`, credentialRevision: digest({ home: env.CODEX_HOME ?? null }).slice(0, 16) }
+            : null;
+          const account = new CodexAccountChannel({
+            write: (line) => { child.stdin.write(line); },
+            binding: planBinding,
+            leanRead: codexPlanUsageLeanRead(codexVersion || undefined),
+          });
+          child.once("exit", () => account.close());
+          child.once("error", () => account.close());
+          const made: Conn = { nextId: 1, baseline: undefined, onLine: () => {}, onOverflow: () => {}, buffered: () => 0, account };
+          const lines = createBoundedLineSplitter({ onLine: (line) => { if (!account.intercept(line)) made.onLine(line); }, onOverflow: (overflow) => made.onOverflow(overflow) });
           made.buffered = () => lines.bufferedBytes;
           child.stdout.on("data", (chunk: Buffer) => lines.push(chunk));
           registerIntake(threadId, child.stdout, child);
@@ -1187,6 +1208,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const HELPER_WAKE_GRACE_MS = Number(process.env.MURAGE_CODEX_WAKE_GRACE_MS) > 0 ? Number(process.env.MURAGE_CODEX_WAKE_GRACE_MS) : 5_000;
 
       const asks = new Map<string, AskFinish>();
+      /** Who waits for every open card to close: the Stop barrier (onStop). */
+      const askWaiters = new Set<() => void>();
+      /** Turns held at the barrier right now: such a turn ends by the model's next end, never by a helper finishing. */
+      let stopHolds = 0;
+      /** The barrier sent the model back to work: this turn ends by the engine's own turn/completed, never by a helper finishing. */
+      let resumedAtStop = false;
+      const askClosed = () => {
+        if (asks.size > 0) return;
+        for (const wake of [...askWaiters]) wake();
+        askWaiters.clear();
+        settleHeld();
+      };
       let codexThreadId: string | null = null;
       let codexTurnId: string | null = null;
       let awaitingTurnStart = false;
@@ -1448,6 +1481,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const finish: AskFinish = (behavior, message, source = "user", _answers, extra) => {
             behavior = refusal.verdict(behavior);
             if (!asks.delete(requestId)) return;
+            askClosed();
             timer.clear();
             const rewritten = extra?.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
             resolveAnswer(behavior === "allow"
@@ -1521,7 +1555,19 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await settle(false, "gate_incident");
         })();
       };
-      if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool });
+      /** CARDS-WAIT-CODEX-1013: the barrier for a model that ended its turn under an open card (a cell it yielded itself). The call dies
+       *  with the turn, so the turn waits here for the owner, then goes on with the answer. Bounded by cards: a Stop with none ends. */
+      const onStop = async (): Promise<HookStopAnswer> => {
+        if (asks.size === 0) return { decision: "end" };
+        stopHolds++;
+        try {
+          while (asks.size > 0 && !stopRequested && !state.settled) await new Promise<void>((wake) => { askWaiters.add(wake); });
+        } finally { stopHolds--; }
+        if (stopRequested || state.settled) return { decision: "end" };
+        resumedAtStop = true;
+        return { decision: "block", reason: CARD_ANSWERED_NOTE };
+      };
+      if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool, onStop });
       const handleServerRequest = (msg: any) => {
         if (refusal.refused || stopRequested) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
         const method = msg.method as string;
@@ -1639,6 +1685,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const finish: AskFinish = (behavior, _message, source = "user", answers) => {
           behavior = refusal.verdict(behavior);
           if (!asks.delete(requestId)) return;
+          askClosed();
           timer?.clear();
           if (questions) {
             // Only the owner's validated answers reach Codex. A skip, the
@@ -1736,16 +1783,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
        * start a reply to them within the grace. */
       const settleHeld = () => {
         if (!helpers.holding || state.settled || helpers.open.size > 0) return;
+        // CARDS-WAIT-CODEX-1013: a card waits for the owner, whoever asked (askClosed comes back here)
+        if (asks.size > 0 || stopHolds > 0 || resumedAtStop) return;
         if (helpers.woken) { void settle(true, null); return; }
         if (helpers.grace) return;
-        helpers.grace = setTimeout(() => { helpers.grace = undefined; if (helpers.open.size === 0 && !helpers.woken) void settle(true, null); }, HELPER_WAKE_GRACE_MS);
+        helpers.grace = setTimeout(() => { helpers.grace = undefined; if (helpers.open.size === 0 && !helpers.woken && asks.size === 0 && stopHolds === 0 && !resumedAtStop) void settle(true, null); }, HELPER_WAKE_GRACE_MS);
         helpers.grace.unref?.();
       };
       const holdForHelpers = () => {
         if (!helpers.holding) {
           helpers.holding = true;
-          helpers.cap = setTimeout(() => {
+          const armCap = () => { helpers.cap = setTimeout(() => {
             if (state.settled) return;
+            // CARDS-WAIT-CODEX-1013: a card waits for the owner, whoever asked; the cap comes round again.
+            if (asks.size > 0 && !stopRequested) { armCap(); return; }
             // a Stop already in: no cap note, the turn ends as that Stop (STOP1)
             if (stopRequested) { void settle(true, "cancelled"); return; }
             const note = backgroundCapNote(backgroundWaitCapMs());
@@ -1753,7 +1804,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: note });
             void settle(true, "background_wait_cap");
           }, backgroundWaitCapMs());
-          helpers.cap.unref?.();
+          helpers.cap.unref?.(); };
+          armCap();
         }
         helpers.woken = false;
         settleHeld();
@@ -1974,6 +2026,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "turn/completed": {
             const t = p.turn ?? {};
+            resumedAtStop = false;
             // STOP1: an end Codex reports after the person's Stop (a clean end the Stop's own deny let it reach, an
             // interrupted or failed end while it dies) is that Stop: no error card, and settle ends it as cancelled.
             if (stopRequested) { void settle(true, "cancelled"); break; }
@@ -2163,6 +2216,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await request("initialize", { clientInfo: { name: "murage", version: "1" } });
           if (cancelledBeforeStart()) return;
           send({ jsonrpc: "2.0", method: "initialized", params: {} });
+          // the handshake is done: this process may now answer plan usage reads (idempotent; released when it exits)
+          conn.account.ready();
         }
         // Rule 68b: both handlers listed, trusted and enabled before anything is asked of the model; any other listing refuses the
         // turn before a model request. Checked again on a retained process (the trust record lives in the scope's config).
@@ -2569,6 +2624,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     driverKind: DRIVER_KIND,
     displayName: input.displayName,
     enabled: input.enabled,
+    planUsageReporter: "native-rpc",
     get models() {
       return models;
     },
