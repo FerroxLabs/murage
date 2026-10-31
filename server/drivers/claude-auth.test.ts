@@ -3,7 +3,7 @@
 import { errorTextCases, ERROR_TEXT_LEAK } from "../testing/error-text-fixtures.ts";
 import { describe, expect, it } from "vitest";
 
-import { claudeAuthFailure, claudeAuthStatus, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
+import { CLAUDE_ORG_LOGIN_LINE, claudeAuthFailure, claudeAuthStatus, claudeSignedIn, claudeVersionTooOld } from "./claude.ts";
 import { CLAUDE_UPDATE_MESSAGE } from "./claude-guards.ts";
 
 describe("claudeAuthStatus", () => {
@@ -105,6 +105,16 @@ describe("claudeAuthFailure", () => {
     expect(claudeAuthFailure({ error: "api_error" }, "401 unauthorized")).toBe(true);
     for (const frame of [{}, { is_api_error_message: false }, { is_api_error_message: "true", error: false }]) expect(claudeAuthFailure(frame, login)).toBe(false);
     expect(claudeAuthFailure({}, "You are not logged in to npm; run npm login.")).toBe(false);
+  });
+  it("treats an org-disabled login as a sign-in matter only behind the CLI error flag", () => {
+    const off = "Your organization has disabled subscription access for Claude Code.";
+    expect(claudeAuthFailure({ is_api_error_message: true }, off)).toBe(true);
+    expect(claudeAuthFailure({ error: "api_error" }, "oauth_org_not_allowed")).toBe(true);
+    expect(claudeAuthFailure({}, off)).toBe(false);
+  });
+  it("words the org-disabled line plainly, the way forward first", () => {
+    expect(CLAUDE_ORG_LOGIN_LINE).toMatch(/^To carry on with Claude, sign in with another account/);
+    expect(CLAUDE_ORG_LOGIN_LINE).not.toMatch(/\u2014|\b(safe|safely|safety|unsafe)\b|quota|subscription/i);
   });
   it("does not relabel non-auth provider errors as sign-in failures", () => {
     expect(claudeAuthFailure({ error: "api_error", is_api_error_message: true }, "API Error (529): overloaded")).toBe(false);

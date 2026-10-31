@@ -1073,6 +1073,12 @@ const playTurn = (prompt: JsonValue) => {
 
   // Upstream signed-out protocol capture; the success-result variant ensures
   // a flagged auth failure cannot be mislabeled as successful completion.
+  if (mode === "org-login-off") {
+    out({ type: "assistant", error: "api_error", is_api_error_message: true,
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Your organization has disabled subscription access for Claude Code. (oauth_org_not_allowed)" }] } });
+    out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
   if (mode === "not-logged-in" || mode === "not-logged-in-success-result") {
     out({ type: "assistant", error: "authentication_failed", is_api_error_message: true,
       message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in · Please run /login" }] } });

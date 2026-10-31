@@ -22,7 +22,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
+import { CLAUDE_ORG_LOGIN_LINE, bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
@@ -567,6 +567,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ]);
     expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
     expect(recorder.events.some(event => event.type === "content.delta")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ ok: false, stopReason: "auth_required" }),
+    ]);
+  });
+
+  it("gives an org-disabled login its plain line and the sign-in path, not a bot reply", async () => {
+    await create("org-login-off");
+    await instance.adapter.sendTurn({ threadId: "t-org-off", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
+      expect.objectContaining({ message: CLAUDE_ORG_LOGIN_LINE, setup: true, authRequired: true }),
+    ]);
+    expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
     expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
       expect.objectContaining({ ok: false, stopReason: "auth_required" }),
     ]);

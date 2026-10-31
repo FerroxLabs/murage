@@ -93,6 +93,7 @@ import {
   createAttemptBoundary,
   interruptibleDelay,
   isPreAcceptFailure,
+  ORG_LOGIN_OFF,
   RETRY_MAX_ATTEMPTS,
   type AttemptBoundary,
 } from "./retry.ts";
@@ -189,6 +190,10 @@ export function claudeAuthFailure(frame: { error?: unknown; is_api_error_message
   if (frame.is_api_error_message !== true && typeof frame.error !== "string") return false;
   return frame.error === "authentication_failed" || classifyError({ text }).reason === "auth";
 }
+
+/** What the owner reads when Claude reports the login's organization has plan access turned off. The way forward comes
+ * first. It names Settings, not the chat card: the CLI still reports this login as signed in, so that card can clear itself. */
+export const CLAUDE_ORG_LOGIN_LINE = "To carry on with Claude, sign in with another account: open Settings, then Models, Advanced, Claude accounts. Claude says this login's organization has turned off plan access.";
 
 /** Adapted from OpenMausBot 95a94daa (#1840, Apache-2.0). A model newer
  * than the installed Claude Code: the API refuses it and the CLI relays that
@@ -4852,7 +4857,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
                 message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings."
-                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : text || "Claude needs you to sign in. Open engine setup to continue.",
+                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : ORG_LOGIN_OFF.test(text) ? CLAUDE_ORG_LOGIN_LINE : text || "Claude needs you to sign in. Open engine setup to continue.",
                 setup: !injected.injected, ...(!injected.injected ? { authRequired: true } : { details: text }),
               });
               break;
