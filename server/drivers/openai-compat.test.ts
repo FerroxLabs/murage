@@ -89,8 +89,10 @@ describe("OpenAICompatDriver", () => {
 
   // A model that failed the Local models tools test (e.g. a role-play model)
   // can still chat here: this driver lists Local models rows, answers for
-  // them without an endpoint key, and sends them to that server with no tools.
-  it("chats with a Local models server model without a key and never sends tools", async () => {
+  // them without an endpoint key, and sends them to that server. No tool
+  // server is mounted on this turn, so the body carries no tools; the turn
+  // with a mounted server is in openai-chat-tools.test.ts.
+  it("chats with a Local models server model without a key (no tool server mounted, so no tools in the body)", async () => {
     const chats: Array<{ url: string; auth: string | null; body: Record<string, unknown> }> = [];
     vi.stubGlobal(
       "fetch",

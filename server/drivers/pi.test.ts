@@ -227,9 +227,9 @@ describe("PiDriver config + install", () => {
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
     expect(PiDriver.install).toMatchObject({
       command: {
-        darwin: "npm install -g @earendil-works/pi-coding-agent",
-        linux: "npm install -g @earendil-works/pi-coding-agent",
-        win32: "npm install -g @earendil-works/pi-coding-agent",
+        darwin: "npm install -g --force @earendil-works/pi-coding-agent",
+        linux: "npm install -g --force @earendil-works/pi-coding-agent",
+        win32: "npm install -g --force @earendil-works/pi-coding-agent",
       },
       docsUrl: "https://pi.dev",
       needsNode: true,
@@ -288,11 +288,11 @@ describe("PiDriver turns (fake CLI)", () => {
     await instance?.dispose();
   });
 
-  it("reports the last step once for each of two multi-step turns",async()=>{
+  it("reports every step's usage once for each of two multi-step turns",async()=>{
     await create("tooluse");
     for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",model:"ollama-cloud/glm-5.2"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
-    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:12,output:2}});
+    for(const event of completed)expect(event).toMatchObject({ok:true,usage:{input:17,output:3}});
   });
 
   it("normalizes a full turn into the canonical event sequence", async () => {
@@ -750,7 +750,8 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "item.started").length).toBe(1);
     expect(recorder.events.filter((e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "tool").length).toBe(1);
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
-    expect((done as { usage: { input: number; output: number } }).usage).toEqual({ input: 12, output: 2 });
+    // both rounds count: the tool round's 5/1 plus the reply round's 12/2
+    expect((done as { usage: { input: number; output: number } }).usage).toEqual({ input: 17, output: 3 });
     const text = recorder.events.find(
       (e) => e.type === "item.completed" && (e as { itemType: string }).itemType === "assistant_text",
     ) as { text: string } | undefined;
