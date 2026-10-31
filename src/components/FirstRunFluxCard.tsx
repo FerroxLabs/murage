@@ -31,7 +31,10 @@
 
 import { useState } from "react";
 
-import { FIRST_RUN_COPY, foundNothingLine, type FirstRunFluxFeature } from "@/lib/first-run-copy";
+import { FIRST_RUN_COPY, type FirstRunFluxFeature } from "@/lib/first-run-copy";
+import { useOnline } from "@/lib/first-run";
+import { useAction } from "@/lib/use-action";
+import { ActionButton } from "./ActionButton";
 import {
   FLUX_KEY_NOT_A_KEY,
   FLUX_KEY_REJECTED,
@@ -43,8 +46,9 @@ import { SETUP_FLUX_PROVED_ANSWER, SETUP_FLUX_UNPROVED_ANSWER } from "../../shar
 import { useDesktopSurface } from "@/lib/use-surface";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { api, useStore } from "@/state/store";
-import { FLUX_SIGNUP_URL } from "./FluxRouterConnection";
+import { FLUX_ACCOUNT_URL, FLUX_SIGNUP_URL } from "./FluxRouterConnection";
 import {
+  FIRST_RUN_CHIP,
   FIRST_RUN_FOCUS,
   FIRST_RUN_INPUT,
   FIRST_RUN_PRIMARY,
@@ -52,6 +56,7 @@ import {
   FirstRunBubble,
   FirstRunFailure,
   FirstRunLine,
+  FirstRunNote,
   answerSetupStep,
   failureText,
   openOutside,
@@ -85,8 +90,12 @@ export function fluxRecommendation(view: { agents?: readonly unknown[]; signedOu
   // engine Murage ships (`installed: false`) answers only once this very key
   // is in, so on a box where nothing was found it made the card say the
   // person had been running all along (0.1.60 Linux customer pass).
+  // §1.5: a signed-in engine gets the bonus framing; a machine whose only
+  // help is a local model gets "Recommended", because this key is what opens
+  // everything else for it.
   const found = view.agents.filter((agent) => (agent as { installed?: unknown } | null)?.installed !== false);
-  if (found.length > 0) return copy.recommendationBonus;
+  if (found.some((agent) => !(agent as { localModel?: unknown }).localModel)) return copy.recommendationBonus;
+  if (found.length > 0) return copy.recommendation;
   return (view.signedOutAgents?.length ?? 0) > 0 ? copy.recommendation : copy.recommendationBare;
 }
 
@@ -212,16 +221,15 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   const desktop = useDesktopSurface();
   const { refreshAfterKey } = useStore();
   const [key, setKey] = useState("");
+  // The allowance screen's one button opens the account page; it goes
+  // through useAction so a page that will not open says so.
+  const openAccount = useAction(() => openOutside(FLUX_ACCOUNT_URL));
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState("");
-  // THE OFFER AND THE PASTE BOX ARE TWO SCREENS, NOT ONE.
-  //
-  // They used to be one, with the field sitting under the copy and a separate
-  // "I need a key" chip beside the button. That asks somebody who has never
-  // heard of Flux Router to paste something they do not have, and puts the way
-  // to GET one third in a row of three. The approved flow presses one button,
-  // opens the sign-up page in their real browser, and then asks for the paste,
-  // which is the order the thing actually happens in.
+  // THE SIGN-UP SCREEN. 1.0.12 (UX-FIRSTRUN-SCALE-1012 §1.5) puts the key
+  // field on the card itself, for somebody who already has a key, with
+  // "I need a key" opening the sign-up page and switching to this screen,
+  // which says the browser is open and takes the paste.
   const [pasting, setPasting] = useState(false);
   // A CARD SETTLES FROM THE SERVER, NOT ONLY FROM THIS COMPONENT.
   //
@@ -235,6 +243,12 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   // Derived instead, so the two ways a card can be finished agree: this
   // component did it, or the server says so.
   const [acted, setActed] = useState(false);
+  // Only a key that answered its proof read earns "Connected". A skip or a
+  // saved-but-unproved key finishes the card without claiming a connection.
+  const [proved, setProved] = useState(false);
+  const [declinedBare, setDeclinedBare] = useState(false);
+  const [offlineAsked, setOfflineAsked] = useState(false);
+  const online = useOnline();
   const done = acted || settled;
 
   const save = async () => {
@@ -264,6 +278,7 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
         return;
       }
       setActed(true);
+      setProved(proof === "proved");
       await answerSetupStep("flux", proof === "proved" ? SETUP_FLUX_PROVED_ANSWER : SETUP_FLUX_UNPROVED_ANSWER);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
@@ -295,17 +310,11 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
   // once on the server for exactly this reason, so four surfaces cannot each
   // re-derive it and one of them get it wrong.
   const noBrain = view?.nothingToThinkWith === true;
-  // WHAT THERE IS TO CARRY ON WITH, WHICH IS NOT THE SAME QUESTION.
-  //
-  // THE DEFECT. The dismissal offered "Not yet, start me on the local model"
-  // whenever `noBrain` was false, and `nothingToThinkWith` is FALSE on a
-  // machine whose only engine is signed out. So the one audience the
-  // `signed-out` variant exists for was offered a local model to start on
-  // while `view.agents` was empty and there was none. `agents` is already
-  // filtered by `runnable()`, so it is the reading that answers this: the
-  // offer is made only where something can really take it, and anywhere else
-  // the dismissal is the plain "Not now" that is true on every machine.
   const canCarryOn = (view?.agents.length ?? 0) > 0;
+  // §1.5: the ghost names the local model only on a machine that has one.
+  const onLocal = (view?.agents ?? []).some((agent) => Boolean(agent.localModel));
+  const fluxStep = view?.steps.find((step) => step.id === "flux");
+  const allowanceUsed = fluxStep?.status === "blocked" && fluxStep.block?.reason === "payment-required";
 
   if (pasting && !done) {
     return (
@@ -315,9 +324,6 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
         failure={failure}
         onChange={(next) => {
           setKey(next);
-          // Both of the failures that mean "that key was wrong" clear the
-          // moment they start typing a different one. A refusal left on
-          // screen over a fresh paste is the card arguing with them.
           if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
         }}
         onSubmit={() => void save()}
@@ -327,67 +333,143 @@ export function FirstRunFluxCard({ settled }: { settled: boolean }) {
     );
   }
 
+  // §1.9: no internet. The buttons stay; pressing one that needs it says so
+  // instead of failing, and the card picks up when the connection is back.
+  const needsInternet = (): boolean => {
+    if (online) return false;
+    setOfflineAsked(true);
+    return true;
+  };
+
+  const notNowPressed = () => {
+    if (busy) return;
+    // §1.5 bare decline: nothing here can think, so passing over would leave
+    // a window with nothing behind it. The Chief says so and the card stays,
+    // with the same buttons; the step stays where it is.
+    if (!canCarryOn) {
+      setDeclinedBare(true);
+      return;
+    }
+    void notNow();
+  };
+
   return (
     <FirstRunBubble>
-      {/* NO EYEBROW HERE, and it is not an omission. The approved screen has
-          "Flux Router" in a top bar AND again as an eyebrow, which is two
-          separate elements on a full screen. In a thread the step separator
-          above this card IS the top bar and already says it, so a second one
-          would be the same two words twice in a row. On a blank machine the
-          status line takes that slot: the report step two never got to make. */}
-      {noBrain && <FirstRunLine quiet>{foundNothingLine(view?.ownerName ?? "")}</FirstRunLine>}
-      <div className="text-[17px] font-semibold text-ink">{noBrain ? copy.headingBare : copy.heading}</div>
-      <FirstRunLine>{noBrain ? copy.leadBare : copy.lead}</FirstRunLine>
+      {/* NO EYEBROW HERE: the step separator above the card already says
+          "Flux Router". The example brief sits above this bubble (§1.5). */}
+      <div className="text-[17px] font-semibold text-ink">
+        {allowanceUsed ? copy.allowanceHeading : noBrain ? copy.headingBare : copy.heading}
+      </div>
+      <FirstRunLine>{allowanceUsed ? copy.allowanceLead : fluxRecommendation(view)}</FirstRunLine>
 
       {/* THE CARD. No price, no figure, no plan comparison anywhere on it: a
           ruling, and also two assertions in first-run-copy.test.ts. Every row
           is something that stops working without the key. */}
-      <div className="mt-3 overflow-hidden rounded-xl border border-hairline/50 bg-inset">
-        <div className="flex items-center justify-between gap-3 border-b border-hairline/40 px-3 py-2">
-          <span className="text-[12.5px] font-semibold uppercase tracking-[0.12em] text-ink-secondary">{copy.cardTitle}</span>
-          <span className="text-[12.5px] text-ink-secondary">{copy.cardAccount}</span>
+      {!allowanceUsed && (
+        <div className="mt-3 overflow-hidden rounded-xl border border-hairline/50 bg-inset">
+          <ul className="divide-y divide-hairline/30">
+            {copy.features.map((row) => (
+              <FirstRunFluxRow key={row.id} row={row} />
+            ))}
+          </ul>
         </div>
-        <ul className="divide-y divide-hairline/30">
-          {copy.features.map((row) => (
-            <FirstRunFluxRow key={row.id} row={row} />
-          ))}
-        </ul>
-      </div>
+      )}
 
-      <FirstRunLine quiet>{fluxRecommendation(view)}</FirstRunLine>
+      {allowanceUsed && !done && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+          {opensPurchasePages() && (
+            <ActionButton action={openAccount} className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
+              {copy.allowanceOpen}
+            </ActionButton>
+          )}
+        </div>
+      )}
 
-      {!done && (
+      {!done && !allowanceUsed && (
         <div className="mt-3 grid gap-2">
-          <div className="flex flex-wrap items-center gap-2">
+          <label className="text-[13px] text-ink-secondary">
+            {copy.fieldLabel}
+            <input
+              aria-label={copy.fieldLabel}
+              type="password"
+              name="flux-router-key"
+              autoComplete="off"
+              spellCheck={false}
+              maxLength={4096}
+              placeholder={copy.placeholder}
+              value={key}
+              disabled={busy}
+              onChange={(event) => {
+                setKey(event.target.value);
+                if (failure === FLUX_KEY_NOT_A_KEY || failure === FLUX_KEY_REJECTED) setFailure("");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (!needsInternet()) void save();
+                }
+              }}
+              className={`mt-1.5 ${FIRST_RUN_INPUT} ${FIRST_RUN_FOCUS}`}
+            />
+          </label>
+          <p className="text-[13px] text-ink-secondary">{copy.keyCaveat}</p>
+          {/* One primary action, on the right; the secondary and the ghost
+              before it, in the same order on every surface. */}
+          <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+            <button type="button" disabled={busy} onClick={notNowPressed} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+              {onLocal ? copy.dismissLocal : copy.dismiss}
+            </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => {
-                // The browser first, because the next screen says it is open.
+                if (needsInternet()) return;
                 if (opensPurchasePages()) void openOutside(FLUX_SIGNUP_URL);
                 setPasting(true);
               }}
+              className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}
+            >
+              {copy.signup}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !key.trim()}
+              onClick={() => {
+                if (!needsInternet()) void save();
+              }}
               className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}
             >
-              {copy.submit}
+              {busy ? copy.working : copy.submit}
             </button>
           </div>
-          <p className="text-[13px] text-ink-secondary">{copy.keyCaveat}</p>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <button type="button" disabled={busy} onClick={() => void notNow()} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
-              {/* A machine with nothing runnable on it has nothing to carry
-                  on WITH, so it is not offered anything to carry on with. */}
-              {canCarryOn ? copy.dismissLocal : copy.dismiss}
-            </button>
-            <span className="text-[13px] text-ink-secondary">{copy.dismissCaveat}</span>
-          </div>
+          {offlineAsked && !online && <p role="status" className="text-[13px] text-ink-secondary">{copy.offline}</p>}
         </div>
       )}
 
+      {acted && proved && !failure && <FirstRunNote>{copy.saved}</FirstRunNote>}
       <FirstRunFailure message={failure} />
+
+      {/* §1.5 and §1.9, nothing to think with and "Not now": the Chief says
+          why it cannot just carry on, and the jobs it would do are shown
+          waiting, not pressable. */}
+      {declinedBare && !done && (
+        <div className="mt-3">
+          <FirstRunLine>{copy.notNowBare}</FirstRunLine>
+          <ul className="mt-2 grid gap-1.5" aria-disabled="true">
+            {FIRST_RUN_COPY.chat.jobs.rows.map((row) => (
+              <li key={row.id} className="rounded-xl border border-hairline/40 bg-inset px-3 py-2 opacity-60">
+                <span className="block text-[14px] font-medium text-ink">{row.title}</span>
+                <span className="block text-[12.5px] text-ink-secondary">{row.sub}</span>
+              </li>
+            ))}
+          </ul>
+          <FirstRunLine quiet>{copy.jobsWaiting}</FirstRunLine>
+        </div>
+      )}
     </FirstRunBubble>
   );
 }
+
 
 /** The other half of card three: they said not now, and that is a real
  *  answer rather than a postponement with a reminder attached. */

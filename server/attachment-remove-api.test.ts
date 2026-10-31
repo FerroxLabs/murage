@@ -164,6 +164,23 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
     expect((await request("GET", avatarUrl)).status).toBe(200);
   }, 30_000);
 
+  // Any other picture still checks on every view: attachments-http.test.ts.
+  it("a phone may show its copy of a bot's picture while it checks again", async () => {
+    const bot = await makeBot("Cached picture fixture", "fuigo");
+    const picture = await upload();
+    const avatarUrl = `/api/attachments/${basename(picture.path)}`;
+    expect((await request("PATCH", `/api/bots/${bot.id}`, { avatarUrl })).status).toBe(200);
+    // No desktop headers: a remote caller, as a paired phone is.
+    const remote = async (path: string) => { const res = await fetch(`${base}${path}`); await res.arrayBuffer(); return res; };
+    const face = await remote(avatarUrl);
+    expect(face.status).toBe(200);
+    expect(face.headers.get("cache-control")).toBe("private, max-age=0, stale-while-revalidate=2592000");
+    // A new picture is a new name, cached the same way.
+    const next = await upload();
+    expect((await request("PATCH", `/api/bots/${bot.id}`, { avatarUrl: `/api/attachments/${basename(next.path)}` })).status).toBe(200);
+    expect((await remote(`/api/attachments/${basename(next.path)}`)).headers.get("cache-control")).toBe("private, max-age=0, stale-while-revalidate=2592000");
+  }, 30_000);
+
   it("inline (Fuigo): the turn goes ahead without the removed image, its tag never reaches the engine, and one line counts it", async () => {
     const bot = await makeBot("Inline fixture", "fuigo");
     const gone = await upload(bot.threadId), kept = await upload(bot.threadId);

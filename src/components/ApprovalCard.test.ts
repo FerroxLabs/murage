@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
+import type { CardClass } from "../../shared/fold-scopes";
 import { alwaysAllowLabel, approvalGrants, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
@@ -30,7 +31,8 @@ describe("ApprovalCard hold explanation", () => {
     const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
     if (answered) {
       expect(markup).not.toContain(held);
-      expect(markup).toContain(answered === "allow" ? "Allowed" : "Denied");
+      // UX-TRUST-MOMENTS-1012 1.1: the outcome line says what the server knows
+      expect(markup).toContain(answered === "allow" ? "Approved" : "Denied");
     } else expect(markup).toContain(held);
     expect(message.card!.held).toBe(held);
     expect(message.card!.answered).toBe(answered);
@@ -43,7 +45,8 @@ describe("ApprovalCard settled state", () => {
       card: { title: "Approve image generation", subtitle: "One image · flux · flux-image-1 · high · 1024x1024", options: ["Allow", "Deny"],
         tool: "generate_image", requestId: "image-1", answered: "unavailable", dismissed: true } };
     const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
-    expect(markup).toContain("Not answered");
+    // 1.1, H08: who stopped waiting, never a denial
+    expect(markup).toContain("stopped waiting for this. Ask it again.");
     expect(markup).not.toContain("Denied");
     expect(markup).toContain("generate image");
   });
@@ -316,8 +319,8 @@ describe("the one-time 'use this computer' card", () => {
     expect(markup).toContain("your own screen, mouse and keyboard");
   });
 
-  it("settles as Allowed or Not allowed", () => {
-    expect(renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent("allow") }))).toContain("Allowed");
+  it("settles as Approved or Not allowed", () => {
+    expect(renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent("allow") }))).toContain("Approved");
     const denied = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent("deny") }));
     expect(denied).toContain("Not allowed");
     expect(denied).not.toContain("Denied");
@@ -423,10 +426,14 @@ describe("the stop line's grants on a pending approval", () => {
     detail: "rm -rf ~/Documents/old",
   });
 
-  it("offers Allow for this task when the server scoped one, on any surface", () => {
-    const stop = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
+  it("offers the 12-hour task row when the card's class offers it, on any surface", () => {
+    const cardClass: CardClass = { reason: "stop-line", stop: { kind: "delete", public: false, placed: true, places: 1 }, unattended: false, automated: false, keys: ["allowKey", "taskAllowKey"] };
+    const stop = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old", cardClass });
     expect(approvalGrants(stop, { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: true, forRoutine: false });
     expect(approvalGrants(stop, { desktop: false, hasBot: true })).toEqual({ always: false, exact: false, forTask: true, forRoutine: false });
+    // UX-TRUST-MOMENTS-1012 F18: a card from an older build (no class) never offers a task row
+    const legacy = pending({ allowKey: "stop:delete:/Users/ada/Documents/old", taskAllowKey: "stop:delete:/Users/ada/Documents/old" });
+    expect(approvalGrants(legacy, { desktop: true, hasBot: true })).toEqual({ always: true, exact: false, forTask: false, forRoutine: false });
   });
 
   it("keeps Always allow but offers no task grant on an ordinary card", () => {

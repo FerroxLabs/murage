@@ -38,8 +38,8 @@ test('expired Claude login overrides stale Ready until a fresh successful auth c
  await expect(page.getByText('Sign in to Claude',{exact:true})).toHaveCount(0);await expect(page.getByRole('button',{name:'Retry',exact:true})).toBeVisible();
  await page.evaluate(()=>(window as any).setMode('provider'));
  await expect(page.getByRole('button',{name:'Open sign-in in Terminal',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'Provider settings',exact:true}).click();expect(await page.evaluate(()=>(window as any).openedSettings)).toBe('models');
- await page.evaluate(()=>(window as any).setMode('permission'));await expect(page.getByText('Your model provider denied access',{exact:true})).toBeVisible();
+ await page.getByRole('button',{name:'Models & engines',exact:true}).click();expect(await page.evaluate(()=>(window as any).openedSettings)).toBe('models');
+ await page.evaluate(()=>(window as any).setMode('permission'));await expect(page.getByText('Your AI service denied access',{exact:true})).toBeVisible();
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
  await page.screenshot({path:info.outputPath('provider-permission.png')});
 });

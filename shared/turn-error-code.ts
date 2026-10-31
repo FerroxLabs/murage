@@ -23,7 +23,7 @@ export type TurnRecovery =
   | "change-setting"   // a setting must change first (the sentence says where)
   | "link-account"     // a channel account must be linked in Settings
   | "contact"          // wait, check, or reach out; an unchanged retry is not the fix
-  | "blocked";         // the provider declined the request; no retry
+  | "blocked";         // the AI service declined the request; no retry
 export interface PlainTurnError { text: string; recovery: TurnRecovery }
 export interface PlainTurnOptions {
   /** True when the failure card shows a Retry button (default true). */
@@ -51,7 +51,7 @@ const HUMAN_LINK: Line = (bot, again) => ({
   recovery: "link-account",
 });
 const PROVIDER_BLOCKED: Line = () => ({
-  text: "The provider blocked this request. Review your request before sending a new message.",
+  text: "Your AI service blocked this request. Review your request before sending a new message.",
   recovery: "blocked",
 });
 
@@ -60,7 +60,7 @@ const SPECIFIC: Record<string, Line> = {
   CLAUDE_SESSION_NOT_STOPPED: ENGINE_RESTART,
   // The engine cannot end its retained session, so waiting or retrying adds nothing.
   MEMORY_SESSION_RESET_UNAVAILABLE: (bot) => ({
-    text: `${cap(bot)}'s current engine can't start a fresh conversation, which this message needs. Choose a different engine for ${bot} in Provider settings, or start a new conversation with ${bot}.`,
+    text: `${cap(bot)}'s current engine can't start a fresh conversation, which this message needs. Choose a different engine for ${bot} in Models & engines, or start a new conversation with ${bot}.`,
     recovery: "change-setting",
   }),
   MEMORY_MCP_NAME_COLLISION: (bot, again) => ({

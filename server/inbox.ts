@@ -5,7 +5,7 @@ import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InboxItem, InboxPage, InboxQuery, InboxStateUpdate } from "../shared/inbox.ts";
-import { INBOX_DECISION_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
+import { INBOX_DECISION_STATUSES, INBOX_RUN_ON_CARD_STATUSES, INBOX_TO_READ_STATUSES } from "../shared/inbox.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
 import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
@@ -17,6 +17,15 @@ import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
 const sqlList = (values: readonly string[]) => values.map((value) => `'${value}'`).join(",");
 const DECISION_SQL = sqlList(INBOX_DECISION_STATUSES);
 const TO_READ_SQL = sqlList(INBOX_TO_READ_STATUSES);
+/** A ROUTINE RUN PARKED ON A CARD IS NOT A SECOND THING OWED (1.0.12,
+ *  docs/designs/NEEDS-YOU-COUNT-1012.md). Applied when counting and listing
+ *  ONLY: never spliced into PROJECTION_DDL, listTerms, BADGES or COUNTERS, so
+ *  the stored layout stays 4 and older builds read this file unchanged. An
+ *  expired run row (not a shape syncRoutineRunToSource writes) is left out of
+ *  the rule and behaves as in 1.0.10 everywhere. `p` is the row prefix. */
+const RUN_ON_CARD = (p = "") => `(${p}kind='routine.run' AND ${p}status IN (${sqlList(INBOX_RUN_ON_CARD_STATUSES)}) AND ${p}expired=0)`;
+const runOnCard = (status: string) => (INBOX_RUN_ON_CARD_STATUSES as readonly string[]).includes(status);
+const runOnCardRow = (row: { kind: string; status: string; expired: number }) => row.kind === "routine.run" && runOnCard(row.status) && row.expired === 0;
 
 export interface InboxThread { threadId: string; label: string; botId?: string }
 /** One routine run as the routine's own record has it (server/routines.ts).
@@ -906,8 +915,9 @@ function routineFacts(sqlRows: readonly RoutineRow[], threads: InboxAccess["thre
     // the owner is the one case where "failed" is not generous but wrong —
     // it would print "Not recovering" over a routine that is one answer away
     // from carrying on.
-    failed: row.status !== "completed" && row.decision !== 1,
-    owed: row.decision === 1,
+    // A run waiting on its card is waiting, not failed, though the card and not the run is counted (RUN_ON_CARD).
+    failed: row.status !== "completed" && row.decision !== 1 && !runOnCard(row.status),
+    owed: row.decision === 1 || runOnCard(row.status),
     detail: row.summary,
     link: { threadId: row.thread_id, messageId: row.message_id },
   })), ...routineRecordFacts(records, carded, byThread, now)];
@@ -955,10 +965,14 @@ function item(row: Row, access: InboxAccess): InboxItem {
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
   const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" || row.kind === "mcpSignIn" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
-  const segment = (["approval", "question", "connection", "routine", "result"] as const)
+  // A run on a card is presented as the routine it is: the card is the thing
+  // owed. It still cannot be cleared: the same receipt can turn into a real
+  // question with its original time, and a clear mark would hide that question.
+  const onCard = runOnCardRow(row), decision = row.decision === 1 && !onCard;
+  const segment = onCard ? "routine" as const : (["approval", "question", "connection", "routine", "result"] as const)
     .find(value => value === row.segment) ?? "result";
   return { id: Buffer.from(row.source_key).toString("base64url"), version: revision, kind, segment, status: row.status,
-    decision: row.decision === 1, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary, row.status === "digest" ? 1000 : 280),
+    decision, toRead: row.to_read === 1, title: text(row.title, 120), summary: text(row.summary, row.status === "digest" ? 1000 : 280),
     sourceLabel: text(source.label, 100), ...(source.botId ? { botId: source.botId } : {}), at: row.at,
     read: row.read_version === revision, snoozedUntil: row.snoozed_until, duplicates: row.copies,
     ...(row.kind === "connector" && row.status === "pending" && source.botId ? { dismissible: true as const } : {}),
@@ -998,6 +1012,42 @@ function decodeCursor(value: string): Cursor {
 
 export function listInbox(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now = Date.now()): InboxPage {
   return inboxPage(db, query, access, now, false);
+}
+
+/** Runs on cards, file wide, grouped by what the counters care about. */
+interface OnCardGroup { thread_id: string; live: number; snoozed_until: number | null; n: number }
+/** ONE READ PER MESSAGES VERSION, SHARED BY EVERY VIEW, PAGE, SEARCH, SCOPE
+ *  AND THE SNOOZE SWEEP. Walks the decisions partial index (decision=1 AND
+ *  expired=0, the owed_open population): history, expired cards and answered
+ *  cards are not in it. No scope and no clock in SQL; callers filter the few
+ *  groups in JS, so a snooze that runs out with no write is seen without a
+ *  re-read. Uncached callers read fresh. */
+const RUNS_ON_CARDS_SQL = () => `SELECT thread_id, live, snoozed_until, COUNT(*) AS n
+  FROM inbox_items INDEXED BY ${listIndex("decisions", false)}
+  WHERE expired=0 AND decision=1 AND kind='routine.run' AND status IN (${sqlList(INBOX_RUN_ON_CARD_STATUSES)})
+  GROUP BY thread_id, live, snoozed_until`;
+const onCardHeld = new WeakMap<DatabaseSync, { version: number; rows: OnCardGroup[] }>();
+function runsOnCards(db: DatabaseSync, cache: boolean): OnCardGroup[] {
+  const read = () => db.prepare(RUNS_ON_CARDS_SQL()).all() as unknown as OnCardGroup[];
+  if (!cache) return read();
+  const version = messagesVersion(), held = onCardHeld.get(db);
+  if (held && held.version === version) return held.rows;
+  const rows = read();
+  onCardHeld.set(db, { version, rows });
+  return rows;
+}
+/** The groups in this audience, and which of them the live counters count right now. */
+function onCardInScope(db: DatabaseSync, access: InboxAccess, now: number, cache: boolean) {
+  const byId = threadsById(access.threads);
+  const all = runsOnCards(db, cache).filter(group => byId.has(group.thread_id));
+  const liveNow = all.filter(group => group.live === 1 && (group.snoozed_until === null || group.snoozed_until <= now));
+  return { all, liveNow, sum: (groups: readonly OnCardGroup[]) => groups.reduce((n, group) => n + Number(group.n), 0) };
+}
+
+/** The growth tests time the per-call JS half on its own (cache hit). Not used by the server. */
+export function inboxRunsOnCardsInScope(db: DatabaseSync, access: InboxAccess, now: number): number {
+  const onCard = onCardInScope(db, access, now, true);
+  return onCard.sum(onCard.liveNow) + onCard.sum(onCard.all);
 }
 
 /** What the SQL half of an Inbox answer holds: everything that costs a scan. */
@@ -1098,7 +1148,9 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // The conversation names are only read by a search, so only a search pays
   // for them (one redaction per conversation was a cost of every poll).
   const labels = search ? JSON.stringify(access.threads.map(thread => ({ threadId: thread.threadId, label: text(thread.label, 100) }))) : "[]";
-  const filter = `${listed} AND ${SCOPE}${includeSnoozed ? "" : ` AND ${NOT_SNOOZED}`}${search ? ` AND (instr(lower(title || ' ' || summary || ' ' || status),?)>0
+  // Decisions and Questions leave out a run on a card (the card is listed); the index is still the list's own.
+  const corrected = view === "decisions" || view === "questions";
+  const filter = `${listed}${corrected ? ` AND NOT ${RUN_ON_CARD()}` : ""} AND ${SCOPE}${includeSnoozed ? "" : ` AND ${NOT_SNOOZED}`}${search ? ` AND (instr(lower(title || ' ' || summary || ' ' || status),?)>0
       OR thread_id IN (SELECT json_extract(value,'$.threadId') FROM json_each(?) WHERE instr(lower(json_extract(value,'$.label')),?)>0))` : ""}`;
   const filterParams = [allowed, ...(includeSnoozed ? [] : [now]), ...(search ? [search, labels, search] : [])];
   // ONE COUNT PER THING THAT CAN BE ASKED OF A PERSON, AND NONE FOR THE REST.
@@ -1124,10 +1176,17 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
       FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>? AND ${SCOPE} GROUP BY thread_id`)
       .all(now, allowed) as Array<Record<"thread_id" | "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read", string | number | null>>;
     const less = (key: "total" | "approvals" | "questions" | "connections" | "decisions" | "to_read") => snoozed.reduce((n, row) => n + Number(row[key] ?? 0), 0);
-    const count = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => Number(kept[key] ?? 0) - less(key);
+    // A run on a card is stored owed (layout 4) and counted by the live
+    // counters; the card beside it is the one thing owed, so it is taken off
+    // here: from the live numbers when it is live and not snoozed now (a
+    // snoozed one is already off), from the `v_` totals whatever its marks.
+    const onCard = onCardInScope(db, access, now, cache);
+    const onCardLive = onCard.sum(onCard.liveNow);
+    const correction = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => key === "questions" || key === "decisions" ? onCardLive : 0;
+    const count = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => Number(kept[key] ?? 0) - less(key) - correction(key);
     const total = search
       ? Number((db.prepare(`SELECT COUNT(*) AS n FROM inbox_items INDEXED BY ${index} WHERE ${filter}`).get(...filterParams) as { n: number }).n)
-      : Number(kept.total ?? 0) - (includeSnoozed ? 0 : less("total"));
+      : Number(kept.total ?? 0) - (includeSnoozed ? 0 : less("total")) - (corrected ? (includeSnoozed ? onCard.sum(onCard.all) : onCardLive) : 0);
     // Owed first. A tab that holds both must not float a request that expired
     // last week above one that is waiting now. The json comes back only for the
     // rows on this page: the read mark is a hash of the whole message. A
@@ -1150,6 +1209,10 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
       for (const row of snoozed) {
         const id = String(row.thread_id), left = (questionThreads[id] ?? 0) - Number(row.questions ?? 0);
         if (left > 0) questionThreads[id] = left; else delete questionThreads[id];
+      }
+      for (const group of onCard.liveNow) {
+        const left = (questionThreads[group.thread_id] ?? 0) - Number(group.n);
+        if (left > 0) questionThreads[group.thread_id] = left; else delete questionThreads[group.thread_id];
       }
     }
     const wake = (db.prepare(`SELECT MIN(snoozed_until) AS next FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>?`).get(now) as { next: number | null } | undefined)?.next;
@@ -1221,15 +1284,18 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
  *  conversation go quiet?" (server/thread-snooze.ts), and the answer for
  *  anything owed is no, whatever else was done to it. An expired card is
  *  not owed: nothing is waiting on it any more. */
-export function owedThreads(db: DatabaseSync, access: InboxAccess): Set<string> {
+export function owedThreads(db: DatabaseSync, access: InboxAccess, cache = false): Set<string> {
   const allowed = scope(access);
   // Until the first fill is done the answer would be part of the history read
   // as all of it. Nothing is reported owed then: a snoozed conversation wakes
   // for an owed item a little late (the next sweep after the fill) rather
   // than being woken, and marked unread, by an item a later copy answered.
   if (!inboxProjectionReady(db)) return new Set();
-  const rows = db.prepare(`SELECT thread_id FROM inbox_counts WHERE owed_open>0 AND ${SCOPE}`).all(allowed) as Array<{ thread_id: string }>;
-  return new Set(rows.map(row => row.thread_id));
+  const rows = db.prepare(`SELECT thread_id, owed_open FROM inbox_counts WHERE owed_open>0 AND ${SCOPE}`).all(allowed) as Array<{ thread_id: string; owed_open: number }>;
+  // A run on a card is not owed beside its card, whatever its marks (owed_open has no live or snooze term).
+  const onCard = new Map<string, number>();
+  for (const group of runsOnCards(db, cache)) onCard.set(group.thread_id, (onCard.get(group.thread_id) ?? 0) + Number(group.n));
+  return new Set(rows.filter(row => Number(row.owed_open) - (onCard.get(row.thread_id) ?? 0) > 0).map(row => row.thread_id));
 }
 
 const owedAnswers = new WeakMap<DatabaseSync, { version: number; entries: Map<string, Set<string>> }>();
@@ -1241,7 +1307,7 @@ export function owedThreadsCached(db: DatabaseSync, access: InboxAccess): Set<st
   let held = owedAnswers.get(db);
   if (!held || held.version !== version) { held = { version, entries: new Map() }; owedAnswers.set(db, held); }
   let hit = held.entries.get(allowed);
-  if (!hit) { hit = owedThreads(db, access); if (held.entries.size >= ENTRY_LIMIT) held.entries.clear(); held.entries.set(allowed, hit); }
+  if (!hit) { hit = owedThreads(db, access, true); if (held.entries.size >= ENTRY_LIMIT) held.entries.clear(); held.entries.set(allowed, hit); }
   return new Set(hit);
 }
 

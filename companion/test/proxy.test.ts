@@ -494,7 +494,8 @@ describe("the sidecar in front of an unmodified harness", () => {
       // cursor. Rewriting the payload must not disturb it.
       const { body } = await device("GET", "/api/bots");
       const botId = body.bots[0].id;
-      await device("POST", `/api/bots/${botId}/read`);
+      // A read mark that changes nothing says nothing on the stream, so this one changes something.
+      await device("POST", `/api/bots/${botId}/read`, { body: { unread: true } });
 
       const frame = await nextEvent((e) => e.startsWith("id: "));
       expect(frame).not.toBeNull();
