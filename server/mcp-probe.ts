@@ -21,8 +21,24 @@ export type McpProbeFailureReason =
   | "not-found" | "unreachable" | "wrong-address" | "moved" | "https-required" | "local-confirm"
   | "address-changed" | "blocked-address" | "server-error" | "no-answer" | "session-gone";
 
+/** What a server's list holds past the tools a probe keeps. */
+export interface McpToolsBeyondList {
+  /** Tools in the answer, when more than the probe kept. */
+  toolsTotal?: number;
+  /** The server has a further page, which no probe asks for. */
+  toolsMore?: true;
+}
+
+/** Say what was left out, so Settings shows the server's real size and not the probe's limit. */
+export function toolsBeyondList(tools: readonly unknown[], nextCursor: unknown, kept: number): McpToolsBeyondList {
+  return {
+    ...(tools.length > kept ? { toolsTotal: tools.length } : {}),
+    ...(typeof nextCursor === "string" && nextCursor ? { toolsMore: true as const } : {}),
+  };
+}
+
 export type McpProbeResult =
-  | { ok: true; tools: McpProbeTool[]; transport?: "http" | "sse" }
+  | ({ ok: true; tools: McpProbeTool[]; transport?: "http" | "sse" } & McpToolsBeyondList)
   | {
     ok: false;
     error: string;
@@ -184,7 +200,7 @@ export function probeMcpServer(
         finish(fail("initialize"));
         return;
       }
-      const result = value.result as { tools?: unknown } | undefined;
+      const result = value.result as { tools?: unknown; nextCursor?: unknown } | undefined;
       if (value.jsonrpc !== "2.0" || "error" in value || !Array.isArray(result?.tools)) {
         finish(fail("protocol"));
         return;
@@ -201,7 +217,7 @@ export function probeMcpServer(
             : {}),
         });
       }
-      finish({ ok: true, tools });
+      finish({ ok: true, tools, ...toolsBeyondList(result.tools, result.nextCursor, tools.length) });
     });
 
     timer = setTimeout(() => {

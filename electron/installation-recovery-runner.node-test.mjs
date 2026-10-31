@@ -113,3 +113,24 @@ test("a malformed skipped list is reduced, never a failed result", async () => {
   assert.deepEqual(result.skipped.items.map(item => item.path), ["workspaces/b/..\\plug", "a\\b"]);
   assert.equal(result.skipped.bots.b, "Be?ll");
 });
+
+test("1.0.12: progress notes reach the desktop, malformed ones are dropped, and neither changes the result", async () => {
+  const notes = [];
+  const f = fixture(500, { args: ["backup-encrypted"], onProgress: note => notes.push(note) });
+  for (const raw of [{ type: "murage:recovery-progress", step: "encrypt", elapsedMs: 5, done: 1, total: 2 }, { data: { type: "murage:recovery-progress", step: "readback", elapsedMs: 9 } }, { type: "murage:recovery-progress", step: "nonsense", elapsedMs: 1 }, { type: "murage:recovery-progress" }]) f.child.emit("message", raw);
+  f.finish({ ok: false, error: "BACKUP_DISK_FULL" }, 1);
+  await assert.rejects(f.result, error => error.code === "BACKUP_DISK_FULL");
+  assert.deepEqual(notes, [{ step: "encrypt", elapsedMs: 5, done: 1, total: 2 }, { step: "readback", elapsedMs: 9 }]);
+});
+test("1.0.12: a desktop that throws on a note still gets the worker's result, and other operations take no notes", async () => {
+  const f = fixture(500, { args: ["backup-encrypted"], onProgress: () => { throw new Error("window gone"); } });
+  f.child.emit("message", { type: "murage:recovery-progress", step: "encrypt", elapsedMs: 5 });
+  f.finish({ ok: false, error: "AGE_TOOL_TIMEOUT" }, 1);
+  await assert.rejects(f.result, error => error.code === "AGE_TOOL_TIMEOUT");
+  const notes = [];
+  const other = fixture(500, { onProgress: note => notes.push(note) });
+  other.child.emit("message", { type: "murage:recovery-progress", step: "encrypt", elapsedMs: 5 });
+  other.finish(valid);
+  assert.equal((await other.result).path, valid.path);
+  assert.deepEqual(notes, []);
+});

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  acpMcpGateLine,
+  acpMcpGateWorthLogging,
+  acpMcpMissingReason,
+  acpMcpServerDetail,
   awaitRequiredMcp,
   isUnsupportedAnswer,
   McpBackoff,
@@ -15,8 +19,89 @@ import {
   toolsUnavailableNotice,
   toolsUnavailableRunError,
   unavailableLabels,
+  type AcpMcpGateFacts,
   type McpServerState,
 } from "./mcp-readiness.ts";
+
+describe("ACP gate line", () => {
+  // Assembled at run time so no key-shaped literal sits in the source.
+  const SECRET = ["sk", "live", "fixture", "marker", "0042"].join("-");
+  const gate = (list: Record<string, Record<string, unknown>>, extra: Partial<AcpMcpGateFacts> = {}): AcpMcpGateFacts => ({
+    threadId: "t1", engine: "fuigoAgent", waitedMs: 0, waitOutcome: null,
+    required: ["agents", "murage-memory", "murage_connectors"].filter((name) => name in list),
+    mounted: Object.keys(list), reconnected: [], backedOff: [], missing: [], standIn: [],
+    states: new Map(Object.entries(list).map(([name, session]) => [name, String(session.status)])),
+    details: new Map(Object.entries(list).map(([name, session]) => [name, acpMcpServerDetail(session)])),
+    ...extra,
+  });
+
+  it("reads Fuigo's failure text down to a fixed word", () => {
+    const reason = (unavailableReason: string) => acpMcpMissingReason({ status: "unavailable", unavailableReason });
+    expect(reason("MCP server 'agents' timed out after 30s")).toBe("timeout-30s");
+    expect(reason("Failed to spawn MCP server 'agents': program not found")).toBe("spawn-failed");
+    expect(reason("MCP server 'agents' handshake failed: connection closed")).toBe("handshake-failed");
+    expect(reason("MCP server 'x': Auth required (non-interactive session; authenticate in TUI or set Authorization header)")).toBe("auth");
+    expect(reason("MCP server 'x': unreachable during startup (connection failed; will retry)")).toBe("unreachable");
+    expect(reason("MCP client error: broken pipe")).toBe("client-error");
+    expect(reason("MCP service error: closed")).toBe("service-error");
+    expect(reason(`something new from ${SECRET}`)).toBe("other");
+    expect(acpMcpMissingReason({ status: "unavailable", authRequired: true })).toBe("auth");
+    expect(acpMcpMissingReason({ status: "setuprequired", setupRequired: true })).toBe("setup");
+    expect(acpMcpMissingReason({ status: "unavailable", enabled: false })).toBe("disabled");
+    expect(acpMcpMissingReason({ enabled: false, blockedReason: "policy" })).toBe("blocked");
+    expect(acpMcpMissingReason({ status: "initializing" })).toBe("starting");
+    expect(acpMcpMissingReason({ status: "unavailable" })).toBeNull();
+    expect(acpMcpMissingReason(null)).toBeNull();
+  });
+
+  it("logs each server's status, the wait and the reason, in the Claude line's order", () => {
+    const line = acpMcpGateLine(gate({
+      agents: { status: "unavailable", unavailableReason: "MCP server 'agents' timed out after 30s" },
+      "murage-memory": { status: "initializing" },
+      TVControl: { status: "ready", tools: new Array(113).fill({ name: "x" }) },
+    }, { waitedMs: 15119, waitOutcome: "timeout", reconnected: ["agents"], backedOff: ["murage-memory"], missing: ["agents", "murage-memory"] }));
+    expect(line).toBe("acp mcp gate thread=t1 engine=fuigoAgent waitedMs=15119 readiness=degraded wait=timeout reconnected=agents backedOff=murage-memory missing=agents,murage-memory"
+      + " notConnected=agents:unavailable,murage-memory:initializing reasons=agents:timeout-30s,murage-memory:starting standIn=none tools=agents:0,murage-memory:0,TVControl:113");
+  });
+
+  it("names a required server the list left out, and a list that never came", () => {
+    const facts = gate({ agents: { status: "ready" } }, { required: ["agents", "murage-memory"], mounted: ["agents", "murage-memory"] });
+    const absent = acpMcpGateLine(facts);
+    expect(absent).toContain("readiness=unknown");
+    expect(absent).toContain("notConnected=murage-memory:absent reasons=murage-memory:not-listed");
+    const noStatus = gate({ agents: { status: "ready" } }, { mounted: ["agents", "x"], details: new Map([["agents", { tools: 1, reason: null }], ["x", { tools: 0, reason: "blocked" }]]) });
+    expect(acpMcpGateLine(noStatus)).toContain("notConnected=x:no-status reasons=x:blocked");
+    const silent = gate({}, { required: ["agents"], mounted: ["agents"], states: null, details: null, unchecked: "no-answer", waitOutcome: "timeout" });
+    expect(acpMcpGateWorthLogging(silent)).toBe(true);
+    expect(acpMcpGateLine(silent)).toMatch(/readiness=unknown .* missing=none notConnected=none reasons=none standIn=none tools=none unchecked=no-answer$/);
+    // The same as the turn: a wait that ended well is not "unknown" just because the list went quiet.
+    expect(acpMcpGateLine({ ...silent, waitOutcome: "ready" })).toContain("readiness=ready");
+  });
+
+  it("prints no engine text, whatever the engine sends", () => {
+    const line = acpMcpGateLine(gate({
+      agents: { status: `bad ${SECRET}`, unavailableReason: `MCP server 'agents' handshake failed: ${SECRET} /Users/jane/notes.txt`, tools: [{ name: "t", arguments: SECRET }] },
+      "owner server\nfake=line": { status: "ready" },
+      [SECRET]: { status: "Terryscustomstatus" },
+    }, { missing: ["agents"] }));
+    expect(line).not.toContain(SECRET);
+    expect(line).not.toContain("jane");
+    expect(line).not.toContain("\n");
+    expect(line).toContain("agents:unknown");
+    expect(line).toContain("agents:handshake-failed");
+    expect(line).toContain("owner_server_fake_line:0");
+    expect(line).not.toContain("Terryscustomstatus");
+  });
+
+  it("stays quiet on a healthy fast turn and speaks on a ready server holding no tools", () => {
+    const tools = [{ name: "x" }];
+    expect(acpMcpGateWorthLogging(gate({ agents: { status: "ready", tools }, "murage-memory": { status: "ready", tools } }))).toBe(false);
+    expect(acpMcpGateWorthLogging(gate({ agents: { status: "ready", tools } }, { waitedMs: 1_000 }))).toBe(true);
+    expect(acpMcpGateWorthLogging(gate({ agents: { status: "ready" } }))).toBe(true);
+    expect(acpMcpGateWorthLogging(gate({ agents: { status: "ready", tools }, TVControl: { status: "initializing" } }))).toBe(true);
+    expect(acpMcpGateWorthLogging(gate({ agents: { status: "ready", tools }, TVControl: { status: "ready" } }))).toBe(false);
+  });
+});
 
 /** A fake engine clock: status answers follow a script keyed on elapsed time.
  * A reconnect resolves at once to `reconnectTo[name]`, or never ("hang"). */
