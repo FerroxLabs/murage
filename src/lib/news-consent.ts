@@ -35,10 +35,11 @@ export function newsSignupFrom(value: unknown): NewsSignupFrom {
   return value === "settings" ? "settings" : "hello";
 }
 
-/** The card's heading and its promise, line by line as shown, capped at 500. */
+/** The card's heading and its promise, line by line as shown, capped at 500.
+ *  1.0.12: the hello card's promise is the helper under the email field. */
 export function newsConsentText(from: NewsSignupFrom): string {
   const hello = FIRST_RUN_COPY.hello.welcome;
-  const lines = from === "settings" ? [NEWS_COPY.title, NEWS_COPY.subtitle] : [hello.heading, hello.lead];
+  const lines = from === "settings" ? [NEWS_COPY.title, NEWS_COPY.subtitle] : [hello.heading, hello.emailHelper];
   let text = lines.join("\n").slice(0, NEWS_CONSENT_MAX);
   // never end on half of a surrogate pair
   if (/[\uD800-\uDBFF]$/.test(text)) text = text.slice(0, -1);

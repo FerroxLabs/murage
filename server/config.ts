@@ -39,8 +39,9 @@ const BROWSER_PROFILE_ID = /^[a-z0-9_-]{1,40}$/;
 // work while it was still streaming. A short value was chosen under that old
 // meaning, so a saved value under the minimum still loads (the whole config
 // file is refused on a schema error) and is raised to it on read; a new save
-// must be at least the minimum. The minimum and default match the direct
-// turns' 20-minute no-activity limit (TURN_STALL_MS in index.ts).
+// must be at least the minimum. The minimum and default stay at 20 minutes;
+// the direct turns' no-activity limit (TURN_STALL_MS in index.ts) is one hour
+// since 1.0.12, and a room keeps its own, shorter setting.
 export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
@@ -358,8 +359,11 @@ const appConfigSchema = z.object({
     byoKey: optionalText,
     baseUrl: optionalText,
   }).strict().optional(),
-  /** Non-secret profile details shown in the sidebar. */
-  profile: z.object({ name: optionalText, email: optionalText }).optional(),
+  /** Non-secret profile details shown in the sidebar. `timeZone` is the
+   * owner's IANA zone (1.0.8, owner-time-zone.ts); empty or absent follows
+   * this computer. Read leniently: a value that is not a zone follows the
+   * computer instead of failing the whole config. */
+  profile: z.object({ name: optionalText, email: optionalText, timeZone: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
    * system language. Unknown tags degrade to English in the renderer. */
   language: optionalText,
@@ -429,7 +433,7 @@ export interface AppConfig {
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
-  profile?: { name?: string; email?: string };
+  profile?: { name?: string; email?: string; timeZone?: string };
   rooms?: { turnTimeoutMinutes: number };
   /** Shared preserves the historical singleton. Per-bot gives every bot a
    * separate container, durable workspace, viewer and lease. */
@@ -560,6 +564,12 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
       { status: 400 },
     );
   }
+  // The owner's time zone is applied to the running server as it is saved, so
+  // it has one door: PUT /api/owner/timezone (owner-time-zone.ts).
+  const profile = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, JsonValue>).profile : undefined;
+  if (profile && typeof profile === "object" && !Array.isArray(profile) && Object.hasOwn(profile, "timeZone")) {
+    throw Object.assign(new Error("Change the time zone in Settings, under Time zone."), { status: 400 });
+  }
   const parsed = appConfigPatchSchema.safeParse(value);
   if (!parsed.success) {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
@@ -569,7 +579,7 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
   // one, so every door into these two slots refuses it here.
   for (const [slot, key] of [["openai", parsed.data.imageGen?.key], ["xai", parsed.data.xai?.key]] as const) {
     const issuer = key ? keyIssuer(key) : null;
-    if (issuer && issuer !== slot) throw Object.assign(new Error("This key appears to belong to a different provider. Choose its provider before saving."), { status: 400 });
+    if (issuer && issuer !== slot) throw Object.assign(new Error("This key does not match the AI service you picked. Choose the right one before saving."), { status: 400 });
   }
   return parsed.data;
 }

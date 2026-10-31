@@ -8,6 +8,7 @@ import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PA
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
+import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry } from "./data-dir-inventory.ts";
 
@@ -104,7 +105,7 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
   if (!object(value)) fail("INVALID_CONFIG_COMPONENT");
   const projected: JsonObject = {};
   const fields: Record<string, Record<string, string>> = {
-    profile: { name: "string", email: "string" },
+    profile: { name: "string", email: "string", timeZone: "string" },
     rooms: { turnTimeoutMinutes: "number" },
     localVm: { mode: "string", maxInstances: "number" },
     features: { browser: "boolean", skillRecorder: "boolean", showToolCalls: "boolean" },
@@ -244,7 +245,7 @@ export async function stageInstallationState(dataDir: string, outputParent: stri
  *    and listed. The backup still completes.
  * Murage's own records at the top of the folder are still all-or-nothing. */
 export interface InstallationStage { directory: string; manifest: StateSnapshotManifest; assertSourceUnchanged: () => void; openFile: (stored: string) => ReadStream }
-export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number } = {}): Promise<InstallationStage> {
+export async function stageInstallationStateWhileOwned(installation: OfflineInstallation, outputParent: string, options: { signal?: AbortSignal; maxBytes?: number; maxFiles?: number; onProgress?: BackupProgressReport } = {}): Promise<InstallationStage> {
   const root = installation.dataDir;
   const parent = dataDirLeasePaths(outputParent).canonicalDataDir;
   if (parent === root || parent.startsWith(root + sep)) fail("DESTINATION_INSIDE_INSTALLATION");
@@ -442,9 +443,10 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       if (names.length) manifest.names = names;
       if (skippedCount) { manifest.skipped = skipped; manifest.skippedCount = skippedCount; }
       mkdirSync(join(stage, "state"), { recursive: true, mode: 0o700 });
-      manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"));
+      manifest.database = await installation.snapshotDatabase(join(stage, "state", "messages.db"), options.onProgress);
       if (manifest.database.status === "copied") add("messages.db", manifest.database.bytes, manifest.database.sha256, "messages.db");
       else manifest.missing.push("messages.db");
+      safeBackupProgress(options.onProgress)("ledger");
       // A consistent copy of the connected-app ledger, so unknown-outcome
       // records keep blocking duplicate actions on a restored computer.
       const ledger = await installation.snapshotConnectedLedger(join(stage, "state", "connected-app-ledger.db"));

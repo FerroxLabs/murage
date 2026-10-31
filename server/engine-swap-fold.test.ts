@@ -78,6 +78,8 @@ function foldFixture() {
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,
     liveSubtasks: new Map(), broadcast: noop, routines: undefined, botForDirectThread: () => bot,
     groupSpeakers: new Map(), turnEngineByThread: stamps, memoryDispatches: new Map(),
+    // the model Flux reported serving each thread's turn (usage-tags: stored on the reply), empty: these fixtures are no Flux turn
+    turnServedModelByThread: new Map(),
     toolMessageByItem: new Map(), toolRowByItem: new Map(), narrateTool: () => "Sending", screenTouchingTool: () => false,
     turnOutputRoots: new Map(), isMemoryProvenanceEcho: () => false, lastReply: new Map(), sessionAudienceByThread: new Map(), registry: { get: () => instance },
     isUnattended: () => false, exactAllowKeyFor: noop, routineRunLevel: () => null,

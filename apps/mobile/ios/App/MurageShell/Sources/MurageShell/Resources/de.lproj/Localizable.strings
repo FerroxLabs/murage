@@ -24,7 +24,8 @@
 "phone_sharing_generic" = "Teile die Daten, die ein Bot mit deiner Erlaubnis auf deinem Telefon liest, über dein eigenes Murage mit dem KI-Dienst, den dieser Bot nutzt.";
 "phone_provider_fallback" = "ein anderer KI-Dienst";
 "phone_no_key" = "Lege einen Code für dieses Telefon fest und kopple es erneut";
-"phone_update" = "Aktualisiere Murage auf deinem Computer";
+"phone_update" = "Schalte diese Funktion auf deinem Computer ein oder aktualisiere dort Murage.";
+"phone_turned_off" = "Diese Funktion ist auf deinem Computer noch nicht eingeschaltet. Schalte sie in Murage auf dem Computer unter Einstellungen → Telefon und andere Geräte ein.";
 "phone_failed" = "Die Telefonwerkzeuge konnten nicht aktualisiert werden. Versuche es erneut.";
 "phone_refused" = "Die Anmeldung des Telefons wurde abgelehnt. Kopple dieses Telefon erneut.";
 "phone_rate_limited" = "Zu viele Anmeldeversuche. Versuche es in Kürze erneut.";
@@ -67,7 +68,8 @@
 "ask_setup_body" = "Sende deinen Bots Inhalte aus jeder App und stelle ihnen eine Frage, ohne vorher Murage zu öffnen. Bestätige dies einmal für diesen Computer.";
 "ask_turn_on" = "Aktivieren";
 "ask_not_now" = "Nicht jetzt";
-"ask_update" = "Aktualisiere Murage auf deinem Computer, um dies zu nutzen.";
+"ask_update" = "Schalte diese Funktion auf deinem Computer ein oder aktualisiere dort Murage.";
+"ask_turned_off" = "Diese Funktion ist auf deinem Computer noch nicht eingeschaltet. Schalte sie in Murage auf dem Computer unter Einstellungen → Telefon und andere Geräte ein.";
 "ask_no_key" = "Lege einen Gerätecode auf diesem Telefon fest und öffne dann Murage.";
 "ask_computer_off" = "Teilen und Fragen sind für dieses Telefon ausgeschaltet.";
 "ask_setup_again" = "Öffne Murage, um das Teilen erneut einzurichten.";

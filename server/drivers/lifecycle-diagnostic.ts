@@ -38,6 +38,9 @@ export const LIFECYCLE_EVENTS = [
   "mcp_ready", "mcp_ready_own", "mcp_ready_timeout",
   // A required server (connected apps, memory, bot messaging) was not ready: reconnected once.
   "mcp_reconnect",
+  // One per turn that pinned a model through configureSession (grok): how it ended, how long it waited for the engine's catalog,
+  // and whether the scope held the engine's model list cache at spawn. No slug, no path.
+  "model_pin",
 ] as const;
 export type LifecycleEventName = (typeof LIFECYCLE_EVENTS)[number];
 
@@ -88,7 +91,14 @@ export interface LifecycleFields {
   promptSent?: boolean;
   /** Windows stop_requested (U24 design R10): "job" when every process the CLI created is in its job, else "none". */
   containment?: "job" | "none";
+  /** model_pin: how the pin ended. */
+  outcome?: (typeof MODEL_PIN_OUTCOMES)[number];
+  /** model_pin: milliseconds spent waiting for the engine's catalog (0 when there was no wait). */
+  waitedMs?: number;
+  /** model_pin: the scope held the engine's model list cache when the engine was spawned. */
+  cacheAtSpawn?: boolean;
 }
+export const MODEL_PIN_OUTCOMES = ["ok", "repinned", "timeout", "unlisted", "error", "aborted"] as const;
 
 export type LifecycleRecord = Record<string, unknown> & {
   type: typeof LIFECYCLE_TYPE;
@@ -296,7 +306,15 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
       if (fields.signal !== null && !SIGNALS.has(fields.signal)) return null;
       msg.signal = fields.signal;
     }
-    for (const key of ["settled", "cancelRequested", "promptSent"] as const) {
+    if (fields.outcome !== undefined) {
+      if (!(MODEL_PIN_OUTCOMES as readonly string[]).includes(fields.outcome)) return null;
+      msg.outcome = fields.outcome;
+    }
+    if (fields.waitedMs !== undefined) {
+      if (!Number.isSafeInteger(fields.waitedMs) || fields.waitedMs < 0) return null;
+      msg.waitedMs = fields.waitedMs;
+    }
+    for (const key of ["settled", "cancelRequested", "promptSent", "cacheAtSpawn"] as const) {
       if (fields[key] === undefined) continue;
       if (typeof fields[key] !== "boolean") return null;
       msg[key] = fields[key];

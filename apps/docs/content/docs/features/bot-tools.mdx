@@ -52,6 +52,14 @@ In a project the lead has project_assign, project_accept, project_card_manage, p
 
 publish_site puts a site a bot built online on a hosting account you connected, after you approve it. take_down_site takes one of those sites down again. The Published sites list in a bot's settings shows them, and Publishing sites in Settings connects Netlify and other hosts.
 
+## Bot email
+
+A bot can have its own email address through Flux Router. Open **Settings → Connected apps → Bot email** to give a bot an address, and sign in with Flux there if Murage asks. The section needs a Flux Router account with email on.
+
+You choose who a bot can email without asking. With "Nobody. I approve every email", the bot writes each email and waits, and nothing goes out until you tap Send. With "People who've emailed it, after I approve once", you approve its first reply to someone new, and after that it can reply to that exact address on its own. Anything long, with attachments or with many addresses still waits for you.
+
+Every bot has the same limits: no mass mail, a daily limit, an automatic pause if someone reports spam or mail bounces, a full activity list, and one tap to pause sending.
+
 ## Marking results
 
 propose_outcome lets a bot suggest that a piece of work worked or did not work. You confirm or change it, and confirmed results feed what the bot learns. See Memory and learning.

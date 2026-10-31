@@ -24,7 +24,8 @@
 "phone_sharing_generic" = "Compartilhe o que um bot lê no seu celular, quando você permitir, com o serviço de IA que esse bot usa, pelo seu próprio Murage.";
 "phone_provider_fallback" = "outro serviço de IA";
 "phone_no_key" = "Defina um código neste celular e faça o pareamento novamente";
-"phone_update" = "Atualize o Murage no seu computador";
+"phone_update" = "Ative este recurso ou atualize o Murage no seu computador.";
+"phone_turned_off" = "Este recurso ainda não foi ativado no seu computador. Ative-o no Murage do computador, em Ajustes → Telefone e outros dispositivos.";
 "phone_failed" = "Não foi possível atualizar as ferramentas do celular. Tente novamente.";
 "phone_refused" = "O login do celular foi recusado. Faça o pareamento deste celular novamente.";
 "phone_rate_limited" = "Muitas tentativas de login. Tente novamente em instantes.";
@@ -67,7 +68,8 @@
 "ask_setup_body" = "Envie coisas aos seus bots de qualquer app e faça uma pergunta sem abrir o Murage primeiro. Confirme uma vez para este computador.";
 "ask_turn_on" = "Ativar";
 "ask_not_now" = "Agora não";
-"ask_update" = "Atualize o Murage no seu computador para usar este recurso.";
+"ask_update" = "Ative este recurso ou atualize o Murage no seu computador.";
+"ask_turned_off" = "Este recurso ainda não foi ativado no seu computador. Ative-o no Murage do computador, em Ajustes → Telefone e outros dispositivos.";
 "ask_no_key" = "Defina um código de acesso neste celular e abra o Murage.";
 "ask_computer_off" = "O compartilhamento e as perguntas estão desativados para este celular.";
 "ask_setup_again" = "Abra o Murage para configurar o compartilhamento novamente.";

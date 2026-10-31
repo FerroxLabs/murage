@@ -11,7 +11,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { applyGrokFluxMemory, grokIsolationArgs } from "../drivers/acp/grok.ts";
 import { applyOpenCodeTurnPermission, isolateOpenCodeFromPersonalSetup } from "../drivers/acp/opencode-go.ts";
-import { computeFluxSpacePlan, fluxMemoryContextForTurn, fluxMemoryDecision, fuigoConfigOverlay, opencodeConfigOverlay, FLUX_MEMORY_UNKNOWN, FluxMemoryBreaker, type FluxMemorySettings } from "../flux-memory-headers.ts";
+import { computeFluxSpacePlan, fluxMemoryContextForTurn, fluxMemoryDecision, fluxTurnDecision, fuigoConfigOverlay, opencodeConfigOverlay, FLUX_MEMORY_UNKNOWN, FluxMemoryBreaker, type FluxMemorySettings } from "../flux-memory-headers.ts";
+import { engineUsageTagsAllowed, FLUX_USAGE_HEADERS } from "../flux-usage-tags.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { launcherRig, type Rig } from "./engine-launch-fixture.ts";
 
@@ -43,7 +44,7 @@ describe("Grok argv", () => {
   const text = source("../drivers/acp/grok.ts");
   // spawnArgs is a block since the 1.0.3 merge (94a4d02b5: requireGrokAskHold runs before `return [`), so the argv
   // is read from the start of spawnArgs to the end of its array, in either the expression or the block form.
-  const start = text.indexOf("spawnArgs: (config, turn, ctx) =>");
+  const start = text.search(/spawnArgs: \(_?config, turn, ctx\) =>/); // `_config` once fullAuto no longer picks the mode (fix/1010-server-small)
   const block = start >= 0 ? text.slice(start) : "";
   const ends = ["\n  ],", "\n    ];"].map(end => block.indexOf(end)).filter(at => at > 0);
   const flags = [...block.slice(0, ends.length ? Math.min(...ends) : 2000).matchAll(/^\s*"(--[a-z-]+)",/gm)].map(m => m[1]!);
@@ -270,5 +271,33 @@ describe("Codex route headers", () => {
   it("refuses a header that is not a Murage memory header, and headers on another engine", () => {
     expect(rig.plan(rig.request("codex", { render: { route: route({ headers: { "x-flux-memory-app": "murage", "x-evil": "1" } }) } })).error).toBe("Cloud turn render route headers are not allowed");
     expect(rig.plan(rig.request("fuigoAgent", { render: { route: route({ headers, protocol: "openai" }) } })).error).toBe("Cloud turn render route headers are not allowed");
+  });
+});
+
+// USAGE-TAGS (1.0.10): the launcher on today's homes (version 4) accepts only the memory headers in an engine overlay and REFUSES the
+// turn on anything else. Engine usage tags stay off on every Cloud home until homes run launcher version 5 (murage-launchers-5,
+// MurageCloud, after the 1.0.10 tag): a home turn carries no tag and still launches; the tagged overlay is what this launcher refuses.
+describe("usage tags on a Cloud home (launcher version 4)", () => {
+  const turn = { threadId: "t-home-1", warmIdentity: { botId: "b1", audience: "owner", decidedOwner: true } } as never;
+  const ok = (value: string, fn: string) => rig.py(`print(json.dumps(m.${fn}(sys.argv[2])))`, value).trim() === "true";
+  it("a home's engine turn carries no usage tag, and the launcher plans it", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      expect(engineUsageTagsAllowed()).toBe(false);
+      const headers = fluxTurnDecision(turn, {}, { MURAGE_CLOUD_ROLE: "home" }).headers;
+      for (const name of FLUX_USAGE_HEADERS) expect(headers).not.toHaveProperty(name);
+      expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_CONFIG: fuigoConfigOverlay(headers) } })).ok?.env.FUIGO_CONFIG).toBe(fuigoConfigOverlay(headers));
+      expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(opencodeConfigOverlay("flux", headers));
+      const grok: Record<string, string | undefined> = {};
+      applyGrokFluxMemory(grok, headers);
+      expect(rig.plan(rig.request("grokAgent", { env: { GROK_CONFIG: grok.GROK_CONFIG } })).ok?.env.GROK_CONFIG).toBe(grok.GROK_CONFIG);
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("the same turn off a home is tagged, and this launcher would refuse that overlay (why homes wait for version 5)", () => {
+    const tagged = fluxTurnDecision(turn, {}, {}).headers;
+    expect(tagged).toHaveProperty("x-flux-feature", "chat");
+    expect(tagged).toHaveProperty("x-flux-bot-id", "b1");
+    expect(ok(fuigoConfigOverlay(tagged), "fuigo_config_value")).toBe(false);
+    expect(ok(opencodeConfigOverlay("flux", tagged), "opencode_config_value")).toBe(false);
   });
 });

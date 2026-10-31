@@ -12,6 +12,9 @@
 // `advanced` when their page gains its Advanced section.
 //
 // Loaded with the modal and the palette, never on the first paint (the words).
+import { EMAIL_OWNER_COPY } from "../../shared/email-copy";
+import { HEALTH_COPY } from "../../shared/sentinel-view";
+import { NEWS_COPY } from "./news-consent";
 import { t } from "./i18n";
 import type { LocaleKey } from "@/locales";
 import type { SettingsCard } from "./settings-cards";
@@ -32,8 +35,10 @@ const GENERAL: SettingsCard[] = [
   card("appearance", "general", "appearance-heading", { keywords: ["skin", "theme", "appearance", "dark", "light"], surface: "any" }),
   card("sidebar-density", "general", "sidebar-density-heading", { keywords: ["sidebar", "density", "rail", "compact"], advanced: true }),
   card("language", "general", "language-heading", { keywords: ["language", "translation"] }),
-  card("notifications", "general", "notifications-heading", { keywords: ["notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews"] }),
-  card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in"], advanced: true }),
+  card("time-zone", "general", "time-zone-heading", { keywords: ["time zone", "timezone", "zone", "clock", "daylight saving", "dst", "calendar times"] }),
+  card("send-key", "general", "send-key-heading", { keywords: ["sending messages", "send", "enter", "shift enter", "return key", "new line", "newline", "keyboard"], surface: "any" }),
+  card("notifications", "general", "notifications-heading", { keywords: ["notifications", "sound", "sounds", "mute", "chime", "quiet hours", "privacy", "previews", "alert", "alerts", "notify", "ping", "badge"] }),
+  card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in", "launch", "autostart", "open at login"], advanced: true }),
   card("analytics", "general", "analytics-heading", { keywords: ["analytics"], surface: "any", advanced: true }),
   card("about-me", "general", "about-me-heading", { keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] }),
 ];
@@ -58,7 +63,7 @@ const SKILLS: SettingsCard[] = [
 
 // ---- Memory (L2) ----
 const MEMORY: SettingsCard[] = [
-  card("overview", "memory", "memory-heading", { keywords: ["memory", "learning", "learned", "remember", "forget", "facts", "notes", "what it knows", "history", "review", "smart search", "switch"] }),
+  card("overview", "memory", "memory-heading", { keywords: ["memory", "learning", "learned", "remember", "forget", "facts", "notes", "what it knows", "history", "review", "smart search", "switch", "delete", "erase", "wipe", "remove"] }),
   card("how-it-learns", "memory", "memory-how-heading", { keywords: ["learn as we talk", "review before using", "learn from chats", "learn from channels", "facts", "procedures"] }),
   card("bots", "memory", "memory-bots-heading", { keywords: ["bots", "pause", "each bot", "paused"] }),
   card("learned", "memory", "memory-learned-heading", { keywords: ["what it learned", "keep", "undo", "history", "skipped", "try again"] }),
@@ -75,21 +80,21 @@ const MEMORY: SettingsCard[] = [
 
 // ---- Models & engines (L4) ----
 const MODELS: SettingsCard[] = [
-  card("providers", "models", "models-heading", { keywords: ["models", "providers", "keys", "api key", "catalog", "flux", "pricing", "openai", "anthropic", "gemini", "google", "local models"] }),
-  card("engines", "models", "engines-heading", { keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys", "accounts", "engines"] }),
-  card("paste-keys", "models", "paste-any-keys", { keywords: ["paste", "paste keys", "env", "add keys", "add a key", "replace keys"] }),
+  card("providers", "models", "models-heading", { keywords: ["models", "providers", "keys", "api key", "catalog", "flux", "pricing", "openai", "anthropic", "gemini", "google", "local models", "secret", "ai", "provider key"] }),
+  card("engines", "models", "engines-heading", { keywords: ["models", "claude", "grok", "providers", "cli", "flux", "flux router", "router", "opencode", "keys", "accounts", "engines", "ai"] }),
+  card("paste-keys", "models", "paste-any-keys", { keywords: ["paste", "paste keys", "env", "add keys", "add a key", "replace keys", "api key", "secret"] }),
   card("existing-keys", "models", "existing-keys-heading", { keywords: ["existing keys", "default keys", "opencode", "default connections"] }),
   card("catalogs", "models", "model-catalogs-heading", { keywords: ["model catalogs", "catalog", "model list", "search models", "context", "chat models"], advanced: true }),
-  card("local-servers", "models", "local-models-heading", { keywords: ["local models", "local servers", "ollama", "llama", "lm studio", "model server", "vllm"], advanced: true }),
+  card("local-servers", "models", "local-models-heading", { keywords: ["local models", "local servers", "ollama", "llama", "lm studio", "model server", "vllm", "offline", "on this computer", "local ai"], advanced: true }),
   card("claude-accounts", "models", "claude-accounts-heading", { keywords: ["claude accounts", "several claude accounts", "second account", "config directory", "work account"], advanced: true }),
   card("command-lines", "models", "engine-command-lines-heading", { keywords: ["command line", "set cli", "cli", "binary", "path", "reset", "wrapper"], advanced: true }),
 ];
 
 // ---- Tools (L4) ----
 const TOOLS: SettingsCard[] = [
-  card("search", "webSearch", "search-settings-heading", { keywords: ["search", "web search", "web", "internet", "tavily", "exa", "brave", "look up"] }),
+  card("search", "webSearch", "search-settings-heading", { keywords: ["search", "web search", "web", "internet", "tavily", "exa", "brave", "look up", "lookup", "google"] }),
   card("images", "webSearch", "image-settings-heading", { keywords: ["images", "image", "picture", "pictures", "photo", "photos", "gpt image", "image generation", "generate", "draw", "reference", "references", "reference packs", "packs", "prompt blocks", "blocks", "library"] }),
-  card("voice", "webSearch", "voice-settings-heading", { keywords: ["voice", "transcription", "transcribe", "assemblyai", "voice notes", "speech", "dictation", "narration"] }),
+  card("voice", "webSearch", "voice-settings-heading", { keywords: ["voice", "transcription", "transcribe", "assemblyai", "voice notes", "speech", "dictation", "narration", "dictate", "speak", "talk"] }),
   card("provider-keys", "webSearch", "search-keys-heading", { keywords: ["search keys", "provider keys", "tavily", "exa", "firecrawl", "api key", "web search key"], advanced: true }),
   card("daily-check", "webSearch", "image-daily-check-heading", { keywords: ["daily check", "image check", "daily image check", "probe", "test image model"], advanced: true }),
   card("voice-key", "webSearch", "voice-key-heading", { keywords: ["assemblyai key", "transcription key", "voice key", "api key"], advanced: true }),
@@ -98,6 +103,7 @@ const TOOLS: SettingsCard[] = [
 // ---- Connected apps and Messaging apps (L1) ----
 const REACH: SettingsCard[] = [
   card("apps", "connections", "connections-heading", { keywords: ["connected apps", "apps", "connections", "integrations", "gmail", "notion", "keys", "api"] }),
+  card("bot-email", "connections", "bot-email-heading", { keywords: ["bot email", "email", "mail", "inbox", "address", "agentmail", "send email", "flux"] }),
   card("mcp", "connections", "mcp-servers-heading", { keywords: ["mcp", "mcp servers", "servers"], advanced: true }),
   card("telegram", "channels", "telegram-settings-title", { keywords: ["telegram", "botfather", "pair", "messaging", "channels"] }),
   card("slack", "channels", "slack-settings-title", { keywords: ["slack", "messaging", "channels"] }),
@@ -112,21 +118,21 @@ const REACH: SettingsCard[] = [
 // ---- Devices (L4) ----
 const DEVICES: SettingsCard[] = [
   card("browser", "companion", "browser-settings-heading", { keywords: ["built-in browser", "browser", "browser switch", "browser access"] }),
-  card("pairing", "companion", "companion-heading", { keywords: ["companion", "phone", "pair", "mobile", "devices", "tablet", "laptop", "browser", "webui", "qr", "code", "tailscale", "remote access"] }),
+  card("pairing", "companion", "companion-heading", { keywords: ["companion", "phone", "pair", "mobile", "devices", "tablet", "laptop", "browser", "webui", "qr", "code", "tailscale", "remote access", "iphone", "android", "phone pairing"] }),
   card("script-access", "companion", "script-access-heading", { keywords: ["script access", "scripts", "script"], advanced: true }),
   card("vps", "companion", "vps-heading", { keywords: ["vps", "remote computer", "server", "ssh", "box", "cloud computer", "remote"], advanced: true }),
-  card("computer", "companion", "computer-settings-heading", { keywords: ["computer", "vm", "virtual", "desktop", "local vm", "vps", "server", "ssh", "box", "cloud computer", "browser", "browser profiles", "sign-in", "browser access", "other agents", "extension"] }),
+  card("computer", "companion", "computer-settings-heading", { keywords: ["computer", "vm", "virtual", "desktop", "local vm", "vps", "server", "ssh", "box", "cloud computer", "browser", "browser profiles", "sign-in", "browser access", "other agents", "extension", "sandbox"] }),
 ];
 
 // ---- Backups (L5) ----
 const BACKUPS: SettingsCard[] = [
-  card("backups", "backups", "backups-heading", { keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key"] }),
+  card("backups", "backups", "backups-heading", { keywords: ["backup", "restore", "recovery", "schedule", "s3", "off-site", "remote", "restic", "age", "key", "recovery key", "age key", "encryption key", "export"] }),
   card("storage", "backups", "storage-heading", { keywords: ["storage", "disk", "disk space", "free space", "space", "attachments", "full", "out of space"] }),
 ];
 
 // ---- Usage (L6) ----
 const USAGE: SettingsCard[] = [
-  card("by-bot", "usage", "usage-heading", { keywords: ["usage", "tokens", "cost", "billing", "replies", "by bot", "export"], surface: "any" }),
+  card("by-bot", "usage", "usage-heading", { keywords: ["usage", "tokens", "cost", "billing", "replies", "by bot", "export", "spend"], surface: "any" }),
   card("learning", "usage", "usage-learning-heading", { keywords: ["learning", "memory learning", "limit", "learning limit", "monthly limit", "tokens read", "tokens written"] }),
 ];
 
@@ -140,6 +146,8 @@ const ABOUT: SettingsCard[] = [
   card("setup", "about", "setup-heading", { keywords: ["setup", "first run", "get set up", "walkthrough"] }),
   card("shortcuts", "about", "shortcuts-heading", { keywords: ["keyboard", "shortcuts"], surface: "any" }),
   card("previous-version", "about", "previous-version-heading", { keywords: ["previous version", "go back", "downgrade", "older version", "reinstall", "roll back"] }),
+  card("news", "about", "news-heading", { keywords: ["news", "newsletter", "setup guide", "release emails", "new releases", "subscribe", "email me"] }),
+  card("health", "about", "health-heading", { keywords: ["health", "status", "problems", "issues", "is it working", "checks", "sentinel", "recovered"], surface: "any" }),
 ];
 
 export const SETTINGS_CARDS: readonly SettingsCard[] = [
@@ -150,7 +158,26 @@ export const SETTINGS_CARDS: readonly SettingsCard[] = [
  *  it renders the ids; L7's gate asserts the map is empty. (A search "Open" on one of these lands on its page.) */
 export const ANCHORS_OWED: Readonly<Record<string, string>> = {};
 
+/** Cards whose name already lives with the card's own copy (SETTINGS-UX-1011 S2), read from there so the two never drift. */
+const CARD_NAMES: Readonly<Record<string, () => string>> = {
+  "connections.bot-email": () => EMAIL_OWNER_COPY.sectionTitle,
+  "general.send-key": () => t("settings.sendKey.title"),
+  "about.news": () => NEWS_COPY.title,
+  "about.health": () => HEALTH_COPY.title,
+};
+
+/** The name people type for a card whose plain label does not say it: "Connected tools details" is what "mcp" means.
+ *  Typed whole it ranks as the label does, so that card leads its own name even from under Advanced. Also in the card's
+ *  `keywords`. Matched, never shown; under `keywords` for the same reason as the registry's. */
+const CARD_NAME_WORDS: Readonly<Record<string, { keywords: readonly string[] }>> = {
+  "connections.mcp": { keywords: ["mcp"] },
+};
+
+export const cardNameWords = (id: string): readonly string[] => CARD_NAME_WORDS[id]?.keywords ?? [];
+
 /** What a card is called in search results and the palette. */
 export function cardLabel(card: Pick<SettingsCard, "id">): string {
+  const named = CARD_NAMES[card.id];
+  if (named) return named();
   return t(`settings.l1.card.${card.id}` as LocaleKey);
 }

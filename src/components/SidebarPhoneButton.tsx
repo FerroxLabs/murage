@@ -5,7 +5,8 @@ import { cn } from "@/lib/cn";
 import type { Action } from "@/state/store";
 import type { SidebarDensity } from "@/lib/sidebar-preferences";
 import { usePageVisible } from "@/lib/page-visible";
-import { companionBridge, type CompanionState } from "./PhoneSetupFlow";
+import { companionBridge } from "@/lib/companion-bridge";
+import type { CompanionState } from "./PhoneSetupFlow";
 
 export const SIDEBAR_PHONE_RECENT_MS = 2 * 60_000;
 const SIDEBAR_PHONE_POLL_MS = 15_000;

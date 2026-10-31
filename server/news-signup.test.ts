@@ -11,7 +11,7 @@ import { FIRST_RUN_COPY } from "../src/lib/first-run-copy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { NEWS_CONSENT_MAX, NEWS_COPY, newsConsentText } from "../src/lib/news-consent.ts";
 
-const HELLO_WORDS = `${FIRST_RUN_COPY.hello.welcome.heading}\n${FIRST_RUN_COPY.hello.welcome.lead}`;
+const HELLO_WORDS = `${FIRST_RUN_COPY.hello.welcome.heading}\n${FIRST_RUN_COPY.hello.welcome.emailHelper}`;
 const SETTINGS_WORDS = `${NEWS_COPY.title}\n${NEWS_COPY.subtitle}`;
 
 const ENV = { MURAGE_NEWS_URL: "https://news.test" } as NodeJS.ProcessEnv;

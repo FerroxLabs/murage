@@ -13,6 +13,7 @@ import { trackedCredentialUpdate } from "./secure-credentials.mjs";
 import { createServerConnections, openServerPrompt } from "./server-connection.mjs";
 import { launchSecretVia, sendLaunchSecretParent } from "./launch-secret.mjs";
 import { closedControlDirectory } from "./backup-closed-controller.mjs";
+import { desktopFluxEnvironment } from "./workspace-credentials.mjs";
 
 const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
@@ -213,7 +214,7 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
     mcpCommitToken:"private-mcp-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
     launchSecretVia,sendLaunchSecretParent,managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
-    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),slog:()=>{},
+    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),desktopFluxEnvironment,slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
     pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,portAvailable,compileCacheEnvironment:()=>({}),desktopMark:()=>{},

@@ -101,7 +101,7 @@ for (const viewport of VIEWPORTS) {
   test(`${viewport.name}: a pasted link that offers sign-in and an API key, added with the key`, async ({ page }, info) => {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(origin + "/__mcp");
-    await expect(page.getByRole("heading", { name: "Your MCP servers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your connected tools" })).toBeVisible();
     await expect(page.getByText("No servers yet. Paste a link to add your first one.")).toBeVisible();
     await page.screenshot({ path: info.outputPath(`mcp-${viewport.name}-1-empty.png`), fullPage: true });
 
@@ -118,17 +118,17 @@ for (const viewport of VIEWPORTS) {
     const host = "127.0.0.1:" + fake.port;
     await expect(page.getByText(`${host} uses sign-in.`)).toBeVisible();
     await expect(page.getByRole("button", { name: `Sign in to ${host}` })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Use an API key instead" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Use a key instead" })).toBeVisible();
     // no desktop shell in a browser: the button says why it cannot be used
     await expect(page.getByRole("button", { name: `Sign in to ${host}` })).toBeDisabled();
     await expect(page.getByText("Sign in needs the Murage desktop app.")).toBeVisible();
     await page.screenshot({ path: info.outputPath(`mcp-${viewport.name}-3-both-ways.png`), fullPage: true });
 
-    await page.getByRole("button", { name: "Use an API key instead" }).click();
-    await expect(page.getByLabel("API key")).toBeVisible();
+    await page.getByRole("button", { name: "Use a key instead" }).click();
+    await expect(page.getByLabel("Key", { exact: true })).toBeVisible();
     await page.getByText("Sent as").click();
     await expect(page.getByLabel("X-API-Key")).toBeChecked();
-    await page.getByLabel("API key").fill(KEY);
+    await page.getByLabel("Key", { exact: true }).fill(KEY);
     await page.screenshot({ path: info.outputPath(`mcp-${viewport.name}-4-key.png`), fullPage: true });
     await page.getByRole("button", { name: "Save and test" }).click();
 
@@ -147,7 +147,7 @@ for (const viewport of VIEWPORTS) {
     expect(fake.requests.some((request) => request.headers["x-api-key"] === KEY)).toBe(true);
     expect(JSON.stringify(await list())).not.toContain(KEY);
 
-    await expect(page.getByRole("heading", { name: "Your MCP servers" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your connected tools" })).toBeVisible();
     await page.screenshot({ path: info.outputPath(`mcp-${viewport.name}-6-list.png`), fullPage: true });
     expect(await noOverflow(page)).toBe(true);
   });
@@ -292,7 +292,7 @@ test("the panel has no accessibility violations", async ({ page }, info) => {
   await page.getByRole("button", { name: "Add server" }).click();
   await paste(page, fake.mcpUrl);
   await page.getByRole("button", { name: "Continue", exact: true }).nth(1).click();
-  await expect(page.getByRole("button", { name: "Use an API key instead" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Use a key instead" })).toBeVisible();
   await page.addScriptTag({ content: readFileSync(axeScriptPath, "utf8") });
   const report = await page.evaluate(async () => (window as any).axe.run(document));
   writeFileSync(info.outputPath("mcp-axe.json"), JSON.stringify(report, null, 2));

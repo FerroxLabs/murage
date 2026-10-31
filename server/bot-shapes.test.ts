@@ -282,7 +282,7 @@ describe("the date and time a turn starts at", () => {
   it("names the day, both clock forms and the owner's zone with its offset", () => {
     // 01:03 UTC is 8:03 am in Bangkok: the run a bot once logged as 20:03.
     const text = nowPrompt(new Date("2026-09-24T01:03:00Z"), "Asia/Bangkok");
-    expect(text).toBe(" It is now Thursday, 24 September 2026, 8:03 am (08:03) in the owner's time zone, Asia/Bangkok (UTC+07:00).");
+    expect(text).toBe(" It is now Thursday, 24 September 2026, 8:03 am (08:03) in the owner's time zone, Asia/Bangkok (UTC+07:00). Coming days: Fri 25 Sep, Sat 26 Sep, Sun 27 Sep, Mon 28 Sep, Tue 29 Sep, Wed 30 Sep, Thu 1 Oct, Fri 2 Oct, Sat 3 Oct, Sun 4 Oct, Mon 5 Oct, Tue 6 Oct, Wed 7 Oct, Thu 8 Oct.");
   });
   it("reads UTC as UTC", () => {
     expect(nowPrompt(new Date("2026-09-24T13:30:00Z"), "UTC")).toContain("1:30 pm (13:30) in the owner's time zone, UTC (UTC+00:00)");

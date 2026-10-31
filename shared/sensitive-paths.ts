@@ -50,9 +50,11 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "credentials-json",
-    re: /\bcredentials?\.json\b|\bserviceaccount\b/i,
-    read: ["**/credentials.json", "**/credential.json", "**/*serviceaccount*"],
-    bash: ["*credentials.json*", "*credential.json*", "*serviceaccount*"],
+    // NOLIMITS-KEY-TEXT A2: a service account key is a file (a `.json`, `.p12` or `.pem` named for it) or the mounted
+    // folder (`.../serviceaccount/token`); the bare word in `kubectl get serviceaccount` names neither.
+    re: /\bcredentials?\.json\b|serviceaccount[\w.-]*\.(?:json|p12|pem)\b|[\\/]serviceaccount(?:[\\/]|$|["'\s;|&)])/i,
+    read: ["**/credentials.json", "**/credential.json", "**/*serviceaccount*.json", "**/*serviceaccount*.p12", "**/*serviceaccount*.pem", "**/serviceaccount/**"],
+    bash: ["*credentials.json*", "*credential.json*", "*serviceaccount*.json*", "*serviceaccount*.p12*", "*serviceaccount*.pem*", "*/serviceaccount/*"],
   },
   {
     // 2026-09-17 (thread e4454625): an auto-mode bot lifted a personal OpenAI
@@ -60,7 +62,8 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     // keys, and (Rule 74b) the files that shape every shell the owner runs.
     id: "shell-rc",
     // `$HOME/.zshrc`, `${HOME}/.zshrc`, `$env:HOME\.zshrc` and `%USERPROFILE%\.zshrc` name the same file as `~/.zshrc`
-    re: /(^|[\s"'=])~?[\w./${}:%\\-]*\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
+    // NOLIMITS-KEY-TEXT A3: the dot file is a whole basename, so `user.profile.json` is not it and `.zshrc.bak` still is
+    re: /(^|[\s"'=])~?(?:[\w./${}:%\\-]*[\\/])?\.(zshrc|zshenv|zprofile|bashrc|bash_profile|profile)\b/i,
     read: ["~/.zshrc", "~/.zshenv", "~/.zprofile", "~/.bashrc", "~/.bash_profile", "~/.profile"],
     bash: ["*.zshrc*", "*.zshenv*", "*.zprofile*", "*.bashrc*", "*.bash_profile*", "*.profile*"],
   },
@@ -82,9 +85,9 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   {
     id: "windows-credential-files",
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
-    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](gcloud|npm)[\\/]|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
-    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/**", "**/Login Data"],
-    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*.config/gcloud*", "*AppData*Roaming*npm*", "*Login Data*"],
+    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/]gcloud[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
+    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/npmrc", "**/Login Data"],
+    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*.config/gcloud*", "*AppData*Roaming*npm*etc*npmrc*", "*Login Data*"],
   },
   {
     id: "keys-and-cluster-configs",
@@ -122,9 +125,10 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "project-tooling",
-    re: /(^|[\s/"'])(\.claude[\\/]settings[^\\/\s"']*\.json\b|\.vscode[\\/]tasks\.json\b|\.husky([\\/]|$)|node_modules[\\/]\.bin([\\/]|$))/i,
-    read: [".claude/settings*.json", ".vscode/tasks.json", ".husky/**", "node_modules/.bin/**"],
-    bash: ["*.claude/settings*", "*.vscode/tasks.json*", "*.husky*", "*node_modules/.bin*"],
+    // NOLIMITS-KEY-TEXT A4: the global npm shims under AppData\Roaming\npm change what runs, so they are tooling, not a key place
+    re: /(^|[\s/"'])(\.claude[\\/]settings[^\\/\s"']*\.json\b|\.vscode[\\/]tasks\.json\b|\.husky([\\/]|$)|node_modules[\\/]\.bin([\\/]|$))|appdata[\\/]roaming[\\/]npm[\\/](?!etc[\\/])/i,
+    read: [".claude/settings*.json", ".vscode/tasks.json", ".husky/**", "node_modules/.bin/**", "~/AppData/Roaming/npm/**"],
+    bash: ["*.claude/settings*", "*.vscode/tasks.json*", "*.husky*", "*node_modules/.bin*", "*AppData*Roaming*npm*"],
   },
   // Rule 74b/74d: Murage's own murage-exec wrapper and the per-turn env
   // file it reads; a write to either would change what every command runs.
@@ -138,11 +142,12 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
+  // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
   {
     id: "murage-engine-hooks",
-    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
-    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
-    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
+    re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
+    read: ["**/native/antigravity-relay/**", "**/native/antigravity-ask/**", "**/native/antigravity-scope/**", "**/native/codex-scope/**", "**/native/hermes-ask/**", "**/murage-agy-relay*", "**/murage-hook.mjs", "**/murage-hook.cmd", "**/murage-hook.env", "**/ask-hook-*.cjs"],
+    bash: ["*native/antigravity-relay*", "*native/antigravity-ask*", "*native/antigravity-scope*", "*native/codex-scope*", "*native/hermes-ask*", "*murage-agy-relay*", "*murage-hook.mjs*", "*murage-hook.cmd*", "*murage-hook.env*", "*ask-hook-*.cjs*"],
   },
   // agy 1.4.4 loads the hooks of the workspace's customization root (.agents, .agent, _agents, _agent: hooks.json,
   // plugins.json, plugins/<name>/hooks.json, and agents/*.md, whose front matter can carry hooks) beside Murage's
@@ -189,11 +194,14 @@ export const SENSITIVE_TEXT: readonly SensitiveTextRow[] = [
   { id: "keychain", re: /security\s+find-(generic|internet)-password|\bkeychain\b/i },
   { id: "key-name", re: /\b[A-Z][A-Z0-9_]*_(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN)\b/ },
   { id: "bearer", re: /\bBearer\s+\$\{?[A-Za-z_]/i },
-  { id: "key-literal", re: /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/ },
+  // NOLIMITS-KEY-TEXT A7: a key has length, so `pip install sk-learn` names none
+  { id: "key-literal", re: /\bsk-(?:proj|ant|or)?[-_]?[A-Za-z0-9_-]{16,}/ },
   { id: "env-grep", re: /\benv\b[^|;&]*\|\s*grep\b/i },
-  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone.
+  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone,
+  // and (NOLIMITS-KEY-TEXT A8) `declare -p NAME`, `typeset -p NAME`, `export -p NAME`, `Get-ChildItem Env:`, `gci env:`, `dir env:` alone. Piped, the
+  // PowerShell listing keeps its 1.0.3 standing: Claude's own gate lists the environment that way at Full access.
   // Only at the start of a command, so `env VAR=x cmd`, `export FOO=1` and a word like "environment" are ordinary.
-  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|export\s+-p|declare\s+-[xp]+|set)\s*(?=$|[;&|)>`\n])/i },
+  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset|export)\s+-[a-z]*p[a-z]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset)\s+-x+|(?:Get-ChildItem|gci|dir|ls)\s+(?:-Path\s+)?Env:[\\/]?\*?(?!\s*\|)|set)\s*(?=$|[;&|)>`\n])/i },
   // Rule 74b: cmd's AutoRun runs on every cmd start; a change to it is a
   // sensitive write.
   { id: "cmd-autorun", re: /Command Processor[\s\S]*\bAutoRun\b/i },
@@ -232,7 +240,7 @@ export const SECRET_SHAPES: readonly SensitiveTextRow[] = [
   { id: "bearer-literal", re: /\bBearer\s+[A-Za-z0-9._~+/-]{20,}=*/ },
 ];
 
-function luhn(digits: string): boolean {
+export function luhn(digits: string): boolean {
   let sum = 0;
   for (let i = 0; i < digits.length; i++) {
     let d = Number(digits[digits.length - 1 - i]);
@@ -270,6 +278,12 @@ export function sensitivePathRow(path: string, inProject: boolean, onTheWay = fa
     if ((onTheWay && row.ancestor ? row.ancestor : row.re).test(path)) return row.id;
   }
   return null;
+}
+
+/** NOLIMITS-KEY-TEXT section 10: the one row test over a named path, the same `re` the key guard runs, for the key guard
+ * and the home-glob lane both. No Read tails, no Bash patterns, no second matcher. */
+export function sensitiveNameRow(spelling: string): string | null {
+  return sensitivePathRow(spelling, false);
 }
 
 /** Rule 63/69c: the Claude `permissions.ask` projection, generated from the

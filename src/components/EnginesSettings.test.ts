@@ -257,9 +257,9 @@ describe("the engine command lines", () => {
     const markup = renderToStaticMarkup(createElement(EnginesSettings));
     expect(markup).toContain('id="engine-command-lines-heading"');
     expect(markup).toContain("Engine command lines");
-    expect(markup.match(/Set CLI…/g)).toHaveLength(1);
+    expect(markup.match(/Choose location…/g)).toHaveLength(1);
     const hosted = renderToStaticMarkup(createElement(AdvancedHost, null, createElement(EnginesSettings)));
-    expect(hosted).not.toContain("Set CLI…");
+    expect(hosted).not.toContain("Choose location…");
     expect(hosted).not.toContain("Engine command lines");
   });
 });

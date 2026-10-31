@@ -9,6 +9,7 @@
 // also save a typed API key ("enroll-key"): the key is typed here first, and the session opens only to carry it as
 // its first and only message.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import {
@@ -35,7 +36,6 @@ export interface EngineLoginTerminalProps {
 const ENGINE_LABEL: Record<EngineLoginEngine, string> = { codex: "Codex", claudeAgent: "Claude", grokAgent: "Grok", kimiAgent: "Kimi", opencodeGo: "OpenCode" };
 
 /** Same words as server/cloud-home/copy.ts (cloudClaudeSigninScreen, cloudClaudeSigninRenew, engineLoginBotRequired). */
-export const CLAUDE_CLOUD_SIGNIN_COPY = "Cloud turns run on a long-lived Claude subscription token. Your local MCP servers work as before; claude.ai connectors and Remote Control are desktop features and are not part of Cloud turns.";
 export const CLAUDE_CLOUD_RENEW_COPY = "Renew your Claude sign-in";
 
 /** "Sign Codex in for Atlas" for a per-bot sign-in, "Sign Claude in" for the home's own. */
@@ -138,7 +138,7 @@ export function EngineLoginTerminal({ homeId, engine, action = "login", bot = nu
   return (
     <section aria-label={title} className="flex flex-col gap-3">
       <h3 className="text-sm font-medium">{title}</h3>
-      {engine === "claudeAgent" && action === "login" ? <p className="text-sm text-ink-secondary">{CLAUDE_CLOUD_SIGNIN_COPY}</p> : null}
+      {engine === "claudeAgent" && action === "login" ? <p className="text-sm text-ink-secondary">{t("ux.lcopyb.cloud.claudeSignin")}</p> : null}
       <div ref={host} className="rounded-md border border-hairline bg-black p-2" style={{ minHeight: 280 }} />
       <p role="status" aria-live="polite" className="text-sm text-ink-secondary">
         {state.phase === "connecting" ? "Connecting to your Cloud home..." : null}

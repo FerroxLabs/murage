@@ -11,6 +11,7 @@ import { writeEncryptedInstallationBackup, inspectEncryptedInstallationBackup, r
 import { resolveWindowsBackupRuntime } from "./installation-backup-encryption.ts";
 import { downgradeInstallationMemorySchema, MEMORY_DOWNGRADE_TARGETS } from "./installation-memory-downgrade.ts";
 import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
+import type { BackupProgressReport } from "../shared/backup-progress.mjs";
 
 export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> [--to 1|2|3|4|5|6|7|8|9|10|11|12] | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
 
@@ -20,7 +21,7 @@ async function identityFromStdin(): Promise<string> {
   return identity;
 }
 
-export async function installationRecoveryCommand(args: string[], input: { readIdentity?: () => Promise<string> } = {}): Promise<Record<string, unknown>> {
+export async function installationRecoveryCommand(args: string[], input: { readIdentity?: () => Promise<string>; onProgress?: BackupProgressReport } = {}): Promise<Record<string, unknown>> {
   const command = args[0];
   const options = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
@@ -34,7 +35,7 @@ export async function installationRecoveryCommand(args: string[], input: { readI
     const numeric=(key:string,min:number,max:number)=>{const raw=options.get(key);if(raw===undefined)return undefined;const value=Number(raw);if(!/^[1-9][0-9]*$/.test(raw)||!Number.isSafeInteger(value)||value<min||value>max)throw new Error("INVALID_BACKUP_BUDGET");return value;};
     const maxBytes=numeric("--max-bytes",1,MAX_BACKUP_BYTES),timeoutMs=numeric("--max-duration-ms",1000,30*60000);
     if(process.platform==="win32")await resolveWindowsBackupRuntime(options.get("--age-tool")!);
-    const result=await writeEncryptedInstallationBackup(options.get("--data-dir")!,options.get("--output")!,{ageExecutable:options.get("--age-tool")!,recipient:options.get("--recipient")!,identity:await(input.readIdentity??identityFromStdin)(),selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},...(maxBytes===undefined?{}:{maxBytes}),...(timeoutMs===undefined?{}:{timeoutMs,signal:AbortSignal.timeout(timeoutMs)})});
+    const result=await writeEncryptedInstallationBackup(options.get("--data-dir")!,options.get("--output")!,{ageExecutable:options.get("--age-tool")!,recipient:options.get("--recipient")!,identity:await(input.readIdentity??identityFromStdin)(),selection:{scope:"application-data",credentialPolicy:"preserve-in-encrypted-fidelity"},...(maxBytes===undefined?{}:{maxBytes}),...(timeoutMs===undefined?{}:{timeoutMs,signal:AbortSignal.timeout(timeoutMs)}),...(input.onProgress?{onProgress:input.onProgress}:{})});
     return{ok:true,operation:command,...result};
   }
   if(command==="inspect-encrypted"&&options.has("--archive")&&options.has("--age-tool")&&(options.size===2||(options.size===3&&options.has("--data-dir")))){

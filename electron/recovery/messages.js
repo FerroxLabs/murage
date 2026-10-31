@@ -43,8 +43,8 @@
   // A plain file error while the backup file was written (W-D1): about the
   // backup folder or the drive, never the recovery key.
   const WRITE_FAILED = "Murage couldn't finish writing the backup file, and nothing in your workspace was changed. Try again; if it happens again, open the diagnostics folder and send the newest log to support.";
-  const DISK_FULL = "The drive ran out of space while the backup was being written. Free up space on the drive that holds your backup folder, then try again.";
-  const NOT_WRITABLE = "This computer didn't let Murage write a file the backup needed. Check that you can create files in your backup folder, then try again.";
+  const DISK_FULL = "There isn't enough free space to finish. Free up space on this computer's drive and on the drive that holds your backup folder, then try again.";
+  const NOT_WRITABLE = "Murage can't write a file the backup needs. Choose a backup folder you can write to, or fix the permissions on that folder and on the folder that holds Murage's data.";
   const IN_USE = "Another program was holding a file the backup needed, often antivirus or a sync app. Wait a few minutes, then try again.";
   const FOLDER_UNUSABLE = "Murage couldn't make its private working folder inside your backup folder. Choose a folder on this computer's own drive that you can create files in, then try again.";
   const groups = [
@@ -72,6 +72,7 @@
     [DEFAULT, ["BACKUP_CREDENTIAL_POLICY_REQUIRED", "INVALID_RECOVERY_REQUEST", "INVALID_RECOVERY_RESULT", "RECOVERY_OPERATION_FAILED"]],
     [TOO_BIG, ["BACKUP_LIMIT_EXCEEDED", "SNAPSHOT_LIMIT_EXCEEDED", "ARCHIVE_LIMIT_EXCEEDED", "REVIEW_LIMIT_EXCEEDED"]],
     ["On Windows Murage can open a backup of up to 20 GB, and this one is bigger, so nothing was restored. Restore it on a Mac or a Linux computer instead.", ["BACKUP_WINDOWS_SIZE_LIMIT"]],
+    ["That location can't be used. Choose another folder; nothing was saved.", ["BACKUP_RECOVERY_KEY_LOCATION_INVALID"]],
     [PLACE, ["DESTINATION_EXISTS", "DESTINATION_INSIDE_INSTALLATION", "INVALID_DESTINATION", "RESTORE_PATH_ALREADY_EXISTS", "BROAD_RESTORE_TARGET_REFUSED", "RESTORE_SOURCE_TARGET_REFUSED",
       "UNSAFE_RESTORE_DIRECTORY", "UNSAFE_RESTORE_TARGET", "INVALID_PRIVATE_RESTORE_PARENT", "RESTORE_NEW_TARGET_REQUIRED", "INSTALLATION_SELECTION_INVALID"]],
     [PAUSED, ["RESTORE_REVIEW_REQUIRED", "RESTORE_ALREADY_REQUIRES_REVIEW"]],
@@ -84,7 +85,7 @@
     [PARTS, ["BACKUP_SELECTED_COMPONENT_UNAVAILABLE", "BACKUP_REQUIRED_COMPONENT_MISSING", "INSTALLATION_MISSING", "STATE_SNAPSHOT_FAILED"]],
     [UNKNOWN_PART, ["BACKUP_UNCLASSIFIED_COMPONENT"]],
     [WRITE_FAILED, ["ENCRYPTED_BACKUP_FAILED"]],
-    ["Murage could not save its backup state. Check the disk space and permissions, then press Return to workspace again.", ["BACKUP_STATE_SAVE_FAILED"]],
+    ["Murage could not save its backup state. Check free disk space and folder permissions, then choose Return to workspace again.", ["BACKUP_STATE_SAVE_FAILED"]],
     [DISK_FULL, ["BACKUP_DISK_FULL"]],
     [NOT_WRITABLE, ["BACKUP_FOLDER_NOT_WRITABLE"]],
     [IN_USE, ["BACKUP_FILE_IN_USE"]],

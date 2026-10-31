@@ -1,0 +1,160 @@
+[
+  {
+    "name": "max-safe-int",
+    "input_json": "9007199254740991",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "9007199254740991",
+    "digest": "9AtCPC3ZX_Ky8CfiIgj0OM9yQoYuXnRoYOaXMIya3SY"
+  },
+  {
+    "name": "min-safe-int",
+    "input_json": "-9007199254740991",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "-9007199254740991",
+    "digest": "TJM6RWu48umJSy0LJkgEOc1y1S-4ony_j9fzI_IseBU"
+  },
+  {
+    "name": "zero",
+    "input_json": "0",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "0",
+    "digest": "X-zrZv_IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V-k"
+  },
+  {
+    "name": "negative-zero",
+    "input_json": "-0",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "0",
+    "digest": "X-zrZv_IbzjZUnhsbWlsecLbwjndTpG0ZynXOif7V-k"
+  },
+  {
+    "name": "nested-arrays-objects",
+    "input_json": "{\"z\":[1,[2,[3]]],\"a\":{\"c\":{},\"b\":[]}}",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "{\"a\":{\"b\":[],\"c\":{}},\"z\":[1,[2,[3]]]}",
+    "digest": "jhIARiqjt_0uNTbgS4NL9LWnHDHojfAyHbmSa5RVgbc"
+  },
+  {
+    "name": "astral-string-value",
+    "input_json": "{\"k\":\"\\ud83d\\ude00 x\"}",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "{\"k\":\"😀 x\"}",
+    "digest": "bvcKHNzySJ1DOdJoauNmrvwEc4HALYoXycNN_oMmf50"
+  },
+  {
+    "name": "astral-utf16-key-order",
+    "input_json": "{\"\\ufb33\":1,\"\\ud83d\\ude00\":2}",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "{\"😀\":2,\"דּ\":1}",
+    "digest": "7E59jCljyqONzMPUJpNxmsnG7NeDiRtYPTM1ZWIKwr4"
+  },
+  {
+    "name": "scalars-in-array",
+    "input_json": "[true,false,null,\"a\",0,-1]",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "[true,false,null,\"a\",0,-1]",
+    "digest": "BtgIHj42F93hN5RednCnrvsidtdObnjfAuay6yH3C3Y"
+  },
+  {
+    "name": "key-sort-by-code-unit",
+    "input_json": "{\"b\":1,\"a\":2,\"B\":3,\"\":4,\"10\":5,\"9\":6}",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "{\"\":4,\"10\":5,\"9\":6,\"B\":3,\"a\":2,\"b\":1}",
+    "digest": "Za1BcWCXKcDTSIfvlqE3SYx-gg7is_V7o9Bt-u7fpQk"
+  },
+  {
+    "name": "control-char-escapes",
+    "input_json": "\"\\u0000\\u001f\\b\\f\\n\\r\\t\\\"\\\\\\u007f\"",
+    "expect": "ok",
+    "layer": "parsed-value",
+    "canonical": "\"\\u0000\\u001f\\b\\f\\n\\r\\t\\\"\\\\\"",
+    "digest": "54gr-91WPdBCUc9ThffRBZB1LLV-xhlJZ0CnKEx9hPc"
+  },
+  {
+    "name": "int-above-max",
+    "input_json": "9007199254740992",
+    "expect": "int_range",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "int-below-min",
+    "input_json": "-9007199254740992",
+    "expect": "int_range",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "int-huge",
+    "input_json": "{\"n\":123456789012345678901234567890}",
+    "expect": "int_range",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "float-1.5",
+    "input_json": "1.5",
+    "expect": "float",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "float-1.0",
+    "input_json": "1.0",
+    "expect": "float",
+    "layer": "number-token"
+  },
+  {
+    "name": "float-1e2",
+    "input_json": "1e2",
+    "expect": "float",
+    "layer": "number-token"
+  },
+  {
+    "name": "nan",
+    "input_json": "NaN",
+    "expect": "float",
+    "layer": "number-token"
+  },
+  {
+    "name": "infinity",
+    "input_json": "Infinity",
+    "expect": "float",
+    "layer": "number-token"
+  },
+  {
+    "name": "lone-high-surrogate-value",
+    "input_json": "\"\\ud800\"",
+    "expect": "lone_surrogate",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "lone-low-surrogate-value",
+    "input_json": "\"\\udc00\"",
+    "expect": "lone_surrogate",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "lone-high-surrogate-key",
+    "input_json": "{\"\\ud83d\":1}",
+    "expect": "lone_surrogate",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "lone-low-surrogate-key",
+    "input_json": "{\"\\ude00\":1}",
+    "expect": "lone_surrogate",
+    "layer": "parsed-value"
+  },
+  {
+    "name": "reversed-surrogate-pair",
+    "input_json": "\"\\ude00\\ud83d\"",
+    "expect": "lone_surrogate",
+    "layer": "parsed-value"
+  }
+]

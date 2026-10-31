@@ -12,7 +12,9 @@
 // import graph never reaches server startup, the live database opener, a driver, credential-bearing config or any
 // network module (cli-imports.test.ts walks it). Registration readers are injected: lane C supplies the launchd,
 // Task Scheduler and systemd readers.
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 import { loadDescriptor, type SentinelDescriptor } from "./paths.ts";
 import { readPublishedView } from "./publication.ts";
@@ -192,10 +194,14 @@ export async function main(argv: readonly string[], deps: CliDeps = {}): Promise
   return EXIT.ok;
 }
 
-const invokedDirectly = (() => {
-  try { return typeof process.argv[1] === "string" && import.meta.url === pathToFileURL(process.argv[1]).href; } catch { return false; }
-})();
-if (invokedDirectly) {
+/** True when argv[1] names this module. A Cloud home runs the checker through the /opt/murage symlink, while node loads
+ *  the module by its real path, so both sides are compared as real paths (as server/cloud-home/supervisor.ts does). */
+export function invokedAsMain(argv1: string | undefined, moduleUrl: string = import.meta.url): boolean {
+  if (typeof argv1 !== "string" || !argv1) return false;
+  try { return realpathSync(resolve(argv1)) === realpathSync(fileURLToPath(moduleUrl)); } catch { return false; }
+}
+
+if (invokedAsMain(process.argv[1])) {
   scrubEnvironment(process.env);
   void main(process.argv.slice(2)).then(code => { process.exitCode = code; });
 }

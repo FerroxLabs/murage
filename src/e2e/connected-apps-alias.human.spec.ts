@@ -169,7 +169,7 @@ test("an unreadable inventory cannot start a new account", async ({ page }) => {
 
 test("a remote viewer cannot open the label form or authorize", async ({ page }) => {
   const calls = await mount(page, { surface: "remote" });
-  await expect(page.getByText("View connected apps. Manage connections and MCP tools in the desktop app.")).toBeVisible();
+  await expect(page.getByText("View your connected apps. Manage them and your connected tools in the desktop app.")).toBeVisible();
   const connect = page.locator('[data-connector-action="slack"]');
   await expect(connect).toBeDisabled();
   await expect(connect).toHaveAttribute("title", "Manage connections in the desktop app");
