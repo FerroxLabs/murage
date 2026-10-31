@@ -31,6 +31,8 @@ import { readOwnerTimeZone, validateOwnerTimeZone, writeOwnerTimeZone } from "./
 // 1.0.9 Sentinel: health producers, owner reads, page and digest delivery (server/sentinel/server-host.ts, owner-api.ts).
 import { captureActiveFromControl, startServerSentinel } from "./sentinel/server-host.ts";
 import { handleSentinelRead, sentinelOwner } from "./sentinel/owner-api.ts";
+import { applyOwnerTimeZone, chosenOwnerTimeZone, computerTimeZone, ownerTimeZone } from "./owner-time-zone.ts";
+import { createOwnerZoneReconciler } from "./owner-zone-reconcile.ts";
 import { CloudBrowserProfileUsage } from "./cloud-home/browser-profile-usage.ts";
 import { setCloudBrowserAdmission } from "./cloud-home/browser-process.ts";
 import { cloudTurnEnvironment, CLOUD_ENGINES } from "./cloud-home/turn-process.ts";
@@ -47,6 +49,9 @@ import { withoutCloudCredentials } from "./cloud-home/credentials.ts";
 import { readServerSecrets } from "./cloud-home/server-secrets.ts";
 import { criteriaClaimCorrection, createReplySpeakerTurns, replyAudienceIsOwner } from "./reply-speaker-guard.ts";
 import { readBody } from "./read-body.ts";
+import { feedbackRoute } from "./feedback-routes.ts";
+import { feedbackInstallId } from "./feedback-relay.ts";
+import { helpRoute } from "./help-routes.ts";
 import { flushCoalesced } from "./atomic.ts";
 import { projectIsClosing } from "./project-records.ts";
 import { beginTeamJournal, reconcileTeamIdentities } from "./team-lifecycle.ts";
@@ -146,6 +151,7 @@ import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, par
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
+import { createFluxConnectionApply } from "./flux-connection-apply.ts";
 import { rememberedMomentsAwaitingReply, rememberedMomentsForJob, threadAwaitsRememberedChip } from "./memory/memory-moments.ts";
 import { forgetBotLearningData, sweepLearningRetention } from "./memory/evolution-forgetting.ts";
 import { consolidateCompletedMemorySource, consolidateMemorySource, pendingMemoryConsolidationJobs } from "./memory/consolidate.ts";
@@ -200,7 +206,7 @@ import { isPipReflectThread, parseContinuityOptions } from "./memory/pip-types.t
 import { assertMemoryAccess, memoryAccess, backgroundMemoryAudience, lineageReaderScopes, personReadableScopes, recallThreads, type MemoryAccess } from "./memory/policy.ts";
 import { MemoryDispatchReceipt, resumedSessionInvalidAfterRecall, retainedSessionInvalid, AUDIENCE_SESSION_READER, CONTENT_SESSION_READER, writetimeSessionVerdict, memorySessionRevoked, buildMemoryBundleAfterReset, lateMemoryRefusalLine, turnRefusedLine, type TurnRefusedKind, pinnedMemoryFailure, withheldPinLine, droppedPinLine, MEMORY_REDISPATCH_ATTEMPTS, nextMemoryRebuild, sessionCheckRefusal, refusalCauseNote } from "./memory/dispatch.ts";
 import { memoryState } from "./memory/repository.ts";
-import { noteContinuationReset, noteSealedTurn } from "./memory/reset-watch.ts";
+import { noteContinuationReset, noteResumedTurn, noteSealedTurn, sessionGauges } from "./memory/reset-watch.ts";
 import { turnAccepted, turnExhausted, turnRefused } from "./health/turn-observer.ts";
 import { continuationMemoryRevoked, filterDirectReplay, linkRetainedSessionOutput, replayBudgetBytes, replayWindow, readerWithheldMessage } from "./memory/disclosures.ts";
 import { roomTranscriptForTurn, roomTranscriptWithoutMemory } from "./room-transcript.ts";
@@ -212,7 +218,7 @@ import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { createDataWriterGate, stopDataWriters } from "./data-writers.ts";
 import { refuseEngineHistoryJobs, stopEngineHistory } from "./engine-history-offthread.ts";
 import { WAITING_NOTE } from "./harness/instance-holds.ts";
-import { pipReflectPendingSliced, maintainPip, runPipReflect, type ReflectDeps } from "./memory/pip-reflect.ts";
+import { pipReflectPendingSliced, maintainPip, pinTraceDayEnds, runPipReflect, type ReflectDeps } from "./memory/pip-reflect.ts";
 import { endsWithHandle } from "./memory/handle-guard.ts";
 import { createResolveRoute } from "./memory/pip-reflect-host.ts";
 import { interruptOpenTurn, recordMemorySettlement } from "./memory/settlement.ts";
@@ -224,11 +230,13 @@ import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync, realpathSync } from "node:fs";
 import { availableParallelism, homedir, hostname as osHostname, tmpdir } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { familyOffered, phoneFamily, phonesOffered, shareAskOffered } from "./phones/offered.ts";
+import { familyOffered, offeredAnswer, phoneFamily, phonesOffered, shareAskOffered } from "./phones/offered.ts";
 import { ensurePhonesTables, phoneAskCaller, phoneCaller } from "./phones/gate.ts";
 import { isDirectOwnerThread } from "./phones/direct-thread.ts";
 import { PhoneAuthorities, phoneMintEligible, type MintFacts } from "./phones/authority.ts";
 import { PhoneJobs } from "./phones/jobs.ts";
+import { HighLevelTurnSignals } from "./highlevel/host.ts";
+import { filterRelayToolListBytes } from "./highlevel/access.ts";
 import { deviceJobPush } from "./phones/job-push.ts";
 import { narrowedCapabilities, normalizePhoneApps } from "../shared/phone-apps.ts";
 import { PHONE_TOOL_NAMES, type PhoneCapability } from "../shared/phone-jobs-contract.ts";
@@ -642,7 +650,7 @@ import { SEQ_INDEX, seqProgress } from "./transcript-seq.ts";
 import { CHAT_PAGE_DEFAULT, chatFiltersFromQuery, chatSearchThreads, pageChats, type ChatSource } from "./chat-list.ts";
 import { closeMessageDb, startBackfill as startMessageBackfill, setupFactsFor, readMessage, setAttachmentAdoptionObserver, setBotReplyObserver, deleteThread as deleteThreadRows, readThreadNewest, openApprovalCardMessages, openQuestionCardMessages, messagesHighWater, cardSweepThrough, keepCardSweepThrough, searchMessagesWithMeta, threadsReferencingAttachment, storedMessage, toolCardSweepRange, keepToolCardSweepRange, openCardIndexDone, LONG_WAY_REQUEST_ROWS, withLongWayBudget } from "./message-db.ts";
 import { fluxCaptureHeld } from "./flux-capture-hold.ts";
-import { onDelegationAdmissionOpen } from "./pending-delegations-schema.ts";
+import { holdForReconcile, onDelegationAdmissionOpen } from "./pending-delegations-schema.ts";
 import { providerReplyOf, type ProviderReply } from "./provider-reply.ts";
 import { admit as admitHandoff, assertHandoffStartable, configureHandoffDispatch, configureSharedHandoffs, settleOptions as handoffSettleOptions, type HandoffRun, type HandoffTurnOptions, type StartStamp, type CouldNotStart } from "./handoff-dispatch.ts";
 import {
@@ -800,6 +808,9 @@ import {
   type GroupTaskRecord,
   type TaskRecord,
   threadSealed,
+  sessionTainted,
+  cursorStartedBelowSeal,
+  dispatchSealStart,
   type TaskResourceWaitKind,
   type TaskResourceWait,
 } from "./store.ts";
@@ -943,6 +954,8 @@ import * as vps from "./vps-computer.ts";
 import { awaitBoxWakeAtDispatch, turnTrace } from "./computer-wake.ts";
 import { type StoredAnswerDeps } from "./handoff-replay.ts";
 import { runEventAction, type EventActionHandle, type EventActionSpec } from "./event-limit.ts";
+import { AppTriggerStore, type AppEventRunStore } from "./app-trigger-store.ts";
+import { APP_CHILD_NOT_ALLOWED, AppChildNotAllowed, isAppChildContext, rebuildOwedCards, refuseAppChild, wireAppChildGuard } from "./app-trigger-zero.ts";
 import { isLiveRoutineRunStatus, isOpenRoutineRunStatus, routineRecoveredLine, routineRunCard, RoutineManager, setLimitResetReader, type Routine, type RoutineLimitRefusal, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { resolveTurnSelection, type RouteVerdict, type TurnSelectionResult } from "./turn-selection.ts";
 import { LimitStateStore, engineKey, limitUntil } from "./limit-state.ts";
@@ -1196,6 +1209,9 @@ const serverSentinel = startServerSentinel({
 // runs the store is inert, so no engine writer can see a user address.
 configureLocalServerStore(DATA_DIR);
 const cfg = loadConfig();
+// 1.0.8: the owner's time zone, when they chose one, is this server's clock (owner-time-zone.ts).
+// A Cloud home's process TZ already follows its owner.json.
+if (process.env.MURAGE_CLOUD_ROLE !== "home") applyOwnerTimeZone(cfg.profile?.timeZone);
 // Lines the server writes into an outside chat read in the owner's app language, read live (channels/reply-text.ts).
 setChannelReplyLanguage(() => cfg.language);
 // Rule 57a (APP-GRANT-DESIGN-FINAL.AGREED-r10.md), once at load before any
@@ -1286,11 +1302,11 @@ onCatalogOutcome: (connection, outcome, code) => {
   if (cfg.openaiCompat?.key?.trim()) {
     const configuredUrl = (cfg.openaiCompat.url ?? "https://openrouter.ai/api/v1").replace(/\/+$/, "");
     const preset = Object.keys(PROVIDER_PRESETS).find(id => PROVIDER_PRESETS[id as keyof typeof PROVIDER_PRESETS].baseUrl === configuredUrl) as keyof typeof PROVIDER_PRESETS | undefined;
-    let problem = preset ? undefined : "This existing compatible endpoint is not a named provider preset. Manage it in existing engine settings; no key has been copied.";
+    let problem = preset ? undefined : "This saved address is not one of the AI services Murage knows by name. No key was copied. Manage it in Models & engines.";
     // Every recognised prefix, Google's included: a key on the wrong
     // endpoint stays listed for review but is never enabled or sent.
     if (preset && (keyIssuer(cfg.openaiCompat.key) || cfg.openaiCompat.key.trim().startsWith("sk-admin-"))) {
-      try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its configured endpoint. Choose the correct provider before using it."; }
+      try { assertProviderKey(preset, cfg.openaiCompat.key); } catch { problem = "This saved key does not match its address. Choose the right AI service before using it."; }
     }
     add("legacy-openai-compatible", preset ?? "openrouter", problem ? "Existing compatible key · needs review" : `${PROVIDER_PRESETS[preset!].label} · existing compatible key`, cfg.openaiCompat.key, "engines", problem);
   }
@@ -1320,7 +1336,7 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string, op
   const connection = providerConnections.resolve(selection.connectionId);
   const signIn = modelSignIns.info(selection.connectionId);
   if (signIn?.state === "needs-sign-in") throw Object.assign(new Error(needsSignInLine(signIn.provider)), { status: 409, code: "needs-sign-in" });
-  if (!connection?.enabled) throw Object.assign(new Error("Selected provider connection is disabled or unavailable"), { status: 409, code: "disabled" });
+  if (!connection?.enabled) throw Object.assign(new Error("The AI service picked for this bot is turned off or unavailable. Check it in Models & engines."), { status: 409, code: "disabled" });
   const catalog = providerConnections.getCatalog(connection.id);
   const model = catalog.models.find(row => row.id === selection.model);
   if (!model) throw Object.assign(new Error(catalog.stale || catalog.error
@@ -1329,7 +1345,7 @@ function selectedProviderRoute(selection: ModelSelection, driverKind: string, op
   if (!model.enabled) throw Object.assign(new Error("The selected model is disabled in this connection's model list. Review it in Settings. Your selection has not changed."), { status: 409, code: "model" });
   if (!model.chatEligible || model.capabilities.chat !== true) throw Object.assign(new Error("This connection's model list does not identify the selected model as chat-capable. Refresh models in Settings or explicitly choose a supported chat model. Your selection has not changed."), { status: 409, code: "model" });
   const protocol = providerEngineProtocol(driverKind, connection.preset, connection.protocol);
-  if (!protocol) throw Object.assign(new Error("Selected engine does not support this provider connection"), { status: 409, code: "protocol" });
+  if (!protocol) throw Object.assign(new Error("This AI app cannot use the AI service picked for it. Pick another in Models & engines."), { status: 409, code: "protocol" });
   const route = { connectionId: connection.id, preset: connection.preset, protocol, baseUrl: connection.baseUrl, apiKey: connection.key, model: selection.model, revision: connection.revision };
   if (modelSignIns.has(connection.id)) {
     // A plan sign-in never hands its token to an engine: the engine talks to
@@ -1857,6 +1873,8 @@ function internalToken(botId: string, threadId: string, generation: string, kind
 /** 1.0.9 phone tools: the authority registry (memory only) and the two module-private symbols that keep minting to one path.
  * The idle-entry symbol is passed only by the fresh idle-entry call in admitDirectSend; the ticket is handed to startTurnAdmitting only from there. */
 const phoneAuthorities = new PhoneAuthorities();
+// Stop for native HighLevel calls (GAP-HIGHLEVEL-109 H3): revokeInternalGeneration ends a waiting call at once.
+const highlevelCalls = new HighLevelTurnSignals();
 /** S12: the phone job state machine. Memory only. S15 wires its park and withdraw hooks to the device-job push. */
 const phoneJobs: PhoneJobs = new PhoneJobs({
   now: () => Date.now(),
@@ -1923,6 +1941,7 @@ function revokeInternalGeneration(threadId: string, generation: string): void {
   phoneDispatchFacts.delete(generation);
   phoneAuthorities.revokeGeneration(generation);
   phoneJobs.turnEnded(generation);
+  highlevelCalls.turnEnded(generation);
   abandonProjectUsageTurn(threadId, generation);
   turnRequestByGeneration.delete(generation);
   if (hostComputerThreads.get(threadId)?.ownerId === generation) hostComputerThreads.delete(threadId);
@@ -1934,6 +1953,7 @@ function revokeInternalGeneration(threadId: string, generation: string): void {
 function revokeInternalThread(threadId: string): void {
   phoneAuthorities.revokeThread(threadId);
   phoneJobs.turnEndedForThread(threadId);
+  highlevelCalls.turnEndedForThread(threadId);
   hostComputerThreads.delete(threadId);
   const owner = internalTurnOwners.get(threadId);
   if (owner) projectTurnLeases.abandon(owner.generation);
@@ -1943,6 +1963,7 @@ function revokeInternalThread(threadId: string): void {
 function revokeInternalBot(botId: string): void {
   phoneAuthorities.revokeBot(botId);
   phoneJobs.turnEndedForBot(botId);
+  highlevelCalls.turnEndedForBot(botId);
   for (const [threadId, entry] of hostComputerThreads) if (entry.botId === botId) hostComputerThreads.delete(threadId);
   for (const owner of internalTurnOwners.values()) if (owner.botId === botId) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeBot(botId);
@@ -1951,6 +1972,7 @@ function revokeInternalBot(botId: string): void {
 function revokeAllInternalTurns(): void {
   phoneAuthorities.revokeAll();
   phoneJobs.turnEndedAll();
+  highlevelCalls.turnEndedAll();
   hostComputerThreads.clear();
   for (const owner of internalTurnOwners.values()) projectTurnLeases.abandon(owner.generation);
   internalCapabilities.revokeAll();
@@ -3708,6 +3730,16 @@ function fuigoHomeForTrust(instance: Pick<ProviderInstance, "instanceId" | "driv
   if (!instance || instance.driverKind !== "fuigoAgent" || providerRouted) return null;
   return fuigoHomeFromEnv({ ...process.env, ...instanceConfigs(cfg)[instance.instanceId]?.environment });
 }
+/** The thread desk Murage itself makes for this bot and thread
+ * (`taskWorkspacePath`, partition-aware), or "" when an id is refused: an
+ * empty desk has no desk shape, so nothing matches it. */
+function managedDeskFor(botId: string, threadId: string): string {
+  try {
+    return taskWorkspacePath(DATA_DIR, botId, threadId);
+  } catch {
+    return "";
+  }
+}
 /** The record the driver decides from, for an engine that gates folders;
  * undefined for every other engine. `cwd` undefined = the home folder,
  * which Fuigo never gates. `providerRouted` = the turn runs on a provider
@@ -3725,8 +3757,11 @@ function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined,
   // links to the skills it pinned runs trusted with no card
   // (managed-workspace-trust.ts); nothing is recorded, so every turn decides
   // again from what the desk holds then.
+  // The desk is the one Murage made for this bot and thread, partition-aware
+  // (a team hand-off or project desk lives under a partition root, 1.0.8
+  // THREAD-TRUST-108); an id it refuses means no desk, so the card stays.
   const recorded = folderTrust.decision(scan.folder, { fuigoHome });
-  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed }) ? "trust" as const : undefined);
+  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed, desk: managedDeskFor(managed.botId, managed.threadId) }) ? "trust" as const : undefined);
   return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}) };
 }
 /** Full access with "approve setup requests" on (server/full-access.ts)
@@ -3810,6 +3845,11 @@ const memoryDispatches = new Map<string, MemoryDispatchReceipt>();
  * the thread's running turn was shown, laid on each reply it produces and on
  * its engine session. Keyed by thread; each dispatch replaces its entry. */
 const turnOutputRoots = new Map<string, RunningTurnLineage>();
+/** Thread recall (THREAD-SEAL 3.4 item 2), the submission fence of every send that can carry a cursor: judged on the cursor the dispatch
+ * snapshotted, so a clean pair replacing the store slot never authorizes an older one. Synchronous, on the in-memory task. */
+const assertCursorNotSealed = (task: TaskRecord | undefined, instanceId: string, cursor: unknown): void => {
+  if (cursorStartedBelowSeal(task, instanceId, cursor)) throw sessionCheckRefusal({ reason: "sealed" });
+};
 /** What a session.started names for memory (S6 rules 26 and 27), formed once per event (the bus hands every observer the same object): the
  * receipt observer binds the key before the fold retains the cursor. A fresh start (its turn began with no cursor) takes the id's next
  * incarnation in the transaction that writes its stamped row; a resumed one keeps the key its dispatch formed from the cursor and the stored
@@ -4952,7 +4992,7 @@ const liveSubtasks = new Map<string, Subtask[]>();
 // rows owed to the next turn, the held queue row): no client reads them (rc9 data test, boot page composition). A roster row (`roster`)
 // leaves out the procedure pin as well (the pinned skill bundle, 45 KB of the owner's boot page); a bot frame, the bare listing and
 // GET /api/bots/:id carry it.
-const wireTask = ({ resumeCursors: _resumeCursors, resumeContracts: _resumeContracts, resumePlainToolNames: _resumePlainToolNames, resumeIncarnations: _resumeIncarnations, lastInstanceId: _lastInstanceId, sealGeneration: _sealGeneration, heldContinuations: _heldContinuations,
+const wireTask = ({ resumeCursors: _resumeCursors, resumeContracts: _resumeContracts, resumePlainToolNames: _resumePlainToolNames, resumeIncarnations: _resumeIncarnations, resumeSeals: _resumeSeals, lastInstanceId: _lastInstanceId, sealGeneration: _sealGeneration, heldContinuations: _heldContinuations,
   automationEventId: _automationEventId, externalUpdates: _externalUpdates, heldQueueRowId: _heldQueueRowId, effortSent: _effortSent, limitFailover: _limitFailover, phoneUsedAt: _phoneUsedAt, sharedWork, procedurePin, ...task }: TaskRecord, roster = false) =>
   // 1.0.4 SL-K K1: followsBotModel = the chat has no model of its own and uses its bot's
   withLastActivity({ ...(sharedWork ? { ...task, sharedWork: wireSharedWork(sharedWork) } : task), followsBotModel: task.modelSelection === undefined, ...(procedurePin && !roster ? { procedurePin } : {}), ...(liveSubtasks.has(task.threadId) ? { subtasks: liveSubtasks.get(task.threadId) } : {}) });
@@ -7384,9 +7424,12 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // whose thread has emitted NOTHING for stallMs — activity-based, so an
 // hour-long turn that keeps streaming is never touched, and turns parked on a
 // human approval are exempt. Room turns follow the same rule on their own
-// silence limit (rooms.turnTimeoutMinutes, never under this one's default);
+// silence limit (rooms.turnTimeoutMinutes, from 20 minutes, set apart from this default);
 // they no longer have an absolute ceiling (0.1.61).
-const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 20 * 60_000);
+// One hour (was 20 minutes): a quiet tool, a long build or a slow connected
+// app can sit silent past 20 minutes without being stuck (LONGWORK-STALL-60).
+// Owner Stop is not on this clock: it ends a turn at any moment.
+const TURN_STALL_MS = Math.max(60_000, Number(process.env.MURAGE_TURN_STALL_MS) || 60 * 60_000);
 // The watch is armed at admission (upstream #1682), and setup is latched to
 // this longer ceiling until dispatch: a box, VPS or VM being prepared, a
 // connected-app discovery or a memory build can be slow and silent without
@@ -8363,9 +8406,18 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       const startOf = () => sessionStartOf(event, event.providerInstanceId ?? lineage?.instanceId ?? "");
       retainSession({
         ...(rootsApply ? { recordRoots: () => startOf().recorded } : {}),
-        // Thread recall, design S3: a sealed thread never stores a cursor, whatever the age, lifetime,
-        // instance or prewarm of this session.started. Read from the in-memory task at fold time.
-        saveCursor: () => { if (bot && event.sessionId && event.providerInstanceId && !threadSealed(store.taskByThread(bot.id, event.threadId))) store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId, sessionAudienceByThread.get(event.threadId), event.sessionContract, legacyToolNamesByThread.get(event.threadId) !== true, startOf().incarnation); },
+        // Thread recall, THREAD-SEAL 3.3: the cursor is saved with the generation its session started under only when this event is
+        // the running dispatch's own provider turn. Anything else (a late or retried event of an earlier turn, a fold with no lineage)
+        // saves it unbound, which is tainted on a sealed task. The dispatch's own id can be unknown yet: Claude's session.started may
+        // fold before the send returns, so that record waits for acceptance (the same comparison, in the dispatch's callback).
+        saveCursor: () => {
+          if (!bot || !event.sessionId || !event.providerInstanceId) return;
+          const own = rootsApply && internalCapabilities.activeGeneration(event.threadId) === lineage?.generation;
+          const accepted = lineage?.acceptedTurnId;
+          const sealStart = own && accepted !== undefined && event.turnId === accepted ? lineage?.startGeneration : undefined;
+          store.setResumeCursor(bot.id, event.providerInstanceId, event.sessionId, event.threadId, sessionAudienceByThread.get(event.threadId), event.sessionContract, legacyToolNamesByThread.get(event.threadId) !== true, startOf().incarnation, sealStart);
+          if (own && lineage && accepted === undefined && event.turnId) lineage.pendingSeal = { turnId: event.turnId, cursor: String(event.sessionId) };
+        },
         dropCursor: () => { if (bot && lineage) store.setResumeCursor(bot.id, lineage.instanceId, undefined, event.threadId); },
       });
       // The provider's own report of the model beats the one we asked for.
@@ -9711,6 +9763,7 @@ function wakeAsker(threadId: string, tries = 0): void {
   }).catch((error: unknown) => {
     const { status, code } = error as { status?: number; code?: string };
     if (code === "asker_wake_stopped" || !askerWakes.startable(record.id)) return; // Stop came first, or nothing was left owed: nothing restarts
+    if (turnDispatchClosed && askerWakes.requeue(record.id)) return; // the server closed under this start: the next server wakes the asker
     if (status === 409 && askerWakes.requeue(record.id)) return; // busy or at its thread limit: the sweep retries
     askerWakes.cancel(record.id);
     store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", tool: { name: `error: could not resume after the teammate replied: ${(error instanceof Error ? error.message : String(error)).slice(0, 120)}`, ok: false } }));
@@ -9856,7 +9909,7 @@ function recordHandoffAccepted(run: HandoffRun | undefined, turnId: string): voi
 // fence), so a delegation waiting on a reloaded bot runs on the new fleet.
 const delegationRetryBots = new Set<string>();
 const deferredDelegationRetries = new Set<string>();
-const coordinationAdmissionClosed = () => Boolean(homeExecutionGate && !homeExecutionGate.open()) || backupRestartAdmission.held() || providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady;
+const coordinationAdmissionClosed = () => turnDispatchClosed || Boolean(homeExecutionGate && !homeExecutionGate.open()) || backupRestartAdmission.held() || providerConfigBusy || providerBankDispatchFenced() || !providerFleetReady;
 function retryDelegationsWaitingOn(botId: string): void {
   if (delegationRetryBots.has(botId)) return;
   delegationRetryBots.add(botId);
@@ -9980,7 +10033,8 @@ bus.subscribe((event: RuntimeEvent) => {
   // the rule in discardDelegations that an item which has already outlived a
   // turn is never collateral.
   // (a wake turn that ended badly restarts nothing; the done ids stay for the one rebuild a late memory refusal schedules, asker-wake.ts failed)
-  if (settleQueuedDelegations(commsBus, approvalBus, event.threadId, event, store.botByThread(event.threadId)?.id) === "discarded") askerWakes.failed(event.threadId);
+  // A turn the closing server ended was stopped by nobody: the wakes this conversation is owed are kept for the next server, as after a crash.
+  if (settleQueuedDelegations(commsBus, approvalBus, event.threadId, event, store.botByThread(event.threadId)?.id) === "discarded" && !turnDispatchClosed) askerWakes.failed(event.threadId);
   // Every owed wake is tried, not only this thread's: a wake held back while
   // its bot was busy in a room or on three threads is freed by a turn that
   // ended somewhere else. wakeAsker starts nothing for a thread still busy.
@@ -10166,12 +10220,13 @@ function admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, un
             // before the engine writes the line, however late (a steer that
             // waits for the engine to be ready): one that fails then is not
             // written and the line runs as its own turn.
-            // Thread recall, design S7: on a sealed thread no line is steered into a running turn, checked
-            // before any receipt, cursor, lineage or session is read. The same predicate is the write fence's
+            // Thread recall, THREAD-SEAL 3.4 item 5: no line is steered into a running session that started
+            // below the seal, checked before any receipt, cursor or session is read. A release in this turn
+            // raises the seal above the turn's start synchronously. The same predicate is the write fence's
             // recheck, so a seal landing while an accepted steer waits for the engine refuses it too.
-            const steerThreadSealed = (): boolean => threadSealed(store.taskByThread(currentAtStart.id, threadId));
+            const steerSessionTainted = (): boolean => (turnOutputRoots.get(threadId)?.startGeneration ?? 0) < (store.taskByThread(currentAtStart.id, threadId)?.sealGeneration ?? 0);
             const steerSessionHolds = (): boolean => {
-              if (steerThreadSealed()) return false;
+              if (steerSessionTainted()) return false;
               // checked again at the write's fence: the asking turn may have ended meanwhile
               if (answer && !answerTurnLive()) return false;
               const receipt = memoryDispatches.get(threadId);
@@ -10191,8 +10246,8 @@ function admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, un
             // the one that decides whether the session continues.
             const steerable = !isEngineCommand && !unprovenSend && Boolean(instance && cardSteeringMode(instance.adapter) === "steer");
             const memorySessionHolds = steerable && steerSessionHolds();
-            if (steerable && !memorySessionHolds && steerThreadSealed()) {
-              // An intended refusal, not a reset: the queued line runs as its own sealed turn (counted by S2).
+            if (steerable && !memorySessionHolds && steerSessionTainted()) {
+              // An intended refusal, not a reset: the queued line runs as its own turn (counted by S2 when it goes fresh).
               console.warn(`thread recall steer refused thread=${threadId} engine=${currentAtStart.modelSelection.instanceId} reason=steer-refused sealed`);
             } else if (steerable && !memorySessionHolds) {
               console.warn(`memory continuation reset thread=${threadId} engine=${currentAtStart.modelSelection.instanceId} reason=steer-refused session-invalid`);
@@ -11393,19 +11448,19 @@ async function startTurnAdmitting(
   // fresh engine gets (sessionContractChanged).
   const contractMoved = sessionContractChanged(task.resumeContracts?.[instanceId], task.resumeCursors[instanceId] !== undefined, instance.sessionContract);
   const engineFresh = engineIsFresh({ instanceId, lastInstanceId: task.lastInstanceId, resumeCursors: task.resumeCursors, transcript });
-  // Thread recall, design S2: once recall output was released on this thread (the seal, S1), it
-  // never resumes an engine session again. Every dispatch takes the fresh path. On a sealed thread
-  // audienceMoved and contractMoved compare against frozen pre-seal cursor metadata (S3 stops
-  // refreshing it), so they decide nothing there: the same engine opens as restarted, an actual
-  // engine switch as fresh, a rewind as rewound.
-  const sealed = threadSealed(task);
-  const fresh = !rewound && (audienceMoved || contractMoved || engineFresh || sealed);
+  // Thread recall, THREAD-SEAL 3.4 item 1: a native session that was handed recall output, and every
+  // session started before the seal moved, is never resumed: that dispatch takes the fresh path. The
+  // first session started at the current seal holds only Murage's authorized replay and resumes like
+  // any other. On the tainted path the same engine opens as restarted, an actual engine switch as
+  // fresh, a rewind as rewound.
+  const tainted = sessionTainted(task, instanceId);
+  const fresh = !rewound && (audienceMoved || contractMoved || engineFresh || tainted);
   const switched = task.lastInstanceId !== undefined ? task.lastInstanceId !== instanceId : engineFresh;
   // Fresh only because the session contract moved: the same engine, restarted by Murage, so the
   // replay says that rather than that the bot was switched over.
-  const sessionRestarted = sealed ? !rewound && !switched : fresh && contractMoved && !audienceMoved && !engineFresh;
-  // A sealed turn is an intended fresh start, not a reset loop: counted apart, never warned on.
-  if (sealed) noteSealedTurn(threadId, instanceId);
+  const sessionRestarted = tainted ? !rewound && !switched : fresh && contractMoved && !audienceMoved && !engineFresh;
+  // A tainted turn is an intended fresh start, not a reset loop: counted apart, never warned on.
+  if (tainted) noteSealedTurn(threadId, instanceId);
   // Messages this thread owes the engine because they were appended outside
   // any provider turn. With a live session they ride inside this turn's
   // prompt; with no session the branch replay already underway carries the
@@ -11972,7 +12027,7 @@ async function startTurnAdmitting(
         }
       }
       if (boxesAllowed && wants === "cloud" && cloudBackend === "box" && !box.boxConfigured(cfg)) {
-        throw new LocalSetupError("computer", "Cloud box is not configured: add a Box API key or choose Local VM");
+        throw new LocalSetupError("computer", "The cloud computer is not set up yet: add a Box key, or choose Local VM.");
       }
       if (wants === "cloud" && cloudBackend === "box" && !integrations.computer) {
         throw new LocalSetupError("computer", "the cloud computer could not be created or reached");
@@ -12358,7 +12413,7 @@ async function startTurnAdmitting(
         // and again at every adapter write, with no receipt to carry the check
         // the owner's own direct chat is judged by content: an audience-only revoke (a roster or settings change) never resets it (1.0.2 Keep all P0)
         const sessionReader = directOwnerAudience ? CONTENT_SESSION_READER : AUDIENCE_SESSION_READER;
-        submissionBoundary.alsoCheck(() => { const why: { reason?: string } = {}; if (resumeCursor && retainedSessionInvalid(LineageAllowance.tool(), threadId, instanceId, resumeKey().nativeSession, why, sessionReader)) throw sessionCheckRefusal(why); });
+        submissionBoundary.alsoCheck(() => { assertCursorNotSealed(store.taskByThread(bot.id, threadId), instanceId, resumeCursor); const why: { reason?: string } = {}; if (resumeCursor && retainedSessionInvalid(LineageAllowance.tool(), threadId, instanceId, resumeKey().nativeSession, why, sessionReader)) throw sessionCheckRefusal(why); });
         if (resumeCursor && retainedSessionInvalid(allowance, threadId, instanceId, resumeKey().nativeSession, offWhy, sessionReader)) {
           console.warn(`memory continuation reset thread=${threadId} engine=${instanceId} reason=memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
           noteContinuationReset(threadId, instanceId, `memory-${memoryState().mode} ${offWhy.reason ?? "check-failed"}`);
@@ -12390,7 +12445,7 @@ async function startTurnAdmitting(
       const endAssertDispatch = pre.span("assert.dispatch");
       memoryReceipt?.assertCurrent();
       endAssertDispatch();
-      if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      if (!providerRouteIsCurrent(providerRoute)) throw new Error("The AI service picked for this bot changed just before sending. Send your message again.");
       if (providerRoute) activeProviderSelections.set(threadId, { botId: bot.id, instanceId, route: providerRoute });
       // Immediately before sendTurn and after every check that can still
       // refuse the turn: a writer lease marked dispatched is held until the
@@ -12424,7 +12479,7 @@ async function startTurnAdmitting(
       const endAssertImages = pre.span("assert.images");
       memoryReceipt?.assertCurrent();
       endAssertImages();
-      if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      if (!providerRouteIsCurrent(providerRoute)) throw new Error("The AI service picked for this bot changed just before sending. Send your message again.");
       noteImagesLeftOut(threadId, bot, imagePlan, imageText, routedModelAcceptsImages(providerRoute, model));
       // Images past the count or the bytes are left out of the turn, not the
       // turn out of the conversation: their tags leave what the bot reads,
@@ -12623,7 +12678,7 @@ async function startTurnAdmitting(
         // prompts built for this turn quoted (a wake, a redo: promptForTurn).
         const branchById = new Map(branchMessages.map(row => [row.id, row]));
         const remembered = memoryReceipt ? memorySourceLines(memoryReceipt.bundle.sourceVersions.map(source => source.id)) : [];
-        turnOutputRoots.set(threadId, beginTurnLineage({ threadId, botId: bot.id, roots, instanceId, generation: dispatchClaimId, turn: turnLineage, ...(resumeCursor ? { session: resumeKey().nativeSession, cursor: String(resumeCursor), ...(resumeIncarnation !== undefined ? { incarnation: resumeIncarnation } : {}) } : {}),
+        turnOutputRoots.set(threadId, beginTurnLineage({ threadId, botId: bot.id, roots, instanceId, generation: dispatchClaimId, turn: turnLineage, startGeneration: dispatchSealStart(store.taskByThread(bot.id, threadId), instanceId, resumeCursor), ...(resumeCursor ? { session: resumeKey().nativeSession, cursor: String(resumeCursor), ...(resumeIncarnation !== undefined ? { incarnation: resumeIncarnation } : {}) } : {}),
           shown: [...shown, ...remembered], ownLines: branchMessages.map(row => ({ threadId, id: row.id, role: row.role, copyOf: row.copyOf })),
           ownLinesIncomplete: Boolean(resumeCursor) && replayMore,
           withheldNow: line => Boolean((branchById.get(line.id) ?? messagesById.get(line.id))?.withheldFromBots) }));
@@ -12699,7 +12754,9 @@ async function startTurnAdmitting(
         onToolSurface: inspectToolSurface,
         notWritten: () => submissionBoundary.notWritten(),
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
-          if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
+          // A release on this thread after the dispatch decided raises the seal above the session it was about to resume.
+          assertCursorNotSealed(store.taskByThread(bot.id, threadId), instanceId, resumeCursor);
+          if (!providerRouteIsCurrent(providerRoute)) throw new Error("The AI service picked for this bot changed just before sending. Send your message again.");
           // A wake's fence: re-checked and marked started in one step, written before the call (asker-wake.ts start). Gone meanwhile
           // (Stop): the submission is refused on the quiet cancelled path, and a restart never runs a started wake again by itself.
           if (opts?.askerWakeId && !askerWakes.start(opts.askerWakeId, askerWakeReplyAllowed(bot.id, threadId, !directOwnerAudience), askerWakeReplyAuthorized(bot.id, threadId, !directOwnerAudience))) throw new DirectTurnSetupCancelled("turn stopped before the teammate's reply could be carried in");
@@ -12748,7 +12805,16 @@ async function startTurnAdmitting(
         // The turn the words were released to (stamped now if the fence already passed: Claude; else at the fence: ACP, Codex).
         turnAttribution.accepted(dispatchClaimId, accepted.turnId);
         // write-time: the engine's lines of this provider turn are attached to this dispatch's turn, by id (lineage-write.ts writerTurnFor)
+        if (resumeCursor !== undefined && !sessionReset) noteResumedTurn();
         bindProviderTurn(turnLineage, accepted.turnId);
+        // Thread recall, THREAD-SEAL 3.3: from now on this dispatch knows its own provider turn. A session.started that folded
+        // first is bound here, by the same exact comparison the fold makes, at the start captured at dispatch.
+        const sealLine = turnOutputRoots.get(threadId);
+        if (sealLine?.generation === dispatchClaimId) {
+          sealLine.acceptedTurnId = accepted.turnId;
+          if (sealLine.pendingSeal?.turnId === accepted.turnId) store.bindResumeSeal(bot.id, sealLine.instanceId, threadId, sealLine.pendingSeal.cursor, sealLine.startGeneration);
+          sealLine.pendingSeal = undefined;
+        }
         // Bind the writer lease to the provider turn BEFORE acceptance can
         // refuse it: a memory disclosure revoked at acceptance stops the
         // provider turn (stopAfterSetup above), and only a bound lease is
@@ -13375,7 +13441,32 @@ async function interruptRoutineGroupGoal(
   closeOpenApprovals(threadId);
 }
 
+// 1.0.11 APP-TRIGGERS: the connected-app store follows the current messages.db (a restore or data-dir switch swaps it).
+let appTriggerStoreCache: { db: ReturnType<typeof database>; store: AppTriggerStore } | null = null;
+const appTriggerStore = (): AppTriggerStore => {
+  const db = database();
+  if (appTriggerStoreCache?.db !== db) appTriggerStoreCache = { db, store: new AppTriggerStore(db) };
+  return appTriggerStoreCache.store;
+};
+const appRunStore: AppEventRunStore = {
+  create: input => appTriggerStore().create(input),
+  update: (runId, patch, now, expectedState) => appTriggerStore().update(runId, patch, now, expectedState),
+  findById: runId => appTriggerStore().findById(runId),
+  findActive: triggerId => appTriggerStore().findActive(triggerId),
+  findByThread: (threadId, generation) => appTriggerStore().findByThread(threadId, generation),
+  history: (routineId, options) => appTriggerStore().history(routineId, options),
+};
+// The hard zero for child automation reads host lineage from this store; the card is the persisted record.
+wireAppChildGuard({ lineage: {
+  findByThread: (threadId, generation) => appTriggerStore().findByThread(threadId, generation),
+  findById: runId => appTriggerStore().findById(runId),
+  recordChildRefusal: (runId, kind, now) => appTriggerStore().recordChildRefusal(runId, kind, now),
+  markCardWritten: (runId, card) => appTriggerStore().markCardWritten(runId, card),
+  cardsOwed: limit => appTriggerStore().cardsOwed(limit),
+} });
+
 routines = new RoutineManager({
+  appRunStore,
   botMode: (id) => botPermissionMode(store.bot(id)),
   validateInstructionPromotion: (routine, proposal) => procedureReviews?.validateRoutinePromotion(routine, proposal) ?? false,
   validateInstructionEvidence: (context, evidence) => procedureReviews?.validateRoutineEvidence(context, evidence) ?? false,
@@ -13389,6 +13480,7 @@ routines = new RoutineManager({
     }).read(source, signal);
   },
   dispatchOpen: () => routineDispatchOpen,
+  dispatchHeld: () => !ownerZoneReconciler.reconcile(),
   priorReplyCarryable,
   priorReplyEmailDerived,
   automaticPaused: () => Boolean(homeExecutionGate && !homeExecutionGate.open()) || homeExecutionGate?.safeMode === true || backupRestartAdmission.held() || cfg.automationsPaused === true,
@@ -14046,7 +14138,25 @@ const routineRequests = new RoutineRequestService({
   webhooks: () => webhooks,
 });
 const ROUTINE_WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
-const routineTimeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+// The owner's zone: their choice in Settings, else this computer's (owner-time-zone.ts).
+const routineTimeZone = () => ownerTimeZone();
+/** Daily routines' next times still to be worked out in the owner's zone (owner-zone-reconcile.ts): tried before every
+ *  dispatch (dispatchOpen), so no daily routine fires at a time worked out in the old zone while a write keeps failing. */
+const ownerZoneReconciler = createOwnerZoneReconciler(() => routines ? (options) => routines?.rescheduleForZoneChange(options) : null);
+/** Before the owner's zone changes, with the old zone still in force: a bot whose last trace day was written before
+ *  1.0.8 has no recorded end for it, and working that end out later in the new zone would leave hours no day reads
+ *  (pip-reflect.ts pinTraceDayEnds). Memory that cannot be opened has nothing to pin. */
+function pinOwnerZoneTraceDays(): void {
+  try { pinTraceDayEnds(); }
+  catch (error) { console.warn(`owner time zone: trace days keep their old end (${error instanceof Error ? error.message : String(error)})`); }
+}
+/** After the owner's zone changed (PUT /api/owner/timezone, desktop or Cloud), with the new zone in force: daily
+ *  routines' next times were worked out in the old zone, so they are worked out again in the new one
+ *  (RoutineManager.rescheduleForZoneChange). The zone is already saved; when the routine file cannot be written the
+ *  change stays pending (retried before routines dispatch, and by a save of the same zone) and this answers false. */
+function ownerZoneChanged(before: string | null, after: string): boolean {
+  return ownerZoneReconciler.changed(before, after);
+}
 const routineTimestamp = (value: number | undefined) =>
   value !== undefined && Number.isFinite(value) ? new Date(value).toISOString() : null;
 const agentRoutine = (
@@ -14079,6 +14189,9 @@ const agentRoutine = (
         : routine.schedule.type === "limit_reset"
           // 1.0.4 SL-I I3: runs once after the named engine's limit resets
           ? { type: "limit_reset" as const, engine: limitEngineLabel(routine.schedule.engineKey) }
+          // 1.0.11 APP-TRIGGERS: runs when its connected app sends an event, never on a clock
+          : routine.schedule.type === "app_event"
+            ? { type: "app_event" as const }
           : {
             type: "weekly" as const,
             time: routine.schedule.time,
@@ -17821,6 +17934,8 @@ async function runGroupMemberTurn(
     const floor=roomFloor;
     const verbatim=floor?floor.messages.filter(message=>!floor.withheld.has(message.id)).map(message=>message.id):roomTurnRows(threadId).rows.map(message=>message.id);
     submissionBoundary.alsoCheck(()=>{
+      // A backstop (THREAD-SEAL 3.4 item 2): a room thread has no seal today, and a room send passes no cursor.
+      assertCursorNotSealed(store.taskByThread(bot.id,threadId),instance.instanceId,keptSession);
       // the fence runs at the write, after setup's allowance is closed: it owns a scope of its own
       const fence=LineageAllowance.tool();
       if(keptRoots&&outputRootsBad(fence,keptRoots))throw new Error("MEMORY_CONTEXT_REVOKED");
@@ -18098,7 +18213,7 @@ async function runGroupMemberTurn(
       const imagePrompt = integrations.agents ? IMAGE_DELIVERY_PROMPT[imageDeliveryOutcome(imagePlan, collectedImages)] : "";
       if (abandoned || isCancelled?.() || internalTurnOwners.get(threadId)?.generation !== internalGeneration) throw new Error("turn stopped before image dispatch");
       memoryReceipt?.assertCurrent();
-      if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before dispatch");
+      if (!providerRouteIsCurrent(providerRoute)) throw new Error("The AI service picked for this bot changed just before sending. Send your message again.");
       noteImagesLeftOut(threadId, bot, imagePlan, imageSelectionText, routedModelAcceptsImages(providerRoute, bot.modelSelection.model));
       // Same as the direct path: left-out images leave the text, one line says so.
       const roomTurnText = leftOut.paths.length || removedImages.length ? withoutImageTags(text, [...leftOut.paths, ...removedImages]) : text;
@@ -18146,7 +18261,7 @@ async function runGroupMemberTurn(
         // prompt built for this turn quoted (a wake: promptForTurn)
         const roomById = new Map(roomRows.map(row => [row.id, row]));
         const remembered = memoryReceipt ? memorySourceLines(memoryReceipt.bundle.sourceVersions.map(source => source.id)) : [];
-        const lineage = beginTurnLineage({ threadId, botId: bot.id, roots: held, instanceId: instance.instanceId, generation: internalGeneration, turn: roomTurnLineage, shown: [...shown, ...remembered], ownLines: shown,
+        const lineage = beginTurnLineage({ threadId, botId: bot.id, roots: held, instanceId: instance.instanceId, generation: internalGeneration, turn: roomTurnLineage, startGeneration: store.taskByThread(bot.id, threadId)?.sealGeneration ?? 0, shown: [...shown, ...remembered], ownLines: shown,
           ...(kept ? { kept: { sources: kept.sources, ranges: kept.ranges } } : {}),
           withheldNow: line => Boolean(roomById.get(line.id)?.withheldFromBots) });
         turnOutputRoots.set(threadId, lineage);
@@ -18185,7 +18300,7 @@ async function runGroupMemberTurn(
       return guardTurnDispatch(sendProjectUsageTurn(instance, {
         onToolSurface: inspectToolSurface,
         beforeSubmit: () => submissionBoundary.beforeSubmit(() => {
-          if (!providerRouteIsCurrent(providerRoute)) throw new Error("Selected provider connection changed before submission");
+          if (!providerRouteIsCurrent(providerRoute)) throw new Error("The AI service picked for this bot changed just before sending. Send your message again.");
           // One stopped-before-submission check (CANCEL-TREE-104 R1 + U29): a Stop, this attempt being abandoned, or its generation moving
           // or being revoked (its request cancelled, even when the engine had not registered the turn yet and so could not hear the
           // interrupt) after setup and before the engine call ends the turn here, unsent and writing nothing; the refusal takes the quiet
@@ -20679,23 +20794,22 @@ function readFluxConnectionState(): FluxCredentialState {
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("Flux configuration is unreadable. Original credentials were preserved."); }
   return { bank: cfg.modelProviders?.bank, workspaceKey: fluxKey() ?? "", aliases: cfg.flux?.connectionAliases, fileWorkspaceKey, ambientWorkspaceKey: process.env.MURAGE_FLUX_AMBIENT_KEY };
 }
+// Every server copy of the key is rewritten synchronously here (config.json, env, memory); see flux-connection-apply.ts.
+const fluxConnectionApply = createFluxConnectionApply({
+  config: () => cfg,
+  cloudHome: Boolean(cloudHome),
+  persistCloudCredentialPatch: patch => persistCloudCredentialPatch(patch),
+  dropFluxBrokerToken: () => composio.dropFluxBrokerToken(),
+  providerConnectionsChanged: (previous, next) => providerConnections.changed(previous, next),
+});
 const fluxConnectionTransaction = new FluxConnectionTransaction({
   read: readFluxConnectionState,
   assertIdle: () => { if (providerConfigBusy || providerConnectionsBusy || providerBankDispatchFenced() || engineWorkActive() || store.bots.some(bot => directRuns.forBot(bot.id).length > 0) || activeProviderSelections.size || fluxMediaRequests) throw Object.assign(new Error(fluxCredentialBusyMessage()), { status: 409 }); },
   fence: held => { providerConnectionsBusy = held; providerConfigBusy = held; if (held) void closeAllStreams(); if (!held) { replayDeferredDelegationRetries(); scheduleCoordinationDrain(); } },
-  apply: async (state, external, restore) => {
-    const previous = cfg.modelProviders?.bank, previousKey = cfg.flux?.apiKey ?? "";
-    const bank = state.bank ?? "[]", apiKey = state.workspaceKey ?? "", connectionAliases = state.aliases ?? [];
-    if (previousKey !== apiKey) composio.dropFluxBrokerToken();
-    if (cloudHome) await persistCloudCredentialPatch({ modelProviders: { bank }, flux: { apiKey } });
-    saveConfig({ modelProviders: { bank: cloudHome || external ? "" : bank }, flux: { apiKey: cloudHome ? "" : restore ? state.fileWorkspaceKey ?? "" : external ? "" : apiKey, connectionAliases } });
-    syncCredentialEnv({ modelProviders: { bank }, flux: { apiKey } });
-    process.env.MURAGE_FLUX_CONNECTION_ALIASES = JSON.stringify(connectionAliases);
-    if (restore && state.ambientWorkspaceKey) process.env.MURAGE_FLUX_AMBIENT_KEY = state.ambientWorkspaceKey; else delete process.env.MURAGE_FLUX_AMBIENT_KEY;
-    cfg.modelProviders = { bank }; cfg.flux = { apiKey, connectionAliases };
-    await providerConnections.changed(previous, bank);
-  },
+  apply: fluxConnectionApply.apply,
 });
+/** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
+const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired() });
 async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
@@ -20756,7 +20870,7 @@ const engineManager = new EngineManager({
       try { await reloadProviders(); }
       catch (cause) {
         const rollback = withInstanceCli(loadConfig(), id, previousCli);
-        if (!rollback.ok) throw new Error("The engine could not be restored. Review its path in Settings.");
+        if (!rollback.ok) throw new Error("The AI app could not be restored. Check its location in Settings, Models & engines.");
         const entry = rollback.config.instances![id];
         saveConfig({ instances: { [id]: { ...entry, config: entry.config ?? {} } } });
         Object.assign(cfg, loadConfig());
@@ -22036,7 +22150,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const offerFacts = currentOfferFacts();
       const offered = phonesOffered(offerFacts);
       // `shareAsk` is additive (features.phoneShareAsk, independent of phoneTools); readers of `offered` keep reading it.
-      if (method === "GET" && path === "/api/phones/offered") return json(res, 200, { offered, flag: cfg.features?.phoneTools === true, shareAsk: shareAskOffered(offerFacts) });
+      // 1.0.12 adds `shareAskFlag` and `blocked` for the Settings preview switches (server/phones/offered.ts offeredAnswer).
+      if (method === "GET" && path === "/api/phones/offered") return json(res, 200, offeredAnswer(offerFacts));
       // Each family answers to its own flag; a path in no family answers to phoneTools, as before.
       const family = phoneFamily(method, path);
       if (!(family ? familyOffered(family, offerFacts) : offered)) return json(res, 404, { error: "no such route" });
@@ -22130,6 +22245,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path.startsWith("/api/mobile/push/")) {
       const pushed = await mobilePushRoute({ method, path, headers: req.headers, readBody: () => readBody(req) }, pushRouteDeps);
       if (pushed) return json(res, pushed.status, pushed.body);
+    }
+    // Help panel search (server/help-routes.ts): the docs this build shipped with, no owner data.
+    if (method === "GET" && path === "/api/help/search") { const help = helpRoute({ method, url }); if (help) return json(res, help.status, help.body); }
+    // Tester feedback from the help panel (server/feedback-routes.ts).
+    if (method === "POST" && path === "/api/feedback") {
+      const answered = await feedbackRoute({ method, path, readBody: (max, signal) => readBody(req, max, signal) }, { installId: () => feedbackInstallId(DATA_DIR) });
+      if (answered) {
+        if (answered.close) res.setHeader("connection", "close"); // a body read cut off at the deadline: end the socket after the answer
+        return json(res, answered.status, answered.body);
+      }
     }
     // "Leave paused" on the learning-paused item: set aside for this month only (server/inbox-learning-paused.ts).
     if (method === "POST" && path === "/api/inbox/learning-paused/leave") {
@@ -22627,7 +22752,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (patch.connectionId && patch.connectionId !== cfg.imageGen?.connectionId) delete next.model;
       if (patch.connectionId || patch.model || patch.enabled === true) {
         const state = await imageSettings(next.connectionId);
-        if (!state.catalog) return json(res, 409, { error: state.catalogError ?? "Connect an image provider first." });
+        if (!state.catalog) return json(res, 409, { error: state.catalogError ?? "Connect an image service in Settings first, then try again." });
         const model = patch.model ?? next.model ?? state.catalog.defaultModel;
         if (model && !state.catalog.models.some(item => item.id === model && item.generate && !item.disabledReason)) return json(res, 400, { error: "Choose a supported image model from this connection." });
         if (model) next.model = model; else { delete next.model; next.enabled = false; }
@@ -22692,7 +22817,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // turn-watchdog-wiring.test.ts reads this line to prove the computer
       // activity route is exempt from the stall watchdog.
       const requiredKind: InternalCapabilityKind = path.startsWith("/api/internal/memory/") ? "memory" : path.startsWith(`${BOX_RELAY_PREFIX}/`) ? "computer" : path.startsWith("/api/internal/connectors/")
-        ? "connectors" : path.startsWith("/api/internal/mcp-remote/") ? "mcp" : path.startsWith("/api/internal/device/") ? "device" : ["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
+        ? "connectors" : path.startsWith("/api/internal/mcp-remote/") ? "mcp" : path.startsWith("/api/internal/device/") ? "device" : path.startsWith("/api/internal/highlevel/") ? "highlevel" : ["/api/internal/computer-control", "/api/internal/computer-activity", "/api/internal/headless-browser", "/api/internal/unified-browser", "/api/internal/host-computer"].includes(path) ? "computer" : "agents";
       if (internalClaim.kind !== requiredKind) return json(res, 403, { error: "capability cannot access this service" });
       // The Chief's New project proposal turn reaches project_propose and nothing else.
       const proposalRefusal = projectProposalToolRefusal(chiefProposals.ignores(internalClaim.threadId), method, path);
@@ -22761,8 +22886,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const internalEventId = internalOwner.eventId;
       // Hand-offs and new bots made by an event run go through one action ledger (event-limit.ts): identity, counting and execution together.
       const eventReply = (status: number, body: unknown): EventReply => ({ status, body });
+      // An app-origin turn never reaches the event ledger: with no event id runEventAction would run the step directly
+      // (app-trigger-zero.ts). The routes refuse first; this is the same check at the shared wrapper.
       const eventAction = <R,>(spec: Omit<EventActionSpec<R>, "routines" | "bus" | "eventId" | "stillActive">, step: (handle: EventActionHandle) => Promise<R>): Promise<R> =>
-        runEventAction<R>({ ...spec, routines, bus: approvalBus, eventId: internalEventId, stillActive: requireActiveInternal }, step);
+        isAppChildContext(internalClaim.threadId, internalClaim.generation)
+          ? Promise.reject(new AppChildNotAllowed(""))
+          : runEventAction<R>({ ...spec, routines, bus: approvalBus, eventId: internalEventId, stillActive: requireActiveInternal }, step);
       // The one reader of every hand-off outcome (event-limit.ts HandoffOutcome), for the ask and delegate routes alike: a hand-off asked one way and
       // asked again the other way, later or at the same time, gets the first outcome in its own route's shape, with no second execution or charge.
       const assertInternalIdentity = (body: Record<string, unknown>) => {
@@ -23052,6 +23181,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // Not offered (flag off, Cloud home, shared workspace): the same answer as an unknown route, and nothing is read.
         if (!registry) return json(res, 404, { error: "no such route" });
         const parsed = z.object({ tool: z.string().max(64), args: z.unknown() }).strict().safeParse(await readBody(req));
+        // Asked again after the body's await: phone tools turned off while it was read must not open a job behind the revoke. Nothing awaits from here to the job.
+        if (!phoneRegistryNow()) return json(res, 404, { error: "no such route" });
         const result = !parsed.success || !(PHONE_TOOL_NAMES as readonly string[]).includes(parsed.data.tool)
           ? { ok: false as const, code: "refused", text: PHONE_COPY.refused }
           : await phoneRpc(internalClaim, { tool: parsed.data.tool as (typeof PHONE_TOOL_NAMES)[number], args: parsed.data.args }, {
@@ -23567,6 +23698,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (delegationMatch) return await checkDelegationRoute({ askerWake: askerWakePort, connectorThread, delegationMatch, internalClaim, requireActiveInternal, res, resultEgressDeps, store: boundaryStoreView, taskResolutionDeps, url });
       if (method === "POST" && path === "/api/internal/delegate-bot") return await delegateBotRoute({ askerWake: askerWakePort, MAX_COMMS_DEPTH, beginRoomAsk, comms: boundaryCommsPort, connectorThread, coordinationBudget, eventAction, fullAccessSkipsPeerCard, internalCapabilities, internalClaim, internalEventId, internalOwner, isUnattended, ownerSurfacesByThread, readInternalBody, res, resultEgressDeps, roomAskDuplicate, roomAskParent, roomAskRefused: roomAskRefusedStatus, routinePeerSource, settleRoomAsk, sourceExecutionAudience, store: boundaryStoreView, taskResolutionDeps });
       if (method === "POST" && path === "/api/internal/create-bot") {
+        // The hard zero: an app-origin create is refused before its body, the card, the ledger or the workspace check.
+        if (refuseAppChild({ threadId: internalClaim.threadId, generation: internalClaim.generation }, "create")) return json(res, 403, { error: outboundWords(status("app_child_not_allowed")), code: APP_CHILD_NOT_ALLOWED });
         const body = await readInternalBody();
         const fromBotId = String(body.fromBotId ?? "");
         const chief = store.bot(fromBotId);
@@ -23775,7 +23908,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const fromThreadId = String(body.fromThreadId ?? defaultThreadId(from));
         const owner = connectorThread(from.id, fromThreadId);
         if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
-        if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+        if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
         mcpConfigBusy = true;
         try {
           const current = cfg.mcpServers ?? {};
@@ -23785,7 +23918,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           // A name that held secrets before (an orphan) starts empty, as on the owner's route.
           forgetMcpSecrets(added.name);
           const fromRoom = owner.group ? { from: { botId: from.id, name: from.name, color: from.color } } : {};
-          store.appendMessage(fromThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: `${from.name} added MCP server ${added.name} (off)`, ok: true, notice: true } }));
+          store.appendMessage(fromThreadId, murageLine({ role: "bot", kind: "activity", tool: { name: `${from.name} added the connected tool ${added.name} (off)`, ok: true, notice: true } }));
           store.appendMessage(fromThreadId, murageLine({ role: "bot", kind: "options", ...fromRoom, card: mcpEnableCard(added.name, added.server, added.rev, from) }));
           for (const card of mcpCredentialCards(added.name, added.server, added.rev)) {
             store.appendMessage(fromThreadId, murageLine({ role: "bot", kind: "secret", ...fromRoom, secret: { ...card, requestKey: randomUUID() } }));
@@ -23928,7 +24061,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         };
         if (upstream.transportSessionId) headers["mcp-session-id"] = upstream.transportSessionId;
         res.writeHead(upstream.status, headers);
-        return res.end(Buffer.from(upstream.bytes));
+        // a bot never discovers native HighLevel names on the external relay (GAP-HIGHLEVEL-109 section 7)
+        const listed = (Array.isArray(body) ? body : [body]).some((message: unknown) => Boolean(message) && typeof message === "object" && (message as { method?: unknown }).method === "tools/list");
+        return res.end(Buffer.from(listed ? filterRelayToolListBytes(upstream.contentType, upstream.bytes) : upstream.bytes));
       }
       // ── the owner's link servers: the relay behind remote-mcp-proxy (spec MCP-LINK 3.8) ──
       const mcpRemoteMatch = /^\/api\/internal\/mcp-remote\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
@@ -23944,7 +24079,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (botRefusal) return json(res, 403, { error: botRefusal });
         const name = mcpRemoteMatch[1]!;
         const entry = parseAnyStoredMcpServer(name, cfg.mcpServers?.[name]);
-        if (!entry.ok || !isRemoteMcpServer(entry.server) || !entry.server.enabled || isNetlifyMcpUrl(entry.server.url)) return json(res, 404, { error: "MCP server not found." });
+        if (!entry.ok || !isRemoteMcpServer(entry.server) || !entry.server.enabled || isNetlifyMcpUrl(entry.server.url)) return json(res, 404, { error: "That connected tool is no longer here. Refresh the list, then try again." });
         const valid = validateRelayBody(await readInternalBody());
         if (!valid.ok) return json(res, 400, { error: valid.error });
         const controller = new AbortController();
@@ -26935,6 +27070,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         selection = checked.selection;
       }
+      // The request gate ran before the body and the engine list were read: a writer hold that began during those waits (an index
+      // build at start) is waited out here, or the write below takes the hold's 50 ms budget and answers busy at once.
+      await awaitWriterGateForeground();
       // Keep the capacity check immediately beside the synchronous write.
       // Awaiting provider discovery before this point cannot race the cap.
       if (store.bots.length >= MAX_WORKSPACE_BOTS) {
@@ -29429,14 +29567,44 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // identity handshake for the packaged app's port fallback: the forked
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
-    if (cloudHome && method === "PUT" && path === "/api/owner/timezone") {
+    // The owner's time zone (Settings > General > Time zone). A Cloud home keeps
+    // it in owner.json and always has one; the desktop keeps it on the owner's
+    // profile in config.json, where null or "" means follow this computer.
+    if (method === "GET" && path === "/api/owner/timezone") {
+      if (cloudHome) {
+        let timeZone: string;
+        try { timeZone = readOwnerTimeZone(DATA_DIR); } catch { timeZone = ownerTimeZone(); }
+        return json(res, 200, { timeZone, chosen: true, computerTimeZone: timeZone, canFollowComputer: false });
+      }
+      return json(res, 200, { timeZone: ownerTimeZone(), chosen: chosenOwnerTimeZone(cfg.profile?.timeZone) !== null, computerTimeZone: computerTimeZone(), canFollowComputer: true });
+    }
+    if (method === "PUT" && path === "/api/owner/timezone") {
       const body = await readBody(req);
-      let timeZone: string;
-      try { timeZone = validateOwnerTimeZone(body?.timeZone); }
-      catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
-      writeOwnerTimeZone(DATA_DIR, timeZone);
-      process.env.TZ = timeZone;
-      return json(res, 200, { timeZone });
+      if (cloudHome) {
+        let timeZone: string;
+        try { timeZone = validateOwnerTimeZone(body?.timeZone); }
+        catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
+        let before: string | null = null;
+        try { before = readOwnerTimeZone(DATA_DIR); } catch { before = null; }
+        pinOwnerZoneTraceDays();
+        writeOwnerTimeZone(DATA_DIR, timeZone);
+        process.env.TZ = timeZone;
+        const routinesMoved = ownerZoneChanged(before, timeZone);
+        return json(res, 200, { timeZone, chosen: true, computerTimeZone: timeZone, canFollowComputer: false, routinesMoved });
+      }
+      const requested = body?.timeZone;
+      let saved = "";
+      if (requested !== null && requested !== "") {
+        try { saved = validateOwnerTimeZone(requested); }
+        catch { return json(res, 400, { error: cloudHomeCopy.chooseAnIANATimeZone }); }
+      }
+      const before = ownerTimeZone();
+      pinOwnerZoneTraceDays();
+      saveConfig({ profile: { timeZone: saved } });
+      cfg.profile = { ...cfg.profile, timeZone: saved };
+      const timeZone = applyOwnerTimeZone(saved);
+      const routinesMoved = ownerZoneChanged(before, timeZone);
+      return json(res, 200, { timeZone, chosen: saved !== "", computerTimeZone: computerTimeZone(), canFollowComputer: true, routinesMoved });
     }
     if (method === "GET" && path === "/api/health") {
       healthAnswered = true;
@@ -29460,6 +29628,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         static: Boolean(STATIC_DIR),
         // see unresolvedFrameDrops: steady zero is healthy
         unresolvedFrameDrops,
+        // what the seal cost and what a resume saved this lifetime (THREAD-SEAL 3.6): counts only
+        warm: sessionGauges(),
         // The upgrade work that runs after the server listens (memory/upgrade-background.ts): which phase, how far, any hold, and the progress
         // fields the upgrade screen reads. The same shape as the 503 body the pre-listen responder gives (progress: upgrade-progress.ts).
         memoryIntegrity: integrity,
@@ -29665,7 +29835,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       });
       if (answer) return json(res, answer.status, answer.body);
     }
-    if (path === "/api/flux-connection" && method === "GET") return json(res, 200, fluxCredentialStatus(readFluxConnectionState()));
+    if (path === "/api/flux-connection" && method === "GET") return json(res, 200, fluxConnectionStatusWithRestart(fluxCredentialStatus(readFluxConnectionState())));
     if (path === "/api/flux-connection/test" && method === "POST") {
       if (providerConfigBusy || providerConnectionsBusy) return json(res, 409, { error: "Flux credentials are being changed. Try again shortly." });
       const status = fluxCredentialStatus(readFluxConnectionState());
@@ -29694,7 +29864,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
       const update = body as Record<string, unknown>;
       if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
-      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, committed); }
+      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
       if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
       return json(res, 400, { error: "Invalid Flux connection update." });
@@ -29702,7 +29872,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path === "/api/flux-connection/mutate" && method === "POST") {
       if (utilityParentPort && !cloudHome) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
       const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
-      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, committed); }
+      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
       finally { fluxConnectionTransaction.finish(reserved.lease); }
     }
@@ -30257,7 +30427,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         return json(res, 415, { error: "content-type must be application/json" });
       }
       if (mcpProbesInFlight >= MAX_CONCURRENT_MCP_PROBES) {
-        return json(res, 429, { error: "Two MCP connection tests are already running." });
+        return json(res, 429, { error: "Two connected tool checks are already running. Wait for one to finish, then try again." });
       }
       const controller = new AbortController();
       const disconnect = () => { if (!res.writableEnded) controller.abort(); };
@@ -30276,7 +30446,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const name = mcpSecretsRoute[1]!;
       // Command servers take env values here too (T16); a held value may be missing, that is why it is pushed.
       const entry = parseAnyStoredMcpServer(name, cfg.mcpServers?.[name], { envHeld: () => true });
-      if (!entry.ok) return json(res, 404, { error: "MCP server not found." });
+      if (!entry.ok) return json(res, 404, { error: "That connected tool is no longer here. Refresh the list, then try again." });
       if (method === "DELETE") {
         clearMcpServerSecrets(name);
         return json(res, 200, { ok: true });
@@ -30309,7 +30479,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!utilityParentPort) return json(res, 409, { error: "Sign in needs the Murage desktop app." });
       const name = mcpOauthTargetRoute[1]!;
       const entry = parseAnyStoredMcpServer(name, cfg.mcpServers?.[name]);
-      if (!entry.ok || !isRemoteMcpServer(entry.server)) return json(res, 404, { error: "MCP server not found." });
+      if (!entry.ok || !isRemoteMcpServer(entry.server)) return json(res, 404, { error: "That connected tool is no longer here. Refresh the list, then try again." });
       // A tool refused for scope (403 insufficient_scope) left its scope on the
       // waiting card: the sign-in asks for it too (spec 3.7 step 10).
       const target = await oauthTargetFor(name, entry.server, {}, { stepUpScope: mcpStepUpScope(waitingMcpSignInCards(database(), name, mcpServerOrigin(entry.server))) });
@@ -30319,11 +30489,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
 
     if (method === "POST" && mcpTest) {
       const raw = cfg.mcpServers?.[mcpTest[1]];
-      if (raw === undefined) return json(res, 404, { error: "MCP server not found." });
+      if (raw === undefined) return json(res, 404, { error: "That connected tool is no longer here. Refresh the list, then try again." });
       const parsed = parseAnyStoredMcpServer(mcpTest[1], raw, { envHeld: () => true });
       if (!parsed.ok) return json(res, 400, { error: parsed.error });
       if (mcpProbesInFlight >= MAX_CONCURRENT_MCP_PROBES) {
-        return json(res, 429, { error: "Two MCP connection tests are already running." });
+        return json(res, 429, { error: "Two connected tool checks are already running. Wait for one to finish, then try again." });
       }
       const controller = new AbortController();
       const disconnect = () => {
@@ -30361,15 +30531,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+      if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
       mcpConfigBusy = true;
       try {
         const body = await readBody(req);
         const name = typeof body?.name === "string" ? body.name : "";
         const current = cfg.mcpServers ?? {};
-        if (Object.hasOwn(current, name)) return json(res, 409, { error: "An MCP server with that name already exists." });
+        if (Object.hasOwn(current, name)) return json(res, 409, { error: "A connected tool with that name already exists. Pick another name." });
         if (Object.keys(current).length >= MAX_MCP_SERVERS) {
-          return json(res, 400, { error: `You can add at most ${MAX_MCP_SERVERS} MCP servers.` });
+          return json(res, 400, { error: `You can add up to ${MAX_MCP_SERVERS} connected tools. Remove one to add another.` });
         }
         const confirm = parseConfirmLocal(body?.confirmLocal);
         if (!confirm.ok) return json(res, 400, { error: "Unknown local confirmation." });
@@ -30396,12 +30566,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (method !== "DELETE" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+      if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
       mcpConfigBusy = true;
       try {
         const name = mcpServerRoute[1];
         const current = cfg.mcpServers ?? {};
-        if (!Object.hasOwn(current, name)) return json(res, 404, { error: "MCP server not found." });
+        if (!Object.hasOwn(current, name)) return json(res, 404, { error: "That connected tool is no longer here. Refresh the list, then try again." });
         if (method === "DELETE") {
           const next = { ...current };
           delete next[name];
@@ -30740,6 +30910,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // Access settings are read live by the service; applying them bumps the access revision and revokes removed chats.
       if (patch.whatsapp) void whatsapp?.applySettings().catch(() => console.error("WhatsApp settings change could not be applied."));
       if (patch.features) {
+        // Phone tools turned off: every open phone job (its card on the phone, the bot's waiting tool call) ends now as did not
+        // run, or may have run once leased, instead of waiting out its deadline behind routes that are already absent.
+        if (cfg.features?.phoneTools !== true) phoneJobs.revokeFor({});
         queueMicrotask(pumpRoomDispatcher);
         for (const group of store.groups) if (group.channelProject) projectFrames.strip(group.id);
       }
@@ -31161,7 +31334,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // Item 118 (118-3): the card names one key of one entry at one revision.
         // Re-resolved on every save; a changed or removed entry saves nothing.
         if (message.secret.dismissed) return json(res, 409, { error: message.secret.error ?? "this credential request was dismissed" });
-        if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+        if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
         mcpConfigBusy = true;
         try {
           const resolved = resolveMcpCredential(cfg.mcpServers, mcpTarget)!;
@@ -31232,7 +31405,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         store.patchMessage(threadId, message.id, { card: { ...card, dismissed: true } });
         return json(res, 200, { dismissed: true });
       }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
+      if (mcpConfigBusy) return json(res, 409, { error: "Connected tools are already being updated. Wait a moment, then try again." });
       mcpConfigBusy = true;
       try {
         const resolved = resolveMcpCard(cfg.mcpServers, card.mcpEnable.name, card.mcpEnable.rev);
@@ -31988,8 +32161,11 @@ const gracefulShutdown = createGracefulShutdown({
     // Health producers: flush the open minute window with a `stopping` lifecycle and clear the Sentinel timers.
     async () => { await serverSentinel.stop(); },
     // First: nothing queued may start while the harness closes; turns this
-    // stops free their rooms, and the queue must wait for the next launch.
-    () => { turnDispatchClosed = true; routines?.stop(); roomEngine.ready = false; projectCardExecutor.stop(); refuseEngineHistoryJobs(); delegatedReplyChecks.stop(); },
+    // stops free their rooms, and the queue must wait for the next launch. The
+    // hand-off gate closes here and is never opened (it ends with the process):
+    // a hand-off stays as it is and the next server's boot settling picks it up,
+    // so no retry is spent on an engine fleet that is going away.
+    () => { turnDispatchClosed = true; holdForReconcile(); routines?.stop(); roomEngine.ready = false; projectCardExecutor.stop(); refuseEngineHistoryJobs(); delegatedReplyChecks.stop(); },
     () => stopModelCatalogRefresh(),
     () => announcements.stop(),
     async () => {
@@ -32112,6 +32288,8 @@ if (!homeExecutionGate || homeExecutionGate.open()) routines.start();
 startupMark("routines.started");
 // 1.0.4 SL-I: a limit failover a crash interrupted is finished (or cancelled) once, now that a send can run
 setImmediate(() => { try { recoverLimitFailovers(); } catch (error) { console.error("limit failover: boot recovery failed", error); } });
+// 1.0.11 APP-TRIGGERS: a child-refusal card a restart interrupted is written from its receipt; nothing runs again.
+setImmediate(() => { try { rebuildOwedCards(); } catch (error) { console.error("app triggers: refusal cards were not rebuilt", error); } });
 
 /** The scheduler has already pinned instructions and assigned this thread. */
 function procedureRoutineSnapshot(threadId:string):{id:string;instructionRevision:string}|undefined {

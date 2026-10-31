@@ -12,6 +12,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SwitchCompat;
+import com.murage.mobile.shell.ProbeVerdict;
 import com.murage.mobile.shell.WorkspaceOrigin;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
@@ -59,10 +60,11 @@ final class PhoneForBotsScreen {
     private void available(PhoneForBotsModel.Done done) {
         if (key.point(workspace) == null) { done.finish(new Exception(activity.getString(R.string.phone_no_key))); return; }
         io.execute(() -> {
-            boolean offered = ProbeClient.probe(workspace, Shell.USER_AGENT_TOKEN).phoneJobsOk();
+            ProbeVerdict verdict = ProbeClient.probe(workspace, Shell.USER_AGENT_TOKEN);
             activity.runOnUiThread(() -> {
                 if (closed) { done.finish(new IllegalStateException()); return; }
-                done.finish(offered ? null : new Exception(activity.getString(R.string.phone_update)));
+                done.finish(verdict.phoneJobsOk() ? null : new Exception(activity.getString(
+                    verdict.phoneFlagsOk() ? R.string.phone_turned_off : R.string.phone_update)));
             });
         });
     }

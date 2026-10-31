@@ -266,12 +266,13 @@ describe("108 E1 typed operational failures", () => {
       expect(envInfoOf(record).unchecked).toEqual({ reason });
       expect(JSON.stringify(envInfoOf(record))).not.toContain("private-value");
     }
-    expect(run).toHaveBeenCalledTimes(1);
+    const tries = reason === "timeout" ? 2 : 1; // a timeout gets its one retry inside each check
+    expect(run).toHaveBeenCalledTimes(tries);
     expect(log.mock.calls).toEqual([[`approvals: environment unchecked bot=fixture-bot reason=${reason}`]]);
     vi.setSystemTime(130_000); await execEnvNow("e1", form, hand, cwd);
-    expect(run).toHaveBeenCalledTimes(2); expect(log).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(tries * 2); expect(log).toHaveBeenCalledTimes(2);
     vi.setSystemTime(249_999); await execEnvNow("e1", form, hand, cwd);
-    expect(run).toHaveBeenCalledTimes(2); expect(log).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(tries * 2); expect(log).toHaveBeenCalledTimes(2);
   });
   it.each(["cwd", "alias", "extra", "nonce", "version", "malformed", "cloud", "no-form", "unpinned"])("keeps %s failures and their cooldowns U20", async kind => {
     const run = vi.spyOn(procs, "execCli").mockImplementation((_file, args, _opts, cb) => {

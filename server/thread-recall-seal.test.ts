@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Thread recall, design S (the seal), tests S6 and S7, through the real server and the fake Claude CLI.
-// Once recall output was released on a thread (task.sealGeneration above 0), that thread never resumes an
-// engine session again: every dispatch takes the fresh path with sessionReset true and no cursor, stores no
-// cursor, is never warmed, and no line is steered into a running turn.
+// A native session handed recall output, and every session started before the seal moved, is never resumed,
+// and no line is steered into it. The first session started at the current seal holds only Murage's own
+// authorized replay: its cursor is bound to that generation (THREAD-SEAL 3.1) and it resumes like any other, until
+// the next release. A sealed thread is never warmed.
 //
 // Covered: direct turns on a Claude engine (two engine instances, a restart that reloads the seal from
 // disk), an engine switch, a rewind (edit), an audience move and a contract move, the /warm route, the task
@@ -28,6 +29,7 @@ import { withTurnSecrets } from "./testing/fixture-dump.ts";
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const STORE_URL = pathToFileURL(join(SERVER_DIR, "store.ts")).href;
 const WATCH_URL = pathToFileURL(join(SERVER_DIR, "memory", "reset-watch.ts")).href;
+const ALLOWANCE_URL = pathToFileURL(join(SERVER_DIR, "memory", "lineage-allowance.ts")).href;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 /** The marks a prompt carries (turn-context.ts). */
@@ -56,12 +58,26 @@ const instrumentation = `
   cfg.instances.slowB=make({FAKE_CLAUDE_MODE:'slow',FAKE_CLAUDE_REPLY_GATE:gate('gate-b')});
   cfg.instances.slowInitC=make({FAKE_CLAUDE_MODE:'slow',FAKE_CLAUDE_START_DELAY_MS:'6500'});
   cfg.instances.slowInitD=make({FAKE_CLAUDE_MODE:'slow',FAKE_CLAUDE_START_DELAY_MS:'6500'});
+  const memoryLate=JSON.stringify({'murage-memory':2500,agents:2500});
+  cfg.instances.early=make({FAKE_CLAUDE_INIT_AT_START:'1'});
+  cfg.instances.noReinit=make({FAKE_CLAUDE_NO_REINIT:'1'});
+  cfg.instances.gated=make({FAKE_CLAUDE_MCP_READY_MS:memoryLate});
+  cfg.instances.earlyGated=make({FAKE_CLAUDE_INIT_AT_START:'1',FAKE_CLAUDE_MCP_READY_MS:memoryLate});
+  cfg.instances.gatedLong=make({FAKE_CLAUDE_MCP_READY_MS:JSON.stringify({'murage-memory':6000,agents:6000}),MURAGE_MCP_REQUIRED_WAIT_MS:'20000'});
+  cfg.instances.newIdGated=make({FAKE_CLAUDE_INIT_AT_START:'1',FAKE_CLAUDE_RESUME_NEW_ID:'reported-other-id',FAKE_CLAUDE_MCP_READY_MS:memoryLate});
+  cfg.instances.newIdLate=make({FAKE_CLAUDE_RESUME_NEW_ID:'reported-other-id'});
+  cfg.instances.finalSteer=make({FAKE_CLAUDE_MODE:'final-steer',FAKE_CLAUDE_FINAL_STEERS:'2'});
+  cfg.instances.earlyWarm=make({FAKE_CLAUDE_INIT_AT_START:'1'});
   fs.writeFileSync(cfgFile,JSON.stringify(cfg));
   process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS='250';
   const {Store}=await import(${JSON.stringify(STORE_URL)});
   const watch=await import(${JSON.stringify(WATCH_URL)});
-  let store;
+  // a resume after a restart must not meet the 50 ms budget of a cold lineage check (reason=lineage-warming, fail closed): a slow runner proves nothing here
+  (await import(${JSON.stringify(ALLOWANCE_URL)})).setLineageTimeBudgetForTest(null);
+  let store,lockedFolds=false;
   for(const name of ['taskByThread','bot']){const original=Store.prototype[name];Store.prototype[name]=function(...args){store=this;return original.apply(this,args);};}
+  const saveCursor=Store.prototype.setResumeCursor;
+  Store.prototype.setResumeCursor=function(...args){if(lockedFolds&&args[2]!==undefined)throw Object.assign(new Error('database is locked'),{errcode:5});if(args[2]!==undefined)fs.appendFileSync(gate('cursor-saves.jsonl'),JSON.stringify({cursor:args[2],sealStart:args[8]??null})+String.fromCharCode(10));return saveCursor.apply(this,args);};
   const ctl=gate('seal-ctl.json');const out=gate('seal-out.json');
   setInterval(()=>{
     let command;try{command=JSON.parse(fs.readFileSync(ctl,'utf8'));}catch{return;}
@@ -70,6 +86,9 @@ const instrumentation = `
     try{
       if(command.seal)result.sealed=store.sealThread(command.seal[0],command.seal[1]);
       if(command.counts)result.counts=watch.sealedTurnCounts();
+      if(command.gauges)result.gauges=watch.sessionGauges();
+      if(command.lockFolds!==undefined)lockedFolds=command.lockFolds;
+      if(command.pair)saveCursor.apply(store,command.pair);
     }catch(error){result.error=String(error);}
     fs.writeFileSync(out,JSON.stringify(result));
   },30).unref();
@@ -100,7 +119,7 @@ const logged = () => (existsSync(file("seal-turns.jsonl")) ? readFileSync(file("
 interface Bot { id: string; threadId: string }
 let control = 0;
 /** Asks the running server (through the instrumentation) to seal a thread or report the sealed-turn counter. */
-async function ask(command: { seal?: [string, string]; counts?: true }) {
+async function ask(command: { seal?: [string, string]; counts?: true; gauges?: true; lockFolds?: boolean; pair?: unknown[] }) {
   const id = ++control;
   rmSync(file("seal-out.json"), { force: true });
   writeFileSync(file("seal-ctl.json"), JSON.stringify({ ...command, id }));
@@ -149,11 +168,14 @@ async function turn(bot: Bot, text: string, threadId = bot.threadId) {
   return { ...saw, tag };
 }
 const resumed = (argv: string[]) => argv.includes("--resume");
+/** The native session a turn ran in, whether its process was spawned for it (--resume, --session-id) or kept from the turn before. */
+const sessionOf = (argv: string[]): string => argv[argv.includes("--resume") ? argv.indexOf("--resume") + 1 : argv.indexOf("--session-id") + 1]!;
+/** Saved to disk, the cursor and its binding for this engine (the save is coalesced). */
+const bound = (bot: Bot, instanceId = "verification", threadId = bot.threadId) => waitUntil(() => { const task = taskOnDisk(bot, threadId); const entry = task?.resumeSeals?.[instanceId]; return task?.resumeCursors?.[instanceId] !== undefined && entry?.cursor === task.resumeCursors[instanceId] && entry.generation >= (task.sealGeneration ?? 0); }, "the cursor to be saved with its binding", 15_000);
 const waitCursor = (bot: Bot) => waitUntil(() => taskOnDisk(bot)?.resumeCursors?.verification && taskOnDisk(bot)?.resumeContracts?.verification !== undefined, "the first cursor to be saved", 15_000);
 
 posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
   const bots: Record<string, Bot> = {};
-  let preSealMeta = "";
   let preSealCursor = "";
 
   beforeAll(async () => {
@@ -171,7 +193,6 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     await turn(bots.second!, "PRE_second remember the word PELICAN_second");
     await waitUntil(() => taskOnDisk(bots.second!)?.resumeCursors?.second, "the second engine's cursor", 15_000);
     await sleep(1_500);
-    preSealMeta = sessionMeta(taskOnDisk(bots.cursor!));
     preSealCursor = taskOnDisk(bots.cursor!).resumeCursors.verification;
     // Seal on disk, then restart: the seal is read back from the saved roster. Four bots carry an unusual pre-seal state.
     await fixture.stop();
@@ -194,54 +215,56 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     const roster = await call("GET", "/api/bots");
     expect(roster.status).toBe(200);
     expect(roster.text).not.toContain("sealGeneration");
+    expect(roster.text).not.toContain("resumeSeals");
     const one = await call("GET", `/api/bots/${bots.cursor!.id}/tasks/${bots.cursor!.threadId}`);
     expect(one.status).toBe(200);
     expect(one.body.task.threadId).toBe(bots.cursor!.threadId);
     expect(one.text).not.toContain("sealGeneration");
+    expect(one.text).not.toContain("resumeSeals");
     const list = await call("GET", `/api/bots/${bots.cursor!.id}/tasks`);
     expect(list.status).toBe(200);
     expect(list.text).not.toContain("sealGeneration");
+    expect(list.text).not.toContain("resumeSeals");
     const patched = await call("PATCH", `/api/bots/${bots.cursor!.id}/tasks/${bots.cursor!.threadId}`, { unread: false });
     expect(patched.status).toBe(200);
     expect(patched.text).not.toContain("sealGeneration");
+    expect(patched.text).not.toContain("resumeSeals");
   });
 
-  it("three consecutive sealed turns each send no cursor, reset the session, open as restarted, and leave the pre-seal cursor and its records byte for byte", async () => {
+  it("the first turn after a seal is fresh and replays, and the turns after it continue that session with no replay", async () => {
     const bot = bots.cursor!;
-    const seen = [];
-    for (const n of [1, 2, 3]) {
-      const saw = await turn(bot, `SEALED_${n} what was the word`);
-      seen.push(saw);
-      expect(resumed(saw.argv), `turn ${n}`).toBe(false);
-      expect(saw.argv).toContain("--session-id");
-      expect(saw.argv[saw.argv.indexOf("--session-id") + 1]).not.toBe(preSealCursor);
-      expect(saw.prompt).toContain(RESTARTED);
-      expect(saw.prompt).not.toContain(SWITCHED);
-      // the replay carries the conversation, the earlier sealed turns included
-      expect(saw.prompt).toContain("PELICAN_cursor");
-      if (n > 1) expect(saw.prompt).toContain(`SEALED_${n - 1} what was the word`);
+    const first = await turn(bot, "SEALED_1 what was the word");
+    expect(resumed(first.argv)).toBe(false);
+    expect(first.argv).toContain("--session-id");
+    const started = sessionOf(first.argv);
+    expect(started).not.toBe(preSealCursor);
+    expect(first.prompt).toContain(RESTARTED);
+    expect(first.prompt).not.toContain(SWITCHED);
+    expect(first.prompt).toContain("PELICAN_cursor");
+    // the session.started of that turn replaced the pre-seal cursor and bound the new one to the current seal
+    await bound(bot);
+    expect(taskOnDisk(bot).resumeCursors.verification).toBe(started);
+    expect(taskOnDisk(bot).resumeSeals.verification).toEqual({ cursor: started, generation: 1 });
+    for (const n of [2, 3]) {
+      const saw = await turn(bot, `SEALED_${n} and the next`);
+      expect(sessionOf(saw.argv), `turn ${n}`).toBe(started);
+      expect(saw.prompt).not.toContain(RESTARTED);
     }
-    // every turn on its own process: the retained one was closed each time
-    expect(new Set(seen.map((s) => s.pid)).size).toBe(3);
-    // the session.started of those turns folded and wrote no cursor, and nothing refreshed the pre-seal records
-    await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot))).toBe(preSealMeta);
-    expect(taskOnDisk(bot).resumeCursors.verification).toBe(preSealCursor);
+    expect(taskOnDisk(bot).resumeSeals.verification).toEqual({ cursor: started, generation: 1 });
     expect(serverLog()).not.toMatch(/continuation reset/);
   }, 120_000);
 
-  it("a sealed thread with no pre-seal cursor at all opens as restarted on every turn", async () => {
+  it("a sealed thread with no pre-seal cursor at all opens as restarted once, then continues", async () => {
     const bot = bots.stripped!;
-    for (const n of [1, 2, 3]) {
-      const saw = await turn(bot, `STRIPPED_${n} go on`);
-      expect(resumed(saw.argv)).toBe(false);
-      expect(saw.prompt).toContain(RESTARTED);
-      expect(saw.prompt).not.toContain(SWITCHED);
-      expect(saw.prompt).toContain("PELICAN_stripped");
-    }
-    await sleep(1_500);
-    // no cursor was ever stored for the thread
-    expect(taskOnDisk(bot).resumeCursors ?? {}).toEqual({});
+    const first = await turn(bot, "STRIPPED_1 go on");
+    expect(resumed(first.argv)).toBe(false);
+    expect(first.prompt).toContain(RESTARTED);
+    expect(first.prompt).not.toContain(SWITCHED);
+    expect(first.prompt).toContain("PELICAN_stripped");
+    await bound(bot);
+    const next = await turn(bot, "STRIPPED_2 go on");
+    expect(sessionOf(next.argv)).toBe(sessionOf(first.argv));
+    expect(next.prompt).not.toContain(RESTARTED);
   }, 120_000);
 
   it("a sealed thread that never ran starts fresh with the conversation replayed and no cursor", async () => {
@@ -250,25 +273,24 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     const saw = await turn(bot, "FIRST_EVER hello");
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.argv).toContain("--session-id");
-    await sleep(1_500);
-    expect(taskOnDisk(bot).resumeCursors ?? {}).toEqual({});
+    await bound(bot);
+    expect(taskOnDisk(bot).resumeSeals.verification.generation).toBe(1);
     expect(taskOnDisk(bot).sealGeneration).toBe(1);
   }, 60_000);
 
   it("a sealed thread on a second engine instance behaves the same, after a restart", async () => {
     const bot = bots.second!;
-    const before = sessionMeta(taskOnDisk(bot));
-    for (const n of [1, 2]) {
-      const saw = await turn(bot, `SECOND_${n} carry on`);
-      expect(resumed(saw.argv)).toBe(false);
-      expect(saw.prompt).toContain(RESTARTED);
-      expect(saw.prompt).toContain("PELICAN_second");
-    }
-    await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot))).toBe(before);
+    const first = await turn(bot, "SECOND_1 carry on");
+    expect(resumed(first.argv)).toBe(false);
+    expect(first.prompt).toContain(RESTARTED);
+    expect(first.prompt).toContain("PELICAN_second");
+    await bound(bot, "second");
+    const next = await turn(bot, "SECOND_2 carry on");
+    expect(sessionOf(next.argv)).toBe(sessionOf(first.argv));
+    expect(next.prompt).not.toContain(RESTARTED);
   }, 120_000);
 
-  it("a sealed turn after an engine switch opens as a switch (the fresh preamble), then as restarted again on the new engine", async () => {
+  it("a sealed turn after an engine switch opens as a switch (the fresh preamble), and the new engine's session then continues", async () => {
     const bot = bots.switch!;
     const model = (await call("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "second").models.options[0].id;
     expect((await call("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "second", model }, computer: "off" })).status).toBe(200);
@@ -276,15 +298,14 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(resumed(switched.argv)).toBe(false);
     expect(switched.prompt).toContain(SWITCHED);
     expect(switched.prompt).not.toContain(RESTARTED);
+    await bound(bot, "second");
     const again = await turn(bot, "AFTER_SWITCH_TWO and again");
-    expect(resumed(again.argv)).toBe(false);
-    expect(again.prompt).toContain(RESTARTED);
+    expect(sessionOf(again.argv)).toBe(sessionOf(switched.argv));
+    expect(again.prompt).not.toContain(RESTARTED);
     expect(again.prompt).not.toContain(SWITCHED);
-    await sleep(1_500);
-    expect(taskOnDisk(bot).resumeCursors?.second).toBeUndefined();
   }, 120_000);
 
-  it("a sealed rewind (an edit) opens as rewound, and the turn after it as restarted", async () => {
+  it("a sealed rewind (an edit) opens as rewound, and is never continued past the rewind", async () => {
     const bot = bots.rewind!;
     const mine = (await botView(bot)).messages.find((m: any) => m.role === "user" && m.kind === "text" && String(m.text).includes("PRE2_rewind"));
     const tag = mark("EDITED");
@@ -296,36 +317,46 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.prompt).toContain(REWOUND);
     expect(saw.prompt).not.toContain(RESTARTED);
+    // the rewind's own patch empties the cursors (and their bindings) when its dispatch is taken: what is left decides the next turn, as anywhere
+    await sleep(1_000);
+    const held = taskOnDisk(bot).resumeCursors?.verification;
     const after = await turn(bot, "AFTER_REWIND next");
-    expect(resumed(after.argv)).toBe(false);
-    expect(after.prompt).toContain(RESTARTED);
+    if (held === undefined) {
+      expect(resumed(after.argv)).toBe(false);
+      expect(after.prompt).toContain(RESTARTED);
+    } else {
+      expect(sessionOf(after.argv)).toBe(sessionOf(saw.argv));
+      expect(after.prompt).not.toContain(RESTARTED);
+    }
   }, 120_000);
 
-  it("a sealed turn after an audience move opens as restarted (not a switch), notes no reset, and never refreshes the frozen record", async () => {
+  it("a tainted turn after an audience move opens as restarted (not a switch), notes no reset, and its session then carries the new audience", async () => {
     const bot = bots.aud!;
-    const before = sessionMeta(taskOnDisk(bot));
-    expect(before).toContain("a-different-audience");
+    expect(sessionMeta(taskOnDisk(bot))).toContain("a-different-audience");
     const saw = await turn(bot, "AUDIENCE_MOVED continue");
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.prompt).toContain(RESTARTED);
     expect(saw.prompt).not.toContain(SWITCHED);
-    await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot))).toBe(before);
+    await bound(bot);
+    // cursor metadata is live again on a sealed thread
+    expect(sessionMeta(taskOnDisk(bot))).not.toContain("a-different-audience");
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
+    const next = await turn(bot, "AUDIENCE_MOVED_TWO continue");
+    expect(sessionOf(next.argv)).toBe(sessionOf(saw.argv));
   }, 60_000);
 
-  it("a sealed turn after a contract move opens as restarted (not a switch), notes no reset, and never refreshes the frozen record", async () => {
+  it("a tainted turn after a contract move opens as restarted (not a switch), notes no reset, and its session then carries the contract", async () => {
     const bot = bots.con!;
-    const before = sessionMeta(taskOnDisk(bot));
     expect(taskOnDisk(bot).resumeContracts).toBeUndefined();
     const saw = await turn(bot, "CONTRACT_MOVED continue");
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.prompt).toContain(RESTARTED);
     expect(saw.prompt).not.toContain(SWITCHED);
-    await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot))).toBe(before);
-    expect(taskOnDisk(bot).resumeContracts).toBeUndefined();
+    await bound(bot);
+    expect(taskOnDisk(bot).resumeContracts?.verification).toBeDefined();
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
+    const next = await turn(bot, "CONTRACT_MOVED_TWO continue");
+    expect(sessionOf(next.argv)).toBe(sessionOf(saw.argv));
   }, 60_000);
 
   it("a thread that was never recalled resumes its session exactly as before", async () => {
@@ -373,19 +404,39 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(warmed.body.warming).toBe(true);
     expect(warmed.body.started).toBe(true);
     await expect.poll(starts, { timeout: 15_000 }).toBe(baseline + 1);
+    // (j) a clean turn ended and its session is resumable: the seal still refuses the warm, and the same with a chat's own engine
+    await bound(sealed, "warmable");
+    const task = await call("POST", `/api/bots/${sealed.id}/tasks`, { title: "Its own engine" });
+    const threadId = task.body.task.threadId as string;
+    const model = (await call("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "verification").models.options[0].id;
+    expect((await call("PATCH", `/api/bots/${sealed.id}/tasks/${threadId}`, { modelSelection: { instanceId: "verification", model } })).status).toBe(200);
+    await seal(sealed, threadId);
+    await turn(sealed, "WARM_OVERRIDE_TURN hello", threadId);
+    await bound(sealed, "verification", threadId);
+    await sleep(2_000);
+    const before = starts();
+    for (const refusedThread of [sealed.threadId, threadId]) {
+      expect((await call("POST", `/api/bots/${sealed.id}/warm`, { threadId: refusedThread })).body).toEqual({ warming: true, started: false });
+    }
+    await sleep(1_000);
+    expect(starts()).toBe(before);
   }, 90_000);
 
-  it("ten sealed turns raise no reset-loop warning and are counted ten times", async () => {
+  it("ten turns on a sealed thread raise no reset-loop warning and only the tainted one is counted", async () => {
     const bot = bots.ten!;
     for (let n = 1; n <= 10; n++) {
       const saw = await turn(bot, `TEN_${n} again`);
-      expect(resumed(saw.argv)).toBe(false);
-      expect(saw.prompt).toContain(RESTARTED);
+      expect(saw.prompt.includes(RESTARTED), `turn ${n}`).toBe(n === 1);
+      if (n === 1) await bound(bot);
     }
     const counts = (await ask({ counts: true })).counts as Array<{ threadId: string; count: number; instances: string[] }>;
-    expect(counts.find((entry) => entry.threadId === bot.threadId)).toMatchObject({ count: 10, instances: ["verification"] });
+    expect(counts.find((entry) => entry.threadId === bot.threadId)).toMatchObject({ count: 1, instances: ["verification"] });
     expect(serverLog()).not.toMatch(/continuation reset loop/);
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
+    const gauges = (await ask({ gauges: true })).gauges as { taintedFresh: number; resumedTurns: number };
+    expect(gauges.taintedFresh).toBeGreaterThan(0);
+    expect(gauges.resumedTurns).toBeGreaterThanOrEqual(9);
+    expect((await call("GET", "/api/health")).body.warm).toEqual(gauges);
   }, 300_000);
 
   it("a seal that lands between turns (the live server's own sealThread) takes effect on the very next dispatch", async () => {
@@ -396,10 +447,13 @@ posixOnly("thread recall seal at dispatch (S2, S3, S4)", () => {
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.prompt).toContain(RESTARTED);
     expect(taskOnDisk(bot).sealGeneration).toBe(2);
+    await bound(bot);
+    expect(taskOnDisk(bot).resumeSeals.verification.generation).toBe(2);
+    expect(sessionOf((await turn(bot, "BUMPED_TWO go on")).argv)).toBe(sessionOf(saw.argv));
   }, 60_000);
 });
 
-posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
+posixOnly("no line is steered into a session started below the seal (S7 a to d)", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer({}, undefined, { instrumentationSource: instrumentation });
     await authenticate();
@@ -410,7 +464,7 @@ posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
   const texts = async (bot: Bot): Promise<Array<{ role: string; text: string; steered: boolean }>> => (await botView(bot)).messages.filter((m: any) => m.kind === "text").map((m: any) => ({ role: m.role as string, text: String(m.text), steered: m.steered === true }));
   const steerEntries = () => logged().filter((entry) => entry.steer !== undefined);
 
-  /** The shared assertions once a refused steer has run as its own turn. */
+  /** The shared assertions once a refused steer has run as its own turn. `steered` lines before it: what another test of this block wrote. */
   async function expectRunAsOwnSealedTurn(bot: Bot, line: string, refusalLogged = true) {
     await expect.poll(async () => (await texts(bot)).some((m) => m.role === "bot" && m.text.includes(line)), { timeout: 60_000 }).toBe(true);
     await expect.poll(() => isIdle(bot), { timeout: 60_000 }).toBe(true);
@@ -419,7 +473,7 @@ posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
     expect(all.filter((m) => m.role === "user" && m.text === line)).toEqual([{ role: "user", text: line, steered: false }]);
     // no reply was ever folded together with a steer, and the engine was never written a steer
     expect(all.some((m) => m.text.includes("+ steered:"))).toBe(false);
-    expect(steerEntries()).toEqual([]);
+    expect(steerEntries().filter((entry) => JSON.stringify(entry).includes(line))).toEqual([]);
     // its own turn opened as a restarted session
     const own = logged().find((entry) => entry.prompt !== undefined && entry.prompt.includes(line));
     expect(own?.prompt).toContain(RESTARTED);
@@ -432,7 +486,7 @@ posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
   }
 
-  it("(a) a steer into a turn running on a sealed thread is not written, runs as its own sealed turn, reads no cursor and notes no reset", async () => {
+  it("(a) a steer into a clean turn of a sealed thread, before any release in it, is judged by the session check as on any thread", async () => {
     const bot = await createBot("slowA", "steer a");
     await seal(bot);
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "first sealed turn", threadId: bot.threadId })).status).toBe(202);
@@ -440,12 +494,12 @@ posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
     await expect.poll(() => hasChip(bot), { timeout: 20_000 }).toBe(true);
     const second = await call("POST", `/api/bots/${bot.id}/messages`, { text: "second line a", threadId: bot.threadId });
     expect(second.status, second.text).toBe(202);
-    expect(second.body.steered).not.toBe(true);
-    expect(second.body.queued).toBe(true);
+    expect(second.body.steered).toBe(true);
+    await expect.poll(() => steerEntries().length, { timeout: 10_000 }).toBe(1);
     writeFileSync(file("gate-a"), "go");
-    await expectRunAsOwnSealedTurn(bot, "second line a");
-    // a sealed thread never held a cursor for this to read or write
-    expect(taskOnDisk(bot).resumeCursors ?? {}).toEqual({});
+    await expect.poll(() => isIdle(bot), { timeout: 60_000 }).toBe(true);
+    expect((await texts(bot)).some((m) => m.text.includes("+ steered: second line a"))).toBe(true);
+    expect(serverLog()).not.toContain(`thread recall steer refused thread=${bot.threadId}`);
   }, 120_000);
 
   it("(b) the seal lands while the recalling turn runs: a steer after the bump is refused before any write", async () => {
@@ -482,19 +536,16 @@ posixOnly("a sealed thread is never steered into (S7 a to d)", () => {
     await expectRunAsOwnSealedTurn(bot, "second line c", false);
   }, 180_000);
 
-  it("(d) a Claude engine that flushes queued steers at init: on a sealed thread nothing is queued or flushed into the running turn", async () => {
+  it("(d) a Claude engine that flushes queued steers at init: on a clean turn of a sealed thread the seal refuses nothing", async () => {
     const bot = await createBot("slowInitD", "steer d");
     await seal(bot);
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "slow sealed turn", threadId: bot.threadId })).status).toBe(202);
     await expect.poll(async () => (await botView(bot)).busy, { timeout: 20_000 }).toBe(true);
-    const startedAt = Date.now();
     const second = await call("POST", `/api/bots/${bot.id}/messages`, { text: "second line d", threadId: bot.threadId });
     expect(second.status, second.text).toBe(202);
-    // refused at once: no wait for the engine's init, no bound
-    expect(Date.now() - startedAt).toBeLessThan(3_000);
-    expect(second.body.steered).not.toBe(true);
-    expect(second.body.queued).toBe(true);
-    await expectRunAsOwnSealedTurn(bot, "second line d");
+    await expect.poll(async () => (await texts(bot)).some((m) => m.role === "bot" && m.text.includes("second line d")), { timeout: 60_000 }).toBe(true);
+    await expect.poll(() => isIdle(bot), { timeout: 60_000 }).toBe(true);
+    expect(serverLog()).not.toContain(`thread recall steer refused thread=${bot.threadId}`);
   }, 180_000);
 });
 
@@ -520,7 +571,7 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     await sleep(1_000);
     return taskOnDisk(bot).resumeCursors.verification as string;
   }
-  /** What a sealed dispatch of any kind must look like: a new session, never the held cursor. */
+  /** What a tainted dispatch of any kind must look like: a new session, never the held cursor. */
   function expectFreshSealed(saw: { argv: string[]; prompt: string }, heldCursor: string) {
     expect(resumed(saw.argv)).toBe(false);
     expect(saw.argv).toContain("--session-id");
@@ -528,7 +579,7 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     expect(saw.argv.join(" ")).not.toContain(heldCursor);
   }
 
-  it("a routine run in a sealed routine thread sends no cursor and stores none", async () => {
+  it("a routine run in a sealed routine thread never resumes the session from before the seal", async () => {
     const bot = await createBot("verification", "routine");
     const tag = mark("ROUTINE_RUN");
     const created = await call("POST", "/api/routines", { name: "Seal check", botId: bot.id, prompt: `Write the report. ${tag}`, enabled: false, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 86_400_000 } });
@@ -543,21 +594,18 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     await waitUntil(() => taskOnDisk(bot, threadId)?.resumeCursors?.verification, "the routine thread's cursor", 15_000);
     await sleep(1_000);
     const held = taskOnDisk(bot, threadId).resumeCursors.verification as string;
-    const meta = sessionMeta(taskOnDisk(bot, threadId));
     await seal(bot, threadId);
     await waitUntil(async () => (await call("GET", "/api/routines")).body.runs.filter((r: any) => r.routineId === routineId && !["completed", "failed"].includes(r.status)).length === 0, "no live run");
     const second = await run();
     expectFreshSealed(second, held);
     await waitUntil(async () => (await call("GET", "/api/routines")).body.runs.filter((r: any) => r.routineId === routineId && ["completed", "failed"].includes(r.status)).length >= 2, "the second run to finish");
     await sleep(1_500);
-    // a routine run ends its session unretained, which drops the cursor (dropCursor): a sealed thread may lose its old cursor this way but
-    // never gains a new one, and the other pre-seal records are left as they were
-    expect([undefined, held]).toContain(taskOnDisk(bot, threadId).resumeCursors?.verification);
-    expect(JSON.stringify(JSON.parse(meta).slice(1))).toBe(JSON.stringify(JSON.parse(sessionMeta(taskOnDisk(bot, threadId))).slice(1)));
+    // a routine run may end its session unretained (dropCursor); what it may never leave behind is the session from before the seal
+    expect(taskOnDisk(bot, threadId).resumeCursors?.verification).not.toBe(held);
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${threadId}`));
   }, 180_000);
 
-  it("a project card run in a sealed desk thread sends no cursor and stores none", async () => {
+  it("a project card run in a sealed desk thread never resumes the session from before the seal", async () => {
     const bot = await createBot("verification", "card");
     const group = (await call("POST", "/api/groups", { name: "Seal board", memberIds: [bot.id], setup: { bulletin: "Seal checks", defaultResponder: { kind: "member", botId: bot.id } } })).body.group;
     expect((await call("PATCH", `/api/groups/${group.id}`, { channelProject: { goal: "Seal checks" } })).status).toBe(200);
@@ -577,19 +625,17 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     await waitUntil(() => taskOnDisk(bot, deskThreadId)?.resumeCursors?.verification, "the desk's cursor", 15_000);
     await sleep(1_000);
     const held = taskOnDisk(bot, deskThreadId).resumeCursors.verification as string;
-    const meta = sessionMeta(taskOnDisk(bot, deskThreadId));
     await seal(bot, deskThreadId);
     await waitUntil(() => isIdle(bot), "the desk to be idle");
     const second = await runCard(mark("SEALCARD_TWO"));
     expectFreshSealed(second.saw, held);
     await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot, deskThreadId))).toBe(meta);
+    expect(taskOnDisk(bot, deskThreadId).resumeCursors?.verification).not.toBe(held);
   }, 240_000);
 
-  it("a delegated turn in a sealed thread sends no cursor and stores none", async () => {
+  it("a delegated turn in a sealed thread never resumes the session from before the seal", async () => {
     const asker = await createBot("verification", "asker"), peer = await createBot("verification", "peer");
     const held = await withCursor(peer, "peer");
-    const meta = sessionMeta(taskOnDisk(peer));
     await seal(peer);
     const holdTag = mark("ASKER_HOLD");
     rmSync(fixture.fixtureDumpPath, { force: true });
@@ -608,17 +654,16 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     expectFreshSealed(saw, held);
     await waitUntil(() => isIdle(peer), "the delegated turn to settle");
     await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(peer))).toBe(meta);
+    expect(taskOnDisk(peer).resumeCursors?.verification).not.toBe(held);
   }, 180_000);
 
-  it("an engine command in a sealed thread sends no cursor and stores none", async () => {
+  it("an engine command in a sealed thread never resumes the session from before the seal", async () => {
     const bot = await createBot("cmds", "command");
     await turn(bot, "PRE_command remember the word PELICAN_command");
     await waitUntil(async () => (await call("GET", `/api/bots/${bot.id}/engine-commands`)).body.status === "ready", "the engine to report its commands", 15_000);
     await waitUntil(() => taskOnDisk(bot)?.resumeCursors?.cmds, "the first cursor to be saved", 15_000);
     await sleep(1_000);
     const held = taskOnDisk(bot).resumeCursors.cmds as string;
-    const meta = sessionMeta(taskOnDisk(bot));
     await seal(bot);
     rmSync(fixture.fixtureDumpPath, { force: true });
     expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: "/context", threadId: bot.threadId })).status).toBeLessThan(300);
@@ -626,7 +671,7 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     expectFreshSealed(saw, held);
     await waitUntil(() => isIdle(bot), "the command to settle");
     await sleep(1_500);
-    expect(sessionMeta(taskOnDisk(bot))).toBe(meta);
+    expect(taskOnDisk(bot).resumeCursors?.cmds).not.toBe(held);
   }, 120_000);
 
   /** One real recall: a held turn calls the harness's own thread_search route with its memory capability, as the engine's proxy would. */
@@ -645,7 +690,7 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     return { post, holding, search: await post("thread-search", { query }) };
   }
 
-  it("a real thread_search release makes the harness seal the thread: the next dispatch resets the session and sends no cursor", async () => {
+  it("a real thread_search release seals the thread: the next turn is fresh, the one after resumes it, and a release there makes the next fresh", async () => {
     const bot = await createBot("verification", "recall");
     const held = await withCursor(bot, "real");
     expect(taskOnDisk(bot).sealGeneration ?? 0).toBe(0);
@@ -659,7 +704,22 @@ posixOnly("a sealed thread on every dispatch kind, and a seal written by a real 
     expectFreshSealed(next, held);
     expect(next.prompt).toContain(RESTARTED);
     expect(serverLog()).not.toMatch(new RegExp(`continuation reset thread=${bot.threadId}`));
-  }, 180_000);
+    await bound(bot);
+    const clean = await turn(bot, "AFTER_REAL_RECALL_TWO carry on");
+    expect(sessionOf(clean.argv)).toBe(sessionOf(next.argv));
+    expect(clean.prompt).not.toContain(RESTARTED);
+    // (k) a release during that resumed session: the next turn never sees it again, and the turn after resumes the new one
+    const again = await recallDuringTurn(bot, "PELICAN_real");
+    expect(again.search.status, again.search.text).toBe(200);
+    await waitUntil(() => (taskOnDisk(bot)?.sealGeneration ?? 0) >= 2, "the second release to raise the seal");
+    finish(again.holding.pid);
+    await waitUntil(() => isIdle(bot), "the second recalling turn to settle");
+    const fresh = await turn(bot, "AFTER_SECOND_RECALL carry on");
+    expectFreshSealed(fresh, sessionOf(next.argv));
+    expect(fresh.prompt).toContain(RESTARTED);
+    await bound(bot);
+    expect(sessionOf((await turn(bot, "AFTER_SECOND_RECALL_TWO carry on")).argv)).toBe(sessionOf(fresh.argv));
+  }, 240_000);
 
   it("with memory off the thread tools still answer, and release and seal, while memory_* keep refusing (rule 18)", async () => {
     expect((await call("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
@@ -689,7 +749,7 @@ const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 /** Adds a Codex, a Pi and a Fuigo (ACP) instance, each with a log of what the harness sent its fake engine. */
 const engineInstrumentation = instrumentation.replace("fs.writeFileSync(cfgFile,JSON.stringify(cfg));", `
   fs.mkdirSync(path.join(process.env.HOME,'.fuigo'),{recursive:true});fs.writeFileSync(path.join(process.env.HOME,'.fuigo','auth.json'),'{}');
-  cfg.instances['seal-codex']={driver:'codex',displayName:'Codex fixture',environment:{FAKE_CODEX_MODE:'resume',FAKE_CODEX_CALL_LOG:gate('codex-calls.log'),FAKE_CODEX_DUMP:gate('codex-dump.json')},config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
+  cfg.instances['seal-codex']={driver:'codex',displayName:'Codex fixture',environment:{FAKE_CODEX_MODE:'resume',FAKE_CODEX_UNIQUE_THREADS:'1',FAKE_CODEX_CALL_LOG:gate('codex-calls.log'),FAKE_CODEX_DUMP:gate('codex-dump.json')},config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
   cfg.instances['seal-pi']={driver:'piAgent',displayName:'Pi fixture',environment:{FAKE_PI_COMMAND_LOG:gate('pi-commands.log'),FAKE_PI_UNIQUE:'1'},config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true}};
   cfg.instances['seal-acp']={driver:'fuigoAgent',displayName:'Fuigo fixture',environment:{FAKE_ACP_MCP_READY:'1',FAKE_ACP_UNIQUE_SESSIONS:'1',FAKE_ACP_RPC_LOG:gate('acp-rpc.log'),FAKE_ACP_PROMPT_DUMP:gate('acp-prompt.json')},config:{cli:${JSON.stringify(FAKE_ACP)}}};
   cfg.instances.lateInit=make({FAKE_CLAUDE_START_DELAY_MS:'6500'});
@@ -756,7 +816,7 @@ posixOnly("a sealed thread on the Codex, Pi and ACP drivers (S6)", () => {
   }, 300_000);
   afterAll(async () => { await fixture?.close(); });
 
-  it.each(kinds.map((kind) => [kind.key, kind] as const))("%s: the next dispatch of a sealed thread sends no cursor and resets the session; an unsealed thread of the same engine does resume", async (_key, kind) => {
+  it.each(kinds.map((kind) => [kind.key, kind] as const))("%s: a sealed thread starts fresh once, then resumes that session until the next seal; an unsealed thread of the same engine does resume", async (_key, kind) => {
     const sealed = bots[`${kind.key}-sealed`]!, open = bots[`${kind.key}-open`]!;
     const heldCursor = cursorOf(sealed, kind.instanceId)!;
     expect(heldCursor).toBeTruthy();
@@ -777,8 +837,22 @@ posixOnly("a sealed thread on the Codex, Pi and ACP drivers (S6)", () => {
     expect(kind.fresh(sent), `${kind.key} sealed dispatch started a session`).toBe(true);
     await waitUntil(() => kind.prompt(from).includes(RESTARTED), `${kind.key}: the restarted notice in the prompt`, 15_000);
     expect(kind.prompt(from)).toContain(`PELICAN_${kind.key}_sealed`);
-    await sleep(1_000);
-    expect(cursorOf(sealed, kind.instanceId)).toBe(heldCursor);
+    // (n) the session started at the current seal is bound, and it resumes
+    await bound(sealed, kind.instanceId);
+    const clean = cursorOf(sealed, kind.instanceId)!;
+    expect(clean).not.toBe(heldCursor);
+    from = kind.log().length;
+    await converse(sealed, `SEALED_${kind.key} and the next`);
+    expect(kind.fresh(kind.log().slice(from)), `${kind.key} clean turn started another session`).toBe(false);
+    expect(cursorOf(sealed, kind.instanceId)).toBe(clean);
+    // the next seal: fresh again, never the session it held
+    expect((await seal(sealed)).sealed).toBe(2);
+    from = kind.log().length;
+    await converse(sealed, `SEALED_${kind.key} after the second seal`);
+    const again = kind.log().slice(from);
+    expect(kind.resumed(again), `${kind.key} resumed below the seal`).toBe(false);
+    expect(again.join("\n")).not.toContain(clean);
+    expect(kind.fresh(again)).toBe(true);
   }, 180_000);
 });
 
@@ -834,5 +908,335 @@ posixOnly("a session that starts after the release is carried by the real sessio
     expect(sessionCarryParents().filter((thread) => thread === task).length).toBe(before);
     await waitUntil(() => isIdle(bot), "the turn to settle", 60_000);
     await waitUntil(() => sessionCarryParents().filter((thread) => thread === task).length > before, "the session.started fold to persist the reads onto the session", 15_000);
+    // (f) the release came before the first session.started: that session started at the old generation, so it is below the seal
+    expect(taskOnDisk(bot).sealGeneration).toBe(1);
+    await waitUntil(() => taskOnDisk(bot)?.resumeSeals?.lateInit !== undefined, "the session to be saved with its start", 15_000);
+    expect(taskOnDisk(bot).resumeSeals.lateInit.generation).toBe(0);
+    const held = taskOnDisk(bot).resumeCursors.lateInit as string;
+    const next = await turn(bot, "AFTER_LATE_RECALL carry on");
+    expect(resumed(next.argv)).toBe(false);
+    expect(sessionOf(next.argv)).not.toBe(held);
+    expect(next.prompt).toContain(RESTARTED);
+  }, 240_000);
+});
+
+posixOnly("a session bound to the seal it started under (THREAD-SEAL 3.3 to 3.5)", () => {
+  beforeAll(async () => {
+    fixture = await launchVerificationServer({}, undefined, { instrumentationSource: instrumentation });
+    await authenticate();
+  }, 120_000);
+  afterAll(async () => { await ask({ lockFolds: false }).catch(() => undefined); await fixture?.close(); });
+
+  const finish = (pid: number) => writeFileSync(join(fixture.fixtureFinishGateDir, String(pid)), "finish");
+  const restart = async () => { await fixture.restart(); await authenticate(); };
+  const interrupt = (bot: Bot) => call("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId });
+  const entryOf = (bot: Bot, instanceId: string) => taskOnDisk(bot)?.resumeSeals?.[instanceId] as { cursor: string; generation: number } | undefined;
+  /** A sealed thread whose first clean turn ran: a bound session at the current seal. */
+  async function sealedClean(instanceId: string, name: string) {
+    const bot = await createBot(instanceId, name);
+    await seal(bot);
+    const saw = await turn(bot, `CLEAN_${name} remember the word PELICAN_${name.replace(/\W/g, "")}`);
+    expect(resumed(saw.argv)).toBe(false);
+    await bound(bot, instanceId);
+    await sleep(400);
+    return { bot, started: sessionOf(saw.argv) };
+  }
+  /** A release inside a running turn: the seal lands while the turn is held, as a recall's would. */
+  async function releaseDuringTurn(bot: Bot) {
+    const tag = mark("RELEASE_HOLD");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `Hold on. __fixture_hold_authority__ ${tag}`, threadId: bot.threadId })).status).toBe(202);
+    const saw = await engineSaw(tag);
+    await seal(bot);
+    finish(saw.pid);
+    await waitUntil(() => isIdle(bot), "the releasing turn to settle");
+    return saw;
+  }
+  /** Sends a turn and leaves it inside the MCP gate: the session may have started, nothing has been written to it yet. */
+  async function intoGate(bot: Bot, text: string) {
+    const tag = mark("GATE");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `${text} ${tag}`, threadId: bot.threadId })).status).toBe(202);
+    await sleep(1_000);
+    return tag;
+  }
+  const why = (bot: Bot) => `${JSON.stringify(taskOnDisk(bot))} LOG ${serverLog().split("\n").filter((line) => line.includes(bot.threadId)).slice(-14).join(" || ")}`;
+  const settled = async (bot: Bot) => { await waitUntil(() => isIdle(bot), "the turn to settle", 60_000); await sleep(400); };
+
+  it.each(["verification", "early"])("(a, b, c, q) %s: release, fresh, resume, release, fresh, resume, in both arrival orders", async (instanceId) => {
+    const bot = await createBot(instanceId, `chain ${instanceId}`);
+    const first = await releaseDuringTurn(bot);
+    const second = await turn(bot, "CHAIN_2 go on");
+    expect(resumed(second.argv)).toBe(false);
+    expect(sessionOf(second.argv)).not.toBe(sessionOf(first.argv));
+    expect(second.prompt).toContain(RESTARTED);
+    await bound(bot, instanceId);
+    expect(entryOf(bot, instanceId)).toEqual({ cursor: sessionOf(second.argv), generation: 1 });
+    const third = await releaseDuringTurn(bot);
+    expect(sessionOf(third.argv)).toBe(sessionOf(second.argv));
+    await sleep(400);
+    expect(entryOf(bot, instanceId)?.generation).toBe(1);
+    const fourth = await turn(bot, "CHAIN_4 go on");
+    expect(resumed(fourth.argv)).toBe(false);
+    expect(sessionOf(fourth.argv)).not.toBe(sessionOf(second.argv));
+    expect(fourth.prompt).toContain(RESTARTED);
+    await bound(bot, instanceId);
+    expect(entryOf(bot, instanceId)).toEqual({ cursor: sessionOf(fourth.argv), generation: 2 });
+    const fifth = await turn(bot, "CHAIN_5 go on");
+    expect(sessionOf(fifth.argv)).toBe(sessionOf(fourth.argv));
+  }, 180_000);
+
+  it("(q) a held prewarm init on an unsealed thread binds at acceptance", async () => {
+    const bot = await createBot("earlyWarm", "held prewarm");
+    const first = await turn(bot, "HELD_1 hello");
+    await bound(bot, "earlyWarm");
+    await sleep(2_500); // the (shortened) activity window lets the idle engine go, so a warm has something to start
+    const warmed = await call("POST", `/api/bots/${bot.id}/warm`, { threadId: bot.threadId });
+    expect(warmed.body.started, warmed.text).toBe(true);
+    await sleep(1_000);
+    const second = await turn(bot, "HELD_2 hello");
+    expect(sessionOf(second.argv)).toBe(sessionOf(first.argv));
+    await sleep(600);
+    expect(entryOf(bot, "earlyWarm")).toEqual({ cursor: sessionOf(first.argv), generation: 0 });
+  }, 90_000);
+
+  it("(d, l) a server restart keeps the session resumable; audience, contract, engine and rewind still decide on a clean generation", async () => {
+    const { bot, started } = await sealedClean("verification", "restarted");
+    await restart();
+    const after = await turn(bot, "AFTER_RESTART go on");
+    expect(resumed(after.argv), why(bot)).toBe(true);
+    expect(sessionOf(after.argv)).toBe(started);
+    expect(after.prompt).not.toContain(RESTARTED);
+    await sleep(600);
+    // the audience moves
+    await fixture.stop();
+    editDisk((rows) => { taskRow(rows, bot).resumeAudiences = { verification: "a-different-audience" }; });
+    await restart();
+    const moved = await turn(bot, "AUDIENCE_CLEAN go on");
+    expect(resumed(moved.argv)).toBe(false);
+    await bound(bot);
+    await sleep(600);
+    // the contract moves
+    await fixture.stop();
+    editDisk((rows) => { delete taskRow(rows, bot).resumeContracts; });
+    await restart();
+    const contract = await turn(bot, "CONTRACT_CLEAN go on");
+    expect(resumed(contract.argv)).toBe(false);
+    expect(contract.prompt).toContain(RESTARTED);
+    await bound(bot);
+    // an edit: a rewound session is never continued
+    const mine = (await botView(bot)).messages.find((m: any) => m.role === "user" && m.kind === "text" && String(m.text).includes("AUDIENCE_CLEAN"));
+    const tag = mark("EDITED");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages/${mine.id}/edit`, { text: `EDITED clean ${tag}` })).status).toBe(202);
+    const rewound = await engineSaw(tag);
+    await waitUntil(() => isIdle(bot), "the edit to settle");
+    expect(resumed(rewound.argv)).toBe(false);
+    expect(rewound.prompt).toContain(REWOUND);
+    await sleep(800);
+    // the engine moves
+    const model = (await call("GET", "/api/instances")).body.instances.find((entry: any) => entry.instanceId === "second").models.options[0].id;
+    expect((await call("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: "second", model }, computer: "off" })).status).toBe(200);
+    const switched = await turn(bot, "ENGINE_CLEAN go on");
+    expect(resumed(switched.argv)).toBe(false);
+    expect(switched.prompt).toContain(SWITCHED);
+  }, 240_000);
+
+  it("(e) a steer written before the release, answered by a second init in the same process: the start stays, the next turn is fresh", async () => {
+    const bot = await createBot("finalSteer", "follow up");
+    const tag = mark("FOLLOWUP");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `The turn ${tag}`, threadId: bot.threadId })).status).toBe(202);
+    const saw = await engineSaw(tag);
+    const sent = await call("POST", `/api/bots/${bot.id}/messages`, { text: "the line before it", threadId: bot.threadId });
+    expect(sent.status, sent.text).toBe(202);
+    expect(sent.body.steered).toBe(true);
+    // the final answer holds on (FAKE_CLAUDE_FINAL_STEERS 2, or 3 s): the release lands after the write and before the follow-up's init
+    await seal(bot);
+    await settled(bot);
+    expect((await botView(bot)).messages.some((m: any) => m.role === "bot" && String(m.text).includes("reply to: the line before it"))).toBe(true);
+    expect(entryOf(bot, "finalSteer")).toEqual({ cursor: sessionOf(saw.argv), generation: 0 });
+    const next = await turn(bot, "AFTER_FOLLOWUP go on");
+    expect(resumed(next.argv)).toBe(false);
+    expect(sessionOf(next.argv)).not.toBe(sessionOf(saw.argv));
+  }, 120_000);
+
+  it("(g) a fold retried after a locked database keeps the stored start, and the next turn resumes", async () => {
+    const bot = await createBot("verification", "locked fold");
+    await seal(bot);
+    await ask({ lockFolds: true });
+    const tag = mark("LOCKED");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `A locked fold ${tag}`, threadId: bot.threadId })).status).toBe(202);
+    const saw = await engineSaw(tag);
+    await sleep(500);
+    expect(taskOnDisk(bot).resumeCursors?.verification).toBeUndefined();
+    await ask({ lockFolds: false });
+    await settled(bot);
+    await bound(bot);
+    expect(entryOf(bot, "verification")).toEqual({ cursor: sessionOf(saw.argv), generation: 1 });
+    expect(sessionOf((await turn(bot, "AFTER_LOCK go on")).argv)).toBe(sessionOf(saw.argv));
+  }, 120_000);
+
+  const savesOf = (session: string) => (existsSync(file("cursor-saves.jsonl")) ? readFileSync(file("cursor-saves.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { cursor: string; sealStart: number | null }) : []).filter((save) => save.cursor === session);
+  /** Session A starts at seal 0 and its session.started cannot fold; the release lands; Stop ends the turn. Its fold is still waiting for the database. */
+  async function stoppedWithFoldWaiting(bot: Bot) {
+    await ask({ lockFolds: true });
+    const tag = mark("R2A");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `Hold on. __fixture_hold_authority__ ${tag}`, threadId: bot.threadId })).status).toBe(202);
+    const sessionA = sessionOf((await engineSaw(tag)).argv);
+    await seal(bot);
+    expect((await interrupt(bot)).status).toBe(200);
+    await waitUntil(() => isIdle(bot), "the stop to settle", 30_000);
+    return sessionA;
+  }
+
+  it("(g, the r2 sequence) the old session's start retried before the successor's acceptance saves unbound, and never resumes", async () => {
+    const bot = await createBot("gatedLong", "r2 before");
+    const sessionA = await stoppedWithFoldWaiting(bot);
+    const tag = await intoGate(bot, "The successor, in its gate");
+    await ask({ lockFolds: false });
+    await waitUntil(() => savesOf(sessionA).length > 0, "the retried fold", 4_000);
+    expect(savesOf(sessionA).every((save) => save.sealStart === null), JSON.stringify(savesOf(sessionA))).toBe(true);
+    await sleep(400);
+    expect(entryOf(bot, "gatedLong")?.cursor).not.toBe(sessionA);
+    const saw = await engineSaw(tag);
+    await settled(bot);
+    expect(sessionOf(saw.argv)).not.toBe(sessionA);
+    const next = await turn(bot, "AFTER_R2 go on");
+    expect(sessionOf(next.argv)).not.toBe(sessionA);
+    expect(savesOf(sessionA).every((save) => save.sealStart === null)).toBe(true);
+  }, 120_000);
+
+  it("(g, the r2 sequence) retried after the successor's acceptance it saves unbound too", async () => {
+    const bot = await createBot("verification", "r2 after");
+    const sessionA = await stoppedWithFoldWaiting(bot);
+    const successor = mark("R2B");
+    rmSync(fixture.fixtureDumpPath, { force: true });
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, { text: `The successor ${successor}`, threadId: bot.threadId })).status).toBe(202);
+    const sessionB = sessionOf((await engineSaw(successor)).argv);
+    await ask({ lockFolds: false });
+    await settled(bot);
+    await bound(bot);
+    expect(savesOf(sessionA).length).toBeGreaterThan(0);
+    expect(savesOf(sessionA).every((save) => save.sealStart === null), JSON.stringify(savesOf(sessionA))).toBe(true);
+    expect(entryOf(bot, "verification")).toEqual({ cursor: sessionB, generation: 1 });
+  }, 120_000);
+
+  it("(g) the successor dies before its own init: the retried cursor stays tainted", async () => {
+    const bot = await createBot("gatedLong", "r2 dies");
+    const sessionA = await stoppedWithFoldWaiting(bot);
+    await intoGate(bot, "A successor that never writes");
+    await ask({ lockFolds: false });
+    await waitUntil(() => savesOf(sessionA).length > 0, "the retried fold", 4_000);
+    await interrupt(bot);
+    await settled(bot);
+    await waitUntil(() => taskOnDisk(bot)?.resumeCursors?.gatedLong === sessionA, "the retried cursor on disk", 5_000);
+    expect(entryOf(bot, "gatedLong")).toBeUndefined();
+    const next = await turn(bot, "AFTER_DEATH go on");
+    expect(resumed(next.argv)).toBe(false);
+    expect(sessionOf(next.argv)).not.toBe(sessionA);
+  }, 120_000);
+
+  it("(h) a kept process that announces nothing on its next turn: no release resumes, a release there makes the next fresh", async () => {
+    const { bot, started } = await sealedClean("noReinit", "kept");
+    const second = await turn(bot, "KEPT_2 go on");
+    expect(sessionOf(second.argv)).toBe(started);
+    const third = await releaseDuringTurn(bot);
+    expect(sessionOf(third.argv)).toBe(started);
+    await sleep(400);
+    expect(entryOf(bot, "noReinit")).toEqual({ cursor: started, generation: 1 });
+    const fourth = await turn(bot, "KEPT_4 go on");
+    expect(resumed(fourth.argv)).toBe(false);
+    expect(sessionOf(fourth.argv)).not.toBe(started);
+  }, 120_000);
+
+  it("(o) a seal between the dispatch decision and the write refuses the resume, memory active and memory off", async () => {
+    for (const mode of ["active", "off"]) {
+      if (mode === "off") expect((await call("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
+      try {
+        const { bot, started } = await sealedClean("gated", `fence ${mode}`);
+        await restart();
+        const tag = await intoGate(bot, "Between the decision and the write");
+        await seal(bot);
+        const saw = await engineSaw(tag);
+        await settled(bot);
+        expect(resumed(saw.argv), mode).toBe(false);
+        expect(sessionOf(saw.argv)).not.toBe(started);
+      } finally {
+        if (mode === "off") expect((await call("POST", "/api/memory/action", { action: "configure", mode: "active" })).status).toBe(200);
+      }
+    }
+  }, 240_000);
+
+  it("(o) a clean pair replacing the store slot does not authorize the older cursor this dispatch snapshotted", async () => {
+    const { bot, started } = await sealedClean("gated", "slot");
+    await restart();
+    const tag = await intoGate(bot, "A slot replaced under the dispatch");
+    const raised = (await seal(bot)).sealed as number;
+    await ask({ pair: [bot.id, "gated", "a-clean-pair", bot.threadId, undefined, undefined, false, undefined, raised] });
+    const saw = await engineSaw(tag);
+    await settled(bot);
+    expect(sessionOf(saw.argv)).not.toBe(started);
+  }, 120_000);
+
+  it("(r) a resumed spawn whose init arrives during the MCP gate keeps its entry, passes the fence, and writes the prompt", async () => {
+    const { bot, started } = await sealedClean("earlyGated", "gate init");
+    await restart();
+    const saw = await turn(bot, "INIT_IN_GATE go on");
+    expect(resumed(saw.argv), why(bot)).toBe(true);
+    expect(sessionOf(saw.argv)).toBe(started);
+    expect(saw.prompt).not.toContain(RESTARTED);
+    await sleep(600);
+    expect(entryOf(bot, "earlyGated")).toEqual({ cursor: started, generation: 1 });
+  }, 120_000);
+
+  it("(s) a resume reporting another id before the last fence refuses once and rebuilds fresh; reported after the write, the new id carries the start", async () => {
+    const before = await sealedClean("newIdGated", "other id");
+    await restart();
+    const saw = await turn(before.bot, "OTHER_ID go on");
+    expect(resumed(saw.argv)).toBe(false);
+    expect(sessionOf(saw.argv)).not.toBe(before.started);
+    const after = await sealedClean("newIdLate", "other id late");
+    await restart();
+    const resumedAs = await turn(after.bot, "OTHER_ID_LATE go on");
+    expect(sessionOf(resumedAs.argv)).toBe(after.started);
+    await settled(after.bot);
+    expect(entryOf(after.bot, "newIdLate")).toEqual({ cursor: "reported-other-id", generation: 1 });
+  }, 180_000);
+
+  it("(t) a cancelled dispatch establishes no new binding: a fresh session stays unbound, a resumed one keeps its entry, below the seal if it released", async () => {
+    // a fresh session
+    const bot = await createBot("earlyGated", "cancelled fresh");
+    await seal(bot);
+    await intoGate(bot, "Cancelled before the write");
+    await waitUntil(() => taskOnDisk(bot)?.resumeCursors?.earlyGated, "the early session to fold", 10_000);
+    await interrupt(bot);
+    await settled(bot);
+    expect(entryOf(bot, "earlyGated")).toBeUndefined();
+    const held = taskOnDisk(bot).resumeCursors.earlyGated as string;
+    const next = await turn(bot, "AFTER_CANCEL go on");
+    expect(resumed(next.argv)).toBe(false);
+    expect(sessionOf(next.argv)).not.toBe(held);
+    // a resumed session, no release: it keeps its entry and resumes
+    const kept = await sealedClean("earlyGated", "cancelled resume");
+    await restart();
+    await intoGate(kept.bot, "Cancelled resume");
+    await interrupt(kept.bot);
+    await settled(kept.bot);
+    expect(entryOf(kept.bot, "earlyGated")).toEqual({ cursor: kept.started, generation: 1 });
+    expect(sessionOf((await turn(kept.bot, "AFTER_KEPT go on")).argv)).toBe(kept.started);
+    // a resumed session that released before the cancel: its entry is below the seal
+    const released = await sealedClean("earlyGated", "cancelled release");
+    await restart();
+    await intoGate(released.bot, "Cancelled after a release");
+    await seal(released.bot);
+    await interrupt(released.bot);
+    await settled(released.bot);
+    expect(entryOf(released.bot, "earlyGated"), why(released.bot)).toEqual({ cursor: released.started, generation: 1 });
+    const after = await turn(released.bot, "AFTER_RELEASED go on");
+    expect(resumed(after.argv)).toBe(false);
+    expect(sessionOf(after.argv)).not.toBe(released.started);
   }, 240_000);
 });

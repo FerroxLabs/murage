@@ -724,6 +724,7 @@ jobs:
           pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -935,6 +936,8 @@ jobs:
           set -euo pipefail
           node scripts/stage-memory-model.mjs --target linux-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
       - name: Package with the frozen GEPA manifest
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           export MURAGE_REQUIRE_BUNDLED_MODEL=1
@@ -1181,7 +1184,7 @@ jobs:
       - name: Diff the capability database against the previous release
         # CAPABILITY-DB-1010 section 5: added, retired, status and fact changes
         # for the MurageSite note. Fails when an id from the previous export is
-        # neither an entry nor retired. The 1.0.10 bootstrap has no previous
+        # neither an entry nor retired. The 1.0.11 bootstrap has no previous
         # export and reports every entry as added. The diff goes to the job
         # summary and its own artifact, never into the asset directory.
         env:
@@ -1198,8 +1201,8 @@ jobs:
           if [ -n "$url" ]; then
             curl -fsSL --retry 3 "$url" -o "$previous"
           else
-            # Bootstrap: 1.0.10 is the first release with an export. A later release with none is a broken baseline.
-            case "$VERSION" in 1.0.10) echo "no previous capability export: bootstrap diff" ;; *) echo "::error::the previous release has no capability export"; exit 1 ;; esac
+            # Bootstrap: 1.0.11 is the first release with an export. A later release with none is a broken baseline.
+            case "$VERSION" in 1.0.11) echo "no previous capability export: bootstrap diff" ;; *) echo "::error::the previous release has no capability export"; exit 1 ;; esac
           fi
           node scripts/build-capability-db.mjs --diff "$previous" --current "assets/capability-db-$VERSION.json" --diff-out "$RUNNER_TEMP/capability-db-diff.md"
           cat "$RUNNER_TEMP/capability-db-diff.md" >> "$GITHUB_STEP_SUMMARY"
