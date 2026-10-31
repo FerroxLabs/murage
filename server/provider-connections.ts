@@ -8,6 +8,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { resolveModelLabel } from "../shared/model-label.ts";
 import type { ProviderCatalog, ProviderCatalogError, ProviderConnectionRecord, ProviderModel, ProviderPreset, PublicProviderConnection } from "../shared/provider-connections.ts";
 import type { SignInConnectionInfo } from "../shared/model-signin.ts";
+import { fluxUsageHeaders, isFluxHost } from "./flux-usage-tags.ts";
 
 /** Endpoint facts for any preset, pasted-key or plan sign-in. */
 export function presetInfo(preset: ProviderPreset) {
@@ -204,6 +205,7 @@ export class ProviderConnectionsService {
     let headers:Record<string,string>,secret=connection.key;
     if(isSignInPreset(connection.preset)){const bearer=this.options.signIns?.bearer(id);if(!bearer)throw new CatalogFailure("needs-sign-in");secret=bearer.accessToken;headers={authorization:`Bearer ${bearer.accessToken}`,accept:"application/json",...(connection.preset==="chatgpt"?{...CHATGPT_IDENTITY_HEADERS,...(bearer.accountId?{"chatgpt-account-id":bearer.accountId}:{})}:{})};}
     else headers=connection.preset==="anthropic"?{"x-api-key":connection.key,"anthropic-version":"2023-06-01"}:{authorization:`Bearer ${connection.key}`};
+    if(isFluxHost(url))headers={...headers,...fluxUsageHeaders({feature:"other"})};
     const response=await this.fetcher(url.toString(),{headers,signal:controllerSignal,redirect:"error"});active();
     if(!response.ok){void response.body?.cancel();throw new CatalogFailure(response.status===401?isSignInPreset(connection.preset)?"needs-sign-in":"unauthorized":response.status===403?"forbidden":response.status===429?"rate-limited":"unavailable");}
     if(Number(response.headers.get("content-length")??0)>MAX_BYTES||!response.body){void response.body?.cancel();throw new CatalogFailure("invalid-catalog");}

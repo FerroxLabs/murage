@@ -135,10 +135,10 @@ describe("T5 answer and its retry (5.4)", () => {
   it("first device wins; the other gets answered_elsewhere; the winner's retry returns the same session (F16)", () => {
     const db = fresh(); const { fx, log } = recorder();
     const id = ringing(db, fx);
-    const first = answerCall(db, id, "phone:p1", fx, T0 + 100);
+    const first = answerCall(db, id, "phone:p1", fx, T0 + 100, "desktop");
     expect(first.status).toBe(200);
-    expect(answerCall(db, id, "desktop:d1", fx, T0 + 300)).toEqual({ status: 409, error: "answered_elsewhere" });
-    const retry = answerCall(db, id, "phone:p1", fx, T0 + 400);
+    expect(answerCall(db, id, "desktop:d1", fx, T0 + 300, "desktop")).toEqual({ status: 409, error: "answered_elsewhere" });
+    const retry = answerCall(db, id, "phone:p1", fx, T0 + 400, "desktop");
     expect(retry.status === 200 && first.status === 200 && retry.callId === first.callId).toBe(true);
     expect(log.filter(e => e[0] === "resolve")).toEqual([["resolve", id, "answered"]]);
     expect(getIntent(db, id)).toMatchObject({ state: "live", answeredOn: "phone:p1", activeSlot: true });
@@ -146,19 +146,19 @@ describe("T5 answer and its retry (5.4)", () => {
   it("an answer after the deadline is 409 expired and runs T7 (F17)", () => {
     const db = fresh(); const { fx, log } = recorder();
     const id = ringing(db, fx);
-    expect(answerCall(db, id, "phone:p1", fx, T0 + 47_000)).toEqual({ status: 409, error: "expired" });
+    expect(answerCall(db, id, "phone:p1", fx, T0 + 47_000, "desktop")).toEqual({ status: 409, error: "expired" });
     expect(getIntent(db, id)).toMatchObject({ state: "done", outcome: "missed", activeSlot: false });
     expect(log.slice(1)).toEqual([["resolve", id, "missed"], ["card", id, "missed"], ["note", id]]);
   });
   it("the winner's retry after the session ended, or went silent, is 410 (F18)", () => {
     const db = fresh(); const { fx } = recorder();
     const id = ringing(db, fx);
-    const won = answerCall(db, id, "phone:p1", fx, T0 + 100);
+    const won = answerCall(db, id, "phone:p1", fx, T0 + 100, "desktop");
     if (won.status !== 200) throw new Error("no answer");
-    expect(answerCall(db, id, "phone:p1", fx, T0 + 100 + 61_000)).toEqual({ status: 410, error: "gone" });
+    expect(answerCall(db, id, "phone:p1", fx, T0 + 100 + 61_000, "desktop")).toEqual({ status: 410, error: "gone" });
     expect(getSession(db, won.callId)).toMatchObject({ endedBy: "lost" });
     expect(getIntent(db, id)).toMatchObject({ state: "done", outcome: "answered", activeSlot: false });
-    expect(answerCall(db, id, "phone:p1", fx, T0 + 200_000)).toEqual({ status: 410, error: "gone" });
+    expect(answerCall(db, id, "phone:p1", fx, T0 + 200_000, "desktop")).toEqual({ status: 410, error: "gone" });
   });
 });
 
@@ -179,7 +179,7 @@ describe("T6, T7, T8 (5.4)", () => {
   it("T8: the intent follows its session; lost reads The call dropped on the card (F30, F32, F36)", () => {
     const db = fresh(); const { fx } = recorder();
     const id = ringing(db, fx);
-    const won = answerCall(db, id, "desktop:d1", fx, T0 + 1);
+    const won = answerCall(db, id, "desktop:d1", fx, T0 + 1, "desktop");
     if (won.status !== 200) throw new Error("no answer");
     expect(touchSession(db, won.callId, fx, T0 + 50_000)).toBe("live");
     expect(sweepSessions(db, fx, T0 + 100_000)).toEqual([]);
@@ -190,7 +190,7 @@ describe("T6, T7, T8 (5.4)", () => {
   it("the end route closes a call once, and its intent runs T8", () => {
     const db = fresh(); const { fx } = recorder();
     const id = ringing(db, fx);
-    const won = answerCall(db, id, "desktop:d1", fx, T0 + 1);
+    const won = answerCall(db, id, "desktop:d1", fx, T0 + 1, "desktop");
     if (won.status !== 200) throw new Error("no answer");
     expect(endSession(db, won.callId, "closed", fx, T0 + 120_000 - 1)).toEqual({ ended: true, intentId: id });
     expect(endSession(db, won.callId, "closed", fx, T0 + 120_000)).toEqual({ ended: false, intentId: id });
@@ -199,14 +199,14 @@ describe("T6, T7, T8 (5.4)", () => {
   });
   it("a request after 60 s of silence never revives the call (F59)", () => {
     const db = fresh(); const { fx } = recorder();
-    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1" }, fx, T0);
+    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1", principal: "desktop" }, fx, T0);
     expect(touchSession(db, s.callId, fx, T0 + 60_001)).toBe("ended");
     expect(getSession(db, s.callId)).toMatchObject({ endedBy: "lost" });
     expect(touchSession(db, s.callId, fx, T0 + 60_002)).toBe("ended");
   });
   it("the backstop ends a call that keeps talking for 4 h", () => {
     const db = fresh(); const { fx } = recorder();
-    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1" }, fx, T0);
+    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1", principal: "desktop" }, fx, T0);
     for (let t = T0; t < T0 + 4 * 3600_000; t += 30_000) touchSession(db, s.callId, fx, t);
     expect(sweepSessions(db, fx, T0 + 4 * 3600_000)).toEqual([s.callId]);
     expect(getSession(db, s.callId)).toMatchObject({ endedBy: "backstop" });
@@ -214,7 +214,7 @@ describe("T6, T7, T8 (5.4)", () => {
   it("opening an ordinary call while an intent rings ends the ring as text_instead; while live, new intents text", () => {
     const db = fresh(); const { fx } = recorder();
     const id = ringing(db, fx);
-    const s = openOwnerSession(db, { botId: "scout", threadId: "t2", device: "desktop:d1" }, fx, T0 + 5);
+    const s = openOwnerSession(db, { botId: "scout", threadId: "t2", device: "desktop:d1", principal: "desktop" }, fx, T0 + 5);
     expect(s.endedRing).toBe(id);
     expect(getIntent(db, id)).toMatchObject({ state: "done", outcome: "text_instead" });
     expect(getIntent(db, id)!.receipt.stop).toBe("another_call");
@@ -226,8 +226,8 @@ describe("T6, T7, T8 (5.4)", () => {
 describe("T9 cancelBotCalls (5.6)", () => {
   it("Stop ends every live session of the bot, ordinary calls included, and drops the bot's notes (F20, F22)", () => {
     const db = fresh(); const { fx, log } = recorder();
-    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1" }, fx, T0);
-    const other = openOwnerSession(db, { botId: "atlas", threadId: "t9", device: "desktop:d1" }, fx, T0);
+    const s = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1", principal: "desktop" }, fx, T0);
+    const other = openOwnerSession(db, { botId: "atlas", threadId: "t9", device: "desktop:d1", principal: "desktop" }, fx, T0);
     const r = rule(db);
     const w = admitIntent(db, fact(r, "w"), T0)!;
     applyInitial(db, w, 0, { to: "waiting", deadlineAt: T0 + 600_000, steps: [] }, fx, T0);
@@ -245,7 +245,7 @@ describe("T9 cancelBotCalls (5.6)", () => {
     const db = fresh(); const { fx } = recorder();
     const r = rule(db);
     const id = ringing(db, fx, "a", "scout", r);
-    const won = answerCall(db, id, "phone:p1", fx, T0 + 1);
+    const won = answerCall(db, id, "phone:p1", fx, T0 + 1, "desktop");
     if (won.status !== 200) throw new Error("no answer");
     const p = admitIntent(db, fact(r, "p"), T0)!;
     expect(cancelBotCalls(db, { rule: r }, "rule_off", fx, T0 + 2)).toEqual({ intents: [p], callIds: [] });
@@ -333,8 +333,8 @@ describe("boot reconcile (5.8)", () => {
   });
   it("gives open sessions 60 s of grace: back in time continues, gone ends lost (F33)", () => {
     const db = fresh(); const { fx } = recorder();
-    const back = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1" }, fx, T0);
-    const gone = openOwnerSession(db, { botId: "atlas", threadId: "t2", device: "phone:p1" }, fx, T0);
+    const back = openOwnerSession(db, { botId: "scout", threadId: "t1", device: "desktop:d1", principal: "desktop" }, fx, T0);
+    const gone = openOwnerSession(db, { botId: "atlas", threadId: "t2", device: "phone:p1", principal: "desktop" }, fx, T0);
     const boot = T0 + 10 * 60_000;
     bootReconcile(db, { fx, threadRunning: () => false, match: () => [] }, boot);
     expect(callIsLive(db, boot + 30_000)).toBe(true);

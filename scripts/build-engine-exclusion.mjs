@@ -57,7 +57,7 @@ export function buildEngineExclusion({platform=process.platform,exec=execFileSyn
     {source,target:"/source/exclusion.c",readOnly:true},
     {source:path.resolve(headerDirectory),target:"/headers",readOnly:true},
     {source:path.resolve(directory),target:"/work"},
-   ],command:["/bin/bash","-c",ENGINE_EXCLUSION_BUILD_SCRIPT]}),{timeout:20*60*1000,stdio:"inherit"});
+   ],command:["/bin/bash","-c",ENGINE_EXCLUSION_BUILD_SCRIPT]}),{timeout:40*60*1000,stdio:"inherit"});
    verifyGlibcFloor(String(exec("objdump",["-T",output],{encoding:"utf8",timeout:120000,maxBuffer:4*1024*1024})));
    verifyNeededLibraries(String(exec("readelf",["-d",output],{encoding:"utf8",timeout:120000})));
   }else if(platform==="win32"){

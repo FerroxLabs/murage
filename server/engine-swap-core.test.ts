@@ -408,6 +408,8 @@ describe("CF-5 history is fixed (I-24)", () => {
       "message-db.ts",
       "peer-approval.ts",
       "publish/publish-ops.ts",
+      // a routine run's own result card (ROUTINE-DELIVER-1010, stable id routineResultId(run.id)): a retry rewrites that card, never another row
+      "routine-delivery.ts",
       "routine-requests.ts",
       "steer-late.ts",
       "steer-queue.ts",

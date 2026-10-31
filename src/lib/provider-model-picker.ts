@@ -18,9 +18,10 @@ export interface PickerModel { key: string; selection: PickerSelection; label: s
   /** Local models only (spec V3): outcome of the last tool test. `failed` is
    *  marked; absent means this model was never tested. */
   localTools?: "pass" | "partial" | "failed";
-  /** Local models only: the engine never sends tools (openai-compat), so the
-   *  tools test does not limit this row — it chats whatever the test said. */
-  chatOnly?: true }
+  /** Local models only: the engine (openai-compat) lists this row whatever its
+   *  tools test said. It still sends tools; a model that refuses them is
+   *  remembered and answers in text, so the row always chats. */
+  anyModel?: true }
 /** The one name this feature has, everywhere (spec UX rule). Only a row that
  *  names its server belongs here: a custom row an engine carries for a cloud
  *  provider (Pi's groq rows, openai-compat's OpenRouter defaults) is not a
@@ -128,7 +129,7 @@ export function pickerModels(instance: PickerEngine, connections: readonly Publi
       if(instance.snapshot.authenticated===false&&!option.custom)continue;
       const selection={instanceId:instance.instanceId,model:option.id};
       const metadata=option as typeof option&{contextWindow?:number};
-      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="chat-only"?{chatOnly:true as const}:{})};
+      const row:PickerModel={key:pickerKey(selection),selection,label:resolveModelLabel(option.id,{catalogLabel:option.label}),group:option.localServer?LOCAL_MODELS_GROUP:option.custom?CUSTOM_MODELS_GROUP:"Engine models",provider:option.provider??option.localServer??instance.displayName,contextWindow:metadata.contextWindow,...(option.localServer?{localServer:option.localServer}:{}),...(option.localTools?{localTools:option.localTools}:{}),...(option.localServer&&localEngineSupport(instance.driverKind)==="any-model"?{anyModel:true as const}:{})};
       // A local model runs on this computer and costs nothing per token, so a
       // cloud price would be a lie about the user's own hardware — local rows
       // are left exactly as their server described them.
@@ -153,13 +154,13 @@ export function localPickerRows(rows: readonly PickerModel[]): PickerModel[] {
   return rows.filter((row) => row.group === LOCAL_MODELS_GROUP);
 }
 /** Whether the Local rail shows its "no local server" row for this engine.
- *  Only an engine the Local models section actually feeds (spec E1/E3: a
- *  `tools` driver, whose catalog carries a `localServer` row once a server is
- *  detected) can be told there is none. A chat-only driver is not primarily a
- *  local engine: grok never receives local rows and openai-compat only lists
- *  them as chat-only extras once a server exists — its Engines line already
- *  says "chat only (no tools)" — so the row would be a false nudge there; a
- *  driver with no local support at all (gemini, cursor) has no rail. */
+ *  Only a local engine (spec E1/E3: a `tools` driver, whose catalog carries a
+ *  `localServer` row once a server is detected) is told there is none.
+ *  openai-compat runs tools on local rows too, but it is the engine for an
+ *  endpoint the owner named, so its local rows are extras that appear once a
+ *  server exists and an "add one" row would be noise in every cloud picker.
+ *  Its Engines line already says it works with local models. A driver with
+ *  no local support at all (grok API, gemini, cursor) has no rail. */
 export function showNoLocalServerRow(engine: Pick<PickerEngine, "driverKind"> | null | undefined, rows: readonly PickerModel[]): boolean {
   if (!engine || localEngineSupport(engine.driverKind) !== "tools") return false;
   return localPickerRows(rows).length === 0;
@@ -242,8 +243,9 @@ export function pickerEmptyState(
 /** The picker's warning marker, in plain words. Empty when there is nothing to
  *  warn about — an untested model is not accused of anything. */
 export function localToolsWarning(row: PickerModel): string {
-  if (row.chatOnly) return "Chat only: this engine sends no tools, so it can chat with any model";
-  if (row.localTools === "failed") return "Tools test failed: chat only, not usable for bot work";
+  // openai-compat lists every local model and still sends it tools, so a
+  // failed test there says what still works rather than warning the row off.
+  if (row.localTools === "failed") return row.anyModel ? "Tools test failed: this model still chats here, and tools may not work" : "Tools test failed: chat only, not usable for bot work";
   if (row.localTools === "partial") return "Tools test passed with gaps. See Settings → Models";
   return "";
 }

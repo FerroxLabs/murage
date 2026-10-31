@@ -25,7 +25,7 @@ You cannot see images at all on this engine: say so and ask for a description ra
 Memory is off: you remember only this conversation. Do not claim to recall past chats and do not offer to remember anything for later.
 Murage did not set a working folder for this turn, so your engine has fallen back to wherever it starts by default. Check where you are before you write anything.
 A tool call can stop for the owner's approval. A refusal is a decision, not an obstacle: stop, say what was refused and why you needed it, and never route around it with another tool, another account, or a shell command.
-You have no way to look Murage's documentation up from here, so if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour."
+You cannot look Murage's documentation up from here. When Murage has checked facts for the owner's question, they come with the message as "Murage facts"; outside them, if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour."
 `;
 
 exports[`golden blocks > an engine bot with an image provider but no connected apps and memory off 1`] = `

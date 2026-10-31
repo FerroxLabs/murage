@@ -132,7 +132,7 @@ function withheldByType(policy: PhoneWithholdPolicy, event: RuntimeEvent): Runti
 const STRUCTURAL_STRING_KEYS: ReadonlySet<string> = new Set([
   "eventId", "provider", "providerInstanceId", "threadId", "turnId", "itemId", "requestId", "interjectionId", "sessionId", "id",
   "createdAt", "type", "kind", "itemType", "requestType", "streamKind", "status", "origin", "behavior", "source", "stopReason",
-  "approvalScope", "toolKind", "tool", "toolEngine", "mcpReadiness",
+  "approvalScope", "toolKind", "tool", "toolEngine", "mcpReadiness", "deniedBy",
 ]);
 /** `name` and `namespace` are structural only inside a tool identity (a tool's name, never display text). */
 const TOOL_IDENTITY_KEYS: ReadonlySet<string> = new Set(["name", "namespace", "kind"]);

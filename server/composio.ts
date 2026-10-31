@@ -2,6 +2,8 @@
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
 import { toolSlugsOf, withScopeHint, type ScopeRoute } from "./connector-scope-hint.ts";
+import { withForeignTimesNote } from "./connector-time-note.ts";
+import { ownerTimeZone } from "./owner-time-zone.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
 import {
   CONNECTED_APP_ACTION_TIMEOUT_MS,
@@ -81,6 +83,7 @@ import {
 import { handOverInitialTools } from "./connector-cache-harness.ts";
 import { INITIAL_GENERATION, INITIAL_TOOLS_ASK_HARNESS } from "./connector-cache.ts";
 import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBackend, type CatalogView } from "./app-catalog.ts";
+import { isFluxHost, setFluxUsageHeaders } from "./flux-usage-tags.ts";
 
 export interface ConnectedAccountSummary {
   id: string;
@@ -1146,6 +1149,8 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   // never be what unlocks the user's connected apps.
   headers.set("authorization", `Bearer ${broker.token}`);
   if (init?.body) headers.set("content-type", "application/json");
+  // a broker on Flux Router: the usage tags say what the call is for (flux-usage-tags.ts)
+  if (isFluxHost(broker.url)) setFluxUsageHeaders(headers, { feature: "other" });
   const response = await fetch(`${broker.url}${path}`, {
     ...init,
     headers,
@@ -1540,6 +1545,7 @@ async function relayMcpUpstream(
   }
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
+  if (isFluxHost(url)) setFluxUsageHeaders(headers, { feature: "other" });
   beforeDispatch?.();
   let response: Response;
   const body = JSON.stringify(payload);
@@ -1907,7 +1913,9 @@ export function scopeRouteFor(broker: BrokerKind | null): ScopeRoute {
 /** The reply with the missing-permission note added when the app refused for that reason; the very same reply otherwise. */
 function withScopeRefusalNote(op: ConnectedAppOperation, reply: RelayReply): RelayReply {
   const call = operationCalls.get(op);
-  const bytes = withScopeHint(reply.bytes, reply.contentType, toolSlugsOf(call?.name, call?.args), call?.route ?? "managed");
+  const scoped = withScopeHint(reply.bytes, reply.contentType, toolSlugsOf(call?.name, call?.args), call?.route ?? "managed");
+  // 1.0.8: times stamped in another zone than the owner's (a free/busy answer in UTC) get one line naming the owner's zone (connector-time-note.ts).
+  const bytes = withForeignTimesNote(scoped, reply.contentType, ownerTimeZone());
   return bytes === reply.bytes ? reply : { ...reply, bytes };
 }
 

@@ -256,7 +256,7 @@ it("r6-6: while the open-card list is still being built, the start reads nothing
   for (let at = 0; at < high; at += 1_000) dismissed += dismissStalePeerCards(busOf(store), { after: at, upTo: Math.min(high, at + 1_000) }) + dismissStaleHostConsentCards(busOf(store), { after: at, upTo: Math.min(high, at + 1_000) });
   expect(dismissed).toBe(2);
   expect(loaded(store, thread)).toBe(false);
-  expect(readMessage(thread, `${thread}-card-0`)?.card).toMatchObject({ answered: "deny", dismissed: true });
+  expect(readMessage(thread, `${thread}-card-0`)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
 });
 
 it("r6-6: the start between the two marks reads no transcript, and the other boot work is not repeated", () => {

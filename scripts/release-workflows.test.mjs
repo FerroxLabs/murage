@@ -757,7 +757,7 @@ describe("tests CI's shards leave out still run (nightly.yml)", () => {
 
   it("shard caps sit above the slowest expected shard, and a cancelled shard is never the plan", () => {
     expect(ci.jobs.vitest.strategy.matrix.vitest_shard).toContain("[1,2,3,4,5,6,7,8,9,10,11,12]");
-    expect(ci.jobs.vitest["timeout-minutes"]).toBe("${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 40 }}");
+    expect(ci.jobs.vitest["timeout-minutes"]).toBe("${{ matrix.os == 'windows-latest' && 60 || matrix.os == 'macos-latest' && 45 || 90 }}");
     expect(nightly.jobs.slow["timeout-minutes"]).toBeGreaterThanOrEqual(120);
   });
 });

@@ -1,0 +1,52 @@
+# Capability records: install and account. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: install-account.ubuntu-computer-control
+    name: Let a bot control this Ubuntu computer
+    status: can
+    questions:
+      - Can a bot control my Ubuntu desktop?
+      - Enable local control on Linux
+      - Computer use on Ubuntu with Wayland
+    answer: >
+      Yes, as a Beta on Ubuntu with an Xorg session. Open the Computer panel, press Enable local
+      control (Beta) and let the checks finish.
+    limits: >
+      Xorg only. On Wayland, sign out and choose Ubuntu on Xorg at the login screen. A session with
+      no display is not supported. OpenClaw and Antigravity bots do not get local control.
+    platforms: [linux]
+    engines: [fuigo, claude, codex, grok, cursor, kimi, droid, opencode, qwen, hermes, gemini, cline, pi, openai-compatible]
+    anchors:
+      - file:src/components/LinuxLocalControl.tsx#Enable local control (Beta)
+      - file:electron/capabilities.cjs#linux-wayland-seat-safety-blocked
+      - file:electron/capabilities.cjs#headless-session
+      - "file:server/drivers/acp/core.ts#localComputerMcp: !config.fullAuto && !support.ownTools"
+    verified: 1.0.10
+    doc: computers/local-computer#ubuntu
+    internal: CANNOT-ANSWERS-109 item e. Engines from localComputerMcp (claude, codex, openai-chat true; ACP and pi unless the instance is full-auto; antigravity and OpenClaw never). The help-index "host control temporarily disabled" line is stale for Xorg (fix/1010-copy rewrites it).
+
+  - id: install-account.policy-lock
+    name: Lock settings for staff across installs
+    status: cannot
+    questions:
+      - Can I lock my staff's Murage settings?
+      - Set one permission policy for every install in my company
+      - Is there an admin console for my team?
+      - Enforce a policy on all my staff's bots
+    answer: >
+      Not today. Each install has one owner, and each bot has its own permission level: Ask, Auto,
+      Full access or No limits. Full access and No limits are set only in the desktop app.
+    limits: >
+      There is no shared admin console or policy lock. Set each bot's level in its Bot settings under
+      Permissions.
+    ask_your_bot: Ask your bot to write a setup checklist your staff follow on their own installs.
+    settings_path: Bot settings → Permissions
+    platforms: [all]
+    engines: [all]
+    anchors:
+      - bot-settings:permissions
+      - 'file:src/components/BotPermissionDefault.tsx#mode: "unlimited", label: "No limits"'
+    verified: 1.0.10
+    doc: features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits
+    internal: KB install-account-86; CANNOT-ANSWERS-109 item 5.
+retired: []

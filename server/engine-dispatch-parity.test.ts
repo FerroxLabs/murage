@@ -17,7 +17,8 @@
 // launch, as the real CLI keeps it (the driver removes the file once it is
 // read). The 1.0.9 fake CLI began replaying it, and the golden was regenerated
 // then: only the four warm turns' systemPrompt moved, from null to their launch
-// turn's prompt; every other field is the base's.
+// turn's prompt; every other field is the base's. 1.0.10 (ROUTINE-DELIVER-1010): the routines line of the system prompt gained one
+// sentence on where a routine's results go; only that text moved.
 //
 // Regenerate on a base checkout with ENGINE_DISPATCH_WRITE=<file>.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -67,6 +68,8 @@ function normalizer(home: string, port: number) {
     .replace(/\d{1,2}:\d{2} (?:am|pm) \(\d{1,2}:\d{2}\)/g, "<clock>")
     // ...and the date, which moves every day
     .replace(/It is now [A-Za-z]+, \d{1,2} [A-Za-z]+ \d{4}/g, "It is now <date>")
+    // ...and the 14 dated days after it: a fixed-size line that rides the message, like the clock
+    .replace(/Coming days: (?:[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}, ){13}[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}\./g, "Coming days: <days>.")
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/g, "<iso>")
     .replace(/\b1[67]\d{11}\b/g, "<ms>")
     .replace(new RegExp(`\\b${port}\\b`, "g"), "<port>")

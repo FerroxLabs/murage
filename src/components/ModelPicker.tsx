@@ -267,7 +267,7 @@ export function ModelPicker({bot,threadId,className,contained=false,label,hideTr
   const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections]);const currentKey=pickerKey(bot.modelSelection);const ordered=useMemo(()=>orderedPickerModels(rows,query,prefs.favorites,prefs.recent,currentKey),[rows,query,prefs,currentKey]);
   // Spec V3: the Local rail is always answered for. No local server on this
   // computer is a state with a next step, not an absence the user has to notice.
-  // The "add one" row is a next step only for an engine the Local models section feeds (spec V3, "no dead ends"): never for the chat-only drivers (openai-compat, grok — they are not local engines; openai-compat lists local rows only as chat-only extras), never for gemini/cursor/…, and never while the engine is still loading.
+  // The "add one" row is a next step only for a local engine (spec V3, "no dead ends"): never for openai-compat (an endpoint the owner named; its local rows, tools included, are extras once a server exists), never for the grok API, gemini, cursor and the like, and never while the engine is still loading.
 const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows]);
   const signInNote=useMemo(()=>signInPickerNote(engine?.driverKind,connections,bot.modelSelection.connectionId),[engine,connections,bot.modelSelection.connectionId]);
   // Spec V3 again, for the state that had no next step at all: nothing set up.

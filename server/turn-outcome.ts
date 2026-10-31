@@ -46,3 +46,12 @@ export const TURN_STOPPED_DESKTOP_ACTION_NOTE = STOPPED_MID_DESKTOP_ACTION;
  * Routines, memory turns and team goals have always had one of these; a 1:1
  * turn had nothing, so the thread just ended on the person's message (F7). */
 export const TURN_INTERRUPTED_NOTE = "Murage closed while this was running, so there is no answer. Send it again when you want one.";
+
+/** The host-stop reason (shared/host-stop.ts, read as "Stopped: <reason>") for a turn the ENGINE ended right after a
+ * permission ask was denied (turn.completed `deniedBy`). Nobody pressed Stop, so "Stopped by you" would be untrue;
+ * this says what happened and how to carry on. */
+export function deniedTurnStopReason(deniedBy: "user" | "timeout" | "system"): string {
+  if (deniedBy === "timeout") return "a request went unanswered, so the engine ended the turn. Send a message to carry on.";
+  if (deniedBy === "user") return "the engine ended the turn after the request was declined. Send a message to carry on.";
+  return "the engine ended the turn after a request could not be answered. Send a message to carry on.";
+}

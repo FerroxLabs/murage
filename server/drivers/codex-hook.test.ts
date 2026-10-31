@@ -718,14 +718,15 @@ describe("T86 and T103: a Codex delivery as a decision", () => {
 
   it("reads apply_patch destinations from the headers and allows only in-project, non-sensitive ones", () => {
     const patch = (...body: string[]) => ["*** Begin Patch", ...body, "*** End Patch"].join("\n");
-    const inside = patch("*** Add File: notes/a.md", "+hello", "*** Update File: src/b.ts", "@@", "-x", "+y", "*** Move to: src/c.ts");
+    const inside = patch("*** Add File: notes/a.md", "+hello", "*** Update File: src/b.ts", "*** Move to: src/c.ts", "@@", "-x", "+y");
     expect(parseApplyPatch(inside)?.destinations).toEqual(["notes/a.md", "src/b.ts", "src/c.ts"]);
     mkdirSync(join(project, "src"));
     // the allow carries each destination by its real path (APP-GRANT-FIXPLAN-r6 (b), Rule 67)
     expect(routeDelivery(delivery("apply_patch", { command: inside }), ctx())).toEqual({ route: "allow", final: true, why: "own-workspace", destinations: [join(project, "notes", "a.md"), join(project, "src", "b.ts"), join(project, "src", "c.ts")], cwd: project });
     expect(routeDelivery(delivery("apply_patch", inside), ctx())).toMatchObject({ route: "allow", final: true, why: "own-workspace" });
     for (const bad of ["*** Add File: .env", "*** Delete File: ../outside.txt", "*** Add File: ~/.ssh/authorized_keys", "*** Add File: .git/hooks/pre-commit"]) {
-      const out = routeDelivery(delivery("apply_patch", { command: patch(bad, "+x") }), ctx());
+      // ISSUE-PERMS-1010 Rev 3: a Delete hunk has no body (both engines), so it carries none here
+      const out = routeDelivery(delivery("apply_patch", { command: bad.includes("Delete") ? patch(bad) : patch(bad, "+x") }), ctx());
       expect(out).toMatchObject({ route: "ask", tool: "edit", destinations: [bad.split(": ")[1]] });
     }
     // a patch that is not one whole envelope is unread: a card, never an allow
@@ -757,8 +758,8 @@ describe("T86 and T103: a Codex delivery as a decision", () => {
     expect(routeDelivery(delivery("apply_patch", { command: patch("*** Add File: .env.example", `+OPENAI_API_KEY=${key}`) }), ctx())).toMatchObject({ route: "ask", tool: "edit" });
     writeFileSync(join(project, ".env.sample"), "A=\n");
     expect(routeDelivery(delivery("apply_patch", { command: patch("*** Update File: .env.sample", "@@", "-A=", `+A=${key}`) }), ctx())).toMatchObject({ route: "ask", tool: "edit" });
-    expect(routeDelivery(delivery("apply_patch", { command: patch("*** Update File: notes.md", "@@", "-A", "+B", "*** Move to: .env.dist") }), ctx())).toMatchObject({ route: "allow" });
-    expect(routeDelivery(delivery("apply_patch", { command: patch("*** Update File: notes.md", "@@", "-A", "+-----BEGIN OPENSSH PRIVATE KEY-----", "*** Move to: .env.dist") }), ctx())).toMatchObject({ route: "ask" });
+    expect(routeDelivery(delivery("apply_patch", { command: patch("*** Update File: notes.md", "*** Move to: .env.dist", "@@", "-A", "+B") }), ctx())).toMatchObject({ route: "allow" });
+    expect(routeDelivery(delivery("apply_patch", { command: patch("*** Update File: notes.md", "*** Move to: .env.dist", "@@", "-A", "+-----BEGIN OPENSSH PRIVATE KEY-----") }), ctx())).toMatchObject({ route: "ask" });
   });
 
   it("judges an MCP call against the mounts: own unasked rows run, other own tools and unproven names are asked, custom and external pass to the approval path", () => {

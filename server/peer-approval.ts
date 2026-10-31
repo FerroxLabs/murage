@@ -59,7 +59,7 @@ export interface ApprovalBus {
   /** Scheduled routines also count as unattended for remembered contacts. */
   unattended?: (threadId: string) => boolean;
   /** A scheduled or manual routine run owns the thread. `opened` says so
-   * (true: the card is held open, with no 15-minute expiry, and the run waits
+   * (true: the card is held for the run, and the run waits
    * on the owner); `closed` reports the answer and says whether the run's
    * turn had already ended (true: the run carries on in a new turn). */
   routineCard?: RoutineCardHooks;
@@ -73,9 +73,6 @@ export interface RoutineCardHooks {
 
 interface Pending {
   resolve: (result: PeerApprovalOutcome) => void;
-  /** Frees the requestId if the user never answers. None while a routine run
-   * holds the card. */
-  timer?: ReturnType<typeof setTimeout>;
   /** Held open by a routine run (RoutineCardHooks). */
   held?: boolean;
   allowKey: string;
@@ -101,15 +98,14 @@ function settleCard(pending: Pending, behavior: string, source: "user" | "system
   const existing = pending.bus.store.messageById(pending.threadId, pending.messageId);
   if (!existing?.card || existing.card.answered) return;
   pending.bus.store.patchMessage(pending.threadId, pending.messageId, {
-    card: { ...existing.card, answered: behavior, dismissed: source !== "user" },
+    // A close the owner did not choose reads "Not answered", never "Denied" (LONGWORK H2). An "allow" stays "allow" whatever its source: an allow that went through ran the action, so "Not answered" would be untrue (GROK-STOPPED F6, kept on purpose).
+    card: { ...existing.card, answered: source === "user" || behavior === "allow" ? behavior : "unavailable", dismissed: source !== "user" },
   });
 }
 
 /** requestId → pending ask. Lives only in memory — restarting the
  * server cancels every in-flight approval, like provider permissions do. */
 const pendingComms = new Map<string, Pending>();
-
-const APPROVAL_TIMEOUT_MS = 15 * 60_000;
 
 /** An allow the owner gave after the routine run's turn had ended: the run
  * carries on in a new turn, and its same contact is not asked twice. Used
@@ -158,8 +154,7 @@ function pushApprovalCard(
 }
 
 /** Ask the user (in the source task thread) whether `from` may `action` `target`.
- * Resolves with `"allow"`, the user's `"deny"`, `"expired"` (nobody answered)
- * or `"cancelled"` (its bot or turn went away). If `from.alwaysAllow` already
+ * Resolves with `"allow"`, the user's `"deny"` or `"cancelled"` (its bot or turn went away). If `from.alwaysAllow` already
  * covers the (action, target) pair, returns `"allow"` immediately
  * without a card. */
 export function requestPeerApproval(
@@ -182,7 +177,7 @@ export function requestPeerApproval(
 }
 
 /** The one place a harness-native card is opened and awaited: the card has to
- * exist before the entry, so a timeout or an answer can always find it. */
+ * exist before the entry, so an answer or a cancel can always find it. */
 function waitOnCard(
   bus: ApprovalBus,
   fromBotId: string,
@@ -198,19 +193,11 @@ function waitOnCard(
     const card = push(requestId);
     let held = false;
     try { held = bus.routineCard?.opened(sourceThreadId, requestId, card.card?.title ?? "A bot-to-bot contact") === true; } catch { /* delivery never changes authority */ }
-    const timer = held || bus.holdProjectApproval?.(sourceThreadId) ? undefined : setTimeout(() => {
-      // 15 minutes without an answer → expired. Keeps an unattended bot from
-      // stalling its own turn forever (matches the Claude broker timeout).
-      const pending = pendingComms.get(requestId);
-      if (!pending) return;
-      pendingComms.delete(requestId);
-      settleCard(pending, "deny", "system");
-      resolve("expired");
-    }, APPROVAL_TIMEOUT_MS);
-    timer?.unref?.(); // a waiting card must never hold the process open
+    // The card waits for the owner until it is answered or its turn, bot or
+    // request goes away (cards-wait 1.0.8, GROK-STOPPED F1): no expiry timer.
+    // Bot-to-bot caller waits stay bounded where they wait, not here.
     pendingComms.set(requestId, {
       resolve,
-      timer,
       held,
       allowKey,
       requestId,
@@ -281,7 +268,6 @@ export function resolvePeerComms(
   const pending = pendingComms.get(requestId);
   if (!pending) return false;
   pendingComms.delete(requestId);
-  clearTimeout(pending.timer);
   const allow = behavior === "allow";
   settleCard(pending, allow ? "allow" : "deny", "user");
   closeHeld(pending, allow ? "allow" : "deny");
@@ -305,7 +291,6 @@ export function cancelPeerApprovalsFor(botId: string): void {
   for (const [requestId, pending] of [...pendingComms]) {
     if (pending.fromBotId !== botId && pending.toBotId !== botId) continue;
     pendingComms.delete(requestId);
-    clearTimeout(pending.timer);
     settleCard(pending, "deny", "system");
     closeHeld(pending, "none");
     pending.resolve("cancelled");
@@ -314,12 +299,11 @@ export function cancelPeerApprovalsFor(botId: string): void {
 
 /** Cancel every peer-communication approval owned by a thread whose turn was
  * interrupted. Patching the card alone is not enough: the in-memory promise
- * must resolve too, or the delegation queue waits until its 15-minute timer. */
+ * must resolve too, or the delegation queue waits on a card nobody can answer. */
 export function cancelPeerApprovalsForThread(threadId: string): void {
   for (const [requestId, pending] of pendingComms) {
     if (pending.threadId !== threadId) continue;
     pendingComms.delete(requestId);
-    clearTimeout(pending.timer);
     settleCard(pending, "deny", "system");
     closeHeld(pending, "none");
     pending.resolve("cancelled");
@@ -334,7 +318,6 @@ export function cancelPeerApprovalsForRequest(requestId: string): boolean {
   for (const [id, pending] of [...pendingComms]) {
     if (pending.boundRequestId !== requestId) continue;
     pendingComms.delete(id);
-    clearTimeout(pending.timer);
     settleCard(pending, "deny", "system");
     closeHeld(pending, "none");
     pending.resolve("cancelled");
@@ -369,7 +352,7 @@ export function settleStaleCardPage(bus: ApprovalBus, kinds: readonly StaleCardK
     const card = message.card;
     const kind = kinds.find((candidate) => candidate.tools.includes(String(card?.tool)));
     if (!card || !kind || !owned.has(threadId) || card.answered || card.dismissed || kind.keep(card)) continue;
-    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "deny", dismissed: true } })) dismissed += 1;
+    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) dismissed += 1;
   }
   return { dismissed, next: page.next };
 }
@@ -441,7 +424,7 @@ export function dismissStaleToolCards(bus: ApprovalBus, tools: readonly string[]
   for (const { threadId, message } of hits) {
     const card = message.card;
     if (!card || !owned.has(threadId) || card.answered || card.dismissed || keep(card)) continue;
-    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "deny", dismissed: true } })) dismissed += 1;
+    if (bus.store.patchMessagePoint(threadId, message.id, { card: { ...card, answered: "unavailable", dismissed: true } })) dismissed += 1;
   }
   return dismissed;
 }

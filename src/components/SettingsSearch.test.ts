@@ -11,7 +11,7 @@ describe("settings search", () => {
     }
   });
 
-  it("finds the app version under About & updates, where the Updates row shows it", () => {
+  it("finds the app version and updates under About & updates, where the version card shows both", () => {
     for (const query of ["version", "app version", "about", "About", "updates", "what's new", "diagnostics"]) {
       expect(settingsSearchResults(query), query).toContain("about");
     }

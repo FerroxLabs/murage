@@ -311,6 +311,13 @@ export function artifactRows(threadId: string): Message[] {
   return rows.map(rowToMessage);
 }
 
+/** ROUTINE-DELIVER-1010: the saved-file rows a routine run wrote in its own conversation between `from` and `to`, oldest first, at most
+ * `limit`, read through the same partial index as artifactRows: the work is that window's file rows, never the conversation. */
+export function artifactRowsBetween(threadId: string, from: number, to: number, limit: number): Message[] {
+  const rows = db().prepare("SELECT seq, json FROM messages INDEXED BY messages_inbox_text_artifact WHERE thread_id = ? AND at >= ? AND at <= ? AND role = 'bot' AND kind = 'text' AND json_extract(json, '$.artifactIds[0]') IS NOT NULL ORDER BY at LIMIT ?").all(threadId, from, to, limit) as Array<{ json: string }>;
+  return rows.map(rowToMessage);
+}
+
 /** The newest `limit` rows of a class in the line index (text lines: kind "text" with words), newest first with their
  * places in storage. The thread is prepared first (a turn awaits that; here it is counted as a defect when it is not
  * done): the answer is the thread's lines exactly, and the work is `limit`, never the thread. */
