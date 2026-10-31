@@ -185,7 +185,8 @@ export function piToolErrorDetail(evt: { result?: unknown; error?: unknown }): s
   const raw = typeof evt.result === "string" ? evt.result : toolFailureText(evt.result) ?? (typeof evt.error === "string" ? evt.error : undefined);
   const line = raw?.split("\n").map((l) => l.trim()).find(Boolean);
   if (!line) return undefined;
-  const text = redactSecretsInText(line.replace(PI_ABS_PATH, "…/$1")).slice(0, PI_ERROR_DETAIL_MAX).trim();
+  // Redact first: the fold cuts a path to its last segment, so `token=/tmp/sk-…/rest` would reach the redactor as a key with no body.
+  const text = redactSecretsInText(line).replace(PI_ABS_PATH, "…/$1").slice(0, PI_ERROR_DETAIL_MAX).trim();
   return text || undefined;
 }
 

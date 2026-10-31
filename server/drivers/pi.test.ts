@@ -1695,6 +1695,10 @@ describe("piToolErrorDetail", () => {
     expect(out).toContain("401");
     expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
   });
+  it("masks a credential held in a path whole, before the path is cut", () => {
+    const value = `/tmp/${"sk-" + "abcdefghijklmnopqrst"}/rest`;
+    expect(piToolErrorDetail({ result: `open failed: token=${value}` })).toBe(`open failed: token=«redacted ${value.length} chars»`);
+  });
   it("keeps to about 200 characters", () => {
     expect(piToolErrorDetail({ result: "x".repeat(900) })!.length).toBeLessThanOrEqual(200);
   });
