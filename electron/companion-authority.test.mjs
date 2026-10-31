@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { launchSecretVia } from "./launch-secret.mjs";
 import { closedControlDirectory } from "./backup-closed-controller.mjs";
+import { desktopFluxEnvironment } from "./workspace-credentials.mjs";
 
 it("the real main-process launch blocks share one fresh private token without mutating ambient env", async () => {
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
@@ -24,7 +25,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   // startServerOn awaits the port check (electron/port-availability.mjs), so
   // the extracted body runs in an async function with the port reported free.
   const AsyncFunction = (async () => {}).constructor;
-  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory",`
+  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory","desktopFluxEnvironment",`
     const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
@@ -52,7 +53,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value"};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
   // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
-  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory);
+  const invoke = () => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory,desktopFluxEnvironment);
   const first = await invoke();
   const second = await invoke();
   // The token reaches the harness over the private parent port, never the

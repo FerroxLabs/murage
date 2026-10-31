@@ -123,6 +123,25 @@ final class ProbeVerdictTests: XCTestCase {
         XCTAssertFalse(ProbeVerdict.basic.isFull)
     }
 
+    func testPhoneFlagsIsReadOnlyAsAnIntegerOnFullProbes() {
+        let absent = probe(#"{"mobile":1}"#)
+        XCTAssertNil(absent.phoneFlags); XCTAssertFalse(absent.phoneFlagsOk)
+        for flags: Int64 in [-1, 0, 1, 2, Int64.max] {
+            let verdict = probe("{\"mobile\":1,\"phoneFlags\":\(flags)}")
+            XCTAssertEqual(verdict.phoneFlags, flags)
+            XCTAssertEqual(verdict.phoneFlagsOk, flags >= 1)
+            XCTAssertFalse(verdict.phoneJobsOk); XCTAssertFalse(verdict.phoneAskOk)
+        }
+        for value in ["null", "true", "false", "\"1\"", "1.0", "1e0", "1.5", "[]", "{}", "9223372036854775808"] {
+            let verdict = probe("{\"mobile\":1,\"phoneFlags\":\(value)}")
+            XCTAssertTrue(verdict.isFull, value)
+            XCTAssertNil(verdict.phoneFlags, value); XCTAssertFalse(verdict.phoneFlagsOk, value)
+        }
+        let basic = probe(#"{"phoneFlags":1}"#)
+        XCTAssertEqual(basic, .basic)
+        XCTAssertNil(basic.phoneFlags); XCTAssertFalse(basic.phoneFlagsOk)
+    }
+
     func testApprovalProofIsReadOnlyAsAnInteger() {
         let ok = ProbeVerdict.classify(status: 200, body: Data(#"{"ok":true,"mobile":1,"approvalProof":1}"#.utf8), errorDomain: nil, errorCode: nil)
         XCTAssertTrue(ok.approvalProofOk)

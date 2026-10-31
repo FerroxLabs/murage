@@ -15,7 +15,10 @@
 // read as a statement of its own. cmd text has its own tokenizer, `lexCmd`. `rm`, `rmdir`,
 // `rd`, `del`, `erase` and `ri` with PowerShell-style `-Parameters` are
 // Remove-Item, as its aliases; with `/s` they are cmd's. Everything else
-// that is not a recognized delete or disk command is ordinary.
+// that is not a recognized delete or disk command is ordinary. Two small
+// allow lists read what would otherwise ask or card, each failing closed:
+// `PWSH_READ_ONLY` (cmdlets that read, only when the engine's whole text is one
+// pipeline of reads) and `pureMemberCall` (string methods, in that same shape).
 
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
@@ -218,6 +221,9 @@ function lexPwsh(s: string): Lexed {
       continue;
     }
     if (c === "&") {
+      // `2>&1`: a redirect's duplicate, part of its word
+      const last = parts[parts.length - 1];
+      if (last?.kind === "lit" && last.quote === "none" && last.text.endsWith(">") && /\d/.test(s[i + 1] ?? "")) { lit("&", "none"); i++; continue; }
       if (s[i + 1] === "&") { endStatement(); i += 2; continue; }
       // at the start of a statement `&` calls what follows; anywhere else it
       // ends the statement (cmd's separator, PowerShell's background job)
@@ -364,7 +370,9 @@ export function renderPwshWord(word: Word): string {
 
 /** Walk PowerShell or cmd text, visiting every statement. */
 const ASSIGNMENT_OP = /^(\+=|-=|\*=|\/=|%=|\?\?=|=)(?!=)/;
-const DOTNET_CALL = /::|\.[A-Za-z_]\w*\s*\(/;
+// `$_.$m()` and `$_.('Delete')()` call a member by a computed name
+const STATIC_CALL = /::|\.[A-Za-z_]\w*\s*\(/;
+const DOTNET_CALL = /::|\.[A-Za-z_]\w*\s*\(|\.\$[\w:{}()]*\s*\(|\.\(/;
 const NUMBER = /^-?\d+(\.\d+)?(kb|mb|gb|tb|pb|l|d)?$/i;
 
 /** An assignment: what is left of its operator, the operator, and the
@@ -457,12 +465,18 @@ function redirectTargets(words: Word[]): Word[] {
     for (let p = 0; p < parts.length; p++) {
       const part = parts[p]!;
       if (part.kind !== "lit" || part.quote !== "none") continue;
-      const at = part.text.indexOf(">");
+      let at = part.text.indexOf(">");
       if (at < 0) continue;
       let end = at + 1;
       if (part.text[end] === ">") end++;
-      const rest = part.text.slice(end);
-      if (rest.startsWith("&")) break;
+      // `2>&1>f`: a duplicate, then the file
+      while (/^&\d?/.test(part.text.slice(end)) && part.text.indexOf(">", end) >= 0) {
+        at = part.text.indexOf(">", end);
+        end = at + 1;
+        if (part.text[end] === ">") end++;
+      }
+      if (/^&\d?$/.test(part.text.slice(end))) break;
+      const rest = part.text.slice(end).replace(/^&\d?/, "");
       const tail: Part[] = [...(rest ? [{ kind: "lit", text: rest, quote: "none" } as Part] : []), ...parts.slice(p + 1)];
       if (tail.length) targets.push({ parts: tail });
       else if (words[w + 1]) targets.push(words[w + 1]!);
@@ -883,6 +897,8 @@ function unmodelled(name: string, spelled: string, args: Word[], stdin: Provenan
     // a loader variable this read set or named reaches it (1.0.5 r8)
     markLoaderRunner(ctx.loaders, name);
     const why = interpreterRuns(programBase(name), args, stdin);
+    // `bun run build` after `… > build`: deno and bun run a file by a bare name
+    if (/^(deno|bun)$/.test(interpreterOf(programBase(name)) ?? "") && args.some((arg) => { const text = literalText(arg); return text !== undefined && ctx.written.has(resolveWritten(ctx, text)); })) throw new Unreadable(dialect, `${name} runs a file this text wrote`);
     // 1.0.8 (fallback, as 1.0.7): inline code PowerShell or cmd hands an
     // interpreter is not read; it asks
     if (why) throw new Unreadable(dialect, `${name}: ${why}`);
@@ -907,6 +923,102 @@ export function shellDialectOf(form: readonly string[] | undefined): "pwsh" | un
   return program !== undefined && (programBase(program) === "powershell" || programBase(program) === "pwsh") ? "pwsh" : undefined;
 }
 
+/** Commands that only read or reshape what they are handed, by full name and
+ * alias: the protected-path rule lets them name any path when the engine's
+ * whole text is one pipeline of reads (`wholeRead` in `walkPwsh`). Left off on purpose: every `Format-*`
+ * (Format-Volume erases a disk, and the family stays as it reads today), and
+ * the `sort` alias (native `sort` has an output file option). */
+export const PWSH_READ_ONLY = new Set([
+  "get-childitem", "gci", "dir", "get-content", "gc", "type", "get-item", "gi", "get-itemproperty", "gp", "get-itempropertyvalue", "gpv",
+  "test-path", "resolve-path", "rvpa", "split-path", "join-path", "get-location", "gl", "select-string", "sls", "get-filehash", "get-acl", "findstr",
+  "where-object", "where", "?", "foreach-object", "%", "select-object", "select", "sort-object", "group-object", "group", "measure-object", "measure",
+  "compare-object", "compare", "more", "get-unique", "gu", "get-member", "gm", "out-string", "out-null", "out-host", "oh", "write-output", "write-host",
+  "convertto-json", "convertfrom-json", "convertto-csv", "convertfrom-csv",
+]);
+/** The only text a read counts in: one line of printable ASCII, no comment,
+ * no backtick. PowerShell ends a line at a carriage return, this lexer at a
+ * line feed, and it reads characters this lexer does not as blanks, quotes and
+ * dashes: such text is not proved to be the one pipeline it looks like. */
+const ONE_PLAIN_LINE = /^[\x20-\x22\x24-\x5f\x61-\x7e\t]*$/;
+/** Stages that run a script block on each item. */
+const BLOCK_STAGES = new Set(["foreach-object", "%", "where-object", "where", "?"]);
+
+const nullTarget = (word: Word): boolean => {
+  const only = word.parts.length === 1 ? word.parts[0]! : undefined;
+  return (only?.kind === "var" && only.name === "null" && only.op === undefined) || /^nul$/i.test(literalText(word) ?? "");
+};
+
+/** Does a statement send output to a file (`> f`), not to `$null` or `NUL`? */
+const writesOutput = (words: Word[]): boolean => redirectTargets(words).some((target) => !nullTarget(target));
+
+/** `$_`, `$_.Name`, `$_.Name.Trim()`: the piped item, its properties, allowed methods. */
+function itemValue(word: Word): boolean {
+  const [item, tail, ...rest] = word.parts;
+  if (item?.kind !== "var" || item.op !== undefined || (item.name !== "_" && item.name !== "psitem") || rest.length) return false;
+  return !tail || (tail.kind === "lit" && tail.quote === "none" && (PROPERTIES.test(tail.text) || PURE_CALLS.test(tail.text)));
+}
+
+/** A block that only reads the piped item: one word (`$_.ToUpper()`). Nothing
+ * else is a read: a block may keep the item, assign to it, call a member by a
+ * computed name, or convert it (`-as 'System.IO.StreamWriter'` opens a file). */
+function blockReadsItem(body: string): boolean {
+  const { statements } = lexPwsh(body);
+  const words = statements[0]?.words ?? [];
+  return statements.length === 1 && words.length === 1 && itemValue(words[0]!);
+}
+
+function readStageWords<H>(words: Word[], visitor: Visitor<H>): boolean {
+  const program = literalText(words[0]!);
+  if (program === undefined || program === "&" || program === "." || !visitor.readOnly || writesOutput(words)) return false;
+  const args = words.slice(1);
+  for (const word of args) {
+    for (const part of word.parts) {
+      if (part.kind === "subst" && !(part.block === true && word.parts.length === 1 && BLOCK_STAGES.has(program.toLowerCase()) && blockReadsItem(part.text))) return false;
+      if (part.kind === "lit" && part.quote === "none" && (/[({]/.test(part.text) ? !pureMemberCall(word) : /^@/.test(part.text))) return false;
+    }
+  }
+  return visitor.readOnly({ program: { text: program, dialect: "windows" }, args, wholeRead: true });
+}
+
+/** Is this one pipeline stage a read-only command, its one block (if any)
+ * only reading the piped item? A word the reader cannot place is not. */
+function pwshReadStage<H>(words: Word[], visitor: Visitor<H>): boolean {
+  try {
+    return readStageWords(words, visitor);
+  } catch (error) {
+    if (error instanceof Unreadable) return false;
+    throw error;
+  }
+}
+
+/** A pipeline's first word that writes a value and runs nothing: a quoted
+ * string, or a value or string with allowed methods. */
+const leadValue = (words: Word[]): boolean => words.length === 1 && (stringExpression(words[0]!) || pureMemberCall(words[0]!));
+
+/** Methods with no effect on any object a read pipeline hands on (a string, a
+ * file, a process, a service, a table). `Replace`, `Insert` and `Remove` are
+ * off: FileInfo.Replace swaps files. A name proves nothing about an object the
+ * text built (`Add-Member` can install a `Trim`), so these count only in the
+ * one-pipeline shape, where nothing before them can have built one. */
+const PURE_METHODS = "ToUpper|ToLower|ToUpperInvariant|ToLowerInvariant|Trim|TrimStart|TrimEnd|Substring|StartsWith|EndsWith|PadLeft|PadRight|IndexOf|LastIndexOf|Contains|ToString|Split";
+const PURE_ARGUMENT = String.raw`(?:'[^'"$\x60\u2018-\u201E]*'|"[^'"$\x60\u2018-\u201E]*"|\d+)`;
+const PROPERTIES = /^(?:\.[A-Za-z_]\w*)+$/;
+const PURE_CALLS = new RegExp(String.raw`^(?:\.[A-Za-z_]\w*)*(?:\.(?:${PURE_METHODS})\(\s*(?:${PURE_ARGUMENT}\s*(?:,\s*${PURE_ARGUMENT}\s*)*)?\)(?:\.[A-Za-z_]\w*)*)+$`, "i");
+
+/** `$_.ToUpper()`, `$_.Name.Trim()`, `'a,b'.Split(',')`: a value or a quoted
+ * string, then only allowed methods with literal arguments. */
+function pureMemberCall(word: Word): boolean {
+  const tail = word.parts[word.parts.length - 1];
+  if (word.parts.length < 2 || tail?.kind !== "lit" || tail.quote !== "none" || !PURE_CALLS.test(tail.text)) return false;
+  return word.parts.slice(0, -1).every((part) => (part.kind === "var" && part.op === undefined) || (part.kind === "lit" && part.quote !== "none"));
+}
+
+/** The word as a .NET call test reads it: a subexpression's or a block's text
+ * is walked as a script of its own, so it is left out here. */
+function memberText(word: Word): string {
+  return renderPwshWord({ parts: word.parts.map((part) => (part.kind === "subst" ? { ...part, text: "" } : part)) });
+}
+
 /** PowerShell's expression operators: `"a" -f $x`, `'x' + $y`. */
 const EXPRESSION_OPERATOR = /^(-[ci]?(eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|replace|contains|notcontains|in|notin|split)|-(is|isnot|as|and|or|xor|not|band|bor|bxor|bnot|shl|shr|join|f)|[+*/%]|-|\.\.)$/i;
 
@@ -916,15 +1028,26 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   const loader = mentionsLoaderVariable(text, "pwsh");
   if (loader) markLoaderVariable(ctx.loaders, loader);
   const { statements, nested } = lexPwsh(text);
+  // a read-only command counts only when the engine's whole text is one
+  // pipeline of reads: no earlier statement can have kept a value, built an
+  // object or changed what a name runs, and no block or subexpression hides
+  // one. Any other text reads as it did (Sean's rule: a wrong read never lets a wipe through).
+  const reads = statements.map((statement) => pwshReadStage(statement.words, visitor));
+  const wholeRead = ctx.pwshStamped === true && ONE_PLAIN_LINE.test(text) && statements.every((statement, at) => (at === 0 ? reads[0]! || leadValue(statement.words) : statement.piped && reads[at]!));
   for (const inner of nested) {
     const branch = fork(ctx, true);
+    if (wholeRead) branch.pureMembers = true;
     const hit = walkPwsh(inner, branch, visitor);
     if (hit) return hit;
     keepBranchWrites(ctx, branch);
   }
+  // an output that goes on to a stage that does not read takes any read-only
+  // name off the list, those of the first list too (`ls C:\Windows | Clear-Content`)
+  const readsOn = statements.map(() => true);
+  for (let at = statements.length - 2; at >= 0; at--) if (statements[at + 1]!.piped) readsOn[at] = reads[at + 1]! && readsOn[at + 1]!;
   // what the statement before writes down the pipe, when one joins them
   let carried: Provenance | undefined;
-  for (const statement of statements) {
+  for (const [at, statement] of statements.entries()) {
     // a statement no pipe feeds reads what this shell was given (a nested
     // `pwsh -Command` or `cmd /c` reached by a pipe, UPSEC 10.6)
     const stdin = statement.piped ? carried : ctx.stdin;
@@ -936,13 +1059,20 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
     // a redirect: its target read through the names this text bound
     if (visitor.pwshRedirect) {
       for (const target of redirectTargets(words)) {
+        // `2>$null` throws the output away, in text PowerShell itself runs. To
+        // a POSIX shell `$null` is a variable that can name any file.
+        if (ctx.pwshStamped && nullTarget(target)) continue;
         const hit = visitor.pwshRedirect(target, candidatesOf(target, ctx), ctx);
         if (hit) return hit;
       }
     }
     // a .NET call (`[IO.Directory]::Delete(…)`, `$x.Delete()`) runs code the
-    // reader does not model
-    if (words.some((word) => DOTNET_CALL.test(renderPwshWord(word)))) {
+    // reader does not model. An allowed method (`$_.ToUpper()`) passes as an
+    // expression or for a read stage, in the one-pipeline shape
+    const head = (rhs ?? words)[0];
+    const member = (word: Word) => (printedString(word) ? STATIC_CALL : DOTNET_CALL).test(memberText(word))
+      && !(pureMemberCall(word) && (ctx.pureMembers || (wholeRead && (word === head || reads[at]))));
+    if (words.some(member)) {
       // a .NET call that names a physical drive (`[IO.File]::WriteAllBytes('\\.\PhysicalDrive0', …)`) is a disk write
       if (words.some((word) => PHYSICAL_DRIVE.test(renderPwshWord(word)))) {
         const hit = visitor.command(simpleCommand(".net-call", words, ctx), ctx);
@@ -954,7 +1084,7 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
     // was walked above (`nested`) from this same place. Beside other
     // statements its folder changes would reach them, so there it still asks.
     if (statements.length === 1 && !statement.piped && blockCall(words)) continue;
-    const hit = pwshStatement(words, stdin, ctx, visitor, 0);
+    const hit = pwshStatement(words, stdin, ctx, visitor, 0, !readsOn[at]! || writesOutput(words), wholeRead);
     if (hit) return hit;
     recordPwshWrites(words, ctx);
     // `$null = Set-Content c.txt …`: the right side's command writes too
@@ -1050,7 +1180,7 @@ function printedString(word: Word): boolean {
 }
 
 /** One statement: an assignment, an expression, or a call. */
-function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, hops: number): H | null {
+function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, hops: number, flows: boolean, wholeRead: boolean): H | null {
   if (hops > MAX_DEPTH) throw new Unreadable("depth");
   if (!words.length) return null;
   // `$x = 'a'`, `$x = "$y"`, `$x = 'a', 'b'` bind a value that runs nothing;
@@ -1075,7 +1205,7 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
       return null;
     }
     if (name !== undefined) { ctx.bound.set(name, null); ctx.arrays.delete(name); }
-    return pwshStatement(assignment.rhs, stdin, ctx, visitor, hops + 1);
+    return pwshStatement(assignment.rhs, stdin, ctx, visitor, hops + 1, true, false);
   }
   const first = literalText(words[0]!);
   const called = first === "&" || first === ".";
@@ -1128,7 +1258,7 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
     throw new Unreadable("dynamic-eval", program);
   }
   // `return Remove-Item x`: the keyword's operand is a pipeline of its own
-  if (!called && PIPELINE_KEYWORDS.has(program)) return pwshStatement(call.slice(1), stdin, ctx, visitor, hops + 1);
+  if (!called && PIPELINE_KEYWORDS.has(program)) return pwshStatement(call.slice(1), stdin, ctx, visitor, hops + 1, flows, false);
   const args = splitCommas(call.slice(1));
   if (program === "set-variable" || program === "sv") {
     const set = setVariable(args);
@@ -1177,7 +1307,7 @@ function pwshStatement<H>(words: Word[], stdin: Provenance | undefined, ctx: Wal
   // piped items are the operands of a delete, move, rename or ACL cmdlet that names no path
   const operands = stdin && PIPELINE_TARGETS.has(program) && !namesPath(args) ? [...args, ...pipelineOperands(stdin, ctx)] : args;
   const spelled = literalText(call[0]!);
-  return visitor.command(simpleCommand(program, operands, ctx, spelled !== undefined ? { program: { text: spelled, dialect: "windows" } } : {}), ctx);
+  return visitor.command(simpleCommand(program, operands, ctx, { ...(spelled !== undefined ? { program: { text: spelled, dialect: "windows" as const } } : {}), outputFlows: flows, wholeRead }), ctx);
 }
 
 // cmd: its own language, with its own tokenizer (UPSEC 3.5).
