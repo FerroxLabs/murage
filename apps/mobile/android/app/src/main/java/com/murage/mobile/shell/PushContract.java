@@ -47,7 +47,7 @@ public final class PushContract {
                 case APPROVAL: case APPROVAL_OPEN: return "approvals";
                 case DEVICE_JOB: return "requests";
                 case QUESTION: case CALL_NOTE: return "questions";
-                case CALL: return "calls";
+                case CALL: return "calls_v2";
                 default: return "finished";
             }
         }

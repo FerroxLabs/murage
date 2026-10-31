@@ -21,4 +21,8 @@ export interface RoutineRunCardData {
   executionThreadId?: string;
   summary?: string;
   error?: string;
+  /** ROUTINE-DELIVER-1010: a run that did not finish says what to do next, in one plain line. */
+  nextStep?: string;
+  /** The run saved more files than its card shows; the rest are in Files. */
+  moreFiles?: true;
 }

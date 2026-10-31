@@ -138,8 +138,20 @@ export function externalWebUrl(rawUrl) {
 }
 
 /**
+ * The Cloud-home window's link policy: the same check as externalWebUrl, and https only. That page is run by a home,
+ * not by this computer, so it gets the narrower of the two.
+ * Returns the normalized URL string, or throws without echoing the input.
+ */
+export function cloudExternalWebUrl(rawUrl) {
+  const url = externalWebUrl(rawUrl);
+  if (new URL(url).protocol !== "https:") throw new Error("Only secure web links can be opened");
+  return url;
+}
+
+/**
  * Decide what a main-window `window.open` does. Every popup is denied; a
- * credential-free web URL opens in the default browser, and the startup error
+ * credential-free web URL opens in the default browser, an obsidian:// note
+ * link opens Obsidian, and the startup error
  * page's exact server-log link (a data: page, see buildErrorPage) opens that
  * one log file. Anything else is refused.
  *
@@ -157,7 +169,26 @@ export function mainWindowOpenAction(url, { currentUrl, diagnosticsLogHref } = {
   try {
     return { kind: "external", url: externalWebUrl(url) };
   } catch {
-    return { kind: "refuse" };
+    // An obsidian:// note link from a chat reply opens the owner's Obsidian (adapted from OpenMausBot #3687).
+    // Only that one app scheme, only from a click (window.open); navigation and the IPC door stay web-only.
+    const note = obsidianNoteUrl(url);
+    return note ? { kind: "external", url: note } : { kind: "refuse" };
+  }
+}
+
+const OBSIDIAN_OPEN_PARAMS = new Set(["vault", "file", "path"]);
+
+/** A read-only obsidian://open note link naming only a vault, file or path, normalized, or null. Every other Obsidian
+ *  action (new, search, clipboard, plugin handlers) and every other app scheme is refused. */
+export function obsidianNoteUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !/^obsidian:\/\/open\?/i.test(rawUrl)) return null;
+  try {
+    const url = new URL(rawUrl);
+    const keys = [...url.searchParams.keys()];
+    if (url.protocol !== "obsidian:" || url.host !== "open" || url.username || url.password || (url.pathname && url.pathname !== "/")) return null;
+    return keys.length > 0 && keys.every((key) => OBSIDIAN_OPEN_PARAMS.has(key)) ? url.toString() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -192,19 +223,28 @@ export function createMainWindowOpenHandler({ openExternal, openDiagnosticsLog, 
  * the URL is even parsed, so a foreign, subframe or navigated-away caller
  * learns nothing about the link policy and nothing is opened.
  *
- * @param {{ isTrustedSender: (event: any) => boolean, openExternal: (url: string) => Promise<unknown> }} deps
+ * A Cloud-home window's top frame is the one other sender, and gets cloudExternalWebUrl.
+ *
+ * @param {{ isTrustedSender: (event: any) => boolean, isCloudSender?: (event: any) => boolean, openExternal: (url: string) => Promise<unknown> }} deps
  */
-export function createOpenExternalHandler({ isTrustedSender, openExternal }) {
-  return async (event, rawUrl) => {
-    let trusted = false;
+export function createOpenExternalHandler({ isTrustedSender, isCloudSender, openExternal }) {
+  const passes = (gate, event) => {
     try {
-      trusted = isTrustedSender(event) === true;
+      return gate?.(event) === true;
     } catch {
-      trusted = false;
+      return false;
     }
-    if (!trusted) throw new Error("Web links can be opened only from the main Murage window");
-    await openExternal(externalWebUrl(rawUrl));
-    return true;
+  };
+  return async (event, rawUrl) => {
+    if (passes(isTrustedSender, event)) {
+      await openExternal(externalWebUrl(rawUrl));
+      return true;
+    }
+    if (passes(isCloudSender, event)) {
+      await openExternal(cloudExternalWebUrl(rawUrl));
+      return true;
+    }
+    throw new Error("Web links can be opened only from the main Murage window");
   };
 }
 

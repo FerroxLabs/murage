@@ -6,6 +6,7 @@ import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
 import { backupIdentity, stopBackupAgeProcess } from "./installation-backup-encryption.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
+import { isNoSpaceError } from "./disk-space.ts";
 
 export interface WindowsBackupChild extends Pick<EventEmitter, "on" | "once" | "off"> {
   stdin: Writable; stdout: Readable; stderr: Readable; pid?: number;
@@ -88,7 +89,7 @@ export async function runWindowsBackupTransport<T>(request: WindowsBackupRequest
       let offset = 0;
       while (offset < chunk.length) { const written = writeSync(fd, chunk, offset, chunk.length - offset); if (written <= 0) throw error("AGE_PROCESS_FAILED"); offset += written; }
       if (protocol.plaintextComplete) outputReady.resolve();
-    } catch { fail(); }
+    } catch (cause) { fail(isNoSpaceError(cause) ? "BACKUP_DISK_FULL" : undefined); }
   };
   const onControl = (chunk: Buffer) => {
     if (failure) return;

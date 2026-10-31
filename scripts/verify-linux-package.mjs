@@ -410,6 +410,34 @@ function verifyCloudflaredResources(resources, label, { directoryMode = 0o755 } 
 
 const appImage = exactlyOne(".AppImage");
 const deb = exactlyOne(".deb");
+// CAPABILITY-DB-1010 section 8: the facts the site receives are the facts the
+// shipped server answers from. The committed shared/capability-db.ts names a
+// db_rev; the release export (when this run made one) must name the same one,
+// and every entry rev must be inside the bundled server and agents proxy, which
+// answer the concierge's two routes.
+function verifyCapabilityDb(resources) {
+  const generated = readFileSync(path.join(root, "shared", "capability-db.ts"), "utf8");
+  const committed = /export const CAPABILITY_DB_REV = "([0-9a-f]{64})"/.exec(generated)?.[1];
+  if (!committed) fail("shared/capability-db.ts names no CAPABILITY_DB_REV");
+  const revs = [...generated.matchAll(/"rev": "([0-9a-f]{64})"/g)].map((match) => match[1]);
+  if (!revs.length) fail("shared/capability-db.ts carries no entry revs");
+  const exports = readdirSync(releaseDir).filter((name) => /^capability-db-.+\.json$/.test(name));
+  if (exports.length > 1) fail(`expected at most one capability export, found ${exports.length}`);
+  if (exports.length) {
+    const exported = JSON.parse(readFileSync(path.join(releaseDir, exports[0]), "utf8"));
+    if (exported.db_rev !== committed) fail(`${exports[0]} names db_rev ${exported.db_rev}, the source names ${committed}`);
+    const exportedRevs = (exported.entries ?? []).map((entry) => entry.rev).sort();
+    if (JSON.stringify(exportedRevs) !== JSON.stringify([...revs].sort())) fail(`${exports[0]} entry revs differ from shared/capability-db.ts`);
+  }
+  for (const bundle of ["server/index.js", "server/drivers/agents-proxy.js"]) {
+    const file = path.join(resources, bundle);
+    requireFile(file);
+    const text = readFileSync(file, "utf8");
+    const missing = revs.filter((rev) => !text.includes(rev));
+    if (missing.length) fail(`${bundle} does not carry ${missing.length} capability rev(s): the packaged server answers from other facts`);
+  }
+}
+
 const unpacked = path.join(releaseDir, "linux-unpacked");
 const executable = path.join(unpacked, "murage");
 const resources = path.join(unpacked, "resources");
@@ -425,6 +453,7 @@ for (const forbidden of ["speech-helper", "cua-driver", "cua-sdk"]) {
     fail(`unsupported Linux resource was bundled: ${forbidden}`);
   }
 }
+verifyCapabilityDb(resources);
 const unpackedCuaHashes = verifyCuaResources(resources, "linux-unpacked");
 const unpackedCloudflaredHash = verifyCloudflaredResources(resources, "linux-unpacked");
 requireUpdaterTarget(resources, "linux-unpacked");
@@ -453,6 +482,7 @@ try {
   // Routes the in-app updater to the package-manager hand-off.
   requirePackageType(debResources, "DEB", "deb");
   requireUpdaterTarget(debResources, "DEB");
+  verifyCapabilityDb(debResources);
   const debHashes = verifyCuaResources(debResources, "DEB");
   const debCloudflaredHash = verifyCloudflaredResources(debResources, "DEB");
   if (debCloudflaredHash !== unpackedCloudflaredHash) {
@@ -519,6 +549,7 @@ try {
   // No marker: the AppImage keeps the in-place restart-to-update path.
   requirePackageType(appImageResources, "AppImage", null);
   requireUpdaterTarget(appImageResources, "AppImage");
+  verifyCapabilityDb(appImageResources);
   // Depending on the pinned appimagetool runtime, SquashFS directories are
   // emitted as root:root 0755 or 0775. Require one mode consistently across
   // the reviewed resource tree. The app never executes through that path:

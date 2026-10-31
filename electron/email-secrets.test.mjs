@@ -54,4 +54,11 @@ describe("email secrets custody", () => {
     expect(emailOwnerFromTokenResponse({ api_key: "", key_id: "key_o", scopes: ["email:owner"] })).toBeNull();
     expect(emailOwnerFromTokenResponse(null)).toBeNull();
   });
+
+  it("reads the exact production token body (Flux live 2026-10-30): sk-flux- key, UUID key_id", () => {
+    const key = "sk-flux-" + "f0e1d2c3b4a5".repeat(4);
+    const keyId = "3f2b8c1e-9a4d-4e7b-8c6f-1d2e3f4a5b6c";
+    const body = { api_key: key, key_prefix: key.slice(0, 12), name: "Murage Desktop", key_id: keyId, scopes: ["email:owner"] };
+    expect(emailOwnerFromTokenResponse(body)).toEqual({ token: key, keyId });
+  });
 });

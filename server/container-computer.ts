@@ -38,7 +38,7 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // Image and container labels below remain the authoritative compatibility
 // check, not the mutable tag.
 export const IMAGE_REPOSITORY = "localhost/murage/cua-local-vm";
-export const IMAGE_LAYER_VERSION = "4";
+export const IMAGE_LAYER_VERSION = "5";
 export const IMAGE_LAYER_LABEL = "com.murage.image-layer";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "murage-computer";
@@ -147,7 +147,7 @@ RUN printf '%s\\n' \\
       'set -eu' \\
       'workspace=${VM_WORKSPACE_GUEST}' \\
       'profiles="$workspace/.browser-profiles"' \\
-      'mkdir -p "$profiles/google-chrome" "$profiles/chromium" "$HOME/.config"' \\
+      'mkdir -p "$profiles/google-chrome" "$profiles/chromium" "$HOME/.config" "$HOME/.cache"' \\
       'if ! chmod 0700 "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium" 2>/dev/null; then' \\
       '  for directory in "$workspace" "$profiles" "$profiles/google-chrome" "$profiles/chromium"; do' \\
       '    test -r "$directory" && test -w "$directory" && test -x "$directory"' \\
@@ -165,7 +165,12 @@ RUN printf '%s\\n' \\
       '}' \\
       'migrate_profile google-chrome' \\
       'migrate_profile chromium' \\
-      'find "$profiles" \\( -name SingletonLock -o -name SingletonSocket -o -name SingletonCookie -o -name .parentlock \\) -delete' \\
+      'container_start="$(cat /proc/sys/kernel/random/boot_id):$(sed "s/.*) //" /proc/1/stat | cut -d " " -f20)"' \\
+      'prepared="$HOME/.cache/murage-browser-locks"' \\
+      'if [ "$(cat "$prepared" 2>/dev/null || true)" != "$container_start" ]; then' \\
+      '  find "$profiles" \\( -name SingletonLock -o -name SingletonSocket -o -name SingletonCookie -o -name .parentlock \\) -delete' \\
+      '  printf "%s\\n" "$container_start" > "$prepared"' \\
+      'fi' \\
       > /usr/local/bin/prepare-murage-workspace.sh \\
     && chmod 0755 /usr/local/bin/prepare-murage-workspace.sh
 RUN printf '%s\\n' \\

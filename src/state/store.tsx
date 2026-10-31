@@ -8,6 +8,7 @@ import { formerChiefOutcome } from "../../shared/chief-handover";
 import { REMEMBERED_EVENT } from "../../shared/learned-chip";
 import { MEMORY_WAITING_EVENT } from "@/lib/memory-waiting-event";
 import { CALL_EVENT } from "@/lib/bot-call-event";
+import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 // Server-backed store. The React app holds no transports of its own:
 // it dispatches typed commands over HTTP and folds the one SSE event
 // stream from the harness server into local state. The reducer stays
@@ -314,6 +315,8 @@ export interface Message {
   actionCheck?: import("../../shared/reply-action-claims").ActionCheck;
   /** Which engine wrote this reply, when the server stamped it. */
   engine?: import("../../shared/engine-switch").MessageEngine;
+  /** The model Flux Router served this reply with and the one asked for (server store.ts Message.servedModel). */
+  servedModel?: { routed: string; requested: string };
   /** On a closing message: the turn's helpers (sub agents), summarised by the server. Owner threads only. */
   turnHelpers?: TurnHelper[];
   /** screen messages: a frame of the bot's computer (base64) */
@@ -2164,6 +2167,15 @@ export function withTaskDelta(bot: BotAnnouncement, held: Pick<Bot, "tasks" | "t
     return next.threadId === d.read && next.unread ? { ...next, unread: false } : next;
   });
   return { ...rest, tasks: merged, ...(d.read ? { unread: merged.some((task) => task.unread) } : {}) };
+}
+
+/** Whether a bot frame says the chat on screen is unread, which is what sends the read mark. A delta carries only the rows that changed, so
+ * no row for the open chat means its mark did not move: `bot.unread` there speaks for ANY of the bot's chats, and answering from it posted a read
+ * for each frame while another chat stayed unread, and each post made another frame (LOG-CPU-LINEAGE). A frame with no rows at all, from an older
+ * server, still answers from the bot. */
+export function frameShowsViewedUnread(bot: Pick<BotAnnouncement, "threadId" | "unread" | "tasks" | "tasksDelta">, viewedThread: string | undefined): boolean {
+  if (bot.tasksDelta) return bot.tasksDelta.upsert.find((task) => task.threadId === viewedThread)?.unread === true;
+  return bot.tasks?.find((task) => task.threadId === viewedThread)?.unread ?? (bot.threadId === viewedThread && bot.unread === true);
 }
 
 // ── Bot admission (BOTADDED-DESIGN-V3 r6 §2.3-2.8) ─────────────────────
@@ -6072,6 +6084,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // Bot calls 1.0.9: call.ring / call.answered / call.ended are hints; the ring banner and the Calls settings re-read
       // GET /api/calls/active on each one (calls-109.yaml sse).
       if (frame.kind === "call") { window.dispatchEvent(new CustomEvent(CALL_EVENT, { detail: frame })); return; }
+      if (frame.kind === "emailStatus") { window.dispatchEvent(new CustomEvent(EMAIL_STATUS_EVENT)); return; }
       if (frame.kind === "memory.waiting") { window.dispatchEvent(new CustomEvent(MEMORY_WAITING_EVENT, { detail: frame })); return; }
       if (frame.kind === "project.strip" || frame.kind === "project.board" || frame.kind === "room.requests") {
         projectEvents.frame(frame as ProjectFrame);
@@ -6150,12 +6163,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           const viewed=stateRef.current.bots.find(current=>current.id===bot.id);
           const viewedThread=viewed?.threadId;
-          // A frame that flips busy or unread carries only the task rows that
-          // changed. The reducer lays them over the rows it holds then; this
-          // reads the changed rows only, to decide about the badge.
-          const rows=bot.tasks??bot.tasksDelta?.upsert;
-          const selectedUnread=rows?.find(task=>task.threadId===viewedThread)?.unread??(bot.threadId===viewedThread&&bot.unread);
-          if (selectedUnread && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
+          if (frameShowsViewedUnread(bot, viewedThread) && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
             if (bot.tasksDelta) bot={...bot,tasksDelta:{...bot.tasksDelta,read:viewedThread}};
             else {
               const tasks=bot.tasks?.map(task=>task.threadId===viewedThread?{...task,unread:false}:task);

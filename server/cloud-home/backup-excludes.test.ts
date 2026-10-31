@@ -54,6 +54,8 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
   it("excludes the health runtime files, the token key and the page ledger, and nothing with a similar name", () => {
     for (const p of ["/data/home/health", "/data/home/health/server.current.ndjson", "/data/home/health-key", "/data/home/sentinel-delivery.json"]) expect(excluded(p), p).toBe(true);
     for (const p of ["/data/home/work/health/plan.md", "/data/home/health-notes.md", "/data/home/work/sentinel-delivery.json"]) expect(excluded(p), p).toBe(false);
+    const required = /REQUIRED_EXCLUDES = \(([^)]*)\)/.exec(read("murage-backup"))![1].match(/"[^"]+"/g)!.map((s) => s.slice(1, -1));
+    expect(required).toEqual(expect.arrayContaining(["/data/home/health", "/data/home/health-key", "/data/home/sentinel-delivery.json"]));
   });
   it("does not exclude ordinary customer files", () => {
     for (const p of ["/data/home/work/report.md", "/data/home/memory/db.sqlite", "/data/home/.config/prefs.json"]) expect(excluded(p), p).toBe(false);

@@ -356,15 +356,19 @@ const RAW_READS: Record<string, number> = {
   // 1.0.9 share and ask (S37): index.ts adds the share-orphan reclaim's messageNames probe, `SELECT 1 FROM messages WHERE json LIKE ? LIMIT 1`:
   // it answers only whether a saved file's name appears in some message, and returns no row or words to anyone.
   // 1.0.4 QW (20acb3e0d): roomAnswerReceipt reads the owner's own landed answer row back for the owner's client (the room answer's receipt)
-  "inbox.ts": 6, "index.ts": 76, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  "inbox.ts": 6, "index.ts": 77, "installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
   "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
   "memory/evolution-forgetting.ts": 1, "memory/learning-wiring.ts": 2, "memory/lineage-backfill.ts": 9, "memory/lineage-warm.ts": 2,
   "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 1, "memory/replay-lineage.ts": 6,
-  "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 47,
+  "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 48,
   "message-search-index.ts": 7, "message-tables.ts": 6, "message-walker.ts": 2, "partition-sources.ts": 2, "peer-approval.ts": 1,
   "project-digest.ts": 2, "project-goals.ts": 1, "project-memory-tools.ts": 4, "project-routes.ts": 1, "project-tools.ts": 1, "prompt-quotes.ts": 2,
+  // 1.0.10 ROUTINE-DELIVER-1010: routine-delivery.ts reads back only its own result card by its stable id (rrun-<runId>) to patch it; index.ts
+  // passes that one lookup through; message-db.ts artifactRowsBetween reads a routine run's own saved-file rows to list their Files ids on the
+  // card. None hands a stored row's words to a bot.
+  "routine-delivery.ts": 2,
   "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
   // 1.0.6 recall-forgotten (bb32902a5): thread_list's newestRememberedAt pages a thread's rowid, id, time and withheld stamp to find the newest
   // line the owner has not forgotten; only that time leaves, never a row or its words.

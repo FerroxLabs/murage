@@ -229,14 +229,13 @@ describe("engine eligibility (spec E3/E4)", () => {
     expect(localEnginesFor(test({ chat: false, responses: false, messages: false }, "unreachable"))).toEqual([]);
   });
 
-  it("labels openai-compat and the grok API as chat-only and never offers Antigravity local rows", () => {
-    expect(localEngineSupport("openai-compat")).toBe("chat-only");
-    expect(localEngineSupport("grok")).toBe("chat-only");
+  it("lists every local model on openai-compat, gives the grok API no local rows, and never offers Antigravity local rows", () => {
+    expect(localEngineSupport("openai-compat")).toBe("any-model");
+    expect(localEngineSupport("grok")).toBe("none");
     expect(localEngineSupport("antigravityAgent")).toBe("none");
     expect(localEngineSupport("piAgent")).toBe("tools");
-    expect(engineToolSupport("openai-compat")).toBe("chat-only");
-    expect(engineToolSupport("grok")).toBe("chat-only");
-    for (const driver of ["piAgent", "opencodeGo", "droidAgent", "kimiAgent", "grokAgent", "fuigoAgent"]) {
+    // OPENAI-TOOLS-109 (1.0.9): both OpenAI-chat engines run tools
+    for (const driver of ["piAgent", "opencodeGo", "droidAgent", "kimiAgent", "grokAgent", "fuigoAgent", "openai-compat", "grok"]) {
       expect(engineToolSupport(driver)).toBe("tools");
     }
   });

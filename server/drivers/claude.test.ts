@@ -22,7 +22,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
+import { CLAUDE_ORG_LOGIN_LINE, bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
@@ -327,32 +327,36 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 
   it.skipIf(process.platform === "win32")(
-    "a held turn's permission ask waits past the deny deadline; an ordinary one is denied",
+    "a permission ask waits for the owner on every turn: no deny deadline is armed (Sean 10-29)",
     async () => {
       const dir = mkdtempSync(join(tmpdir(), "murage-broker-hold-"));
       const sock = join(dir, "hold.sock");
-      let hold = true;
+      const asked: string[] = [];
       const resolved: Array<{ id: string; source: string }> = [];
+      const originalTimeout = globalThis.setTimeout;
+      const longTimers: number[] = [];
+      const timerSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) => {
+        if (typeof delay === "number" && delay >= 60_000) longTimers.push(delay);
+        return originalTimeout(callback, delay, ...args);
+      }) as typeof setTimeout);
       const broker = await createPermissionBroker({
         socketPaths: [sock],
-        timeoutMs: 50,
-        holdPermissionAsks: () => hold,
-        onAsk: () => {},
+        onAsk: (ask) => asked.push(ask.id),
         onResolve: (ask) => resolved.push({ id: ask.id, source: ask.source }),
       });
       try {
         const conn = connect(broker.socketPath);
         await new Promise<void>((resolve, reject) => { conn.on("connect", resolve); conn.on("error", reject); });
-        conn.write(JSON.stringify({ t: "ask", id: "held", tool: "Bash", input: { command: "echo hi" } }) + "\n");
-        await new Promise((resolve) => setTimeout(resolve, 200));
-        expect(resolved).toEqual([]);
-        hold = false;
         conn.write(JSON.stringify({ t: "ask", id: "plain", tool: "Bash", input: { command: "echo hi" } }) + "\n");
-        await expect.poll(() => resolved).toEqual([{ id: "plain", source: "timeout" }]);
-        expect(broker.answer("held", "allow")).toBe(true);
-        expect(resolved).toEqual([{ id: "plain", source: "timeout" }, { id: "held", source: "user" }]);
+        await expect.poll(() => asked).toEqual(["plain"]);
+        await new Promise((resolve) => originalTimeout(resolve, 200));
+        expect(longTimers).toEqual([]);
+        expect(resolved).toEqual([]);
+        expect(broker.answer("plain", "allow")).toBe(true);
+        expect(resolved).toEqual([{ id: "plain", source: "user" }]);
         conn.end();
       } finally {
+        timerSpy.mockRestore();
         broker.close();
         removeTempDirSync(dir);
       }
@@ -572,6 +576,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ]);
   });
 
+  it("gives an org-disabled login its plain line and the sign-in path, not a bot reply", async () => {
+    await create("org-login-off");
+    await instance.adapter.sendTurn({ threadId: "t-org-off", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
+      expect.objectContaining({ message: CLAUDE_ORG_LOGIN_LINE, setup: true, authRequired: true }),
+    ]);
+    expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ ok: false, stopReason: "auth_required" }),
+    ]);
+  });
+
   // Upstream #1840 (0.1.61 triage row 2): a model newer than the installed
   // Claude Code is a setup problem the owner fixes by updating, not a reply.
   it("settles an outdated CLI as update_required without emitting an assistant reply", async () => {
@@ -636,7 +653,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset, protocol: "anthropic", baseUrl: preset === "flux" ? "https://fluxrouter.ai/api/v1" : "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" } });
     await recorder.until(event => event.type === "turn.completed");
     const failure = recorder.events.find(event => event.type === "runtime.error");
-    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("selected model provider") });
+    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("did not accept the saved sign-in") });
     expect(failure).not.toHaveProperty("authRequired");
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "auth_required" });
   });
@@ -3760,6 +3777,29 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
       expect(await instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("managed-mcp.json") });
     } finally {
       delete process.env.FAKE_CLAUDE_REFUSE;
+    }
+  });
+
+  it("shows how the login bills from the CLI's own authMethod, and claims neither when it is unknown", async () => {
+    process.env.FAKE_CLAUDE_AUTH = "in";
+    await create();
+    try {
+      for (const [method, billing] of [["claude.ai", "subscription"], ["oauth_token", "subscription"], ["api_key", "metered"], ["api_key_helper", "metered"],
+        ["third_party", "metered"], ["something_new", undefined], ["omit", undefined]] as const) {
+        process.env.FAKE_CLAUDE_AUTH_METHOD = method;
+        const snapshot = await instance.snapshot();
+        expect(snapshot, method).toMatchObject({ state: "available", authenticated: true });
+        expect(snapshot.billing, method).toBe(billing);
+      }
+      // A probe that gave no status says nothing about billing either.
+      process.env.FAKE_CLAUDE_AUTH = "unsupported";
+      expect((await instance.snapshot()).billing).toBeUndefined();
+      // Signed out: no billing claimed.
+      process.env.FAKE_CLAUDE_AUTH = "out";
+      process.env.FAKE_CLAUDE_AUTH_METHOD = "api_key";
+      expect((await instance.snapshot()).billing).toBeUndefined();
+    } finally {
+      delete process.env.FAKE_CLAUDE_AUTH_METHOD;
     }
   });
 

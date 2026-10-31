@@ -76,6 +76,7 @@ import { EngineStderrCapture } from "./acp/core.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { toolFailureText } from "../../shared/tool-activity.ts";
 import { buildMcpServers, piMountRecords } from "./mcp-mounts.ts";
+import { wakeAwareTimeout } from "../sleep-clock.ts";
 
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
@@ -759,6 +760,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
+      // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3): a tool round ends in
+      // its own turn_end, and pi's usage there covers that round only.
+      let turnUsage: { input: number; output: number } | undefined;
 
       // An explicit pick must land on exactly that provider/model. A bare id
       // carries no provider, so set_model cannot pin it, and prompting anyway
@@ -1091,14 +1095,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // limit, then pi gets an honest {cancelled:true} — never a guess
               // in the owner's name. (pi's own `timeout` field, when set, may
               // auto-resolve sooner on its side.)
+              // awake time (1.0.10 C3): a sleep with the question open does not count toward its deadline
               const timer = questions && !turn.holdProjectAsks
-                ? setTimeout(() => {
+                ? wakeAwareTimeout(() => {
                     if (!pending.delete(reqId)) return;
                     send({ type: "extension_ui_response", id: reqId, cancelled: true });
                     emit({ ...base(threadId, turnId), requestId: reqId, type: "request.resolved", behavior: "deny", source: "timeout" });
                   }, QUESTION_TIMEOUT_MS)
                 : null;
-              timer?.unref?.();
               // Register BEFORE emitting: the harness may auto-approve from
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
@@ -1108,7 +1112,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // carries is what the stop line and the card read.
               const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords) : null;
               pending.set(reqId, (decision) => {
-                if (timer) clearTimeout(timer);
+                timer?.clear();
                 if (questions) {
                   // validated picks first; a one-string client (voice) still works
                   const value = decision.behavior !== "answer"
@@ -1179,10 +1183,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           case "turn_end":
           case "agent_end": {
             const sr = evt.message?.stopReason;
+            const round = evt.usage ?? evt.message?.usage;
+            // a turn_end is one model round; agent_end counts only when no round reported (it is not another round)
+            if (round && !settled && (evt.type === "turn_end" || !turnUsage)) {
+              turnUsage = { input: (turnUsage?.input ?? 0) + (round.input ?? 0), output: (turnUsage?.output ?? 0) + (round.output ?? 0) };
+            }
             // toolUse means pi ran a tool and auto-continues next turn to
             // answer — settling now would drop the final reply.
             if (sr === "toolUse" || sr === "tool_use" || sr === "tool_calls") return;
-            const usage = evt.usage ?? evt.message?.usage;
+            const usage = turnUsage;
             if (sr === "error" || sr === "failed") {
               emit({
                 ...base(threadId, turnId),

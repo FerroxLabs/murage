@@ -60,6 +60,7 @@
 //                      reply that @mentions teammates).
 //   FAKE_CLAUDE_AUTH   in (default) | out | unsupported | malformed |
 //                      inherited-api-key — what `auth status` reports
+//   FAKE_CLAUDE_AUTH_METHOD the signed-in `authMethod` (default claude.ai); "omit" leaves the field out
 //   FAKE_CLAUDE_VERSION what `--version` prints before " (Claude Code)" (default 2.1.295)
 //   FAKE_CLAUDE_ONE_SHOT_FAIL after-init — a one-shot helper starts (`init`), then exits 1 with a
 //                      stderr line quoting a launch-flag refusal
@@ -243,7 +244,7 @@ if (argv[0] === "auth" && argv[1] === "status") {
   }
   const loggedIn = auth === "in" || (auth === "inherited-api-key" && Boolean(process.env.ANTHROPIC_API_KEY));
   process.stdout.write(
-    JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none", apiProvider: "firstParty" }) + "\n",
+    JSON.stringify({ loggedIn, ...(process.env.FAKE_CLAUDE_AUTH_METHOD === "omit" ? {} : { authMethod: loggedIn ? process.env.FAKE_CLAUDE_AUTH_METHOD ?? "claude.ai" : "none" }), apiProvider: "firstParty" }) + "\n",
     () => process.exit(auth === "out" ? 1 : 0),
   );
 }
@@ -1073,6 +1074,12 @@ const playTurn = (prompt: JsonValue) => {
 
   // Upstream signed-out protocol capture; the success-result variant ensures
   // a flagged auth failure cannot be mislabeled as successful completion.
+  if (mode === "org-login-off") {
+    out({ type: "assistant", error: "api_error", is_api_error_message: true,
+      message: { model: "<synthetic>", content: [{ type: "text", text: "Your organization has disabled subscription access for Claude Code. (oauth_org_not_allowed)" }] } });
+    out({ type: "result", is_error: true, stop_reason: "stop_sequence", terminal_reason: "api_error" });
+    turnRunning = false; finishIfDone(); return;
+  }
   if (mode === "not-logged-in" || mode === "not-logged-in-success-result") {
     out({ type: "assistant", error: "authentication_failed", is_api_error_message: true,
       message: { model: "<synthetic>", content: [{ type: "text", text: "Not logged in · Please run /login" }] } });

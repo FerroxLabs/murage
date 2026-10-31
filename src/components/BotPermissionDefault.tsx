@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 import { api, useStoreActions, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { FULL_ACCESS_DESKTOP_ONLY, isDesktopOnlyMode, permissionModeOf, type PermissionMode } from "@/lib/permission-mode";
@@ -19,13 +20,13 @@ const MODES: ReadonlyArray<{ mode: PermissionMode; label: string }> = [
 function modeDetail(mode: PermissionMode, onThisComputer: boolean): string {
   if (mode === "unlimited") {
     return onThisComputer
-      ? "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. That includes this computer. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? t("ux.lcopyb.level.unlimitedHere")
+      : t("ux.lcopyb.level.unlimited");
   }
   if (mode === "full") {
     return onThisComputer
-      ? "Keeps going without asking, including on this computer and before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own."
-      : "Keeps going without asking, including before contacting other bots, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys. Webhook turns still ask. Routines use this level unless a routine has its own.";
+      ? t("ux.lcopyb.level.fullHere")
+      : t("ux.lcopyb.level.full");
   }
   if (mode === "auto") {
     return onThisComputer
@@ -64,7 +65,7 @@ export function BotPermissionDefault({
   const full = current === "full" || current === "unlimited";
   const remote = desktop === false;
   const options: ReadonlyArray<{ key: FullAccessOption; label: string; hint: string }> = [
-    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: "On unless you turn it off. Group chats, other people and webhooks still ask. Routines use their own level." },
+    { key: "fullAccessChannelMessages", label: FULL_ACCESS_CHANNEL_OPTION, hint: t("ux.lcopyb.level.channelHint") },
     { key: "fullAccessSetupRequests", label: FULL_ACCESS_SETUP_OPTION, hint: "Connecting an app still asks, because you sign in to it yourself." },
   ];
   return (

@@ -81,6 +81,12 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
 /** Rule 8: the namespaces a stamp may carry. Anything else is unproven until
  * a driver change adds it with its own reader. */
 export const STAMP_NAMESPACES: readonly string[] = ["mcp", "fuigo_build"];
+/** ISSUE-PERMS-1010 rev 4: a stamp part that could read as a known tool in one reader and not in another: whitespace at
+ *  either end (any Unicode kind) or a control, format or separator character anywhere. Nothing trims or rewrites a stamp;
+ *  such a part is unproven everywhere, and every other part compares exactly. */
+const HIDDEN_STAMP_SPELLING = /^\p{White_Space}|\p{White_Space}$|[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
+/** The why of that unproven stamp; auto-approve.ts logs it as its own class. */
+export const STAMP_SPELLING_WHY = "a stamp spelled with hidden characters";
 /** Rule 8, 1.0.4: the engine tools read in a namespace of their own, each by
  * its exact name and the ACP kind it is filed under. Fuigo's (and Grok
  * Build's) whole-file write is the OpenCode `write` tool their preset adds
@@ -90,6 +96,10 @@ export const STAMP_NAMESPACES: readonly string[] = ["mcp", "fuigo_build"];
  * its path and body. Every other name in such a namespace stays unproven. */
 const STAMPED_TOOLS: ReadonlyMap<string, ReadonlyMap<string, string>> = new Map([
   ["opencode", new Map([["write", "edit"]])],
+  // ISSUE-PERMS-1010 B (murage-releases #7b): Fuigo's codex toolset files apply_patch as kind `edit` with rawInput
+  // `{patch}` and no locations; the ACP driver reads the patch's destinations with the Codex driver's own reader
+  // (parseApplyPatch) into the call's locations, so the edit contract, the stop line and the guards read them.
+  ["codex", new Map([["apply_patch", "edit"]])],
 ]);
 /** Rule 9: the ACP kinds that identify an unstamped ask by themselves. */
 export const ACP_IDENTIFYING_KINDS: readonly string[] = ["execute", "edit", "read", "delete", "move", "search", "fetch"];
@@ -179,9 +189,10 @@ function unwrapped(input: unknown, mounts: readonly McpMountRecord[] | undefined
 export function resolveCall(call: GrantCall | undefined): ResolvedCall {
   const identity = call?.toolIdentity;
   if (identity) {
-    const name = typeof identity.name === "string" ? identity.name.trim() : "";
-    const namespace = typeof identity.namespace === "string" ? identity.namespace.trim() : "";
-    if (!namespace || !name) return { kind: "unproven", why: "a stamp this cannot read" };
+    const name = typeof identity.name === "string" ? identity.name : "";
+    const namespace = typeof identity.namespace === "string" ? identity.namespace : "";
+    if (!namespace.trim() || !name.trim()) return { kind: "unproven", why: "a stamp this cannot read" };
+    if (HIDDEN_STAMP_SPELLING.test(namespace) || HIDDEN_STAMP_SPELLING.test(name)) return { kind: "unproven", why: STAMP_SPELLING_WHY };
     const tools = STAMPED_TOOLS.get(namespace);
     if (tools) {
       const filed = tools.get(name);

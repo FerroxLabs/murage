@@ -59,6 +59,16 @@ export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as c
  *  the tab can never disagree about what a decision is. */
 export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input", "needs-you"] as const;
 
+/** A ROUTINE RUN PARKED ON A CARD IS NOT A SECOND THING OWED (1.0.11).
+ *  routines.ts sets a run's own status to 'waiting' when a card opens in its
+ *  conversation (an approval, a question) and to 'needs-you' when the run
+ *  limit comes while that card is still open. The card is the thing owed, and
+ *  the Inbox already counts it, so the run's card in the conversation the
+ *  routine reports to is not owed again: one approval read "Needs you 2".
+ *  A room goal that stops to ask has no card of its own; it carries goalStatus
+ *  'needs-input', which the projection reads first, so it stays owed. */
+export const INBOX_RUN_ON_CARD_STATUSES = ["waiting", "needs-you"] as const;
+
 /** Statuses that are news rather than a question. */
 export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused", "digest"] as const;
 

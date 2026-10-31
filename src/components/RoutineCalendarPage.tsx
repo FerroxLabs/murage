@@ -228,6 +228,7 @@ function intervalLabel(minutes: number): string {
 function scheduleLabel(schedule: RoutineSchedule | CalendarCall["schedule"]): string {
   if (schedule.type === "once") return `${niceDate(schedule.at)}, ${niceTime(schedule.at)}`;
   if (schedule.type === "limit_reset") return t("slik.scheduleLimitReset");
+  if (schedule.type === "app_event") return "When a connected app sends an event";
   if (schedule.type === "interval") {
     return `${intervalLabel(schedule.everyMinutes)} · starting ${niceDate(schedule.anchorAt)}, ${niceTime(schedule.anchorAt)}`;
   }
@@ -248,7 +249,7 @@ function scheduleLabel(schedule: RoutineSchedule | CalendarCall["schedule"]): st
 export function routineFocusAt(schedule: RoutineSchedule | CalendarCall["schedule"], from: number): number {
   if (schedule.type === "once") return schedule.at;
   if (schedule.type === "interval") return schedule.anchorAt;
-  if (schedule.type === "limit_reset") return from;
+  if (schedule.type === "limit_reset" || schedule.type === "app_event") return from;
   for (let step = 0; step < 8; step += 1) {
     const day = addDays(startOfDay(from), step);
     if (!schedule.weekdays.includes(new Date(day).getDay())) continue;
@@ -268,6 +269,8 @@ function recurrenceFor(schedule: RoutineSchedule | CalendarCall["schedule"], at:
   if (schedule.type === "once") return "none";
   if (schedule.type === "interval") return "interval";
   if (schedule.type === "limit_reset") return "limit_reset";
+  // a connected-app routine has no recurrence to edit here; its kind never changes (the server refuses it)
+  if (schedule.type === "app_event") return "none";
   if (schedule.weekdays.length === 7) return "daily";
   if (schedule.weekdays.join(",") === "1,2,3,4,5") return "weekdays";
   if (schedule.weekdays.length === 1 && schedule.weekdays[0] === new Date(at).getDay()) return "weekly";
@@ -462,6 +465,7 @@ function EventEditor({
   const [groupId, setGroupId] = useState(existingRoutine?.groupId ?? "");
   const [runOn, setRunOn] = useState<RoutineRunOn>(existingRoutine?.runOn ?? defaultRunOn ?? "ember");
   const [overlap, setOverlap] = useState<"skip" | "queue">(existingRoutine?.overlap ?? "skip");
+  const [deliverTo, setDeliverTo] = useState<"chat" | "list">(existingRoutine?.deliverTo === "list" ? "list" : "chat");
   const [permissionMode, setPermissionMode] = useState<RoutineLevelChoice>(existingRoutine?.permissionMode ?? permissionModeOf(state.bots.find((bot) => bot.id === botIds[0]) ?? { autoApprove: false, fullAccess: false }));
   const [attachments, setAttachments] = useState<Array<RoutineContextAttachment | CalendarCallAttachment>>(
     existingRoutine?.target === "room-goal" ? [] : existingRoutine?.attachments ?? existingCall?.attachments ?? [],
@@ -553,6 +557,7 @@ function EventEditor({
           timeoutMinutes,
           attachments: routineTarget === "room-goal" ? [] : attachments as RoutineContextAttachment[],
           overlap,
+          ...(routineTarget === "bot" ? { deliverTo } : {}),
           ...(!existingRoutine && routineTarget === "bot" && recurrence !== "none" ? { carryLastReport: true } : {}),
           ...(routineTarget === "bot" ? { permissionMode } : {}),
         };
@@ -605,7 +610,7 @@ function EventEditor({
   const modalRef = useRef<HTMLDivElement>(null);
   const editorDirty = useDirtyBaseline({
     kind, name, description, date, startTime, durationMinutes, timeoutMinutes, recurrence, weekdays, intervalMinutes,
-    botIds, routineTarget, groupId, runOn, overlap, permissionMode, attachments,
+    botIds, routineTarget, groupId, runOn, overlap, deliverTo, permissionMode, attachments,
   });
   useModalDialog(modalRef, onClose, true, editorDirty.isDirty);
 
@@ -763,6 +768,16 @@ function EventEditor({
                       </label>
                       <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{routineOverlapHelp(overlap)}</div>
                       {routineTarget === "bot" && (existingRoutine ? existingRoutine.carryLastReport === true : true) && <div className="mt-3 text-[11.5px] text-ink-secondary">{t("routines.carryLastReport")}</div>}
+                    </div>}
+                    {routineTarget === "bot" && <div className="mt-3">
+                      <label className="flex flex-wrap items-center gap-2 text-[12px] text-ink">
+                        <span>Send results to</span>
+                        <select aria-label="Send results to" value={deliverTo} onChange={(event) => setDeliverTo(event.target.value === "list" ? "list" : "chat")} className="rounded-lg border border-hairline/50 bg-panel px-3 py-2 text-[12px] text-ink outline-none focus:border-accent">
+                          <option value="chat">The chat it was made in</option>
+                          <option value="list">Routines list only</option>
+                        </select>
+                      </label>
+                      <div className="mt-1.5 text-[10.5px] leading-relaxed text-ink-secondary">{deliverTo === "list" ? "Each run stays in the routine's own conversation and on the Routines list." : "When a run finishes, its result, files and images appear in the chat where the routine was set up, or in the bot's main chat if there is none."}</div>
                     </div>}
                     {routineTarget === "bot" && levelBot && <div className="mt-3">
                       <RoutineApprovalLevel value={permissionMode} onChange={setPermissionMode} botName={levelBot.name} botMode={permissionModeOf(levelBot)} />
@@ -1778,7 +1793,7 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
       {canEdit && watchPickerOpen && <RoutineWatchPicker bots={visibleBots} onClose={() => setWatchPickerOpen(false)} />}
       {liveSelected && <EventDetails item={liveSelected} bots={state.bots} onClose={() => setSelected(null)} onEdit={() => { const seed: EventSeed = liveSelected.kind === "call" ? { kind: "call", at: liveSelected.at, durationMinutes: liveSelected.call.durationMinutes, botIds: liveSelected.call.botIds, call: liveSelected.call } : { kind: "routine", at: liveSelected.at, durationMinutes: liveSelected.routine?.durationMinutes ?? liveSelected.run?.durationMinutes ?? 30, botIds: [liveSelected.routine?.botId ?? liveSelected.run?.botId ?? ""].filter(Boolean), routine: liveSelected.routine ?? undefined }; setSelected(null); setEditor(seed); }} onCallChanged={(id) => { if (id) setCalls((current) => current.filter((call) => call.id !== id)); else void loadCalls(); }} onOpenRoom={onOpenRoom} />}
       {problemsOpen && <RoutineProblemsList runs={state.routineRuns} bots={state.bots} onClose={() => setProblemsOpen(false)} onMarkAllSeen={() => { dispatch({ type: "markAllRoutineRunsSeen" }); setProblemsOpen(false); }} onOpen={(run) => { setProblemsOpen(false); setAnchor(startOfDay(run.scheduledFor)); setSelected({ kind: "routine", id: run.id, at: run.scheduledFor, durationMinutes: run.durationMinutes ?? 30, routine: state.routines.find((routine) => routine.id === run.routineId) ?? null, run }); dispatch({ type: "markRoutineRunSeen", runId: run.id }); }} />}
-      {pausedOpen && <PausedList routines={paused} bots={state.bots} groups={state.groups} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : routine.schedule.type === "limit_reset" ? routine.nextRunAt ?? Date.now() : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} onOpenRoom={onOpenRoom} />}
+      {pausedOpen && <PausedList routines={paused} bots={state.bots} groups={state.groups} onClose={() => setPausedOpen(false)} onEdit={(routine) => { setPausedOpen(false); const at = routine.schedule.type === "once" ? routine.schedule.at : routine.schedule.type === "interval" ? routine.schedule.anchorAt : routine.schedule.type === "limit_reset" || routine.schedule.type === "app_event" ? routine.nextRunAt ?? Date.now() : atLocalTime(Date.now(), routine.schedule.time); setEditor({ kind: "routine", at, durationMinutes: routine.durationMinutes, botIds: [routine.botId], routine }); }} onOpenRoom={onOpenRoom} />}
     </main>
   );
 }

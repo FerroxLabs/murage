@@ -20,6 +20,7 @@ import { parse as parseYaml } from "yaml";
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
 import { fluxMemoryBreaker, setFluxMemorySettings } from "../flux-memory-headers.ts";
+import { fluxThreadIdValue } from "../flux-usage-tags.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { ClaudeDriver } from "./claude.ts";
@@ -57,7 +58,15 @@ let scratch: string;
 let instance: ProviderInstance | undefined;
 let recorder: EventRecorder | undefined;
 let seq = 0;
-const threadId = (label: string) => `t-hdr-${label}-${++seq}`;
+let lastThread = "";
+const threadId = (label: string) => (lastThread = `t-hdr-${label}-${++seq}`);
+/** The exact set an engine turn carries: the memory headers plus the usage tags (flux-usage-tags.ts) of that turn and thread. */
+const tagged = (turn: Partial<SendTurnInput>, memory: Record<string, string>, thread = lastThread): Record<string, string> => ({
+  "x-flux-feature": turn.background ? "other" : "chat",
+  ...(turn.warmIdentity?.botId ? { "x-flux-bot-id": turn.warmIdentity.botId } : {}),
+  "x-flux-thread-id": fluxThreadIdValue(thread)!,
+  ...memory,
+});
 
 beforeEach(() => {
   ensureDirs();
@@ -107,11 +116,11 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
     const seen = await spawnFor(turn);
-    expect(parseLines(seen.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(headers);
+    expect(parseLines(seen.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(turn, headers));
   });
 
   it("a turn with no identity is off/off, and a native (non-Flux) turn carries none", async () => {
-    expect(parseLines((await spawnFor({})).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
+    expect(parseLines((await spawnFor({})).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged({}, OFF));
     recorder?.stop();
     await instance?.dispose();
     delete process.env.FLUX_API_KEY;
@@ -121,7 +130,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
   it("a user's own ANTHROPIC_CUSTOM_HEADERS never rides a Flux turn", async () => {
     process.env.ANTHROPIC_CUSTOM_HEADERS = "x-flux-memory-inject: on\nx-team: a";
     try {
-      expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(APP);
+      expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, APP));
     } finally { delete process.env.ANTHROPIC_CUSTOM_HEADERS; }
   });
 
@@ -134,21 +143,21 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
     const id = threadId("claude-respawn");
     await oneTurn({ threadId: id, model: "flux-auto", ...CASES[0]!.turn });
     const owner = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
-    expect(parseLines(owner.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(APP);
+    expect(parseLines(owner.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, APP, id));
     await oneTurn({ threadId: id, model: "flux-auto", ...CASES[2]!.turn });
     const other = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
-    expect(parseLines(other.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
+    expect(parseLines(other.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[2]!.turn, OFF, id));
     expect(other.pid).not.toBe(owner.pid);
   });
 
   it("the kill switch makes an owner turn off/off", async () => {
     setFluxMemorySettings({ killSwitch: true });
-    expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
+    expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, OFF));
   });
 
   it("a Flux connection (named provider route) carries the headers too", async () => {
     const route = { connectionId: "c1", revision: "r1", preset: "flux", protocol: "anthropic", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "claude-opus-5-5" } as SendTurnInput["providerRoute"];
-    expect(parseLines((await spawnFor({ ...CASES[2]!.turn, providerRoute: route })).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(OFF);
+    expect(parseLines((await spawnFor({ ...CASES[2]!.turn, providerRoute: route })).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[2]!.turn, OFF));
   });
 });
 
@@ -169,7 +178,10 @@ describe("codex: three provider tables, one chosen per thread", () => {
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
     const seen = await spawnFor(turn);
-    expect(providerOf(seen)).toBe(headers === APP ? "flux" : "flux-off");
+    const provider = headers === APP ? "flux" : "flux-off";
+    expect(providerOf(seen)).toBe(provider);
+    // the usage tags ride this thread's start config (the override replaces the table's http_headers, so it repeats them)
+    expect(seen.calls.find((call) => call.method === "thread/start")?.params?.config).toEqual({ [`model_providers.${provider}.http_headers`]: tagged(turn, headers) });
     const argv = seen.argv.join("\n");
     // the tables never change with the audience: one app-server serves every thread
     expect(argv).toContain('model_providers.flux.http_headers={ "x-flux-memory-app" = "murage" }');
@@ -185,6 +197,7 @@ describe("codex: three provider tables, one chosen per thread", () => {
   it("a native turn names no Flux table", async () => {
     const seen = await spawnFor(CASES[2]!.turn, "gpt-5.6-sol");
     expect(providerOf(seen)).toBe("openai");
+    expect(seen.calls.find((call) => call.method === "thread/start")?.params?.config).toBeUndefined();
   });
 });
 
@@ -205,11 +218,11 @@ describe("ACP engines: the headers land in the spawn env after the route settles
     it.each(CASES)("$name", async ({ turn, headers, external }) => {
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
-      expect(overlayHeaders((await acpDump(create, turn, "flux-auto")).env.FUIGO_CONFIG)).toEqual(headers);
+      expect(overlayHeaders((await acpDump(create, turn, "flux-auto")).env.FUIGO_CONFIG)).toEqual(tagged(turn, headers));
     });
     it("keeps the user's own overlay keys and replaces their memory headers", async () => {
       const seen = await acpDump(create, CASES[2]!.turn, "flux-auto", { FUIGO_CONFIG: JSON.stringify({ models: { extra_headers: { "x-team": "a", "x-flux-memory-inject": "on" } } }) });
-      expect(overlayHeaders(seen.env.FUIGO_CONFIG)).toEqual({ "x-team": "a", ...OFF });
+      expect(overlayHeaders(seen.env.FUIGO_CONFIG)).toEqual({ "x-team": "a", ...tagged(CASES[2]!.turn, OFF) });
     });
   });
 
@@ -220,7 +233,7 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
       mkdirSync(join(scratch, "grok"), { recursive: true });
-      expect(overlayHeaders((await acpDump(create, { ...turn, providerRoute: route }, "claude-opus-5-5")).env.GROK_CONFIG)).toEqual(headers);
+      expect(overlayHeaders((await acpDump(create, { ...turn, providerRoute: route }, "claude-opus-5-5")).env.GROK_CONFIG)).toEqual(tagged(turn, headers));
     });
   });
 
@@ -239,7 +252,7 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { default: string; extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
       // the overlay also carries the Ask hook gate (applyHermesAskHook): the headers stay strict, the hooks block is the gate
       expect(Object.keys(overlay).sort()).toEqual(["hooks", "model"]);
-      expect(overlay.model).toEqual({ default: "flux-auto", extra_headers: headers });
+      expect(overlay.model).toEqual({ default: "flux-auto", extra_headers: tagged(turn, headers) });
       expect(overlay.hooks.pre_tool_call).toHaveLength(1);
       expect(overlay.hooks.pre_tool_call[0]!.fail_closed).toBe(true);
     });
@@ -254,7 +267,7 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       const path = seen.env.QWEN_CODE_SYSTEM_SETTINGS_PATH!;
       expect(path.startsWith(join(DATA_DIR, "native", "flux-memory"))).toBe(true);
       expect(existsSync(path)).toBe(true);
-      expect(JSON.parse(readFileSync(path, "utf8")).model.generationConfig.customHeaders).toEqual(headers);
+      expect(JSON.parse(readFileSync(path, "utf8")).model.generationConfig.customHeaders).toEqual(tagged(turn, headers));
     });
   });
 
@@ -264,13 +277,13 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux-auto");
-      expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(headers);
+      expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(tagged(turn, headers));
     });
     // The catalog keeps OpenCode's own slug (`flux/flux-auto`) as the id, so that id must reach the same decision.
     it.each(CASES)("native slug flux/flux-auto: $name", async ({ turn, headers, external }) => {
       setFluxMemorySettings(external === undefined ? {} : { external });
       const seen = await acpDump(create, turn, "flux/flux-auto");
-      expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(headers);
+      expect(JSON.parse(seen.env.OPENCODE_CONFIG_CONTENT!).provider.flux.options.headers).toEqual(tagged(turn, headers));
     });
   });
 

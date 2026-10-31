@@ -1,0 +1,28 @@
+# Capability records: limits. Schema and rules: scripts/build-capability-db.mjs.
+schema: 1
+entries:
+  - id: limits.spending-per-bot
+    name: A spending cap for each bot
+    status: partial
+    questions:
+      - Can I set a spending limit per bot?
+      - Cap how much one bot spends
+      - Set a budget for each bot
+      - Stop a bot when it costs too much
+    answer: >
+      Partly. Settings, Usage shows this month's use by bot, a project can have a work budget in
+      minutes, and memory learning has a monthly limit. There is no money cap for one bot.
+    limits: >
+      No money cap per bot. Watch Usage, give a project a work budget, or keep the bot on Ask so it
+      checks with you first.
+    ask_your_bot: Ask your bot to set up a weekly routine that reminds you to review Usage.
+    settings_path: Settings → Usage → This month by bot
+    platforms: [all]
+    engines: [all]
+    anchors:
+      - settings-card:usage/by-bot
+      - settings-card:memory/limit
+      - file:src/locales/en.json#projects.work.budgetHint
+    verified: 1.0.10
+    internal: KB limits-41. No per-bot spend cap in server, shared or src/lib (searched 1.0.10).
+retired: []

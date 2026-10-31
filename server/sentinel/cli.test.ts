@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkInstall, main, parseArgs, registrationMatches, type RegistrationState } from "./cli.ts";
+import { checkInstall, invokedAsMain, main, parseArgs, registrationMatches, type RegistrationState } from "./cli.ts";
 import { writeDescriptor } from "./paths.ts";
 import { runScan } from "./scan.ts";
 import { T0, cleanupFixtures, makeInstall, type FixtureInstall } from "./scan-fixtures.ts";
 import { EXIT } from "./supervisor.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 
 afterEach(() => cleanupFixtures());
 
@@ -194,5 +196,24 @@ describe("cli import graph", () => {
       const code = readFileSync(join(ROOT, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
       expect(code, `${file} must not use fetch or sockets`).not.toMatch(/\bfetch\s*\(|\bWebSocket\b|\bXMLHttpRequest\b/);
     }
+  });
+});
+
+describe("the checker starts when run through a symlinked install", () => {
+  it("argv[1] through a symlinked directory still names the module, so main() runs on a Cloud home", () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "murage-sentinel-main-")));
+    try {
+      const real = join(base, "slot-a", "dist-server", "sentinel");
+      mkdirSync(real, { recursive: true });
+      writeFileSync(join(real, "cli.js"), "");
+      symlinkSync(join(base, "slot-a"), join(base, "murage"), process.platform === "win32" ? "junction" : "dir");
+      const moduleUrl = pathToFileURL(join(real, "cli.js")).href;
+      expect(invokedAsMain(join(base, "murage", "dist-server", "sentinel", "cli.js"), moduleUrl)).toBe(true);
+      expect(invokedAsMain(join(real, "cli.js"), moduleUrl)).toBe(true);
+      writeFileSync(join(real, "other.js"), "");
+      expect(invokedAsMain(join(base, "murage", "dist-server", "sentinel", "other.js"), moduleUrl)).toBe(false);
+      expect(invokedAsMain(join(base, "missing.js"), moduleUrl)).toBe(false);
+      expect(invokedAsMain(undefined, moduleUrl)).toBe(false);
+    } finally { removeTempDirSync(base); }
   });
 });

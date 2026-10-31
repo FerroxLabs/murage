@@ -3,7 +3,7 @@
 //
 // The wiring, end to end, on the ACP path the 1.0.1 camera run used: a real
 // ACP driver against the scripted fake CLI raises the shell ask the engine
-// sent for `cat …/mcp/call_00_….json | python3 …`, and the event it emits is
+// sent for a read of `…/mcp/call_00_….json`, and the event it emits is
 // fed into exactly the calls server/index.ts makes. The boundary itself is in
 // own-tool-results.test.ts; this proves the session's folder reaches policy,
 // and that a read of anything else still raises the card.
@@ -58,6 +58,13 @@ function sessionDirs(childHome: string): string[] {
   return keys.map((key) => join(childHome, "sessions", key, "fake-acp-session", "mcp"));
 }
 
+/** Stop the driver of the previous ask so the next one starts its own. */
+async function releaseDriver(): Promise<void> {
+  recorder?.stop();
+  await instance?.dispose();
+  instance = undefined;
+}
+
 /** Raise one shell ask through the real driver and judge it as index.ts does. */
 async function askFor(command: string, threadId: string) {
   process.env.FAKE_ACP_MODE = "permission";
@@ -79,6 +86,7 @@ async function askFor(command: string, threadId: string) {
     command: isCommandTool(opened.tool) ? commandFromToolInput(opened.toolCall?.input) : undefined,
     filePaths: opened.filePaths,
     dirs: opened.toolResultDirs,
+    ...(opened.commandShell ? { commandShell: opened.commandShell } : {}),
   });
   const verdict = autoVerdict({ autoApprove: false }, opened.tool, opened.summary, { ownToolResults: own });
   await instance.adapter.respondToRequest(threadId, opened.requestId, { behavior: "deny" });
@@ -100,11 +108,22 @@ describe("an ACP engine reading its own saved MCP result", () => {
     mkdirSync(dir, { recursive: true });
     const saved = join(dir, "call_00_Ugx02hBzWG21yy4QOx9K5297.json");
     writeFileSync(saved, JSON.stringify({ messages: [{ subject: "Invoice" }] }));
-    const { opened, verdict } = await askFor(
-      `cat ${process.platform === "win32" ? `'${saved}'` : saved} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['messages'][0]['subject'])"`, "t-own-read");
+    const quoted = process.platform === "win32" ? `'${saved}'` : saved;
+    const { opened, verdict } = await askFor(`jq -r '.messages[0].subject' ${quoted}`, "t-own-read");
     expect(opened.toolResultDirs).toEqual(sessionDirs(childHome));
-    expect(verdict).toMatchObject({ source: "own-tool-results" });
-    expect(verdict.approve).toBeTruthy();
+    if (process.platform === "win32") {
+      // Windows engines may run the line under PowerShell, which the POSIX reader cannot place: the shell read asks there.
+      expect(verdict.approve).toBeNull();
+    } else {
+      expect(verdict).toMatchObject({ source: "own-tool-results" });
+      expect(verdict.approve).toBeTruthy();
+    }
+    // 1.0.11 OWN-TOOL-RESULTS: the python form of the same read asks on every OS (it imports from the folder it runs in).
+    await releaseDriver();
+    const python = await askFor(
+      `cat ${quoted} | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['messages'][0]['subject'])"`, "t-own-read-py");
+    expect(python.opened.toolResultDirs).toEqual(sessionDirs(childHome));
+    expect(python.verdict.approve).toBeNull();
   });
 
   it("still asks for a read of any other file", async () => {

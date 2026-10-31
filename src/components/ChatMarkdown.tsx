@@ -53,11 +53,28 @@ const localHref = (url: string): string | null => {
   if (!/^file:\/\//i.test(restored) && !WINDOWS_PATH.test(restored)) return null;
   return localFilePath(restored) ? restored : null;
 };
+// An obsidian://open link (adapted from OpenMausBot #3687) opens a note in the
+// owner's Obsidian vault. The default allow-list emptied it, so a bot that
+// cited a note rendered a dead link. Only a link's href keeps it, an image
+// source never does, and only the read-only `open` action naming a vault,
+// file or path: `new`, `search`, clipboard and plugin actions stay refused,
+// because a reply must never write a note or run a plugin with one click.
+const OBSIDIAN_OPEN_PARAMS = new Set(["vault", "file", "path"]);
+const isObsidianOpenHref = (url: string): boolean => {
+  if (!/^obsidian:\/\/open\?/i.test(url)) return false;
+  try {
+    const params = new URL(url).searchParams;
+    return [...params.keys()].length > 0 && [...params.keys()].every((key) => OBSIDIAN_OPEN_PARAMS.has(key));
+  } catch {
+    return false;
+  }
+};
 const urlTransform: UrlTransform = (url, key, node) => {
   if (key === "src" && node.tagName === "img" && isRasterDataUrl(url)) return url;
   if (key === "href" && node.tagName === "a") {
     const local = localHref(url);
     if (local) return local;
+    if (isObsidianOpenHref(url)) return url;
   }
   return defaultUrlTransform(url);
 };

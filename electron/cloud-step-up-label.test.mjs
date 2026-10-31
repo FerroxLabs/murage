@@ -44,6 +44,8 @@ const SAMPLES = [
   // 1.0.9 bot email owner routes.
   ["POST", "/api/email/account"], ["POST", "/api/email/other-setups/inbox-1/remove"], ["POST", "/api/email/bots/b1/setup"],
   ["POST", "/api/email/bots/b1/trusted-add"], ["GET", "/api/email/status"],
+  // 1.0.9 bot call settings.
+  ["PUT", "/api/bots/b1/calls/rules"], ["POST", "/api/calls/off-today"], ["POST", "/api/calls/rearm"],
 ];
 
 describe("every step-up route has a human label", () => {

@@ -43,6 +43,21 @@ beforeEach(async () => {
 afterEach(() => runtime.stop());
 
 describe("F21 setup crash steps (2.5)", () => {
+  it("the runtime tick finishes a setup that got no answer, with no restart", async () => {
+    runtime.stop(); // the beforeEach read started a real tick
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      await runtime.start();
+      fake.on("POST", /^\/api\/desktop\/bot-keys$/, "reset");
+      expect(await runtime.services()!.bindings.enable("b1", { username: "juniper" })).toMatchObject({ state: "provisioning" });
+      fake.on("POST", /^\/api\/desktop\/bot-keys$/, { status: 201, body: { key: "bot-email-key", key_id: "key_new" } });
+      fake.on("POST", /^\/v1\/email\/inboxes$/, { status: 201, body: { id: "ibx_7", bot_id: "b1", address: "juniper@murage.email", state: "active", send_policy: "ask" } });
+      clock += 30_000;
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.waitFor(() => expect(runtime.services()!.store.getBinding("b1")).toMatchObject({ state: "active", inboxId: "ibx_7" }));
+    } finally { vi.useRealTimers(); }
+  });
+
   it("a key already stored at step key skips to inbox; 409 inbox_exists is adopted", async () => {
     binding("b1", { inboxId: null, address: null, state: "provisioning", step: "key", opId: "op-1", opStartedAt: clock - 1000 });
     runtime.secrets.setBotKey("b1", { token: "bot-new", keyId: "key_new" });
