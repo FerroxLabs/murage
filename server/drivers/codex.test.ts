@@ -9,7 +9,7 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as procs from "../procs.ts";
@@ -1348,7 +1348,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "approval" });
     await instance.adapter.sendTurn({ threadId: "t-approve-patch", text: "patch" });
     const opened = await recorder.until((e) => e.type === "request.opened");
-    expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug" });
+    expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug", toolCall: { name: "edit", input: { paths: ["src/a.ts", "src/b.ts"] } } });
+    expect((opened as { toolInputMissing?: string }).toolInputMissing).toBeUndefined();
     await instance.adapter.respondToRequest("t-approve-patch", opened.requestId!, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
   });
@@ -3044,6 +3045,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     }
     expect(shell.execEnv.env.PYTHONINSPECT).toBeUndefined();
     expect(edit).toMatchObject({ tool: "edit", toolCall: { name: "edit", input: { paths: ["../outside.txt"] } } });
+    // where it lands, placed from the delivery's own folder, which the partition and the writer roots read
+    expect(edit.filePaths).toEqual([resolve(realpathSync(scratch), "../outside.txt")]);
     expect(own).toMatchObject({ tool: "publish_site", toolCall: { name: "mcp__agents__publish_site", input: { site: "x" } } });
     // F5: a command that never arrived is stated missing and never replaced
     expect(missing).toMatchObject({ tool: "shell", toolInputMissing: "command", toolCall: { name: "shell" } });
@@ -3077,6 +3080,30 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     const log = JSON.parse(readFileSync(join(scratch, "dump-narrow.json"), "utf8")).hookLog;
     expect(log.map((h: any) => [h.id, h.verdict])).toEqual([["n1", "deny"], ["n2", "deny"], ["n3", "allow"]]);
     expect(log[0].reason).toBe("search a folder (1)");
+  });
+
+  it("NOLIMITS-CODEX-EDIT: a native file-change approval (no hook on this build) files the edit it announced", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const outside = join(scratch, "..", "sibling", "notes.md");
+    const r = await run("t-native-edit", [{ kind: "apply_patch", id: "n1", patch: `*** Begin Patch\n*** Add File: ${outside}\n+x\n*** End Patch`, escalate: true }]);
+    expect(r.opened).toHaveLength(1);
+    expect(r.opened[0]).toMatchObject({ tool: "edit", summary: outside, filePaths: [resolve(realpathSync(scratch), "..", "sibling", "notes.md")], toolCall: { name: "edit", input: { paths: [outside] } } });
+    expect(r.opened[0].toolInputMissing).toBeUndefined();
+  });
+
+  it("NOLIMITS-CODEX-EDIT: a native file-change approval nothing announced stays a card that says what it lacks", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    process.env.FAKE_CODEX_MODE = "approval";
+    process.env.FAKE_CODEX_APPROVAL = JSON.stringify({ method: "item/fileChange/requestApproval", params: { itemId: "ghost", reason: "needs to write" } });
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-native-unread", text: "go", cwd: scratch } as never);
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "edit", toolInputMissing: "changes" });
+    expect((opened as { toolCall?: unknown }).toolCall).toBeUndefined();
+    await instance.adapter.respondToRequest("t-native-unread", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    delete process.env.FAKE_CODEX_APPROVAL;
   });
 
   it("answers a call that reaches the approval path after the hook with the hook's decision, one card", async () => {

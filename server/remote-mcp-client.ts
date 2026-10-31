@@ -22,7 +22,7 @@ import { Readable } from "node:stream";
 import { GuardedHttpError, guardedRequest, type GuardedRequestOptions, type GuardedStreamResponse } from "../shared/guarded-http.mjs";
 import { LIMITS, parseServerUrl, sameOrigin, type LocalConfirmation } from "../shared/remote-mcp-url.mjs";
 import { displayUrl, urlHasSecret } from "../shared/mcp-secret-url.mjs";
-import type { McpProbeFailureReason, McpProbeResult, McpProbeTool } from "./mcp-probe.ts";
+import { toolsBeyondList, type McpProbeFailureReason, type McpProbeResult, type McpProbeTool, type McpToolsBeyondList } from "./mcp-probe.ts";
 
 export type RemoteTransport = "http" | "sse";
 
@@ -344,7 +344,7 @@ function validInitialize(frame: Record<string, unknown> | null): boolean {
     && isRecord(result.serverInfo) && typeof result.serverInfo.name === "string" && typeof result.serverInfo.version === "string";
 }
 
-function collectTools(frame: Record<string, unknown> | null, secrets: string[]): McpProbeTool[] | null {
+function collectTools(frame: Record<string, unknown> | null, secrets: string[]): ({ tools: McpProbeTool[] } & McpToolsBeyondList) | null {
   if (!frame || frame.jsonrpc !== "2.0" || "error" in frame || !isRecord(frame.result) || !Array.isArray(frame.result.tools)) return null;
   const tools: McpProbeTool[] = [];
   for (const raw of frame.result.tools.slice(0, LIMITS.toolsListed)) {
@@ -354,7 +354,7 @@ function collectTools(frame: Record<string, unknown> | null, secrets: string[]):
       ...(typeof raw.description === "string" ? { description: redactUpstreamText(raw.description, secrets).slice(0, 500) } : {}),
     });
   }
-  return tools;
+  return { tools, ...toolsBeyondList(frame.result.tools, frame.result.nextCursor, tools.length) };
 }
 
 function initializeFrame(id: number): string {
@@ -500,8 +500,8 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
     if (initialized.status >= 400) return explainStatus(initialized.status, initialized.headers, textOf(initialized as { body?: Buffer }));
     const list = await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }), session, protocol);
     if (list.status !== 200) return explainStatus(list.status, list.headers, textOf(list as { body?: Buffer }));
-    const tools = collectTools(parseRpcResponse((list as { body: Buffer }).body.toString("utf8"), 2), secrets);
-    return tools ? { ok: true, tools, transport: "http" } : fail("wrong-address");
+    const listed = collectTools(parseRpcResponse((list as { body: Buffer }).body.toString("utf8"), 2), secrets);
+    return listed ? { ok: true, ...listed, transport: "http" } : fail("wrong-address");
   };
 
   const viaLegacySse = async (): Promise<McpProbeResult> => {
@@ -539,8 +539,8 @@ export async function probeRemoteMcp(input: RemoteProbeInput): Promise<McpProbeR
       await send(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }));
       const sentList = await send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }));
       if (sentList.status >= 300) return explainStatus(sentList.status, sentList.headers, textOf(sentList as { body?: Buffer }));
-      const tools = collectTools(await answer(2), secrets);
-      return tools ? { ok: true, tools, transport: "sse" } : fail("wrong-address");
+      const listed = collectTools(await answer(2), secrets);
+      return listed ? { ok: true, ...listed, transport: "sse" } : fail("wrong-address");
     } catch (error) {
       if (error instanceof Stop) throw error;
       if (error instanceof SseReaderError) return fail(error.code === "idle-timeout" ? "no-answer" : "wrong-address");

@@ -770,10 +770,69 @@ export function parseApplyPatch(patch: unknown): { destinations: string[]; added
   return { destinations, added: new Map([...added].map(([k, v]) => [k, v.join("\n")])), removed };
 }
 
+/** What a native file-change names: every path it touches, a move's new name included, and what it takes away (a delete,
+ *  and a move's old name). `changes` is the `changes` of a `fileChange` item (`{path, kind}`) or the map of an older
+ *  `applyPatchApproval` (path to change). Anything unread, an unknown kind or a move that names no path included, is null. */
+export function readFileChanges(changes: unknown): { paths: string[]; removed: string[] } | null {
+  const map = record(changes);
+  const rows: Array<[unknown, unknown]> = Array.isArray(changes)
+    ? changes.map((change) => [record(change)?.path, record(change)?.kind])
+    : map ? Object.entries(map) : [];
+  if (!rows.length) return null;
+  const paths: string[] = [];
+  const removed: string[] = [];
+  for (const [path, kind] of rows) {
+    if (typeof path !== "string" || !path) return null;
+    paths.push(path);
+    const change = record(kind);
+    const type = typeof kind === "string" ? kind : str(change?.type);
+    if (type === "delete") removed.push(path);
+    else if (type === "update") {
+      const moved = change?.move_path ?? change?.movePath ?? undefined;
+      if (moved === undefined) continue;
+      if (typeof moved !== "string" || !moved) return null;
+      paths.push(moved);
+      removed.push(path);
+    } else if (type !== "add") return null;
+  }
+  return { paths, removed };
+}
+
+/** Each path of an edit placed part by part from the call's own folder (Rules 63.2, 75d), never lexically: `real` is where
+ *  every path lands, `hold` the first key rule or placing failure, which the key guard answers at every level (`localHold`),
+ *  and `inside` whether all of them stay in the project. Both Codex edit routes read their paths through this. */
+export function placeEditPaths(paths: readonly string[], project: string, cwd: string, home: string, added?: ReadonlyMap<string, string>): { real: string[]; inside: boolean; hold?: string } {
+  const real: string[] = [];
+  let inside = true;
+  let hold: string | undefined;
+  for (const path of paths) {
+    const checked = inProjectCheck(path, project, added?.get(path), { home, base: cwd });
+    if (checked.ok) { real.push(checked.real); continue; }
+    inside = false;
+    if (checked.reason === "outside") { real.push(checked.real); continue; }
+    real.push(path);
+    hold ??= (checked.reason === "sensitive" ? checked.rule : checked.why).slice(0, 80);
+  }
+  return { real, inside, ...(hold ? { hold } : {}) };
+}
+
+/** The native file-change approval's call, in the shape the hook's apply_patch ask files (the Codex edit contract), or
+ *  the field that could not be read. A `grantRoot` is a place the engine asks to write under, so the guards read it too. */
+export function codexNativeEditCall(params: { grantRoot?: unknown }, changes: unknown, ctx: { project: string; cwd: string; home?: string }):
+  | { toolCall: { name: "edit"; input: { paths: string[]; cwd: string; removed?: string[] } }; filePaths: string[]; localHold?: string; inputMissing?: undefined }
+  | { toolCall?: undefined; filePaths?: undefined; localHold?: undefined; inputMissing: string } {
+  const read = readFileChanges(changes);
+  if (!read) return { inputMissing: "changes" };
+  const root = str(params.grantRoot);
+  const paths = root ? [...read.paths, root] : read.paths;
+  const placed = placeEditPaths(paths, ctx.project, ctx.cwd, ctx.home ?? homedir());
+  return { toolCall: { name: "edit", input: { paths, cwd: ctx.cwd, ...(read.removed.length ? { removed: read.removed } : {}) } }, filePaths: placed.real, ...(placed.hold ? { localHold: placed.hold } : {}) };
+}
+
 export type HookRoute =
   | { route: "allow"; final: boolean; why: string; destinations?: string[]; cwd?: string }
   | { route: "deny"; reason: string }
-  | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string };
+  | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string; filePaths?: string[]; localHold?: string };
 
 export interface RouteContext {
   /** F4: the mounts this app-server loads; undefined = unstated, so no MCP call is proven. */
@@ -819,15 +878,10 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     const parsed = parseApplyPatch(patch);
     if (!parsed) return { route: "ask", tool: "edit", summary: "edit", toolCall: { name: "edit" }, toolInputMissing: "patch", cwd };
     // Rules 63.2, 75d: each destination is placed in order from the delivery's folder (shared/in-project.ts), never lexically
-    const reals: string[] = [];
-    for (const destination of parsed.destinations) {
-      const checked = inProjectCheck(destination, ctx.project, parsed.added.get(destination), { home: ctx.home ?? homedir(), base: cwd });
-      if (!checked.ok) break;
-      reals.push(checked.real);
-    }
+    const placed = placeEditPaths(parsed.destinations, ctx.project, cwd, ctx.home ?? homedir(), parsed.added);
     // the destinations travel with the allow, stored real, so the tripwire matches the started change on where it lands (Rule 67)
-    if (reals.length === parsed.destinations.length) return { route: "allow", final: true, why: "own-workspace", destinations: reals, cwd };
-    return { route: "ask", tool: "edit", summary: parsed.destinations.join(", "), destinations: parsed.destinations, cwd,
+    if (placed.inside) return { route: "allow", final: true, why: "own-workspace", destinations: placed.real, cwd };
+    return { route: "ask", tool: "edit", summary: parsed.destinations.join(", "), destinations: parsed.destinations, cwd, filePaths: placed.real, ...(placed.hold ? { localHold: placed.hold } : {}),
       // ISSUE-PERMS-1010 Rev 3 G2: what the patch takes away travels with the ask, so the stop line judges it as a delete
       toolCall: { name: "edit", input: { paths: parsed.destinations, cwd, ...(parsed.removed.length ? { removed: parsed.removed } : {}) } } };
   }
