@@ -63,7 +63,7 @@ export const cloudHomeCopy = {
   cloudBotStateUnreadable: "Your Cloud could not read this bot's sign-in state.",
   cloudBotIdTombstoned: "That bot ID belonged to a deleted bot and is not used again.",
   cloudClaudeSigninRenew: "Renew your Claude sign-in",
-  cloudClaudeSigninScreen: "Cloud turns run on a long-lived Claude subscription token. Your local MCP servers work as before; claude.ai connectors and Remote Control are desktop features and are not part of Cloud turns.",
+  cloudClaudeSigninScreen: "Cloud chats use a long-lasting Claude sign-in. Your local connected tools work as before; claude.ai connectors and Remote Control are desktop features and are not part of Cloud chats.",
   unsupportedUpgrade: "This Cloud connection does not support that upgrade.",
   invalidCloudSupervisorMessage: "Invalid cloud supervisor message",
   cloudSupervisorConnectionIsRequired: "Cloud supervisor connection is required",

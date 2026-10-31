@@ -53,7 +53,7 @@ vi.mock("./FirstRunChrome", () => ({
 }));
 
 const { FirstRunPhases, FirstRunPhasesBody } = await import("./FirstRunPhases");
-const { FIRST_RUN_PHASES, firstRunPhaseRows, resetFirstRunPhases } = await import("@/lib/first-run");
+const { FIRST_RUN_PHASES, firstRunPhaseRows, forgetFirstRunStarted, resetFirstRunPhases } = await import("@/lib/first-run");
 const { SETUP_STEPS } = await import("../../shared/setup");
 
 type View = Parameters<typeof FirstRunPhasesBody>[0]["view"];
@@ -129,7 +129,9 @@ describe("the bar lists the server's five phases", () => {
   it("builds the list from the view and never from a list of its own", () => {
     // A hard-coded step list here would go stale the moment the server's
     // did, and would be able to claim progress the workspace has not earned.
-    expect(code).toContain("firstRunPhaseRows(view)");
+    // The second argument is the renderer's own connection, which only marks
+    // a pill as waiting; every row still comes from the view.
+    expect(code).toContain("firstRunPhaseRows(view, online)");
     for (const id of SETUP_STEPS) expect(code, id).not.toContain(`"${id}"`);
   });
 });
@@ -253,6 +255,10 @@ describe("the wired bar", () => {
     liveView = null;
     expect(wired(), "the bar drew before the server had answered").toBe("");
 
+    // A fresh session on a set-up install. (A session that WATCHED the run
+    // end keeps the bar one beat for "All set"; that is tested in
+    // src/lib/first-run.test.ts.)
+    forgetFirstRunStarted();
     liveView = view({}, { firstRun: false, next: null, progress: { done: 5, total: 5 } });
     expect(wired(), "the bar drew on an install that is not in its first run").toBe("");
   });

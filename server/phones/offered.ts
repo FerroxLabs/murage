@@ -41,3 +41,21 @@ export function familyOffered(family: PhoneFamily, f: OfferFacts): boolean {
   if (family === "bootstrap") return phonesOffered(f) || shareAskOffered(f);
   return phonesOffered(f);
 }
+
+/** Why a host does not offer either preview even with its flag on: a Cloud home, a shared workspace, or no desktop launch proof (in that order). Null when nothing stands in the way. */
+export type OfferBlock = "cloud-home" | "shared-workspace" | "launch-proof";
+export function offerBlock(f: OfferFacts): OfferBlock | null {
+  if (f.cloudRole === "home") return "cloud-home";
+  if (f.sharedWorkspace) return "shared-workspace";
+  if (!f.launchProof) return "launch-proof";
+  return null;
+}
+
+/**
+ * GET /api/phones/offered. `offered`, `flag` and `shareAsk` keep their 1.0.9 meaning (the door and the Cloud card read them).
+ * 1.0.12 adds, for the Settings preview switches: `shareAskFlag` (features.phoneShareAsk is exactly true) and `blocked` (the
+ * reason a switch that is on does nothing here, or null).
+ */
+export function offeredAnswer(f: OfferFacts): { offered: boolean; flag: boolean; shareAsk: boolean; shareAskFlag: boolean; blocked: OfferBlock | null } {
+  return { offered: phonesOffered(f), flag: f.features?.phoneTools === true, shareAsk: shareAskOffered(f), shareAskFlag: f.features?.phoneShareAsk === true, blocked: offerBlock(f) };
+}
