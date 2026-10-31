@@ -1635,6 +1635,46 @@ describe("harness HTTP API", () => {
     }
   });
 
+  it("LOG-CPU-LINEAGE: reading a chat that is already read says nothing on the stream, and a read of one chat leaves another's unread", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      const second = (await desktopApi("POST", `/api/bots/${bot.id}/tasks`, { title: "Second chat" })).body;
+      const other = second.task?.threadId ?? second.bot?.threadId ?? second.threadId;
+      expect(typeof other).toBe("string");
+      const viewed = (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((value: { id: string }) => value.id === bot.id).tasks.find((task: { threadId: string }) => task.threadId !== other).threadId;
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/read`, { threadId: other, unread: true })).body.bot.unread).toBe(true);
+      stream = await openSse(`${BASE}/api/events`);
+      for (let i = 0; i < 5; i++) expect((await desktopApi("POST", `/api/bots/${bot.id}/read`, { threadId: viewed })).body.bot.unread).toBe(true);
+      // The barrier is a real change; a no-op's frame would be in front of it.
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { name: "Read barrier" })).status).toBe(200);
+      await stream.until((frame) => frame.kind === "bot" && frame.bot?.name === "Read barrier", 5_000);
+      expect(stream.frames.filter((frame) => frame.kind === "bot" && frame.bot?.id === bot.id && frame.bot?.name !== "Read barrier")).toEqual([]);
+      expect((await desktopApi("POST", `/api/bots/${bot.id}/read`, { threadId: other })).body.bot.unread).toBe(false);
+      await stream.until((frame) => frame.kind === "bot" && frame.bot?.id === bot.id && frame.bot?.unread === false, 5_000);
+    } finally {
+      stream?.close();
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
+  it("LOG-CPU-LINEAGE: a room's read that changes nothing says nothing on the stream, from any client", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const group = (await api("POST", "/api/groups", { name: "Read no-op fixture", memberIds: [bot.id] })).body.group;
+    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
+    try {
+      stream = await openSse(`${BASE}/api/events`);
+      for (let i = 0; i < 3; i++) expect((await api("POST", `/api/groups/${group.id}/read`)).body.group.unread).toBe(false);
+      expect((await desktopApi("POST", `/api/groups/${group.id}/read`, { unread: true })).body.group.unread).toBe(true);
+      await stream.until((frame) => frame.kind === "group" && frame.group?.id === group.id && frame.group?.unread === true, 5_000);
+      expect(stream.frames.filter((frame) => frame.kind === "group" && frame.group?.id === group.id && frame.group?.unread === false)).toEqual([]);
+    } finally {
+      stream?.close();
+      await desktopApi("DELETE", `/api/groups/${group.id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+    }
+  });
+
   it("does not expose or mutate a hidden bot through its read marker", async () => {
     const bot = (await desktopApi("POST", "/api/bots", { name: "Hidden read-marker canary" })).body.bot;
     try {

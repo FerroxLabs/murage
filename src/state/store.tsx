@@ -2166,6 +2166,15 @@ export function withTaskDelta(bot: BotAnnouncement, held: Pick<Bot, "tasks" | "t
   return { ...rest, tasks: merged, ...(d.read ? { unread: merged.some((task) => task.unread) } : {}) };
 }
 
+/** Whether a bot frame says the chat on screen is unread, which is what sends the read mark. A delta carries only the rows that changed, so
+ * no row for the open chat means its mark did not move: `bot.unread` there speaks for ANY of the bot's chats, and answering from it posted a read
+ * for each frame while another chat stayed unread, and each post made another frame (LOG-CPU-LINEAGE). A frame with no rows at all, from an older
+ * server, still answers from the bot. */
+export function frameShowsViewedUnread(bot: Pick<BotAnnouncement, "threadId" | "unread" | "tasks" | "tasksDelta">, viewedThread: string | undefined): boolean {
+  if (bot.tasksDelta) return bot.tasksDelta.upsert.find((task) => task.threadId === viewedThread)?.unread === true;
+  return bot.tasks?.find((task) => task.threadId === viewedThread)?.unread ?? (bot.threadId === viewedThread && bot.unread === true);
+}
+
 // ── Bot admission (BOTADDED-DESIGN-V3 r6 §2.3-2.8) ─────────────────────
 // One server number (`tasksEpoch`, `tasksSeq`) orders every record-shaped input against the held copy: stream frames, roster rows and
 // every HTTP answer carrying a bot. Record admission, page adoption, same-version completion and selection are separate decisions.
@@ -6150,12 +6159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           const viewed=stateRef.current.bots.find(current=>current.id===bot.id);
           const viewedThread=viewed?.threadId;
-          // A frame that flips busy or unread carries only the task rows that
-          // changed. The reducer lays them over the rows it holds then; this
-          // reads the changed rows only, to decide about the badge.
-          const rows=bot.tasks??bot.tasksDelta?.upsert;
-          const selectedUnread=rows?.find(task=>task.threadId===viewedThread)?.unread??(bot.threadId===viewedThread&&bot.unread);
-          if (selectedUnread && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
+          if (frameShowsViewedUnread(bot, viewedThread) && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
             if (bot.tasksDelta) bot={...bot,tasksDelta:{...bot.tasksDelta,read:viewedThread}};
             else {
               const tasks=bot.tasks?.map(task=>task.threadId===viewedThread?{...task,unread:false}:task);
