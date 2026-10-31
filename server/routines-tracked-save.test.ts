@@ -162,6 +162,17 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   finishGoalRun: f => f.m.finishGoalRun(f.goal.id, "completed", "Done"),
   runSeatWait: f => { f.m.runSeatWait(f.running.id, "working-folder"); f.m.runSeatWait(f.running.id, null); },
   notePinnedBundle: f => f.m.notePinnedBundle(f.thread, "bundle-1"),
+  // ROUTINE-DELIVER-1010: the durable delivery marker. The failed manual run of B is settled with its result still owed (pending)
+  runById: f => expect(f.m.runById(f.failing.id)?.delivery?.state).toBe("pending"),
+  pendingDeliveries: f => expect(f.m.pendingDeliveries().map(run => run.id)).toContain(f.failing.id),
+  recordRunDelivery: f => expect(f.m.recordRunDelivery(f.failing.id, "chat-delivered")?.delivery).toEqual({ state: "pending", threadId: "chat-delivered" }),
+  markRunDelivered: f => {
+    f.m.recordRunDelivery(f.failing.id, "chat-delivered");
+    f.m.markRunDelivered(f.failing.id);
+    expect(f.m.runById(f.failing.id)?.delivery).toEqual({ state: "sent", threadId: "chat-delivered" });
+    expect(f.m.pendingDeliveries().some(run => run.id === f.failing.id)).toBe(false);
+  },
+  nextRunStartAfter: f => { const run = f.m.runById(f.failing.id)!; expect(f.m.nextRunStartAfter(run)).toBeUndefined(); },
   preparePackageAddition: f => {
     const routine = { ...f.m.listRoutines().find(item => item.id === f.b.id)!, id: "imported-1", name: "Imported", enabled: false, nextRunAt: null };
     delete (routine as { failureStreak?: number }).failureStreak;

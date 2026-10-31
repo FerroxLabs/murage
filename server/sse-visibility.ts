@@ -339,6 +339,7 @@ export const KNOWN_FRAME_KINDS = [
   "project.strip",
   "sidebar.order",
   "inbox.changed",
+  "emailStatus",
   "learning.remembered",
   "learning.improved",
   "memory.waiting",
@@ -430,6 +431,9 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
     // and nothing a phone or browser would use, so it stays off the scoped streams.
     case "inbox.changed":
       return { scope: "desktop" };
+    // Content-free ({kind} only): any app reads email status again when it lands; a stream without status access gets a 403 and keeps its last status.
+    case "emailStatus":
+      return WORKSPACE;
     // A memory the bot just kept (B5m): carries the entry's own words, so it
     // stays on the owner's desktop stream. A phone or browser reads the same
     // chip from GET /lessons?threadId= when its chat settles.

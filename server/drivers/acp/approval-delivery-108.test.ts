@@ -326,58 +326,68 @@ describe("1.0.8 ACP approval delivery", () => {
     request.dispose();
   });
 
-  it("permission expiry during backoff prevents further Allow retries and denies", async () => {
-    const timers = vi.spyOn(globalThis, "setTimeout");
+  // GROK-STOPPED F1/F4 (1.0.10): a permission card has no deadline. Fake timers cross the old 15-minute
+  // bound and a day more; a restored deny timer of any length up to that resolves the request and fails here.
+  // Astra r2 F4: the fake clock is installed BEFORE the request opens, so a deny timer armed while it opens is a
+  // fake one and fires here. shouldAdvanceTime lets the real process start-up run on the fake clock.
+  it("an unanswered card survives past 15 minutes and a day on fake timers, then the owner's Allow lands", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    let requestId = "";
+    try {
+      requestId = await open();
+      await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(resolved()).toEqual([]);
+      expect(peer.responses).toHaveLength(0);
+    } finally { vi.useRealTimers(); }
+    expect(await answer(requestId)).toBe("allowed-once");
+    expect(peer.responses).toHaveLength(1);
+    expect(resolved()[0]).toMatchObject({ behavior: "allow", source: "user" });
+    await recorder.until(e => e.type === "turn.completed");
+  });
+
+  it("Stop during Allow backoff ends the retries without a second Allow", async () => {
     const requestId = await open();
-    const expire = timers.mock.calls.find(([, ms]) => ms === 15 * 60_000)?.[0];
     peer.mode = "throw"; peer.failures = 1;
     const allowed = answer(requestId).catch(error => error);
     await Promise.resolve();
-    (expire as () => void)();
-    expect(await allowed).toBeInstanceOf(ApprovalDeliveryError);
-    await recorder.until(e => e.type === "request.resolved");
-    expect(peer.responses).toHaveLength(2);
-    expect(peer.responses[1]).toMatchObject({ result: { outcome: { optionId: "reject" } } });
-    expect(resolved()[0]).toMatchObject({ behavior: "deny", source: "timeout" });
+    await instance.adapter.interruptTurn(threadId);
+    expect(await allowed).toBeInstanceOf(Error);
+    await recorder.until(e => e.type === "turn.completed");
+    expect(peer.responses.filter(r => (r.result as { outcome?: { optionId?: string } }).outcome?.optionId === "allow-once")).toHaveLength(1);
   });
 
-  it("permission expiry during an accepted write error never denies the uncertain Allow", async () => {
-    const timers = vi.spyOn(globalThis, "setTimeout");
+  it("a Deny racing an accepted write error never contradicts the uncertain Allow", async () => {
     const requestId = await open();
-    const expire = timers.mock.calls.find(([, ms]) => ms === 15 * 60_000)?.[0];
     peer.mode = "hold-error"; peer.failures = 1;
     const allowed = answer(requestId).catch(error => error);
-    (expire as () => void)();
+    const denied = instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }).catch(error => error);
     peer.late!();
     expect(await allowed).toMatchObject({ terminal: true });
+    await denied;
     await recorder.until(e => e.type === "turn.completed" && !e.ok);
     expect(peer.responses).toHaveLength(1);
     expect(resolved()).toEqual([]);
   });
 
-  it("a definite delivery miss rearms the deny deadline after it fires in flight", async () => {
-    const timers = vi.spyOn(globalThis, "setTimeout");
+  it("a definite delivery miss on Deny leaves the card open, and the owner's next Deny lands", async () => {
     const requestId = await open();
-    const deadlines = () => timers.mock.calls.filter(([, ms]) => ms === 15 * 60_000);
     peer.mode = "throw"; peer.failures = 3;
-    const denied = instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }).catch(error => error);
-    (deadlines()[0][0] as () => void)();
-    expect(await denied).toMatchObject({ terminal: false });
+    const denied = await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }).catch(error => error);
+    expect(denied).toMatchObject({ terminal: false });
     expect(resolved()).toEqual([]);
-    expect(deadlines()).toHaveLength(2);
-    (deadlines()[1][0] as () => void)();
+    peer.failures = 0;
+    expect(await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" })).toBe("rejected");
     await recorder.until(e => e.type === "request.resolved");
-    expect(resolved()[0]).toMatchObject({ behavior: "deny", source: "timeout" });
+    expect(resolved()[0]).toMatchObject({ behavior: "deny", source: "user" });
   });
 
-  it("permission expiry stops a still uncertain Allow without another response", async () => {
-    const timers = vi.spyOn(globalThis, "setTimeout");
+  it("Stop with a still uncertain Allow ends the turn without another response", async () => {
     const requestId = await open();
-    const expire = timers.mock.calls.find(([, ms]) => ms === 15 * 60_000)?.[0];
     peer.mode = "hold"; peer.failures = 1;
     await expect(answer(requestId)).rejects.toMatchObject({ reason: "delivery_pending" });
-    (expire as () => void)();
-    await recorder.until(e => e.type === "turn.completed" && !e.ok);
+    await instance.adapter.interruptTurn(threadId);
+    await recorder.until(e => e.type === "turn.completed");
     expect(peer.attempts).toBe(1);
     expect(peer.responses).toHaveLength(1);
     expect(resolved()).toEqual([]);

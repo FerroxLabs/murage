@@ -6,7 +6,7 @@ icon: MessageCircle
 
 ## What messaging apps do
 
-Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in **Settings → Messaging apps**. Murage must be running to receive messages. Approvals that matter stay in Murage.
+Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in **Settings → Messaging apps**. Murage must be running to receive messages. Telegram, Slack and Discord bring approval cards to you with buttons, so you can answer from your phone. WhatsApp approvals stay in Murage.
 
 ## What you need first
 
@@ -18,7 +18,7 @@ Each connection pairs with your Chief of Staff, so pick one first. Every connect
 2. In **Settings → Messaging apps → Telegram**, paste the token and press Save token.
 3. Press Pair with Chief to get a code. Send /pair followed by the code to your new bot in a private Telegram chat.
 
-When it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you allow once or deny pending actions. Use Revoke to disconnect, or Replace token to move to a new token for the same bot.
+When it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Owner-only buttons let you answer approval cards there (see Approvals from your phone). Use Revoke to disconnect, or Replace token to move to a new token for the same bot.
 
 ## Slack: set up
 
@@ -30,7 +30,7 @@ Use a private Slack app with Socket Mode on. The app-level token needs connectio
 
 ## Discord: set up
 
-Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name. Server messages and Discord approval buttons are not supported.
+Create your own application and bot in the Discord Developer Portal. Murage reads only direct messages from the owner you name, not server messages.
 
 1. Save credentials: paste the bot token.
 2. Choose your application and owner: enter the Application ID and your Owner user ID, then Save application details.
@@ -55,6 +55,10 @@ Voice notes you send are turned into text with Murage's transcription (the same 
 Linking your own number is the way to connect today. WhatsApp's official business route is a later option and is not available yet.
 
 Approvals stay in Murage: typing yes or approve in WhatsApp does not grant anything. Use Unlink to remove the link from this computer. If WhatsApp ends the link or another WhatsApp Web session takes it over, press Relink.
+
+## Approvals from your phone
+
+When a bot needs your OK, Telegram, Slack and Discord send the approval card to your private chat with buttons, and only your own presses count. Every card offers Approve once and Deny. On Telegram, a stop-line card (deleting outside the bot's folder, paying, messaging someone new) also offers Allow for this task, for the same kind of action in the same place. A card about controlling a computer offers Deny only, and you approve it in Murage. A card too long to show in full stays in Murage.
 
 ## If a connection stops
 

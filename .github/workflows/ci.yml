@@ -381,6 +381,8 @@ jobs:
         env:
           MURAGE_E2E_DATA_DIR: ${{ runner.temp }}/murage-e2e-scratch
           HUMAN_SHARD: ${{ matrix.human_shard }}/6
+          # One worker on the 16 GB public runner: its default 4 GB heap ran out mid-shard (SIGABRT, run 41071979931).
+          NODE_OPTIONS: --max-old-space-size=6144
         run: pnpm test:human --shard="$HUMAN_SHARD"
       - name: Run the human specs that need a harness of their own
         # Runs even when the seeded specs failed, so one red step does not hide the other.
@@ -412,7 +414,7 @@ jobs:
       matrix:
         extended_shard: [1, 2, 3, 4, 5]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -596,7 +598,7 @@ jobs:
     runs-on: ubuntu-24.04
     # The GEPA runtime build adds about 3 minutes (CPython from source can take
     # longer on a cold runner); package-linux.yml runs the same sequence in ~16.
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

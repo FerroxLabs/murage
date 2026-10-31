@@ -62,6 +62,10 @@ export interface EmailRuntimeOptions {
   log?: (line: string) => void;
   /** 2.6 boot: whether the bot's deletion proof (botDeletionKey) exists. Absent = false: an intent without proof waits (L2). */
   deletionProof?: (botId: string) => boolean;
+  /** EMAIL-CAPS-CACHE-1011: DATA_DIR/email-capabilities.json, the last definitive #31 answer for the saved key (caps-file.ts). */
+  capsFile?: string;
+  /** Told after every capability read lands, so the app reads the status again (the emailStatus socket frame). */
+  onStatus?: () => void;
 }
 
 type Services = { db: DatabaseSync; store: EmailStore; send: EmailSendService; tools: EmailTools; bindings: EmailBindingService; cards: EmailCards | null; events: EmailEventReader };
@@ -92,6 +96,14 @@ export class EmailRuntime {
   private current: Services | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticks = 0;
+  /** EMAIL-CAPS-CACHE-1011: bumped by start() and stop(); boot work that started under an older value does nothing more. */
+  private epoch = 0;
+  private stopped = false;
+  /** start() ran: the first on after it runs the boot work. Before start() an on starts the tick only, as 1.0.10. */
+  private started = false;
+  /** The boot work (recover, reconcile, cards) ran, or is running, for this start. */
+  private booted = false;
+  private booting: Promise<void> | null = null;
 
   private readonly options: EmailRuntimeOptions;
   constructor(options: EmailRuntimeOptions) {
@@ -99,6 +111,10 @@ export class EmailRuntime {
     this.secrets = new EmailSecretStore(options.persistSecrets);
     this.health = new EmailKeyHealth({ now: options.now });
     const account = () => {
+      // 1.0.11: the saved key has no email scope (403 email_scope_required, e.g. a dashboard key): once the owner signs in, the
+      // capability read goes on the email:owner token, which Flux minted for this account
+      const owner = this.probe?.useOwnerKey() ? this.secrets.owner() : null;
+      if (owner) return owner;
       const key = options.accountKey();
       return key ? { token: key, keyId: `account:${credentialFingerprint(key)}` } : null;
     };
@@ -108,8 +124,19 @@ export class EmailRuntime {
       observe: (ref, outcome) => this.health.observe(ref, outcome),
       gate: ref => this.health.gate(ref),
     });
-    this.probe = new EmailCapabilityProbe({ client: this.client, accountRef: () => { const key = options.accountKey(); return key ? credentialFingerprint(key) : null; }, now: options.now });
-    this.probe.onChange(enabled => { if (enabled) this.startTick(); else this.stopTick(); });
+    this.probe = new EmailCapabilityProbe({
+      client: this.client, accountRef: () => { const key = options.accountKey(); return key ? credentialFingerprint(key) : null; },
+      ownerKeySaved: () => this.secrets.owner() !== null, now: options.now,
+      capsFile: options.capsFile, log: options.log, onRead: () => options.onStatus?.(),
+    });
+    // EMAIL-CAPS-CACHE-1011: the first on of a start runs the boot work once (a start that began with no definitive answer included);
+    // a later on starts the tick as before, and off stops it as before
+    this.probe.onChange(enabled => {
+      if (this.stopped) return;
+      if (!enabled) { this.stopTick(); return; }
+      if (this.started && !this.booted) { this.booted = true; this.booting = this.runBoot(this.epoch, false); }
+      else this.startTick();
+    });
   }
 
   /** The launch switch (2.0). */
@@ -231,25 +258,71 @@ export class EmailRuntime {
     try { return this.services()?.store.getBinding(botId)?.state ?? null; } catch { return null; }
   }
 
-  /** Boot: read the launch switch; when on, recover open sends and start the tick. Never throws. */
+  /** Boot: read the launch switch; when on, recover open sends and start the tick. Never throws.
+   *  EMAIL-CAPS-CACHE-1011: the last definitive answer for the saved key is read from disk first. A cached on brings email up at once
+   *  (local steps first, then the read and the 1.0.10 network steps in the background; start() does not wait for the network). With no
+   *  cached on, start() reads #31 and, when it says on, runs the same boot work as 1.0.10 before it resolves. */
   async start(): Promise<void> {
     // 5.4: a turn mark a crash left behind holds again, email on or off now (only where the email tables already exist; none is made)
     try {
       const db = this.options.database();
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='email_event_cursor'").get()) persistTurnMarks(turnMarksIn(new EmailStore(db, { transaction: this.options.transaction })));
     } catch { /* marks stay in memory */ }
+    const epoch = ++this.epoch;
+    this.stopped = false;
+    this.started = true;
+    this.booted = false;
+    this.booting = null;
+    try { this.probe.hydrate(); } catch { /* no cache: Checking until Flux answers */ }
+    // on from the file alone: up at once, the network follows in the background
+    if (this.enabled() && !this.probe.readInSession()) {
+      this.booted = true;
+      this.booting = this.runBoot(epoch, true);
+      return;
+    }
     try { await this.probe.refresh(); } catch { /* off until a later read says otherwise */ }
-    if (!this.enabled()) return;
-    // 2.5, 2.6: unfinished setups, removals and policy writes carry on before anything else reads a binding
-    // 2.6 (Astra R4, L2): uncommitted bot-deletion intents are dropped (bot still here), promoted (bot gone with proof) or left for next boot
-    try { this.services()?.bindings.settleDeletionIntents(botId => Boolean(this.options.bot(botId)), botId => this.options.deletionProof?.(botId) ?? false); } catch (error) { this.options.log?.(`[email] deletion intents: ${(error as Error)?.message ?? error}`); }
-    try { await this.services()?.bindings.reconcileBindings(); await this.services()?.bindings.reap(); } catch (error) { this.options.log?.(`[email] bindings: ${(error as Error)?.message ?? error}`); }
+    if (epoch !== this.epoch) return;
+    // a definitive on started the boot work (onChange); an answer already read in this process did not, so it starts here; wait for it, as 1.0.10 did
+    if (this.enabled() && !this.booted) { this.booted = true; this.booting = this.runBoot(epoch, false); }
+    if (this.booting) await this.booting;
+  }
+
+  /** Resolves when this start's boot work has finished (or at once when none started). */
+  async whenBooted(): Promise<void> { await this.booting; }
+
+  /** The 1.0.10 boot work, unchanged in order. `cached`: email is up from the file, so the local steps run first and #31 is read before
+   *  any network step; a definitive off on that read ends the boot (a later on runs it again). */
+  private async runBoot(epoch: number, cached: boolean): Promise<void> {
+    const live = () => epoch === this.epoch && !this.stopped;
+    const settle = () => {
+      // 2.5, 2.6: unfinished setups, removals and policy writes carry on before anything else reads a binding
+      // 2.6 (Astra R4, L2): uncommitted bot-deletion intents are dropped (bot still here), promoted (bot gone with proof) or left for next boot
+      try { this.services()?.bindings.settleDeletionIntents(botId => Boolean(this.options.bot(botId)), botId => this.options.deletionProof?.(botId) ?? false); } catch (error) { this.options.log?.(`[email] deletion intents: ${(error as Error)?.message ?? error}`); }
+    };
+    const rebuild = () => {
+      // 9.3: every card is rebuilt from its row
+      try { this.services()?.cards?.rebuild(); } catch (error) { this.options.log?.(`[email] cards: ${(error as Error)?.message ?? error}`); }
+      try { const services = this.services(); for (const row of services?.store.bindings() ?? []) services?.cards?.syncTrustOffers(row.botId); } catch { /* the next offer makes its card */ }
+    };
+    if (cached) {
+      // local only: cards and the inbox panel answer from local rows at once
+      settle(); rebuild();
+      try { await this.probe.refresh(); } catch { /* the cached answer stands */ }
+      if (!live()) return;
+      if (!this.enabled()) { this.booted = false; return; }
+    } else {
+      if (!this.enabled()) return;
+      settle();
+    }
+    try { await this.services()?.bindings.reconcileBindings(); if (!live()) return; await this.services()?.bindings.reap(); } catch (error) { this.options.log?.(`[email] bindings: ${(error as Error)?.message ?? error}`); }
+    if (!live()) return;
     try { await this.services()?.send.recover(); } catch (error) { this.options.log?.(`[email] recovery did not finish: ${(error as Error)?.message ?? error}`); }
+    if (!live()) return;
     // F4: a pending Flux approval with no local row lands on the bot's main thread (Don't send only)
     try { await this.services()?.send.adoptHolds(botId => this.options.bot(botId)?.threadId); } catch (error) { this.options.log?.(`[email] approvals: ${(error as Error)?.message ?? error}`); }
+    if (!live()) return;
     // 9.3: every card is rebuilt from its row after the recovery settled what it could
-    try { this.services()?.cards?.rebuild(); } catch (error) { this.options.log?.(`[email] cards: ${(error as Error)?.message ?? error}`); }
-    try { const services = this.services(); for (const row of services?.store.bindings() ?? []) services?.cards?.syncTrustOffers(row.botId); } catch { /* the next offer makes its card */ }
+    rebuild();
     this.prune();
     this.startTick();
   }
@@ -279,6 +352,7 @@ export class EmailRuntime {
       const refresh = ++this.ticks % BINDING_REFRESH_TICKS === 0;
       if (this.ticks % PRUNE_TICKS === 0) this.prune();
       void services.send.tick().then(async () => {
+        await services.bindings.retryStalledSetups();
         await services.cards?.sweep(); services.cards?.digest();
         await services.bindings.reap();
         if (refresh) for (const row of services.store.bindings()) if (LIVE_BINDING_STATES.has(row.state)) await services.bindings.refresh(row.botId).catch(() => undefined);
@@ -287,7 +361,7 @@ export class EmailRuntime {
     (this.timer as { unref?: () => void }).unref?.();
   }
   private stopTick(): void { if (this.timer) clearInterval(this.timer); this.timer = null; this.current?.events.stop(); }
-  stop(): void { this.stopTick(); }
+  stop(): void { this.stopped = true; this.epoch++; this.booting = null; this.probe.stop(); this.stopTick(); }
 
   /** The mount (3.1, 3.2): the verdict, and on a mount the generation-bound record. Off: { mounted: false, line: null } with nothing read. */
   mount(generation: string, input: Omit<EmailMountInput, "enabled" | "binding">): EmailMountVerdict {
