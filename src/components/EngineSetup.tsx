@@ -186,8 +186,12 @@ export function EngineSetup({
   const signInCommand = install?.signInCommand;
   const signInOnly = intent === "cloud" && (needsSignIn(instance) || (authRequired && instance.snapshot.state === "available"));
   const command = signInOnly ? signInCommand : installCommand;
-  const title = signInOnly ? `Sign in to ${instance.displayName}` : `Install ${instance.displayName}`;
-  const description = signInOnly
+  // Pi below the version Murage can run: it is installed, and the install command updates it.
+  const outdated = instance.driverKind === "piAgent" && !signInOnly && Boolean(instance.snapshot.version) && instance.snapshot.state === "unavailable";
+  const title = signInOnly ? `Sign in to ${instance.displayName}` : outdated ? `Update ${instance.displayName}` : `Install ${instance.displayName}`;
+  const description = outdated
+    ? `${instance.snapshot.reason} Run this once, then check again.`
+    : signInOnly
     ? "Finish the account sign-in in Terminal, then check again below."
     : intent === "inject"
       ? "Install the engine once, then you can run it with local models; no cloud sign-in required."

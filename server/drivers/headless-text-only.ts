@@ -269,7 +269,7 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     // Flux Memory: a reflection is background work, so a Flux-routed child carries off/off
     // (PROPOSAL-v2 5.4, same overlay the engine's turns use).
     if (input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey)) {
-      const overlay = fuigoConfigOverlay(fluxCallHeaders("pip-reflection"));
+      const overlay = fuigoConfigOverlay(fluxCallHeaders("pip-reflection", { overlay: true, usage: { botId: input.context.botId } }));
       if (cfg.engine === "fuigo") env.FUIGO_CONFIG = overlay; else env.GROK_CONFIG = overlay;
     }
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }

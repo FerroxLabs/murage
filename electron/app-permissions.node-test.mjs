@@ -187,7 +187,19 @@ test("window.open opens credential-free web links and only the startup page's ex
     [LOG_HREF, { currentUrl: ERROR_PAGE, diagnosticsLogHref: null }],
     [LOG_HREF, { currentUrl: "https://other.example/", diagnosticsLogHref: LOG_HREF }],
     [LOG_HREF, {}],
+    ["vscode://file/etc/passwd", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
+    ["obsidian:open", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
+    ["obsidian://new?vault=Work&name=x&content=y&overwrite=true&silent=true", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
+    ["obsidian://open?vault=Work&file=Plan&clipboard=true", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
+    ["obsidian://advanced-uri?vault=Work&commandid=editor%3Asave-file", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
+    ["obsidian://open", { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }],
   ]) assert.deepEqual(mainWindowOpenAction(url, context), { kind: "refuse" }, `${url} from ${context.currentUrl}`);
+});
+
+test("window.open opens an obsidian:// note link in Obsidian; the IPC door stays web-only", () => {
+  const note = "obsidian://open?vault=Work&file=Plan";
+  assert.deepEqual(mainWindowOpenAction(note, { currentUrl: LOCAL_PAGE, diagnosticsLogHref: LOG_HREF }), { kind: "external", url: note });
+  assert.throws(() => externalWebUrl(note), /Only web/);
 });
 
 function windowOpenFixture({ current = LOCAL_PAGE, openExternal, openDiagnosticsLog } = {}) {

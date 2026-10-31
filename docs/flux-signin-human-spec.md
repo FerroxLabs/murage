@@ -1,8 +1,8 @@
 # Flux one-click sign-in: human spec (run later, with Sean's OK)
 
-A real run mints a Flux key and counts against Sean's 5 connected-app tokens. Do NOT run until Sean says so and FluxMain PR #207 is deployed.
+A real run mints a Flux key and counts against Sean's 5 connected-app tokens. Do NOT run until Sean says so. FluxMain PR #207 is live in production (confirmed by FluxMain 2026-10-30); the browser consent step needs a person, so the real proof is Sean's live canary plus the L-GATE row.
 
-Pre-check: turn the fluxDesktopSignin feature switch on (config.json features.fluxDesktopSignin = true, unless the default in shared/flux-desktop-signin-default.mjs is already on; it is off by default and the IPC refuses with FLUX_SIGNIN_UNAVAILABLE while off). Flux PR #207 is merged and deployed (the murage-desktop client_id exists on prod). Host fluxrouter.ai and the sk-flux- prefix are confirmed.
+Pre-check: the fluxDesktopSignin feature switch is on by default since 1.0.11 (shared/flux-desktop-signin-default.mjs); make sure config.json does not set features.fluxDesktopSignin = false, which turns it off and makes the IPC refuse with FLUX_SIGNIN_UNAVAILABLE. Flux PR #207 is deployed: https://fluxrouter.ai/desktop/authorize answers, and POST https://fluxrouter.ai/api/desktop/token returns {api_key, key_prefix, name, key_id (UUID), scopes} for client murage-desktop. Host fluxrouter.ai and the sk-flux- prefix are confirmed.
 
 Stub run (no cost): `node --test electron/flux-desktop-signin.node-test.mjs` covers the full exchange against a local stub.
 

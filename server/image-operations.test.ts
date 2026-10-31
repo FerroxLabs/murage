@@ -9,7 +9,7 @@ import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { Store } from "./store.ts";
 import { saveImage } from "./attachments.ts";
 import { describeArtifact } from "./artifacts.ts";
-import { IMAGE_APPROVAL_TIMEOUT_MS, ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
+import { ImageOperations, imageReferences, publishImage } from "./image-operations.ts";
 import { ImageGenerationService, type ImageReference } from "./image-generation.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
 import { fenceRestoredSql, releaseHeldImageOperation, sqlRowRestoreHeld } from "./restore-fence.ts";
@@ -625,7 +625,7 @@ it("image approval waits like any other approval and settles as not answered on 
     const card = await f.card(), requestId = card.card!.requestId!;
     expect(f.waiting).toHaveBeenLastCalledWith(f.bot.threadId, true, requestId, card.id, f.bot.id);
     await vi.advanceTimersByTimeAsync(60_000);
-    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS - 60_000 - 5_000); // vi.waitFor already advanced the clock a little
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000); // well past the old 15-minute bound
     const stillOpen = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
     expect(stillOpen.answered).toBeUndefined(); expect(stillOpen.dismissed).toBeFalsy();
     expect(f.waiting.mock.calls.filter(call => call[1] === false)).toHaveLength(0);
@@ -636,20 +636,21 @@ it("image approval waits like any other approval and settles as not answered on 
     expect(f.fetcher).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
-it("image approval times out on the shared permission bound as not answered, never as the owner's denial", async () => {
+// GROK-STOPPED F1 (1.0.10): an owner-facing card never expires. A restored
+// 15-minute (or any) card timer closes this card inside the day and fails here.
+it("image approval card never expires: a day later the owner's answer still lands", async () => {
   vi.useFakeTimers();
   try {
-    expect(IMAGE_APPROVAL_TIMEOUT_MS).toBe(15 * 60_000);
     const f = generationFixture();
-    // The bot is told the card closed unanswered, not that the owner said no,
-    // and not to point the owner at a card that is no longer there.
-    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("Nobody answered the approval card within 15 minutes, so it was closed and nothing was sent. If the owner still wants this image, ask for it again; a new card will show.");
+    const job = f.run("late", f.request), refused = expect(job).rejects.toThrow("Image generation was not approved by the owner, so nothing was sent.");
     const card = await f.card();
-    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS);
+    await vi.advanceTimersByTimeAsync(15 * 60_000 + 1);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    const open = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
+    expect(open.answered).toBeUndefined(); expect(open.dismissed).toBeFalsy();
+    expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "deny")).toBe("rejected");
     await refused;
-    const settled = f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!;
-    expect(settled.answered).toBe("unavailable"); expect(settled.dismissed).toBe(true);
-    expect(f.operations.resolve(f.bot.threadId, card.card!.requestId!, "allow")).toBe("unavailable");
+    expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBe("deny");
     expect(f.fetcher).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
@@ -699,7 +700,7 @@ it("a routine run holds its image card open past the bound and past its turn", a
     const run = (id: string, actor = f.actor) => held.execute(actor, id, f.request, (reserve, publish) => service.generate(f.request, { reserve, publish, assertActive: actor.assertActive, signal: actor.signal }, []));
     const job = run("held"), refused = expect(job).rejects.toThrow("not approved");
     const card = await f.card();
-    await vi.advanceTimersByTimeAsync(IMAGE_APPROVAL_TIMEOUT_MS + 60 * 60_000);
+    await vi.advanceTimersByTimeAsync(75 * 60_000);
     expect(f.store.messagesFor(f.bot.threadId).find(m => m.id === card.id)!.card!.answered).toBeUndefined();
     // the tool call gives up (its turn ended): the card stays answerable
     f.controller.abort(); f.revoke(); await refused;
