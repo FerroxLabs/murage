@@ -58,9 +58,12 @@ describe("108 E1 owner-only unchecked environment waiver", () => {
         expect(verdict(bot, record, command)).toMatchObject({ approve: null, source: "unread-call", rule: expect.stringContaining("changes a setting") });
       }
       for (const command of ["PAGER=cat git log", `GIT_SSH_COMMAND="${hand.env.GIT_SSH_COMMAND}" git fetch`]) expect(verdict(bot, record, command).approve, command).not.toBeNull();
+      // ISSUE-PERMS-1010 A (murage-releases #7a): a routine run judged at Full access or No limits is waived like the owner's turn
       for (const patch of [
         { fullAccessOrigin: "routine", routineLevel: true },
         { fullAccessOrigin: "routine", routineLevel: true, automated: true },
+      ] satisfies Partial<AutoContext>[]) expect(verdict(bot, record, "echo fixture", patch).approve).not.toBeNull();
+      for (const patch of [
         { fullAccessOrigin: "owner-channel", channelOwner: true },
         { fullAccessOrigin: "other", unattended: true }, { fullAccessOrigin: undefined },
       ] satisfies Partial<AutoContext>[]) {

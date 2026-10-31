@@ -43,6 +43,7 @@ import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBack
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
+import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { prepareMessageSearchBackfill } from "./message-search-index.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
@@ -378,7 +379,7 @@ export function database(): DatabaseSync {
     initializeInbox(db);
     initializeThreadSnooze(db);
     initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); if (firstOpen) startupMark("database.tablesAll");
+    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); if (firstOpen) startupMark("database.tablesAll");
     runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
     // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
     installWriteRevisionTriggers(db);

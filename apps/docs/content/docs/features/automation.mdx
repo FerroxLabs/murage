@@ -16,6 +16,12 @@ Run receipts distinguish queued, active, waiting on you, completed, missed, fail
 
 Each routine keeps one conversation, named after the routine. Every run happens in that same conversation, with a divider between runs, so runs no longer pile up as separate conversations. Open it to read what the routine did last time and what it is doing now.
 
+## Where results go
+
+When a routine run finishes, its result comes back to the chat where you set the routine up: the bot's final reply, the files and images it saved, and **Open run** for the whole run. A routine with no chat of its own (one made on the calendar), or whose chat was deleted, posts to the bot's main chat instead. A run that fails or is missed posts one line that says what to do next.
+
+To keep results out of chat, open the routine editor and set **Advanced → Send results to** to **Routines list only**. Each run still stays in the routine's own conversation and on the Routines list. Room and project routines, webhooks and messaging-app routines keep their own delivery.
+
 ## Routine approval level
 
 Each routine runs at its own approval level: Ask, Auto, Full access or No limits. Set it in the routine editor under **Advanced → Approvals for this routine**, or from the permission chip in the routine's own conversation: choosing a level there sets it for the routine.

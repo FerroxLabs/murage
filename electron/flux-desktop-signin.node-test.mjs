@@ -130,12 +130,39 @@ test("a token endpoint refusal or a non-key answer is coded and carries no key",
   } finally { await bad.close(); }
 });
 
-test("feature switch: explicit off refuses with FLUX_SIGNIN_UNAVAILABLE, explicit on allows, unset follows the default", async () => {
+test("feature switch: on by default (1.0.11); explicit off still refuses with FLUX_SIGNIN_UNAVAILABLE, explicit on allows", async () => {
   const { assertFluxDesktopSigninEnabled, fluxDesktopSigninEnabledIn } = await import("./flux-desktop-signin.mjs");
   const { FLUX_DESKTOP_SIGNIN_DEFAULT } = await import("../shared/flux-desktop-signin-default.mjs");
   assert.throws(() => assertFluxDesktopSigninEnabled({ features: { fluxDesktopSignin: false } }), (e) => e instanceof FluxSigninError && e.code === "FLUX_SIGNIN_UNAVAILABLE");
   assert.doesNotThrow(() => assertFluxDesktopSigninEnabled({ features: { fluxDesktopSignin: true } }));
-  for (const config of [null, {}, { features: {} }]) assert.equal(fluxDesktopSigninEnabledIn(config), FLUX_DESKTOP_SIGNIN_DEFAULT);
+  assert.equal(FLUX_DESKTOP_SIGNIN_DEFAULT, true);
+  for (const config of [null, {}, { features: {} }, { features: { fluxDesktopSignin: "false" } }]) {
+    assert.equal(fluxDesktopSigninEnabledIn(config), true);
+    assert.doesNotThrow(() => assertFluxDesktopSigninEnabled(config));
+  }
+  assert.equal(fluxDesktopSigninEnabledIn({ features: { fluxDesktopSignin: false } }), false);
+});
+
+test("production token body shape (Flux live 2026-10-30): plain sign-in keeps the key, bot email gets the owner credential", async () => {
+  const { readEmailOwnerToken } = await import("./flux-desktop-signin.mjs");
+  const { emailOwnerFromTokenResponse } = await import("./email-secrets.mjs");
+  // Exact production field set, fake values only: a sk-flux- key and a UUID key_id.
+  const prod = { api_key: FAKE_KEY, key_prefix: FAKE_KEY.slice(0, 12), name: "Murage Desktop", key_id: "3f2b8c1e-9a4d-4e7b-8c6f-1d2e3f4a5b6c", scopes: ["email:owner"] };
+  assert.equal(keyFromTokenResponse(prod), FAKE_KEY);
+  assert.deepEqual(emailOwnerFromTokenResponse(prod), { token: FAKE_KEY, keyId: prod.key_id });
+  assert.deepEqual(readEmailOwnerToken(prod), { token: FAKE_KEY, keyId: prod.key_id });
+  const flux = await stubFlux();
+  try {
+    const { key } = await runFluxDesktopSignin({ ...flux.options, scope: "email:owner", readToken: readEmailOwnerToken,
+      fetchImpl: async (url, init) => { await fetch(url, init); return new Response(JSON.stringify(prod)); } });
+    assert.deepEqual(key, { token: FAKE_KEY, keyId: prod.key_id });
+  } finally { await flux.close(); }
+  const plain = await stubFlux();
+  try {
+    const { key } = await runFluxDesktopSignin({ ...plain.options,
+      fetchImpl: async (url, init) => { await fetch(url, init); return new Response(JSON.stringify({ ...prod, scopes: [] })); } });
+    assert.equal(key, FAKE_KEY);
+  } finally { await plain.close(); }
 });
 
 test("bot email (2.4, contract r2.5): the token request asks scope email:owner and returns the owner credential, never a plain key", async () => {

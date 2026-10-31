@@ -22,6 +22,7 @@ import { initializePendingDelegations } from "./pending-delegations-schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { initializeOwnerSends } from "./send-store.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
+import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
 
@@ -172,10 +173,19 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   // bot calls (server/bot-calls-schema.ts), new in 1.0.9; an older archive lacks them. The owed trigger on messages is created with them.
   bot_call_rules: { required: false, optional: [] },
   bot_calls: { required: false, optional: [] },
-  bot_call_sessions: { required: false, optional: [] },
+  // principal appended by ALTER (the authenticated device a call channel ticket is bound to)
+  bot_call_sessions: { required: false, optional: ["principal"] },
   bot_call_owed: { required: false, optional: [] },
   bot_call_watch_threads: { required: false, optional: [] },
   bot_call_settings: { required: false, optional: [] },
+  // connected-app triggers (server/app-trigger-store.ts), new in 1.0.11; an older archive lacks them.
+  app_trigger_bindings: { required: false, optional: [] },
+  app_trigger_policies: { required: false, optional: [] },
+  app_event_inbox: { required: false, optional: [] },
+  app_event_tombstones: { required: false, optional: [] },
+  app_event_batches: { required: false, optional: [] },
+  app_event_run_events: { required: false, optional: [] },
+  app_event_runs: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -207,7 +217,7 @@ function referenceSchema(): Map<string, ReferenceObject> {
   try {
     initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeEmailTables(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeEmailTables(db);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
