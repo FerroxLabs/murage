@@ -83,3 +83,61 @@ describe("locale copy rules", () => {
     });
   }
 });
+
+// 1.0.12 to 1.0.14: the UX lanes' English fragments (src/locales/en-ux). Each lane writes only
+// its own `<lane>.json`, every key prefixed `ux.<lane>.`; ../index.ts merges them under en.json.
+const FRAGMENT_DIR = join(LOCALES_DIR, "en-ux");
+const fragmentFiles = readdirSync(FRAGMENT_DIR).filter((file) => file.endsWith(".json")).sort();
+
+describe("English UX fragments", () => {
+  it("registers every fragment file in the loader, and loads nothing that is not a file", async () => {
+    const { enUxFragments } = await import("./en-ux");
+    expect(Object.keys(enUxFragments).sort()).toEqual(fragmentFiles.map((file) => file.slice(0, -".json".length)).sort());
+  });
+
+  for (const file of fragmentFiles) {
+    const lane = file.slice(0, -".json".length);
+    it(`${file} holds only strings under ux.${lane}., none of them already in en.json`, () => {
+      const fragment = JSON.parse(readFileSync(join(FRAGMENT_DIR, file), "utf8")) as Record<string, unknown>;
+      const catalogue = load("en");
+      const problems = Object.entries(fragment).flatMap(([key, value]) => [
+        ...(key.startsWith(`ux.${lane}.`) && key.length > `ux.${lane}.`.length ? [] : [`${key}: must start ux.${lane}.`]),
+        ...(typeof value === "string" && value.trim() ? [] : [`${key}: must be a non-empty string`]),
+        ...(Object.hasOwn(catalogue, key) ? [`${key}: already in en.json (ask the copy lane to change it)`] : []),
+        ...(typeof value === "string" && DASH.test(value) ? [`${key}: em dash or spaced dash`] : []),
+        ...(typeof value === "string" && SAFE.test(value) ? [`${key}: "safe" wording`] : []),
+      ]);
+      expect(problems).toEqual([]);
+    });
+  }
+
+  it("merges the fragments into the English pack the app reads, without changing an en.json string", async () => {
+    const { en } = await import("./index");
+    const catalogue = load("en");
+    for (const [key, value] of Object.entries(catalogue)) expect(en[key as keyof typeof en]).toBe(value);
+    for (const file of fragmentFiles) {
+      const fragment = JSON.parse(readFileSync(join(FRAGMENT_DIR, file), "utf8")) as Record<string, string>;
+      for (const [key, value] of Object.entries(fragment)) expect(en[key as keyof typeof en]).toBe(value);
+    }
+  });
+});
+
+// The help panel's per-screen words: English, but on the help chunk, not the first paint.
+describe("English help screens", () => {
+  const screens = JSON.parse(readFileSync(join(LOCALES_DIR, "en-help/screens.json"), "utf8")) as Record<string, string>;
+
+  it("holds only ux.l4a.screen. strings, none of them already in the English pack", async () => {
+    const { en } = await import("./index");
+    const keys = Object.keys(screens);
+    expect(keys.length).toBeGreaterThan(50);
+    expect(keys.filter((key) => !key.startsWith("ux.l4a.screen.") || typeof screens[key] !== "string" || Object.hasOwn(en, key))).toEqual([]);
+  });
+
+  it("joins the English pack when the help chunk loads, without changing a string it already has", async () => {
+    const { en } = await import("./index");
+    const before = { ...en };
+    await import("@/lib/help-screen-copy");
+    for (const [key, value] of Object.entries(screens)) expect(en[key as keyof typeof en]).toBe(value);
+    for (const [key, value] of Object.entries(before)) expect(en[key as keyof typeof en]).toBe(value);
+  });
+});
