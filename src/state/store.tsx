@@ -629,7 +629,7 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
-  /** No limits, above Full access: no stop line; the key guard still asks */
+  /** No limits, above Full access: no stop line; on a turn the owner started only the gate files of the key guard ask */
   noLimits?: boolean;
   /** set by the server once the owner confirmed the one-time No limits warning */
   noLimitsAcknowledgedAt?: number;
@@ -901,6 +901,8 @@ export interface ConfigStatus {
    * the browser UA, which is the browser's machine, not the harness's.
    * Absent until `/api/config` has answered, or from an older harness. */
   harness?: { platform: string };
+  /** Whether the owner has accepted No limits as it now stands. Desktop only: the phone's copy has no such field. */
+  noLimitsTerms?: { accepted: boolean };
 }
 
 export interface BrowserProfile {
@@ -1486,6 +1488,7 @@ export type Action =
   | { type: "interruptGroup"; groupId: string; queueIds?: string[] }
   | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null; engineNote?: string }
   | { type: "configStatus"; config: ConfigStatus }
+  | { type: "noLimitsTermsAccepted" }
   | { type: "select"; id: string; threadId?: string }
   | {
       type: "send";
@@ -3418,6 +3421,8 @@ function reduceState(state: AppState, action: Action): AppState {
             ? "chat"
             : state.activeView,
       };
+    case "noLimitsTermsAccepted":
+      return state.config?.noLimitsTerms ? { ...state, config: { ...state.config, noLimitsTerms: { accepted: true } } } : state;
     case "select": {
       // An id this client has neither a bot nor a group for (E1, 2026-09-28:
       // a companion selecting a bot⇄bot group the server never sent it) used

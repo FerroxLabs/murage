@@ -107,6 +107,7 @@ export const STEP_UP_LABELS = Object.freeze([
   // 1.0.9 bot calls: the owner's call settings, from a chat-only Cloud browser.
   { methods: ["PUT"], path: rx(`/api/bots/${ID}/calls/rules`), label: "Change when a bot can call you", summary: "bot" },
   { methods: ["POST"], path: rx("/api/calls/off-today"), label: "Turn bot calls off for today" },
+  { methods: ["POST"], path: rx("/api/no-limits/terms"), label: "Accept the No limits terms" },
   { methods: ["POST"], path: rx("/api/calls/rearm"), label: "Turn bot calls back on" },
 
   // Routines, webhooks, connectors.

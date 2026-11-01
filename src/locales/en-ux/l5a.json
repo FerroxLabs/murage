@@ -1,0 +1,7 @@
+{
+  "ux.l5a.undo": "Undo",
+  "ux.l5a.undoing": "Undoing",
+  "ux.l5a.dismiss": "Dismiss",
+  "ux.l5a.couldNotUndo": "Could not undo: {reason}",
+  "ux.l5a.didNotGoThrough": "That did not go through"
+}

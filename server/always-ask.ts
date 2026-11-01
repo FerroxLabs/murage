@@ -69,6 +69,10 @@ export interface AlwaysAskHit {
    * unseen script Full access and No limits would run, but for this reader
    * limit; the card names the fix. */
   unseenWhy?: UnseenWhy;
+  /** `unreadable` only (NOLIMITS-MEANS-IT 3.3): the reader could not follow the text and found nothing it can name. Set
+   * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
+   * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
+  readerFailed?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -124,13 +128,20 @@ const REMOTE_ELEVATED_WHAT = "This runs text downloaded from the internet with a
 
 /** The hit for a command the reader was not given whole (a cut card). */
 export function unreadableHit(): AlwaysAskHit {
-  return hit("unreadable");
+  return { ...hit("unreadable"), readerFailed: true };
 }
+
+/** The ends of the failures that carry something the reader found (`rm $F /`, inline code naming `/`), as opposed to
+ * something it could not follow. server/shell/walk.ts throws the two catastrophe details. */
+const DELETE_OPTION_VALUE = "a delete option from a value";
+const FOUND_FAILURES = [DELETE_OPTION_VALUE, "runs a catastrophe", "names a catastrophe"];
 
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
   if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  return hit("unreadable");
+  // a finding thrown is a finding, and a depth stop was never read past: neither carries the mark
+  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail)) || error.reason === "depth" || error.reason === "nesting") return hit("unreadable");
+  return unreadableHit();
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -252,13 +263,23 @@ function classifyCandidate(candidate: Candidate, ctx: WalkContext): AlwaysAskRul
 /** The worst thing any candidate of these operands names. */
 function worstOf(lists: Candidate[][], ctx: WalkContext): AlwaysAskRule | null {
   let found: AlwaysAskRule | null = null;
+  // a candidate the reader cannot judge must not hide the next one (`cd "$D" && rm -rf build /`)
+  let failure: Unreadable | undefined;
   for (const list of lists) {
     for (const candidate of list) {
-      const rule = classifyCandidate(candidate, ctx);
+      let rule: AlwaysAskRule | null;
+      try {
+        rule = classifyCandidate(candidate, ctx);
+      } catch (error) {
+        if (!(error instanceof Unreadable)) throw error;
+        failure ??= error;
+        continue;
+      }
       if (rule === "delete-root") return rule;
       if (rule && (!found || RANK[rule] > RANK[found])) found = rule;
     }
   }
+  if (!found && failure) throw failure;
   return found;
 }
 
@@ -275,7 +296,7 @@ function optionFromValue(recursive: boolean, unknown: boolean, paths: Candidate[
   if (recursive) return worstOf(paths, ctx);
   // the target here is a literal that asks; only the option is a value, so
   // the routine carve-out never covers it
-  if (unknown && worstOf(paths, ctx)) throw new Unreadable("expansion", "a delete option from a value");
+  if (unknown && worstOf(paths, ctx)) throw new Unreadable("expansion", DELETE_OPTION_VALUE);
   return null;
 }
 
@@ -1233,7 +1254,7 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
     // Keep foreign executors held without mistaking Elixir iex for PowerShell.
     const foreignExecutor = foreignExecutorIn(text, shell !== undefined);
     return !found && mode === "command" && foreignExecutor
-      ? hit("unreadable")
+      ? unreadableHit()
       : found;
   } catch (error) {
     if (!(error instanceof Unreadable)) throw error;
@@ -1296,10 +1317,10 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (found || !unseen || unseen.paths.length === 0) return found;
     // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
     // Windows) keeps the 1.0.5 ask; Git Bash's own text is read below
-    if (windowsBash) return hit("unreadable");
+    if (windowsBash) return unreadableHit();
     const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
-    if (admits === true) return { ...hit("unreadable"), unseenScript: true };
-    return admits === null ? hit("unreadable") : { ...hit("unreadable"), unseenWhy: admits };
+    if (admits === true) return { ...unreadableHit(), unseenScript: true };
+    return admits === null ? unreadableHit() : { ...unreadableHit(), unseenWhy: admits };
   } finally {
     unseen = null;
   }

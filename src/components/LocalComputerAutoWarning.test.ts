@@ -10,11 +10,12 @@ import { describe, expect, it } from "vitest";
 import {
   LOCAL_COMPUTER_AUTO_WARNING,
   LOCAL_COMPUTER_FULL_ACCESS_WARNING,
+  LOCAL_COMPUTER_NO_LIMITS_WARNING,
   LocalComputerAutoWarning,
 } from "./LocalComputerAutoWarning";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
-const render = (mode?: "auto" | "full") =>
+const render = (mode?: "auto" | "full" | "unlimited") =>
   renderToStaticMarkup(createElement(LocalComputerAutoWarning, { open: true, mode, onCancel: () => {}, onConfirm: () => {} }));
 
 describe("the this-computer warning names the mode being switched on", () => {
@@ -35,6 +36,15 @@ describe("the this-computer warning names the mode being switched on", () => {
   it("never promises Full access keeps the stops Auto keeps", () => {
     expect(LOCAL_COMPUTER_FULL_ACCESS_WARNING).not.toContain("still stop");
     expect(render("full")).not.toContain("Destructive and sensitive actions still stop");
+  });
+
+  it("says what No limits still asks about, a command it cannot read in full among them", () => {
+    const markup = render("unlimited");
+    expect(markup).toContain("Allow No limits on this computer?");
+    expect(markup).toContain(LOCAL_COMPUTER_NO_LIMITS_WARNING);
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("It still asks before a wipe it can read and before a command it cannot read in full");
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("A script file can still run unread.");
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).not.toMatch(/\bsafe\b|\u2014/i);
   });
 
   it("renders nothing while closed", () => {

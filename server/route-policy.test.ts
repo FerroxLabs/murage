@@ -114,6 +114,15 @@ describe("route policy (strict)", () => {
     expect(cloudRouteDecision("GET", "/api/storage/attachments", "owner-browser", null)).toBe("allow");
   });
 
+  it("accepting the No limits terms is the desktop's alone; phone, door, bot and nobody are refused", () => {
+    const route = "/api/no-limits/terms";
+    expect(routePolicy("POST", route)).toMatchObject({ class: "desktop", path: route, cloudWrite: "step-up" });
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(routeAdmits(routeClass("POST", route), { ...nobody, desktop: true })).toBe(true);
+    for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("POST", route), { ...nobody, [who]: true }), who).toBe(false);
+    expect(routeAdmits(routeClass("POST", route), nobody)).toBe(false);
+  });
+
   it("an unclassified route is desktop-only; the named holes are closed", () => {
     expect(routeClass("POST", "/api/a-route-added-tomorrow")).toBe("desktop");
     expect(routeClass("GET", "/api/decisions")).toBe("desktop");

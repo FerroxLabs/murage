@@ -42,6 +42,10 @@ import { loadPlainApproval } from "@/lib/plain-approval";
 import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { TermsGate } from "@/components/TermsGate";
+import { NoLimitsTermsPrompt } from "@/components/NoLimitsTermsPrompt";
+import { HelpHost } from "@/components/help/HelpHost";
+import { UndoToastHost } from "@/components/ui/UndoToast";
+import { feedbackSurface } from "@/lib/feedback-surface";
 
 // Opened by a tap, so loaded by one (spec §6). Settings alone pulls in every
 // settings page and, through House rules and the skill editor, Tiptap; a phone
@@ -510,6 +514,7 @@ function Shell() {
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPaletteHost onOpenChange={setPaletteOpen} />
+      {desktop === true && <NoLimitsTermsPrompt />}
       {/* Bot calls 1.0.9: the ring banner (call.ring hints re-read GET /api/calls/active) */}
       <BotCallRing />
       <CallOverlaySlot
@@ -517,6 +522,14 @@ function Shell() {
         dispatch={dispatch}
         isCallTargetCovered={isCallTargetCovered}
         uncoverCallTarget={uncoverCallTarget}
+      />
+      <UndoToastHost />
+      {/* 1.0.12 UX slice 4: the "?" help panel, its tab and keys (? and Cmd/Ctrl+/), on every surface. */}
+      <HelpHost
+        surface={feedbackSurface(desktop, isCloudOrigin())}
+        noEngines={noEngines}
+        enginesOff={enginesOff}
+        firstRun={setupOwnsView && setupView ? { next: setupView.next, chiefBotId: setupView.chiefBotId, blocked: setupView.blocked } : null}
       />
       </BotListDrawerProvider>
       </div>

@@ -27,6 +27,10 @@
     "server/auto-approve.ts": {
       "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing",
       "lines": {
+        "9ed9cfeb637eb026": "type KeyWhy = \"path\" | \"value\" | \"field\" | \"mcp\" | \"summary\" | \"unmodeled\" | \"pwsh\" | \"local-hold\";",
+        "8c31ac12b45b7d5f": "const commandData: CommandDataRead | \"plain\" | \"unmodeled\" | \"summary\" | undefined = covered && pinShell !== \"pwsh\"",
+        "09b9146350fd9b8f": ": pinShell === \"pwsh\" ? \"pwsh\"",
+        "3542a1ee4d026956": "const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === \"pwsh\").text, ...(dequoted ? [dequoted.text] : [])]);",
         "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
         "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
         "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
@@ -218,7 +222,7 @@
   "open_spawns": {},
   "fixed_probe": {
     "file": "server/engine-env.ts",
-    "launch": "a6fa54200af68732",
+    "launch": "8eba4ba5668095b1",
     "script": "666769f50c9d3a8a",
     "reason": "Only a command ask runs this fixed nonce-tagged environment probe through an absolute executable and pinned NoProfile form with closed stdin, hidden console, bounded output and bounded cleanup; no handed PATH lookup, tool command or environment value is interpolated."
   }

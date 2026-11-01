@@ -27,6 +27,31 @@ entries:
     doc: features/messaging-apps#what-messaging-apps-do
     internal: CANNOT-ANSWERS-109 item d. Allow for this task is Telegram only (approval.taskAllow); Discord and Slack transports never render it.
 
+  - id: apps.bot-email
+    name: A bot's own email address
+    status: can
+    questions:
+      - Can my bot have its own email address?
+      - Give a bot an email address
+      - Can a bot send email for me?
+      - Does a bot need my approval to send email?
+    answer: >
+      Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose
+      who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person.
+    limits: >
+      Needs a Flux Router account with email on. Anything long, with attachments or with many
+      addresses still waits for you, and there is a daily limit.
+    settings_path: Settings → Connected apps → Bot email
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:connections/bot-email
+      - 'file:shared/email-copy.ts#Nobody. I approve every email'
+      - 'file:shared/email-copy.ts#Anything long, with attachments or with many addresses still waits for you'
+    verified: 1.0.11
+    doc: features/bot-tools#bot-email
+    internal: CHECK-AHEAD-1011 self-knowledge gap, docs patch in 1.0.12.
+
   - id: apps.own-browser
     name: A built-in browser for each bot
     status: can

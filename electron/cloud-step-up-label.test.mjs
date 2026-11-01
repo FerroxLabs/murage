@@ -46,6 +46,8 @@ const SAMPLES = [
   ["POST", "/api/email/bots/b1/trusted-add"], ["GET", "/api/email/status"],
   // 1.0.9 bot call settings.
   ["PUT", "/api/bots/b1/calls/rules"], ["POST", "/api/calls/off-today"], ["POST", "/api/calls/rearm"],
+  // 1.0.13 the desktop accepts the No limits terms.
+  ["POST", "/api/no-limits/terms"],
 ];
 
 describe("every step-up route has a human label", () => {
