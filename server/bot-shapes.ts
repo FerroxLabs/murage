@@ -18,6 +18,7 @@ import { murageTool, renderMurageTools, murageToolHowTo, NEUTRAL_TOOL_SURFACE, t
 import { personalityImprint } from "../shared/bot-identity.ts";
 import { renderSkillInstructions, type BundledSkill } from "./skill-library.ts";
 import type { LearnedBlock } from "./memory/lessons.ts";
+import { daylightSavingNote, utcOffsetLabel } from "./owner-time-zone.ts";
 
 export type ShapeGroup = "rules" | "identity" | "tools" | "turn";
 /** Where a row's Edit link goes. */
@@ -357,9 +358,35 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
  *  (withNowLine), where it is new every turn anyway. */
 export function nowPrompt(at: Date, timeZone: string): string {
   const parts = (options: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat("en-GB", { timeZone, ...options }).format(at);
-  const offset = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(at).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
   const time = new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit", hour12: true }).format(at).toLowerCase();
-  return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${offset.replace("GMT", "UTC") || "UTC"}).`;
+  // 1.0.8: a daylight saving change in the next 30 days or the last 7 gets one
+  // clause, so a time booked across it carries the offset it will have
+  // (a 10 November event at the October offset was an hour out on the dry run).
+  const dst = daylightSavingNote(at, timeZone);
+  return ` It is now ${parts({ weekday: "long", day: "numeric", month: "long", year: "numeric" })}, ${time} (${parts({ hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}) in the owner's time zone, ${timeZone} (${utcOffsetLabel(at, timeZone)}).${dst ? ` ${dst}` : ""} ${comingDaysLine(at, timeZone)}`;
+}
+
+const COMING_DAYS = 14;
+// Spelled here, not by Intl: ICU versions differ on short English months ("Sep" or "Sept").
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
+
+/** "Coming days: Tue 27 Oct, Wed 28 Oct, ..." for the 14 days after today in
+ *  the owner's zone. 1.0.8 gate: given only today's weekday a bot worked the
+ *  rest out itself and called 28 October 2026 a Tuesday. Each day is counted
+ *  on the owner's calendar date (no hours added), so a daylight saving change
+ *  or a turn at 23:30 never shifts a weekday onto the wrong date. Fixed size:
+ *  it never grows with the chat. */
+export function comingDaysLine(at: Date, timeZone: string): string {
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(at);
+  const part = (type: string) => Number(today.find((item) => item.type === type)?.value);
+  const days: string[] = [];
+  for (let ahead = 1; ahead <= COMING_DAYS; ahead++) {
+    // that calendar date, stepped and read in UTC: a pure calendar step, no hours involved
+    const day = new Date(Date.UTC(part("year"), part("month") - 1, part("day") + ahead));
+    days.push(`${WEEKDAYS[day.getUTCDay()]} ${day.getUTCDate()} ${MONTHS[day.getUTCMonth()]}`);
+  }
+  return `Coming days: ${days.join(", ")}.`;
 }
 
 /** The turn's message with the date line on top. An engine command ("/name

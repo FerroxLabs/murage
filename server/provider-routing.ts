@@ -13,6 +13,9 @@ import { z } from "zod";
 /** Server-only, resolved from encrypted custody at admission. */
 export interface ProviderTurnRoute { connectionId: string; preset: ProviderPreset; protocol: ProviderProtocol; baseUrl: string; apiKey: string; model: string; revision: string }
 export interface ProviderRouteBinding { model: string; args: string[]; modelProvider?: string; identity?: string; cleanup: () => void;
+  /** A Fuigo home created for this turn alone, the only place R4 seeds may go. `cloud`: the launcher's
+   * tmpfs inside the turn's namespace, which the server cannot reach, so the seed goes as typed render keys. */
+  freshFuigoHome?: { path: string; cloud: boolean };
   /** Keep this turn's engine logs (never auth or session files) when the turn failed or retried. */
   keepLogs: (turnId: string) => void }
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -113,7 +116,7 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
   for (const name of ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_API_KEY", "FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"]) delete env[name];
   deleteEnvNames(env, [FUIGO_ALLOW_UPSTREAM_ENV]);
   let keepLogsFor = "";
-  const result = { model: route.model, args: [] as string[], cleanup: () => {}, keepLogs: (_turnId: string) => {} };
+  const result: ProviderRouteBinding = { model: route.model, args: [] as string[], cleanup: () => {}, keepLogs: (_turnId: string) => {} };
   if (driver === "grokAgent") {
     if (!context) throw new Error("Grok provider routing requires an exact thread");
     const identity = grokProviderIdentity(route, grokThread.parse(context.threadId));
@@ -168,10 +171,12 @@ export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route
       const relative = `native/provider-turns/${driver}-${randomBytes(12).toString("hex")}`;
       home = join(cloudEngineHome(driver), relative);
       cloudTurnScratch(env, relative);
+      if (driver === "fuigoAgent") result.freshFuigoHome = { path: home, cloud: true };
     } else if (context?.homeRoot && driver === "fuigoAgent") { home = resolve(context.homeRoot); mkdirSync(home, { recursive: true, mode: 0o700 }); }
     else {
       const parent = join(DATA_DIR, "native", "provider-turns"); mkdirSync(parent, { recursive: true, mode: 0o700 });
       home = mkdtempSync(join(parent, `${driver}-`));
+      if (driver === "fuigoAgent") result.freshFuigoHome = { path: home, cloud: false };
       result.cleanup = () => {
         if (keepLogsFor) keepFuigoTurnLogs(home, keepLogsFor, join(DATA_DIR, "native", "fuigo-turn-logs"));
         rmSync(home, { recursive: true, force: true });

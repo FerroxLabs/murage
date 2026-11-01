@@ -108,7 +108,7 @@ describe("the composer on a phone", () => {
       'aria-label={recording ? "Stop dictation" : "Start dictation"}',
       "<PushToTalk",
       "<LocalComputerAutoWarning",
-      "<FullAccessWarning",
+      "<LevelConfirmChunk.Component",
     ]) {
       const at = composer.indexOf(marker);
       expect(at, marker).toBeGreaterThan(0);

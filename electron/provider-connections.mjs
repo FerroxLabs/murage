@@ -47,18 +47,18 @@ export function isFluxKeyShape(key) {
 }
 export const NOT_A_FLUX_KEY = "That is not a Flux Router key. A Flux Router key starts with sk-flux-. Copy the key, not the web address, from your Flux Router account.";
 export function assertProviderKey(preset, key) {
-  if (!Object.hasOwn(PROVIDER_PRESETS, preset) || !secret(key)) fail("Choose a provider and paste a valid model API key.");
+  if (!Object.hasOwn(PROVIDER_PRESETS, preset) || !secret(key)) fail("Choose an AI service and paste a valid key for it.");
   if (preset === "flux" && !isFluxKeyShape(key) && !keyIssuer(key)) fail(NOT_A_FLUX_KEY);
-  if (key.trim().startsWith("sk-admin-")) fail("Use an inference API key, not an OpenAI admin key.");
+  if (key.trim().startsWith("sk-admin-")) fail("Use a regular OpenAI key, not an admin key.");
   const known = keyIssuer(key);
-  if (known && known !== preset) fail("This key appears to belong to a different provider. Choose its provider before saving.");
+  if (known && known !== preset) fail("This key does not match the AI service you picked. Choose the right one before saving.");
 }
 /** Caller supplies fresh opaque IDs; create/update never sends a key anywhere. */
 export function mutateProviderBank(raw, input, createId) {
   const bank = parseProviderBank(raw);
   if (!plain(input)) fail("Invalid model connection change.");
   if (input.action === "create") {
-    if (Object.keys(input).some(key => !["action", "preset", "label", "key"].includes(key))) fail("Only a provider, account label and key can be supplied.");
+    if (Object.keys(input).some(key => !["action", "preset", "label", "key"].includes(key))) fail("Only an AI service, an account name and a key can be saved here. Remove anything else, then save again.");
     assertProviderKey(input.preset, input.key);
     if (bank.length >= 32) fail("You can save up to 32 model connections.");
     const name = input.label === undefined ? PROVIDER_PRESETS[input.preset].label : input.label;

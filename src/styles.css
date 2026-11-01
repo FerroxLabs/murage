@@ -81,6 +81,13 @@
   --color-danger: #f87171;
   --color-warning: #fbbf24;
   --color-team-lead: #82b5ef;
+  /* Soft chips and bands (UX overhaul): a tinted ground that carries its own
+     status colour as text, e.g. "Asks first" in warning on warning-soft.
+     Measured by scripts/a11y/contrast.mjs in both palettes. */
+  --color-accent-soft: #3a2216;
+  --color-success-soft: #123326;
+  --color-warning-soft: #352a0e;
+  --color-danger-soft: #3d1c1c;
 
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", system-ui, sans-serif;
@@ -148,6 +155,10 @@
   --color-danger-ink: #2a0806;
   --color-warning: #fbbf24;       /* Wayland --warning, verbatim */
   --color-team-lead: #82b5ef;     /* Sidebar role, not selection or activity */
+  --color-accent-soft: #3a2216;   /* accent-text 6.04:1, ink 13.56:1 */
+  --color-success-soft: #123326;  /* success 7.15:1 */
+  --color-warning-soft: #352a0e;  /* warning 8.45:1 */
+  --color-danger-soft: #3d1c1c;   /* danger 5.50:1 */
   --color-scrollbar: #5c5c5c;
   --color-ember-line: #f5f5f5;
 
@@ -221,6 +232,10 @@
   --color-danger: #b3261e;        /* Wayland #f87171 is 2.9:1 on white */
   --color-danger-ink: #ffffff;
   --color-warning: #8a6100;       /* Wayland #fbbf24 is 1.6:1 on white */
+  --color-accent-soft: #fbe9e1;   /* accent-text 5.37:1, ink 16.52:1 */
+  --color-success-soft: #e1f2ea;  /* success 4.61:1 */
+  --color-warning-soft: #fbf0d9;  /* warning 4.90:1 */
+  --color-danger-soft: #fbe7e6;   /* danger 5.50:1 */
   --color-scrollbar: #b3b3b3;     /* Wayland --bg-5 */
   --color-ember-line: #555555;
 
@@ -453,10 +468,24 @@ body {
 }
 
 /* Keep focus visible after components clear the browser outline. These
-   unlayered rules outrank Tailwind utilities without needing !important. */
+   unlayered rules outrank Tailwind utilities without needing !important.
+   The ring is one token set (colour per palette, width and offset here), so
+   every interactive element wears the same ring a keyboard user follows. */
+:root {
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+}
 :focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+}
+/* A visually hidden native control (`sr-only` checkbox or radio under a
+   styled label) takes focus where nobody can see it; the label wears the
+   ring instead. */
+label:has(> input.sr-only:focus-visible) {
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-lg);
 }
 
 /* Text fields already sit in a bordered card (the composer pill especially).
@@ -471,8 +500,8 @@ body {
 
 select.procedure-history-audience:focus-visible,
 :is(input, textarea, select).browser-extension-control:focus-visible {
-  outline: 2px solid var(--color-focus);
-  outline-offset: 2px;
+  outline: var(--focus-ring-width) solid var(--color-focus);
+  outline-offset: var(--focus-ring-offset);
 }
 
 ::selection {
@@ -612,8 +641,8 @@ select.procedure-history-audience:focus-visible,
 /* The phone's message action sheet. It rises from the bottom edge because
    that is where a thumb is on a 390px screen; the ground behind it fades
    rather than cuts, so the transcript reads as still there. Both are motion a
-   person can decline — see the reduced-motion block below, where the sheet
-   simply arrives. */
+   person can decline — see the reduced-motion block at the end of this file,
+   where the sheet simply arrives. */
 @keyframes msg-sheet-in {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
@@ -627,16 +656,6 @@ select.procedure-history-audience:focus-visible,
 }
 .msg-sheet-backdrop {
   animation: msg-sheet-backdrop-in 0.16s linear both;
-}
-@media (prefers-reduced-motion: reduce) {
-  .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
-  .animate-status-pulse { animation: none; opacity: 0.6; }
-  .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
-  .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
-  /* The sheet still appears, it just does not travel. */
-  .msg-sheet, .msg-sheet-backdrop { animation: none; }
-  /* The drawer still moves, it just arrives instantly. */
-  aside { transition: none; }
 }
 
 /* Ember vector motion. The fast horizontal compression is the edge-on
@@ -1098,34 +1117,6 @@ select.procedure-history-audience:focus-visible,
   43%, 58% { opacity: 1; transform: translate(18px, -15px) scale(0.42); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ember-motion *,
-  .ember-motion {
-    animation: none !important;
-  }
-
-  .ember-orbit {
-    display: none;
-  }
-
-  .ember-eyes { transform: none; }
-
-  /* Stop spatial motion instead of accelerating infinite animations. Loading
-     icons keep a slow opacity pulse, so progress remains visible without
-     rotation, bounce, or flicker. */
-  *,
-  *::before,
-  *::after {
-    animation: none !important;
-    transition-duration: 0.01ms !important;
-    transition-delay: 0ms !important;
-    scroll-behavior: auto !important;
-  }
-
-  .animate-spin {
-    animation: reduced-loader-pulse 1.6s ease-in-out infinite !important;
-  }
-}
 
 /* ─────────────────────────────────────────────────────────────────────────
    Filled accent / danger / success surfaces
@@ -1257,9 +1248,6 @@ button:disabled.bg-danger {
 .whats-new-card {
   animation: whats-new-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-@media (prefers-reduced-motion: reduce) {
-  .whats-new-card { animation: none; }
-}
 
 /* ─────────────────────────────────────────────────────────────────────────
    ANNOUNCEMENTS (src/components/Announcements.tsx)
@@ -1327,9 +1315,6 @@ button:disabled.bg-danger {
 .announce-in {
   animation: whats-new-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-@media (prefers-reduced-motion: reduce) {
-  .announce-in { animation: none; }
-}
 
 /* The sentence a sidebar claim row points at (src/lib/focus-message.ts). */
 ::highlight(murage-claim) {
@@ -1342,3 +1327,160 @@ button:disabled.bg-danger {
 [data-window-drag] :is(button, a, input, select, textarea, summary, label, [role="button"], [role="tab"], [role="menuitem"], [role="switch"], [role="combobox"], [tabindex]:not([tabindex="-1"]), [contenteditable="true"], [data-no-window-drag]) { -webkit-app-region: no-drag; }
 /* Never drag the window from an overlay, a menu, or the Computer panel's resize handle. */
 dialog, [role="dialog"], [aria-modal="true"], [role="menu"], [data-no-window-drag] { -webkit-app-region: no-drag; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   UX OVERHAUL: motion, landing ring, touch targets, marks (slice 8, L8)
+
+   Shared classes the overhaul surfaces use, so the motion and the sizes are
+   decided once, here, and the reduced-motion block below can switch every one
+   of them off by name.
+   ───────────────────────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+/* The help panel slides in from the right edge, 180 ms ease-out. */
+/* The Workspace pane has its own "?" in its header, so the floating tab never
+   sits on the pane's Save and Download. The tab stays inside a modal window and
+   over a full-screen overlay, where the pane's "?" cannot be reached. */
+body:has([data-testid="workspace-pane"]:not([hidden])):not(:has(.fixed.inset-0:not(dialog))) [data-help-launcher]:not(dialog [data-help-launcher]) {
+  display: none;
+}
+
+@keyframes help-panel-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.help-panel-in {
+  animation: help-panel-in 180ms ease-out both;
+}
+/* A coach mark or hint fades in; it never travels. */
+.coach-in {
+  animation: fade-in 120ms ease-out both;
+}
+/* Landing highlight: a search result or a help answer that lands on a
+   control rings it for two seconds, then the ring fades. An attribute, not a
+   class, for the reason [data-flash-target] above is one: React rewrites a
+   control's className while the page settles around it. The owner removes the
+   attribute after two seconds. */
+@keyframes landing-fade {
+  0%, 60% { box-shadow: 0 0 0 var(--focus-ring-width) var(--color-accent); }
+  100% { box-shadow: 0 0 0 var(--focus-ring-width) transparent; }
+}
+[data-landing] {
+  border-radius: var(--radius-lg);
+  box-shadow: 0 0 0 var(--focus-ring-width) var(--color-accent);
+  animation: landing-fade 2s ease-out forwards;
+}
+/* The dot on a bot that is working now. It pulses only while a turn runs:
+   the owner renders the class only then, so nothing loops when idle. */
+.working-pulse {
+  animation: status-pulse 1.6s steps(2, jump-none) infinite;
+}
+
+/* Touch targets: 44 px on a touch screen (rulebook item 9). `.tap-target`
+   grows the control itself; `.tap-area` keeps an inline link or a small
+   switch at its drawn size and widens only what a finger can hit, with an
+   invisible ::before (a click on a pseudo-element is a click on its element).
+   Do not combine `.tap-area` with a component that draws its own ::before. */
+@media (pointer: coarse) {
+  .tap-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .tap-area {
+    position: relative;
+  }
+  .tap-area::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+/* Status marks on rows (a run that finished, failed or asks): 32 px, on the
+   soft ground of their own tone. */
+.status-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  background-color: var(--color-raised);
+  color: var(--color-ink-secondary);
+}
+.status-mark[data-tone="accent"] { background-color: var(--color-accent-soft); color: var(--color-accent-text); }
+.status-mark[data-tone="success"] { background-color: var(--color-success-soft); color: var(--color-success); }
+.status-mark[data-tone="warning"] { background-color: var(--color-warning-soft); color: var(--color-warning); }
+.status-mark[data-tone="danger"] { background-color: var(--color-danger-soft); color: var(--color-danger); }
+/* The phone's bottom tab labels never drop under 12 px. */
+.phone-tab-label {
+  font-size: 12px;
+  line-height: 16px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   REDUCED MOTION: the one block. Every rule that honours
+   prefers-reduced-motion lives here, at the end of the file, so it wins
+   against everything above it. A person who asked for less motion still sees
+   every change; nothing travels, bounces or loops. Panels fade instead of
+   sliding, pulses stop, and a landing highlight is a static ring that stays
+   until its owner removes it.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .whats-new-card { animation: none; }
+  .announce-in { animation: none; }
+  .animate-caret, .animate-msg-in, .animate-shimmer { animation: none; }
+  .animate-status-pulse { animation: none; opacity: 0.6; }
+  .working-pulse { animation: none; opacity: 1; }
+  .thinking-shimmer { background: none; color: var(--color-ink-secondary); }
+  .turn-mascot-in, .turn-mascot-out, .turn-answer { animation: none; }
+  /* The sheet still appears, it just does not travel. */
+  .msg-sheet, .msg-sheet-backdrop { animation: none; }
+  /* The drawer still moves, it just arrives instantly. */
+  aside { transition: none; }
+
+  .ember-motion *,
+  .ember-motion {
+    animation: none !important;
+  }
+  .ember-orbit {
+    display: none;
+  }
+  .ember-eyes { transform: none; }
+
+  /* Stop spatial motion instead of accelerating infinite animations. Loading
+     icons keep a slow opacity pulse, so progress remains visible without
+     rotation, bounce, or flicker. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .animate-spin {
+    animation: reduced-loader-pulse 1.6s ease-in-out infinite !important;
+  }
+  /* A panel that slides in fades in instead: the class outranks the `*` rule
+     above, and both are !important. */
+  .animate-panel-in,
+  .help-panel-in {
+    animation: fade-in 120ms ease-out both !important;
+  }
+  .coach-in {
+    animation: fade-in 120ms ease-out both !important;
+  }
+  /* The landing highlight holds still: the ring stays, without the fade. */
+  [data-landing] {
+    animation: none !important;
+    box-shadow: 0 0 0 var(--focus-ring-width) var(--color-accent);
+  }
+}
