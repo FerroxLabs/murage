@@ -457,6 +457,7 @@ export function ImageLightbox({ items, index, onIndexChange, onClose }: {
       aria-label={t("media.lightbox.label", { name: item.name })}
       aria-describedby="image-lightbox-meta"
       tabIndex={-1}
+      data-box-exempt="full-screen lightbox, the picture is the page"
       data-testid="image-lightbox"
       onKeyDown={onKeyDown}
       onCancel={onCancel}

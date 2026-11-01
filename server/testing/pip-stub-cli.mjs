@@ -43,6 +43,14 @@ if (!promptFile) { // Claude shape: the prompt arrives on stdin
   await new Promise((r) => { process.stdin.on("data", (c) => { data += c; }); process.stdin.on("end", r); process.stdin.on("error", r); });
   prompt = data;
   record({ stdin: data });
+} else {
+  // The driver ends stdin right after it has registered this process. A stub that exits sooner is absent from macOS ps,
+  // which reads as a failed registration (uncertain-transport) however the row meant to end. The cap serves a test that holds stdin open.
+  await new Promise((r) => {
+    setTimeout(r, 2000).unref();
+    process.stdin.once("end", r); process.stdin.once("error", r); process.stdin.resume();
+  });
+  process.stdin.pause();
 }
 
 switch (scenario) {

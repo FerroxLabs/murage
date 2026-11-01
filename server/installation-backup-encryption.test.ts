@@ -5,6 +5,7 @@ import { PassThrough,Readable } from "node:stream";
 import { expect,it } from "vitest";
 import { backupIdentity,backupRecipient,encryptBackupStream,decryptBackupFile,stopBackupAgeProcess } from "./installation-backup-encryption.ts";
 import { testAgeKeys,rawAgeHost } from "./testing/backup-fixture.ts";
+import { MAX_BACKUP_DURATION_MS } from "../shared/backup-budget.mjs";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 it.skipIf(!rawAgeHost)("round trips through pinned age with private identity on stdin; wrong key and tampering refuse",async()=>{
   const keys=testAgeKeys(),other=testAgeKeys(),root=mkdtempSync(join(tmpdir(),"murage-age-roundtrip-test-"));
@@ -16,6 +17,14 @@ it.skipIf(!rawAgeHost)("round trips through pinned age with private identity on 
     await expect(decryptBackupFile(keys.ageExecutable,other.identity,encrypted,join(root,"wrong"),{maxBytes:4096})).rejects.toThrow("AGE_PROCESS_FAILED");
     const bytes=readFileSync(encrypted);bytes[bytes.length-1]^=1;writeFileSync(join(root,"tampered.age"),bytes);
     await expect(decryptBackupFile(keys.ageExecutable,keys.identity,join(root,"tampered.age"),join(root,"tampered"),{maxBytes:4096})).rejects.toThrow("AGE_PROCESS_FAILED");
+  }finally{removeTempDirSync(root);}
+});
+it.skipIf(!rawAgeHost)("an age process takes a limit up to 4 hours and no more",async()=>{
+  const keys=testAgeKeys(),root=mkdtempSync(join(tmpdir(),"murage-age-limit-test-"));
+  try{
+    await encryptBackupStream(keys.ageExecutable,keys.recipient,Readable.from(["FAKE"]),join(root,"long.age"),{maxBytes:4096,timeoutMs:MAX_BACKUP_DURATION_MS});
+    expect(existsSync(join(root,"long.age"))).toBe(true);
+    await expect(encryptBackupStream(keys.ageExecutable,keys.recipient,Readable.from(["FAKE"]),join(root,"over.age"),{maxBytes:4096,timeoutMs:MAX_BACKUP_DURATION_MS+1})).rejects.toThrow("INVALID_AGE_PROCESS_LIMITS");
   }finally{removeTempDirSync(root);}
 });
 it("rejects plugin, passphrase and malformed recipient/identity inputs before execution",()=>{

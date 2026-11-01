@@ -17,6 +17,7 @@ import { REDIRECT_TOOL, type CarvedTarget } from "./always-ask.ts";
 import { parseExactCommandKey } from "../shared/exact-command.ts";
 import { APP_ACTION_PREFIX, APP_LOOKUPS, isCurrentAppGrant } from "../shared/app-action-words.ts";
 import { CONNECTED_APPS_SERVER, exposedToolName } from "../shared/connected-app-names.ts";
+import { durableGrantAllowed } from "../shared/durable-grant-allowed.ts";
 
 /** How many "Always allow for this routine" grants one routine keeps, the
  * same cap a bot's own list has. */
@@ -155,6 +156,8 @@ const ROUTINE_LOOKUP_KEYS: ReadonlySet<string> = new Set(Object.keys(APP_LOOKUPS
 export function isRoutineGrantKey(key: unknown): key is string {
   if (typeof key !== "string" || key.length > 6_000) return false;
   if (key.startsWith("stop:browser:")) return false;
+  // UX-TRUST-MOMENTS-1012 2.3.3, 2.3.4: never a payment, for a routine either
+  if (!durableGrantAllowed(key)) return false;
   if (isStopLineKey(key) || parseExactCommandKey(key) !== undefined) return true;
   if (key.startsWith(APP_ACTION_PREFIX)) return isCurrentAppGrant(key);
   return ROUTINE_LOOKUP_KEYS.has(key);

@@ -132,7 +132,7 @@ export function SkillImportPanel({ onBack, onOpen }: { onBack(): void; onOpen(re
           </div>
         </div>
       ) : state.kind === "exists" ? (
-        <div role="alertdialog" aria-label="Replace this skill?" className="mt-4 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
+        <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Replace this skill?" className="mt-4 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
           <div className="font-medium">{state.message} Replace it?</div>
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={() => void send({ ...state.input, replace: true } as ImportInput)} className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white">Replace</button>

@@ -8,6 +8,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeft, Check, Loader2, RefreshCw, Search, TriangleAlert, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { readCachedInventory, writeCachedInventory } from "@/lib/connected-apps-cache";
 // The MCP servers tab is desktop-only and heavy (the paste parser rides with it),
@@ -1347,12 +1348,12 @@ export function PluginsPanel() {
         aria-modal="true"
         aria-labelledby="plugins-title"
         tabIndex={-1}
-        className="animate-pop-in flex h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50"
+        className={cn(BOX_FRAME, "animate-pop-in h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50")}
       >
-        <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
+        <BoxHead className="items-start gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="plugins-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Connected apps</h2>
-            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? `One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}. You can add your own MCP tools too.` : "View connected apps. Manage connections and MCP tools in the desktop app."}</p>
+            <p className="mt-1 text-[13px] text-ink-secondary">{desktop === true ? t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) }) : t("ux.lcopyb.connected.subtitleRemote")}</p>
           </div>
           <div className="flex items-center gap-1">
             {surface === "apps" && lockState === "unlocked" && (
@@ -1373,10 +1374,10 @@ export function PluginsPanel() {
               <X size={21} />
             </button>
           </div>
-        </header>
+        </BoxHead>
 
-        <div className="border-b border-hairline/40 px-6 sm:px-8">
-          <div className="flex gap-6" role="tablist" aria-label="Connected apps and MCP servers">
+        <div className="shrink-0 border-b border-hairline/40 px-6 sm:px-8">
+          <div className="flex gap-6" role="tablist" aria-label={t("ux.lcopyb.connected.tabsLabel")}>
             {(desktop === true ? ["apps", "mcp"] as const : ["apps"] as const).map((item) => (
               <button
                 key={item}
@@ -1389,7 +1390,7 @@ export function PluginsPanel() {
                   surface === item ? "border-accent text-ink" : "border-transparent text-ink-secondary hover:text-ink",
                 )}
               >
-                {item === "apps" ? "Connected apps" : "MCP servers"}
+                {item === "apps" ? "Connected apps" : t("ux.lcopyb.connected.toolsTab")}
               </button>
             ))}
           </div>
@@ -1420,7 +1421,7 @@ export function PluginsPanel() {
           </div>
         )}
 
-        <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+        <div className="flex shrink-0 flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Connected apps view">
             <button
               role="tab"
@@ -1540,7 +1541,7 @@ export function PluginsPanel() {
         )}
         {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
+        <BoxBody ref={scrollRef} className="px-6 pb-7 pt-5 sm:px-8">
           {cards === null && tab === "marketplace" ? (
             <div className="flex items-center justify-center gap-2 py-24 text-[13px] text-ink-secondary">
               <Loader2 size={14} className="animate-spin" /> Loading catalog…
@@ -1636,7 +1637,7 @@ export function PluginsPanel() {
               )}
             </div>
           )}
-        </div>
+        </BoxBody>
 
         </>}
       </div>

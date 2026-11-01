@@ -13,7 +13,7 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 import { localSlot } from "./delivery.ts";
 import { publishView, viewFromStore } from "./publication.ts";
 import { INST, T0, cleanupFixtures, issueRecord, makeInstall } from "./scan-fixtures.ts";
-import { captureActiveFromControl, cardRows, startServerSentinel, type ServerSentinelOptions } from "./server-host.ts";
+import { captureActiveFromControl, inboxHealth, startServerSentinel, type ServerSentinelOptions } from "./server-host.ts";
 import { SentinelStore } from "./store.ts";
 
 const dirs: string[] = [];
@@ -124,8 +124,7 @@ describe("the minute delivery pass", () => {
     expect(digests).toHaveLength(1);
     const inbox = host.inbox();
     expect(inbox.status).toBe("ready");
-    expect(inbox.rows.length).toBeLessThanOrEqual(5);
-    expect(inbox.digest?.id).toBe(digests[0]);
+    expect(host.digest()?.id).toBe(digests[0]);
     expect(Buffer.byteLength(JSON.stringify(inbox))).toBeLessThan(32 * 1024);
     host.tick();
     expect(digests).toHaveLength(1);
@@ -133,12 +132,15 @@ describe("the minute delivery pass", () => {
     await host.stop();
   });
 
-  it("orders card rows by impact, then recency", () => {
-    const rows = cardRows({ schemaVersion: 1, storeRevision: 1, publishedAt: T0, summary: {} as never, rows: [
-      { fingerprint: "a", severity: "low", lastSeenAt: 3, state: "open" }, { fingerprint: "b", severity: "high", lastSeenAt: 1, state: "open" },
-      { fingerprint: "c", severity: "high", lastSeenAt: 2, state: "recovering" }, { fingerprint: "d", severity: "high", lastSeenAt: 9, state: "resolved" },
-    ] as never });
-    expect(rows.map(r => r.fingerprint)).toEqual(["c", "b", "a"]);
-    expect(cardRows(null)).toEqual([]);
+  it("carries the level and only what the owner must act on, folded", () => {
+    const row = (titleKey: string, state = "open") => ({ fingerprint: titleKey + state, titleKey, state, count: 1, firstSeenAt: 1, lastSeenAt: 2 }) as never;
+    const view = (rows: never[]) => ({ schemaVersion: 1, storeRevision: 1, publishedAt: T0, summary: {} as never, rows }) as never;
+    const deletions = [1, 2, 3, 4, 5].map(() => row("health.deletion.still-pending"));
+    expect(inboxHealth("ready", view(deletions))).toEqual({ status: "ready", level: "note", needs: [] });
+    expect(inboxHealth("ready", view([...deletions, row("health.extraction.unusable-replies")])).level).toBe("watch");
+    expect(inboxHealth("ready", view([row("health.backup.not-protected"), row("health.backup.not-protected"), ...deletions]))).toEqual({
+      status: "ready", level: "act", needs: [{ titleKey: "health.backup.not-protected", issues: 2, lastSeenAt: 2 }] });
+    expect(inboxHealth("ready", view([row("health.backup.not-protected", "resolved")]))).toEqual({ status: "ready", level: null, needs: [] });
+    expect(inboxHealth("unavailable", null)).toEqual({ status: "unavailable", level: null, needs: [] });
   });
 });
