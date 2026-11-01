@@ -21,7 +21,7 @@ export function browserChoicePatch(bot: Pick<Bot, "useMyChrome" | "browserTransp
 export const USE_MY_CHROME_PATCH = { useMyChrome: true, browserTransport: "auto" } as const;
 /** What choosing "Use my Chrome" means, said at the moment of choosing. */
 export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { botName: string; pending: boolean; onConfirm: () => void; onCancel: () => void }) {
-  return <div role="dialog" aria-label="Use my Chrome" className="flex flex-col gap-2 rounded-lg bg-card p-3 text-xs">
+  return <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label="Use my Chrome" className="flex flex-col gap-2 rounded-lg bg-card p-3 text-xs">
     <p className="text-sm text-ink">{botName} works in your Chrome, signed in as you, in a tab of its own.</p>
     <p className="text-ink-secondary">Murage connects through Murage for Chrome when it is installed, and shows you one step if it is not. With Murage for Chrome you choose which sites {botName} may use, and anything that sends, posts, buys or changes something asks you first. You can pause or stop at any time.</p>
     <p className="text-ink-secondary">If Murage for Chrome is not connected but Chrome's remote debugging is on, Murage uses that instead. Chrome asks you once to Allow it, {botName} then works in tabs it opens, your own tabs stay yours, and one bot at a time can use it.</p>

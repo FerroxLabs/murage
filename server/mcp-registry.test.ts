@@ -373,6 +373,14 @@ describe("remote MCP registry entries (T1)", () => {
     expect(listing[0]).toMatchObject({ kind: "stdio", envKeys: ["NOTES_TOKEN"] });
   });
 
+  it("gives every link entry its revision, and the revision changes with the link or the sign-in", () => {
+    const rev = (entry: Record<string, unknown>) => listAllMcpServers({ comfy: entry })[0]!.rev;
+    const owned = { url: "https://cloud.comfy.org/mcp", auth: "header", headers: { Authorization: true } };
+    expect(rev(owned)).toMatch(/^[0-9a-f]{12}$/);
+    expect(rev({ ...owned, url: "https://other.example/mcp" })).not.toBe(rev(owned));
+    expect(rev({ ...owned, auth: "oauth", headers: {} })).not.toBe(rev(owned));
+  });
+
   it("computes status from secret presence", () => {
     const raw = {
       comfy: { url: "https://cloud.comfy.org/mcp", auth: "oauth" },

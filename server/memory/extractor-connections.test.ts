@@ -37,7 +37,7 @@ describe("memory extractor connections", () => {
     expect(init.redirect).toBe("error");
     expect(init.headers).toMatchObject({ authorization: "Bearer replacement-fixture-key" });
     const body = JSON.parse(String(init.body));
-    expect(body).toMatchObject({ model: "flux-fast", max_tokens: 100, stream: false });
+    expect(body).toMatchObject({ model: "flux-pinned-gpt-5-nano", max_tokens: 100, stream: false });
     expect(body).not.toHaveProperty("tools");
     expect(body.messages).toEqual(memoryExtractionMessages("Owner prefers daily reports."));
     key = null;

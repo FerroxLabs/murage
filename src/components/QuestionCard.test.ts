@@ -325,6 +325,16 @@ describe("the folder-trust card", () => {
     expect(buttonDisabled(render(trustCard()), "Send answer")).toBe(true);
   });
 
+  it("a generation 2 card lists its declines in full from the first one, and a card with none has no list", () => {
+    const decline = `/repo/${"long/".repeat(600)}declined`;
+    const withDecline = render(trustCard({ folderTrust: { key: "/repo", folder: "/repo", sources: [], v2: true, declines: [decline] } }));
+    expect(withDecline).toContain('data-testid="folder-trust-declines"');
+    expect(withDecline).toContain("Every folder this can include");
+    expect(withDecline).toContain(decline);
+    expect(render(trustCard({ folderTrust: { key: "/repo", folder: "/repo", sources: [], v2: true } }))).not.toContain("folder-trust-declines");
+    expect(render(trustCard())).not.toContain("folder-trust-declines");
+  });
+
   it("submits the pick as the folder-trust answer the server records", () => {
     const question = folderTrustQuestion({ key: "/repo", folder: "/repo", sources: ["AGENTS.md"] });
     let picked = toggleOption({}, question, "Trust this folder");

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { signedOutEngineRows } from "@/lib/signed-out-engines";
+import { engineNeed } from "@/lib/engine-need";
+import { firstRunOwnsMainView } from "@/lib/first-run";
+import { useEngineReading } from "@/components/today/use-engine-health";
+import type { HealthIssueLevel } from "../../shared/health-levels";
 import { useSetupView } from "./FirstRunChrome";
 import { refreshThreadSnoozes, setQuestionThreads } from "@/lib/thread-attention";
 import { FALLBACK_POLL_MS, inboxPollScale, onInboxChanged, serialRefresh } from "@/lib/inbox-changed";
@@ -14,6 +18,8 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
   // on the row and the number inside the dialog can never disagree.
   const [decisions, setDecisions] = useState<number>();
   const [stale, setStale] = useState(true);
+  // The Health level rides on this read, so the dot needs no poll of its own.
+  const [healthLevel, setHealthLevel] = useState<HealthIssueLevel | null>();
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
@@ -25,7 +31,7 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
         const result = await api("/api/inbox?view=decisions&pageSize=1", { signal: controller.signal });
         // Still getting ready (once, after an upgrade): its zeros are not the answer, so the last badge stays, marked stale.
         if (!disposed && result.preparing) setStale(true);
-        else if (!disposed) { setCount(result.total); setDecisions(result.decisions); setStale(false); setQuestionThreads(result.questionThreads); }
+        else if (!disposed) { setCount(result.total); setDecisions(result.decisions); setHealthLevel(result.health?.level); setStale(false); setQuestionThreads(result.questionThreads); }
         // The same beat reads conversation snoozes, and that read is what
         // wakes a snooze whose time has come (server/thread-snooze.ts).
         if (!disposed) await refreshThreadSnoozes(api, controller.signal).catch(() => undefined);
@@ -54,10 +60,13 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
   // would say two, the Inbox would open saying three, and the number nobody
   // can reconcile is the number nobody reads.
   const { view } = useSetupView();
-  const signedOut = signedOutEngineRows(view).length;
+  const signedOutRows = signedOutEngineRows(view);
+  const reading = useEngineReading();
+  const owed = signedOutRows.length + (engineNeed(reading, signedOutRows, Boolean(view && firstRunOwnsMainView(view))) ? 1 : 0);
   return {
     count,
-    decisions: decisions === undefined ? decisions : decisions + signedOut,
+    decisions: decisions === undefined ? decisions : decisions + owed,
     stale: stale || !connected,
+    healthLevel,
   };
 }

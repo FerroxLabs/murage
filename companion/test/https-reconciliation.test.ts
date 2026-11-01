@@ -53,12 +53,16 @@ describe("the sidecar's actual bind decision", () => {
   it("converges a tailnet listener to loopback when an owned HTTPS front is observed", async () => {
     const source = readFileSync(new URL("../src/index.ts",import.meta.url),"utf8");
     const start = source.indexOf("const desiredBrowserBindHost =");
-    const end = source.indexOf("/** A sentence naming",start);
+    // Only the one declaration: the helpers after it are TypeScript, which
+    // new Function cannot parse. DOOR-HTTPS-RECON-SLICE (1.0.14) moves this
+    // decision into browser.ts so the test can import it instead.
+    const end = source.indexOf("/** Door notes",start);
     expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
     const declaration = source.slice(start,end).replace("(): string =>","() =>");
-    const desired = new Function("browserBindHost","BROWSER_BIND","BROWSER_FRONT","tailscaleAddress","tailnetSelfAddress","console",
+    const desired = new Function("browserBindHost","BROWSER_BIND","BROWSER_FRONT","tailscaleAddress","tailnetSelfAddress","noteOnce","console",
       `${declaration}; return desiredBrowserBindHost;`)(browserBindHost,"auto",{scheme:"https",host:"box.tail1234.ts.net",port:443},
-      ()=>"100.64.0.10",()=>"100.64.0.10",{log:()=>{}});
+      ()=>"100.64.0.10",()=>"100.64.0.10",()=>{},{log:()=>{}});
     const listened: string[] = [];
     const fakeServer = {closeAllConnections:()=>{},close:(done:()=>void)=>done()};
     const result = await rebindBrowserDoor({
