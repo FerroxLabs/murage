@@ -24,7 +24,7 @@ export interface McpSecretsInput {
 
 export type McpBridgeError =
   | "desktop-only" | "storage" | "not-found" | "invalid" | "stale" | "busy" | "headless"
-  | "not-sign-in" | "no-registration" | "refused" | "cancelled" | "denied" | "timeout"
+  | "not-sign-in" | "no-registration" | "no-sign-in-details" | "refused" | "cancelled" | "denied" | "timeout"
   | "port" | "browser" | "network" | "token" | "unknown";
 
 export type McpBridgeResult = { ok: true } | { ok: false; error: McpBridgeError; message: string };

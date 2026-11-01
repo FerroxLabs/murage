@@ -5,6 +5,7 @@ import { t } from "@/lib/i18n";
 import { ImportGuardFindings, OfficialMark, guardBlockedNote, type GuardScan, type OfficialStatus } from "./ImportGuardFindings";
 import { ImportScanProgress } from "./ImportScanProgress";
 import { isCheckStopped, useImportScan, withScanId } from "@/lib/importScan";
+import { BOX_DIALOG, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 type Selection = { agents: string[]; skills: string[]; routines: string[]; instructions: string[] };
 type Scan = GuardScan;
@@ -87,9 +88,12 @@ export function BundleImportDialog({ archivePath, fileName, onClose, onImported 
     <span className="min-w-0 break-words">{name}{detail && <span className="mt-0.5 block text-[11px] text-ink-secondary">{detail}</span>}</span>
   </label>;
   return <dialog ref={dialog} onCancel={event => { event.preventDefault(); closeDialog(); }} aria-labelledby="bundle-import-title"
-    className="m-auto max-h-[calc(100dvh-2rem-2*max(var(--inset-top),var(--inset-bottom)))] w-[calc(100%-2rem)] max-w-[580px] overflow-y-auto rounded-xl border border-hairline/50 bg-panel p-5 text-ink backdrop:bg-black/60">
+    className={`${BOX_DIALOG} m-auto w-[calc(100%-2rem)] max-w-[580px] rounded-xl border border-hairline/50 bg-panel p-0 text-ink backdrop:bg-black/60`}>
+    <BoxHead className="block border-b border-hairline/40 px-5 pb-3 pt-5">
     <h2 id="bundle-import-title" className="text-[18px] font-semibold">Import selected package contents</h2>
     <p className="mt-1 break-words text-[12px] text-ink-secondary">{fileName}</p>
+    </BoxHead>
+    <BoxBody className="px-5 pb-5">
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">Imported bots receive fresh identities. Skills and routines stay disabled; connections, computer access and Chief roles are not granted.</p>
     <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("importGuard.askNote")}</p>
     <OfficialMark status={preview?.official ?? options?.official} />
@@ -124,12 +128,16 @@ export function BundleImportDialog({ archivePath, fileName, onClose, onImported 
       <p className="mt-2 text-ink-secondary">{t("importGuard.scanNote")}</p>
       {preview.scan.reviewRequired && <label className="mt-3 flex items-start gap-2"><input type="checkbox" checked={acknowledged} disabled={Boolean(busy)} onChange={event => setAcknowledged(event.target.checked)} />{t("importGuard.acknowledge")}</label>}
     </section>}
-    {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
-    <div className="mt-4 flex flex-wrap justify-end gap-2">
+    </BoxBody>
+    {/* The error sits by the buttons that raise it: the body may be scrolled far from here. */}
+    <BoxFoot className="block border-t border-hairline/40 px-5 py-3">
+    {error && <p role="alert" className="mb-2 text-[12px] text-danger">{error}</p>}
+    <div className="flex flex-wrap justify-end gap-2">
       <button type="button" disabled={busy === "import"} onClick={closeDialog} className="rounded-lg px-3 py-2 text-[13px] text-ink-secondary disabled:opacity-50">{busy === "loading" || busy === "preview" ? t("importGuard.stopCheck") : "Cancel"}</button>
       {!options && !busy && <button type="button" onClick={() => { setError(""); void load(); }} className="rounded-lg bg-control px-3 py-2 text-[13px]">Retry</button>}
       {options && !options.scan.blocked && <button type="button" disabled={Boolean(busy) || !selection.agents.length} onClick={() => void inspect()} className="rounded-lg bg-control px-3 py-2 text-[13px] disabled:opacity-50">{busy === "preview" ? "Checking selection…" : "Preview selection"}</button>}
       {preview && !preview.scan.blocked && <button type="button" disabled={Boolean(busy) || !preview.summary || preview.missingDependencies.length > 0 || (preview.scan.reviewRequired && !acknowledged)} onClick={() => void install()} className="rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-white disabled:opacity-50">{busy === "import" ? "Importing…" : "Import package"}</button>}
     </div>
+    </BoxFoot>
   </dialog>;
 }

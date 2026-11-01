@@ -10,7 +10,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
@@ -116,10 +116,14 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     await completed(turnId);
   }, 60_000);
 
-  it("nobody answering in time goes back as cancel", async () => {
+  it("on a turn nobody is at, the note goes back as cancel", async () => {
     process.env.FAKE_CLAUDE_ELICIT = JSON.stringify([PRICE_CONFIRM]);
-    await start({ questionTimeoutMs: 1_000 });
-    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-timeout", text: "make the image" });
+    const original = globalThis.setTimeout;
+    const shortNote = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+      original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
+    onTestFinished(() => shortNote.mockRestore());
+    await start();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-timeout", text: "make the image", unattendedAskNote: true });
     const card = await opened(turnId);
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "timeout" });
     await completed(turnId);

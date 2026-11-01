@@ -88,8 +88,8 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     const group = dialog.getByRole("radiogroup", { name: "Image approval" });
     const card = group.locator("..");
     await card.evaluate((el) => el.scrollIntoView({ block: "start" }));
-    await expect(group.getByRole("radio", { name: "Follow permission level" })).toHaveAttribute("aria-checked", "true");
-    for (const name of ["Follow permission level", "Ask before each image", "Make images without asking"]) {
+    await expect(group.getByRole("radio", { name: "Follow the level" })).toHaveAttribute("aria-checked", "true");
+    for (const name of ["Follow the level", "Ask before each image", "Make images without asking"]) {
       const radio = group.getByRole("radio", { name });
       expect((await radio.boundingBox())!.height, `${name} is a 44px target`).toBeGreaterThanOrEqual(43);
       const box = await radio.boundingBox();
@@ -114,7 +114,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     if (SHOTS) await page.screenshot({ path: join(SHOTS, `setting-allow-${width}x${height}.png`) });
     await field.fill(""); await field.blur();
     await expect.poll(async () => (await bot()).imageAskAfter, { timeout: 15_000 }).toBeUndefined();
-    await group.getByRole("radio", { name: "Follow permission level" }).click();
+    await group.getByRole("radio", { name: "Follow the level" }).click();
     await expect.poll(async () => (await bot()).imageApproval, { timeout: 15_000 }).toBeUndefined();
   });
 }

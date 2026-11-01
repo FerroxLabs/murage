@@ -179,7 +179,7 @@ it("logs one hourly summary per pair, including successes, each failure reason a
   const lines = vi.mocked(console.info).mock.calls.map(call => String(call[0]));
   expect(lines).toContainEqual(expect.stringMatching(/^\[memory\] extraction outcomes complete=0 deferred=1 unusable=6 interrupted=0 extractor=[0-9a-f]{32} engine=other model=flux-fast coverage=partial$/));
   expect(lines.join("\n")).not.toContain("@murage/flux-fast");
-  expect(EXTRACTION_FAILURE_REASONS).toHaveLength(6);
+  expect(EXTRACTION_FAILURE_REASONS).toHaveLength(7);
   expect(console.info).toHaveBeenCalledWith(expect.stringContaining("complete=1 deferred=0 unusable=0"));
   // Counters reset for the next window; an idle pair emits no repetitive zero line.
   await run(success); vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);

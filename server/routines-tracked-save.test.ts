@@ -106,6 +106,7 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   },
   isActiveThread: f => f.m.isActiveThread(f.thread),
   activeRunOrigin: f => f.m.activeRunOrigin(f.thread),
+  liveGoalInRoom: f => f.m.liveGoalInRoom("group-1"),
   liveRunThreadIds: f => { expect(f.m.liveRunThreadIds("bot-a")).toBeInstanceOf(Set); },
   cardOpened: f => expect(f.m.cardOpened(f.thread, "card-1", "Approve the write")).toBe(true),
   cardClosed: f => { f.m.cardOpened(f.thread, "card-1", "Approve the write"); f.m.cardClosed(f.thread, "card-1"); },
@@ -127,6 +128,12 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   remove: f => expect(f.m.remove(f.b.id)).toBe(true),
   disableForBot: f => f.m.disableForBot("bot-a"),
   disableForGroup: f => f.m.disableForGroup("group-1"),
+  rescheduleForZoneChange: f => {
+    const daily = f.m.create({ name: "Daily", prompt: "Report", botId: "bot-a", target: "bot", runOn: "ember", enabled: true, schedule: { type: "daily", time: "09:00", weekdays: [0, 1, 2, 3, 4, 5, 6] } });
+    // a next time worked out in the old zone
+    internals(f.m).routines.find((routine: { id: string }) => routine.id === daily.id)!.nextRunAt! += HOUR;
+    expect(f.m.rescheduleForZoneChange().map((routine) => routine.id)).toEqual([daily.id]);
+  },
   runNow: f => expect(f.m.runNow(f.b.id)).not.toBeNull(),
   enqueueWebhook: f => f.m.enqueueWebhook({ webhookId: "hook-2", webhookName: "Hook 2", prompt: "Handle 2", botId: "busy-bot", runOn: "ember", deliveryId: "delivery-2", receivedAt: START }),
   findWebhookDelivery: f => f.m.findWebhookDelivery("hook-1", "delivery-1"),
