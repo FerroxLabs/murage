@@ -3,9 +3,11 @@ import { readFileSync } from "node:fs";
 import { SHORTCUT_GROUPS, filterShortcuts, modShortcut, shortcutKeys } from "./keyboard-shortcuts";
 it("lists only the inspected bindings and qualifies context-dependent actions", () => {
   const items = SHORTCUT_GROUPS.flatMap(group => group.items);
-  expect(items.map(item => item.id)).toEqual(["palette", "new-bot", "settings", "all-chats", "chat-list", "new-chat", "jump-bot", "find", "close", "send", "newline", "edit", "suggestion", "bulletin", "reorder"]);
+  expect(items.map(item => item.id)).toEqual(["palette", "new-bot", "settings", "all-chats", "chat-list", "new-chat", "jump-bot", "find", "close", "help", "help-question", "send", "newline", "edit", "suggestion", "bulletin", "reorder"]);
   expect(new Set(items.map(item => item.id)).size).toBe(items.length); expect(items.every(item => item.context)).toBe(true);
-  expect(items.some(item => item.keys.includes("?") || item.keys.includes("/"))).toBe(false);
+  // 1.0.12: "?" and Mod+/ exist only for help, and HelpHost (components/help/HelpHost.tsx) really listens for them.
+  expect(items.filter(item => item.keys.includes("?") || item.keys.includes("/")).map(item => item.id)).toEqual(["help", "help-question"]);
+  expect(readFileSync(new URL("../components/help/HelpHost.tsx", import.meta.url), "utf8")).toContain("helpKeyAction(event, event.target");
 });
 it("renders real platform modifiers and searches actions, keys and context", () => {
   const palette = SHORTCUT_GROUPS[0]!.items[0]!;

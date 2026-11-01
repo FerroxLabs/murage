@@ -127,7 +127,7 @@ import XCTest
     }
 
     func testMissingKeyOrOldDoorNeverDisclosesMintsOrRegisters() async throws {
-        for error in [PhoneJobsMintError.noApprovalKey, .updateComputer] {
+        for error in [PhoneJobsMintError.noApprovalKey, .updateComputer, .turnedOff] {
             let r = Rig(); r.unavailable = error
             do { try await r.enable(); XCTFail() } catch {}
             XCTAssertEqual(r.prompts, 0); XCTAssertEqual(r.disclosures, 0); XCTAssertTrue(r.events.isEmpty)

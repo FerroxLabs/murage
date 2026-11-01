@@ -1,0 +1,113 @@
+{
+  "_note": "What a feedback report may hold, word for word. The same values as FEEDBACK_FIXED and FEEDBACK_CHOICE_WORDS in src/lib/screen-envelope.ts; src/lib/feedback-contract.test.ts fails when the two differ.",
+  "words": [
+    "Something on this screen felt complicated.",
+    "I couldn't do something on this screen.",
+    "I couldn't find something on this screen."
+  ],
+  "titles": {
+    "unknown": "unknown",
+    "today": "Today",
+    "chats": "Chats",
+    "chat": "Chat",
+    "group": "Group chat",
+    "needs-you": "Needs you",
+    "routines": "Routines",
+    "routine": "Routine",
+    "bot": "Bot settings",
+    "bot:overview": "Bot · Overview",
+    "bot:identity": "Bot · Identity & instructions",
+    "bot:shapes": "Bot · What shapes this bot",
+    "bot:skills": "Bot · Skills",
+    "bot:learning": "Bot · Learning",
+    "bot:memory": "Bot · Memory",
+    "bot:routines": "Bot · Routines",
+    "bot:teams": "Bot · Teams",
+    "bot:access": "Bot · Access",
+    "bot:email": "Bot · Email",
+    "bot:model": "Bot · Model",
+    "bot:permissions": "Bot · Permissions",
+    "bot:voice": "Bot · Voice & alerts",
+    "bot:history": "Bot · History",
+    "bot:usage": "Bot · Usage",
+    "new": "New",
+    "new-bot": "New bot",
+    "connect-app": "Connect an app",
+    "settings:general": "Settings · General",
+    "settings:botDefaults": "Settings · Bots",
+    "settings:skills": "Settings · Skills",
+    "settings:memory": "Settings · Memory",
+    "settings:models": "Settings · Models & engines",
+    "settings:webSearch": "Settings · Tools",
+    "settings:connections": "Settings · Connected apps",
+    "settings:channels": "Settings · Messaging apps",
+    "settings:companion": "Settings · Devices",
+    "settings:backups": "Settings · Backups",
+    "settings:usage": "Settings · Usage",
+    "settings:about": "Settings · About & updates",
+    "help": "Help",
+    "first-run:hello": "Getting set up · who you are",
+    "first-run:detect": "Getting set up · what is here",
+    "first-run:flux": "Getting set up · switch it on",
+    "first-run:chat": "Getting set up · first chat",
+    "first-run:flow": "Getting set up · do the thing",
+    "first-run:strip": "Getting set up",
+    "rail-fold": "More bots",
+    "client-header": "Client workspace",
+    "clients-card": "Clients",
+    "other-workspaces": "Other workspaces",
+    "add-client": "Add a client workspace",
+    "phone-setup": "Pair your phone",
+    "cloud": "Murage Cloud",
+    "files": "Files",
+    "map": "Team map",
+    "apps": "Connected apps",
+    "skill-recorder": "Teach a skill",
+    "computer": "Computer",
+    "inspector": "Inspector",
+    "no-engines": "Nothing to think with yet"
+  },
+  "pages": [
+    "general",
+    "botDefaults",
+    "skills",
+    "memory",
+    "models",
+    "webSearch",
+    "connections",
+    "channels",
+    "companion",
+    "backups",
+    "usage",
+    "about"
+  ],
+  "gates": {
+    "offline": "Not connected to the computer running Murage",
+    "engines-off": "Engines are switched off in this copy",
+    "no-engine": "No engine is connected yet",
+    "first-run:hello": "Set-up step waiting on something",
+    "first-run:detect": "Set-up step waiting on something",
+    "first-run:flux": "Set-up step waiting on something",
+    "first-run:chat": "Set-up step waiting on something",
+    "first-run:flow": "Set-up step waiting on something",
+    "first-run:strip": "Set-up step waiting on something"
+  },
+  "controls": {
+    "new-bot": {
+      "label": "New bot",
+      "address": "murage://new/bot"
+    },
+    "settings-search": {
+      "label": "Search settings",
+      "address": "murage://settings/search"
+    },
+    "connect-app": {
+      "label": "Connect an app",
+      "address": "murage://settings/connections"
+    },
+    "engines": {
+      "label": "Engines",
+      "address": "murage://settings/engines"
+    }
+  }
+}
