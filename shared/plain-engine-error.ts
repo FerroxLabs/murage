@@ -28,7 +28,7 @@ export function plainEngineError(message: string, botName: string, options: { de
   if (!text.trim() || !RAW_API.test(text)) return undefined;
   const status = statusOf(text);
   if (/context[_ ]length|too long|maximum context|too many tokens|prompt is too long/i.test(text) || status === 413) {
-    return `This conversation is too long for ${botName}'s model. Start a new conversation, or choose a model with a larger context.`;
+    return `This conversation is too long for ${botName}'s model. Start a new conversation, or choose a model that handles longer conversations.`;
   }
   const imageRequest = status === undefined || status === 400 || status === 415 || status === 422;
   // Only the provider's own "no images here" says the model cannot see; any
@@ -37,17 +37,17 @@ export function plainEngineError(message: string, botName: string, options: { de
     return `${botName}'s model can't read images, so it couldn't answer. Send the message again without the picture, or choose a model that reads images.`;
   }
   if (imageRequest && /\bimage|image_url/i.test(text)) {
-    return `${botName}'s model provider couldn't use the picture. Send it again, or send the message without it.`;
+    return `${botName}'s AI service couldn't use the picture. Send it again, or send the message without it.`;
   }
   if (status === 404 || /model[^.]{0,80}(?:does not exist|not found)/i.test(text)) {
-    return `${botName}'s model isn't available from its provider. Choose another model for ${botName}.`;
+    return `${botName}'s model isn't available from its AI service. Choose another model for ${botName}.`;
   }
   if ((status !== undefined && status >= 500) || /\bapi_error\b|internal server error|overloaded/i.test(text)) {
-    return `${botName}'s model provider had a problem on its side. Try again in a moment.`;
+    return `${botName}'s AI service had a problem on its side. Try again in a moment.`;
   }
   return options.details === false
-    ? `${botName}'s model provider turned this request down.`
-    : `${botName}'s model provider turned this request down. The details below say why.`;
+    ? `${botName}'s AI service turned this request down. Change the request or pick another model, then send it again.`
+    : `${botName}'s AI service turned this request down. The details below say why. Change the request or pick another model, then send it again.`;
 }
 
 /** A payment or access refusal carries the provider's own sentence after ours ("... The provider says: ..."). The store apps show no

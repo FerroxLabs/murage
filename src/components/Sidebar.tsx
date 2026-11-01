@@ -82,7 +82,7 @@ import { ConfirmDelete } from "./ConfirmDelete";
 import { isMascotAnimated, stateForBot } from "@/lib/mascot";
 import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
-import { openUpdateCard } from "@/lib/update-card";
+import { openUpdateCard, showUpdatePopup } from "@/lib/update-card";
 import { cn } from "@/lib/cn";
 import { skillRecorderAvailable } from "@/lib/feature-flags";
 import { isCloudOrigin } from "@/lib/cloud-workspace";
@@ -394,7 +394,8 @@ function profileInitials(profile?: { name?: string; email?: string }): string {
 /** Manual update check, next to the settings gear. Packaged app only (no
  * bridge in dev/browser). One button, state-dependent: check → download →
  * restart, with a brief "up to date" tick when a check finds nothing so a
- * click is never silent. States needing guidance open the update card. */
+ * click is never silent. States needing guidance open the update card; during
+ * a download it brings the progress pop-up back. */
 function UpdateButton() {
   const s = useUpdaterState();
   const [checkedAt, setCheckedAt] = useState(0);
@@ -443,6 +444,7 @@ function UpdateButton() {
     <button
       onClick={() => {
         if (cardLabel) return openUpdateCard();
+        if (status === "downloading") return showUpdatePopup();
         if (status === "downloaded") {
           setPending(true);
           return void updater.install();
@@ -454,7 +456,7 @@ function UpdateButton() {
         setCheckedAt(Date.now());
         void updater.check();
       }}
-      disabled={working}
+      disabled={working && status !== "downloading"}
       data-testid="update-button"
       title={label}
       aria-label={label}
@@ -3194,7 +3196,7 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
 
       {/* Footer. Below md the drawer runs to the bottom of the screen, so the
           last row owes the home indicator its inset. */}
-      <div className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
+      <div data-update-popup-anchor="" className={cn("pb-3 pt-2 max-md:pb-[calc(0.75rem+var(--inset-bottom))]", density === "icons" ? "px-2" : "px-3")}>
         {/* Announcements: an info notice is a banner here; an important or
             security one opens as a card, after What's new has closed. */}
         <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />

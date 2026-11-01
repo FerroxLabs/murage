@@ -493,10 +493,86 @@ describe("the financial rule is linear in its input", () => {
   });
 });
 
+// Whole spans run before the shape rules. A shape rule stops at the first
+// character outside its class, so with the shapes first the rest of a
+// credential stayed behind its mask: every line below did.
+describe("redactSecretsInText masks a whole credential, tail included", () => {
+  const SK = "sk-" + "abcdefghijklmnopqrst";
+  const LONG_SK = "sk-" + "abcdefghijklmnopqrstuvwxyz";
+  const AWS = "AKIA" + "IOSFODNN7EXAMPLE";
+  const GITHUB = "ghp_" + "abcdefghijklmnopqrst";
+  const NPM = "npm_" + "abcdefghijklmnopqrst";
+  const masked = (value: string) => `«redacted ${value.length} chars»`;
+
+  it.each([
+    ["key=value holding a path", "token=", `/tmp/${SK}/rest`, ""],
+    ["a query value", "GET /v1?token=", `${SK}/querytail`, " failed"],
+    ["a bearer token", "Authorization: Bearer ", `${LONG_SK}/bearer-tail`, ""],
+    ["a dot after the key", "api_key=", `${LONG_SK}.tailsecret`, ""],
+    ["an underscore after a prefix that has none", "password=", `${GITHUB}_MORESECRET`, ""],
+    ["the secret half of an AWS pair", "token=", `${AWS}/wJalrXUtnFEMI/K7MDENG`, ""],
+    ["an export line", "export TOKEN=", `${NPM}/leftover`, ""],
+    ["a quoted value", "client_secret: '", `${SK}+plusTail99`, "'"],
+  ])("%s", (_shape, lead, value, trail) => {
+    const once = redactSecretsInText(`${lead}${value}${trail}`);
+    expect(once).toBe(`${lead}${masked(value)}${trail}`);
+    expect(redactSecretsInText(once)).toBe(once);
+  });
+
+  it("keeps the token after a value that ends in the word Bearer masked", () => {
+    const out = redactSecretsInText("token=aaaaaaaa-Bearer abcdefghijklmnop");
+    expect(out).not.toContain("abcdefghijklmnop");
+  });
+
+  it("masks a JWT whole when a key prefix shows up inside it", () => {
+    const jwt = `eyJabcdefgh.ijklmnop-${SK}.qrstuvwxyz`;
+    expect(redactSecretsInText(`header ${jwt} end`)).toBe(`header ${masked(jwt)} end`);
+  });
+
+  it("still masks a key beside a span, and leaves prose and numbers readable", () => {
+    expect(redactSecretsInText(`token=abcdefghij then ${SK} here`)).toBe(`token=${masked("abcdefghij")} then ${masked(SK)} here`);
+    expect(redactSecretsInText("/tmp/plain/path?max_tokens=4096&stream=true")).toBe("/tmp/plain/path?max_tokens=4096&stream=true");
+    expect(redactSecretsInText("the token: leave this prose alone")).toBe("the token: leave this prose alone");
+  });
+
+  // The order is the only thing that changed, so the order it replaced is the
+  // oracle: whatever that order hid, this one must hide too.
+  it("hides everything the previous rule order hid, over 50 000 fuzzed shapes", () => {
+    const byName = new Map(TEXT_RULES);
+    const names = [...byName.keys()];
+    const shapes = names.filter((name) => name.startsWith("KEY_PREFIXES"));
+    const previous = ["PEM_BLOCK", ...shapes, "JWT", "BEARER", "KEY_VALUE", "QUERY_KEY", "FINANCIAL_ID"];
+    expect([...previous].sort()).toEqual([...names].sort());
+    const previousOrder = (text: string) => previous.reduce((out, name) => byName.get(name)!(out), text);
+
+    const JWT = "eyJabcdefgh.ijklmnopqr.stuvwxyz12";
+    const SECRETS = [
+      SK, LONG_SK, AWS, GITHUB, NPM, JWT, "xoxb-" + "abcdefghijklmnopqrst", "xai-" + "abcdefghijklmnopqrst", "hf_" + "abcdefghijklmnopqrstuvwxyzabcd",
+      "AIza" + "abcdefghijklmnopqrstuvwxyzabcd", "github_pat_" + "abcdefghijklmnopqrst", "plainvaluetwelve", "SECRETTAIL",
+    ];
+    const ATOMS = [
+      ...SECRETS, ...SECRETS, "token=", "TOKEN: ", "api_key=", "password=\"", "client_secret: '", "?token=", "&key=", "?max_tokens=", "Bearer ", "Authorization: ", "Authorization: Bearer ",
+      "/tmp/", "/", ".", "-", "_", "+", "~", "=", ":", " ", "\n", "\"", "'", "?", "&", "@", "://", "x", "aaaaaaaa-", "https", "«redacted 8 chars»",
+    ];
+    let seed = 20261101;
+    const next = (n: number) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+    for (let i = 0; i < 50_000; i++) {
+      const text = Array.from({ length: 2 + next(8) }, () => ATOMS[next(ATOMS.length)]).join("");
+      if (text.length < 8) continue;
+      const before = previousOrder(text);
+      const now = redactSecretsInText(text);
+      for (const secret of SECRETS) {
+        if (!before.includes(secret)) expect(now.includes(secret), JSON.stringify(text)).toBe(false);
+      }
+      expect(redactSecretsInText(now), JSON.stringify(text)).toBe(now);
+    }
+  });
+});
+
 // The linear forms must match EXACTLY what the rules they replace matched —
 // same spans, same output — or "no cut before redaction" buys nothing. The
 // oracle is the rule set as it stood before round 10 (base 0.1.53 plus the
-// QUERY_KEY rule), copied verbatim, run as the same replacement sequence, and
+// QUERY_KEY rule), copied verbatim, run in the order TEXT_RULES runs them, and
 // compared with the shipped function on a deterministic fuzz corpus built
 // from the atoms the rules care about plus the shapes reasoned about by hand.
 describe("redactSecretsInText's linear rules match the rules they replaced", () => {
@@ -512,8 +588,8 @@ describe("redactSecretsInText's linear rules match the rules they replaced", () 
     /\bxai-[A-Za-z0-9_-]{20,}/g,
     /\bgsk_[A-Za-z0-9]{40,}/g,
     /\bhf_[A-Za-z0-9]{30,}/g,
-    /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
   ];
+  const OLD_JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
   const OLD_BEARER = /(\bBearer\s+)([A-Za-z0-9._~+/=-]{12,})/g;
   const OLD_PEM_BLOCK = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)([\s\S]*?)(-----END [A-Z ]*PRIVATE KEY-----)/g;
   const OLD_KEY_VALUE =
@@ -524,10 +600,11 @@ describe("redactSecretsInText's linear rules match the rules they replaced", () 
     if (!text || text.length < 8) return text;
     let out = text;
     out = out.replace(OLD_PEM_BLOCK, (_m, open: string, body: string, close: string) => `${open}\n${mask(body.trim())}\n${close}`);
-    for (const re of OLD_KEY_PREFIXES) out = out.replace(re, (m) => mask(m));
     out = out.replace(OLD_BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`);
     out = out.replace(OLD_KEY_VALUE, (_m, key: string, sep: string, quote: string, value: string) => `${key}${sep}${quote}${mask(value)}${quote}`);
     out = out.replace(OLD_QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`));
+    out = out.replace(OLD_JWT, (m) => mask(m));
+    for (const re of OLD_KEY_PREFIXES) out = out.replace(re, (m) => mask(m));
     return out;
   }
 

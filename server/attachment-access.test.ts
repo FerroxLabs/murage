@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { attachmentReferencesIn, attachmentVisibleToRemote, messageJsonReferences, RemoteUploadGrants } from "./attachment-access.ts";
+import { attachmentReferencesIn, attachmentVisibleToRemote, messageJsonReferences, RemoteUploadGrants, remoteAttachmentCacheControl } from "./attachment-access.ts";
 
 const store = (visible: string[], bots: Array<{ hidden?: boolean; avatarUrl?: string }> = []) => ({ visibleThreadIds: () => visible, bots });
 
@@ -44,6 +44,22 @@ describe("attachmentVisibleToRemote", () => {
     uploads.grant("hidden.png", "companion");
     expect(attachmentVisibleToRemote(store([]), "hidden.png", () => ["t9"], uploads, "companion")).toBe(false);
     expect(attachmentVisibleToRemote(store([]), "hidden.png", () => [], uploads, "companion")).toBe(false);
+  });
+});
+
+describe("remoteAttachmentCacheControl", () => {
+  const bots = [{ avatarUrl: "/api/attachments/face.png" }, { hidden: true, avatarUrl: "/api/attachments/secret.png" }];
+  it("lets a phone show its copy of a visible bot's avatar while it checks again", () => {
+    expect(remoteAttachmentCacheControl(store([], bots), "face.png")).toBe("private, max-age=0, stale-while-revalidate=2592000");
+  });
+  it("makes every other picture check again on each view", () => {
+    expect(remoteAttachmentCacheControl(store([], bots), "secret.png")).toBe("private, no-cache");
+    expect(remoteAttachmentCacheControl(store([], bots), "photo.png")).toBe("private, no-cache");
+    expect(remoteAttachmentCacheControl(store([], []), "face.png")).toBe("private, no-cache");
+  });
+  it("matches the stored name exactly, as the visibility rule does", () => {
+    expect(remoteAttachmentCacheControl(store([], bots), "FACE.png")).toBe("private, no-cache");
+    expect(remoteAttachmentCacheControl(store([], bots), "face.png.bak")).toBe("private, no-cache");
   });
 });
 
