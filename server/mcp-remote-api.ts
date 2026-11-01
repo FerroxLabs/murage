@@ -199,7 +199,7 @@ export type InspectResponse =
  * A link that points at this computer or the local network answers
  * `local-confirm` before any request is sent, until `confirmLocal` is sent. */
 export async function inspectMcpInput(body: unknown, deps: InspectDeps): Promise<InspectResponse> {
-  if (!isRecord(body) || typeof body.input !== "string") return { status: 400, body: { error: "Paste a link, a command, or a config snippet." } };
+  if (!isRecord(body) || typeof body.input !== "string") return { status: 400, body: { error: "Paste a link, a command, or the settings text the service gave you." } };
   const confirm = parseConfirmLocal(body.confirmLocal);
   if (!confirm.ok) return { status: 400, body: { error: "Unknown local confirmation." } };
   if (new TextEncoder().encode(body.input).length > MAX_INSPECT_INPUT_BYTES) {

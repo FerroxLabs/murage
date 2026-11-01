@@ -22,7 +22,7 @@ import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
+import { CLAUDE_ORG_LOGIN_LINE, bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
@@ -576,6 +576,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ]);
   });
 
+  it("gives an org-disabled login its plain line and the sign-in path, not a bot reply", async () => {
+    await create("org-login-off");
+    await instance.adapter.sendTurn({ threadId: "t-org-off", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
+      expect.objectContaining({ message: CLAUDE_ORG_LOGIN_LINE, setup: true, authRequired: true }),
+    ]);
+    expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ ok: false, stopReason: "auth_required" }),
+    ]);
+  });
+
   // Upstream #1840 (0.1.61 triage row 2): a model newer than the installed
   // Claude Code is a setup problem the owner fixes by updating, not a reply.
   it("settles an outdated CLI as update_required without emitting an assistant reply", async () => {
@@ -640,7 +653,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset, protocol: "anthropic", baseUrl: preset === "flux" ? "https://fluxrouter.ai/api/v1" : "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" } });
     await recorder.until(event => event.type === "turn.completed");
     const failure = recorder.events.find(event => event.type === "runtime.error");
-    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("selected model provider") });
+    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("did not accept the saved sign-in") });
     expect(failure).not.toHaveProperty("authRequired");
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "auth_required" });
   });
@@ -2294,6 +2307,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(lines[0].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("first-capability");
     expect(lines[1].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("second-capability");
     expect(lines[1].credFile.path).toBe(lines[0].credFile.path);
+    // the warm turn's line names its bot and thread too, though the mcp config file went when the first turn settled
+    expect(lines.map((line) => [line.botId, line.threadId])).toEqual([["fixture-bot", "t-rotate"], ["fixture-bot", "t-rotate"]]);
     expect(readFileSync(lines[1].credFile.path, "utf8")).toBe("{}");
   });
 

@@ -223,6 +223,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // folders the owner trusted, and the stop line's remembered recipients
   // (stop-line-state.ts), which decide when a send needs no card.
   "door-identity": excluded(TRUST), "folder-trust.json": excluded(TRUST), "stop-line": excluded(TRUST),
+  // The random id tester feedback carries (feedback-relay.ts), so the team can tell one install's notes from another's.
+  // Not a credential; a restored computer simply makes a new one.
+  "feedback-install-id": excluded("Random feedback id, made again when missing; not restored"),
 
   // Credentials and pairings, made again on the restored computer: Claude
   // account config dirs, the Hermes engine home, the dev harness broker token,
