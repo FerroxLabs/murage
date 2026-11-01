@@ -1,24 +1,24 @@
 ---
 title: Connected apps
-description: Give bots secure, user-authorized tools for Gmail, GitHub, Slack, Notion, and hundreds more.
+description: Let your bots use Gmail, GitHub, Slack, Notion and hundreds more apps, with your permission.
 icon: PlugZap
 ---
 
-Open **Connected apps** from the sidebar (**Sidebar → Apps**, in the row under Needs you), choose a service, and complete its authorization in your normal browser. Murage turns the resulting connection into tools that supported agent engines can use.
+Open **Connected apps** from the sidebar (**Sidebar → Apps**, in the row under Needs you), choose a service, and sign in to it in your normal browser. Murage then lets your bots use that service, on every engine that supports connected apps.
 
 <ProductScreenshot name="docs-connected-apps" alt="The clean Murage connected-app marketplace" caption="Search the marketplace or review every account from the Connected tab." />
 
 ## Connecting an app
 
-Connected apps run through Flux Router. Add your Flux Router key under **Settings → Models** and the apps unlock. There is no separate key to find or paste.
-
-1. Open **Connected apps**.
-2. Search for Gmail, GitHub, Slack, Notion, or another toolkit.
+1. Open **Sidebar → Apps** (Connected apps).
+2. Search for Gmail, GitHub, Slack, Notion, or another app.
 3. Select **Connect**.
-4. Finish OAuth in the browser window that opens.
+4. Sign in on the service's own page in the browser window that opens. Murage never sees your password.
 5. Return to the app and ask a bot to use the service.
 
-The installation identity is stored using Electron's operating-system-backed secure storage. Provider sign-in tokens stay with the connected-apps service and are not written into bot prompts or the renderer.
+Connected apps run through Flux Router. Add your Flux Router key under **Settings → Models & engines** and the apps unlock. There is no separate key to find or paste.
+
+Murage keeps its own sign-in in your computer's secure storage. Your sign-ins to each service stay with the connected-apps service: they are never put into a bot's instructions or shown on screen.
 
 ## If you used a key of your own before
 
@@ -30,15 +30,15 @@ Each bot has a switch for connected apps: **Bot settings → Access → Allow th
 
 ## Bots stay connected
 
-Each bot's turn checks the connected-apps service again before it starts, so a short network blip no longer leaves your bots without their apps until Murage restarts. This was fixed in 0.1.60. If a bot still says it has no connected apps, see **Troubleshooting → Connected apps**.
+Each bot checks the connected-apps service again before every reply, so your bots get their apps back on their own after a short network drop. If a bot says it has no connected apps, see **Troubleshooting → Connected apps**.
 
 ## Multiple accounts
 
-Connect more than one account for the same toolkit and give each a clear alias such as `work`, `personal`, or `client-acme`. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection.
+Connect more than one account for the same app and give each a clear alias such as `work`, `personal`, or `client-acme`. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection.
 
 ## Disconnecting
 
-Disconnecting an account revokes the upstream grant. It does not only hide the account in the local UI. Other accounts for the same toolkit remain connected.
+Disconnecting an account takes back the permission you gave that service. It does not only hide the account in Murage. Other accounts for the same app stay connected.
 
 <Callout type="info" title="One key">
   Your Flux Router key is all connected apps need.

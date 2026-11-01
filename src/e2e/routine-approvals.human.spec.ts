@@ -95,8 +95,8 @@ test("the chip in a routine's conversation shows and sets the routine's level", 
   await chip.click();
   // the menu itself says it sets the routine, not this conversation
   await expect(page.getByRole("menu").getByText("Changes the level of the routine RWA watch. Every run of it works here.")).toBeVisible();
-  await page.getByRole("menuitemradio", { name: /^Auto mode/ }).click();
-  await expect(page.getByRole("button", { name: "Auto mode for the routine RWA watch" })).toBeVisible();
+  await page.getByRole("menuitemradio", { name: /^Auto\b/ }).click();
+  await expect(page.getByRole("button", { name: "Auto for the routine RWA watch" })).toBeVisible();
   await expect.poll(async () => (await routine())?.permissionMode).toBe("auto");
 });
 
@@ -114,7 +114,7 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
 
   const level = editor.getByLabel("Approvals for this routine");
   await expect(level).toHaveValue((await routine())!.permissionMode!);
-  await expect(level.locator("option")).toHaveText(["Ask for approval", "Auto mode", "Full access", "No limits"]);
+  await expect(level.locator("option")).toHaveText(["Ask", "Auto", "Full access", "No limits"]);
   expect(await level.locator("option").evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value)))
     .toEqual(["ask", "auto", "full", "unlimited"]);
   const grants = editor.getByRole("region", { name: "Always allowed for this routine" });
@@ -129,7 +129,7 @@ test("the routine editor stores a selected ceiling and lists its remembered appr
   await expect.poll(async () => (await routine())?.alwaysAllow).toBeUndefined();
 
   await level.selectOption("ask");
-  await expect(editor.getByText("Every run of this routine: ask before actions that need your permission.", { exact: false })).toBeVisible();
+  await expect(editor.getByText("Every run of this routine: asks before each action that needs your yes.", { exact: false })).toBeVisible();
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await expect(editor).toHaveCount(0);
   await expect.poll(async () => (await routine())?.permissionMode).toBe("ask");
@@ -157,7 +157,7 @@ test("the chip in any other conversation says it changes that conversation only"
   const chip = page.getByRole("button", { name: /^No limits$/ });
   await expect(chip).toBeVisible();
   await chip.click();
-  await expect(page.getByRole("menu").getByText("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.")).toBeVisible();
+  await expect(page.getByRole("menu").getByText(/Changes this conversation only\. Routines keep their own level\./)).toBeVisible();
 });
 
 test("a card answered after its run ended offers Run again, which starts the routine", async ({ page }) => {

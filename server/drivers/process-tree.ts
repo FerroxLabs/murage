@@ -48,6 +48,12 @@ export function descendantPids(root: number): Promise<Set<number> | null> {
 
 const PS_ARGS = ["-A", "-o", "pid=,ppid=,comm="];
 const PS_ETIME_ARGS = ["-A", "-o", "pid=,ppid=,etime=,comm="];
+/** The settle probe's listing: PS_ARGS with each process's state. */
+const PS_SETTLE_ARGS = ["-A", "-o", "pid=,ppid=,stat=,comm="];
+/** A plain zombie's `stat`: exited, waiting only for its parent to read its status. A
+ * lowercase `l` (Linux) is left out on purpose: a multi-threaded process whose main
+ * thread exited also reads Z, and its other threads may still be working. */
+const ZOMBIE_STAT = /^Z[+<NsLW]*$/;
 
 /** No real process is a century old. procps computes etime as uptime minus
  * start; a process that started inside the same clock tick as ps's uptime
@@ -536,11 +542,31 @@ async function processTreeWalk(root: number, stopAt: ReadonlySet<number> | null,
     return walk(winWalkLines(rows), root, exact, layout)?.found ?? null;
   }
   return new Promise((resolve) => {
-    execFile("ps", PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", stopAt ? PS_SETTLE_ARGS : PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
       if (error) return resolve(null);
-      resolve(walk(stdout, root, stopAt, layout)?.found ?? null);
+      if (!stopAt) return resolve(walk(stdout, root, stopAt, layout)?.found ?? null);
+      resolve(settleWalk(stdout, root, stopAt, layout));
     });
   });
+}
+
+/** Exported for tests: the settle walk over a `ps -o pid=,ppid=,stat=,comm=` listing.
+ * Every row and edge stays in the traversal, so whatever runs below a zombie is still
+ * reached and reported. Only the zombie itself leaves the answer: it runs nothing and
+ * holds nothing. A row whose state cannot be read stays in. */
+export function settleWalk(stdout: string, root: number, stopAt: ReadonlySet<number>, layout?: ExemptLayout | null): Set<number> | null {
+  const zombies = new Set<number>();
+  const lines: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+    if (!match) continue;
+    if (ZOMBIE_STAT.test(match[3]!)) zombies.add(Number(match[1]));
+    lines.push(`${match[1]} ${match[2]} ${match[4] ?? ""}`);
+  }
+  const found = walk(lines.join("\n"), root, stopAt, layout)?.found;
+  if (!found) return null;
+  for (const pid of zombies) found.delete(pid);
+  return found;
 }
 
 /** Exported for tests: the walk over a given `ps -o pid=,ppid=,comm=` listing. */

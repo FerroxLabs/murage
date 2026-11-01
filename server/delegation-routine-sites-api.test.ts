@@ -14,6 +14,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 let fixture: VerificationServer, desktop: Record<string, string>;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -62,7 +63,7 @@ afterEach(async () => {
 /** An asker, a peer on Full access that reviews its own peer contact, and a third bot for the peer's second hop. */
 async function trio(label: string) {
   const asker = await newBot(`Asker ${label}`), peer = await newBot(`Peer ${label}`), third = await newBot(`Third ${label}`);
-  const level = await post(`/api/bots/${peer.id}`, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true, approvePeerComms: true }, desktop, "PATCH");
+  const level = await raiseLevel((method, path, body) => post(path, body, desktop, method), peer.id, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true, approvePeerComms: true });
   expect(level.status, JSON.stringify(level.body)).toBe(200);
   return { asker, peer, third };
 }

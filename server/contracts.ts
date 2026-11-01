@@ -131,6 +131,8 @@ export type RuntimeEvent = RuntimeEventBase &
         delayMs: number;
         /** Why this failure was judged retry-worthy (classifyError's reason). */
         reason: string;
+        /** All attempts, the first try included, when the engine counts them itself. */
+        maxAttempts?: number;
       }
     | {
         type: "turn.completed";
@@ -440,6 +442,8 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  /** The thread is sealed (thread recall): this turn is cold by design. Read by the reuse gauge only. */
+  sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string;
@@ -546,10 +550,12 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
-  /* Permission cards carry no deadline on any turn (Sean 10-29, LONGWORK H4): a card waits until the owner answers
-   * it or the turn stops, on every engine, direct chat and routine alike. A routine run still ends as "waiting on
-   * you" at its run limit (RoutineManager.enforceRunLimits). */
-  holdProjectAsks?: true;
+  /* Cards carry no deadline (Sean 10-26, 10-29, LONGWORK H4): a card waits until the owner answers it or the turn stops,
+   * on every engine. The one exception is this flag, set only by the registry decorator (harness/ask-note-adapter.ts)
+   * on a turn nobody is at, a routine run or an unattended turn. There a question still ends with the 30 minute note:
+   * an open run holds back its routine's next occurrences, so one unanswered question would stop the routine (House
+   * Rule 8), and a question, unlike an approval, can be gone past. Permission cards never take the note. */
+  unattendedAskNote?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents
    * server, project_propose is the one Murage tool it may use. A driver that
@@ -704,7 +710,7 @@ export interface ProviderAdapter {
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
-  resetSession?(threadId: ThreadId): Promise<void>;
+  resetSession?(threadId: ThreadId, why?: { route: string }): Promise<void>;
   /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
    * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
    * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
@@ -855,6 +861,13 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** True when this engine keeps no session between turns (pi runs with --no-session): each turn is a new session, so the
+   * harness replays the thread, and that replay says the session was restarted, not that the bot was switched over. */
+  readonly keepsNoSession?: boolean;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */

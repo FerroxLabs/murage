@@ -164,6 +164,12 @@ const runFallback = (text, delayMs = 100) => {
       send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
         update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
       send({ jsonrpc: "2.0", method: "_fuigo/queue/changed", params: { sessionId: SID, entries: [] } });
+      if (process.env.FUIGO_FAKE_FALLBACK_ASK === "1") setTimeout(() => {
+        order("late-ask");
+        send({ jsonrpc: "2.0", id: "late-permission", method: "session/request_permission", params: { sessionId: SID,
+          toolCall: { toolCallId: "late-tool", kind: "execute", title: "late write" },
+          options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject-once", kind: "reject_once" }] } });
+      }, 50);
     }, Number(process.env.FUIGO_FAKE_FALLBACK_MS ?? 600));
   }, delayMs);
 };
@@ -313,7 +319,8 @@ process.stdin.on("data", (d) => {
       // marker takes FUIGO_FAKE_MCP_RECONNECT_TO (default: unchanged).
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "mcp-list.log"), JSON.stringify(m.params) + "\\n");
       const states = { ...JSON.parse(process.env.FUIGO_FAKE_MCP_LIST), ...reconnected };
-      ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status } })) } });
+      const extra = JSON.parse(process.env.FUIGO_FAKE_MCP_LIST_SESSION ?? "{}");
+      ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status, ...extra[name] } })) } });
     } else if (m.method === "_fuigo/interject") {
       // FUIGO_FAKE_INTERJECT: "ok" (default) queues and echoes; "nomethod" is
       // method-not-found, as a build without the extension answers;
@@ -1504,6 +1511,32 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
   });
 
+  it("(i2) the gate line says each server's status, the wait and the reason, and no engine text", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "300";
+    const lines: string[] = [];
+    const info = vi.spyOn(console, "info").mockImplementation((...args: unknown[]) => { lines.push(args.join(" ")); });
+    onTestFinished(() => info.mockRestore());
+    const { threadId } = await start({
+      FUIGO_FAKE_MCP: "ready",
+      FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable", agents: "ready" }),
+      FUIGO_FAKE_MCP_LIST_SESSION: JSON.stringify({
+        murage_connectors: { unavailableReason: `MCP server 'murage_connectors' handshake failed: ${["sk", "live", "fixture", "marker", "0042"].join("-")} at /Users/jane/x` },
+        agents: { tools: [{ name: "send" }, { name: "read" }] },
+      }),
+    }, { ...COMPOSIO, ...AGENTS });
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
+    const gate = lines.filter((line) => line.startsWith("acp mcp gate"));
+    expect(gate).toHaveLength(1);
+    expect(gate[0]).toContain(`thread=${threadId} engine=fuigoAgent waitedMs=`);
+    expect(gate[0]).toContain("readiness=degraded");
+    expect(gate[0]).toContain("reconnected=murage_connectors backedOff=none missing=murage_connectors");
+    expect(gate[0]).toContain("notConnected=murage_connectors:unavailable reasons=murage_connectors:handshake-failed");
+    expect(gate[0]).toMatch(/tools=.*agents:2/);
+    expect(gate[0]).not.toContain("sk-live");
+    expect(gate[0]).not.toContain("jane");
+  });
+
   it("(j) a reconnect that brings connected apps up runs the turn with no notice", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "3000";
     await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable" }), FUIGO_FAKE_MCP_RECONNECT_TO: "ready" }, COMPOSIO);
@@ -1902,6 +1935,34 @@ describe("steer (fuigo/interject)", () => {
     const before = recorder!.events.slice(0, recorder!.events.indexOf(done));
     expect(before.some((e) => JSON.stringify(e).includes("helper result"))).toBe(true);
     expect(readFileSync(join(dumps, "helper.log"), "utf8")).toContain("allow-once");
+  }, 20_000);
+
+  it("a card open at the fallback cap holds the turn, and Stop still ends it once", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "200", MURAGE_FUIGO_FALLBACK_CAP_MS: "700" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_ASK: "1", FUIGO_FAKE_FALLBACK_MS: "100" });
+    expect(await adapter.steer!("t-fuigo", "one more thing")).toBe("delivered");
+    await recorder!.until((e) => e.type === "request.opened", 15_000);
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    expect(recorder!.events.some((e) => e.type === "turn.completed")).toBe(false);
+    await adapter.interruptTurn("t-fuigo");
+    const done = await recorder!.until((e) => e.type === "turn.completed", 15_000);
+    expect((done as { stopReason?: string }).stopReason).not.toBe("interject_fallback_cap");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(recorder!.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder!.events.some((e) => e.type === "runtime.error" && (e as { message?: string }).message === FALLBACK_CAP_LINE)).toBe(false);
+  }, 20_000);
+
+  it("a card that opens in the fallback grace holds the turn, and its answer lets the grace finish it cleanly", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "4000" });
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_ASK: "1", FUIGO_FAKE_FALLBACK_MS: "100" });
+    expect(await adapter.steer!("t-fuigo", "one more thing")).toBe("delivered");
+    const opened = await recorder!.until((e) => e.type === "request.opened", 15_000);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(recorder!.events.some((e) => e.type === "turn.completed")).toBe(false);
+    expect(await adapter.respondToRequest("t-fuigo", (opened as { requestId: string }).requestId, { behavior: "allow" })).not.toBe("unavailable");
+    // Nothing more comes from the engine: the card's close alone starts the grace, well inside the cap.
+    const done = await recorder!.until((e) => e.type === "turn.completed", 2_000);
+    expect(done).toMatchObject({ ok: true, stopReason: null });
   }, 20_000);
 
   it("a fallback still running at the cap settles failed with a visible reason", async () => {

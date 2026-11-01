@@ -1,4 +1,5 @@
 import type { Bot } from "@/state/store";
+import { t } from "@/lib/i18n";
 
 /** The approval level a conversation runs at: Ask, Auto, Full access, or No
  * limits (Full access without the stop line). Each only counts on top of the
@@ -14,6 +15,19 @@ export function permissionModeOf(bot: Pick<Bot, "autoApprove" | "fullAccess"> & 
 /** Full access and No limits are the desktop app's decision alone. */
 export function isDesktopOnlyMode(mode: PermissionMode): boolean {
   return mode === "full" || mode === "unlimited";
+}
+
+const LEVEL_ORDER: readonly PermissionMode[] = ["ask", "auto", "full", "unlimited"];
+
+/** Ask, Auto, Full access, No limits, in that order. */
+export function levelRank(mode: PermissionMode): number {
+  return LEVEL_ORDER.indexOf(mode);
+}
+
+/** UX-TRUST-MOMENTS-1012 3.3: a pick of Full access or No limits above the
+ * current level shows the confirm card; every other pick goes direct. */
+export function needsLevelConfirm(current: PermissionMode, picked: PermissionMode): boolean {
+  return isDesktopOnlyMode(picked) && levelRank(picked) > levelRank(current);
 }
 
 /** What choosing an approval level as a bot's default does next: save it, or
@@ -90,7 +104,7 @@ export function peerContactHint(bot: Pick<Bot, "autoApprove" | "fullAccess" | "a
   if (!bot.approvePeerComms) return "Off: this bot contacts other bots without asking you first.";
   const mode = permissionModeOf(bot);
   if (mode === "full" || mode === "unlimited") {
-    return `On, but ${mode === "full" ? "Full access" : "No limits"} skips this in conversations you start and in routines at that level; webhook turns still stop and ask. Switch to Auto to be asked every time.`;
+    return t("ux.lcopyb.level.peerSkip", { level: mode === "full" ? "Full access" : "No limits" });
   }
   return "On: this bot stops and asks you before it contacts another bot.";
 }

@@ -3032,6 +3032,7 @@ FUIGO_MANAGED_CONFIG = "# managed by the Murage launcher\n"
 FUIGO_MEMORY_TOOLS = ("memory_search", "memory_get", "memory_save", "memory_propose_correction")
 OPENCODE_BASE = {"$schema": "https://opencode.ai/config.json", "autoupdate": False}
 OPENCODE_COMPAT_NPM = "@ai-sdk/openai-compatible"
+CLAUDE_BROKER_TOOL_TIMEOUT_MS = 1728000000
 EMPTY_MCP = '{"mcpServers":{}}'
 
 def claude_mcp_text(render):
@@ -3043,6 +3044,10 @@ def claude_mcp_text(render):
             continue
         args = [stanza["script"]] + ([stanza["socket"]] if row["arg"] == "socket" else ["--server", stanza["server"]] if row["arg"] == "server" else [])
         servers[name] = {"command": NODE, "args": args, "env": {"ELECTRON_RUN_AS_NODE": "1", **stanza["env"]}}
+        # A card outlives Claude's 30 minute idle limit on a stdio server (CLAUDE_BROKER_TOOL_TIMEOUT_MS). Written here, not
+        # sent in the stanza: a launcher refuses an unknown key, so a home and its launcher need no shared version.
+        if stanza["proxy"] == "permission":
+            servers[name]["timeout"] = CLAUDE_BROKER_TOOL_TIMEOUT_MS
     return json.dumps({"mcpServers": servers}, separators=(",", ":"))
 
 def codex_config_text(render):
@@ -3459,6 +3464,8 @@ CODEX_OVERRIDES = {
     "features.shell_tool": "false", "features.apps": "false", "web_search": '"disabled"',
     # codex.ts 658: Murage fences what a bot remembers, so Codex's own memories stay off (this value only).
     "features.memories": "false",
+    # CARDS-WAIT-CODEX-1013: a code cell stays in flight while a card waits; the driver sends it once every home has this launcher.
+    "features.code_mode.default_exec_yield_time_ms": "1728000000",
     "plugins": '{ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
 }
 
