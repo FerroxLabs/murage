@@ -131,7 +131,8 @@ function buildBotPackageExport(input: BotPackageExportInput) {
     // it out until the portable format can name a package-local room.
     const agent = idToKey.get(routine.botId);
     // 1.0.4 SL-I I3: a limit_reset schedule names an engine of this computer, which a package cannot carry
-    if (routine.target === "room-goal" || !agent || routine.schedule.type === "limit_reset") {
+    // 1.0.11 APP-TRIGGERS: nor a connected-app trigger, which needs this owner's own review and Flux subscription
+    if (routine.target === "room-goal" || !agent || routine.schedule.type === "limit_reset" || routine.schedule.type === "app_event") {
       routineCandidates.push({ id: routine.id, key: null, name: routine.name, botId: routine.botId, supported: false, prompt: scrubEmailAddress(routine.prompt, boundEmailAddress(routine.botId)), schedule: routine.schedule });
       return [];
     }

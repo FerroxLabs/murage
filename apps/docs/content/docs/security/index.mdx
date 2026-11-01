@@ -1,6 +1,6 @@
 ---
 title: Security model
-description: The boundaries that keep agents, credentials, computers, and paired devices scoped.
+description: The limits that keep bots, keys, computers and paired devices to what you allow.
 icon: ShieldCheck
 ---
 
@@ -8,20 +8,20 @@ Murage is designed around a local owner, explicit capabilities, and narrow proce
 
 ## Core boundaries
 
-- The harness owns agent processes and listens on loopback.
-- The renderer receives configured-or-not credential state, not secret values.
-- Provider-specific credentials are injected only into the process that needs them.
+- Murage's background service runs the AI apps and only accepts connections from this computer.
+- The app's screens learn only whether a key is saved, never the key itself.
+- Each AI service's key goes only to the AI app that needs it.
 - Risky actions become approval cards rather than implicit permission.
 - Local computer control is a separate opt-in and per-bot selection.
-- Paired phones use a default-deny API allowlist and per-device bearer tokens.
+- A paired phone can use only a short list of allowed actions, and each device has its own private sign-in.
 - Cloud and VPS backends are validated before reuse.
 
 ## Your responsibility
 
 - Review approvals, especially shell commands, file writes, and actions in connected services.
 - Use dedicated environments for untrusted or destructive work.
-- Keep provider accounts and connected apps scoped to what a bot needs.
+- Give each bot only the AI service accounts and connected apps it needs.
 - Revoke a lost phone or other paired device immediately, in Settings → Phone and other devices.
-- Keep Murage and agent CLIs updated.
+- Keep Murage and your AI apps up to date.
 
 Security reports should be filed through the repository's documented security channel rather than disclosed in a public issue before a fix is available.

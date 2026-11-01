@@ -142,6 +142,12 @@ describe("routines are routines", () => {
 describe("connected apps", () => {
   it("is called Connected apps on its own panel, not Plugins", () => {
     const panel = read("./PluginsPanel.tsx");
+    // the panel's subtitle and tab words live in the L-COPY-B fragment since 1.0.12
+    for (const [key, text] of Object.entries(en).filter(([key]) => key.startsWith("ux.lcopyb.connected."))) {
+      expect(text, key).not.toMatch(/\u2014/);
+      expect(text, key).not.toMatch(/\b(?:cheap|cheaper|discount|wholesale|affordable|free daily allowance)\b/i);
+      expect(text, key).not.toMatch(/\d+\+ models/i);
+    }
     expect(panel).toContain(">Connected apps</h2>");
     expect(visibleWords(panel).filter((text) => /\bplugins?\b/i.test(text))).toEqual([]);
   });
@@ -149,7 +155,8 @@ describe("connected apps", () => {
   it("says what the key unlocks, in the one claim the product makes", () => {
     // The claim itself lives in ConnectedAppsLock.tsx and is stated once.
     // "500+ apps" is the wording; a count of MODELS is still never given.
-    expect(read("./PluginsPanel.tsx")).toContain("One Flux Router key connects ${appsClaimFor(catalog?.total, APPS_CLAIM)}.");
+    expect(read("./PluginsPanel.tsx")).toContain('t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) })');
+    expect(en["ux.lcopyb.connected.subtitleDesktop"]).toBe("One Flux Router key connects {apps}. You can add your own connected tools too.");
     for (const value of Object.values(en)) expect(value).not.toMatch(/\d+\+ (?:more|models)|and \d+\+ more/);
     expect(Object.values(en).filter((value) => /FluxRouter/.test(value))).toEqual([]);
   });
