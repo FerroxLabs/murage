@@ -116,6 +116,20 @@ describe("I1: a limit refusal from every engine", () => {
     expect(out).not.toBeNull();
     if (resetsAt !== undefined) expect(out!.resetsAt).toBe(resetsAt);
   });
+  describe("a short credit hold is not a limit", () => {
+    // The exact sentence from a real Flux 429 relayed by Fuigo 1.0.37 (gate run raw8-head, ACP -32003, error_kind rate_limited).
+    const HOLD = "API error (status 429 Too Many Requests): api_error: Available credit is low because other requests have temporarily reserved it. Wait for them to finish or top up to run more requests in parallel. Retry in 2s.";
+    it("the held-credit 429 is no limit, by text or by structured kind", () => {
+      expect(limitRefusal("acp", { text: HOLD }, NOW)).toBeNull();
+      expect(limitRefusal("acp", { text: HOLD, kind: "rate_limited" }, NOW)).toBeNull();
+      expect(limitRefusal("gateway", { text: `failed ${HOLD}`, kind: "rate_limited" }, NOW)).toBeNull();
+    });
+    it("every other rate limit from the same engine still counts, new wording included", () => {
+      expect(limitRefusal("acp", { text: "API error (status 429 Too Many Requests): api_error: rate limit exceeded", kind: "rate_limited" }, NOW)).not.toBeNull();
+      expect(limitRefusal("acp", { text: "Available credit is low. Retry later.", kind: "rate_limited" }, NOW)).not.toBeNull();
+      expect(limitRefusal("acp", { text: "Rate limited", status: 429 }, NOW)).not.toBeNull();
+    });
+  });
   it("an ordinary error is not a limit", () => {
     expect(limitRefusal("claude", { text: "connection reset by peer" }, NOW)).toBeNull();
     expect(limitRefusal("codex", { status: 500, text: "internal error" }, NOW)).toBeNull();

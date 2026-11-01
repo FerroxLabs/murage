@@ -154,9 +154,6 @@ export type RuntimeEvent = RuntimeEventBase &
          * up (it does not report per-server status); the bot was told they may
          * still be loading. Absent when they were checked. */
         mcpReadiness?: "unknown";
-        /** The engine ended the prompt `cancelled` on its own right after a permission ask was denied, with no Stop or
-         *  host interrupt: who denied it. The person did not press Stop, so the turn's line says why it ended instead. */
-        deniedBy?: "user" | "timeout" | "system";
       }
     /** `summary` is a short human read of the tool's arguments, for engines
      * that hide the real call inside a wrapper tool — without it every chip
@@ -224,7 +221,7 @@ export type RuntimeEvent = RuntimeEventBase &
         /** 0.1.52 FUIGOTRUST1 (additive): this question decides trust for a
          * folder. The server persists it on the card and, once the owner
          * answers, records the decision for the folder's trust key. */
-        folderTrust?: { key: string; folder: string; sources: string[] };
+        folderTrust?: { key: string; folder: string; sources: string[]; v2?: true; declines?: string[] };
         /** Additive: the file paths this permission acts on, read
          * from the ENGINE's structured tool input — never from `summary`,
          * which is display text composed from model output. Policy uses them
@@ -331,9 +328,6 @@ export type RuntimeEvent = RuntimeEventBase &
         folderTrustLate?: "finished" | "stopped" | "failed" | "timeout";
       }
     | { type: "thread.token-usage.updated"; input: number; output: number; cachedInput?: number }
-    /** A Flux response named the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model), read at
-     * the start of the response. The reply this turn writes next stores it (Message.servedModel). */
-    | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
     | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
@@ -422,9 +416,6 @@ export interface SendTurnInput {
   /** The thread holds a bank, card or id number (flux-capture-hold.ts), or this turn's text does: Flux Memory capture off, inject on.
    * Set by the server where the turn is sent (index.ts sendProjectUsageTurn). */
   fluxCaptureHold?: boolean;
-  /** What this turn is for, on the x-flux-feature usage tag of its Flux requests (flux-usage-tags.ts). Stamped by the server where
-   * the turn is dispatched; absent = "chat", or "other" for background work. */
-  usageFeature?: import("./flux-usage-tags.ts").FluxFeature;
   text: string;
   model?: string;
   /** Exact server-authorized incoming bytes; never resolve paths in drivers. */
@@ -525,6 +516,11 @@ export interface SendTurnInput {
    * and the driver raises a question card before the engine starts when
    * `sources` names anything the folder would contribute. */
   folderTrust?: FolderTrustTurnInput;
+  /** A Full access approve-setup grant took effect for this turn (R5). The core
+   * calls it where the grant lands: at the turn's start on generation 1, and on
+   * generation 2 only once the seed holding the policy folder is written. Keeps
+   * the activity line and decision log honest about what happened. */
+  onFolderPolicyApplied?: () => void;
   /** The bot is on Murage's Full access, which still stops before deleting
    * outside its folder, paying and messaging someone new (server/stop-line.ts).
    * The engine must send its permission asks to Murage for that to hold, so a
@@ -546,9 +542,12 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
-  /* Permission cards carry no deadline on any turn (Sean 10-29, LONGWORK H4): a card waits until the owner answers
-   * it or the turn stops, on every engine, direct chat and routine alike. A routine run still ends as "waiting on
-   * you" at its run limit (RoutineManager.enforceRunLimits). */
+  /** A scheduled or manual routine run. Its permission cards wait until the
+   * owner answers them or the turn stops, instead of the drivers' 15-minute
+   * deny: the routine manager ends the run as "waiting on you" at its run
+   * limit and answering the card later carries the same run on. Absent: the
+   * ordinary 15-minute deny. */
+  holdPermissionAsks?: true;
   holdProjectAsks?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents
@@ -570,7 +569,18 @@ export interface FolderTrustTurnInput {
   key: string;
   folder: string;
   decision?: "trust" | "reject";
+  /** `decision` was copied from Murage's own stored record, so the pool digest
+   * already carries it. A managed desk or Full access auto-trust never sets it. */
+  fromRecord?: true;
   sources: string[];
+  /** Generation 2 (Fuigo 1.0.35 and later): every consent-2 trust key and every
+   * stored reject. Stored records only; the engine's question is answered from
+   * these, and both ride the pool digest, so changing a record starts a new process. */
+  trustKeys?: string[];
+  rejects?: Array<{ key: string; folder: string }>;
+  /** Rule 3b: plain picker trusts that raise no card this turn. Set only for an
+   * owner-started turn at No limits, and absent otherwise, so rule 5 stands. */
+  noCardPickKeys?: string[];
   /** 0.1.52 FUIGOTRUST2 (additive): the user's own Fuigo install already
    * trusts this workspace (`<FUIGO_HOME>/trusted_folders.toml`), so the
    * engine will run the turn trusted whatever `decision` says and never
@@ -658,6 +668,8 @@ export interface ProviderAdapter {
      * driver takes from `SendTurnInput.folderTrust` (Fuigo 1.0.13). The
      * server scans the folder and hands the record only to such drivers. */
     folderTrust?: boolean;
+    /** The trust protocol this engine speaks, from the version last seen. Read only. */
+    readonly folderTrustGeneration?: 1 | 2;
     /** True when the adapter implements textOnlyTurn (PIP reflection): one
      * tool-free structured call, no tools or MCP servers mounted. */
     textOnlyTurn?: true;
