@@ -35,6 +35,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { lstatOrNull, removeConfined, type RemoveOutcome } from "./engine-exec.ts";
 import type { AcpHistoryEngine } from "./engine-history-deletion.ts";
 import { applyFactsDelta, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
+import { configureRedo, listRedo } from "./engine-redo.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
 import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
@@ -126,6 +127,13 @@ export interface PendingConversationDeletion {
    * delete, a checkpoint...) with a `done` mark, per engine home. It is the record of what this attempt is doing. Every attempt
    * begins with a fresh plan of ALL homes and nothing in an earlier plan counts as proof that a home is finished. */
   enginePlan?: EnginePlanData;
+  /** Homes (`engine\0home`) an attempt found clean with their engine closed. A report only: these homes are left out of what is shown as
+   * owed, every attempt still plans them, and the record clears only when one attempt finds every home free. A later plan with content in
+   * a home takes it out again. */
+  homesVerified?: string[];
+  /** When the start-up pass last tried this record: the pass goes to the least recently tried first, so a record a kill cut short does not
+   * keep the next ones waiting. */
+  lastTriedAt?: number;
   /** What is still owed to the owner after the retry schedule has run out: since when, and per engine home why, as a code. The
    * words shown come from ownerNoticeText (never a path or an error). Cleared when the deletion finishes. */
   owed?: OwedStatus;
@@ -401,6 +409,9 @@ export interface DeletionServiceOptions {
    * every attempt the same deletion lost to a running turn, 250 ms, 1 s, 4 s, 15 s, so a bot whose turns never stop cannot keep a deletion
    * owed for days; new turns wait only for that long, once per attempt). */
   holdHomes?: (homes: DeletionEngineHome[], waitMs?: number) => Promise<{ release: () => void; skipped: DeletionEngineHome[] }>;
+  /** New turns on these homes wait from this moment, in one synchronous step, and until the returned function is called. Before the port
+   * opens nothing runs, so there is nothing to wait for: a crash journal is repaired before any turn can read the file it names. */
+  holdHomesNow?: (homes: DeletionEngineHome[]) => () => void;
   /** What is owed to the owner changed (a notice appeared, changed or went away). */
   onOwed?: (notices: OwnerNotice[], rev: number) => void;
   /** How long a home that keeps changing is left alone before it is planned again (default 10 s). */
@@ -517,6 +528,18 @@ export class ConversationDeletions {
 
   /** Deletions between begin and finish in this process: never settled early by `settleDeferred`. */
   private readonly active = new Set<string>();
+  /** Boot records whose rows have not been removed yet, by id (memory only: every start prepares its records again). */
+  private readonly unprepared = new Map<string, PendingConversationDeletion>();
+  private readonly preparing = new Map<string, Promise<void>>();
+  private prepareRows: ((threadId: string) => void) | undefined;
+  private bootIsLive: ((threadId: string) => boolean) | undefined;
+  /** Attachment files of boot records, until the record's first attempt has passed its file step. */
+  private readonly pendingFiles = new Map<string, Set<string>>();
+  private recovery: Promise<void> = Promise.resolve();
+  private bootRelease: (() => void) | undefined;
+  /** Boot records whose saved-file rows triage could not remove: prepare removes them, and Files stays closed until it has. */
+  private readonly artifactRowsOwed = new Set<string>();
+  private resumed = false;
 
   /** The attachment-name index has reached every row (or a later pass cleared deferrals): decide the files a deletion had to keep, now,
    * without a restart. Returns how many records it finished. A deletion that fails here stays pending for the next pass or the next boot. */
@@ -587,6 +610,7 @@ export class ConversationDeletions {
     this.ownTurnWaits.get(entry.id)?.();
     this.ownTurnWaits.delete(entry.id);
     try {
+      await this.prepare(entry);
       return await this.finishOnce(entry, allHomes);
     } catch (error) {
       let pending = true;
@@ -602,6 +626,7 @@ export class ConversationDeletions {
     const removed: string[] = [];
     const failed: string[] = [];
     const leftovers = [...entry.leftovers];
+    const trees: Array<{ root: string; target: string }> = [];
     const threadIds = entry.threadIds.filter((id) => ID.test(id));
     this.deleteArtifactRows(threadIds);
     for (const threadId of threadIds) {
@@ -619,18 +644,13 @@ export class ConversationDeletions {
     for (const desk of entry.desks) {
       if (!ID.test(desk.botId) || !ID.test(desk.threadId) || !threadIds.includes(desk.threadId)) continue;
       for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, desk.botId, "threads", desk.threadId));
-      const folder = nodePath.join(dirs.workspaces, desk.botId, "threads", desk.threadId);
-      record(removeConfined(dirs.workspaces, folder), folder, removed, failed);
-      const bundles = nodePath.join(dirs.skillState, desk.botId, "task-bundles", desk.threadId);
-      record(removeConfined(dirs.skillState, bundles), bundles, removed, failed);
-      if (desk.checkpointKey && /^[a-f0-9]{16}$/.test(desk.checkpointKey)) {
-        const shadow = nodePath.join(dirs.checkpoints, desk.botId, desk.checkpointKey);
-        record(removeConfined(dirs.checkpoints, shadow), shadow, removed, failed);
-      }
+      trees.push({ root: dirs.workspaces, target: nodePath.join(dirs.workspaces, desk.botId, "threads", desk.threadId) });
+      trees.push({ root: dirs.skillState, target: nodePath.join(dirs.skillState, desk.botId, "task-bundles", desk.threadId) });
+      if (desk.checkpointKey && /^[a-f0-9]{16}$/.test(desk.checkpointKey)) trees.push({ root: dirs.checkpoints, target: nodePath.join(dirs.checkpoints, desk.botId, desk.checkpointKey) });
     }
     for (const botId of (entry.botIds ?? []).filter((id) => ID.test(id))) {
       for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, botId));
-      for (const root of [dirs.workspaces, dirs.skillState, dirs.checkpoints]) record(removeConfined(root, nodePath.join(root, botId)), nodePath.join(root, botId), removed, failed);
+      for (const root of [dirs.workspaces, dirs.skillState, dirs.checkpoints]) trees.push({ root, target: nodePath.join(root, botId) });
     }
     // Antigravity's own per-thread folder when a turn has none
     // (drivers/antigravity.ts: workspaces/<thread id>), and the engine
@@ -640,14 +660,21 @@ export class ConversationDeletions {
       const stat = lstatOrNull(own);
       if (!stat || stat.isSymbolicLink() || !stat.isDirectory() || lstatOrNull(nodePath.join(own, "threads"))) continue;
       for (const root of new Set([dirs.workspaces, realWorkspaces].filter((dir): dir is string => Boolean(dir)))) folders.push(nodePath.join(root, threadId));
-      record(removeConfined(dirs.workspaces, own), own, removed, failed);
+      trees.push({ root: dirs.workspaces, target: own });
     }
     // pinned bundles can exist for a thread whose folder was never made
     for (const botId of listDir(dirs.skillState).filter((name) => ID.test(name))) {
       for (const threadId of threadIds) {
-        const bundles = nodePath.join(dirs.skillState, botId, "task-bundles", threadId);
-        record(removeConfined(dirs.skillState, bundles), bundles, removed, failed);
+        trees.push({ root: dirs.skillState, target: nodePath.join(dirs.skillState, botId, "task-bundles", threadId) });
       }
+    }
+    // A live delete keeps its one step on this thread. A boot or retry attempt hands the folders to the worker, so a large one never holds
+    // the thread that serves the app.
+    if (this.active.has(entry.id)) for (const { root, target } of trees) record(removeConfined(root, target), target, removed, failed);
+    else if (trees.length) {
+      const ran = await runEngineHistoryOffThread({ kind: "removeTrees", trees, homes: [], folders: [], memoryFolders: [], sessions: {} });
+      removed.push(...ran.removed);
+      failed.push(...ran.failed);
     }
     const removeAttachment = (name: string) => {
       const path = nodePath.join(dirs.attachments, name);
@@ -658,6 +685,7 @@ export class ConversationDeletions {
       } else record(removeConfined(dirs.attachments, path), path, removed, failed);
     };
     for (const name of entry.attachments.filter((item) => ATTACHMENT_NAME.test(item))) removeAttachment(name);
+    this.pendingFiles.delete(entry.id);
     // files the index could not yet vouch for: decided now if it can (no reference elsewhere: gone; one: kept), else left for a later pass
     const stillDeferred: string[] = [];
     for (const name of (entry.deferredAttachments ?? []).filter((item) => ATTACHMENT_NAME.test(item))) {
@@ -709,7 +737,8 @@ export class ConversationDeletions {
       // still waits for the grace period); every other reason only once the retry schedule has run out.
       const exhausted = this.retriesExhausted(entry);
       const version = this.appVersion();
-      const items = engines.failedHomes.map((key) => {
+      const verified = new Set(verifiedHomes(entry));
+      const items = engines.failedHomes.filter((key) => !verified.has(key)).map((key) => {
         const code = owedCodeOf(engines.homeReasons?.[key]);
         return { engine: key.split("\0")[0] as DeletionEngine, code, home: key, ...(engines.homeApps?.[key] ? { app: engines.homeApps[key] } : {}), ...(exhausted || NAMED_AT_ONCE.has(code) ? { named: true } : {}), ...(code === "helper-unloadable" && version ? { version } : {}) };
       });
@@ -724,7 +753,7 @@ export class ConversationDeletions {
       this.save(this.pending().map((other) => other.id === entry.id ? { ...other, attachments: [], deferredAttachments: stillDeferred } : other));
     }
     // A home skipped because Murage's own turn on the engine was still running is tried again as soon as that turn ends.
-    const ownTurnKeys = failed.length && engines ? engines.failedHomes.filter((key) => engines.homeReasons?.[key] === "engine-running") : [];
+    const ownTurnKeys = failed.length && engines ? engines.failedHomes.filter((key) => engines.homeReasons?.[key] === "engine-running" && !verifiedHomes(entry).includes(key)) : [];
     this.waitForOwnTurns(entry, ownTurnKeys.length ? entry.engineHomes.filter((home) => ownTurnKeys.includes(homeKey(home.engine, home.home))) : [], startedAt);
     if (!failed.length && !stillDeferred.length) {
       this.abandon(entry);
@@ -1119,6 +1148,7 @@ export class ConversationDeletions {
     if (this.graceTimer) { clearTimeout(this.graceTimer); this.graceTimer = undefined; }
     for (const cancel of this.ownTurnWaits.values()) cancel();
     this.ownTurnWaits.clear();
+    this.releaseBootHold();
   }
 
   /** The engines' own files can be hundreds of megabytes: planned, rewritten and vacuumed in a worker thread, one job at a time.
@@ -1168,6 +1198,13 @@ export class ConversationDeletions {
       const step = entry.enginePlan?.homes[key]?.steps[index];
       if (step) step.done = true;
     };
+    // Content in a home takes it off the verified list in the same save as the plan that found it, so a crash before the steps run cannot
+    // keep a mark that plan disproved. Only a later clean pass puts it back.
+    const noteContent = (key: string, plan: HomePlanData) => {
+      if (!hasContentSteps(plan)) return;
+      const left = verifiedHomes(entry).filter((home) => home !== key);
+      if (left.length) entry.homesVerified = left; else delete entry.homesVerified;
+    };
     try {
       // A home a program Murage did not start has open (the owner's own Claude Code or Grok in a terminal) is left as it is before
       // anything is paused or held: the full gate below would only find it open again, after closing Murage's own idle sessions on it
@@ -1199,6 +1236,7 @@ export class ConversationDeletions {
           if (ready.length) {
             const merged = { ...(entry.engineDiscovery ?? {}), ...(planned.discovery ?? {}) };
             if (Object.keys(merged).length) entry.engineDiscovery = merged;
+            for (const [key, plan] of Object.entries(planned.plans ?? {})) noteContent(key, plan);
             this.saveEngineState(entry);
             const ran = await runEngineHistoryOffThread({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: ready, plans: planned.plans });
             removed.push(...ran.removed);
@@ -1219,7 +1257,7 @@ export class ConversationDeletions {
           const before = new Map(quiet.map((key) => [key, fingerprint(key)]));
           await new Promise<void>((resolve) => { const timer = setTimeout(resolve, this.options.staleQuietMs ?? 10_000); timer.unref(); });
           const replanned = await runEngineHistoryOffThread({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only: quiet, ...(logged.length ? { quiet: logged } : {}) });
-          for (const [key, plan] of Object.entries(replanned.plans ?? {})) plans[key] = plan;
+          for (const [key, plan] of Object.entries(replanned.plans ?? {})) { plans[key] = plan; noteContent(key, plan); }
           if (replanned.discovery) entry.engineDiscovery = { ...(entry.engineDiscovery ?? {}), ...replanned.discovery };
           this.saveEngineState(entry);
           if (quiet.every((key) => fingerprint(key) === before.get(key))) return;
@@ -1263,7 +1301,7 @@ export class ConversationDeletions {
           for (const key of unplanned) { stuck.add(key); failedHomes.add(key); }
           if (!planned.plans) for (const home of base.homes) if (only.includes(homeKey(home.engine, home.home))) failed.add(home.home); // the job itself failed
           leftovers.push(...planned.leftovers);
-          for (const [key, plan] of Object.entries(planned.plans ?? {})) plans[key] = plan;
+          for (const [key, plan] of Object.entries(planned.plans ?? {})) { plans[key] = plan; noteContent(key, plan); }
           const merged = { ...(entry.engineDiscovery ?? {}), ...(planned.discovery ?? {}) };
           if (Object.keys(merged).length) entry.engineDiscovery = merged;
           // persist: the plan and its ids are in the record before anything is changed
@@ -1310,6 +1348,14 @@ export class ConversationDeletions {
         }
         this.saveEngineState(entry);
         if (quiet.length && round < MAX_ENGINE_ROUNDS - 1) await settleQuiet(quiet);
+      }
+      // What this attempt proved, home by home, for the report only. Not stuck means held and planned in the last round; the rest of the
+      // finished test is the closed check of that plan and nothing left in it.
+      const clean = keys.filter((key) => !stuck.has(key) && plans[key] && closedOfLastPlan.includes(key) && !hasContentSteps(plans[key]!));
+      const verified = [...new Set([...verifiedHomes(entry), ...clean])];
+      if (JSON.stringify(verified) !== JSON.stringify(entry.homesVerified ?? [])) {
+        if (verified.length) entry.homesVerified = verified; else delete entry.homesVerified;
+        this.saveEngineState(entry);
       }
       return { removed, failed: [...failed], leftovers, reasons, homeReasons, homeApps, failedHomes: [...failedHomes], syncedHomes: [...syncedHomes] };
     } catch (error) {
@@ -1375,9 +1421,10 @@ export class ConversationDeletions {
     const changed = homes.length !== entry.engineHomes.length || homes.some((home, at) => homeKey(home.engine, home.home) !== homeKey(entry.engineHomes[at]!.engine, entry.engineHomes[at]!.home));
     if (!changed) return;
     entry.engineHomes = homes;
+    entry.homesVerified = verifiedHomes(entry);
     const entries = this.pending();
     const at = entries.findIndex((item) => item.id === entry.id);
-    if (at >= 0) { entries[at] = { ...entries[at]!, engineHomes: homes }; this.save(entries); }
+    if (at >= 0) { entries[at] = { ...entries[at]!, engineHomes: homes, homesVerified: entry.homesVerified }; this.save(entries); }
   }
 
   /** Saves the plan, its step marks and the ids with the pending record. Throws when the record is gone. */
@@ -1385,12 +1432,10 @@ export class ConversationDeletions {
     const entries = this.pending();
     const at = entries.findIndex((item) => item.id === entry.id);
     if (at < 0) throw new Error("the pending deletion record is gone");
-    entries[at] = { ...entries[at]!, enginePlan: entry.enginePlan, engineDiscovery: entry.engineDiscovery };
+    entries[at] = { ...entries[at]!, enginePlan: entry.enginePlan, engineDiscovery: entry.engineDiscovery, homesVerified: entry.homesVerified };
     this.save(entries);
   }
 
-  /** Finish every deletion a crash interrupted. A record whose thread is
-   * still live never committed and is dropped; the owner can delete again. */
   /** Every engine session a conversation started, by engine: the resume
    * cursors Murage holds plus each `session.started` in its event log (a
    * rewind starts a new session and forgets the old cursor). */
@@ -1442,31 +1487,174 @@ export class ConversationDeletions {
     try { await this.options.forgetThreads?.(threadIds.filter((id) => ID.test(id))); } catch (error) { console.error("conversation deletion: could not drop records", error); }
   }
 
+  /** The start-up pass, whole: what the server does across triage, the port opening and resumeAfterBoot. */
   async reconcile(isLive: (threadId: string) => boolean, deleteRows: (threadId: string) => void): Promise<number> {
-    let finished = 0;
-    // A crash can leave an engine's history row cut in the middle of a value: finish the crash journals before anything is planned.
-    try {
-      const homes = this.pending().flatMap((entry) => entry.engineHomes);
-      // Before any hold: the journals of Murage's private scopes wait for the attempt that holds them (engine-history-run.ts).
-      await runEngineHistoryOffThread({ kind: "recover", homes, folders: [], memoryFolders: [], sessions: {}, redoDir: this.redoDir, nativeDir: this.dir.native, skipScopes: true });
-    } catch (error) { console.warn("conversation deletion: the crash journals were not checked", error); }
+    const ids = this.triage(isLive, deleteRows);
+    await this.prepareBoot(ids);
+    return this.drain(ids);
+  }
+
+  /** Before the port opens: reads the journal and does nothing that grows with history. Each record whose thread is live again never
+   * committed and is dropped; the owner can delete again. The others wait for `prepare` and stay hidden until then (isDeleting,
+   * attachmentPending). Their saved-file rows go here, as they did before the port opened: Files reads no conversation, so nothing else
+   * would keep those files out of it, and the rows are a few indexed deletes. The crash journals are repaired by the same job as ever,
+   * now unawaited, and turns on the engines they name wait for it. Returns the ids of the records still to finish. */
+  triage(isLive: (threadId: string) => boolean, deleteRows: (threadId: string) => void): string[] {
+    this.prepareRows = deleteRows;
+    this.bootIsLive = isLive;
     let entries: PendingConversationDeletion[];
-    try { entries = this.pending(); } catch (error) { console.error("conversation deletion: the pending deletions could not be read; they stay as they are", error); return 0; }
+    try { entries = this.pending(); } catch (error) { console.error("conversation deletion: the pending deletions could not be read; they stay as they are", error); return []; }
+    const ids: string[] = [];
     for (const entry of entries) {
       if (entry.threadIds.some(isLive)) {
-        this.abandon(entry);
+        try { this.abandon(entry); } catch (error) { console.error("conversation deletion: could not drop a deletion that never committed", error); }
         continue;
       }
-      try {
-        for (const threadId of entry.threadIds) deleteRows(threadId);
-        await this.forget(entry.threadIds);
-        await this.finish(entry);
-        finished++;
-      } catch (error) {
-        console.error("conversation deletion: could not finish an interrupted delete", error);
+      this.unprepared.set(entry.id, entry);
+      try { this.deleteArtifactRows(entry.threadIds.filter((id) => ID.test(id))); } catch (error) {
+        console.warn("conversation deletion: saved files of a deleted conversation wait for the next step", error);
+        this.artifactRowsOwed.add(entry.id);
       }
+      const names = (entry.attachments ?? []).filter((name) => ATTACHMENT_NAME.test(name)).map((name) => name.toLowerCase());
+      if (names.length) this.pendingFiles.set(entry.id, new Set(names));
+      ids.push(entry.id);
     }
+    const homes = entries.flatMap((entry) => entry.engineHomes ?? []);
+    configureRedo(this.redoDir);
+    let journaled: DeletionEngineHome[];
+    try { journaled = this.journaledHomes(); } catch (error) { console.warn("conversation deletion: the crash journals could not be listed; every pending home waits for them", error); journaled = homes; }
+    if (journaled.length) {
+      this.releaseBootHold();
+      this.bootRelease = this.options.holdHomesNow?.(journaled);
+    }
+    // No record and no journal: nothing for a worker to do.
+    if (!entries.length && !journaled.length) return ids;
+    this.recovery = (async () => {
+      // Before any hold: the journals of Murage's private scopes wait for the attempt that holds them (engine-history-run.ts).
+      await runEngineHistoryOffThread({ kind: "recover", homes, folders: [], memoryFolders: [], sessions: {}, redoDir: this.redoDir, nativeDir: this.dir.native, skipScopes: true });
+      const waiting = new Set(journaled.map((home) => homeKey(home.engine, home.home)));
+      if (!this.journaledHomes().some((home) => waiting.has(homeKey(home.engine, home.home)))) this.releaseBootHold();
+    })().catch((error) => { console.warn("conversation deletion: the crash journals were not checked", error); });
+    return ids;
+  }
+
+  /** The homes the crash journals on disk name. Throws when they cannot be listed. */
+  private journaledHomes(): DeletionEngineHome[] {
+    const seen = new Map<string, DeletionEngineHome>();
+    for (const record of listRedo()) seen.set(homeKey(record.engine as DeletionEngine, record.home), { engine: record.engine as DeletionEngine, home: record.home });
+    return [...seen.values()];
+  }
+
+  private releaseBootHold(): void {
+    const release = this.bootRelease;
+    this.bootRelease = undefined;
+    try { release?.(); } catch (error) { console.warn("conversation deletion: the hold on the crash journals' engines could not be released", error); }
+  }
+
+  /** A boot record's rows and other records, once however many callers ask at a time, before any attempt at it. A failure rejects, and
+   * both callers (finishGuarded, prepareBoot) arm the retry. */
+  private prepare(entry: PendingConversationDeletion): Promise<void> {
+    if (!this.unprepared.has(entry.id)) return Promise.resolve();
+    let running = this.preparing.get(entry.id);
+    if (!running) {
+      running = (async () => {
+        if (this.artifactRowsOwed.has(entry.id)) {
+          this.deleteArtifactRows(entry.threadIds.filter((id) => ID.test(id)));
+          this.artifactRowsOwed.delete(entry.id);
+        }
+        for (const threadId of entry.threadIds) this.prepareRows?.(threadId);
+        await this.options.forgetThreads?.(entry.threadIds.filter((id) => ID.test(id)));
+        this.unprepared.delete(entry.id);
+      })().finally(() => { this.preparing.delete(entry.id); });
+      this.preparing.set(entry.id, running);
+    }
+    return running;
+  }
+
+  /** The rows of every boot record, one per turn of the event loop, straight after the first health answer. */
+  async prepareBoot(ids: readonly string[]): Promise<void> {
+    for (const id of ids) {
+      const entry = this.unprepared.get(id);
+      if (!entry) continue;
+      if (this.disposed) return;
+      try { await this.prepare(entry); } catch (error) {
+        console.error("conversation deletion: could not finish an interrupted delete", error);
+        this.scheduleRetry(entry);
+      }
+      await new Promise<void>((resolve) => { setImmediate(resolve); });
+    }
+  }
+
+  /** One attempt at each boot record, in series, after the crash journals: records with a journaled home first, then the least recently
+   * tried, read fresh from the journal each time. A record whose thread is live again is left alone (triage decides that, at the next
+   * start). Never throws. Returns the attempts that ended without an error. */
+  async drain(ids: readonly string[]): Promise<number> {
+    let finished = 0;
+    const startedAt = Date.now();
+    try {
+      await this.recovery;
+      const visited = new Set<string>();
+      const wanted = new Set(ids);
+      while (!this.disposed) {
+        let entries: PendingConversationDeletion[];
+        try { entries = this.pending(); } catch (error) { console.error("conversation deletion: the pending deletions could not be read; they stay as they are", error); break; }
+        const left = entries.filter((entry) => wanted.has(entry.id) && !visited.has(entry.id));
+        if (!left.length) break;
+        let journaled = new Set<string>();
+        try { journaled = new Set(this.journaledHomes().map((home) => homeKey(home.engine, home.home))); } catch { /* the order is only an order */ }
+        const hasJournal = (entry: PendingConversationDeletion) => (entry.engineHomes ?? []).some((home) => journaled.has(homeKey(home.engine, home.home)));
+        const next = [...left].sort((a, b) => Number(hasJournal(b)) - Number(hasJournal(a)) || (a.lastTriedAt ?? 0) - (b.lastTriedAt ?? 0))[0]!;
+        visited.add(next.id);
+        if (next.threadIds.some((id) => this.bootIsLive?.(id))) { console.warn("conversation deletion: a pending deletion's conversation is live; it is left for the next start"); continue; }
+        // Only an order: a journal that cannot be written now never stops the attempt.
+        next.lastTriedAt = Date.now();
+        try { this.save(entries); } catch (error) { console.warn("conversation deletion: the time of this try was not saved", error); }
+        try {
+          await this.finish(next);
+          finished++;
+        } catch (error) {
+          console.error("conversation deletion: could not finish an interrupted delete", error);
+        }
+        await new Promise<void>((resolve) => { setImmediate(resolve); });
+      }
+    } catch (error) {
+      console.error("conversation deletion: the start-up pass stopped", error);
+    } finally {
+      this.releaseBootHold();
+    }
+    if (ids.length) console.info(`conversation deletion: start-up pass tried ${finished} of ${ids.length} pending deletions in ${Math.round((Date.now() - startedAt) / 1000)} s`);
     return finished;
+  }
+
+  /** The rest of the start-up pass, once, after the port is open: the rows now, the engine work once the start's own work has settled. */
+  async resumeAfterBoot(ids: readonly string[], settled: () => Promise<void>): Promise<void> {
+    if (this.resumed) return;
+    this.resumed = true;
+    try {
+      await this.prepareBoot(ids);
+      await settled();
+    } catch (error) {
+      console.error("conversation deletion: the start-up pass stopped", error);
+    }
+    await this.drain(ids);
+  }
+
+  /** A boot record not yet prepared names this thread: its rows may still be there, and it stays out of sight until they are gone. */
+  isDeleting(threadId: string): boolean {
+    for (const entry of this.unprepared.values()) if (entry.threadIds.includes(threadId)) return true;
+    return false;
+  }
+
+  /** A boot record's saved-file rows could not be removed yet: Files stays closed, because its rows do not say a conversation is going. */
+  artifactRowsPending(): boolean {
+    return this.artifactRowsOwed.size > 0;
+  }
+
+  /** A boot record will remove this attachment and its first attempt has not reached it yet. */
+  attachmentPending(name: string): boolean {
+    const wanted = name.toLowerCase();
+    for (const names of this.pendingFiles.values()) if (names.has(wanted)) return true;
+    return false;
   }
 
   private memoryCleanupPending(): boolean {
@@ -1543,6 +1731,12 @@ export class ConversationDeletions {
     if (this.hasTable("output_publications")) db.prepare(`DELETE FROM output_publications WHERE thread_id IN (${marks})`).run(...threadIds);
     if (this.hasTable("artifacts")) db.prepare(`DELETE FROM artifacts WHERE thread_id IN (${marks})`).run(...threadIds);
   }
+}
+
+/** The record's verified homes that are still among its homes. */
+function verifiedHomes(entry: PendingConversationDeletion): string[] {
+  const homes = new Set(entry.engineHomes.map((home) => homeKey(home.engine, home.home)));
+  return (Array.isArray(entry.homesVerified) ? entry.homesVerified : []).filter((key) => homes.has(key));
 }
 
 function dedupeLeftovers(leftovers: DeletionLeftover[]): DeletionLeftover[] {

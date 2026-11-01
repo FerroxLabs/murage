@@ -447,7 +447,7 @@ describe("link servers through the routes", () => {
     }
     const over = await addRemote("fill20");
     expect(over.status).toBe(400);
-    expect(over.body.error).toMatch(/at most 20/);
+    expect(over.body.error).toMatch(/up to 20/);
     for (let index = 0; index < 20; index += 1) await desktop("DELETE", `/api/mcp/servers/fill${index}`);
     expect(storedServers()).toEqual({});
   });

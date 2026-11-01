@@ -16,7 +16,7 @@
 import { expect, type Page } from "@playwright/test";
 
 export async function chiefHasSpoken(app: Page): Promise<void> {
-  const question = app.getByText(/Where should I send your setup guide\?/i);
+  const question = app.getByText(/Tell me what to call you and I will get the rest ready/i);
   const log = app.getByTestId("chat-scroll");
   await expect(async () => {
     // Same gesture as a reader's: a wheel up (which releases bottom-follow), then to the top.

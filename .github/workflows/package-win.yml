@@ -104,6 +104,7 @@ jobs:
           pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         env:
+          NODE_OPTIONS: --max-old-space-size=6144
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}

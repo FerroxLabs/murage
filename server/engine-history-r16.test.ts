@@ -485,7 +485,7 @@ describe("E: a retry that throws while the record is pending arms the next one",
     await deletions.finish(entry);
     deletions.dispose();
     const second = setup(fx);
-    second.fail(1);
+    second.fail(3); // triage's saved-file rows, the prepare after the port opens, and the attempt itself
     expect(await second.deletions.reconcile(() => false, () => undefined)).toBe(0); // it threw
     expect(second.deletions.pending()).toHaveLength(1);
     await delay(400);

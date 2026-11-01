@@ -24,7 +24,8 @@
 "phone_sharing_generic" = "在你允许时，将机器人从手机读取的内容通过你自己的 Murage 共享给该机器人使用的 AI 服务。";
 "phone_provider_fallback" = "其他 AI 服务";
 "phone_no_key" = "请为这部手机设置密码，然后重新配对";
-"phone_update" = "请更新电脑上的 Murage";
+"phone_update" = "请在电脑上开启此功能，或更新 Murage。";
+"phone_turned_off" = "电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。";
 "phone_failed" = "无法更新手机工具，请重试。";
 "phone_refused" = "手机登录被拒绝，请重新配对这部手机。";
 "phone_rate_limited" = "登录尝试次数过多，请稍后重试。";
@@ -67,7 +68,8 @@
 "ask_setup_body" = "从任何应用向你的机器人发送内容，无需先打开 Murage 就能提问。为这台电脑确认一次即可。";
 "ask_turn_on" = "开启";
 "ask_not_now" = "暂时不要";
-"ask_update" = "请更新电脑上的 Murage 以使用此功能。";
+"ask_update" = "请在电脑上开启此功能，或更新 Murage。";
+"ask_turned_off" = "电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。";
 "ask_no_key" = "请在这部手机上设置锁屏密码，然后打开 Murage。";
 "ask_computer_off" = "这部手机的分享和提问功能已关闭。";
 "ask_setup_again" = "请打开 Murage 重新设置分享功能。";
