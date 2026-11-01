@@ -5,7 +5,8 @@ import type {RoutineRunTrigger} from "./routines.ts";
 export function automationForTurn(input:{automation?:Message["automation"];automationSource?:RoutineRunTrigger;commsDepth?:number;cardContinuation?:boolean;projectCardRun?:{request:{id:string}};memorySkillSource?:string;unattended?:boolean;origin?:MessageOrigin},run?:{routineId?:string;webhookId?:string;telegramConnectionId?:string;channelOrigin?:{platform:"slack"|"discord"|"whatsapp";connectionId:string}}):Message["automation"]{
  if(input.automation)return input.automation;
  if(input.projectCardRun||input.cardContinuation||input.memorySkillSource)return {kind:"card"};
- if(input.automationSource)return {kind:input.automationSource,...(run?.routineId?{routineId:run.routineId}:{}),...(run?.webhookId?{webhookId:run.webhookId}:{}),
+ // 1.0.11 APP-TRIGGERS: a connected-app run is an outside event, marked as one (its own label arrives with the run-thread UI)
+ if(input.automationSource)return {kind:input.automationSource==="app"?"webhook":input.automationSource,...(run?.routineId?{routineId:run.routineId}:{}),...(run?.webhookId?{webhookId:run.webhookId}:{}),
   ...(run?.channelOrigin?{channel:run.channelOrigin.platform,connectionId:run.channelOrigin.connectionId}:run?.telegramConnectionId?{channel:"telegram",connectionId:run.telegramConnectionId}:{})};
  if(input.commsDepth)return {kind:"delegation"};
  if(input.unattended&&!input.origin)return {kind:"message"};

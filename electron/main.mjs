@@ -28,6 +28,7 @@ import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
 import { createCloudLinkQueue } from "./cloud-link-queue.mjs";
 import { handOffDoorLink, needsDoorHandoff, takeStashedDoorLink } from "./cloud-link-handoff.mjs";
+import { configureLinuxPasswordStore } from "./linux-password-store.mjs";
 import { ensureLinuxUrlHandler } from "./linux-url-handler.mjs";
 import { createEngineLoginRelay, registerEngineLoginIpc } from "./cloud-home-engine-login.mjs";
 import { createNotificationAuthorization } from "./notification-authorization.mjs";
@@ -36,7 +37,7 @@ import { BACKUP_MODE_ARGUMENT, BACKUP_TOOL_STUCK_AFTER, createBackupModeControll
 import { BACKUP_SCHEDULE_BINDINGS_KEY, createBackupScheduleHost, firstRunWithoutHost, setUpBackupsRequest } from "./backup-schedule-host.mjs";
 import { BACKUP_UNAVAILABLE_SENTENCES, backupUnavailableCode, captureFailureSentence, describeCaptureError } from "../shared/backup-capture-failure.mjs";
 import { pathWithin } from "../shared/path-identity.mjs";
-import { cloudNoticeStore, createRecoveryKeyFlow, hostCloudFolder, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
+import { cloudNoticeStore, createRecoveryKeyFlow, defaultRecoveryKeyFolder, hostCloudFolder, recoveryKeyAutomaticExclusions, recoveryKeyFolderStore, settleRecoveryKeyRequest } from "./backup-recovery-key.mjs";
 import { CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding,closedInstallationIdentity } from "./backup-closed-profile.mjs";
 import { createClosedBackupController,closedControlDirectory } from "./backup-closed-controller.mjs";
 import { tightenOwnedDirectory } from "./private-directory.mjs";
@@ -90,7 +91,7 @@ import {
   createRendererMemorySampler,
   readSafeLogTail,
 } from "./diagnostics.mjs";
-import { migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
+import { desktopFluxEnvironment, migrateMcpServerSecrets, migrateWorkspaceCredentials, workspaceCredentialEnv } from "./workspace-credentials.mjs";
 import { EMAIL_OWNER_MESSAGE, EMAIL_OWNER_SCOPE, isEmailSecretsSave, withEmailOwner, withEmailSecrets } from "./email-secrets.mjs";
 import { assertIncidentExportSender, prepareSelectedIncidentReport, saveDiagnosticsReport, validateIncidentSelection } from "./incident-export.mjs";
 import { activateExistingWindow } from "./single-instance.mjs";
@@ -205,6 +206,8 @@ if (process.env.MURAGE_USER_DATA !== undefined) {
 }
 
 const { desktopCapabilities, nativeDesktopActions } = capabilitiesModule;
+// Keep this outside the profile-isolation slice, but before Electron is ready.
+configureLinuxPasswordStore({ commandLine: app.commandLine });
 // Local crash dumps, started before "ready" as Electron requires and after any
 // user-data move so they land in this profile's app.getPath("crashDumps").
 // Uploads are off and there is no server address (crash-dumps.mjs).
@@ -542,7 +545,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   selectedDestination:()=>backupScheduleHost.selectedDestination(),
   // Only the folder of the last key saved or picked is remembered, never the key.
   folderStore:recoveryKeyFolderStore(path.join(app.getPath("userData"),"backup-key-folder.json")),
-  defaultFolder:()=>app.getPath("documents"),
+  defaultFolder:()=>defaultRecoveryKeyFolder(name=>app.getPath(name)),
   // Where a key is written when nobody is asked: the person's home folder,
   // then (Windows) the local app data folder. Never Documents: that is the
   // folder sync clients take over (OneDrive on Windows, iCloud Desktop and
@@ -558,7 +561,7 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   rebindKeyFile:file=>backupScheduleHost.rebindKeyFile(file),
   noticeStore:cloudNoticeStore(path.join(app.getPath("userData"),"backup-key-cloud-notice.json")),
   // Never written to without asking, even when an earlier key went there.
-  neverAutomatic:()=>{try{return [app.getPath("documents")];}catch{return [];}},
+  neverAutomatic:()=>recoveryKeyAutomaticExclusions(name=>app.getPath(name)),
   // A picked folder that syncs to the cloud is named before the key goes there.
   confirmCloudFolder:async provider=>{
     const answer=await dialog.showMessageBox(mainWindow??undefined,{title:"Murage",type:"warning",buttons:["Choose another place","Save here"],defaultId:0,cancelId:0,noLink:true,
@@ -569,14 +572,14 @@ const backupRecoveryKeys=createRecoveryKeyFlow({
   // The second copy: somewhere other than the backup folder.
   chooseCopyFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save a copy of your recovery key",buttonLabel:"Save copy",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Save this copy somewhere other than your backup folder: a USB drive, another computer, or your password manager. Without this key nobody, including you, can open your backups."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
   // `suggested` is a name not yet taken in that folder.
   chooseFile:async suggested=>{
     const answer=await dialog.showSaveDialog(mainWindow??undefined,{title:"Save your recovery key",buttonLabel:"Save recovery key",properties:["createDirectory"],
-      defaultPath:suggested??path.join(app.getPath("documents"),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
+      defaultPath:suggested??path.join(defaultRecoveryKeyFolder(name=>app.getPath(name)),"murage-recovery-key.txt"),nameFieldLabel:"Key file:",
       message:"Keep this key somewhere other than your backup folder, such as a password manager or a USB drive. Without it, backups cannot be restored."});
     return answer.canceled||!answer.filePath?null:answer.filePath;
   },
@@ -1363,6 +1366,8 @@ const LOG_DIR = app.getPath("logs");
 const DESKTOP_CRASH_LOG = path.join(LOG_DIR, "desktop-crashes.log");
 const DESKTOP_CRASH_LOG_MAX_BYTES = 512 * 1024;
 let logStream = null;
+// Past the single-instance lock, before the first line of this run.
+if (rotateLogAtLaunch(path.join(LOG_DIR, "server.log"))) slog("earlier lines are in server.log.1");
 let desktopShutdownStarted = false;
 import {
   companionAdvertisedHostedUrl,
@@ -1399,6 +1404,7 @@ import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 import { lanPairingView } from "./companion-lan-pairing.mjs";
 import { LINUX_KEYRING_REQUIRED, secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { DESK_POST_TIMEOUT_MS, startDeskPresence } from "./desk-presence.mjs";
+import { openLogStream, rotateLogAtLaunch } from "./log-rotate.mjs";
 
 let companionPowerBlocker = null;
 
@@ -1417,7 +1423,7 @@ function slog(line) {
   try {
     if (!logStream) {
       fs.mkdirSync(LOG_DIR, { recursive: true });
-      logStream = fs.createWriteStream(path.join(LOG_DIR, "server.log"), { flags: "a" });
+      logStream = openLogStream(path.join(LOG_DIR, "server.log"), (lost) => { if (logStream === lost) logStream = null; });
     }
     logStream.write(`[${new Date().toISOString()}] ${line}\n`);
   } catch {
@@ -1985,6 +1991,8 @@ async function gatherDiagnostics() {
 // Set by startServerPackaged: true only when every failing candidate port was
 // taken by another process — decides which error-page message renders.
 let serverStartConflictOnly = false;
+// Set by startServerPackaged: a child stayed alive and silent to the end of the limit. Another fork would repeat the same work from the start.
+let serverStartSlow = false;
 // True while the machine is asleep: the server boot probe does not spend its budget meanwhile (electron/server-boot-probe.mjs isSuspended).
 let bootSystemSuspended = false;
 // Set when the server child stopped because the memory upgrade could not run
@@ -2133,7 +2141,10 @@ async function startServerOn(port) {
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
   // (audit P1, S1b R8).
   const childEnv = managedComposioChildEnvironment(composioBrokerUrl(), secureCredentials, {
-    ...restoredHarnessEnvironment(process.env, restoredConnections),
+    // The shell's FLUX_API_KEY never reaches the child as a key: only the
+    // store's does (workspaceCredentialEnv below), and the shell value is
+    // offered as MURAGE_FLUX_AMBIENT_KEY, a choice, when the store is not managed.
+    ...desktopFluxEnvironment(restoredHarnessEnvironment(process.env, restoredConnections), secureCredentials),
     // A packaged utility child must never fall back to a descriptor inherited
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
@@ -2173,7 +2184,6 @@ async function startServerOn(port) {
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
-    MURAGE_FLUX_AMBIENT_KEY: secureCredentials.fluxConnectionManaged !== "true" && secureCredentials.fluxApiKey && process.env.FLUX_API_KEY !== secureCredentials.fluxApiKey ? process.env.FLUX_API_KEY ?? "" : "",
   }, { fluxBrokerUrl: fluxComposioBrokerUrlValue(), legacyUntil: composioLegacyUntilValue() });
   Object.assign(childEnv, packagedGepaManifestEnvironment({ packaged: app.isPackaged, appPath: app.getAppPath() }));
   delete childEnv.MURAGE_BROWSER_CONNECTION;
@@ -2301,6 +2311,7 @@ async function startServerOn(port) {
   // us here forever) and reports WHY it gave up, so the error page can tell
   // port conflict apart from slow startup.
   let identity;
+  const slowNote = setTimeout(() => slog(`child on port ${port} has not answered /api/health after ${SERVER_BOOT_TIMEOUT_MS / 1000}s; still waiting`), SERVER_BOOT_TIMEOUT_MS);
   const upgradeWatch = desktopDataDir
     ? watchMemoryUpgrade({ dataDir: desktopDataDir, pid: () => proc.pid, onReading: showMemoryUpgradeProgress })
     : null;
@@ -2313,9 +2324,9 @@ async function startServerOn(port) {
     port,
     // The launch nonce, not the pid: the pid is public, so a foreign listener could echo it.
     nonce: () => bootNonce,
-    bootTimeoutMs: SERVER_BOOT_TIMEOUT_MS,
+    bootTimeoutMs: SERVER_BOOT_SLOW_LIMIT_MS,
     isExited: () => exited || lifecycle.failed || desktopShutdownStarted,
-    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]);
+    }), lifecycle.exit.then(() => ({ outcome: "exited" }))]).finally(() => clearTimeout(slowNote));
     // The note must be read before the watcher stops: a child that ended on a
     // blocked upgrade has already written why.
     const finalNote = desktopDataDir ? readMemoryUpgradeStatus(desktopDataDir, { pid: proc.pid }) : null;
@@ -2355,7 +2366,7 @@ async function startServerOn(port) {
     slog(
       identity.outcome === "foreign-owner"
         ? `port ${port} answered health checks from another process`
-        : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_TIMEOUT_MS / 1000}s`,
+        : `child on port ${port} did not answer /api/health within ${SERVER_BOOT_SLOW_LIMIT_MS / 1000}s`,
     );
   }
   await lifecycle.stop({ graceful: false });
@@ -2370,6 +2381,7 @@ async function startServerPackaged() {
   // server during teardown — one settle-and-retry covers it
   let everyPortForeignOwned = true;
   memoryUpgradeBlocked = null;
+  serverStartSlow = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     for (const port of [8799, 18799, 28799]) {
       assertDesktopStartupActive();
@@ -2388,6 +2400,8 @@ async function startServerPackaged() {
       if (started.reason !== "foreign-owner") everyPortForeignOwned = false;
       // Another port or another try would only repeat the same refusal.
       if (started.reason === "memory-blocked") { serverStartConflictOnly = false; return false; }
+      // A live child that took the whole limit is slow work, not a busy port: the same work on another port would take as long.
+      if (started.reason === "timeout") { serverStartSlow = true; serverStartConflictOnly = false; return false; }
     }
     await new Promise((r) => setTimeout(r, 2500));
   }
@@ -2572,6 +2586,8 @@ function buildErrorPage({ allPortsOccupied }) {
 // workspace credentials) can stall a healthy child far past 20s on some
 // machines, which used to surface as the misleading "ports are busy" page.
 const SERVER_BOOT_TIMEOUT_MS = 60_000;
+// The limit itself: a child still silent then is stopped once and the recovery page opens. No second fork: it would start the same work over.
+const SERVER_BOOT_SLOW_LIMIT_MS = 5 * 60_000;
 
 let cuaReady = Promise.resolve({ mode: "unavailable", reason: "not-started" });
 const androidDevice = createAndroidDeviceController({ resourcesPath: process.resourcesPath, ownershipFile: path.join(app.getPath("userData"), "adb-daemon-owned.json") });
@@ -3046,6 +3062,8 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     ? "Your restored copy is paused until you review it. Your previous data is kept as it was."
     : reasonCode === "MEMORY_UPGRADE_BLOCKED"
     ? memoryUpgradeBlockedSentence(memoryUpgradeBlocked, app.getLocale(), { logPath: path.join(LOG_DIR, "server.log") })
+    : reasonCode === "STARTUP_SLOW"
+    ? `Murage is taking longer than usual to start. Your data is kept as it is. Choose Retry startup. If this keeps happening, the details are in ${path.join(LOG_DIR, "server.log")}.`
     : reasonCode === "PORT_CONFLICT"
       ? "Another program is using Murage's ports. Quit it, then choose Retry startup. Restoring a backup won't help with this."
       : "Murage couldn't finish starting. Your data is kept as it is. Choose Retry startup, or restore a backup.";
@@ -3233,6 +3251,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     args, env, track: trackOwnedServerChild,
     ...(operation.includes("encrypted") ? {readIdentity:parameters.readIdentity} : {}),
     ...(operation==="backup-encrypted"&&parameters.maxDurationMs!==undefined?{timeoutMs:parameters.maxDurationMs+30_000}:{}),
+    ...(operation==="backup-encrypted"&&typeof parameters.onProgress==="function"?{onProgress:parameters.onProgress}:{}),
   });
     // Undoing the restore of a separate installation leaves nothing for the
     // selection to open: hand the next start back to the original (D2).
@@ -3903,10 +3922,12 @@ ipcMain.handle("desktop:skin", (_event, skin) => {
 });
 
 // Connector login, plugin/team links and browser-panel "open in browser" all
-// come from the owned main window's top frame. Any other sender is refused
-// before the address is parsed; the address must be credential-free http(s).
+// come from the owned main window's top frame. A Cloud-home window's top frame
+// may ask too, https only. Any other sender is refused before the address is
+// parsed; the address must be credential-free http(s).
 ipcMain.handle("desktop:open-external", createOpenExternalHandler({
   isTrustedSender: ownedMainSenderGate({ window: () => mainWindow, origin: trustedRendererOrigin }),
+  isCloudSender: (event) => cloudHome?.isCloudSender(event) === true,
   openExternal: (url) => shell.openExternal(url),
 }));
 
@@ -4186,6 +4207,15 @@ async function mutateFluxConnectionInMain(input) {
   });
 }
 ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnectionInMain(input));
+// Settings: after a Flux key change, running engines keep the key they were
+// spawned with until Murage restarts. The same relaunch-then-quit pair backup
+// mode uses; refused where Murage cannot reopen itself.
+ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
+  if (args.length) throw new Error("Invalid restart request.");
+  if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
+  relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
+  app.quit();
+});
 
 // One-click Flux sign-in. The key is minted by the token endpoint and stored by
 // the SAME road a pasted key takes; it never reaches the renderer.
@@ -4696,6 +4726,7 @@ async function initializeBackupScheduleHost(){
     firstRunChanged:()=>firstRunBackupChanged(),
     reportOutcome:line=>slog(line),
     reportProgress:name=>backupProgress?.stage(name),
+    reportWorkerProgress:progress=>backupProgress?.worker(progress),
     reportCaptureFailure:(failure,handoff)=>{
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
@@ -4966,7 +4997,7 @@ void androidDevice.reclaimOrphan().catch(() => {});
   // (the panel shows the error) rather than retrying; and it never delays
   // the window.
   if (app.isPackaged && !serverReady) {
-    showDesktopRecovery(memoryUpgradeBlocked ? "MEMORY_UPGRADE_BLOCKED" : serverStartConflictOnly ? "PORT_CONFLICT" : "STARTUP_FAILED");
+    showDesktopRecovery(memoryUpgradeBlocked ? "MEMORY_UPGRADE_BLOCKED" : serverStartSlow ? "STARTUP_SLOW" : serverStartConflictOnly ? "PORT_CONFLICT" : "STARTUP_FAILED");
     return;
   }
   if (serverReady && companionEnabledAtRest()) {

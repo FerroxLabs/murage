@@ -12,7 +12,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { scanFolderTrustSources, upstreamTrustsFolder } from "./folder-trust.ts";
-import { managedThreadDesk, managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
+import { deskComponents, managedThreadDesk, managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
+import { partitionRoots, type Partition } from "./execution-audience.ts";
+import type { BotRecord } from "./store.ts";
 import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
 import { installSkill, migrateSkillDiscoveryToTasks, setSkillEnabled } from "./skills.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -238,5 +240,111 @@ describe("managed thread desk auto-trust on a real pinned bundle", () => {
       removeTempDirSync(join(DATA_DIR, "workspaces", id));
       removeTempDirSync(join(DATA_DIR, "skill-state", id));
     }
+  });
+});
+
+// 1.0.8 THREAD-TRUST-108: a hand-off to a team member or a project desk runs
+// in the desk Murage made under the bot's partition root, not under
+// `workspaces/<botId>/threads`. Such a desk holding only Murage's links is
+// trusted the same as the home desk; anything the owner pointed Murage at,
+// another bot's desk, or a path that escapes through a symlink is not.
+describe("partitioned thread desks (1.0.8 thread trust)", () => {
+  const partitions: Array<[string, Partition]> = [
+    ["team", { kind: "team", teamId: "team_a" }],
+    ["project", { kind: "project", groupId: "group_a", homeMember: false }],
+    ["room", { kind: "room", groupId: "room_a" }],
+    ["isolated", { kind: "isolated", threadId: "thread-x" }],
+    ["general", { kind: "general" }],
+  ];
+  /** The desk `taskWorkspacePath` names for a partitioned thread: the real
+   * partition root, then `threads/<threadId>`. */
+  const partitionDesk = (partition: Partition, botId = BOT) => join(partitionRoots({ id: botId } as BotRecord, partition, dataDir)[0]!, "threads", THREAD);
+  const decideAt = (folder: string, deskPath: string, bundleIds = [BUNDLE]) => managedWorkspaceAutoTrust(folder, scanFolderTrustSources(folder), { ...input(bundleIds), desk: deskPath });
+
+  for (const [label, partition] of partitions) {
+    it(`a ${label} desk holding only Murage skill links is trusted, like the home desk`, () => {
+      const at = partitionDesk(partition);
+      mkdirSync(at, { recursive: true });
+      pinSkill(at, "review");
+      expect(scanFolderTrustSources(at).sources).toEqual([".agents/skills", ".claude/skills"]);
+      expect(decideAt(at, at)).toBe(true);
+      // the home desk keeps its answer, with or without the desk named
+      pinSkill(desk, "review");
+      expect(decide(desk)).toBe(true);
+      expect(decideAt(desk, desk)).toBe(true);
+      // and the partition desk still needs Murage's own name for it
+      expect(decide(at)).toBe(false);
+    });
+  }
+
+  it("a partition desk with a foreign source next to the links keeps the card", () => {
+    const at = partitionDesk({ kind: "team", teamId: "team_a" });
+    mkdirSync(at, { recursive: true });
+    pinSkill(at, "review");
+    writeFileSync(join(at, "AGENTS.md"), "x");
+    expect(decideAt(at, at)).toBe(false);
+  });
+
+  it("an owner-chosen folder is never the desk, even when Murage's desk is named alongside it", () => {
+    const at = partitionDesk({ kind: "project", groupId: "group_a", homeMember: false });
+    mkdirSync(at, { recursive: true });
+    pinSkill(at, "review");
+    const project = join(root, "owner-project");
+    mkdirSync(project);
+    pinSkill(project, "review");
+    expect(decideAt(project, at)).toBe(false);
+    // an owner folder that merely looks like a desk (`.../threads/<id>`) outside the data dir
+    const lookalike = join(root, "owner", "workspaces", BOT, "threads", THREAD);
+    mkdirSync(lookalike, { recursive: true });
+    pinSkill(lookalike, "review");
+    expect(decideAt(lookalike, lookalike)).toBe(false);
+    expect(deskComponents(dataDir, lookalike, BOT, THREAD)).toBeNull();
+  });
+
+  it("only this bot's desk shapes qualify", () => {
+    const other = partitionDesk({ kind: "team", teamId: "team_a" }, "bot_2");
+    mkdirSync(other, { recursive: true });
+    pinSkill(other, "review");
+    expect(decideAt(other, other)).toBe(false);
+    expect(deskComponents(dataDir, other, BOT, THREAD)).toBeNull();
+    // a prefix of the bot id is not the bot, and an unknown suffix is not a partition
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", "bot_1x.teams", "team_a", "threads", THREAD), BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", "bot_1.notes", "k", "threads", THREAD), BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", "bot_1.general", "k", "threads", THREAD), BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", BOT, "threads", "thread-2"), BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", BOT, "threads", THREAD, "sub"), BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, `${join(dataDir, "workspaces", "bot_1.teams", "team_a")}/../team_b/threads/${THREAD}`, BOT, THREAD)).toBeNull();
+    expect(deskComponents(dataDir, join(dataDir, "workspaces", "bot_1.teams", "team_a", "threads", THREAD), BOT, THREAD)).toEqual(["workspaces", "bot_1.teams", "team_a", "threads", THREAD]);
+  });
+
+  it("a partition root or key folder that is a symlink out of the data dir is refused", () => {
+    // `<botId>.teams/<teamId>` linked to a folder outside
+    const outside = join(root, "outside-team");
+    mkdirSync(join(outside, "threads", THREAD), { recursive: true });
+    pinSkill(join(outside, "threads", THREAD), "review");
+    mkdirSync(join(dataDir, "workspaces", "bot_1.teams"), { recursive: true });
+    symlinkSync(outside, join(dataDir, "workspaces", "bot_1.teams", "team_a"), LINK);
+    const viaKey = join(dataDir, "workspaces", "bot_1.teams", "team_a", "threads", THREAD);
+    expect(decideAt(viaKey, viaKey)).toBe(false);
+    // `<botId>.projects` itself linked out
+    const outsideRoot = join(root, "outside-projects");
+    mkdirSync(join(outsideRoot, "group_a", "threads", THREAD), { recursive: true });
+    pinSkill(join(outsideRoot, "group_a", "threads", THREAD), "review");
+    symlinkSync(outsideRoot, join(dataDir, "workspaces", "bot_1.projects"), LINK);
+    const viaRoot = join(dataDir, "workspaces", "bot_1.projects", "group_a", "threads", THREAD);
+    expect(decideAt(viaRoot, viaRoot)).toBe(false);
+    // a desk that is a symlink to the real home desk is not the desk either
+    pinSkill(desk, "review");
+    const roomThreads = join(dataDir, "workspaces", "bot_1.rooms", "room_a", "threads");
+    mkdirSync(roomThreads, { recursive: true });
+    symlinkSync(desk, join(roomThreads, THREAD), LINK);
+    const viaDesk = join(roomThreads, THREAD);
+    expect(decideAt(viaDesk, viaDesk)).toBe(false);
+  });
+
+  it("an empty or relative desk name matches nothing", () => {
+    pinSkill(desk, "review");
+    expect(decideAt(desk, "")).toBe(false);
+    expect(decideAt(desk, join("workspaces", BOT, "threads", THREAD))).toBe(false);
   });
 });

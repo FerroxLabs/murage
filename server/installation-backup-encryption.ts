@@ -8,6 +8,8 @@ import { trustedBackupAgeExecutable, normalizeBackupAgeDiagnostic } from "../ele
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { createWindowsBackupResourceResolver } from "./windows-backup-resources.ts";
 import { redactCauseText } from "../shared/backup-capture-failure.mjs";
+import { safeBackupProgress } from "../shared/backup-progress.mjs";
+import { isNoSpaceError } from "./disk-space.ts";
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
   if (!backupAgePinForTarget(process.platform, process.arch)) fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
@@ -36,7 +38,7 @@ export function backupRecipient(input: string): string {
   if(!/^age1[a-z0-9]{40,100}$/.test(input)) fail("AGE_NATIVE_RECIPIENT_REQUIRED");
   return input;
 }
-export interface BackupAgeLimits { maxBytes: number; signal?: AbortSignal; timeoutMs?: number; closeTimeoutMs?: number }
+export interface BackupAgeLimits { maxBytes: number; signal?: AbortSignal; timeoutMs?: number; closeTimeoutMs?: number; onBytes?: (bytes: number) => void }
 /** Never equate a kill request with observed process closure. */
 export async function stopBackupAgeProcess(child: { kill: (signal: NodeJS.Signals) => unknown }, isClosed: () => boolean, closed: Promise<unknown>, waitMs: number): Promise<boolean> {
   for(const signal of ["SIGTERM","SIGKILL"] as const){
@@ -55,6 +57,7 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>30*60_000||!Number.isSafeInteger(closeTimeoutMs)||closeTimeoutMs<1||closeTimeoutMs>30_000)fail("INVALID_AGE_PROCESS_LIMITS");
   const outputFd=openSync(output,"wx",0o600);
   let bytes=0;
+  const onBytes=safeBackupProgress(options.onBytes);
   const child=spawn(executable,args,{stdio:inputFd===undefined?["pipe","pipe","pipe"]:["pipe","pipe","pipe",inputFd],env:{PATH:""},windowsHide:true});
   let didClose=false;
   // Log-only facts about the tool (never shown, never returned to a window):
@@ -69,7 +72,7 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
   child.stderr!.on("data",(chunk:Buffer)=>{if(stderrHead.length<1024)stderrHead+=chunk.toString("utf8").slice(0,1024-stderrHead.length);});
   const withTool=(code:string)=>{const stderr=redactCauseText(stderrHead);return Object.assign(new InstallationSnapshotError(code),{toolDiagnostic:{...tool,...(stderr?{stderr}:{}),...(tool.errno?{errno:tool.errno,syscall:"spawn"}:{})}});};
   const destination=createWriteStream(output,{fd:outputFd,autoClose:true});
-  const bound=new Transform({transform(chunk,_encoding,done){bytes+=chunk.length;done(bytes>options.maxBytes?new InstallationSnapshotError("BACKUP_LIMIT_EXCEEDED"):null,chunk);}});
+  const bound=new Transform({transform(chunk,_encoding,done){bytes+=chunk.length;onBytes(bytes);done(bytes>options.maxBytes?new InstallationSnapshotError("BACKUP_LIMIT_EXCEEDED"):null,chunk);}});
   const abort=()=>{child.kill("SIGTERM");};
   options.signal?.addEventListener("abort",abort,{once:true});
   const transfers=[pipeline(input,child.stdin!,{signal:options.signal}),pipeline(child.stdout!,bound,destination,{signal:options.signal})];
@@ -84,7 +87,7 @@ async function runAge(executable: string,args: string[],input: Readable,output: 
     if(!confirmed){child.stderr?.destroy();child.unref();throw withTool("AGE_PROCESS_CLOSE_UNCONFIRMED");}
     await Promise.allSettled(transfers);
     if(process.platform!=="win32")rmSync(output,{force:true});
-    const reported=withTool(options.signal?.aborted?"SNAPSHOT_CANCELLED":error instanceof InstallationSnapshotError&&error.code==="AGE_TOOL_TIMEOUT"?"AGE_TOOL_TIMEOUT":"AGE_PROCESS_FAILED");
+    const reported=withTool(options.signal?.aborted?"SNAPSHOT_CANCELLED":error instanceof InstallationSnapshotError&&error.code==="AGE_TOOL_TIMEOUT"?"AGE_TOOL_TIMEOUT":!(error instanceof InstallationSnapshotError)&&isNoSpaceError(error)?"BACKUP_DISK_FULL":"AGE_PROCESS_FAILED");
     // A pipe failure (the zip stream feeding age, or the output file) is the
     // real cause when age itself exited cleanly: keep its errno for the log.
     const pipe=error as NodeJS.ErrnoException|undefined;
