@@ -5,7 +5,7 @@ import { closedComposerLine } from "@/lib/shared-teams";
 import { dictationDisabledNote, isDictationDisabled } from "@/lib/dictation-notes";
 import { FOCUS_COMPOSER_EVENT } from "./useTrayIntents";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, ListChecks, Mic, Paperclip, Sparkles, Square, Target, Terminal, Users, X } from "lucide-react";
 import { useWarmIntent } from "@/hooks/use-warm-intent";
 import { api, olderOpenCards, useStore, visibleMessages, type Bot, type Group, type Message } from "@/state/store";
@@ -56,9 +56,11 @@ import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/li
 import type { EngineCommand, EngineCommandsView } from "../../shared/engine-commands";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
+import { noLimitsTermsPending } from "./NoLimitsTermsPrompt";
 import { PERMISSION_MODES, PermissionModeIcon, PermissionModeMenu, engineCannotAsk } from "./PermissionModeMenu";
 import { RefreshPermissionsButton } from "./ThreadFollowControls";
-import { fullAccessRefusalMessage, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
+import { computerHere } from "@/lib/computer-surface";
+import { fullAccessRefusalMessage, needsLevelConfirm, permissionModeOf, routineEffectiveMode, routineOfConversation, type PermissionMode } from "@/lib/permission-mode";
 import {
   engineAcceptsImages,
   appendPastedText,
@@ -84,7 +86,8 @@ import { goalCoordinatorForComposer, groupComposerHint, roomRespondersForCompose
 import { pendingApprovals, type Pending } from "./PendingApproval";
 import { PendingApprovalQueue } from "./PendingApprovalQueue";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
-import { autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/local-computer";
+import { autoMountsThisComputer, autoNeedsLocalComputerWarning, localAutoHostPlatform } from "@/lib/local-computer";
+import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { ComposerReplyStrip } from "./ReplyQuote";
 import { escapeCancelsReply } from "@/lib/replies";
 import { t } from "@/lib/i18n";
@@ -193,9 +196,10 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
         aria-label={`${current === "ask" ? "Ask for approval" : currentEntry.label}${routine ? ` for the routine ${routine.name}` : ""}`}
         title={routine ? `Every run of the routine ${routine.name} works here at this level. Choosing one here sets it for the routine.` : undefined}
         data-routine-level={routine ? "" : undefined}
+        data-coach="level-chip"
         disabled={bot.busy}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+        className="relative flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border border-hairline/20 bg-transparent px-3 text-[13px] text-ink-secondary after:absolute after:-inset-1.5 after:content-[''] hover:bg-raised hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
         <PermissionModeIcon mode={current} size={14} className="opacity-70" />
         {currentEntry.chip}
@@ -220,6 +224,9 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
  * below Auto on a desktop, and the phone composer's + menu opens the very
  * same one, so the engine notes, the desktop-only levels and Refresh
  * permissions read the same on both. */
+// The confirm card opens from a pick most conversations never make, so it stays off the first paint.
+const LevelConfirmChunk = retryableLazy(() => import("@/components/approval/LevelConfirmCard").then((module) => ({ default: module.LevelConfirmDialog })));
+
 function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
   bot: Bot;
   routine?: { name: string; mode: PermissionMode };
@@ -230,6 +237,8 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
   const desktop = useDesktopSurface();
   const { state } = useStore();
   const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
+  // 3.1: the bot's own record holds the default for new conversations
+  const profile = state.bots.find((candidate) => candidate.id === bot.id);
   return (
     <PermissionModeMenu
       botName={bot.name}
@@ -238,7 +247,8 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
       engineCannotAsk={engineCannotAsk(engine?.driverKind) ? engine!.displayName : undefined}
       engineOwnApprovals={engine?.capabilities?.runsOnOwnTools === true ? engine.displayName : undefined}
       scope={routine ? { routine: routine.name } : {}}
-      footer={!routine && desktop ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={onDone} /> : undefined}
+      botDefault={profile ? permissionModeOf(profile) : undefined}
+      footer={!routine && computerHere(desktop) === true ? <RefreshPermissionsButton botId={bot.id} threadId={bot.threadId} onDone={onDone} /> : undefined}
       onPick={onPick}
     />
   );
@@ -749,9 +759,10 @@ export function Composer({
   };
   const fileInput = useRef<HTMLInputElement>(null);
   // which level the Auto-on-this-computer warning is confirming, if open
-  const [autoWarn, setAutoWarn] = useState<false | "auto" | "full" | "unlimited">(false);
+  const [autoWarn, setAutoWarn] = useState(false);
   // the one-time Full access warning, and whether it also covers this computer
   const [fullWarn, setFullWarn] = useState<false | { onThisComputer: boolean; level: "full" | "unlimited" }>(false);
+  const [levelConfirm, setLevelConfirm] = useState<{ mode: "full" | "unlimited"; keep: PermissionMode; routine?: string; onThisComputer: boolean } | null>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const audioFileRef = useRef<File | null>(null);
@@ -779,8 +790,23 @@ export function Composer({
     // overlapping intake must not erase an earlier failure before it is read.
     onNotice: setAttachmentNotice,
   });
-  const setMode = (mode: PermissionMode) => {
+  const setMode = (mode: PermissionMode, confirmed = false) => {
     if (!autoBot) return;
+    const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
+    // UX-TRUST-MOMENTS-1012 3.3: a higher pick to Full access or No limits is
+    // the confirm card, which is also the one-time warning and, when the bot
+    // drives this computer, the Auto-on-this-computer one, so the owner is
+    // never asked twice in a row.
+    const current = conversationRoutine && routineProfile ? routineEffectiveMode(conversationRoutine, routineProfile) : permissionModeOf(autoBot);
+    // New No limits terms are read in No limits' own warning, which accepts them: the confirm card does not.
+    if (!conversationRoutine && mode === "unlimited" && noLimitsTermsPending(state.config)) {
+      setFullWarn({ onThisComputer: autoMountsThisComputer({ platform, computer: autoBot.computer }), level: "unlimited" });
+      return;
+    }
+    if (!confirmed && (mode === "full" || mode === "unlimited") && needsLevelConfirm(current, mode)) {
+      setLevelConfirm({ mode, keep: current, routine: conversationRoutine?.name, onThisComputer: autoMountsThisComputer({ platform, computer: autoBot.computer }) });
+      return;
+    }
     // In a routine's own conversation the level is the routine's: every run
     // works here at it (server/routines.ts). The server asks for the bot's
     // one-time Full access or No limits warning first, and says so.
@@ -790,33 +816,23 @@ export function Composer({
         .catch((error) => dispatch({ type: "error", message: fullAccessRefusalMessage({ [mode === "unlimited" ? "noLimits" : "fullAccess"]: mode === "full" || mode === "unlimited" }, error) ?? (error instanceof Error ? error.message : String(error)) }));
       return;
     }
-    // Turning Auto (or Full access, which includes it) on for a bot that
-    // drives THIS computer has to be acknowledged first. The flag the dialog
-    // sends is stripped by the reducer rather than stored, so — exactly like
-    // the settings panel — that warning is shown on every switch-on, not just
-    // the first. The platform is the harness's own (announced on
-    // /api/config), not this browser's UA (FOLLOW5).
-    const platform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
+    // Turning Auto on for a bot that drives THIS computer has to be
+    // acknowledged first. The flag the dialog sends is stripped by the reducer
+    // rather than stored, so, exactly like the settings panel, that warning is
+    // shown on every switch-on, not just the first. The platform is the
+    // harness's own (announced on /api/config), not this browser's UA (FOLLOW5).
     const needsLocal = mode !== "ask" && autoNeedsLocalComputerWarning({ platform, computer: autoBot.computer, autoApprove: autoBot.autoApprove });
     if (mode === "full" || mode === "unlimited") {
-      // Full access and No limits each have their own warning, once per bot;
-      // the server refuses the switch without it (server/full-access.ts).
-      // When it is shown it also covers this computer, so the owner is never
-      // asked twice in a row.
-      const acknowledged = mode === "unlimited" ? autoBot.noLimitsAcknowledgedAt : autoBot.fullAccessAcknowledgedAt;
-      if (acknowledged === undefined) {
-        setFullWarn({ onThisComputer: needsLocal, level: mode });
-        return;
-      }
-      if (needsLocal) {
-        setAutoWarn(mode);
-        return;
-      }
-      dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: mode === "unlimited" ? { noLimits: true } : { fullAccess: true } });
+      // Full access and No limits are acknowledged once per bot; the server
+      // refuses the switch without it (server/full-access.ts).
+      const acknowledge = mode === "unlimited"
+        ? autoBot.noLimitsAcknowledgedAt === undefined ? { acknowledgeNoLimits: true } : {}
+        : autoBot.fullAccessAcknowledgedAt === undefined ? { acknowledgeFullAccess: true } : {};
+      dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: { ...(mode === "unlimited" ? { noLimits: true } : { fullAccess: true }), ...acknowledge, ...(needsLocal ? { acknowledgeLocalAuto: true } : {}) } });
       return;
     }
     if (needsLocal) {
-      setAutoWarn("auto");
+      setAutoWarn(true);
       return;
     }
     dispatch({ type: "updateTask", botId: autoBot.id,threadId, patch: { autoApprove: mode === "auto", fullAccess: false } });
@@ -1706,21 +1722,29 @@ export function Composer({
       </div>
       <div className="pointer-events-auto">
       <LocalComputerAutoWarning
-        open={autoWarn !== false}
-        mode={autoWarn === false ? "auto" : autoWarn}
+        open={autoWarn}
+        mode="auto"
         onCancel={() => setAutoWarn(false)}
         onConfirm={() => {
-          if (autoBot) {
-            dispatch({
-              type: "updateTask",
-              botId: autoBot.id,
-              threadId,
-              patch: autoWarn === "unlimited" ? { noLimits: true, acknowledgeLocalAuto: true } : autoWarn === "full" ? { fullAccess: true, acknowledgeLocalAuto: true } : { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true },
-            });
-          }
+          if (autoBot) dispatch({ type: "updateTask", botId: autoBot.id, threadId, patch: { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true } });
           setAutoWarn(false);
         }}
       />
+      {levelConfirm && autoBot && (
+        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => setLevelConfirm(null)}>
+          <Suspense fallback={null}>
+            <LevelConfirmChunk.Component
+              bot={autoBot.name}
+              target={levelConfirm.mode}
+              keep={levelConfirm.keep}
+              effect={levelConfirm.routine ? { kind: "routine", routine: levelConfirm.routine } : { kind: "conversation" }}
+              onThisComputer={levelConfirm.onThisComputer}
+              onKeep={() => setLevelConfirm(null)}
+              onUse={() => { setMode(levelConfirm.mode, true); setLevelConfirm(null); }}
+            />
+          </Suspense>
+        </LazyBoundary>
+      )}
       <FullAccessWarning
         open={fullWarn !== false}
         botName={autoBot?.name ?? ""}
@@ -1736,6 +1760,7 @@ export function Composer({
               threadId,
               patch: { ...(fullWarn.level === "unlimited" ? { noLimits: true, acknowledgeNoLimits: true } : { fullAccess: true, acknowledgeFullAccess: true }), ...(fullWarn.onThisComputer ? { acknowledgeLocalAuto: true } : {}) },
             });
+            if (fullWarn.level === "unlimited") dispatch({ type: "noLimitsTermsAccepted" });
           }
           setFullWarn(false);
         }}

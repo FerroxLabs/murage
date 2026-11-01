@@ -152,7 +152,7 @@ describe("reading the committed issues", () => {
 
   it("summary answers the last published view, waiting before the first, and never starts a scan", () => {
     const { location, store } = seeded(3);
-    expect(read("/api/sentinel/summary", "", owner(location))!.body).toEqual({ status: "waiting", view: null });
+    expect(read("/api/sentinel/summary", "", owner(location))!.body).toEqual({ status: "waiting", view: null, digest: null });
     publishView(location.outputRoot, viewFromStore(store, T0, "running", "complete", T0, T0));
     const body = read("/api/sentinel/summary", "", owner(location))!.body as { status: string; view: { summary: { openCount: number } } };
     expect(body.status).toBe("ready");

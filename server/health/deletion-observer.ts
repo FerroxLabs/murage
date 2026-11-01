@@ -24,7 +24,7 @@ export const deletionEngineKind = (engine: unknown): EngineKind =>
   typeof engine === "string" && Object.hasOwn(DELETION_ENGINE_KINDS, engine) ? DELETION_ENGINE_KINDS[engine]! : toEngineKind(engine);
 
 /** What the journal entries carry that this reads: when the entry was made and which engines' homes it names. */
-export interface DeletionJournalEntry { createdAt?: unknown; engineHomes?: ReadonlyArray<{ engine?: unknown }> }
+export interface DeletionJournalEntry { createdAt?: unknown; engineHomes?: ReadonlyArray<{ engine?: unknown; home?: unknown }>; homesVerified?: unknown }
 
 interface KindState {
   pending: number; oldest: number | null; holder: HolderState; holderClearAt: number | null;
@@ -48,6 +48,16 @@ export function entryKinds(entry: DeletionJournalEntry): EngineKind[] {
   const out = new Set<EngineKind>();
   for (const home of Array.isArray(entry?.engineHomes) ? entry.engineHomes : []) out.add(deletionEngineKind(home?.engine));
   return out.size ? [...out] : ["none"];
+}
+
+/** The kinds one entry still owes: its homes other than those it has verified clean. A home that is verified is not pending for its
+ *  engine, though the entry stays until one attempt finds every home free. Completion still counts every kind (entryKinds). */
+function pendingKinds(entry: DeletionJournalEntry): EngineKind[] {
+  const verified = new Set(Array.isArray(entry?.homesVerified) ? entry.homesVerified : []);
+  const homes = Array.isArray(entry?.engineHomes) ? entry.engineHomes : [];
+  if (!verified.size || !homes.length) return entryKinds(entry);
+  const owed = homes.filter((home) => !verified.has(`${String(home?.engine)}\0${String(home?.home)}`));
+  return owed.length ? entryKinds({ engineHomes: owed }) : [];
 }
 
 function emit(kind: EngineKind, entry: KindState, now: number, force = false): void {
@@ -74,7 +84,7 @@ export function observeDeletionJournal(entries: readonly DeletionJournalEntry[],
     const seen = new Map<EngineKind, { pending: number; oldest: number | null }>();
     for (const entry of entries) {
       const at = typeof entry?.createdAt === "number" && Number.isFinite(entry.createdAt) && entry.createdAt > 0 ? Math.floor(entry.createdAt) : null;
-      for (const kind of entryKinds(entry)) {
+      for (const kind of pendingKinds(entry)) {
         const figure = seen.get(kind) ?? { pending: 0, oldest: null };
         figure.pending++;
         if (at !== null && (figure.oldest === null || at < figure.oldest)) figure.oldest = at;

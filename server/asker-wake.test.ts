@@ -623,3 +623,101 @@ describe("asker wakes", () => {
     expect(wakes.threads()).toEqual([]);
   });
 });
+
+describe("a clean close and the wake it cut", () => {
+  const atFive = (k: ReturnType<typeof kept>) => {
+    const wakes = new AskerWakes(k.persist);
+    wakes.register("task-1", intent());
+    wakes.deliver("task-1", reply);
+    wakes.restore("t1", { intents: [], wakes: k.wakes().map((w) => ({ ...w, attempts: MAX_ASKER_WAKE_ATTEMPTS - 1 })) }, new Set());
+    return wakes;
+  };
+  const reopened = (k: ReturnType<typeof kept>, held: string[] = []) => {
+    const wakes = new AskerWakes(k.persist);
+    wakes.restore("t1", k.saved.get("t1")!, new Set(held), "lead");
+    return wakes;
+  };
+
+  it("a claim at the last attempt that the close cut comes back owed; the same claim after a crash is dropped", () => {
+    const closed = kept();
+    const wakes = atFive(closed);
+    wakes.claim("t1");
+    wakes.closing();
+    expect(closed.wakes().map((w) => [w.state, w.closedClaim])).toEqual([["claimed", true]]);
+    const next = reopened(closed);
+    expect(next.has("t1")).toBe(true);
+    expect(closed.wakes().map((w) => [w.state, w.attempts, w.closedClaim])).toEqual([["owed", MAX_ASKER_WAKE_ATTEMPTS - 1, undefined]]);
+
+    const crashed = kept();
+    atFive(crashed).claim("t1");
+    expect(reopened(crashed).has("t1")).toBe(false);   // a start that kills the server stays bounded
+    expect(crashed.wakes()).toEqual([]);
+  });
+
+  it("closing marks claimed records only, and a started one is still never run again", () => {
+    const k = kept();
+    const wakes = new AskerWakes(k.persist);
+    wakes.register("a", intent()); wakes.deliver("a", reply);
+    const first = wakes.claim("t1")!;
+    expect(wakes.start(first.id)).toBe(true);
+    wakes.register("b", intent()); wakes.deliver("b", { ...reply, toBotId: "other" });
+    wakes.closing();
+    expect(k.wakes().map((w) => [w.state, w.closedClaim])).toEqual([["started", undefined], ["owed", undefined]]);
+    const next = reopened(k);
+    expect(next.stateOf(first.id)).toBeUndefined();
+    expect(next.has("t1")).toBe(true);
+  });
+
+  it("after closing the fence refuses a claimed wake and leaves it marked; a started one passes", () => {
+    const k = kept();
+    const wakes = new AskerWakes(k.persist);
+    wakes.register("a", intent()); wakes.deliver("a", reply);
+    const record = wakes.claim("t1")!;
+    wakes.closing();
+    expect(wakes.start(record.id)).toBe(false);
+    expect(k.wakes().map((w) => [w.state, w.closedClaim])).toEqual([["claimed", true]]);
+    const other = kept();
+    const running = new AskerWakes(other.persist);
+    running.register("a", intent()); running.deliver("a", reply);
+    const taken = running.claim("t1")!;
+    running.start(taken.id);
+    running.closing();
+    expect(running.start(taken.id)).toBe(true);
+  });
+
+  it("a held wake on its last replay when the close comes keeps one replay, with its item; without its item it is gone", () => {
+    const k = kept();
+    const wakes = new AskerWakes(k.persist);
+    wakes.register("a", intent()); wakes.deliver("a", reply);
+    const record = wakes.claim("t1")!;
+    wakes.hold(record.id);
+    for (let i = 0; i < MAX_ASKER_WAKE_ATTEMPTS; i++) expect(wakes.replayHeld(record.id)).toBe(true);
+    wakes.closing();
+    const snapshot = JSON.parse(JSON.stringify(k.saved.get("t1"))) as AskerWakeSnapshot;
+    const next = reopened(k, [heldWakeId(record.id)]);
+    expect(next.isHeld(record.id)).toBe(true);
+    expect(k.wakes().map((w) => [w.attempts, w.closedClaim])).toEqual([[MAX_ASKER_WAKE_ATTEMPTS - 1, undefined]]);
+    expect(next.replayHeld(record.id)).toBe(true);
+    const gone = new AskerWakes();
+    gone.restore("t1", snapshot, new Set());
+    expect(gone.isHeld(record.id)).toBe(false);
+  });
+
+  it("the mark is read back exactly, and Stop and acceptance end a marked record as any other", () => {
+    const k = kept();
+    const wakes = new AskerWakes(k.persist);
+    wakes.register("a", intent()); wakes.deliver("a", reply);
+    const record = wakes.claim("t1")!;
+    wakes.closing();
+    const bad = new AskerWakes();
+    bad.restore("t1", { intents: [], wakes: [{ ...k.wakes()[0]!, closedClaim: "yes" }] } as never, new Set());
+    expect(bad.has("t1")).toBe(false);
+    wakes.done(record.id);
+    expect(k.wakes()).toEqual([]);
+    wakes.register("b", intent()); wakes.deliver("b", reply);
+    const next = wakes.claim("t1")!;
+    expect(next.closedClaim).toBeUndefined();
+    wakes.drop("t1", "lead");
+    expect(k.wakes()).toEqual([]);
+  });
+});

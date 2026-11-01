@@ -88,7 +88,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
-  { methods: ["PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The paired owner sets the home's routine time zone." },
+  { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
   { methods: ["POST"], path: "/api/projects/proposal", class: "desktop", cloudWrite: "ordinary", why: "The owner asks the Chief for a project proposal." },
   { methods: ["POST"], path: "/api/projects", class: "desktop", cloudWrite: "ordinary", why: "The owner creates project authority and members." },
@@ -121,6 +121,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["DELETE"], path: re(`/api/(?:bots|groups)/${ID}/tasks/${ID}`), class: "companion", cloudWrite: "ordinary", why: "deleting a task conversation destroys its transcript" },
   { methods: ["GET", "POST"], path: "/api/mcp-grants", class: "companion", cloudWrite: "credential", why: "the owner lists and makes script access for one bot (mcp-grants.ts); a script or a bot never makes its own" },
   { methods: ["DELETE"], path: re(`/api/mcp-grants/${ID}`), class: "companion", cloudWrite: "step-up", why: "the owner switches one script access off" },
+  { methods: ["POST"], path: "/api/feedback", class: "companion", cloudWrite: "ordinary", why: "the owner sends tester feedback (the screen's name and one of three fixed sentences) from the help panel on the desktop, the phone or the Cloud window" },
+  { methods: ["GET"], path: /^\/api\/help\/search$/, class: "conversation", why: "help search over the shipped docs; no owner data" },
+  { methods: ["GET"], path: "/api/engine-health", class: "conversation", why: "Today's engine tag and the Health dot; the route itself 404s anyone but the owner's surfaces" },
   { methods: ["POST"], path: "/api/sidebar-sections", class: "companion", cloudWrite: "ordinary", why: "filing bots into a team decides who they can reach and which team brief they read" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/work-threads`), class: "companion", cloudWrite: "ordinary", why: "open (creating on first use) the owner's work thread for a covered team, from the desktop or the paired phone (SPEC-X 12.1)" },
   { methods: ["POST"], path: re(`/api/routines/${ID}/run`), class: "companion", cloudWrite: "browser-step-up", why: "run an existing routine now, with the permissions it was given at the keyboard" },
@@ -180,9 +183,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/avatar/generate`), class: "conversation", cloudWrite: "ordinary", why: "draw a new avatar for a bot" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/skills`), class: "conversation", why: "the list of a bot's skills the new-bot intake counts; installing stays on the desktop" },
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
-  { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop" },
+  { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop (ifRev: an Undo restores only the record it changed, UX-TRUST-L1B-1013)" },
   // 1.0.4 SL-K / SL-I: conversation class so a paired device gets the plain 404 from the route's own desktop check (as the task settings PATCH)
-  { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "raise owner open conversations after a preview" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "preview a level (targetLevel) with its conversations and routines, then raise owner open conversations (rosterId, targetLevel, afterRev; designs UX-TRUST-L1B-1013)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "copy the bot's permissions onto one chat after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/threads/follow-model`), class: "desktop", cloudWrite: "ordinary", why: "chats with a model of their own go back to the bot's model" },
   { methods: ["PUT", "DELETE"], path: re(`/api/bots/${ID}/limit-backup`), class: "desktop", cloudWrite: "step-up", why: "the engine that takes over when the bot's engine hits its limit" },
@@ -261,6 +264,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/artifacts(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "verified private workspace deliverables" },
   { methods: "*", path: /^\/api\/claude-accounts(?:\/|$)/, class: "desktop", cloudWrite: "credential", why: "named native Claude account configuration" },
   { methods: "*", path: "/api/automation-admission", class: "desktop", cloudWrite: "ordinary", why: "pause or resume automatic work" },
+  { methods: ["POST"], path: "/api/no-limits/terms", class: "desktop", cloudWrite: "step-up", why: "accept the No limits terms" },
   { methods: ["POST"], path: "/api/backup-failure-notice", class: "desktop", cloudWrite: "ordinary", why: "the desktop reports a stopped backup to the Inbox" },
   { methods: ["GET"], path: "/api/backup-waiting", class: "desktop", why: "who a held-up backup is waiting for" },
   { methods: ["POST"], path: "/api/backup-restart", class: "desktop", cloudWrite: "ordinary", why: "admit or cancel a backup restart" },
@@ -335,9 +339,10 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,64}/stop`), class: "desktop", cloudWrite: "ordinary", why: "stop a delegated task" },
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,160}/(?:send-again|dismiss)`), class: "desktop", cloudWrite: "ordinary", why: "send a held hand-off again, or let it go" },
   // one bot's administration
-  { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", cloudWrite: "body", why: "bot authority, engine, working folder and deletion" },
+  { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", cloudWrite: "body", why: "bot authority, engine, working folder and deletion (previewId, ifRev: a level change writes only what the owner reviewed, UX-TRUST-L1B-1013)" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/access`), class: "desktop", cloudWrite: "step-up", why: "review scoped connected-app authority" },
-  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove|/undo)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants, and the card's Undo of one save by holder (UX-TRUST-MOMENTS-1012 1.3)" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/task-allow/(?:remove|clear)`), class: "companion", cloudWrite: "step-up", why: "take back a 12-hour task allowance (the card's Undo) or clear them all (Settings), from the desktop or the paired phone, as the owner (UX-TRUST-MOMENTS-1012 2.3.8, 2.5)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/(?:assistant-profile|skills|skills/library)`), class: "desktop", cloudWrite: "step-up", why: "install executable instructions" },
   { methods: "*", path: re(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), class: "desktop", cloudWrite: "step-up", why: "read, enable, change, roll back or delete an installed skill" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/memory`), class: "desktop", cloudWrite: "ordinary", why: "the bot's notebook" },
@@ -378,7 +383,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };

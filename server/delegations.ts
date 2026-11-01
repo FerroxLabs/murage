@@ -938,7 +938,7 @@ export function parkWaiting(bus: CommsBus, sourceThreadId: string, item: Pending
     role: "bot",
     kind: "activity",
     tool: { name: why === "busy" ? `Delegation to @${targetName} waiting: they're busy (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS} when they finish)`
-      : `Delegation to @${targetName} waiting: it did not start (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS}). It tries again on its own, or you can stop it.` },
+      : `Delegation to @${targetName} waiting: it did not start (retry ${item.attempts}/${MAX_BUSY_ATTEMPTS})` },
     delegationWait: { id: item.id },
   });
   item.waitMessageId = line.id;

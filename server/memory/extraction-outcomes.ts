@@ -1,31 +1,39 @@
 import { deriveStableToken, extractionAdmitted, extractionSettled, recordCounter, type ExtractionSettlement } from "../health/counters.ts";
 import { toEngineKind, type EngineKind } from "../../shared/health-protocol.mjs";
+import { GATE_REASONS, type GateCounts } from "./candidate-gate.ts";
 
 /** Only these host-owned labels may reach extraction diagnostics. Never log errors or replies. */
-export const EXTRACTION_FAILURE_REASONS = ["empty-reply", "not-json", "schema-mismatch", "cut-off", "refusal", "transport-error"] as const;
+export const EXTRACTION_FAILURE_REASONS = ["empty-reply", "not-json", "schema-mismatch", "cut-off", "refusal", "transport-error", "network"] as const;
 export type ExtractionFailureReason = typeof EXTRACTION_FAILURE_REASONS[number];
 export class ExtractionReplyError extends Error {
   readonly reason: ExtractionFailureReason;
   /** A finer health code where the reason groups several (a tool call is a schema mismatch for backoff, `tool-call` for health). */
-  readonly detail?: "tool-call";
-  constructor(code: string, reason: ExtractionFailureReason, detail?: "tool-call") { super(code); this.reason = reason; if (detail) this.detail = detail; }
+  readonly detail?: "tool-call" | "no-text";
+  constructor(code: string, reason: ExtractionFailureReason, detail?: "tool-call" | "no-text") { super(code); this.reason = reason; if (detail) this.detail = detail; }
 }
 export const EXTRACTION_SUMMARY_MS = 60 * 60_000;
 /** Murage's own extraction catalogue (extractor-connections.ts FLUX_EXTRACTORS). Any other model is reported as `custom`:
  *  a provider's model string or alias never reaches a log line, a counter or a fact (GAP-SENTINEL-109 4.2). */
-export const EXTRACTION_CATALOGUE_MODELS: readonly string[] = Object.freeze(["flux-fast", "flux-standard", "flux-auto"]);
+export const FLUX_PINNED_LEARNING_MODEL = "flux-pinned-gpt-5-nano";
+export const EXTRACTION_CATALOGUE_MODELS: readonly string[] = Object.freeze(["flux-fast", "flux-standard", "flux-auto", FLUX_PINNED_LEARNING_MODEL]);
 export const catalogueModel = (model: unknown): string => (typeof model === "string" && EXTRACTION_CATALOGUE_MODELS.includes(model) ? model : "custom");
 /** Deferrals happen before any call and never enter a success rate. */
 export type ExtractionDeferral = "busy" | "unconfigured" | "budget";
 const MAX_IDENTITIES = 128;
+const NETWORK_BACKOFF_CAP_MS = 15 * 60_000;
 const counts = () => Object.fromEntries(EXTRACTION_FAILURE_REASONS.map(reason => [reason, 0])) as Record<ExtractionFailureReason, number>;
+const noDrops = (): GateCounts => ({ placeholder: 0, transient: 0, thin: 0 });
 interface Outcomes {
   /** The opaque extractor key (health/counters.ts deriveStableToken, the same across restarts): never the connection id itself. */
   extractor: string; engine: EngineKind; model: string; completed: number; deferred: number;
   unusable: Record<ExtractionFailureReason, number>; consecutive: number;
   backoffMs: number; retryAt: number; touched: number; dirty: boolean;
+  /** Calls that never reached the provider, and when the next may try. An owner retry does not pass this one: a press would only fail the same way. */
+  networkStreak: number; networkRetryAt: number;
   /** Settlements as the health contract counts them (a cancelled attempt is not unusable there), and when this summary began. */
   health: { unusable: number; interrupted: number; since: number; partial: boolean };
+  /** Candidates the quality gate dropped since the last summary, by reason. Counts only, never their text. */
+  gate: GateCounts;
 }
 
 /** Process-local pacing survives resolver closures being recreated; no source text is retained.
@@ -45,18 +53,20 @@ export class ExtractionOutcomes {
       id = this.anonymous.get(extractor);
       if (!id) { id = `anonymous-${++this.nextAnonymous}`; this.anonymous.set(extractor, id); }
     }
-    const key = JSON.stringify([id, model]);
+    // The pin is an arm of flux-fast, not another model: a key moved off it keeps its pacing and backoff, and the line reports the arm in use
+    const key = JSON.stringify([id, model === FLUX_PINNED_LEARNING_MODEL ? "flux-fast" : model]);
     let state = this.states.get(key);
     if (!state) {
       if (this.states.size >= MAX_IDENTITIES) this.states.delete(this.states.keys().next().value!);
       const now = Date.now();
       state = {
         extractor: deriveStableToken("extractor", id), engine: toEngineKind(extractor.healthEngine), model: catalogueModel(model),
-        completed: 0, deferred: 0, unusable: counts(), consecutive: 0, backoffMs: 0, retryAt: 0, touched: now, dirty: false,
+        completed: 0, deferred: 0, unusable: counts(), consecutive: 0, backoffMs: 0, retryAt: 0, networkStreak: 0, networkRetryAt: 0, touched: now, dirty: false,
         // the first summary after this identity appeared covers less than its hour
-        health: { unusable: 0, interrupted: 0, since: now, partial: true },
+        health: { unusable: 0, interrupted: 0, since: now, partial: true }, gate: noDrops(),
       };
     }
+    state.model = catalogueModel(model);
     this.states.delete(key); this.states.set(key, state);
     state.touched = Date.now();
     if (!this.timer) {
@@ -67,10 +77,14 @@ export class ExtractionOutcomes {
   }
 
   deferred(state: Outcomes, why: ExtractionDeferral = "busy") { state.deferred++; state.dirty = true; recordCounter("extraction", `deferred-${why}`, state.engine, state.extractor); }
+  /** The extraction `counter` codes are a closed list (shared/health-protocol.mjs), so these reach their own hourly line only. */
+  gated(state: Outcomes, dropped: GateCounts) {
+    for (const reason of GATE_REASONS) { if (dropped[reason]) { state.gate[reason] += dropped[reason]; state.dirty = true; } }
+  }
   /** The call was admitted (its reservation committed): from here it settles exactly once. */
   admitted(state: Outcomes) { extractionAdmitted(state.extractor, state.engine); }
   completed(state: Outcomes) {
-    state.completed++; state.consecutive = 0; state.backoffMs = 0; state.retryAt = 0; state.dirty = true;
+    state.completed++; state.consecutive = 0; state.backoffMs = 0; state.retryAt = 0; state.networkStreak = 0; state.networkRetryAt = 0; state.dirty = true;
     extractionSettled(state.extractor, state.engine, "complete");
   }
   /** The health contract's settlement of a failed attempt, beside the backoff bookkeeping below (which it never changes). */
@@ -82,6 +96,7 @@ export class ExtractionOutcomes {
   }
   unusable(state: Outcomes, reason: ExtractionFailureReason) {
     state.unusable[reason]++; state.dirty = true;
+    if (reason === "network") { this.networkFailed(state); return; }
     // A failed transport produced no reply. Report it, but do not start or extend reply backoff.
     if (reason === "transport-error") return;
     state.consecutive++;
@@ -89,6 +104,11 @@ export class ExtractionOutcomes {
       state.backoffMs = Math.min(EXTRACTION_SUMMARY_MS, 60_000 * 2 ** Math.min(6, state.consecutive - 5));
       state.retryAt = Date.now() + state.backoffMs;
     }
+  }
+  /** One minute, doubling to 15: a long outage costs at most 96 calls a day, however many sources wait. */
+  networkFailed(state: Outcomes) {
+    state.networkRetryAt = Date.now() + Math.min(NETWORK_BACKOFF_CAP_MS, 60_000 * 2 ** Math.min(4, state.networkStreak));
+    state.networkStreak++;
   }
   /** The hourly line, one per extractor identity with anything to say: counts, the opaque extractor key, the engine
    *  category and a catalogue model id or `custom`. Coverage is partial when the summary spans less than its hour or an
@@ -100,8 +120,10 @@ export class ExtractionOutcomes {
         const coverage = state.health.partial || now - state.health.since < EXTRACTION_SUMMARY_MS ? "partial" : "complete";
         try {
           console.info(`[memory] extraction outcomes complete=${state.completed} deferred=${state.deferred} unusable=${state.health.unusable} interrupted=${state.health.interrupted} extractor=${state.extractor} engine=${state.engine} model=${state.model} coverage=${coverage}`);
+          const gateDropped = GATE_REASONS.reduce((total, reason) => total + state.gate[reason], 0);
+          if (gateDropped) console.info(`[memory] extraction gate dropped=${gateDropped} placeholder=${state.gate.placeholder} transient=${state.gate.transient} thin=${state.gate.thin} extractor=${state.extractor} engine=${state.engine}`);
         } catch { /* logging is best effort */ }
-        state.completed = 0; state.deferred = 0; state.unusable = counts(); state.dirty = false;
+        state.completed = 0; state.deferred = 0; state.unusable = counts(); state.gate = noDrops(); state.dirty = false;
       }
       state.health = { unusable: 0, interrupted: 0, since: now, partial: false };
       if (now - state.touched >= 24 * EXTRACTION_SUMMARY_MS) this.states.delete(key);

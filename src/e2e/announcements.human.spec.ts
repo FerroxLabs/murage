@@ -199,3 +199,15 @@ test("the gallery: every layout as a card and as a banner, readable and accessib
     await page.locator(`[data-gallery="cards"] [data-layout="${layout}"]`).screenshot({ path: join(dir, `announcement-gallery-card-${layout}.png`) });
   }
 });
+
+test("on a short phone every card keeps its buttons inside the card", async ({ page }) => {
+  await page.setViewportSize({ width: 667, height: 280 });
+  await page.goto(origin + "/__announcements?gallery=1");
+  for (const layout of ["hero", "split", "spotlight"]) {
+    const card = page.locator(`[data-gallery="cards"] [data-layout="${layout}"]`), foot = card.locator("[data-box-foot]");
+    await expect(foot).toBeVisible();
+    const [box, row] = await Promise.all([card.boundingBox(), foot.boundingBox()]);
+    expect(row!.y + row!.height, `${layout}: buttons inside the card`).toBeLessThanOrEqual(box!.y + box!.height + 0.5);
+    expect(row!.y, `${layout}: words get room above the buttons`).toBeGreaterThan(box!.y);
+  }
+});
