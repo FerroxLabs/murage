@@ -15,7 +15,7 @@
 // The service (conversation-deletion.ts) runs the same stages as separate jobs so it can save the plan before the first step
 // runs and the step marks as they finish.
 import { anyProcessNames, configureScopes, engineState, foreignEngineHolders, holdersClearOf, inScopeFolder, privateScopeHome } from "./engine-closed.ts";
-import { executeEnginePlans, recoverAll } from "./engine-exec.ts";
+import { executeEnginePlans, recoverAll, removeConfined } from "./engine-exec.ts";
 import { configureRedo, listRedo } from "./engine-redo.ts";
 import { exclOps, realEngineFs } from "./engine-fs.ts";
 import type { DeletionEngineHome, DeletionLeftover } from "./conversation-deletion.ts";
@@ -331,6 +331,15 @@ export function runEngineHistoryJob(job: EngineHistoryJob, onStep?: (key: string
     // and the empty private lock folders a killed Murage left next to Claude Code's history (never Claude's own lock)
     const done = recoverAll(configured, job.homes.filter((item) => item.engine === "claude").map((item) => pathApiFor(item.home).join(item.home, "history.jsonl")), allow);
     return { removed: [], failed: done.pending.map((item) => item.home), leftovers: [], failedHomes: done.pending.map((item) => homeKey(item.engine as DeletionEngineHome["engine"], item.home)) };
+  }
+  if (job.kind === "removeTrees") {
+    const removed: string[] = [], failed: string[] = [];
+    for (const { root, target } of job.trees ?? []) {
+      const outcome = removeConfined(root, target);
+      if (outcome === "removed") removed.push(target);
+      else if (outcome === "refused" || outcome === "failed") failed.push(target);
+    }
+    return { removed, failed, leftovers: [] };
   }
   if (job.kind === "probe") return probeEngineHomes(job);
   if (job.kind === "openPass") return openHomePass(job);

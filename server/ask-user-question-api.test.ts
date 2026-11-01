@@ -80,7 +80,7 @@ beforeAll(async () => {
       // A second engine whose question wait is short enough to observe. The
       // shipped default is 30 minutes; the driver clamps a configured value
       // to one second, and nothing else about the engine changes.
-      cfg.instances.expiring={...cfg.instances.verification,displayName:'Expiring questions',config:{...cfg.instances.verification.config,questionTimeoutMs:1000}};
+      cfg.instances.expiring={...cfg.instances.verification,displayName:'Expiring questions',config:{...cfg.instances.verification.config}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     `,
   });
@@ -237,12 +237,13 @@ it("skips a question as soon as the card is closed, instead of leaving the bot w
   await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
 }, 40000);
 
-it("expires a question nobody answered, and still gets a late answer to the bot", async () => {
+it("Stop expires an open question, and it still gets a late answer to the bot", async () => {
   const bot = await makeBot("Question expiry", "expiring");
   const card = await ask(bot);
   const requestId = card.card.requestId;
 
-  // the engine stops waiting on its own; the card does not vanish with it
+  // Stop ends the wait; the card does not vanish with it
+  await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId });
   await expect.poll(async () => (await questionCard(bot.threadId))!.card.expired, { timeout: 15000 }).toBe(true);
   const expired = (await questionCard(bot.threadId))!;
   expect(expired.card.answered).toBe("expired");

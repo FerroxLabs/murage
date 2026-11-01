@@ -33,6 +33,8 @@ export class SseWriter {
   private readonly onProgress: () => void;
   peakPendingBytes = 0;
   peakQueuedFrames = 0;
+  /** UTF-8 bytes of every frame this writer accepted (net-meter.ts reads the difference around a send). */
+  acceptedBytes = 0;
 
   constructor(
     response: SseWritable,
@@ -62,6 +64,7 @@ export class SseWriter {
       this.close("backpressure");
       return false;
     }
+    this.acceptedBytes += bytes - WRITE_OVERHEAD_BYTES;
     if (this.blocked) {
       this.queue.push({ frame, bytes });
       this.queueBytes += bytes;

@@ -38,7 +38,7 @@ describe("plan sign-in card", () => {
     expect(grok).toContain("Continue with Grok");
     expect(grok).toContain(en["modelSignIn.grok.unofficial"]);
     expect(grok).toContain(en["modelSignIn.grok.note"]);
-    expect(row({ provider: "chatgpt" })).toContain("leaves your Codex CLI login alone");
+    expect(row({ provider: "chatgpt" })).toContain("leaves your Codex sign-in alone");
   });
 
   it("maps every error to a line, with provider wording for a refused account", () => {

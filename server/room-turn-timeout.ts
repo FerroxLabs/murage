@@ -10,6 +10,34 @@ export function roomTurnSilenceMs(minutes: number): number {
   return minutes * 60_000;
 }
 
+/** The least a room reply may stay quiet while one of the engine's tools is open. */
+export const ROOM_OPEN_TOOL_MINUTES = 60;
+const OPEN_TOOLS_TRACKED = 256;
+
+/** One room attempt's open engine tools. A wrong count only picks between two
+ * finite limits: a missed end stays on the longer one, a missed start stays on
+ * the owner's. Past the cap an untracked tool could be running, so the longer
+ * limit holds until the attempt ends. */
+export class RoomOpenTools {
+  private open = new Set<string>();
+  private overflowed = false;
+
+  started(itemId: string | undefined): void {
+    const id = itemId ?? "";
+    if (this.open.has(id)) return;
+    if (this.open.size >= OPEN_TOOLS_TRACKED) this.overflowed = true;
+    else this.open.add(id);
+  }
+
+  completed(itemId: string | undefined): void {
+    this.open.delete(itemId ?? "");
+  }
+
+  limitMinutes(roomMinutes: number): number {
+    return this.open.size > 0 || this.overflowed ? Math.max(roomMinutes, ROOM_OPEN_TOOL_MINUTES) : roomMinutes;
+  }
+}
+
 /** Completes the active room turn when its activity watchdog stalls. */
 export class RoomTurnStallRegistry {
   private handlers = new Map<string, () => void>();

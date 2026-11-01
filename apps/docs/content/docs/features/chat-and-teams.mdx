@@ -6,13 +6,13 @@ icon: MessagesSquare
 
 ## Bots and tasks
 
-A bot is a durable agent identity. A task is one conversation with that bot and has its own transcript, provider session, approvals, costs, and state.
+A bot is a lasting helper with its own name and settings. A task is one conversation with that bot, with its own messages, session with your AI service, approvals, costs and status.
 
-Use separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported providers can be steered while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing.
+Use separate tasks when you want fresh context without duplicating the bot. Messages sent while a bot is busy are queued, and supported AI apps can take new directions while they work. A direct message sent while the bot is busy in a channel waits its turn instead of failing.
 
 ## Rooms
 
-Rooms (channels) bring several bots into one conversation. Make one from **+ → New Channel**, name it, and pick its bots. Each participant keeps its own agent process and provider state, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.
+Rooms (channels) bring several bots into one conversation. Make one from **+ → New Channel**, name it, and pick its bots. Each bot keeps its own AI app and its own session with its AI service, so bots in a room can run different engines and sound different. Room timeouts prevent a participant from blocking the whole group indefinitely.
 
 In a room's details, **Instructions** are followed by every bot in it, **Who answers** decides where a plain message goes, and **Folder** is where every bot in it runs file and shell tools. Who answers is Lead (one named bot), Everyone responds, or Only when mentioned. Naming a bot with @ always beats this setting.
 
@@ -24,7 +24,7 @@ Bots can hand work to other bots, or ask them a quick question. Delegated runs c
 
 ## Rewind and branches
 
-Editing an earlier message creates a new conversation path. Murage avoids resuming stale provider sessions after a rewind, so the next turn follows the visible branch rather than hidden abandoned state.
+Editing an earlier message starts a new branch of the conversation. After a rewind, Murage does not pick up the old session with your AI service, so the next turn follows the visible branch rather than hidden abandoned state.
 
 ## Memory and working folders
 

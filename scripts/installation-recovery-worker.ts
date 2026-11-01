@@ -3,6 +3,7 @@ import { installationRecoveryCommand } from "../server/installation-recovery-com
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";
 import { randomUUID } from "node:crypto";
 import { captureFailurePath, describeCaptureError } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_PROGRESS_MESSAGE, createBackupProgressReporter } from "../shared/backup-progress.mjs";
 
 const parentPort = (process as typeof process & { parentPort?: { on(event: string, listener: (event: { data?: unknown }) => void): void; removeListener(event: string, listener: (event: { data?: unknown }) => void): void; postMessage(value: unknown): void } }).parentPort;
 let inputUsed=false;
@@ -25,7 +26,7 @@ async function privateIdentity():Promise<string>{
 let reply: Record<string, unknown>;
 let exitCode = 0;
 try {
-  reply = recoveryDesktopSummary(await installationRecoveryCommand(process.argv.slice(2),parentPort?{readIdentity:privateIdentity}:{}));
+  reply = recoveryDesktopSummary(await installationRecoveryCommand(process.argv.slice(2),parentPort?{readIdentity:privateIdentity,onProgress:createBackupProgressReporter(note=>parentPort.postMessage({type:BACKUP_PROGRESS_MESSAGE,...note}))}:{}));
 } catch (error) {
   const candidate = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const code = typeof candidate === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(candidate) ? candidate : "RECOVERY_OPERATION_FAILED";
