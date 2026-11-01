@@ -256,7 +256,7 @@ test("electron/main.mjs: health/ is initialized after the data owner and before 
   const main = readFileSync(path.join(import.meta.dirname, "main.mjs"), "utf8");
   assert.match(main, /acquireDesktopDataOwner\(\);closedTrace\("owner"\);await initializeSentinelHost\(\{closed:true\}\);await initializeBackupScheduleHost\(\);/);
   assert.match(main, /if \(app\.isPackaged\) \{ acquireDesktopDataOwner\(\); await initializeSentinelHost\(\); \}\n\s*await initializeBackupScheduleHost\(\);/);
-  assert.match(main, /new BackupCoordinator\(\{stateDirectory,onCommitted:state=>sentinelHost\?\.backupCommitted\(state\)\}\)/);
+  assert.match(main, /new BackupCoordinator\(\{stateDirectory,onCommitted:state=>\{sentinelHost\?\.backupCommitted\(state\);/);
   // A restart or an upgrade republishes the committed backup state once the backup host (its folder/key check) exists.
   const created = main.indexOf("backupScheduleHost=createBackupScheduleHost(");
   const republished = main.indexOf("sentinelHost?.backupCommitted(coordinator.committedState())");

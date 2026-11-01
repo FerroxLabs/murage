@@ -14,6 +14,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { t } from "@/lib/i18n";
 import { canAccept, isTermsRefusal, PRIVACY_URL, TERMS_URL } from "@/lib/terms";
 import { openAnnouncementLink } from "@/lib/announcements";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 function ExternalLink({ href, children }: { href: string; children: ReactNode }) {
   return (
@@ -39,24 +40,28 @@ function agreement(): ReactNode[] {
   });
 }
 
-/** The dialog shell. Height-constrained and scrolling, so a short viewport or
- *  400% zoom can always reach the controls; nothing is clipped by the page's
- *  hidden overflow. */
-function Frame({ titleId, children }: { titleId: string; children: ReactNode }) {
+/** The dialog shell. The title and the Accept row stay in view and the card's
+ *  middle scrolls. Below 480px tall, or at 400% zoom, those two rows would leave
+ *  the middle no room, so the card takes its full height and the frame scrolls
+ *  it instead. The controls can always be reached; nothing is clipped by the
+ *  page's hidden overflow. */
+function Frame({ titleId, title, foot, children }: { titleId: string; title: ReactNode; foot: ReactNode; children: ReactNode }) {
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={titleId}
       data-terms-frame
       className="fixed inset-0 z-[70] flex overflow-y-auto bg-app p-4"
       style={{ paddingTop: "calc(env(safe-area-inset-top, 0px) + 1rem)" }}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         data-terms-card
-        className="m-auto w-full max-w-[460px] rounded-2xl border border-hairline/60 bg-panel p-6"
+        className={`${BOX_FRAME} m-auto max-h-full w-full max-w-[460px] rounded-2xl border border-hairline/60 bg-panel [@media(max-height:480px)]:max-h-none`}
       >
-        {children}
+        <BoxHead className="px-6 pt-6">{title}</BoxHead>
+        <BoxBody className="px-6 pt-1">{children}</BoxBody>
+        <BoxFoot className="block px-6 pb-6 pt-5">{foot}</BoxFoot>
       </div>
     </div>
   );
@@ -83,11 +88,8 @@ export function TermsUnreachable({ onRetry, hint = false }: { onRetry: () => voi
   const retryRef = useRef<HTMLButtonElement>(null);
   useEffect(() => { retryRef.current?.focus(); }, []);
   return (
-    <Frame titleId={titleId}>
-      <h2 id={titleId} tabIndex={-1} className="text-[18px] font-medium text-ink">{t("terms.title")}</h2>
-      <p role="status" className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{t("terms.unreachable")}</p>
-      {hint && <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{t("terms.desktopOnly")}</p>}
-      <div className="mt-5 flex flex-col gap-2 sm:flex-row-reverse">
+    <Frame titleId={titleId} title={<h2 id={titleId} tabIndex={-1} className="text-[18px] font-medium text-ink">{t("terms.title")}</h2>} foot={
+      <div className="flex flex-col gap-2 sm:flex-row-reverse">
         <button
           ref={retryRef}
           type="button"
@@ -98,6 +100,9 @@ export function TermsUnreachable({ onRetry, hint = false }: { onRetry: () => voi
         </button>
         <QuitButton />
       </div>
+    }>
+      <p role="status" className="text-[13px] leading-relaxed text-ink-secondary">{t("terms.unreachable")}</p>
+      {hint && <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{t("terms.desktopOnly")}</p>}
     </Frame>
   );
 }
@@ -121,22 +126,8 @@ export function TermsScreen({ updated, onAccept, onRecheck }: { updated: boolean
     }
   };
   return (
-    <Frame titleId={titleId}>
-      <h2 id={titleId} className="text-[18px] font-medium text-ink">{t("terms.title")}</h2>
-      <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{updated ? t("terms.updatedIntro") : t("terms.intro")}</p>
-      <label className="mt-5 flex cursor-pointer items-start gap-3 text-[14px] leading-relaxed text-ink">
-        <input
-          ref={boxRef}
-          data-terms-checkbox
-          type="checkbox"
-          checked={ticked}
-          onChange={(event) => setTicked(event.target.checked)}
-          className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-accent/70"
-        />
-        <span>{agreement()}</span>
-      </label>
-      {failed && <p role="alert" className="mt-3 text-[13px] text-ink-secondary">{failed === "elsewhere" ? t("terms.desktopOnly") : t("terms.error")}</p>}
-      <div className="mt-5 flex flex-col gap-2 sm:flex-row-reverse">
+    <Frame titleId={titleId} title={<h2 id={titleId} className="text-[18px] font-medium text-ink">{t("terms.title")}</h2>} foot={<>
+      <div className="flex flex-col gap-2 sm:flex-row-reverse">
         <button
           type="button"
           data-terms-accept
@@ -158,6 +149,20 @@ export function TermsScreen({ updated, onAccept, onRecheck }: { updated: boolean
           {t("terms.retry")}
         </button>
       )}
+    </>}>
+      <p className="text-[13px] leading-relaxed text-ink-secondary">{updated ? t("terms.updatedIntro") : t("terms.intro")}</p>
+      <label className="mt-5 flex cursor-pointer items-start gap-3 text-[14px] leading-relaxed text-ink">
+        <input
+          ref={boxRef}
+          data-terms-checkbox
+          type="checkbox"
+          checked={ticked}
+          onChange={(event) => setTicked(event.target.checked)}
+          className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-accent)] focus-visible:ring-2 focus-visible:ring-accent/70"
+        />
+        <span>{agreement()}</span>
+      </label>
+      {failed && <p role="alert" className="mt-3 text-[13px] text-ink-secondary">{failed === "elsewhere" ? t("terms.desktopOnly") : t("terms.error")}</p>}
     </Frame>
   );
 }

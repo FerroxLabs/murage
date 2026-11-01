@@ -72,7 +72,7 @@ test("intentional backup mode is routed before harness and native writers start"
   const body=source.slice(start);
   assert.ok(body.indexOf('process.argv.includes(BACKUP_MODE_ARGUMENT)')<body.indexOf('startCua()'));
   assert.ok(body.indexOf('showDesktopRecovery("BACKUP_REQUESTED")')<body.indexOf('await startServerPackaged()'));
-  assert.ok(source.includes('process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)'));
+  assert.ok(source.includes('withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)'));
   assert.equal(BACKUP_MODE_ARGUMENT,"--murage-backup-mode");
   assert.ok(source.includes('if(speechActive()||recorderActive())throw new Error("BACKUP_WORK_ACTIVE")'));
   assert.equal((source.match(/if\(backupMode\.isPreparing\(\)\|\|backupScheduleHost\?\.isPreparing\(\)\)throw new Error\("BACKUP_RESTART_PENDING"\)/g)||[]).length,2);

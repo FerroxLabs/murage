@@ -3,12 +3,13 @@ import Foundation
 import MurageShellCore
 
 enum PhoneJobsMintError: Error, Equatable, LocalizedError {
-    case notOffered, updateComputer, noApprovalKey, refused, rateLimited, invalidResponse, unavailable, storage, cancelled, busy
+    case notOffered, updateComputer, turnedOff, noApprovalKey, refused, rateLimited, invalidResponse, unavailable, storage, cancelled, busy
 
     var errorDescription: String? {
         switch self {
         case .notOffered: return PhoneJobStrings.text("ask_cloud")
         case .updateComputer: return PhoneJobStrings.text("phone_update")
+        case .turnedOff: return PhoneJobStrings.text("phone_turned_off")
         case .noApprovalKey: return PhoneJobStrings.text("phone_no_key")
         case .refused: return PhoneJobStrings.text("phone_refused")
         case .rateLimited: return PhoneJobStrings.text("phone_rate_limited")
@@ -69,7 +70,9 @@ final class PhoneJobsMintClient {
         try Task.checkCancellation()
         guard hello.status == 200 else { throw PhoneJobsMintError.unavailable }
         let verdict = ProbeVerdict.classify(status: hello.status, body: hello.body, errorDomain: nil, errorCode: nil)
-        guard (ask ? verdict.phoneAskOk : verdict.phoneJobsOk) else { throw PhoneJobsMintError.updateComputer }
+        guard (ask ? verdict.phoneAskOk : verdict.phoneJobsOk) else {
+            throw verdict.phoneFlagsOk ? PhoneJobsMintError.turnedOff : PhoneJobsMintError.updateComputer
+        }
 
         let challenge = try object(await send(request(origin, path: "/api/phones/self/challenge", keyId: keyId)))
         guard Set(challenge.keys) == ["nonce", "expiresAt"], let nonce = challenge["nonce"] as? String,

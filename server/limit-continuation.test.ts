@@ -9,6 +9,35 @@ const turn = (over: Partial<LimitTurn> = {}): LimitTurn => ({
   viaGateway: false, sendIds: [], sourceMessageId: "msg-1", sourceText: "hello", ownerDirect: true, routine: false, onFailover: false, activity: false, ...over,
 });
 
+describe("LimitTurns.observe: Murage's own chips are not engine activity", () => {
+  const base = { threadId: "t1", turnId: "p1" };
+  const chip = (itemId: string) => [
+    { ...base, type: "item.started", itemId, itemType: "tool", origin: "murage", title: "trust chosen: AGENTS.md" },
+    { ...base, type: "item.completed", itemId, itemType: "tool", ok: true },
+  ];
+  const seen = (...events: Parameters<LimitTurns["observe"]>[0][]) => {
+    const turns = new LimitTurns();
+    turns.begin(turn({ driverKind: "fuigoAgent", providerTurnId: "p1" }));
+    for (const event of events) turns.observe(event);
+    return turns.get("t1")!;
+  };
+
+  it("the folder trust chip, started with origin murage and completed without, leaves the turn inactive", () => {
+    expect(seen(...chip("folder-trust-p1-1")).activity).toBe(false);
+  });
+
+  it("the engine's own tool still counts, beside a chip", () => {
+    expect(seen(...chip("folder-trust-p1-1"),
+      { ...base, type: "item.started", itemId: "call-1", itemType: "tool", origin: "engine" }).activity).toBe(true);
+    expect(seen(...chip("folder-trust-p1-1"),
+      { ...base, type: "item.completed", itemId: "call-1", itemType: "tool" }).activity).toBe(true);
+  });
+
+  it("reasoning still counts", () => {
+    expect(seen({ ...base, type: "content.delta", streamKind: "reasoning_text", delta: "The" }).activity).toBe(true);
+  });
+});
+
 describe("LimitTurns.markPhoneHeld (X2 carry)", () => {
   it("sets the flag only on the record whose sourceMessageId matches", () => {
     const turns = new LimitTurns();

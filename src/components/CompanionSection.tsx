@@ -31,13 +31,14 @@ import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
-import { api } from "@/state/store";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
 import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
+import { PhonePreviewSwitches, type PhoneOfferAnswer } from "./PhonePreviewSwitches";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 import { useCopyFeedback } from "@/lib/copy-text";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export {
   companionAccountActionError,
@@ -259,8 +260,9 @@ function ConfirmRemoteAccess({
 }) {
   return (
     <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className="w-full max-w-[440px] rounded-2xl bg-card p-5 shadow-xl">
-        <h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3>
+      <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
+        <BoxHead className="px-5 pt-5"><h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3></BoxHead>
+        <BoxBody className="px-5">
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           This turns on the part of Murage that answers your other devices, and asks Tailscale to
           serve it on your tailnet. If Tailscale is not on this computer, the first half still works
@@ -276,7 +278,8 @@ function ConfirmRemoteAccess({
           which is tailnet-only, never Funnel. Traffic stays encrypted end to end. It stays on until you
           turn it off, including after a restart.
         </p>
-        <div className="mt-5 flex justify-end gap-2">
+        </BoxBody>
+        <BoxFoot className="px-5 pb-5 pt-5">
           <button
             onClick={onCancel}
             disabled={busy}
@@ -291,7 +294,7 @@ function ConfirmRemoteAccess({
           >
             {busy ? "Turning on…" : "Serve on my tailnet"}
           </button>
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );
@@ -315,6 +318,7 @@ export function RevokeDeviceConfirm({
   return (
     <div
       role="alertdialog"
+      data-box-exempt="inline confirm under a device row"
       aria-label={t("phone.revoke.title", { name })}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
@@ -533,21 +537,10 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
-  // Share and ask has its own offer; it does not follow phone tools.
+  // Share and ask has its own offer; it does not follow phone tools. The Preview card below asks GET /api/phones/offered
+  // (on mount and after each switch) and hands every answer here, so a switch change shows on each device row at once.
   const [shareAskOffered, setShareAskOffered] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (desktop !== true) return;
-    let active = true;
-    void (async () => {
-      try {
-        const answer = await api("/api/phones/offered");
-        if (active) setShareAskOffered(answer?.shareAsk === true);
-      } catch {
-        if (active) setShareAskOffered(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [desktop]);
+  const onOfferAnswer = (answer: PhoneOfferAnswer | null) => setShareAskOffered(answer?.shareAsk === true);
   // "both": the main switch (the door and remote access). "remote": the
   // separate remote-access switch below, with the door already on.
   const [confirming, setConfirming] = useState<"both" | "remote" | null>(null);
@@ -843,6 +836,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         )}
         {pairedCount > 0 && <KeepAwakeOffer c={c} className="mt-3 border-t border-hairline/30 pt-3" />}
       </Card>
+
+      <PhonePreviewSwitches onAnswer={onOfferAnswer} />
 
       <Card title="Recent activity">
         <div className="-mt-2 mb-3 flex items-center justify-between gap-3">

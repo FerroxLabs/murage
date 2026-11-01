@@ -11,6 +11,7 @@ import { ChevronLeft } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { RichMarkdownEditor } from "../editor/RichMarkdownEditor";
+import { BOX_SAVE_ROW } from "../ui/BoxShell";
 import { analyzeMarkdownFidelity } from "@/lib/markdown-fidelity";
 import { refusalOf, saveSkill, skillBody, type SkillDetail } from "@/lib/skills-api";
 
@@ -91,10 +92,12 @@ export function SkillEditor({ skill, note, onCancel, onSaved }: SkillEditorProps
         </div>
       </div>
       <p className="mt-2 text-[11.5px] text-ink-secondary">Saving checks it again. Bots that use it get the new version.</p>
-      {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
-      <div className="mt-3 flex gap-2">
-        <button type="button" disabled={busy} onClick={() => void save()} className={`${BUTTON} bg-accent text-white`}>{busy ? "Saving…" : "Save"}</button>
-        <button type="button" disabled={busy} onClick={onCancel} className={`${BUTTON} bg-control text-ink`}>Cancel</button>
+      <div className={`${BOX_SAVE_ROW} mt-1 bg-panel`}>
+        {error && <div role="alert" className="mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        <div className="flex gap-2">
+          <button type="button" disabled={busy} onClick={() => void save()} className={`${BUTTON} bg-accent text-white`}>{busy ? "Saving…" : "Save"}</button>
+          <button type="button" disabled={busy} onClick={onCancel} className={`${BUTTON} bg-control text-ink`}>Cancel</button>
+        </div>
       </div>
     </div>
   );
