@@ -171,14 +171,21 @@ describe("C1 (r2 #1, #2; r3 amendment): one choke point writes every durable gra
   });
 
   it("both card routes write only through it, plan before, and never without an answer", () => {
-    for (const [name, route] of [["routine", routineRoute], ["bot", botRoute]] as const) {
-      expect(route, name).toContain("await rememberAndAnswer({");
+    // UX-TRUST-MOMENTS-1012 (L1a): the bot route's logic moved to approval-grant-routes.ts
+    // (botAlwaysAllowSave) once the integrator applies INDEX-PATCH-1013-UX-L1A.diff
+    const moved = botRoute.includes("botAlwaysAllowSave(");
+    const botLogic = moved ? read("./approval-grant-routes.ts").slice(read("./approval-grant-routes.ts").indexOf("export async function botAlwaysAllowSave"), read("./approval-grant-routes.ts").indexOf("export interface BotUndoDeps")) : botRoute;
+    for (const [name, route, call] of [["routine", routineRoute, "await rememberAndAnswer({"], ["bot", botLogic, moved ? "await deps.remember({" : "await rememberAndAnswer({"]] as const) {
+      expect(route, name).toContain(call);
       expect(route, name).toContain("plan: () =>");
       expect(route, name).not.toMatch(/if \(!answer\) return/);
       expect(route, name).not.toMatch(/patchBot\(|patchTask\(|grantAlwaysAllowSet\(|undo/);
     }
     expect(routineRoute).toContain("routines!.planAlwaysAllowSet(routineId, keys)");
-    expect(botRoute).toContain("store.planBotGrants(grantBotId, taskThread, grantKeys)");
+    if (moved) {
+      expect(botRoute).toContain("remember: rememberAndAnswer");
+      expect(botRoute).toContain("store.planBotGrants(botId, taskThread, keys)");
+    } else expect(botRoute).toContain("store.planBotGrants(grantBotId, taskThread, grantKeys)");
   });
 
   it("class: index.ts writes a card's grant nowhere else", () => {

@@ -35,14 +35,17 @@ describe("one compact approval card", () => {
     expect(queue).toMatch(/hidden=\{pending\.requestId !== selectedId\}/);
   });
 
-  it("the wider grants sit behind More, reachable by keyboard as ordinary buttons", () => {
+  // UX-TRUST-MOMENTS-1012 1.1: the remembered grants moved into the fold
+  // under the verb's caret (or the phone's "{Verb} and stop asking…" link),
+  // reachable by keyboard as ordinary buttons
+  it("the wider grants sit behind the verb's caret, reachable by keyboard as ordinary buttons", () => {
     const source = read("./PendingApproval.tsx");
-    const more = source.indexOf("data-approval-more");
-    expect(more).toBeGreaterThan(-1);
-    const block = source.slice(more, source.indexOf("Allow for this task</ApprovalBusyLabel>", more));
-    expect(block).toContain("alwaysAllowLabel(pending)");
-    expect(source).toContain("aria-expanded={moreOpen}");
-    // the narrow, recommended grant and Allow once stay on the card itself
-    expect(source.indexOf("Always allow this exact command here")).toBeGreaterThan(source.indexOf("</div>\n      )}\n      {grants.forRoutine"));
+    expect(source).toContain("data-fold-caret");
+    expect(source).toContain("aria-expanded={foldOpen}");
+    expect(source).toContain("<GrantFold");
+    expect(source).not.toContain("More ways to allow");
+    const fold = read("./approval/GrantFold.tsx");
+    expect(fold).toContain('type="button"');
+    expect(fold).toContain('event.key === "Escape"');
   });
 });

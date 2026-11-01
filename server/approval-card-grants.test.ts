@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { approvalCardGrants, type CardGrantInput } from "./approval-card-grants.ts";
 import { autoVerdict } from "./auto-approve.ts";
 import type { StopHit } from "./stop-line.ts";
+import { exactCommandKey } from "../shared/exact-command.ts";
 
 const stopHit: StopHit = { kind: "delete", what: "Delete files outside its folder", place: "/Users/alex" };
 const LEVELS = [
@@ -51,11 +52,18 @@ describe("the grants an approval card offers", () => {
   }
 
   it("still offers them on an ordinary card", () => {
-    const plain = approvalCardGrants(card("ls -la", {}, false));
+    // UX-TRUST-MOMENTS-1012 2.3.5: a routine's card offers the routine's grant
+    // only; a card no routine raised keeps the bot-level ones
+    const exact = exactCommandKey({ engine: "claude", cwd: "/tmp", command: "ls -la" })!;
+    const owner = (command: string, withStop: boolean): CardGrantInput => ({ ...card(command, {}, withStop), exactAllowKey: withStop ? undefined : exact, routineAllowCard: {} });
+    const plain = approvalCardGrants(owner("ls -la", false));
     expect(plain.allowKey).toBeDefined();
-    expect(plain.exactAllowKey).toBe("exact:claude:/tmp:ls -la");
-    expect(plain).toMatchObject({ routineAllowKey: "exact:claude:/tmp:ls -la", routineId: "routine-1" });
-    const stopped = approvalCardGrants(card("rm -rf /Users/alex/old", {}, true));
+    expect(plain.exactAllowKey).toBe(exact);
+    const routine = approvalCardGrants({ ...card("ls -la", {}, false), exactAllowKey: exact, routineAllowCard: { routineAllowKey: exact, routineId: "routine-1" } });
+    expect(routine).toMatchObject({ routineAllowKey: exact, routineId: "routine-1" });
+    expect(routine.allowKey).toBeUndefined();
+    expect(routine.exactAllowKey).toBeUndefined();
+    const stopped = approvalCardGrants(owner("rm -rf /Users/alex/old", true));
     expect(stopped.allowKey).toBe(stopped.taskAllowKey);
     expect(stopped.taskAllowKey).toBeDefined();
   });
