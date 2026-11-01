@@ -20,6 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -264,7 +265,9 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     await stopTurn(bot.id, bot.threadId);
     expect(await listWebhooks()).toEqual([]);
 
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true, fullAccessSetupRequests: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true, fullAccessSetupRequests: true })).status).toBe(200);
+    // the open card above keeps this conversation out of the bulk apply, so it takes the level itself
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true })).status).toBe(200);
     auth = await heldTurn(bot, bot.threadId);
     const onFull = await proposeWebhook(bot, bot.threadId, auth, "Full hook");
     expect(onFull.status, JSON.stringify(onFull.body)).toBe(201);

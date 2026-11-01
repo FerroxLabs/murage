@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
@@ -163,6 +163,60 @@ describe("Claude turns wait for their required MCP servers", () => {
     expect(allControls().filter((c) => c.reconnected === "murage_connectors")).toEqual([expect.objectContaining({ unauthorized: false })]);
     expect(seen().mcpAtPrompt.murage_connectors).toBe("connected");
     expect(seen().prompt.message.content).not.toContain("[Murage:");
+  }, 60_000);
+
+  const pidOf = () => (JSON.parse(readFileSync(dump, "utf8")) as { pid: number }).pid;
+  const custom = { venice: { command: process.execPath, args: ["/fake/venice.js"], env: {} } };
+  const turnOn = async (threadId: string, text: string) => completed((await instance.adapter.sendTurn({ threadId, text, integrations: { custom } })).turnId);
+
+  it("a custom server that failed on a kept process gets a reconnect, and the turn has it back", async () => {
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+    process.env.FAKE_CLAUDE_MCP_READY_MS = JSON.stringify({ venice: 0 });
+    const killFile = join(scratch, "kill");
+    process.env.FAKE_CLAUDE_MCP_KILL_FILE = killFile;
+    await turnOn("t-opt-back", "one");
+    const firstPid = pidOf();
+    writeFileSync(killFile, "venice");
+    await turnOn("t-opt-back", "two");
+    expect(pidOf()).toBe(firstPid);
+    expect(allControls().filter((c) => c.reconnected === "venice")).toHaveLength(1);
+    expect(seen().mcpAtPrompt.venice).toBe("connected");
+  }, 60_000);
+
+  it("a custom server still failed after two kept turns recycles the process, and the next turn starts it fresh", async () => {
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+    process.env.FAKE_CLAUDE_MCP_RECONNECT_MS = JSON.stringify({ venice: -1 });
+    process.env.MCP_TIMEOUT = "300";
+    const killFile = join(scratch, "kill");
+    process.env.FAKE_CLAUDE_MCP_KILL_FILE = killFile;
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "info").mockImplementation((line: unknown) => { if (typeof line === "string") logged.push(line); });
+    try {
+      await turnOn("t-opt-dead", "one");
+      const firstPid = pidOf();
+      writeFileSync(killFile, "venice");
+      await turnOn("t-opt-dead", "two");
+      expect(pidOf()).toBe(firstPid);
+      expect(logged.some((l) => l.includes("server failed on reuse"))).toBe(false);
+      await turnOn("t-opt-dead", "three");
+      expect(pidOf()).toBe(firstPid);
+      expect(allControls().filter((c) => c.reconnected === "venice")).toHaveLength(2); // one per turn
+      await vi.waitFor(() => expect(logged.some((l) => l.includes("claude close thread=t-opt-dead reason=server failed on reuse"))).toBe(true));
+      await turnOn("t-opt-dead", "four");
+      expect(pidOf()).not.toBe(firstPid);
+    } finally { spy.mockRestore(); delete process.env.MCP_TIMEOUT; }
+  }, 60_000);
+
+  it("a server back between the two failures clears the count", async () => {
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN = "1";
+    const killFile = join(scratch, "kill");
+    process.env.FAKE_CLAUDE_MCP_KILL_FILE = killFile;
+    await turnOn("t-opt-flap", "one");
+    const firstPid = pidOf();
+    for (const text of ["two", "three", "four"]) { writeFileSync(killFile, "venice"); await turnOn("t-opt-flap", text); }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await turnOn("t-opt-flap", "five");
+    expect(pidOf()).toBe(firstPid);
   }, 60_000);
 
   it("shows the loading chip on a kept process's slow check, on that turn", async () => {

@@ -2,7 +2,7 @@
 // Source: the tool lists, settings sections, locale labels and route families
 // named in each entry. Run `node scripts/build-capabilities.mjs` after changing
 // them; `--check` in the test suite fails when this file is stale.
-export type CapabilityKind = "tool" | "settings-page" | "bot-settings" | "place" | "label" | "route";
+export type CapabilityKind = "tool" | "settings-page" | "bot-settings" | "place" | "label" | "route" | "limit";
 
 /** One thing the product can do, and the word the help must use for it. */
 export interface Capability {
@@ -678,8 +678,26 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/engine-health",
+    "term": "health checks",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/engine-setup-check",
+    "term": "engines",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/engine-setup-command",
     "term": "engines",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/feedback",
+    "term": "feedback",
     "source": "server/index.ts"
   },
   {
@@ -704,6 +722,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/groups",
     "term": "channels",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/help",
+    "term": "help",
     "source": "server/index.ts"
   },
   {
@@ -927,5 +951,11 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "name": "/api/whatsapp",
     "term": "WhatsApp",
     "source": "server/index.ts"
+  },
+  {
+    "kind": "limit",
+    "name": "CODEX_WINDOWS_PIPE_LINE",
+    "term": "named pipe",
+    "source": "server/capabilities-primer.ts"
   }
 ];

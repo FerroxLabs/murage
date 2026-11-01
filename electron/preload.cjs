@@ -426,6 +426,8 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** Store a provider credential with OS-backed encryption. */
   mutateProviderConnection: (input) => ipcRenderer.invoke("model-provider:mutate", input),
   mutateFluxConnection: (input) => ipcRenderer.invoke("flux-connection:mutate", input),
+  /** Restart Murage after a Flux key change, so running engines pick up the saved key. */
+  restartForFluxKey: () => ipcRenderer.invoke("flux-connection:restart-app"),
   /** One-click Flux sign-in (PKCE in the main process). Resolves { ok, status } or { ok:false, code, message }; never carries the key. */
   fluxSignin: {
     start: (input) => ipcRenderer.invoke("flux-signin:start", input),
@@ -444,6 +446,23 @@ contextBridge.exposeInMainWorld("muragebox", {
     cancel: (provider) => ipcRenderer.invoke("model-signin:cancel", provider),
     submitCode: (provider, code) => ipcRenderer.invoke("model-signin:submit-code", provider, code),
     signOut: (provider) => ipcRenderer.invoke("model-signin:sign-out", provider),
+  },
+  /** Engine sign-in on this computer (1.0.14). Main runs the engine's own login; this carries an instance id, progress and the final word, never output, a link or a code. */
+  localEngineLogin: {
+    preview: (request) => ipcRenderer.invoke("local-engine-login:preview", request),
+    start: (request) => ipcRenderer.invoke("local-engine-login:start", request),
+    stop: (request) => ipcRenderer.invoke("local-engine-login:stop", request),
+    openTerminal: (request) => ipcRenderer.invoke("local-engine-login:open-terminal", request),
+    onData: (listener) => {
+      const handler = (_event, payload) => { if (payload && typeof payload === "object") listener(payload); };
+      ipcRenderer.on("local-engine-login:data", handler);
+      return () => ipcRenderer.removeListener("local-engine-login:data", handler);
+    },
+    onClosed: (listener) => {
+      const handler = (_event, payload) => { if (payload && typeof payload === "object") listener(payload); };
+      ipcRenderer.on("local-engine-login:closed", handler);
+      return () => ipcRenderer.removeListener("local-engine-login:closed", handler);
+    },
   },
   /** Cloud home engine sign-in terminal (B3 WP5). Main holds the token and step-up; this carries terminal bytes and the owner's pasted code only. */
   ...(cloudFlagOn() ? {

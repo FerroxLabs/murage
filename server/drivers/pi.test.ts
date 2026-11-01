@@ -227,9 +227,9 @@ describe("PiDriver config + install", () => {
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
     expect(PiDriver.install).toMatchObject({
       command: {
-        darwin: "npm install -g @earendil-works/pi-coding-agent",
-        linux: "npm install -g @earendil-works/pi-coding-agent",
-        win32: "npm install -g @earendil-works/pi-coding-agent",
+        darwin: "npm install -g --force @earendil-works/pi-coding-agent",
+        linux: "npm install -g --force @earendil-works/pi-coding-agent",
+        win32: "npm install -g --force @earendil-works/pi-coding-agent",
       },
       docsUrl: "https://pi.dev",
       needsNode: true,
@@ -329,25 +329,15 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
-  it("resumes a prior pi session using the sessionFile resume cursor", async () => {
-    await create();
-    const first = await instance.adapter.sendTurn({ threadId: "t-resume", text: "first" });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
-    const firstSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === first.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(firstSession?.sessionId).toMatch(/\/fake\/pi-session-\d+\.json/);
-
-    const second = await instance.adapter.sendTurn({
-      threadId: "t-resume",
-      text: "second",
-      resumeCursor: firstSession!.sessionId,
-    });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
-    const secondSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === second.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(secondSession?.sessionId).toBe(firstSession?.sessionId);
+  it("keeps no session: pi under --no-session names no file, so no cursor comes back and each turn starts a new one", async () => {
+    await create(undefined, { FAKE_PI_NO_SESSION: "1" });
+    expect(instance.keepsNoSession).toBe(true);
+    for (const text of ["first", "second"]) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-no-session", text });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    }
+    expect(recorder.events.filter((e) => e.type === "session.started").map((e) => (e as { sessionId: string | null }).sessionId)).toEqual([null, null]);
+    expect(outboundCommands("t-no-session").filter((command) => String(command).endsWith("_session"))).toEqual(["new_session", "new_session"]);
   });
 
   it("fails promptly when the pi process exits before replying", async () => {

@@ -89,13 +89,13 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
     await expect(page.getByRole("checkbox", { name: "Show snoozed items" })).toHaveCount(0);
     if (process.env.MURAGE_B35_AXE_SOURCE) {
       await page.addScriptTag({ path: process.env.MURAGE_B35_AXE_SOURCE });
-      const audit = await page.evaluate(async () => (window as any).axe.run(document.querySelector('dialog[open]')));
+      const audit = await page.evaluate(async () => (window as any).axe.run(document.querySelector('main')));
       await testInfo.attach(`axe-${width}.json`, { body: JSON.stringify(audit), contentType: "application/json" });
       expect(audit.violations.filter((issue: any) => ["critical", "serious"].includes(issue.impact))).toEqual([]);
     }
     await page.screenshot({ path: testInfo.outputPath(`b35-${width}.png`), fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    await page.getByRole("button", { name: "Close Inbox", exact: true }).click();
+    // UX 1.0.13: Needs you is a page, not a dialog, so there is nothing to close before the reload.
   }
   await page.reload();
   let sidebar = await openSidebar(page);

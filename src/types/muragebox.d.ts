@@ -180,6 +180,8 @@ type SkillRecordingPayload = {
       reachable(): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
       /** Settings: disconnect this computer from this window's own home. Main then closes the window and shows the Connect panel. */
       disconnectThisComputer?(): Promise<{ disconnected: true }>;
+      /** Open an https link in the default browser. Main validates it; a Cloud-home window gets https only. */
+      openExternal?(url: string): Promise<boolean>;
     };
     muragebox?: {
       platform: NodeJS.Platform;
@@ -280,6 +282,8 @@ type SkillRecordingPayload = {
         onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
         onOpenInbox(callback:()=>void):()=>void;
       };
+      /** Engine sign-in on this computer (main runs it; see src/lib/local-engine-login.ts). Main window only. */
+      localEngineLogin?: import("@/lib/local-engine-login").LocalEngineLoginBridge;
       /** Cloud home engine sign-in terminal relay (main holds the token and step-up). Present only on a desktop with the Cloud flag. */
       cloudEngineLogin?: {
         start(request: { homeId: string; engine: "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo"; action?: "login" | "logout" | "enroll-key"; bot?: string; provider?: string; secret?: string }): Promise<{ ok: true; id: string } | { ok: false; code: string; message: string }>;
@@ -445,6 +449,8 @@ type SkillRecordingPayload = {
       /** Save a provider credential through Electron's OS-backed store. */
       mutateProviderConnection?(input: import("../../shared/provider-connections").ProviderConnectionMutation): Promise<{ connections: import("../../shared/provider-connections").PublicProviderConnection[]; storage: "encrypted" | "local-config" }>;
       mutateFluxConnection?(input: import("../../shared/flux-connection").FluxConnectionMutation): Promise<import("../../shared/flux-connection").FluxConnectionStatus>;
+      /** Restart Murage so running engines use the saved Flux key. Refused where Murage cannot restart itself. */
+      restartForFluxKey?(): Promise<void>;
       fluxSignin?: {
         start(input: { action: "connect" | "replace"; revision: string }): Promise<{ ok: true; status: import("../../shared/flux-connection").FluxConnectionStatus } | { ok: false; code: string; message: string }>;
         cancel(): Promise<void>;

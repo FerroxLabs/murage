@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import { HealthCard } from "./HealthCard";
 import type { NextAction } from "../../shared/sentinel-view";
 import type { OptionCardData } from "@/state/store";
@@ -13,7 +14,7 @@ import { usePageVisible } from "@/lib/page-visible";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
 import { t } from "@/lib/i18n";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { copyTextOrThrow } from "@/lib/copy-text";
+import { EngineSignInButton } from "./EngineSignInButton";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
@@ -336,11 +337,6 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     setTurningOff(null);
     refreshSetup();
   }, "That engine could not be turned off.");
-  const [copied, setCopied] = useState<string | null>(null);
-  const copy = async (engineId: string, command: string) => {
-    try { await copyTextOrThrow(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
-    catch { setActionError("Copying did not work. Select the command and copy it yourself."); }
-  };
   const projectRows=result?.projects??[];
   const groupedMessages=new Set(projectRows.flatMap(row=>row.approvals.map(item=>item.messageId)));
   const list = inboxCardItems(view, result?.items ?? []).filter(item => !gone.has(item.id) && !groupedMessages.has(item.link.messageId));
@@ -405,16 +401,17 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
   const sections = signedOut.length + restoreRows.length + (health ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
-  return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
-    <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
+  return <section aria-labelledby="inbox-title" aria-busy={loading} className={`${BOX_FRAME} mx-auto h-full w-full max-w-4xl bg-panel text-ink`}>
+    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
         <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
           <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
         </button>
         {onClose && <button className={button} onClick={onClose}>Close Inbox</button>}
       </div>
-    </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
+    </BoxHead>
+    <BoxBody className="flex flex-col p-4 sm:p-6">
+    <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot
@@ -500,14 +497,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-ink">{engine.name} is here, and nobody is signed in to it.</p>
-                  <p className="mt-1 text-ink-secondary">Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}</p>
+                  <p className="mt-1 text-ink-secondary">Anything you ask it to do will fail until you sign in.</p>
                 </div>
                 {turningOff !== engine.id && <button className={button} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
               </div>
-              {engine.signInCommand && <div className="mt-2 flex items-center gap-2 rounded-lg bg-control py-1 pl-3 pr-1">
-                <code className="min-w-0 flex-1 break-all text-[12px] text-ink">{engine.signInCommand}</code>
-                <button type="button" className="min-h-8 rounded-md px-2 text-[12px] text-ink-secondary hover:bg-raised-hover hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" aria-label={`Copy the ${engine.name} sign-in command`} onClick={() => void copy(engine.id, engine.signInCommand!)}>{copied === engine.id ? "Copied" : "Copy"}</button>
-              </div>}
+              <EngineSignInButton className="mt-2" instanceId={engine.id} name={engine.name} command={engine.signInCommand} onDone={refreshSetup} />
               {turningOff === engine.id && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
                 <span className="mr-auto text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
                 <button className={button} disabled={saving} onClick={() => setTurningOff(null)}>Keep it</button>
@@ -630,5 +624,6 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.ceil(result.total / result.pageSize)}</span>
       <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => { const next = result.next; setCursors(current => { const kept = [...current]; kept[page + 1] = next; return kept; }); setPage(current => current + 1); }}>Next</button>
     </footer>}
+    </BoxBody>
   </section>;
 }

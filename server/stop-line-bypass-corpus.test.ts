@@ -1,29 +1,57 @@
-// Copyright 2026 Ferrox Labs
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// The stop-line bypass corpus: every reviewer form from the ISSUE-PERMS rounds, judged on this tree and compared with two
+// shipped recordings.
 //
 // ISSUE-PERMS-1010, the 1.0.10 subset (designs/ISSUE-PERMS-DESIGN-1010.md rev 2, sections 3 and 4.1/4.4).
-// Every reviewer form from rounds 1-5 lives in server/testing/stop-line-bypass-corpus.json. Each row is judged the way
-// the server judges it (the stop line's reader, the Codex hook route, the verdict at Full access, Auto and No limits), and
-// compared with what shipped 1.0.9 (ed8af4fd5) did with the same row, recorded in server/testing/stop-line-bypass-109.json.
-// The strictness proof: whatever 1.0.9 held, the subset still holds, on every row and at every level. The only holds the
-// subset removes on purpose (the U20 waiver on Full access / No limits routine runs, #7a, and Fuigo's codex/apply_patch
-// read by its patch instead of held unproven, #7b) are not on these routes; issue-perms-1010.test.ts covers them.
+// Every row of server/testing/stop-line-bypass-corpus.json is judged on this tree, on the paths an engine's command really
+// takes (the engine-neutral reader, the Codex hook route, the Auto guard, the Fuigo ACP patch route), at Auto, Full access
+// (routine and owner) and No limits, and compared with what shipped 1.0.9 (ed8af4fd5) and shipped 1.0.10 (49a54e2fa) did
+// with the same row, recorded in server/testing/stop-line-bypass-109.json and server/testing/stop-line-bypass-1010.json.
+// The strictness proof: whatever either shipped version held, this tree still holds, on every row and at every level. The
+// only holds the subset removes are the three patch rows that name their removal (`removes`); the general shell class
+// (`expect: "109"`) is exactly what shipped, until grammar A (ISSUE-PERMS-GRAMMAR) closes it.
 //
-// Re-recording the 1.0.9 column: run this file on an ed8af4fd5 tree with STOPLINE_CORPUS_RECORD=<file>.
+// One recording serves every OS: an outcome is booleans and sources only, the temp folders never enter it, and the readers
+// load with a fixed home folder (below), so the recording does not follow the OS temp folder either.
+// Re-recording a column: run this file on that version's tree with STOPLINE_CORPUS_RECORD=<file>
+// (ed8af4fd5 for the 1.0.9 column, 49a54e2fa for the 1.0.10 column).
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { GrantCall } from "../shared/app-action-grant.ts";
-import { autoVerdict, type AutoApprover, type AutoContext } from "./auto-approve.ts";
-import { classifyAsk, classifyStopLine, deletesPlacedInside, type StopHit, type StopLinePlace } from "./stop-line.ts";
-import { routeDelivery } from "./drivers/codex-hook.ts";
-import { acpApplyPatchCall } from "./drivers/acp/core.ts";
+import type { AutoApprover, AutoContext } from "./auto-approve.ts";
+import type { StopHit, StopLinePlace } from "./stop-line.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
+// The always-ask reader freezes this computer's home folder and the folder holding it when server/shell/walk.ts loads
+// (HOME and HOME_PARENT, from os.homedir()). The suite's throwaway home sits under the OS temp folder, so on Linux that
+// parent was /tmp and every row naming /tmp was carded as a delete of the folder that holds every home (gc-04 on 1.0.11;
+// reviews/issue-perms-1012/gc04/), which no owner's computer does, and macOS, whose temp folder is elsewhere, disagreed.
+// The suite's setup already loaded walk.ts with that home, so the readers are loaded again here, after the module
+// registry is reset, with one fixed home on every OS; the suite's home comes back as soon as they are loaded.
+const readers = await (async () => {
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = "/home/owner";
+  process.env.USERPROFILE = "/home/owner";
+  vi.resetModules();
+  try {
+    const [autoApprove, stopLine, codexHook, acpCore] = await Promise.all([
+      import("./auto-approve.ts"),
+      import("./stop-line.ts"),
+      import("./drivers/codex-hook.ts"),
+      import("./drivers/acp/core.ts"),
+    ]);
+    return { autoVerdict: autoApprove.autoVerdict, classifyAsk: stopLine.classifyAsk, classifyStopLine: stopLine.classifyStopLine, deletesPlacedInside: stopLine.deletesPlacedInside, routeDelivery: codexHook.routeDelivery, acpApplyPatchCall: acpCore.acpApplyPatchCall };
+  } finally {
+    if (saved.HOME === undefined) delete process.env.HOME; else process.env.HOME = saved.HOME;
+    if (saved.USERPROFILE === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = saved.USERPROFILE;
+  }
+})();
+const { autoVerdict, classifyAsk, classifyStopLine, deletesPlacedInside, routeDelivery, acpApplyPatchCall } = readers;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
-type Row = { id: string; form: string; text: string | string[]; expect: "stop" | "unread" | "run" | "109"; removes?: string };
+type Row = { id: string; form: string; text: string | string[]; expect: "stop" | "unread" | "run" | "109"; removes?: string; noLimitsLifts?: string };
 const corpus = JSON.parse(readFileSync(join(HERE, "testing", "stop-line-bypass-corpus.json"), "utf8")) as { rows: Row[] };
 
 const AUTO: AutoApprover = { autoApprove: true };
@@ -50,7 +78,7 @@ const fill = (text: string): string => {
   return text.replaceAll("{SQDEL}", del.replace(/'/g, "'\\''")).replaceAll("{P}", project).replaceAll("{O}", outside).replaceAll("{H}", home);
 };
 
-/** One row's outcome, booleans and sources only, so the 1.0.9 column does not depend on the temp folders. */
+/** One row's outcome, booleans and sources only, so a recorded column does not depend on the temp folders. */
 type Outcome = {
   reader: string | null;
   inside?: boolean;
@@ -123,27 +151,39 @@ function acpPatch(patch: unknown) {
 }
 const record = process.env.STOPLINE_CORPUS_RECORD;
 
-// The 1.0.9 column is a Linux recording of POSIX lines: on Windows the temp path's backslashes are shell escapes, and on macOS
-// /tmp is no longer the temp folder, so another OS would compare different inputs. The patch routes run on every OS in
+// Linux and macOS compare against the one recording. On Windows the always-ask reader reads in its win32 mode
+// (server/always-ask.ts, platform from process.platform) and the temp folders are not POSIX words, so the POSIX rows need a
+// Windows fixture of their own (ISSUE-PERMS-GRAMMAR follow-up). The patch routes run on every OS in
 // server/drivers/acp/issue-perms-1010.test.ts.
-describe.runIf(process.platform === "linux")("ISSUE-PERMS-1010 bypass corpus (1.0.10 subset)", () => {
+describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.0.10 subset)", () => {
   if (record) {
     it("records this tree's outcomes", () => {
       writeFileSync(record, `${JSON.stringify(Object.fromEntries(outcomes), null, 1)}\n`);
     });
     return;
   }
-  const base = JSON.parse(readFileSync(join(HERE, "testing", "stop-line-bypass-109.json"), "utf8")) as Record<string, Outcome>;
+  const shipped: Record<string, Record<string, Outcome>> = {
+    "1.0.9": JSON.parse(readFileSync(join(HERE, "testing", "stop-line-bypass-109.json"), "utf8")) as Record<string, Outcome>,
+    "1.0.10": JSON.parse(readFileSync(join(HERE, "testing", "stop-line-bypass-1010.json"), "utf8")) as Record<string, Outcome>,
+  };
+  const columns = Object.entries(shipped);
 
-  it("the 1.0.9 column covers every row", () => {
+  it.each(columns)("the %s column covers every row", (_version, base) => {
     expect(Object.keys(base).sort()).toEqual(corpus.rows.map((row) => row.id).sort());
   });
 
-  it("frees only the patch envelope and marker forms both engines read, and nothing else", () => {
+  it.each(columns)("frees only the patch envelope and marker forms both engines read, and nothing %s held besides", (_version, base) => {
     // the bounded claim: every hold this subset removes on these routes is a patch both engines apply the same way
     expect(corpus.rows.filter((row) => row.removes).map((row) => row.id).sort()).toEqual(["p-heredoc-envelope", "p-leading-blank", "p1-eof"]);
-    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]]));
+    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]] && !(level === "noLimits" && row.noLimitsLifts)));
     expect(freed.map((row) => row.id)).toEqual([]);
+    // NOLIMITS-CODEX-EDIT: the bounded exception, and each is a stop-line row that was held at No limits only as unread
+    const lifted = corpus.rows.filter((row) => row.noLimitsLifts);
+    expect(lifted.map((row) => row.id).sort()).toEqual(["p1-delete", "p1-move-out"]);
+    for (const row of lifted) {
+      expect(base[row.id], row.id).toMatchObject({ reader: "delete", noLimitsSource: "unread-call" });
+      expect(outcomes.get(row.id), row.id).toMatchObject({ reader: "delete", noLimitsSource: "no-limits" });
+    }
   });
 
   const patchRows = corpus.rows.filter((row) => row.form === "patch" && (row.expect === "stop" || row.expect === "unread"));
@@ -165,7 +205,7 @@ describe.runIf(process.platform === "linux")("ISSUE-PERMS-1010 bypass corpus (1.
   });
 
   it.each(corpus.rows.filter((row) => row.expect === "stop" || row.expect === "unread").map((row) => [row.id, row] as const))("%s at No limits on a routine (not the owner's turn): the stop line and unread card still hold", (_id, row) => {
-    // the 1.0.9 column records No limits for the owner's own turn only, where No limits lifts the stop line; a routine,
+    // a recorded column holds No limits for the owner's own turn only, where No limits lifts the stop line; a routine,
     // webhook or someone else's turn keeps it (auto-approve.ts), so every stop and unread row is held there too
     const text = Array.isArray(row.text) ? row.text.map(fill) : fill(row.text);
     const judgeAt = (tool: string, summary: string, call: GrantCall, stopLine: StopHit | null) => autoVerdict(NO_LIMITS, tool, summary, { call, stopLine, ...ROUTINE });
@@ -200,16 +240,15 @@ describe.runIf(process.platform === "linux")("ISSUE-PERMS-1010 bypass corpus (1.
     }
   });
 
-  it.each(corpus.rows.map((row) => [row.id, row] as const))("%s: holds everything 1.0.9 held, and meets its row", (_id, row) => {
+  it.each(corpus.rows.flatMap((row) => columns.map(([version, base]) => [row.id, version, row, base[row.id]!] as const)))("%s: holds everything %s held, and meets its row", (_id, _version, row, was) => {
     const now = outcomes.get(row.id)!;
-    const was = base[row.id]!;
-    // strictness against ed8af4fd5, each hold on its own; a row that names the hold it removes on purpose is the
-    // bounded exception (designs/ISSUE-PERMS-DESIGN-1010.md section 3), and 1.0.9 really held it
-    if (row.removes) expect(was.held.fullRoutine, "1.0.9 held the row this subset frees").toBe(true);
+    // strictness against the shipped recording, each hold on its own; a row that names the hold it removes on purpose is
+    // the bounded exception (designs/ISSUE-PERMS-DESIGN-1010.md section 3), and the shipped version really held it
+    if (row.removes) expect(was.held.fullRoutine, "the shipped version held the row this subset frees").toBe(true);
     else if (was.reader !== null) expect(now.reader, "stop line").not.toBeNull();
     if (!row.removes && was.inside === false) expect(now.inside, "Auto guard placed inside").toBe(false);
     for (const level of ["fullRoutine", "fullOwner", "auto", "noLimits"] as const) {
-      if (!row.removes && was.held[level]) expect(now.held[level], level).toBe(true);
+      if (!row.removes && was.held[level] && !(level === "noLimits" && row.noLimitsLifts)) expect(now.held[level], level).toBe(true);
     }
     switch (row.expect) {
       case "stop":
@@ -224,7 +263,7 @@ describe.runIf(process.platform === "linux")("ISSUE-PERMS-1010 bypass corpus (1.
         expect(now.held.fullRoutine, "runs at Full access").toBe(false);
         break;
       case "109":
-        // the general shell class (since 0.1.59): exactly what 1.0.9 did; 1.0.11's grammar closes it
+        // the general shell class (since 0.1.59): exactly what shipped; grammar A (ISSUE-PERMS-GRAMMAR) closes it
         expect(now).toEqual(was);
         break;
     }

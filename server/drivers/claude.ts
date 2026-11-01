@@ -53,6 +53,7 @@ import { awaitCliTreeStopped, CLI_CALLER_DEADLINE_MS, cliTreeConfirmedStopped, c
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { anyMountIncomplete, bindCredentialPath, clearMountsIncomplete, connectorMountRefsOf, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantBaseline, untrackedDescendants, processNames } from "./process-tree.ts";
+import { reuseStats, type ReuseProcess, type SpareHandle } from "./reuse-stats.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { credentialDigest, diffWarmKey, warmKey, type WarmKey } from "./warm-key.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
@@ -94,6 +95,7 @@ import {
   createAttemptBoundary,
   interruptibleDelay,
   isPreAcceptFailure,
+  ORG_LOGIN_OFF,
   RETRY_MAX_ATTEMPTS,
   type AttemptBoundary,
 } from "./retry.ts";
@@ -205,6 +207,10 @@ export function claudeAuthFailure(frame: { error?: unknown; is_api_error_message
   if (frame.is_api_error_message !== true && typeof frame.error !== "string") return false;
   return frame.error === "authentication_failed" || classifyError({ text }).reason === "auth";
 }
+
+/** What the owner reads when Claude reports the login's organization has plan access turned off. The way forward comes
+ * first. It names Settings, not the chat card: the CLI still reports this login as signed in, so that card can clear itself. */
+export const CLAUDE_ORG_LOGIN_LINE = "To carry on with Claude, sign in with another account: open Settings, then Models, Advanced, Claude accounts. Claude says this login's organization has turned off plan access.";
 
 /** Adapted from OpenMausBot 95a94daa (#1840, Apache-2.0). A model newer
  * than the installed Claude Code: the API refuses it and the CLI relays that
@@ -327,6 +333,14 @@ export function resetClaudeMcpReadinessForTests(): void {
 
 /** How long a settle check waits for the init-time baseline probe. */
 const BASELINE_WAIT_MS = 5_000;
+/** Kept turns in a row with a custom server failed before the process is recycled. */
+const FAILED_ON_KEPT_TURNS = 2;
+/** The fence's error name for the close line: a code or class name, never its message. */
+const refusalName = (error: unknown): string => {
+  const code = (error as { code?: unknown } | null)?.code;
+  const name = typeof code === "string" ? code : error instanceof Error ? error.name : "unknown";
+  return `error=${name.replace(/[^\w.-]/g, "_").slice(0, 48)}`;
+};
 /** How long a turn whose steer may be unread waits after `result` for the
  * CLI's follow-up turn. Claude Code 2.1.309 starts it within milliseconds
  * (its `init` follows the result at once); without one the turn settles. */
@@ -2696,12 +2710,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   // npm on all three: the one recipe that is genuinely cross-platform. The
   // native installers differ per OS and would need verifying separately.
   install: {
-    command: {
-      darwin: "npm install -g @anthropic-ai/claude-code",
-      linux: "npm install -g @anthropic-ai/claude-code",
-      win32: "npm install -g @anthropic-ai/claude-code",
-    },
-    needsNode: true,
+    native: true,
     docsUrl: "https://claude.com/claude-code",
     signInCommand: "claude auth login",
   },
@@ -2793,6 +2802,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       turnId: string;
       settled: boolean;
       sawStreamDelta: boolean;
+      /** Set once this turn's prompt is written: what its first token is timed against. */
+      timing?: { dispatchAt: number; process: ReuseProcess; sealed: boolean; resumed: boolean; background: boolean; gateMs: number; writtenMs: number; reported?: boolean };
       authFailed?: boolean;
       /** the CLI is too old for the model (claudeVersionTooOld) */
       updateRequired?: boolean;
@@ -2891,6 +2902,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
        * undefined until the first result; null when the start is unknown. */
       costTotal: number | null | undefined;
       finishClose?: () => Promise<void>;
+      /** Started on intent and not yet taken by a turn. */
+      spare?: SpareHandle;
+      /** Custom servers seen failed on this kept process, with the kept turns in a row. */
+      failedOnKept?: Map<string, number>;
+      /** Why this process ends at its next settle, when the turn itself is fine. */
+      recycleAtSettle?: string;
       /** A confirmation already proved this process tree stopped: finishClose
        * must not run another one that could disagree and quarantine it again. */
       stopProven?: boolean;
@@ -2998,10 +3015,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         else { session.quarantine?.(); watchLateStop(session); }
       });
     };
-    const closeSession = (threadId: string, why: string) => {
+    /** `detail` goes on the log line only (fixed words): the route of a reset, the name of a refusal. */
+    const closeSession = (threadId: string, why: string, detail?: string) => {
       const s = sessions.get(threadId);
       if (!s || s.closing) return;
       s.closing = true;
+      reuseStats.closed(why);
+      s.spare?.lost(why === "idle" || why === "activity window" ? "no-send" : why);
       endElicitations(s, "system");
       warmPool.release(s);
       retire(s, threadId);
@@ -3019,7 +3039,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       s.cred?.dispose();
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { close: why } });
       // The reason a warm process was not kept, where diagnostics can see it.
-      console.info(`claude close thread=${threadId} reason=${why}`);
+      console.info(`claude close thread=${threadId} reason=${why}${detail ? ` ${detail}` : ""}`);
       // stdin EOF is the CLI's exit signal; give it a moment, then insist
       try {
         s.child.stdin.end();
@@ -3152,7 +3172,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         threadId,
         pid: () => s.child.pid,
         spawnedAt: spawnedAtOf(s.child),
-        background: backgroundThreads.has(threadId),
+        // A hold is the owner's intent, whatever the thread's last turn was: only a
+        // settled turn (sendTurn keeps this set current) can be background work.
+        background: !hold && backgroundThreads.has(threadId),
         hold,
         close: (reason) => {
           if (sessions.get(threadId) === s) closeSession(threadId, reason);
@@ -3258,6 +3280,18 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
       });
 
+    /** A new process connects every server again; a kept one holds a failure for good.
+     * After FAILED_ON_KEPT_TURNS kept turns in a row with a custom server still failed,
+     * the process ends when this turn settles, and the next turn starts that server fresh. */
+    const noteFailedOnKept = (s: Session, optional: string[], notConnected: Array<{ name: string; state: string }>) => {
+      const counts = (s.failedOnKept ??= new Map());
+      for (const name of optional) {
+        const state = notConnected.find((entry) => entry.name === name)?.state;
+        if (state === "failed") counts.set(name, (counts.get(name) ?? 0) + 1);
+        else if (state === undefined) counts.delete(name);
+      }
+      s.recycleAtSettle = [...counts.values()].some((turns) => turns >= FAILED_ON_KEPT_TURNS) ? "server failed on reuse" : undefined;
+    };
     /** Before a turn's prompt is written: wait (bounded) until the CLI reports
      * the turn's required MCP servers connected, reconnect the failed ones
      * (together, under one deadline), and return the plain names of those
@@ -3267,7 +3301,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * notice: `chipTurn` gives the turn to show it on (a kept process starts
      * its turn then), or null where there is none. */
     interface GateOutcome { missing: string[]; readiness: McpReadiness; required: string[] }
-    const gateMcpServers = async (s: Session, threadId: string, servers: string[], chipTurn: () => string | null, stopped: () => boolean): Promise<GateOutcome> => {
+    const gateMcpServers = async (s: Session, threadId: string, servers: string[], chipTurn: () => string | null, stopped: () => boolean, kept = false): Promise<GateOutcome> => {
       const plan = splitMcpServers(servers);
       const requiredLabels = unavailableLabels(plan.required);
       if (!plan.required.length && !plan.optional.length) return { missing: [], readiness: "ready", required: requiredLabels };
@@ -3299,7 +3333,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           chipId = `mcp-wait-${chipTurnId}`;
           emit({ ...base(threadId, chipTurnId), type: "item.started", itemType: "tool", origin: "murage", itemId: chipId, title: mcpWaitChipTitle(unavailableLabels(waitingFor)) });
         },
-      }, { firstAnswerMs: mcpFirstAnswerMs() });
+      }, { firstAnswerMs: mcpFirstAnswerMs(), reconnectOptional: kept });
+      if (kept && !outcome.stopped && !outcome.unchecked) noteFailedOnKept(s, plan.optional, outcome.notConnected);
       if (!outcome.stopped) {
         claudeMcpStatusSupport.observe(identity, !outcome.unchecked ? "answered" : outcome.uncheckedReason === "unsupported" ? "unsupported" : "no-answer");
       }
@@ -3322,6 +3357,27 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       return text;
     };
 
+    /** The prompt reached the engine. A retry of the same turn counts once (reuse-stats.ts). */
+    const noteSubmitted = (threadId: string, t: SessionTurn, turn: SendTurnInput, process: ReuseProcess, spawnReason: string | null, dispatchAt: number, gateMs: number) => {
+      const sealed = turn.sealed === true;
+      const background = turn.background === true;
+      reuseStats.submitted({ engine: DRIVER_KIND, threadId, turnId: t.turnId, background, sealed, process, spawnReason });
+      // a kept process is its session; a new one continues only from a cursor
+      const resumed = process !== "spawned" || (!turn.sessionReset && typeof turn.resumeCursor === "string");
+      if (!turn.engineCommand) t.timing = { dispatchAt, process, sealed, resumed, background, gateMs, writtenMs: Date.now() - dispatchAt };
+    };
+    const noteRefused = (threadId: string, turnId: string, turn: SendTurnInput, reason: string) => {
+      reuseStats.refused({ engine: DRIVER_KIND, threadId, turnId, background: turn.background === true, sealed: turn.sealed === true, reason });
+    };
+    /** The first assistant text of a real turn. No content, only how long it took. */
+    const noteFirstToken = (threadId: string, t: SessionTurn | null | undefined) => {
+      const timing = t?.timing;
+      if (!timing || timing.reported) return;
+      timing.reported = true;
+      const firstTokenMs = Date.now() - timing.dispatchAt;
+      console.info(`claude first-token thread=${threadId} process=${timing.process} sealed=${timing.sealed} resumed=${timing.resumed} dispatchMs=${timing.writtenMs} gateMs=${timing.gateMs} firstTokenMs=${firstTokenMs}`);
+      if (!timing.background) reuseStats.firstToken(timing.process, firstTokenMs);
+    };
     /** A steer's fence (steer's `beforeWrite`), run right before its write. */
     const steerFenceHolds = (beforeWrite: (() => void) | undefined): boolean => {
       try { beforeWrite?.(); return true; } catch { return false; }
@@ -4009,6 +4065,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         settingsRev: claudeSettingsRevision(env, cwd),
         // S4 power (design section 7): a constant on a key whose spawn is under the block (Windows only for Claude).
         ...hostPowerKeyField({ posixHostPower: false }),
+        // 1.0.8 owner zone: the zone the process was handed (engine-env.ts withOwnerTimeZone); a change respawns it
+        timeZone: handed.env.TZ ?? null,
       });
 
       // Reuse the live process when it is idle, unchanged, and is the session
@@ -4073,6 +4131,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (spawnReason !== null && live) clearMountsIncomplete(mountRefs);
       const dispatchTrace = `claude dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`} ${shellDispatch}`;
       console.info(dispatchTrace);
+      const dispatchAt = Date.now();
       if (spawnReason !== null && env.ANTHROPIC_CUSTOM_HEADERS) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
       appendNative(threadId, { dir: "out", source: "claude.session", msg: { dispatch: dispatchTrace } });
       if (live && spawnReason === null) {
@@ -4136,8 +4195,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           if (held) { heldStarted.delete(threadId); emit({ ...held, turnId, eventId: newEventId(), createdAt: new Date().toISOString() } as RuntimeEvent); }
           return started;
         };
+        const gateStartedAt = Date.now();
         const reused = await gateMcpServers(live, threadId, Object.keys(mcpServers), () => startLiveTurn().turnId,
-          () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true);
+          () => ctl.isStopped() || (startedTurn as SessionTurn | null)?.stopRequested === true, true);
+        const gateMs = Date.now() - gateStartedAt;
         const early = startedTurn as SessionTurn | null;
         if (early) {
           // The turn started during the check. A Stop killed the process and
@@ -4171,6 +4232,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           turn.beforeSubmit?.();
         } catch (error) {
           dropConfig();
+          noteRefused(threadId, turnId, turn, "submission refused");
           if (early) {
             if (typeof error === "object" && error !== null) submissionRefusals.add(error);
             early.settled = true;
@@ -4178,7 +4240,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             forgetActive(threadId);
             retryState.delete(threadId);
             withdrawCredentials();
-            if (sessions.get(threadId) === live) closeSession(threadId, "submission refused");
+            if (sessions.get(threadId) === live) closeSession(threadId, "submission refused", refusalName(error));
           } else if (withdrawCredentials()) armIdle(threadId);
           throw error;
         }
@@ -4190,6 +4252,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // A Stop inside the turn.started listeners writes nothing.
         liveTurn.submission = liveTurn.stopRequested ? Promise.resolve(false) : writeUser(live, threadId, withToolsNotice(turnPrompt, reused, Boolean(turn.engineCommand)), liveTurn.boundary, turn.images);
         const written = await liveTurn.submission;
+        if (written) {
+          noteSubmitted(threadId, liveTurn, turn, live.spare ? "spare" : "reused", null, dispatchAt, gateMs);
+          // a routine that lands on a spare took it from the owner: that is not a spare serving a turn
+          if (turn.background) live.spare?.lost("background turn"); else live.spare?.served();
+          live.spare = undefined;
+        } else noteRefused(threadId, turnId, turn, liveTurn.stopRequested ? "stopped" : "stdin write failed");
         // A Stop during the write kills the pipe, so the write fails. That is
         // the Stop, not a broken session: the child's close settles this turn
         // as cancelled once the kill is confirmed (upstream #1701).
@@ -4213,6 +4281,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         return { turnId };
       }
+      if (live && !turn.sessionReset && spawnReason) live.spare?.lost(`key:${spawnReason}`);
       if (live) closeSession(threadId, turn.sessionReset ? "context reset" : spawnReason === "max-age" ? "max-age" : `spawn contract changed: ${spawnReason}`);
       let cred: TurnCredentialStore | null = null;
 
@@ -4549,6 +4618,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         }
         forgetActive(threadId);
         session.turn = null;
+        if (t.timing) reuseStats.settled({ threadId, background: t.timing.background });
         // the next intent warm resumes this conversation, not the one the turn began with
         if (session.sessionId) lastTurns.patch(threadId, { resumeCursor: session.sessionId, sessionReset: false });
         // A settled turn owns no retry budget. Retained CLI sessions may run
@@ -4567,6 +4637,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Sign-in state is loaded once per process: after an auth failure the
         // process may hold stale credentials, so the next turn gets a fresh one.
         if (stopReason === "auth_required") recycleReason ??= "auth required";
+        if (session.recycleAtSettle) recycleReason ??= session.recycleAtSettle;
         // `total` is the CLI's running total for this process; the harness
         // books turn.completed.cost as this turn's own spend
         const cost = turnCostFromRunningTotal(total, session.costTotal ?? null);
@@ -4840,6 +4911,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (ev.type !== "content_block_delta") break;
             const d = ev.delta ?? {};
             if (d.type === "text_delta" && typeof d.text === "string" && d.text) {
+              noteFirstToken(threadId, session.turn);
               if (session.turn) session.turn.sawStreamDelta = true;
               emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: d.text });
             } else if (d.type === "thinking_delta" && typeof d.thinking === "string" && d.thinking) {
@@ -4853,8 +4925,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (claudeAuthFailure(o, text)) {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
-                message: injected.injected ? "The selected model provider could not authenticate. Review its saved connection in Settings."
-                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : text || "Claude needs you to sign in. Open engine setup to continue.",
+                message: injected.injected ? "Your AI service did not accept the saved sign-in. Check its connection in Settings, Models & engines, then try again."
+                  : process.env.MURAGE_CLOUD_ROLE === "home" ? `${cloudHomeCopy.cloudClaudeSigninRenew}.` : ORG_LOGIN_OFF.test(text) ? CLAUDE_ORG_LOGIN_LINE : text || "Claude needs you to sign in. Open engine setup to continue.",
                 setup: !injected.injected, ...(!injected.injected ? { authRequired: true } : { details: text }),
               });
               break;
@@ -4867,6 +4939,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             if (text.trim()) {
               // fallback delta for CLIs/paths that never streamed the block
               if (!session.turn?.sawStreamDelta) {
+                noteFirstToken(threadId, session.turn);
                 emit({ ...base(threadId, currentTurnId()), type: "content.delta", streamKind: "assistant_text", delta: text });
               }
               if (session.turn) {
@@ -5318,6 +5391,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       session.quarantine = quarantineSession;
       child.on("close", (code) => {
         warmPool.release(session);
+        session.spare?.lost("process exited");
         // A user-message write still in flight when the process died has an
         // unknown outcome until its callback reports. Node destroys stdin on
         // exit, so it reports promptly; decide only after it has, so the
@@ -5414,8 +5488,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           }, prewarmFileGraceMs());
           session.startupTimer.unref?.();
         }
+        session.spare = startingSpares.get(threadId);
+        session.spare?.parked();
         armIdle(threadId, true);
-        console.info(`claude prewarm thread=${threadId} parked=true`);
+        if (sessions.get(threadId) === session && !session.closing && !session.turn) console.info(`claude prewarm thread=${threadId} parked=true`);
         return { turnId };
       }
       // prompt over stdin as a stream-json message — never argv (ARG_MAX).
@@ -5430,12 +5506,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // The new process connects its MCP servers in the background: wait
       // (bounded) for the ones this turn needs before the prompt goes in.
       let gate: GateOutcome;
+      const gateStartedAt = Date.now();
       try {
         gate = await gateMcpServers(session, threadId, Object.keys(mcpServers), () => turnId, cancelledBeforeWrite);
       } catch (error) {
         turn.notWritten?.();
         throw error;
       }
+      const gateMs = Date.now() - gateStartedAt;
       // A Stop during the wait killed the child: its close settles the turn as
       // cancelled. A child that died during it is settled (or relaunched) by its
       // close as a prompt that never reached it: nothing is written either way.
@@ -5456,13 +5534,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         session.turn = null;
         forgetActive(threadId);
         retryState.delete(threadId);
-        if (sessions.get(threadId) === session) closeSession(threadId, "submission refused");
+        noteRefused(threadId, turnId, turn, "submission refused");
+        if (sessions.get(threadId) === session) closeSession(threadId, "submission refused", refusalName(error));
         throw error;
       }
       if (gate.missing.length) launchTurn.toolsUnavailable = gate.missing;
       if (gate.readiness === "unknown" && gate.required.length) launchTurn.mcpReadiness = "unknown";
       launchTurn.submission = writeUser(session, threadId, withToolsNotice(turnPrompt, gate, Boolean(turn.engineCommand)), launchTurn.boundary, turn.images);
-      if (!(await launchTurn.submission)) {
+      const launchWritten = await launchTurn.submission;
+      if (launchWritten) noteSubmitted(threadId, launchTurn, turn, "spawned", spawnReason, dispatchAt, gateMs);
+      else noteRefused(threadId, turnId, turn, "stdin write failed");
+      if (!launchWritten) {
         turn.notWritten?.();
         // The message never reached the CLI whole. End the session and let
         // its close decide: a transient pre-accept failure may relaunch
@@ -5480,6 +5562,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       return { turnId };
     };
 
+    /** The spare handle of each start in flight, taken by the session when it parks. */
+    const startingSpares = new Map<string, SpareHandle>();
     /** Intent warm: start this thread's engine the way its next turn would (the last real
      * turn's cwd, env, MCP config, settings and warm key) and park it idle, held for one
      * window. A no-op without remembered inputs (after a restart, say), when an engine is
@@ -5490,6 +5574,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const held = sessions.get(threadId);
       if (idleHeld > 0 || !mem || active.has(threadId) || resetBarriers.has(threadId) || resetBlocked.has(threadId) || (held && !held.closing && held.child.exitCode === null) || !prewarming.begin(threadId)) return false;
       const turnId = newId();
+      const spare = reuseStats.spare();
+      startingSpares.set(threadId, spare);
       let stoppedBeforeLaunch = false;
       let wake = () => {};
       const stopped = new Promise<void>((resolve) => { wake = resolve; });
@@ -5497,13 +5583,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       active.set(threadId, reservation);
       try {
         await dispatchTurn({ ...mem, prewarm: true, background: false, sessionReset: false }, undefined, { turnId, reservation, stopped, isStopped: () => stoppedBeforeLaunch });
-        return sessions.get(threadId)?.turn === null;
+        const parked = sessions.get(threadId);
+        return parked?.turn === null && !parked.closing;
       } catch (error) {
         if (!(error instanceof StoppedBeforeLaunch)) console.info(`claude prewarm thread=${threadId} failed=${error instanceof Error ? error.message : String(error)}`);
         if (active.get(threadId) === reservation) forgetActive(threadId);
         prewarmTurns.delete(turnId);
         return false;
       } finally {
+        startingSpares.delete(threadId);
+        if (sessions.get(threadId)?.spare !== spare) spare.lost("not parked");
         prewarming.end(threadId);
       }
     };
@@ -5524,7 +5613,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     };
 
     /** The reset itself; resetSession wraps it in the thread barrier. */
-    const resetSessionBody = async (threadId: string): Promise<void> => {
+    const resetSessionBody = async (threadId: string, route?: string): Promise<void> => {
       // interruptTurn alone ignores retained idle sessions. Cancel any
       // active retry as well, then await this thread's existing close path.
       const session = sessions.get(threadId);
@@ -5545,7 +5634,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       const started = Date.now();
       let exited = true;
       if (session) {
-        closeSession(threadId, "memory context reset");
+        closeSession(threadId, "memory context reset", route ? `route=${route}` : undefined);
         exited = session.finishClose !== undefined || await new Promise<boolean>((resolve) => {
           const done = (value: boolean) => { clearTimeout(timer); session.child.off("close", closed); resolve(value); };
           const closed = () => done(true);
@@ -5613,7 +5702,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const memorySession: MemorySessionRunner = async (prompt, signal) => {
       const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
       try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, { cwd }); }
-      catch (error) { throw error instanceof Error && !("status" in error) ? engineFailure(error.message) : error; }
+      catch (error) { throw error instanceof Error && !("status" in error) ? Object.assign(engineFailure(error.message), "code" in error ? { code: error.code } : {}) : error; }
       finally { rmSync(cwd, { recursive: true, force: true }); }
     };
     const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> => {
@@ -5796,7 +5885,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           let released = false;
           return { confirmed, release: () => { if (!released) { released = true; idleHeld = Math.max(0, idleHeld - 1); } } };
         },
-        resetSession: async (threadId) => {
+        resetSession: async (threadId, why) => {
           // The barrier is installed before this function's first await, so no
           // send or prewarm can slip in beside the tree being reset.
           let release = () => {};
@@ -5804,7 +5893,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const previousBarrier = resetBarriers.get(threadId);
           resetBarriers.set(threadId, previousBarrier ? Promise.all([previousBarrier, barrier]).then(() => undefined) : barrier);
           try {
-            await resetSessionBody(threadId);
+            await resetSessionBody(threadId, why?.route);
           } finally {
             release();
             // the latest barrier on a thread clears itself once it has settled

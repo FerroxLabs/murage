@@ -39,7 +39,7 @@ export function errorPreview(tool: { name: string; setup?: boolean; errorKind?: 
   }
   if (tool.setup) return "This engine needs setup.";
   const message = tool.name.slice(6).trim();
-  if (tool.blocked || isProviderSafetyBlock(message) || isProviderSafetyBlock(tool.errorDetails ?? "")) return "The provider blocked this request.";
+  if (tool.blocked || isProviderSafetyBlock(message) || isProviderSafetyBlock(tool.errorDetails ?? "")) return t("ux.lcopyb.errorPreview.blocked");
   const category = engineErrorCategory(tool.errorKind);
   if (category) return t(`runtimeError.engineKind.${category}`);
   // an internal code reads as its plain sentence, never as the code
