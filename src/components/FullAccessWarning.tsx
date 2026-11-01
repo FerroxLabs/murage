@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
+import { t } from "@/lib/i18n";
 import { AlertTriangle } from "lucide-react";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 /** Shown once per bot, on the desktop, before Full access is switched on. */
 export const FULL_ACCESS_WARNING =
@@ -9,8 +11,6 @@ export const FULL_ACCESS_WARNING =
 export const FULL_ACCESS_STOP_LINE =
   "It still asks before deleting anything outside its folder, paying for anything, messaging someone new or posting in public, and reading your keys and passwords.";
 
-export const FULL_ACCESS_STILL_ASKS =
-  "Turns started by webhooks still ask, as they do in Auto.";
 
 /** Images follow the level now (server/image-approval.ts): made without a card in
  * the owner's own conversations and routines, with a record, unless the bot's Images setting says otherwise. */
@@ -19,13 +19,13 @@ export const FULL_ACCESS_IMAGES =
 
 /** Which level the dialog switches on: a conversation's (the composer chip),
  * the bot's own (Bot settings), or one routine's. A routine run is judged at
- * its routine's level, the bot's own unless the routine has one
+ * the lower of its routine's level and the bot's own
  * (server/routine-permissions.ts), never at a conversation's. */
 export type FullAccessScope = "conversation" | "bot" | { routine: string };
 
 export function fullAccessScopeNote(scope: FullAccessScope): string {
   if (scope === "conversation") return "This is for this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.";
-  if (scope === "bot") return "Routines use this level too, unless a routine has its own.";
+  if (scope === "bot") return "Routines keep their own level and never run above this one.";
   return `This is for the routine ${scope.routine} only.`;
 }
 
@@ -88,27 +88,27 @@ export function FullAccessWarning({
         aria-modal="true"
         aria-labelledby="full-access-warning-title"
         aria-describedby="full-access-warning-body"
-        className="w-full max-w-[440px] rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
+        className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[440px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl`}
       >
-        <div className="flex items-start gap-3">
+        <BoxHead className="items-start justify-start px-5 pt-5">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
-          <div>
-            <h2 id="full-access-warning-title" className="text-[15px] font-semibold text-ink">
+            <h2 id="full-access-warning-title" className="min-w-0 text-[15px] font-semibold text-ink">
               {level === "unlimited" ? `Give @${botName} no limits?` : `Give @${botName} full access?`}
             </h2>
+        </BoxHead>
+        <BoxBody className="pl-[50px] pr-5">
             <div id="full-access-warning-body" className="mt-1.5 flex flex-col gap-1.5 text-[13px] leading-relaxed text-ink-secondary">
               <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}
-              <p>{FULL_ACCESS_STILL_ASKS}</p>
+              <p>{t("ux.lcopyb.fullAccess.stillAsks")}</p>
               <p>{FULL_ACCESS_IMAGES}</p>
               <p>{FULL_ACCESS_ASKS_UNLESS_ALLOWED}</p>
               <p>You are asked this once for this bot. Switch back to {level === "unlimited" ? "Full access, " : ""}Auto or Ask at any time.</p>
             </div>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
+        </BoxBody>
+        <BoxFoot className="px-5 pb-5 pt-4">
           <button
             ref={cancelRef}
             type="button"
@@ -124,7 +124,7 @@ export function FullAccessWarning({
           >
             {level === "unlimited" ? "Turn on no limits" : "Turn on full access"}
           </button>
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );

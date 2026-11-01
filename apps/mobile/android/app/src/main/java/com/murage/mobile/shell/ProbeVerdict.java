@@ -15,20 +15,22 @@ public final class ProbeVerdict {
     public final Long approvalProof;
     public final Long phoneJobs;
     public final Long phoneAsk;
+    public final Long phoneFlags;
 
     private ProbeVerdict(Kind kind, String name) {
         this(kind, name, null);
     }
 
     private ProbeVerdict(Kind kind, String name, Long hostCapability) {
-        this(kind, name, hostCapability, null, null, null);
+        this(kind, name, hostCapability, null, null, null, null);
     }
 
-    private ProbeVerdict(Kind kind, String name, Long hostCapability, Long approvalProof, Long phoneJobs, Long phoneAsk) {
+    private ProbeVerdict(Kind kind, String name, Long hostCapability, Long approvalProof, Long phoneJobs, Long phoneAsk, Long phoneFlags) {
         this.hostCapability = hostCapability;
         this.approvalProof = approvalProof;
         this.phoneJobs = phoneJobs;
         this.phoneAsk = phoneAsk;
+        this.phoneFlags = phoneFlags;
         this.kind = kind;
         this.name = name;
     }
@@ -55,7 +57,9 @@ public final class ProbeVerdict {
             Long phoneJobs = jobs instanceof Integer || jobs instanceof Long ? ((Number) jobs).longValue() : null;
             Object ask = json.opt("phoneAsk");
             Long phoneAsk = ask instanceof Integer || ask instanceof Long ? ((Number) ask).longValue() : null;
-            return new ProbeVerdict(Kind.FULL, raw instanceof String ? WorkspaceBook.cleanName((String) raw) : null, hostCapability, approvalProof, phoneJobs, phoneAsk);
+            Object flags = json.opt("phoneFlags");
+            Long phoneFlags = flags instanceof Integer || flags instanceof Long ? ((Number) flags).longValue() : null;
+            return new ProbeVerdict(Kind.FULL, raw instanceof String ? WorkspaceBook.cleanName((String) raw) : null, hostCapability, approvalProof, phoneJobs, phoneAsk, phoneFlags);
         }
         // Only a refused handshake or certificate gets HTTPS guidance (twin of NavigationFailure.isCertificate);
         // a reset or bad record is a network failure, so the automatic retry still applies.
@@ -73,6 +77,8 @@ public final class ProbeVerdict {
     }
 
     public boolean phoneAskOk() { return kind == Kind.FULL && phoneAsk != null && phoneAsk >= 1; }
+
+    public boolean phoneFlagsOk() { return kind == Kind.FULL && phoneFlags != null && phoneFlags >= 1; }
 
     public boolean phoneJobsOk() {
         return kind == Kind.FULL && phoneJobs != null && phoneJobs >= 1;

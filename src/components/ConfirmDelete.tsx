@@ -13,6 +13,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
 import { api } from "@/state/store";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export function ConfirmDelete({
   name,
@@ -64,18 +65,19 @@ export function ConfirmDelete({
       role="presentation"
     >
       <div
-        className="w-full max-w-[420px] rounded-2xl border border-hairline/40 bg-panel p-6"
+        className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[420px] rounded-2xl border border-hairline/40 bg-panel`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="confirm-delete-title"
       >
-        <div className="flex items-start gap-3">
+        <BoxHead className="items-start justify-start px-6 pt-6">
           <AlertTriangle size={20} className="mt-0.5 shrink-0 text-danger" />
-          <div className="min-w-0">
-            <h2 id="confirm-delete-title" className="text-[15px] font-semibold text-ink">
+            <h2 id="confirm-delete-title" className="min-w-0 text-[15px] font-semibold text-ink">
               {title ?? <>Delete {kind} “{name}”?</>}
             </h2>
+        </BoxHead>
+        <BoxBody className="pl-14 pr-6">
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
             {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages, counts?.engines).map((line) => (
               <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
@@ -83,17 +85,18 @@ export function ConfirmDelete({
             {items && items.length > 0 && (
               <ul
                 aria-label="What will be deleted"
-                className="mt-2 max-h-[160px] overflow-y-auto rounded-lg border border-hairline/40 bg-app px-3 py-2 text-[12.5px] leading-relaxed text-ink"
+                className="mt-2 rounded-lg border border-hairline/40 bg-app px-3 py-2 text-[12.5px] leading-relaxed text-ink"
               >
                 {items.map((item, index) => (
                   <li key={`${index}-${item}`} className="truncate">{item}</li>
                 ))}
               </ul>
             )}
-          </div>
-        </div>
+        </BoxBody>
 
-        <label className="mt-4 block text-[12.5px] text-ink-secondary">
+        {/* The name field stays by the Delete button, so its focus never scrolls the list away. */}
+        <BoxFoot className="block px-6 pb-6 pt-4">
+        <label className="block text-[12.5px] text-ink-secondary">
           Type <span className="font-medium text-ink">{name}</span> to confirm
           <input
             ref={inputRef}
@@ -122,6 +125,7 @@ export function ConfirmDelete({
             Delete {kind}
           </button>
         </div>
+        </BoxFoot>
       </div>
     </div>
   );

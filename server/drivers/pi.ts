@@ -11,10 +11,10 @@ import { PI_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 // BYOK agent: credentials live in ~/.pi/agent/auth.json and are injected by
 // the pi binary itself, so this driver holds no API key and needs no sign-in.
 //
-// Conversation continuity: the first turn sends `new_session` and remembers
-// the returned `sessionFile`; later turns send `switch_session` with that
-// path (the way Claude Code resumes by session id). `sessionFile` is the
-// resumeCursor the harness persists per thread.
+// Conversation continuity: pi runs with --no-session, so `new_session` returns
+// no `sessionFile`, session.started carries no id, no cursor is stored, and the
+// harness replays the thread into each turn's prompt (keepsNoSession). A cursor
+// handed in all the same goes through `switch_session`.
 //
 // Model ids in the picker are `provider/modelId` composites (e.g.
 // `ollama-cloud/glm-5.2`); `set_model` splits that into pi's separate
@@ -34,7 +34,8 @@ import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspac
 import { augmentedPath, envGeneration } from "../env-path.ts";
 import { gitBashPath } from "../tool-discovery.ts";
 import { CLI_TERM_GRACE_MS, cliVersionReader, describeSpawnFailure, engineJob, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
-import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { ProviderStopUnconfirmedError, ROOT_CLOSE_GRACE_MS, stopBudget, TurnTeardowns, type TeardownWait } from "./child-teardown.ts";
+import { classifyError } from "./retry.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
 import type {
@@ -128,6 +129,10 @@ const PI_ISOLATION_FLAGS: ReadonlyArray<readonly [string, readonly [number, numb
 /** The newest floor above: the first pi that has every switch. */
 export const PI_ISOLATION_MIN = [0, 67, 4] as const;
 
+/** The first pi that reports `agent_settled`, the event a turn ends on (0.80.3 and 0.75.4 never send it; 0.80.4 was not
+ * published). Below it a turn would never end, so none is started and the owner is told to update. */
+export const PI_TURN_MIN = [0, 80, 5] as const;
+
 function piSemver(text: string | undefined): [number, number, number] | null {
   const m = /(\d+)\.(\d+)\.(\d+)/.exec(text ?? "");
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
@@ -160,6 +165,12 @@ function walkPiProjectContextFiles(cwd: string, home: string): string[] {
     dir = parent;
   }
   return files;
+}
+
+/** The owner-facing line for a readable pi older than PI_TURN_MIN, or null. An unreadable version is piIsolationArgs's refusal. */
+function piBelowTurnMin(version: string | undefined): string | null {
+  const v = piSemver(version);
+  return v && !piAtLeast(v, PI_TURN_MIN) ? `Your Pi engine is version ${v.join(".")}, and Murage needs ${PI_TURN_MIN.join(".")} or newer.` : null;
 }
 
 /** Isolation argv for one pi turn, given the probed `pi --version`. */
@@ -483,6 +494,27 @@ function decodeConfig(raw: unknown): PiConfig {
 const EMPTY: ModelCatalog = { default: "", options: [] };
 
 /** The parsed pi RPC event we branch on — only the fields this driver reads. */
+/** How one turn ended, closeTurn's only input. */
+type TurnEnd = { kind: "done" } | { kind: "cancelled" } | { kind: "failed"; message?: string; stopReason?: string; setup?: boolean };
+
+/** The extension requests that wait for an answer; pi floods setWidget and setStatus besides. */
+const PI_DIALOGS: ReadonlySet<string> = new Set(["select", "confirm", "input", "editor"]);
+
+/** Why pi refuses a prompt, in words Murage chose. Pi's text can carry anything (an extension's error, a folder, a key), so none of it
+ * reaches the chat: a known refusal reads as its line here and any other as no reason given. The text itself stays in the native trace. */
+const PI_REFUSED_REASONS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\bNo API key found\b/, "No API key found for the selected model"],
+  [/\bNo model selected\b/, "No model selected"],
+  [/^\W*Authentication failed\b/, "Authentication failed"],
+];
+
+/** A prompt pi refused, for the chat. */
+export function piRefusedLine(engine: string, error: unknown): string {
+  const text = typeof error === "string" ? error : "";
+  const reason = PI_REFUSED_REASONS.find(([pattern]) => pattern.test(text))?.[1] ?? "no reason given";
+  return `${engine} did not take this message: ${reason}. Check this bot's engine and model in Settings, then send it again.`;
+}
+
 interface PiEvent {
   type: string;
   // response
@@ -499,9 +531,16 @@ interface PiEvent {
   args?: unknown;
   result?: unknown;
   isError?: boolean;
-  // turn_end / message_end
-  message?: { stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
+  // turn_end / message_start / message_end
+  message?: { role?: string; stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
   usage?: { input?: number; output?: number };
+  // auto_retry_start / compaction_end / agent_settled
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+  reason?: string;
+  aborted?: boolean;
   // extension_ui_request
   id?: string;
   method?: string;
@@ -664,14 +703,17 @@ export function piPinnedBashExtension(shellPath: string): string {
 }\n`;
 }
 
+// --force: pi up to 0.73.1 was published as @mariozechner/pi-coding-agent, and without it npm refuses to replace that package's `pi` (EEXIST).
+const PI_INSTALL_COMMAND = "npm install -g --force @earendil-works/pi-coding-agent";
+
 export const PiDriver: ProviderDriver<PiConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "pi", supportsMultipleInstances: true, access: "custom" },
   install: {
     command: {
-      darwin: "npm install -g @earendil-works/pi-coding-agent",
-      linux: "npm install -g @earendil-works/pi-coding-agent",
-      win32: "npm install -g @earendil-works/pi-coding-agent",
+      darwin: PI_INSTALL_COMMAND,
+      linux: PI_INSTALL_COMMAND,
+      win32: PI_INSTALL_COMMAND,
     },
     needsNode: true,
     docsUrl: "https://pi.dev",
@@ -760,9 +802,13 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const pending = new Map<string, PiAskAnswer>();
       const scopedRequests = new Set<string>();
       let settled = false;
-      // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3): a tool round ends in
-      // its own turn_end, and pi's usage there covers that round only.
+      // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3). A round is counted at
+      // the first place pi reports it, normally its message_end, which precedes the round's tools.
       let turnUsage: { input: number; output: number } | undefined;
+      let roundCounted = false;
+      const addUsage = (round: { input?: number; output?: number }) => {
+        turnUsage = { input: (turnUsage?.input ?? 0) + (round.input ?? 0), output: (turnUsage?.output ?? 0) + (round.output ?? 0) };
+      };
 
       // An explicit pick must land on exactly that provider/model. A bare id
       // carries no provider, so set_model cannot pin it, and prompting anyway
@@ -802,6 +848,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       }
       if (!piVersion && versionProbeAllowed(`pi|${config.cli}`, cliSig(config.cli, piProbeEnv()))) await probePiVersion();
       if (!piVersion) await probePiVersion();
+      const belowTurnMin = piBelowTurnMin(piVersion);
+      if (belowTurnMin) {
+        // No child: nothing would ever end this turn. `setup` puts the update command on the card in place of Retry.
+        emit({ ...base(threadId, turnId), type: "turn.started" });
+        emit({ ...base(threadId, turnId), type: "runtime.error", setup: true, message: `${belowTurnMin} Update it in Settings under Engines, then send your message again.` });
+        emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "failed" });
+        starting.delete(threadId);
+        return { turnId };
+      }
       piIsolationArgs(piVersion, undefined, "");
 
       // integrations → stdio MCP servers for the pi-mcp-extension. The config
@@ -882,7 +937,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
       // spawnCli can throw synchronously (unresolvable CLI); if it does, the
       // 0600 temp file with the box token / composio key / comms token must
-      // not be left on disk — settle() never runs because no child existed.
+      // not be left on disk — closeTurn never runs because no child existed.
       const child = (() => {
         try {
           // The pi whose --version gated piIsolationArgs (piProbeEnv: Murage's own PATH), not the handed PATH's first.
@@ -962,31 +1017,67 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       };
 
       let aborting = false;
+      // The last assistant message of the attempt in progress, and what a failed compaction recovery said.
+      let lastAssistant: { stopReason?: string; errorMessage?: string } | null = null;
+      let recoveryFailure: string | null = null;
+      let attemptStreamed = false;
+      let compactionItem: string | null = null;
+      const askTimers = new Set<{ clear: () => void }>();
+      const closeCompaction = (ok: boolean) => {
+        if (compactionItem) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: compactionItem, ok });
+        compactionItem = null;
+      };
       const terminate = () => {
         try { child.stdin.end(); } catch { /* already closed */ }
         teardown.markStopRequested();
         try { killCliTree(child); } catch { /* already gone */ }
       };
-      const settle = (ok: boolean, stopReason?: string | null, usage?: { input?: number; output?: number }) => {
-        if (settled) return;
+      /** The one way a turn ends (designs/PI-SETTLE-AGENT-END-1013.md): once, with no ask outliving it. */
+      const closeTurn = (end: TurnEnd): boolean => {
+        if (settled) return false;
         settled = true;
+        pending.clear();
+        scopedRequests.clear();
+        for (const timer of askTimers) timer.clear();
+        askTimers.clear();
+        closeCompaction(false);
         flushAssistantText();
+        if (end.kind === "failed" && end.message) emit({ ...base(threadId, turnId), type: "runtime.error", message: end.message, ...(end.setup !== undefined ? { setup: end.setup } : {}) });
         emit({
           ...base(threadId, turnId),
           type: "turn.completed",
-          ok,
-          stopReason: stopReason ?? (ok ? "end_turn" : "failed"),
-          ...(usage ? { usage: { input: usage.input ?? 0, output: usage.output ?? 0 } } : {}),
+          ok: end.kind !== "failed",
+          stopReason: end.kind === "done" ? "end_turn" : end.kind === "cancelled" ? "cancelled" : end.stopReason ?? "failed",
+          ...(turnUsage ? { usage: turnUsage } : {}),
         });
         if (!aborting) terminate();
         active.delete(threadId);
+        return true;
+      };
+      const failed = (message?: string, more: { stopReason?: string; setup?: boolean } = {}): TurnEnd => ({ kind: "failed", ...(message ? { message } : {}), ...more });
+      const noFinish = () => `${ENGINE} could not finish this turn.`;
+      /** How a run that pi says is over ended. Only a last message of `stop` is success; anything unknown fails. */
+      const outcome = (aborted: boolean): TurnEnd => {
+        const sr = lastAssistant?.stopReason;
+        if (aborted || sr === "aborted" || sr === "cancelled") return { kind: "cancelled" };
+        if (recoveryFailure) return failed(recoveryFailure.slice(0, 2_000));
+        if (sr === "stop") return { kind: "done" };
+        if (sr === "length") return failed(`This reply stopped at the model's length limit, so it is not complete. Ask ${ENGINE} to continue, or choose a model with a longer limit.`);
+        if (sr === "error" || sr === "failed") return failed(String(lastAssistant?.errorMessage ?? noFinish()).slice(0, 2_000));
+        return failed(noFinish());
       };
 
+      /** A Stop with a card open: pi's abort waits for the dialog, which has no abort listener of its own. */
+      const cancelOpenAsks = () => {
+        for (const id of pending.keys()) {
+          try { send({ type: "extension_ui_response", id, cancelled: true }); } catch { /* pi is gone: nothing is waiting */ }
+        }
+      };
       const stop = () => {
         if (settled || aborting) return;
         aborting = true;
-        // Register before writing. A turn_end can precede the abort response;
-        // it must not close stdin or kill Pi while its session is still flushing.
+        // Register before writing: pi's own events can precede the abort response, and it must
+        // not have stdin closed or be killed while its session is still flushing.
         const completed = awaitResponse("abort", CLI_TERM_GRACE_MS);
         void completed.catch(() => {}).then(terminate);
         try {
@@ -994,15 +1085,28 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         } catch {
           rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
         }
-        settle(true, "cancelled");
+        cancelOpenAsks();
+        closeTurn({ kind: "cancelled" });
       };
       active.set(threadId, { stop, turnId, pending, child, scopedRequests });
       starting.delete(threadId);
 
       const onEvent = (evt: PiEvent) => {
         appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
+        // After the end only what a graceful Stop needs still counts: the abort's response, and a dialog pi would otherwise wait on.
+        if (settled && evt.type !== "response") {
+          if (aborting && evt.type === "extension_ui_request" && evt.id && PI_DIALOGS.has(String(evt.method))) {
+            try { send({ type: "extension_ui_response", id: evt.id, cancelled: true }); } catch { /* pi is gone */ }
+          }
+          return;
+        }
         switch (evt.type) {
           case "response": {
+            if (evt.command === "prompt") {
+              if (evt.success === false) closeTurn(failed(piRefusedLine(ENGINE, evt.error)));
+              else if ((evt.data as { disposition?: string } | undefined)?.disposition === "handled") closeTurn({ kind: "done" });
+              return;
+            }
             if (evt.command && responseWaiters.has(evt.command)) {
               const waiter = responseWaiters.get(evt.command)!;
               responseWaiters.delete(evt.command);
@@ -1016,13 +1120,64 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             }
             return;
           }
+          case "message_start": {
+            if (evt.message?.role !== "assistant") return;
+            // An error or a cut reply followed by another attempt: retry or recovery replaced it. What it showed goes.
+            if (lastAssistant?.stopReason === "error" || lastAssistant?.stopReason === "length") {
+              assistantText = "";
+              todo = createTodoBlockFilter();
+              if (attemptStreamed) for (const streamKind of ["assistant_text", "reasoning_text"] as const) emit({ ...base(threadId, turnId), type: "content.reset", streamKind });
+            }
+            lastAssistant = null;
+            recoveryFailure = null;
+            attemptStreamed = false;
+            return;
+          }
+          case "message_end": {
+            if (evt.message?.role !== "assistant") return;
+            lastAssistant = { stopReason: evt.message.stopReason, errorMessage: evt.message.errorMessage };
+            if (evt.message.usage) { addUsage(evt.message.usage); roundCounted = true; }
+            // Neither retry nor recovery replaces a `stop` message, and the owner has the reply even if pi then wedges.
+            if (evt.message.stopReason === "stop") flushAssistantText();
+            return;
+          }
+          case "auto_retry_start": {
+            emit({
+              ...base(threadId, turnId),
+              type: "turn.retrying",
+              attempt: Number(evt.attempt) || 1,
+              delayMs: Number(evt.delayMs) || 0,
+              reason: classifyError({ text: String(evt.errorMessage ?? "") }).reason,
+              // the first try plus pi's retries
+              ...(typeof evt.maxAttempts === "number" ? { maxAttempts: evt.maxAttempts + 1 } : {}),
+            });
+            return;
+          }
+          case "compaction_start": {
+            closeCompaction(true);
+            compactionItem = newId();
+            emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: compactionItem, title: "compact" });
+            return;
+          }
+          case "compaction_end": {
+            closeCompaction(!evt.errorMessage && evt.aborted !== true);
+            // Only recovery can fail a turn; compaction after a finished reply never does.
+            if (evt.errorMessage && evt.reason === "overflow" && evt.aborted !== true && lastAssistant?.stopReason !== "stop") recoveryFailure = String(evt.errorMessage);
+            return;
+          }
+          case "agent_settled": {
+            closeTurn(outcome(evt.aborted === true));
+            return;
+          }
           case "message_update": {
             const e = evt.assistantMessageEvent;
             if (!e) return;
             if (e.type === "text_delta" && typeof e.delta === "string") {
+              attemptStreamed = true;
               assistantText += e.delta;
               emitTodoOutput(todo.push(e.delta));
             } else if (e.type === "thinking_delta" && typeof e.delta === "string") {
+              attemptStreamed = true;
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: e.delta });
             }
             return;
@@ -1059,7 +1214,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             // Verified against pi-mono docs/rpc.md: select answers {value:
             // <option>}, input and editor answer {value: <text>}, confirm
             // answers {confirmed}, and every dialog takes {cancelled: true}.
-            if (evt.method === "select" || evt.method === "confirm" || evt.method === "input" || evt.method === "editor") {
+            if (PI_DIALOGS.has(String(evt.method))) {
               flushAssistantText();
               const reqId = evt.id ?? newId();
               // select, input and editor ask the OWNER something: one question
@@ -1096,13 +1251,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               // in the owner's name. (pi's own `timeout` field, when set, may
               // auto-resolve sooner on its side.)
               // awake time (1.0.10 C3): a sleep with the question open does not count toward its deadline
-              const timer = questions && !turn.holdProjectAsks
+              const timer: { clear: () => void } | null = questions && !turn.holdProjectAsks
                 ? wakeAwareTimeout(() => {
+                    if (timer) askTimers.delete(timer);
                     if (!pending.delete(reqId)) return;
                     send({ type: "extension_ui_response", id: reqId, cancelled: true });
                     emit({ ...base(threadId, turnId), requestId: reqId, type: "request.resolved", behavior: "deny", source: "timeout" });
                   }, QUESTION_TIMEOUT_MS)
                 : null;
+              if (timer) askTimers.add(timer);
               // Register BEFORE emitting: the harness may auto-approve from
               // inside its synchronous request.opened listener. Emitting first
               // made respondToRequest see no pending ask, return unavailable,
@@ -1113,6 +1270,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
               const gate = isGateAsk ? piGateAsk(typeof evt.prefill === "string" ? evt.prefill : "", mountRecords) : null;
               pending.set(reqId, (decision) => {
                 timer?.clear();
+                if (timer) askTimers.delete(timer);
                 if (questions) {
                   // validated picks first; a one-string client (voice) still works
                   const value = decision.behavior !== "answer"
@@ -1180,28 +1338,16 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             }
             return;
           }
-          case "turn_end":
-          case "agent_end": {
-            const sr = evt.message?.stopReason;
+          // A turn_end is one model round and an agent_end can be followed by compaction recovery: neither ends a turn.
+          case "turn_end": {
             const round = evt.usage ?? evt.message?.usage;
-            // a turn_end is one model round; agent_end counts only when no round reported (it is not another round)
-            if (round && !settled && (evt.type === "turn_end" || !turnUsage)) {
-              turnUsage = { input: (turnUsage?.input ?? 0) + (round.input ?? 0), output: (turnUsage?.output ?? 0) + (round.output ?? 0) };
-            }
-            // toolUse means pi ran a tool and auto-continues next turn to
-            // answer — settling now would drop the final reply.
-            if (sr === "toolUse" || sr === "tool_use" || sr === "tool_calls") return;
-            const usage = turnUsage;
-            if (sr === "error" || sr === "failed") {
-              emit({
-                ...base(threadId, turnId),
-                type: "runtime.error",
-                message: String(evt.message?.errorMessage ?? `${ENGINE} could not finish this turn.`).slice(0, 2_000),
-              });
-              settle(false, "failed", usage);
-              return;
-            }
-            settle(true, sr === "cancelled" || sr === "aborted" ? "cancelled" : "end_turn", usage);
+            if (round && !roundCounted) addUsage(round);
+            roundCounted = false;
+            return;
+          }
+          case "agent_end": {
+            const round = evt.usage ?? evt.message?.usage;
+            if (round && !turnUsage) addUsage(round);
             return;
           }
           default:
@@ -1225,10 +1371,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           appendNative(threadId, { dir: "in", source: "pi.rpc", msg: { frameOverflow: overflow } });
           if (settled) return;
           const message = frameOverflowMessage("pi", overflow);
-          emit({ ...base(threadId, turnId), type: "runtime.error", message });
-          // settle first so a pending handshake step sees the turn is over
+          // closed first so a pending handshake step sees the turn is over
           // and adds no second failure
-          settle(false, FRAME_TOO_LARGE);
+          closeTurn(failed(message, { stopReason: FRAME_TOO_LARGE }));
           rejectWaiters(new Error(message));
         },
       });
@@ -1243,32 +1388,41 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         return `${ENGINE} could not start a session: it closed before it was ready${lastWords ? ` (${lastWords})` : ""}. Send your message again. If this keeps happening, check that ${ENGINE} is installed and runs, or choose another engine for this bot.`;
       };
       child.stdout.on("data", (chunk: Buffer) => stdoutLines.push(chunk));
+      // stdout ends before exit on every recorded death, so ending here would lose the exit line; waiting on close alone could
+      // hang on a close Node never reports. This timer can only lead to a failure.
+      let stdoutEndTimer: NodeJS.Timeout | undefined;
+      child.stdout.on("end", () => {
+        if (settled) return;
+        stdoutEndTimer = setTimeout(() => {
+          if (settled) return;
+          closeTurn(failed(piClosedMessage(null, null)));
+          rejectWaiters(new Error(`${ENGINE} stopped before replying.`));
+        }, ROOT_CLOSE_GRACE_MS);
+        stdoutEndTimer.unref?.();
+      });
       registerIntake(threadId, child.stdout, child);
       child.on("error", (err) => {
         const fail = describeSpawnFailure(err as NodeJS.ErrnoException, config.cli);
         // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
         if ((err as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
+        // closed first, as below: a pending handshake step adds no second failure, and a late error after the end adds nothing
+        closeTurn(failed(fail.message, { setup: fail.setup }));
         rejectWaiters(new Error(fail.message));
-        emit({ ...base(threadId, turnId), type: "runtime.error", message: fail.message, setup: fail.setup });
-        settle(false);
       });
       child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
+        clearTimeout(stdoutEndTimer);
         // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before pi ran; nothing it was sent was delivered.
         if (!settled && hostPowerRefused(child)) {
           turn.notWritten?.();
+          closeTurn(failed(hostPowerMessage()));
           rejectWaiters(new Error(hostPowerMessage()));
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: hostPowerMessage() });
-          settle(false);
           return;
         }
         // A close without a terminal event is a failed turn, never a hang, and never a silent one: a wrapper (bwrap,
         // sandbox-exec) holds stdin open until it exits, so no EPIPE fires first, and a pi that crashes after the first
         // write gets none either. Exactly one error, emitted and settled before the waiters are rejected, so a pending
         // handshake step (failBeforePrompt) sees the turn is over and adds no second one.
-        if (!settled) {
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: piClosedMessage(code, signal) });
-          settle(false);
-        }
+        closeTurn(failed(piClosedMessage(code, signal)));
         rejectWaiters(new Error(`${ENGINE} stopped before replying.`));
       });
 
@@ -1281,11 +1435,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       /** Fail the turn before the prompt is dispatched: surface why, settle
        * ok:false and stop the child (settle kills it). A no-op once the turn
        * has already settled — e.g. the child exited, or the user cancelled. */
-      const failBeforePrompt = (message: string) => {
-        if (settled) return;
-        emit({ ...base(threadId, turnId), type: "runtime.error", message });
-        settle(false, "failed");
-      };
+      const failBeforePrompt = (message: string) => { closeTurn(failed(message)); };
 
       // handshake: resume the remembered session or start a fresh one. The
       // harness persists session.started.sessionId as the resumeCursor and
@@ -1366,6 +1516,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const probe = await probePi();
       if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
       const { version } = probe;
+      // The update row, not a card that fails on every turn; the same check a turn makes.
+      const belowTurnMin = piBelowTurnMin(version);
+      if (belowTurnMin) return { state: "unavailable", version, reason: belowTurnMin };
       // pi manages its own credentials (~/.pi/agent/auth.json); there is no
       // separate sign-in step the harness can probe, so treat it as authed.
       return { state: "available", version, authenticated: true };
@@ -1415,6 +1568,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
       enabled: input.enabled,
+      keepsNoSession: true,
       get models() {
         return models;
       },

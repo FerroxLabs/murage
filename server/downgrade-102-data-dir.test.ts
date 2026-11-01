@@ -55,6 +55,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "learning-paused-left.json"), "{}");
     writeFileSync(join(DATA_DIR, "pending-grants.json"), "{}");
     writeFileSync(join(DATA_DIR, "setup-backup.json"), "{}");
+    // the feedback id (1.0.12 feedback-relay.ts; random, made again when missing, 1.0.2 has no feedback form)
+    writeFileSync(join(DATA_DIR, "feedback-install-id"), "00000000-0000-4000-8000-000000000000\n", { mode: 0o600 });
     writeFileSync(join(DATA_DIR, "frozen-replies-recovery.json"), JSON.stringify({ rowid: 42, done: true })); // written on every 1.0.3 start
     mkdirSync(join(DATA_DIR, "env"), { recursive: true });
     writeFileSync(join(DATA_DIR, "env", "owner-env.0123456789abcdef"), "PATH=/bin\0HOME=/h\0");
