@@ -121,7 +121,7 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   await entry.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${item.link.messageId}"]`)).toBeVisible({ timeout: 15_000 });
   expect(await inbox().then((value: any) => value.total)).toBe(1); // opening is not answering
-  const allow = page.getByRole("button", { name: "Allow once", exact: true });
+  const allow = page.getByRole("group", { name: "Approval" }).getByRole("button", { name: "Run", exact: true });
   await expect(allow).toHaveCount(1);
   await allow.click();
   const decided = await waitFor("one engine decision", decisions, list => list.length === 1, 30_000);
@@ -163,7 +163,7 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   await expect(entry).toContainText("Offscreen Researcher");
   await entry.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${offscreenItem.link.messageId}"]`)).toBeVisible({ timeout: 15_000 });
-  const deny = page.getByRole("button", { name: "Deny", exact: true });
+  const deny = page.getByRole("button", { name: "Don't run", exact: true });
   await expect(deny).toHaveCount(1);
   await deny.click();
   const decided = await waitFor("one deny decision", decisions, list => list.length === decisionsBefore + 1, 30_000);

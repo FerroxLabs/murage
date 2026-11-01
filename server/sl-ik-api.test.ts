@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const FAKE_CODEX = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-codex-app-server.ts");
 // The server is a child process, so the lineage wall-clock budget (TURN_LINEAGE_MS) is live there: on a loaded host a cold first
@@ -66,7 +67,7 @@ it("Refresh permissions previews, applies that exact preview, refuses a stale on
   expect(preview.status).toBe(200);
   expect(preview.body.level.to).toBe("auto");
   // the bot moves to Full between the preview and the apply: nothing applied
-  expect((await api("PATCH", `/api/bots/${b.id}`, { settingsScope: "defaults", autoApprove: true, fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+  expect((await raiseLevel(api, b.id, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true }, { conversations: false })).status).toBe(200);
   const stale = await api("POST", path, { previewId: preview.body.previewId });
   expect(stale).toMatchObject({ status: 409, body: { code: "preview_stale" } });
   expect((await task(b.id, chat.threadId)).fullAccess).not.toBe(true);

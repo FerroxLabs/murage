@@ -126,6 +126,12 @@ export function probeSentence(probe: Extract<ProbeView, { ok: false }>, host: st
   return key ? t(key, { host }) : probe.error;
 }
 
-export function connectedSentence(count: number): string {
+/** The same on a saved server's card: the harness reports a long wait on an
+ * installer command as still installing, which is the add flow's reading. */
+export function savedProbeSentence(probe: Extract<ProbeView, { ok: false }>, host: string): string {
+  return probe.reason === "still-installing" ? t("mcp.card.test.noAnswer") : probeSentence(probe, host);
+}
+
+export function connectedSentence(count: number | string): string {
   return count === 0 ? t("mcp.card.connected.none") : count === 1 ? t("mcp.card.connected.one") : t("mcp.card.connected.other", { count });
 }

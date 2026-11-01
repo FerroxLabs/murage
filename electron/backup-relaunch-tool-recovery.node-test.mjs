@@ -220,6 +220,7 @@ test("main.mjs: a backup restart whose close can't finish marks this window as u
   const announced = [], logged = [];
   const context = { app: { isPackaged: true }, desktopRecoveryMode: false, desktopShutdownStarted: false, desktopDataOwner: {}, desktopCleanupStage: "owned harness",
     desktopBackupTool: { currentTool: () => "age.exe", status: () => ({ checking: false }) },
+    serverStopReason: { note() {} },
     cleanupDesktopForExit: async () => { context.desktopShutdownStarted = true; throw Error("The owned harness has not exited"); },
     slog: line => logged.push(line), announceBackupUnavailable: async reason => { announced.push(reason); } };
   vm.createContext(context);
