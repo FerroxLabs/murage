@@ -1,0 +1,1692 @@
+{
+ "p1-delete": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p1-move-out": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p1-eof": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-leading-blank": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-heredoc-envelope": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-crlf": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p1-add-inside": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p2-indent-after-add-space": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p2-indent-after-add-two-spaces": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p2-indent-after-add-tab": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-indent-after-add-nbsp": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-indent-after-add-u0085": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-indent-after-add-ufeff": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-indent-in-update-space": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p2-indent-in-update-tab": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-header-tail-crcr": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-header-tail-space": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-header-tail-tab": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-environment-id": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-middle-end": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p2-astra-r2": {
+  "reader": null,
+  "route": "allow",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  }
+ },
+ "p-empty-string": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-blank": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-envelope-only": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-missing-input": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "p-null-input": {
+  "reader": "delete",
+  "route": "ask",
+  "missing": "patch",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call"
+ },
+ "g3-r3-arg-plus-heredoc": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-r3-cd-prefix": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-r3-pwsh": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-r3-two-operands": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-r3-relative-cd": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-plain-heredoc-inside": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-plain-heredoc-delete-inside": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-plain-heredoc-delete-outside": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-applypatch-arg": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-ansi-literal": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-pipe": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-not-a-patch": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-heredoc-delim-blank": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "g3-heredoc-delim-cr": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "g3-heredoc-unquoted-bang": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-backtick": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "g3-uppercase": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-abs-path": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-env-prefix": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-eval": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-subshell": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-chain": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-var": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-bash-lc": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-sh-c-bash-lc": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-grep-readme": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-echo": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "g3-argv-plain": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "g3-argv-applypatch-delete-inside": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "g3-argv-bash-lc": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "g3-argv-env": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "g3-argv-pwsh": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "g3-win-powershell-tool": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "g3-win-shell-tool": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "l2-rm-outside": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-rm-home-tilde": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-cd-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-find-delete": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-mv-devnull": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-mv-trash": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-rsync-delete": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-ionice-t": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-find-exec-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-xargs-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-bash-c-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-sudo-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-timeout-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-nohup-rm": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "l2-argv-rm": {
+  "reader": "delete",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "l2-win-remove-item": {
+  "reader": "delete",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "gc-r4-built-name-0": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-r4-built-name-1": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-r4-built-name-2": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-r4-built-name-3": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-r4-built-name-4": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-r4-built-name-5": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-r4-argv-bash-lc": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "gc-r4-sh-c-bash-lc": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-00": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-01": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-02": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-03": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-04": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-05": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-06": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call",
+  "inside": false
+ },
+ "gc-07": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call",
+  "inside": true
+ },
+ "gc-08": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-09": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-10": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-11": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-12": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-13": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-14": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-15": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-16": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-17": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-18": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "unread-call",
+  "inside": false
+ },
+ "gc-19": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-20": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-21": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-22": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-23": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-24": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-25": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-26": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-27": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-28": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-29": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-30": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-31": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-32": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-33": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-34": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-35": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-36": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-37": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-38": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-39": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-40": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-41": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-42": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-43": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-44": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask",
+  "inside": false
+ },
+ "gc-45": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-46": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-47": {
+  "reader": "delete",
+  "route": "ask",
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "gc-argv-bash-cl": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "gc-ps-0": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "gc-ps-1": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "gc-ps-2": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "gc-ps-3": {
+  "reader": null,
+  "held": {
+   "fullRoutine": true,
+   "fullOwner": true,
+   "auto": true,
+   "noLimits": true
+  },
+  "noLimitsSource": "always-ask"
+ },
+ "gc-ps-4": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ },
+ "run-0": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "run-1": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "run-2": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": true,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": true
+ },
+ "run-3": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "run-4": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "run-5": {
+  "reader": null,
+  "route": "ask",
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits",
+  "inside": false
+ },
+ "run-argv-ls": {
+  "reader": null,
+  "held": {
+   "fullRoutine": false,
+   "fullOwner": false,
+   "auto": false,
+   "noLimits": false
+  },
+  "noLimitsSource": "no-limits"
+ }
+}

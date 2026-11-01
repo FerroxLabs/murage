@@ -48,7 +48,7 @@ describe("audit round: a typed engine error still reads plainly", () => {
     const markup = renderToStaticMarkup(createElement(RuntimeErrorCard, { message: raw, errorKind: "http", botName: "Dax", onOpenProviderSettings: () => {} }));
     const lead = markup.split("<details")[0];
     expect(lead).not.toContain("$10");
-    expect(lead).toContain("Dax&#x27;s model provider turned this request down.");
+    expect(lead).toContain("Dax&#x27;s AI service turned this request down.");
     expect(markup.split("<details")[1]).toContain("$10");
   });
 });
