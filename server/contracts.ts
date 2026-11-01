@@ -377,6 +377,9 @@ export interface BuiltEngineInput {
   sendTurn(input: BuiltSendTurnInput): Promise<TurnStartResult>;
   steer(threadId: ThreadId, prompt: import("./memory/lineage-types.ts").BuiltPrompt, beforeWrite?: () => void, interjectionId?: string): Promise<boolean | SteerDelivery>;
 }
+/** A prewarm's identity check, synchronous and in memory: throws (PrewarmRefused) when this launch may not resume `cursor` (null: a fresh
+ * session). Nothing is spawned then and the spare ends `lost fence:<reason>`. */
+export type PrewarmFence = (cursor: string | null) => void;
 export interface SendTurnInput {
   /** Routine, scheduled or memory work: not user activity. The warm pool
    * releases this turn's engine as soon as it finishes and never keeps it as a spare. */
@@ -384,6 +387,9 @@ export interface SendTurnInput {
   /** Driver-internal: this is an intent warm (prewarm), not a turn. The engine is
    * started and parked idle; nothing is sent, no turn events are emitted. */
   prewarm?: boolean;
+  /** Driver-internal, on a prewarm only: the prewarm's fence (ProviderAdapter.prewarm), run with no await before the spawn on the cursor
+   * that launch resumes. Claude carries it as the prewarm's beforeSubmit instead. */
+  launchFence?: PrewarmFence;
   /** Load browser tools at turn start when the browser is the place. */
   preloadBrowserTools?: boolean;
   /** Inspection observes what the model receives. `mounts` is what the SYSTEM
@@ -440,6 +446,8 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  /** The thread is sealed (thread recall): this turn is cold by design. Read by the reuse gauge only. */
+  sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string;
@@ -672,8 +680,8 @@ export interface ProviderAdapter {
   /** Intent warm: start this thread's engine from the spawn inputs of its last real
    * turn (held in memory only), park it idle and hold it for one activity window.
    * True when an engine was started; false when nothing was remembered, one is
-   * already live, or the thread is busy. Optional: drivers without a warm pool omit it. */
-  prewarm?(threadId: ThreadId): Promise<boolean>;
+   * already live, the thread is busy, or `fence` refused the launch. Optional: drivers without a warm pool omit it. */
+  prewarm?(threadId: ThreadId, opts?: { fence?: PrewarmFence }): Promise<boolean>;
   /** Request a stop. A driver that can observe teardown resolves with a
    * ProviderStopResult (A2); `void` is the legacy "requested, not observed". */
   interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void | ProviderStopResult>;
@@ -704,7 +712,7 @@ export interface ProviderAdapter {
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
-  resetSession?(threadId: ThreadId): Promise<void>;
+  resetSession?(threadId: ThreadId, why?: { route: string }): Promise<void>;
   /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
    * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
    * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
@@ -855,6 +863,10 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */

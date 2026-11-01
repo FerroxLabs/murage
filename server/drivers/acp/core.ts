@@ -2,6 +2,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
+import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
 import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
@@ -292,19 +293,19 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
  * into the transcript, where they may contain credentials or request text. */
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
   const info = classifyProviderError(error);
-  if (info?.kind === "payment") return "Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.";
+  if (info?.kind === "payment") return "Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.";
   // A ceiling the account reached, not a balance it spent. Saying "add
   // credits" here would be advice the provider itself contradicts.
   if (info?.kind === "spend-cap") {
     return info.provider === "flux-router"
-      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine."
-      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.";
+      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or pick another AI."
+      : "This account has reached its monthly spending limit with your AI service. Adding credit will not lift it: ask them to raise it, or pick another AI.";
   }
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
-      return "Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.";
+      return "Flux Router is out of credits. Add credits in Flux Router, then try again, or pick another AI in Models & engines.";
     }
-    return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
+    return "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.";
   }
   if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
   // "Request failed." is the generic line the error card already recognises.
@@ -937,7 +938,8 @@ import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { normalizeEngineCommands } from "../../engine-commands.ts";
 import { engineCommandText } from "../../../shared/engine-commands.ts";
 import { engineClosedLine, plainDuration } from "../stop-copy.ts";
-import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "../warm-pool.ts";
+import { createPrewarmGate, createTurnMemory, PrewarmRefused, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "../warm-pool.ts";
+import type { PrewarmFence } from "../../contracts.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../../subtasks.ts";
 import { awaitScopeStart, withScopeRetry } from "../scoped-cli-home.ts";
 import { connectedAppsServerName, isConnectedAppsServer } from "../../../shared/connected-app-names.ts";
@@ -1471,7 +1473,7 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * goes silent forever without ever answering the RPC.
  *
  * Off by default (0.1.61): the thread's silence watch (server/turn-watchdog.ts,
- * 20 minutes, or the room's own setting) is the one place silence is judged.
+ * one hour, or the room's own setting) is the one place silence is judged.
  * A three-minute guard here cut long tool calls short and ignored the owner's
  * setting. Setting the knob turns it back on for an engine that needs a
  * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */
@@ -1573,6 +1575,12 @@ const poolingEnabled = (): boolean => acpPoolingEnabled();
 /** Off by default for 1.0: an ACP process is only ever reused by the thread that
  * spawned it. `MURAGE_ACP_CROSS_THREAD_SPARE=1` lets another thread adopt an idle
  * spare to load its own session on it (never to open a new one). */
+/** One start in setup, before start() puts it in `active`: what a Stop, a retirement or a teardown marks so it cannot spawn afterwards. */
+interface StartToken { threadId: string; epoch: number; cancelled: boolean }
+/** Thrown at the spawn of a start whose token no longer holds: nothing was spawned. */
+class AcpStartCancelled extends Error {
+  constructor() { super("the turn was stopped before it started"); }
+}
 const crossThreadSpareEnabled = (): boolean => process.env.MURAGE_ACP_CROSS_THREAD_SPARE === "1";
 /** While parked, how often the process tree is checked for new children. */
 const PARKED_TREE_CHECK_MS = 5_000;
@@ -1991,7 +1999,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  that session last accepted; an unchanged stack is not sent again. */
       const systemDelivered = new Map<string, string>();
       const epochOf = (threadId: string) => threadEpochs.get(threadId) ?? 0;
-      const retireThread = (threadId: string) => threadEpochs.set(threadId, epochOf(threadId) + 1);
+      /** One per sendTurn, made before its first await and dropped at start() or on any way out. A set of tokens, not of threads: a send
+       *  waits behind a prewarm on the same thread, and the warm's end must not take the send's registration with it. */
+      const pendingStarts = new Set<StartToken>();
+      const retireThread = (threadId: string) => {
+        threadEpochs.set(threadId, epochOf(threadId) + 1);
+        for (const token of pendingStarts) if (token.threadId === threadId) token.cancelled = true;
+      };
+      /** stopAll and dispose reach setups suspended before start(), which `active`, `pool` and `sendWaits` do not name. */
+      const cancelPendingStarts = () => { for (const threadId of new Set([...pendingStarts].map((token) => token.threadId))) retireThread(threadId); };
       let processSeq = 0;
       let disposed = false;
       /** Threads with a send still waiting on an earlier child before it spawns: Stop All must fence them too. */
@@ -2338,7 +2354,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // kind (and none past the activity window or after a background turn).
         void warmPool.markIdle(proc, {
           engine: "acp", threadId, pid: () => proc.child.pid, spawnedAt: spawnedAtOf(proc.child), ...(proc.scope ? { scope: proc.scope } : {}),
-          background: backgroundThreads.has(threadId), hold,
+          background: !hold && backgroundThreads.has(threadId), hold,
           // adopted by a turn (or replaced): not idle, whatever the shared pool holds
           busy: () => pool.get(threadId) !== proc || proc.owner.hooks !== null,
           close: (reason) => closeProcess(threadId, proc, reason),
@@ -2369,7 +2385,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  replacement is followed), for a takeover to end through its owned process tree. */
       const prewarmChildren = new Map<string, () => ReturnType<typeof spawnCli> | null>();
       const sendTurn = async (turn: SendTurnInput) => {
+        const token: StartToken = { threadId: turn.threadId, epoch: epochOf(turn.threadId), cancelled: false };
+        pendingStarts.add(token);
+        try {
+          return await startTurn(turn, token);
+        } finally {
+          pendingStarts.delete(token);
+        }
+      };
+      const startTurn = async (turn: SendTurnInput, token: StartToken) => {
         const { threadId } = turn;
+        /** LATE-START: no Stop, retirement or teardown has reached this start. Read right before the spawn and again at start(). */
+        const assertStartLive = () => { if (token.cancelled || disposed || epochOf(threadId) !== token.epoch) throw new AcpStartCancelled(); };
         if (!turn.prewarm) {
           if (turn.background) backgroundThreads.add(threadId); else backgroundThreads.delete(threadId);
           if (!turn.background) { warmPool.noteUserActivity(); warmPool.sent(threadId); lastTurns.remember(threadId, spawnInputsOf(turn)); }
@@ -2561,7 +2588,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let reused = false;
         let poolable = false;
         let contractKey: string | null = null;
-        const startEpoch = epochOf(threadId);
+        const startEpoch = token.epoch;
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
         const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
@@ -4312,7 +4339,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         });
         const start = () => {
           if (started) return;
+          assertStartLive();
           started = true;
+          pendingStarts.delete(token);
           active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.interjection ? { interject } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.started" });
         };
@@ -4321,6 +4350,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          * handshake. A synchronous spawn failure throws to the caller, as it
          * always did for a turn that needs no card. */
         const launch = (trusted: boolean) => {
+        assertStartLive();
         if (turn.sessionReset === true) support.onSessionReset?.(turn);
         const argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) });
         // The spawn contract (see the pool notes): everything that decides
@@ -4359,6 +4389,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const resumeId = turn.sessionReset !== true && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
         const spawnFresh = () => {
+          // No await between these and the spawn below; a relaunch keeps its token.
+          assertStartLive();
+          if (turn.prewarm) turn.launchFence?.(resumeId);
           spawned = false;
           lifecycle.record("spawn_requested");
           const spawnedChild = (() => {
@@ -4483,6 +4516,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let mcpReadyWaited = false;
             /** How the last MCP-ready wait ended. */
             let mcpOutcome: "ready" | "own_ready" | "timeout" | "aborted" | null = null;
+            /** What the ready wait has cost this turn, for the gate line. */
+            let mcpWaitedMs = 0;
+            /** The engine's own words on each server, kept with the statuses they came with: only the gate line reads them. */
+            const listDetails = new WeakMap<Map<string, string>, Map<string, AcpMcpServerDetail>>();
             /** Each server's status from the engine's list (`mcpListMethod`), or
              *  null when it has none or did not answer. */
             const readStates = async (timeoutMs = 3_000): Promise<Map<string, string> | null> => {
@@ -4495,9 +4532,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const body = Array.isArray(answer?.servers) ? answer : answer?.result;
                 if (!Array.isArray(body?.servers)) return null;
                 const states = new Map<string, string>();
+                const details = new Map<string, AcpMcpServerDetail>();
                 for (const entry of body.servers) {
                   if (entry && typeof entry.name === "string" && typeof entry.session?.status === "string") states.set(entry.name, entry.session.status);
+                  // A disabled or blocked server is listed with a session and no status.
+                  if (entry && typeof entry.name === "string" && entry.session && typeof entry.session === "object") details.set(entry.name, acpMcpServerDetail(entry.session));
                 }
+                listDetails.set(states, details);
                 return states;
               } catch (error) {
                 if (buildKey && methodNotFound(error)) acpMcpListUnsupported.add(buildKey);
@@ -4510,6 +4551,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const waitMcpReady = async (): Promise<boolean> => {
               mcpReadyWaited = true;
               mcpDeadline ??= Date.now() + mcpRecoveryMs();
+              const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
               const names = mcpServers.map(server => server.name);
@@ -4540,6 +4582,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 void poll;
               }
               mcpOutcome = outcome;
+              mcpWaitedMs += Date.now() - waitStartedAt;
               mcpDone(outcome);
               if (state.settled) return false;
               if (state.cancelRequested) { settle(true, "cancelled"); return false; }
@@ -4945,6 +4988,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const notReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
               const absentFrom = (states: Map<string, string>) => requiredNames.filter(name => !states.has(name));
+              const gateStartedAt = Date.now();
+              let gateReconnected: string[] = [];
+              let gateBackedOff: string[] = [];
+              // Everything the wait learned, one line per turn, as the Claude gate logs it: fixed words, counts and server names only.
+              const logGate = (states: Map<string, string> | null, missing: string[]) => {
+                const buildKey = proc?.mcpBuildKey;
+                const gate: AcpMcpGateFacts = {
+                  threadId, engine: DRIVER_KIND, waitedMs: mcpWaitedMs + Date.now() - gateStartedAt, waitOutcome: mcpOutcome,
+                  required: requiredNames, mounted: mcpServers.map(server => server.name),
+                  reconnected: gateReconnected, backedOff: gateBackedOff, missing,
+                  standIn: requiredNames.filter(holdsStandIn), states, details: states ? listDetails.get(states) ?? null : null,
+                  ...(states ? {} : { unchecked: buildKey && acpMcpListUnsupported.has(buildKey) ? "unsupported" as const : "no-answer" as const }),
+                };
+                if (!acpMcpGateWorthLogging(gate)) return;
+                const line = acpMcpGateLine(gate);
+                console.info(line);
+                appendNative(threadId, { dir: "out", source: SOURCE, msg: { mcpGate: line } });
+              };
               let states = await readStates();
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -4953,11 +5014,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // A server that keeps failing is not reconnected on every turn.
                 const backoffKey = (name: string) => `${threadId}\0${name}`;
                 const retry = missing.filter(name => !acpMcpBackoff.blocked(backoffKey(name)));
+                gateBackedOff = missing.filter(name => !retry.includes(name));
                 // One deadline for the turn: what the ready wait left of it.
                 mcpDeadline ??= Date.now() + mcpRecoveryMs();
                 const windowMs = Math.min(mcpReconnectWaitMs(), mcpDeadline - Date.now());
                 if (retry.length && windowMs >= Math.min(1_000, mcpReconnectWaitMs())) {
                   lifecycle.record("mcp_reconnect");
+                  gateReconnected = retry;
                   const marker = String(Date.now());
                   const reconnecting = mcpServers.map(server => retry.includes(server.name)
                     ? { ...server, env: [...(server.env ?? []).filter((item: { name: string }) => item.name !== "MURAGE_MCP_RECONNECT"), { name: "MURAGE_MCP_RECONNECT", value: marker }] }
@@ -4988,11 +5051,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // waits for the real list), so the bot is not told they are missing.
                 const unavailable = statusNotReady(states);
                 requiredMissing = unavailable.length || !absent.length ? unavailableLabels(unavailable) : null;
-                if (requiredMissing?.length) {
-                  state.toolsUnavailable = requiredMissing;
-                  console.info(`acp mcp gate thread=${threadId} engine=${DRIVER_KIND} missing=${unavailable.join(",")}`);
-                }
-              }
+                if (requiredMissing?.length) state.toolsUnavailable = requiredMissing;
+                logGate(states, unavailable);
+              } else logGate(null, []);
             }
             // The process tree before the prompt goes out (MCP servers included): a
             // child beyond it once the turn settles is the turn's leftover work.
@@ -5170,6 +5231,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           } catch (e) {
             if (!state.settled) {
               if (stopWasAsked() || (disposed && !state.promptSent)) { settleHalted(); return; }
+              // A replacement refused at its spawn: the thread was retired under this turn, which ends as a stopped one.
+              if (e instanceof AcpStartCancelled) { settle(true, "cancelled"); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
               const providerError = classifyProviderError(e);
@@ -5229,10 +5292,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // A warm on intent never raises a card: with no decision recorded there is nothing to warm.
         // Nor does a warm start an engine while Murage removes a deleted conversation from the engine's files (holdIdle); no await separates this from the launch.
         if (turn.prewarm && (needsCard || idleHeld > 0)) { endPrewarm(); forgetPrewarm(); return { turnId }; }
+        /** A Stop or teardown reached this start during setup: nothing was spawned, and it ends as that Stop. */
+        const cancelledStart = () => {
+          providerBinding?.cleanup();
+          endPrewarm();
+          emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+          forgetPrewarm();
+          return { turnId };
+        };
         if (!needsCard) {
           try {
             launch(folderTrusted === "trust");
           } catch (error) {
+            if (error instanceof AcpStartCancelled || error instanceof PrewarmRefused) return cancelledStart();
             providerBinding?.cleanup();
             throw error;
           }
@@ -5240,7 +5313,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           handedBack = true;
           return { turnId };
         }
-        start();
+        try { start(); } catch (error) {
+          if (error instanceof AcpStartCancelled) return cancelledStart();
+          throw error;
+        }
         askFolderTrust(gate!.sources, (decision) => {
           if (state.settled) return;
           if (decision === "unanswered") {
@@ -5252,6 +5328,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           try {
             launch(decision === "trust");
           } catch (error) {
+            if (error instanceof AcpStartCancelled) { settle(true, "cancelled"); return; }
             emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(error as NodeJS.ErrnoException, config.cli) });
             settle(false, "spawn_error");
             return;
@@ -5267,12 +5344,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        * and park it in the pool, held for one window. A no-op without remembered inputs,
        * for an engine that is never pooled, when an idle process or a turn already holds
        * the thread, or when the folder still needs a trust decision. */
-      const prewarm = async (threadId: string): Promise<boolean> => {
+      const prewarm = async (threadId: string, opts?: { fence?: PrewarmFence }): Promise<boolean> => {
         const mem = lastTurns.get(threadId);
-        if (idleHeld > 0 || !mem || support.pooledSessions !== true || !poolingEnabled() || support.driverKind === "grokAgent") return false;
+        if (disposed || idleHeld > 0 || !mem || support.pooledSessions !== true || !poolingEnabled() || support.driverKind === "grokAgent") return false;
         if (active.has(threadId) || pool.has(threadId) || !prewarming.begin(threadId)) return false;
         try {
-          await sendTurn({ ...mem, prewarm: true, background: false, sessionReset: false });
+          await sendTurn({ ...mem, prewarm: true, background: false, sessionReset: false, ...(opts?.fence ? { launchFence: opts.fence } : {}) });
         } catch {
           prewarming.end(threadId);
           return false;
@@ -5451,6 +5528,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             },
           } : {}),
           stopAll: async () => {
+            cancelPendingStarts();
             for (const threadId of new Set([...active.keys(), ...pool.keys(), ...sendWaits.keys()])) retireThread(threadId);
             for (const { stop } of active.values()) stop("driver_dispose");
             for (const threadId of [...pool.keys()]) closeIdle(threadId, "stop_all");
@@ -5464,6 +5542,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         },
         dispose: async () => {
           disposed = true;
+          cancelPendingStarts();
           for (const { stop } of active.values()) stop("driver_dispose");
           for (const threadId of [...pool.keys()]) closeIdle(threadId, "dispose");
           const result = await waitAllClosed();

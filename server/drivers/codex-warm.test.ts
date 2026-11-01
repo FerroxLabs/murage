@@ -12,9 +12,11 @@ import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { bindCredentialPathInArgs, CodexDriver } from "./codex.ts";
+import { CodexHookGate } from "./codex-hook.ts";
 import { CRED_FILE_PLACEHOLDER } from "./turn-credentials.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
-import { warmPool } from "./warm-pool.ts";
+import { PrewarmRefused, warmPool } from "./warm-pool.ts";
+import { reuseStats } from "./reuse-stats.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
@@ -784,6 +786,128 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       expect(x2.completed).toMatchObject({ ok: true });
       expect(x2.seen.hookLog.at(-1)).toMatchObject({ id: "i1", verdict: "allow" });
     });
+
+    describe("LATE-START: a start that was stopped during setup never spawns, and a relaunch of the same turn still does", () => {
+      /** The Nth hook gate listen waits for the test (or fails when `fail` is set), so a Stop lands inside that await. */
+      const holdListen = (nth = 1, fail = false) => {
+        const real = CodexHookGate.prototype.listen;
+        let calls = 0;
+        let release = () => {};
+        let reached = () => {};
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const spy = vi.spyOn(CodexHookGate.prototype, "listen").mockImplementation(async function (this: CodexHookGate) {
+          if (++calls === nth) {
+            reached();
+            if (fail) throw new Error("listen refused");
+            await held;
+          }
+          return real.call(this);
+        });
+        restores.push(() => spy.mockRestore());
+        return { entered, release };
+      };
+      const restores: Array<() => void> = [];
+      const relaunchEnv = ["FAKE_CODEX_LAUNCH_CRASHES", "FAKE_CODEX_TRANSIENTS", "FAKE_CODEX_STATE", "FAKE_CODEX_RETRY_SCALE"];
+      afterEach(() => {
+        for (const restore of restores.splice(0)) restore();
+        for (const name of relaunchEnv) delete process.env[name];
+      });
+      const completedOf = (turnId: string) => recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+      const startedOf = (turnId: string) => recorder.events.filter((e) => e.type === "turn.started" && e.turnId === turnId);
+      const crashOnce = () => {
+        process.env.FAKE_CODEX_LAUNCH_CRASHES = "1";
+        process.env.FAKE_CODEX_STATE = join(scratch, "launches");
+        process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+      };
+
+      it("a Stop during hookGate.listen() spawns nothing and ends the turn as that Stop, once", async () => {
+        await gated();
+        const gate = holdListen();
+        const before = spawns().length;
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-late-stop", text: "go", ...base });
+        await gate.entered;
+        await instance.adapter.interruptTurn("t-late-stop", turnId);
+        gate.release();
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(spawns()).toHaveLength(before);
+        expect(completedOf(turnId)).toHaveLength(1);
+        expect(startedOf(turnId)).toHaveLength(1);
+        expect(instance.adapter.hasSession("t-late-stop")).toBe(false);
+      });
+
+      it("stopAll during hookGate.listen() spawns nothing, and the driver still serves the next turn", async () => {
+        await gated();
+        const gate = holdListen();
+        const before = spawns().length;
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-late-all", text: "go", ...base });
+        await gate.entered;
+        await instance.adapter.stopAll();
+        gate.release();
+        await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(spawns()).toHaveLength(before);
+        const next = await run("t-late-all", "again", base);
+        expect(next.completed).toMatchObject({ ok: true });
+        expect(spawns()).toHaveLength(before + 1);
+      });
+
+      it("the Critical: a relaunch after a recoverable exit still spawns under the same turnId", async () => {
+        crashOnce();
+        await gated();
+        const before = spawns().length;
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-relaunch-exit", text: "go", ...base });
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: true });
+        expect(spawns()).toHaveLength(before + 2);
+        expect(recorder.events.filter((e) => e.type === "turn.retrying" && e.turnId === turnId)).toHaveLength(1);
+        expect(completedOf(turnId)).toHaveLength(1);
+        expect(startedOf(turnId)).toHaveLength(1);
+      });
+
+      it("a relaunch after a transient turn/start failure still spawns under the same turnId", async () => {
+        process.env.FAKE_CODEX_TRANSIENTS = "1";
+        process.env.FAKE_CODEX_STATE = join(scratch, "launches");
+        process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+        await gated();
+        const before = spawns().length;
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-relaunch-503", text: "go", ...base });
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: true });
+        expect(spawns()).toHaveLength(before + 2);
+        expect(completedOf(turnId)).toHaveLength(1);
+      });
+
+      it("a Stop during a relaunch's setup spawns nothing more, ends the turn once and frees the thread", async () => {
+        crashOnce();
+        await gated();
+        const gate = holdListen(2);
+        const before = spawns().length;
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-relaunch-stop", text: "go", ...base });
+        await gate.entered;
+        await instance.adapter.interruptTurn("t-relaunch-stop", turnId);
+        gate.release();
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(spawns()).toHaveLength(before + 1);
+        expect(completedOf(turnId)).toHaveLength(1);
+        expect(startedOf(turnId)).toHaveLength(1);
+        expect(instance.adapter.hasSession("t-relaunch-stop")).toBe(false);
+      });
+
+      it("a relaunch whose setup fails ends the turn with a failure instead of holding the thread", async () => {
+        crashOnce();
+        await gated();
+        holdListen(2, true);
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-relaunch-fail", text: "go", ...base });
+        const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+        expect(done).toMatchObject({ ok: false });
+        expect(instance.adapter.hasSession("t-relaunch-fail")).toBe(false);
+      });
+    });
   });
 });
 
@@ -1042,6 +1166,29 @@ describe("CodexDriver intent prewarm (fake app-server)", () => {
       warn.mockRestore();
       hooks.stuck = false; hooks.failClear = false;
     }
+  });
+
+  it("the fence runs at the spawn with the cursor the launch resumes; a pass starts the engine", async () => {
+    await create();
+    await goCold("t-pw-fence");
+    const fence = vi.fn();
+    expect(await instance.adapter.prewarm!("t-pw-fence", { fence })).toBe(true);
+    expect(fence.mock.calls).toEqual([[sessions.get("t-pw-fence")]]);
+  });
+
+  it("a fence refusal spawns nothing, answers false and ends the spare lost fence:<reason>", async () => {
+    await create();
+    await goCold("t-pw-refused");
+    const before = spawns().length;
+    const lost = () => reuseStats.snapshot().spares.lost["fence:cursor-moved"] ?? 0;
+    const was = lost();
+    const events = recorder.events.length;
+    expect(await instance.adapter.prewarm!("t-pw-refused", { fence: () => { throw new PrewarmRefused("cursor-moved"); } })).toBe(false);
+    expect(spawns()).toHaveLength(before);
+    expect(lost()).toBe(was + 1);
+    expect(recorder.events.length).toBe(events); // nobody is told
+    expect(instance.adapter.hasSession("t-pw-refused")).toBe(false);
+    expect(await instance.adapter.prewarm!("t-pw-refused")).toBe(true); // nothing stays held
   });
 
   it("with no remembered args prewarm is a no-op, and a routine turn leaves nothing to warm", async () => {

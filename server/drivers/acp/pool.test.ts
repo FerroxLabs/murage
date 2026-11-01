@@ -19,7 +19,7 @@ import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../../contra
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
-import { warmPool } from "../warm-pool.ts";
+import { PrewarmRefused, warmPool } from "../warm-pool.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../../connector-cache.ts";
 import { acpPoolingEnabled, createAcpDriver, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
@@ -764,6 +764,108 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     expect(pooled).toBeLessThan(fresh - 200);
   });
 
+  describe("LATE-START: a start in setup is reached by Stop, stopAll and dispose", () => {
+    /** A driver whose sign-in check waits for the test, once armed: a setup suspended before start(), one gate per send. */
+    const heldAuth = () => {
+      const held: Array<{ reached: () => void; go: () => void; entered: Promise<void>; open: Promise<void> }> = [];
+      const hold = () => {
+        let reached = () => {};
+        let go = () => {};
+        const entered = new Promise<void>((resolve) => { reached = resolve; });
+        const open = new Promise<void>((resolve) => { go = resolve; });
+        const entry = { reached, go, entered, open };
+        held.push(entry);
+        return entry;
+      };
+      let armed = 0;
+      let seen = 0;
+      const gates: ReturnType<typeof hold>[] = [];
+      const driver = createAcpDriver({
+        ...POOL_SUPPORT, driverKind: "lateStartTest", requireAuthenticationBeforeSpawn: true,
+        isAuthenticated: async () => {
+          const gate = seen < armed ? gates[seen++] : undefined;
+          if (gate) { gate.reached(); await gate.open; }
+          return true;
+        },
+      });
+      return { driver, arm: () => { armed++; const gate = hold(); gates.push(gate); return gate; } };
+    };
+    const settled = async () => { await new Promise((resolve) => setTimeout(resolve, 100)); };
+
+    it("a Stop during the authentication await cancels the start: nothing spawns and the turn ends as that Stop", async () => {
+      const h = heldAuth();
+      await create(h.driver);
+      const gate = h.arm();
+      const sending = instance!.adapter.sendTurn({ threadId: "t-pool", text: "go" });
+      await gate.entered;
+      await instance!.adapter.interruptTurn("t-pool");
+      gate.go();
+      const { turnId } = await sending;
+      expect(await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+      await settled();
+      expect(spawns()).toHaveLength(0);
+      expect(instance!.adapter.hasSession("t-pool")).toBe(false);
+    });
+
+    it("stopAll during setup before start() cancels it, and the next turn starts as usual", async () => {
+      const h = heldAuth();
+      await create(h.driver);
+      const gate = h.arm();
+      const sending = instance!.adapter.sendTurn({ threadId: "t-pool", text: "go" });
+      await gate.entered;
+      await instance!.adapter.stopAll();
+      gate.go();
+      const { turnId } = await sending;
+      await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
+      await settled();
+      expect(spawns()).toHaveLength(0);
+      expect((await turn({ text: "again" })).done).toMatchObject({ ok: true });
+      expect(spawns()).toHaveLength(1);
+    });
+
+    it("dispose during setup before start() cancels it", async () => {
+      const h = heldAuth();
+      await create(h.driver);
+      const gate = h.arm();
+      const sending = instance!.adapter.sendTurn({ threadId: "t-pool", text: "go" });
+      await gate.entered;
+      await instance!.dispose();
+      gate.go();
+      await sending;
+      await settled();
+      expect(spawns()).toHaveLength(0);
+    });
+
+    it("overlapping starts keep their own tokens: the first ending does not hide the second from stopAll", async () => {
+      const h = heldAuth();
+      await create(h.driver);
+      const first = h.arm();
+      const second = h.arm();
+      const sendingFirst = instance!.adapter.sendTurn({ threadId: "t-pool", text: "one" });
+      await first.entered;
+      const sendingSecond = instance!.adapter.sendTurn({ threadId: "t-pool", text: "two" });
+      await second.entered;
+      first.go();
+      const { turnId } = await sendingFirst;
+      await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
+      const after = spawns().length;
+      await instance!.adapter.stopAll();
+      second.go();
+      await sendingSecond.catch(() => {});
+      await settled();
+      expect(spawns()).toHaveLength(after);
+    });
+
+    it("a relaunch inside one logical turn keeps its token: a reused process refused at load is replaced and the turn finishes", async () => {
+      await create();
+      expect((await turn({ text: "one" })).done).toMatchObject({ ok: true });
+      process.env.FAKE_ACP_REJECT_LIVE_LOAD = "1";
+      expect((await turn({ text: "two", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
+      expect(spawns()).toHaveLength(2);
+      expect(logged("reason=")).toBe(true);
+    });
+  });
+
   describe("intent prewarm", () => {
     /** One user turn, then the pool's own idle timer closes its process: the next warm starts cold. */
     const goCold = async () => {
@@ -775,6 +877,18 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
       await until(() => !alive(pid!), "the idle process to close");
       process.env.MURAGE_ACP_POOL_IDLE_MS = "60000";
     };
+
+    it("the fence runs right before the spawn with the cursor the launch resumes; a refusal spawns nothing and tells nobody", async () => {
+      await goCold();
+      const count = spawns().length;
+      const before = recorder.events.length;
+      expect(await instance!.adapter.prewarm!("t-pool", { fence: () => { throw new PrewarmRefused("cursor-moved"); } })).toBe(false);
+      expect(spawns()).toHaveLength(count);
+      expect(recorder.events.length).toBe(before);
+      const fence = vi.fn();
+      expect(await instance!.adapter.prewarm!("t-pool", { fence })).toBe(true);
+      expect(fence.mock.calls).toEqual([[SESSION]]);
+    });
 
     it("starts a cold engine once with its session established, sends no prompt, and announces nothing", async () => {
       await goCold();

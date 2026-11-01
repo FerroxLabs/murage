@@ -27,7 +27,7 @@ describe("images not sent", () => {
     expect(markup).toContain('role="status"');
     expect(markup).toContain("Only the first 10 images were sent. The other 3 were left out.");
     expect(markup).not.toContain("<button");
-    expect(markup).not.toMatch(/Provider settings|hit a problem|Retry/);
+    expect(markup).not.toMatch(/Models &amp; engines|Provider settings|hit a problem|Retry/);
   });
 
   it("names the reason when images were too large, in singular and plural, and both reasons together", () => {

@@ -53,7 +53,7 @@ export function decorateDraftOnlyInstance(live: ProviderInstance): ProviderInsta
   // A prewarm replays the input the engine remembered from its last turn (the decorated one for a draft-only thread), and the
   // Claude driver re-reads its launch facts before that spawn too; an engine that does not qualify warms nothing for it.
   const prewarm: ProviderAdapter["prewarm"] = original.prewarm
-    ? async (threadId) => (resolver(threadId) && !verdict().ok ? false : original.prewarm!(threadId))
+    ? async (threadId, opts) => (resolver(threadId) && !verdict().ok ? false : original.prewarm!(threadId, opts))
     : undefined;
   const adapter = new Proxy(original, {
     get(target, property) {

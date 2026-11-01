@@ -604,7 +604,9 @@ describe("per-phone share and ask switch", () => {
 
   it("reads the offer from shareAsk alone, independent of phoneTools", () => {
     const src = readFileSync(fileURLToPath(new URL("./CompanionSection.tsx", import.meta.url)), "utf8");
-    expect(src).toContain('"/api/phones/offered"');
+    // 1.0.12: the Preview card asks /api/phones/offered and hands each answer to the page
+    expect(readFileSync(fileURLToPath(new URL("./PhonePreviewSwitches.tsx", import.meta.url)), "utf8")).toContain('"/api/phones/offered"');
+    expect(src).toContain("<PhonePreviewSwitches onAnswer={onOfferAnswer} />");
     expect(src).toContain("answer?.shareAsk === true");
     expect(src).not.toContain("answer?.offered");
     expect(src).toContain("companion.shareAsk(device.id,");

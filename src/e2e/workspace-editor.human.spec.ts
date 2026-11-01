@@ -309,6 +309,17 @@ test("Edit and Save writes the owner's bytes and keeps the replaced revision; a 
   await selectBot(page, bot);
   await transcriptCard(page, firstCard.artifactId).getByRole("button", { name: `Open the working file ${RELATIVE_PATH} here` }).click();
   await expect(pane(page)).toBeVisible();
+
+  // Help stays one tap away, and the floating tab does not sit on the pane's buttons.
+  await expect(page.locator("[data-help-launcher]")).toBeHidden();
+  await page.getByTestId("workspace-pane-help").click();
+  await page.getByRole("button", { name: "Close help", exact: true }).click();
+  // A full-screen overlay covers the pane's "?", so the tab comes back above it.
+  await page.evaluate(() => { const veil = document.createElement("div"); veil.id = "veil"; veil.className = "fixed inset-0"; document.body.append(veil); });
+  await expect(page.locator("[data-help-launcher]")).toBeVisible();
+  await page.evaluate(() => document.getElementById("veil")?.remove());
+  await expect(page.locator("[data-help-launcher]")).toBeHidden();
+
   await editInSource(page, REPORT);
 
   // First save: exactly the typed bytes land; the revision they replaced
