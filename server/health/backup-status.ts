@@ -98,7 +98,11 @@ export interface BackupStatusInput {
   prior?: BackupStatus | null;
   /** A deterministic opaque token for a receipt's snapshot (default: sha256 of installation id and snapshot id). */
   snapshotToken?: (snapshotId: string) => string;
+  /** The time limit the host chose for this handoff. It is never in the committed state (shared/backup-budget.mjs). */
+  captureBudget?: BackupCaptureBudget | null;
 }
+
+export interface BackupCaptureBudget { handoffId: string; budgetMs: number }
 
 /** Builds the manifest from committed coordinator state. Pure. */
 export function projectBackupStatus(input: BackupStatusInput): BackupStatus {
@@ -106,6 +110,7 @@ export function projectBackupStatus(input: BackupStatusInput): BackupStatus {
   const prior = input.prior && input.prior.installationId === installationId ? input.prior : null;
   const schedule = state.schedule;
   const job = state.job;
+  const captureLimitMs = job?.handoff && input.captureBudget?.handoffId === job.handoff.id ? input.captureBudget.budgetMs : schedule.maxDurationMs;
   const receipt = state.lastVerified;
   const verifiedAt = receipt?.verifiedAt ?? null;
   const satisfied = (at: number) => verifiedAt !== null && verifiedAt >= at;
@@ -155,7 +160,7 @@ export function projectBackupStatus(input: BackupStatusInput): BackupStatus {
     status.failureAt = prior?.failureCode === status.failureCode && prior.failureAt !== undefined ? prior.failureAt : now;
   }
   if (job?.attemptAt !== undefined) status.lastAttemptAt = job.attemptAt;
-  if (job && CAPTURE_PHASES.has(job.phase) && job.attemptAt !== undefined && schedule.maxDurationMs) status.captureDeadlineAt = job.attemptAt + schedule.maxDurationMs;
+  if (job && CAPTURE_PHASES.has(job.phase) && job.attemptAt !== undefined && captureLimitMs) status.captureDeadlineAt = job.attemptAt + captureLimitMs;
   if (job?.phase === "waiting-backup-mode") status.pendingOwnerSince = prior?.pendingOwnerSince ?? job.scheduledAt;
   return status;
 }
@@ -176,6 +181,8 @@ export function createBackupStatusProducer(options: BackupStatusProducerOptions)
   const now = options.now ?? Date.now;
   let prior: BackupStatus | null | undefined;
   let lastOutcome: string | null = null;
+  // Kept for its handoff and never cleared: a publish still queued after the capture ends reads the same limit.
+  let captureBudget: BackupCaptureBudget | null = null;
   const readPrior = () => {
     if (prior !== undefined) return prior;
     const parsed = parseBackupStatus(options.publisher.readManifest(HEALTH_FILES.backupStatus));
@@ -183,12 +190,15 @@ export function createBackupStatusProducer(options: BackupStatusProducerOptions)
     return prior;
   };
   return {
+    noteCaptureBudget(budget: BackupCaptureBudget) {
+      if (typeof budget?.handoffId === "string" && Number.isSafeInteger(budget.budgetMs) && budget.budgetMs > 0) captureBudget = { handoffId: budget.handoffId, budgetMs: budget.budgetMs };
+    },
     onCommitted(state: BackupCommittedState): BackupStatus | null {
       try {
         const at = now();
         let binding: boolean | null = null;
         try { binding = options.bindingMatches?.() ?? null; } catch { binding = null; }
-        const status = projectBackupStatus({ installationId: options.installationId, now: at, state, bindingMatches: binding, prior: readPrior() });
+        const status = projectBackupStatus({ installationId: options.installationId, now: at, state, bindingMatches: binding, prior: readPrior(), captureBudget });
         const checked = parseBackupStatus(status);
         if (!checked.ok) return null;
         const outcome = backupOutcome(state);

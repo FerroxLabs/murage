@@ -1,11 +1,11 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { setPlatformProcessHooks } from "../platform-process-hooks.ts";
-import { baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, startedBeforeFromListing, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
+import { settleWalk, baselineFromListing, descendantBaseline, descendantIdentities, descendantPids, isBrowserPath, parseEtime, settleArgsProbe, startedBeforeFromListing, untrackedDescendants, untrackedIdentified, walk, type ExemptLayout } from "./process-tree.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // A stand-in CLI: starts a long-lived "server" child at once, then on a line
@@ -315,6 +315,58 @@ describe.skipIf(process.platform === "win32")("ps lookup under an empty PATH", (
       expect(rows?.get(pid)?.start).toBeTruthy();
     } finally {
       child.kill("SIGKILL");
+    }
+  }, 20_000);
+});
+
+describe("a zombie is not work (ENGINE-PERSIST F1a)", () => {
+  const settled = (listing: string, baseline = [2]) => [...(settleWalk(listing, 1, new Set(baseline), null) ?? [])].sort();
+
+  it("a zombie child of a baseline server is not reported, in every spelling ps gives it", () => {
+    for (const stat of ["Z", "Z+", "Zs", "ZN", "Z<"]) expect(settled(`1 0 Ss cli\n2 1 S mcp\n3 2 ${stat} (python3)\n`)).toEqual([]);
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 Z [python3] <defunct>\n")).toEqual([]);
+  });
+
+  it("a forked sleep under a server is reported, and so is the CLI's own sleep", () => {
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 S sleep\n")).toEqual([3]);
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 1 R sleep\n")).toEqual([3]);
+  });
+
+  it("a live child of a zombie parent is still reached and reported: the zombie's row and edge stay in the traversal", () => {
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 Z (sh)\n4 3 S sleep\n")).toEqual([4]);
+    expect(settled("1 0 Ss cli\n3 1 Z (sh)\n4 3 S sleep\n", [])).toEqual([4]);
+  });
+
+  it("a zombie main thread with other threads alive (Linux Zl) stays reported: it may still be working", () => {
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 Zl MainThread\n")).toEqual([3]);
+  });
+
+  it("a row whose state cannot be read stays reported", () => {
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 /usr/bin/worker\n")).toEqual([3]);
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n3 2 ? worker\n")).toEqual([3]);
+  });
+
+  it("a baseline server that is a zombie is exempt as before, and a server missing from the baseline is reported", () => {
+    expect(settled("1 0 Ss cli\n2 1 Z (mcp)\n")).toEqual([]);
+    expect(settled("1 0 Ss cli\n2 1 S mcp\n", [])).toEqual([2]);
+  });
+
+  it.skipIf(process.platform === "win32")("real ps: a server that never reaps its child leaves nothing to report, a live worker does", async () => {
+    // `exec` makes sleep the parent of the finished `true`, and sleep never waits for its children.
+    const zombieServer = spawn("sh", ["-c", "true & exec sleep 30"], { stdio: "ignore" });
+    const liveServer = spawn("sh", ["-c", "sleep 30 & exec sleep 30"], { stdio: "ignore" });
+    try {
+      await vi.waitFor(() => {
+        const rows = execFileSync("ps", ["-A", "-o", "ppid=,stat="], { encoding: "utf8" });
+        expect(rows.split("\n").some((row) => row.trim().startsWith(`${zombieServer.pid} Z`))).toBe(true);
+      }, { timeout: 5_000 });
+      // the test runner's listing: these two servers are the baseline, under this process
+      const tree = await untrackedDescendants(process.pid, new Set([zombieServer.pid!, liveServer.pid!]));
+      const under = (pid: number) => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }).split("\n").map((l) => l.trim().split(/\s+/).map(Number)).filter(([, ppid]) => ppid === pid).map(([p]) => p!);
+      expect(under(zombieServer.pid!).some((pid) => tree?.has(pid))).toBe(false);
+      expect(under(liveServer.pid!).some((pid) => tree?.has(pid))).toBe(true);
+    } finally {
+      zombieServer.kill("SIGKILL"); liveServer.kill("SIGKILL");
     }
   }, 20_000);
 });

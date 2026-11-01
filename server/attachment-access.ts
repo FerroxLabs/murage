@@ -118,6 +118,24 @@ export function messageJsonReferences(messageJson: string, name: string): boolea
   return attachmentReferencesIn(messageJson).some(ref => sameAttachmentName(ref, name));
 }
 
+/**
+ * The cache-control a remote caller (a paired phone, the browser door) gets for
+ * an attachment. A visible bot's avatar may be shown from the phone's own copy
+ * at once while it checks again in the background (max-age=0 with
+ * stale-while-revalidate): on a slow tunnel the bot keeps its face instead of
+ * the flame. A new picture is a new name, so it shows at once; were a name's
+ * bytes ever to change, the view that notices still shows the old copy while
+ * the new one loads, and the one after it shows the new one.
+ * Everything else is checked on every view, so hiding a conversation takes
+ * effect at once.
+ */
+export function remoteAttachmentCacheControl(store: Pick<AttachmentAccessStore, "bots">, name: string): string {
+  const url = `/api/attachments/${name}`;
+  return store.bots.some(bot => bot.hidden !== true && bot.avatarUrl === url)
+    ? "private, max-age=0, stale-while-revalidate=2592000"
+    : "private, no-cache";
+}
+
 export function attachmentVisibleToRemote(
   store: AttachmentAccessStore,
   name: string,

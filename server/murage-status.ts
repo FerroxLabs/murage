@@ -192,6 +192,8 @@ const TABLE = {
   receipt_turn_unfinished: () => "the delegating turn did not finish",
   receipt_denied: () => "the user denied this handoff",
   draft_only_handoff: () => "This bot drafts replies for you to send, so it hands work only to teammates that draft too.",
+  /** 1.0.11 APP-TRIGGERS hard zero (server/app-trigger-zero.ts): the tool result an app-origin create/ask/delegate gets. */
+  app_child_not_allowed: () => "This routine started from a connected-app event, so it can't start or hand work to other bots. Do this step yourself, or tell the owner it needs a scheduled routine.",
   receipt_draft_only: () => "this bot drafts replies for you to send, so it hands work only to teammates that draft too",
   receipt_expired: () => "the approval card expired without an answer",
   receipt_not_approved: () => "the approval was cancelled before a decision",
