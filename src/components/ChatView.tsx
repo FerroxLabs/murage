@@ -108,6 +108,8 @@ import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { FolderPromptRow } from "./FolderPromptRow";
+import { folderPromptShowing } from "../../shared/mac-folder-prompt";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -365,6 +367,7 @@ export function MessageActionSheet({
         role="dialog"
         aria-modal="true"
         aria-label="Message actions"
+        data-box-exempt="action sheet, its rows are the actions"
         tabIndex={-1}
         className={SHEET_PANEL}
       >
@@ -1276,6 +1279,8 @@ const MessagesList = memo(function MessagesList({
               // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
               // plain tool runs stay out unless Settings → Tool calls is on.
+              // macOS's folder prompt is holding the turn: said until the wait ends, then nothing
+              if (m.folderPrompt) return folderPromptShowing(m, Date.now()) && m.tool ? <FolderPromptRow text={m.tool.name} /> : null;
               // Full access approvals, folded into one quiet line per run
               if (isApprovedStepsLine(m)) return <ApprovedStepsRow message={m} />;
               // an image made without an approval card: what and the whole prompt

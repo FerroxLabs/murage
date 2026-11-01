@@ -22,8 +22,8 @@ import {
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { displayArgs, envForBody, hostOf, installStage, removeServer, signInTo, testServer, type ProbeView } from "@/lib/mcp-add-flow";
-import { probeSentence } from "@/lib/mcp-card-view";
+import { displayArgs, envForBody, hostOf, probeToolCount, removeServer, signInTo, testServer, testWaitKey, type ProbeView } from "@/lib/mcp-add-flow";
+import { savedProbeSentence } from "@/lib/mcp-card-view";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
 import { api } from "@/state/store";
 import { NETLIFY_TOKEN_ENTRY } from "../../shared/published-sites";
@@ -64,6 +64,11 @@ export interface McpRemoteServerListing {
 export function nameClashWith(server: { disabledReason?: string }): string | null {
   const reason = server.disabledReason ?? "";
   return reason.startsWith("name-collision:") && reason.length > "name-collision:".length ? reason.slice("name-collision:".length) : null;
+}
+
+/** What a Test on a saved server says while it waits. */
+export function SavedTestWait({ elapsed }: { elapsed: number }) {
+  return <div role="status" className="mt-3 text-[12px] text-ink-secondary">{t(testWaitKey(elapsed, false))}</div>;
 }
 
 type AnyListing = McpServerListing | McpRemoteServerListing;
@@ -525,23 +530,19 @@ export function McpServersPanel() {
                     </form>
                   )}
                   {removing === server.name && (
-                    <div role="alertdialog" aria-label={t("mcp.remove.confirm", { name: server.name })} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2 text-[12.5px] text-ink">
+                    <div role="alertdialog" data-box-exempt="inline confirm under a server row" aria-label={t("mcp.remove.confirm", { name: server.name })} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2 text-[12.5px] text-ink">
                       <span>{t("mcp.remove.confirm", { name: server.name })}</span>
                       <button type="button" disabled={!idle} onClick={() => void remove(server)} className="rounded-lg px-2.5 py-1.5 text-danger hover:bg-danger/10 disabled:opacity-40">{busy === `delete:${server.name}` && <Loader2 size={13} className="mr-1 inline animate-spin" />}{t("mcp.remove.yes")}</button>
                       <button type="button" onClick={() => setRemoving(null)} className="rounded-lg px-2.5 py-1.5 text-ink-secondary hover:bg-raised">{t("mcp.remove.keep")}</button>
                     </div>
                   )}
-                  {busy === `test:${server.name}` && !remote && elapsed >= 2 && (
-                    <div role="status" className="mt-3 text-[12px] text-ink-secondary">
-                      {installStage(elapsed) === "start" ? t("mcp.card.install.start") : installStage(elapsed) === "setup" ? t("mcp.card.install.setup") : t("mcp.card.install.still")}
-                    </div>
-                  )}
+                  {busy === `test:${server.name}` && !remote && elapsed >= 2 && <SavedTestWait elapsed={elapsed} />}
                   {result && (
                     <div role="status" className={cn("mt-3 rounded-lg px-3 py-2 text-[12px]", result.ok ? "bg-success/10 text-success" : "bg-danger/10 text-danger")}>
                       {result.ok ? (
                         <span className="flex items-start gap-2"><CheckCircle2 size={14} className="mt-px shrink-0" />{" "}
-                          {result.tools.length ? t("mcp.row.connectedTools", { count: result.tools.length, names: result.tools.map((tool) => tool.name).join(", ") }) : t("mcp.row.connectedNoTools")}</span>
-                      ) : probeSentence(result, host)}
+                          {result.tools.length ? t("mcp.row.connectedTools", { count: probeToolCount(result), names: result.tools.map((tool) => tool.name).join(", ") }) : t("mcp.row.connectedNoTools")}</span>
+                      ) : savedProbeSentence(result, host)}
                     </div>
                   )}
                 </div>

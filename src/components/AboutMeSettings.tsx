@@ -128,7 +128,7 @@ export function AboutMeSettings() {
           {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
           {notice && !error && <p role="status" className="text-[12.5px] text-ink-secondary">{notice}</p>}
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="sticky bottom-0 z-10 flex flex-wrap items-center gap-2 bg-panel py-2">
             <button type="button" disabled={busy || !dirty || counter.over} onClick={() => void save()} className={`${BUTTON} bg-accent text-white`}>{busy ? "Saving…" : "Save"}</button>
             {dirty && loaded.saved && (
               <button type="button" disabled={busy} onClick={() => { setDraft(saved); setVersion((current) => current + 1); }} className={`${BUTTON} bg-control text-ink`}>Undo changes</button>

@@ -38,7 +38,7 @@
 // the source lacks: the destination is read as `rm -rf` reads its paths.
 
 import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
-import { looksLikePowerShell, nestedProgram, POWERSHELLS, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
+import { looksLikePowerShell, nestedProgram, POWERSHELLS, PWSH_READ_ONLY, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
   candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
   UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
@@ -741,12 +741,15 @@ function jqFilter(texts: Array<string | undefined>): Set<number> {
   return skip;
 }
 
-function readOnlyListed(cmd: SimpleCommand): boolean {
+function readOnlyListed(cmd: Pick<SimpleCommand, "program" | "args" | "redirects" | "outputFlows" | "wholeRead">): boolean {
   const program = cmd.program;
   if (!program || /[\\/]/.test(program.text)) return false;
+  // PowerShell: the output goes on to something that may act on it
+  if (cmd.outputFlows) return false;
   const name = program.dialect === "posix" ? program.text : program.text.toLowerCase();
   const searcher = SEARCHERS.has(name);
-  if (!READ_ONLY.has(name) && !searcher && name !== "find") return false;
+  const windowsRead = program.dialect === "windows" && !!cmd.wholeRead && PWSH_READ_ONLY.has(name);
+  if (!READ_ONLY.has(name) && !searcher && !windowsRead && name !== "find") return false;
   if (name === "find" || name === "rg") {
     // a word that opens with a value could be any of the options: it asks
     for (const word of cmd.args) {
@@ -759,8 +762,8 @@ function readOnlyListed(cmd: SimpleCommand): boolean {
       if (name === "find" ? FIND_ACTIONS.has(text) : RG_RUNNERS.test(text)) return false;
     }
   }
-  // none of the twelve has a flag that runs, writes or edits a file: only
-  // output sent somewhere other than the terminal takes one off the list
+  // none of these has a flag that runs, writes or edits a file: only output
+  // sent somewhere other than the terminal takes one off the list
   for (const redirect of cmd.redirects) {
     if (!OUTPUT_REDIRECTS.has(redirect.op) && redirect.op !== ">&") continue;
     const target = redirect.target ? literalText(redirect.target) : undefined;
@@ -1113,6 +1116,9 @@ const visitor: Visitor<AlwaysAskHit> = {
   pwshRedirect(target, candidates, ctx): AlwaysAskHit | null {
     return outputTarget(target, candidates, ctx);
   },
+  readOnly(stage): boolean {
+    return readOnlyListed({ ...stage, redirects: [] });
+  },
   catastrophic(text: string): boolean {
     return protectedClass(text) !== null;
   },
@@ -1251,7 +1257,7 @@ function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash
   deferred = null;
   unseen = { text, paths: [] };
   try {
-    return (shell === "pwsh" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash }, visitor) : readRules(text, cwd)) ?? deferred;
+    return (shell === "pwsh" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash, pwshStamped: true }, visitor) : readRules(text, cwd)) ?? deferred;
   } catch (error) {
     if (deferred && error instanceof Unreadable) return deferred;
     throw error;

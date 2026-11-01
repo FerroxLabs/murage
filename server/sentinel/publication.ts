@@ -27,8 +27,9 @@ const bytesOf = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "ut
 
 /** The fixed next action per detector (section 8.1). Never derived from input. */
 export const NEXT_ACTION: Readonly<Record<DetectorId, NextAction>> = Object.freeze({
-  backup: "backups", "io-pressure": "manage-storage", extraction: "memory-settings", "engine-holds": "diagnostics", deletion: "manage-storage",
-  "send-fence": "diagnostics", "dispatch-exhausted": "diagnostics", resets: "diagnostics", "isolation-noise": "diagnostics", coverage: "none",
+  backup: "backups", "io-pressure": "manage-storage", extraction: "memory-settings", "dispatch-exhausted": "engines",
+  // Nothing the owner does helps these, so they offer no button: Murage finishes them by itself.
+  "engine-holds": "none", deletion: "none", "send-fence": "none", resets: "none", "isolation-noise": "none", coverage: "none",
 });
 
 export function toViewRow(record: IssueRecord): ViewRow {

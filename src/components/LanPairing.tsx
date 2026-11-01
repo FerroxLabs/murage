@@ -13,7 +13,7 @@ export function LanPairing({ c, className = "" }: { c: PhoneSetupController; cla
   const button = "rounded-lg border border-hairline/50 px-3 py-1.5 text-[12.5px] text-ink hover:bg-control disabled:opacity-40";
   if (c.lanPrompt) {
     return (
-      <div role="alertdialog" aria-label={t("phone.lan.turnOn")} className={`rounded-lg border border-hairline/50 px-3 py-3 text-left ${className}`}>
+      <div role="alertdialog" data-box-exempt="inline confirm inside the phone setup page" aria-label={t("phone.lan.turnOn")} className={`rounded-lg border border-hairline/50 px-3 py-3 text-left ${className}`}>
         <p className="text-[12.5px] leading-relaxed text-ink">{t("phone.lan.warning")}</p>
         <div className="mt-3 flex gap-2">
           <button disabled={c.busy} onClick={c.confirmLan} className="rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-40">{t("phone.lan.turnOn")}</button>

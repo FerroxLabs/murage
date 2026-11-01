@@ -51,7 +51,7 @@ test("no backup code keeps its own size literal: everything uses MAX_BACKUP_BYTE
     .filter(f=>/backup|installation-(archive|activation|fidelity|state|recovery)/i.test(f)&&/\.(mjs|ts|cjs)$/.test(f)&&!/test|\.d\.mts$/.test(f));
   assert.ok(files.length>20);
   // Platform/staging limits that are not the backup size ceiling.
-  const allowed=new Map([["server/installation-encrypted-backup.ts","Windows 20 GiB staging cap"],["server/installation-activation.ts","restore headroom added to the ceiling"],["shared/backup-max-bytes.mjs","the definition"]]);
+  const allowed=new Map([["server/installation-encrypted-backup.ts","Windows 20 GiB staging cap"],["shared/backup-budget.mjs","a GiB unit in the time estimate, not a size limit"],["server/installation-activation.ts","restore headroom added to the ceiling"],["shared/backup-max-bytes.mjs","the definition"]]);
   const literal=/1024 ?\*\* ?[34]|1024 ?\* ?1024 ?\* ?1024|\b1073741824\b|\b1099511627776\b|\b53687091200\b|maxBytes ?= ?\d/;
   const found=files.filter(f=>!allowed.has(f)&&literal.test(readFileSync(path.join(root,f),"utf8")));
   assert.deepEqual(found,[]);

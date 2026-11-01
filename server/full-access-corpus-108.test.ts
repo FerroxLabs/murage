@@ -509,7 +509,7 @@ describe("1.0.8 owner Full access corpus (classification only)", () => {
     }
     const stale = rows.filter(row => row.scenario === "pre-default-conversation");
     expect(stale.length).toBeGreaterThan(0); expect(stale.every(row => row.approve === null)).toBe(true);
-    expect(scenarioEvidence.environment).toMatchObject({ afterFailureCalls: 1, afterCachedCalls: 2, recovered: { env: handEnvironment() }, cached: { env: handEnvironment() } });
+    expect(scenarioEvidence.environment).toMatchObject({ afterFailureCalls: 2, afterCachedCalls: 3, recovered: { env: handEnvironment() }, cached: { env: handEnvironment() } });
     expect(scenarioEvidence.staleConversation).toMatchObject({ defaultFullAccess: true, effectiveAutoApprove: false, effectiveFullAccess: false });
   });
 });

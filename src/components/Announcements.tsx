@@ -20,6 +20,7 @@
 import { Fragment, useCallback, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { ArrowUpRight, ShieldAlert, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { useStore } from "@/state/store";
 import {
   ANNOUNCEMENT_ACTION_SECTIONS,
@@ -137,52 +138,56 @@ export function AnnouncementCard({ item, imageUrl, onAct, onDismiss, headingRef 
   const title = (className: string) => (
     <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 outline-none", className)}>{item.title}</h2>
   );
-  const shell = "announce-in relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]";
+  // Only the words scroll. Close sits on the card, not in what scrolls, so a short window cannot take it away; the art scrolls with the words.
+  const shell = "announce-in relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]";
 
   if (layout === "hero") {
     return (
-      <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="hero" className={cn(shell, "w-[min(760px,calc(100vw-32px))]")}>
+      <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="hero" className={cn(BOX_FRAME, shell, "w-[min(760px,calc(100vw-32px))]")}>
+        {close(true)}
+        <BoxBody>
         <div className="relative h-[300px] bg-[var(--wn-ground)] max-md:h-[220px] [@media(max-height:640px)]:h-[190px]">
           <img src={imageUrl!} alt={item.imageAlt ?? ""} className="block h-full w-full object-cover" />
           <div aria-hidden="true" className="absolute inset-0 bg-[linear-gradient(to_top,rgba(10,10,10,0.82),rgba(10,10,10,0.1)_55%,transparent)]" />
           <div className="absolute left-[34px] top-[26px] max-sm:left-5"><Chip kind={item.kind} onImage /></div>
-          {close(true)}
           {title("absolute bottom-[26px] left-[34px] right-[34px] text-[50px] leading-[1.02] tracking-[-0.01em] text-white max-sm:left-5 max-sm:text-[38px]")}
         </div>
-        <div className="flex flex-col gap-3.5 px-[34px] pb-[26px] pt-6 max-sm:px-5">
+        <div className="flex flex-col gap-3.5 px-[34px] pb-2 pt-6 max-sm:px-5">
           <AnnouncementBody body={item.body} className="text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]" />
-          {buttons}
         </div>
+        </BoxBody>
+        <BoxFoot className="block px-[34px] pb-[26px] pt-2 max-sm:px-5">{buttons}</BoxFoot>
       </section>
     );
   }
   if (layout === "split") {
     return (
-      <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="split" className={cn(shell, "grid min-h-[400px] w-[min(880px,calc(100vw-32px))] grid-cols-[340px_minmax(0,1fr)] max-md:grid-cols-1")}>
+      <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="split" className={cn(BOX_FRAME, shell, "grid min-h-[400px] w-[min(880px,calc(100vw-32px))] grid-cols-[340px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)] max-md:grid-cols-1 max-md:grid-rows-[200px_minmax(0,1fr)] [@media(max-height:460px)]:min-h-0")}>
         <div className="relative min-h-full bg-[var(--wn-ground)] max-md:h-[200px]">
           <img src={imageUrl!} alt={item.imageAlt ?? ""} className="absolute inset-0 block h-full w-full object-cover" />
         </div>
-        <div className="relative flex min-h-0 flex-col gap-3.5 px-10 pb-[30px] pt-[38px] max-sm:px-6">
+        <div className="relative flex min-h-0 flex-col">
           {close(false)}
+          <BoxBody className="flex flex-col gap-3.5 px-10 pb-2 pt-[38px] max-sm:px-6">
           <Chip kind={item.kind} />
           {title("pr-10 text-[42px] leading-[1.04]")}
           <AnnouncementBody body={item.body} className="text-[15px] leading-[1.55] text-[var(--wn-ink-body)]" />
-          <span className="grow" />
-          {buttons}
+          </BoxBody>
+          <BoxFoot className="block px-10 pb-[30px] pt-2 max-sm:px-6">{buttons}</BoxFoot>
         </div>
       </section>
     );
   }
   return (
-    <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="spotlight" className={cn(shell, "flex w-[min(700px,calc(100vw-32px))] flex-col gap-4 px-[38px] pb-7 pt-[34px] max-sm:px-5")}>
+    <section aria-labelledby={titleId} data-announcement-card={item.id} data-layout="spotlight" className={cn(BOX_FRAME, shell, "w-[min(700px,calc(100vw-32px))] gap-4")}>
       <Rings className="-right-[140px] -top-[170px]" />
       {close(false)}
-      <div className="relative flex flex-col gap-3">
+      <BoxHead className="relative flex-col items-stretch gap-3 px-[38px] pt-[34px] max-sm:px-5">
         <Chip kind={item.kind} />
         {title("pr-10 text-[44px] leading-[1.04]")}
-      </div>
-      <AnnouncementBody body={item.body} className="relative text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]" />
-      <div className="relative">{buttons}</div>
+      </BoxHead>
+      <BoxBody className="relative px-[38px] max-sm:px-5"><AnnouncementBody body={item.body} className="relative text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]" /></BoxBody>
+      <BoxFoot className="relative block px-[38px] pb-7 max-sm:px-5">{buttons}</BoxFoot>
     </section>
   );
 }
@@ -218,6 +223,7 @@ export function AnnouncementDialog({ item, imageUrl, onAct, onDismiss }: Omit<An
     <dialog
       ref={dialog}
       aria-labelledby={`announcement-title-${item.id}`}
+      data-box-exempt="a clear carrier, the card inside it is the box"
       data-announcement
       data-accent={item.accent}
       className="announce m-auto max-h-none max-w-none overflow-visible border-0 bg-transparent p-0 font-sans backdrop:bg-black/[0.66]"
