@@ -57,7 +57,9 @@ import {
 const copy = FIRST_RUN_COPY.phone.phone;
 const walk = FIRST_RUN_COPY.phone["phone-needs-tailscale"];
 
-export function FirstRunPhoneCard({ settled }: { settled: boolean }) {
+/** `onClose`: embedded in the Done card. "Not now" then closes the row and
+ *  writes no setup step. */
+export function FirstRunPhoneCard({ settled, onClose }: { settled: boolean; onClose?: () => void }) {
   const desktop = useDesktopSurface();
   const gone = useRef(false);
   const [state, setState] = useState<CompanionState | null>(null);
@@ -161,6 +163,10 @@ export function FirstRunPhoneCard({ settled }: { settled: boolean }) {
   const notNow = async () => {
     if (busy) return;
     setFailure("");
+    if (onClose) {
+      onClose();
+      return;
+    }
     try {
       await skipSetupStep(PARKED_CARD_STEP);
       setDone(true);

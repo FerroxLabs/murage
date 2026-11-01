@@ -94,12 +94,12 @@ describe("the chat column's own controls", () => {
 describe("full-screen sheets on a phone", () => {
   it("starts Bot settings' header below the status bar and ends its footer above the home indicator", () => {
     const source = read("components/BotSettingsDialog.tsx");
-    const header = elementAt(source, '<header className="flex shrink-0');
+    const header = elementAt(source, '<BoxHead className=');
     expect(header).toContain("max-sm:pt-[calc(0.75rem+var(--inset-top))]");
     // The desktop's centred layout keeps its own padding.
     expect(header).toContain("py-3");
     expect(header).toContain("sm:px-5");
-    expect(source.slice(source.indexOf("<footer"), source.indexOf("<footer") + 200)).toContain("max-sm:pb-[calc(0.5rem+var(--inset-bottom))]");
+    expect(source.slice(source.indexOf("<BoxFoot"), source.indexOf("<BoxFoot") + 200)).toContain("max-sm:pb-[calc(0.5rem+var(--inset-bottom))]");
   });
 
   it("pads Settings' full-bleed sheet by both insets, below md only", () => {
@@ -122,7 +122,12 @@ describe("full-screen sheets on a phone", () => {
 
   it("leaves room for the insets around centred <dialog> cards", () => {
     const room = "2*max(var(--inset-top),var(--inset-bottom))";
-    for (const file of ["components/TeamExportDialog.tsx", "components/BundleImportDialog.tsx", "components/Announcements.tsx"]) {
+    // BOX_DIALOG caps these two in styles.css, by the visual viewport and both insets.
+    for (const file of ["components/TeamExportDialog.tsx", "components/BundleImportDialog.tsx"]) {
+      expect(read(file), file).toContain("${BOX_DIALOG}");
+      expect(read(file), file).not.toContain("max-h-[calc(100dvh-");
+    }
+    for (const file of ["components/Announcements.tsx"]) {
       expect(read(file), file).toContain(`max-h-[calc(100dvh-`);
       expect(read(file), file).toContain(room);
       expect(read(file), file).not.toMatch(/max-h-\[calc\(100dvh-(2rem|32px)\)\]/);

@@ -94,6 +94,17 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
   expect((await api("PATCH",path,body,owner)).status).toBe(403);
   expect((await api("PATCH",path,body,owner,{"x-murage-step-up":await step(owner,"PATCH",path,body)})).status).toBe(200);
  });
+ it("folder decisions read on the owner's desktop and refuse the phone and a remembered-owner browser, at the real dispatcher (FUIGO-TRUST-V2 S7)",async()=>{
+  const folder=encodeURIComponent(fixture.info.dataDir),read=`/api/folder-trust?folder=${folder}`,refused={status:403,body:{error:cloudHomeCopy.phoneCredential}};
+  const before=await api("GET",read,undefined,owner);expect(before.status).toBe(200);expect(Array.isArray(before.body.records)).toBe(true);
+  expect(await api("GET",read,undefined,phone)).toMatchObject(refused);
+  for(const [method,path,body] of [["POST","/api/folder-trust",{bot:"fixture",thread:"fixture"}],["DELETE",`/api/folder-trust?key=${folder}`,{}]] as const){
+   expect(await api(method,path,body,phone)).toMatchObject(refused);
+   expect(await api(method,path,body,phone,{"x-murage-step-up":await step(phone,method,path,body)})).toMatchObject(refused);
+  }
+  expect((await api("GET",read,undefined,browser)).status).toBe(403);
+  expect((await api("GET",read,undefined,owner)).body.records).toEqual(before.body.records);
+ });
  it("bare loopback and forged desktop headers have service authority only",async()=>{expect(await api("GET","/api/health")).toMatchObject({status:200,body:{role:"home"}});expect((await api("GET","/api/decisions",undefined,undefined,{host:"127.0.0.1","x-murage-surface":"desktop","x-murage-surface-secret":"fake"})).status).toBe(403);expect((await api("GET","/api/desktop-secret",undefined,owner)).status).toBe(403);});
  it("blocks CSRF, DNS rebinding and TCP forwarding spoofing",async()=>{expect((await api("POST","/api/bots",{},owner,{origin:"https://attacker.example"})).status).toBe(403);expect((await api("POST","/api/bots",{},owner,{origin:""})).status).toBe(403);expect((await api("GET","/api/health",undefined,owner,{host:"attacker.example","x-forwarded-host":"home.example.test"})).status).toBe(403);});
  it("a paired device's step-up never skips the 72-hour hold: missing, forged, expired, uncompleted, mismatched or reused hold proofs are refused (Astra SELFSERVICE1 #2)",async()=>{

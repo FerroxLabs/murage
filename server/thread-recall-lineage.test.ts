@@ -129,6 +129,7 @@ describe("isTurnOpen (rule 12)", () => {
 describe("sourcesRoom (rule 13)", () => {
   const shown = (threadId: string, id: string, role = "bot"): ShownLine => ({ threadId, id, role });
   const lineageOf = (extra: Partial<RunningTurnLineage> = {}): RunningTurnLineage => ({
+    startGeneration: 0,
     roots: { roots: new Set(), over: false }, instanceId: "claude", botId: "bot", generation: "g", turn: { threadId: "chat", turnId: "t", turnLsn: 0, parents: [], denyGeneration: 0 },
     sources: [shown("other", "k1")], ...extra,
   });

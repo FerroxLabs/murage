@@ -119,9 +119,62 @@ final class PhoneJobsMintTests: XCTestCase {
         }
     }
 
+    func testPhoneFlagsWithoutFeatureShowsTurnedOffBeforeChallenge() async throws {
+        let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
+        XCTAssertEqual(PhoneJobsMintError.turnedOff.errorDescription, "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.")
+        for flags in [1, 2] {
+            let writer = Writer()
+            var calls = 0
+            let signer = PhoneJobsSigner(point: { _ in v["point"] as? String }) { _ in XCTFail("no prompt"); return "" }
+            let client = PhoneJobsMintClient(signer: signer, store: writer, send: { request in
+                calls += 1
+                XCTAssertEqual(request.url?.path, "/healthz")
+                return try self.response(["mobile": 1, "phoneFlags": flags, "phoneAsk": 1])
+            })
+            await expect(.turnedOff) { try await client.mint(origin: origin) }
+            XCTAssertEqual(calls, 1); XCTAssertTrue(writer.writes.isEmpty)
+        }
+    }
+
+    func testMissingPhoneFlagsShowsTurnOnOrUpdateBeforeChallenge() async throws {
+        let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
+        XCTAssertEqual(PhoneJobsMintError.updateComputer.errorDescription, "Turn this on, or update Murage, on your computer.")
+        let writer = Writer()
+        var calls = 0
+        let signer = PhoneJobsSigner(point: { _ in v["point"] as? String }) { _ in XCTFail("no prompt"); return "" }
+        let client = PhoneJobsMintClient(signer: signer, store: writer, send: { request in
+            calls += 1
+            XCTAssertEqual(request.url?.path, "/healthz")
+            return try self.response(["mobile": 1])
+        })
+        await expect(.updateComputer) { try await client.mint(origin: origin) }
+        XCTAssertEqual(calls, 1); XCTAssertTrue(writer.writes.isEmpty)
+    }
+
+    func testPhoneFlagsWithFeatureStillMints() async throws {
+        let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
+        let token = ((try fixture()["token"] as! [String: Any])["valid"] as! [String])[0]
+        let writer = Writer()
+        var calls = 0, prompts = 0
+        let signer = PhoneJobsSigner(point: { _ in v["point"] as? String }) { request in
+            prompts += 1
+            XCTAssertEqual(request.message, Data((v["message"] as! String).utf8))
+            return v["signature"] as! String
+        }
+        let answers = try [response(["mobile": 1, "phoneFlags": 1, "phoneJobs": 1]),
+                           response(["nonce": v["nonce"]!, "expiresAt": v["expiresAt"]!]), response(["token": token])]
+        let client = PhoneJobsMintClient(signer: signer, store: writer, send: { _ in
+            calls += 1
+            return answers[calls - 1]
+        }, now: { 1_700_000_000_000 })
+        try await client.mint(origin: origin)
+        XCTAssertEqual(calls, 3); XCTAssertEqual(prompts, 1)
+        XCTAssertEqual(writer.writes.count, 1); XCTAssertEqual(writer.writes.first?.0, token)
+    }
+
     func testOldDoorAndMissingKeyShowExactCopyBeforeChallenge() async throws {
         let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
-        XCTAssertEqual(PhoneJobsMintError.updateComputer.errorDescription, "Update Murage on your computer")
+        XCTAssertEqual(PhoneJobsMintError.updateComputer.errorDescription, "Turn this on, or update Murage, on your computer.")
         XCTAssertEqual(PhoneJobsMintError.noApprovalKey.errorDescription, "Set a passcode on this phone, then pair again")
         let invalidHellos: [[String: Any]] = [["mobile": 1], ["mobile": 1, "phoneJobs": 0], ["mobile": 1, "phoneJobs": true], ["mobile": 1, "phoneJobs": "1"], ["phoneJobs": 1]]
         for hello in invalidHellos {

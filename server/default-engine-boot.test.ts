@@ -57,5 +57,28 @@ describe("bootEngineChoice", () => {
     expect(adopted).toEqual([choice]);
     release(); await refreshed;
   });
+  it("with bots in place a slow probe never holds the port: it finishes in the background and still counts", async () => {
+    const f = file();
+    let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+    const adopted: unknown[] = [];
+    const { refreshed } = await bootEngineChoice({ hasBots: true, file: f, probeWaitMs: 10, probe: async () => { await gate; return choice; }, adopt: c => { adopted.push(c); } });
+    expect(adopted).toEqual([]);
+    release(); await refreshed;
+    expect(adopted).toEqual([choice]);
+    expect(readRememberedEngine(f)).toEqual(choice);
+  });
+  it("a first run still waits for the probe: its first bot needs the choice", async () => {
+    let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+    let returned = false;
+    const start = bootEngineChoice({ hasBots: false, file: file(), probeWaitMs: 1, probe: async () => { await gate; return choice; }, adopt: () => {} }).then(() => { returned = true; });
+    await new Promise(r => setTimeout(r, 30));
+    expect(returned).toBe(false);
+    release(); await start;
+  });
+  it("a probe that fails late is not an unhandled rejection", async () => {
+    let fail!: (error: Error) => void; const gate = new Promise<void>((_, reject) => { fail = reject; });
+    const { refreshed } = await bootEngineChoice({ hasBots: true, file: file(), probeWaitMs: 1, probe: async () => { await gate; return choice; }, adopt: () => {} });
+    fail(new Error("late")); await expect(refreshed).resolves.toBeUndefined();
+  });
   it("ignores a damaged memory file", () => { expect(readRememberedEngine("/nonexistent/x.json")).toBeNull(); });
 });

@@ -10,11 +10,12 @@ import { describe, expect, it } from "vitest";
 import {
   LOCAL_COMPUTER_AUTO_WARNING,
   LOCAL_COMPUTER_FULL_ACCESS_WARNING,
+  LOCAL_COMPUTER_NO_LIMITS_WARNING,
   LocalComputerAutoWarning,
 } from "./LocalComputerAutoWarning";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
-const render = (mode?: "auto" | "full") =>
+const render = (mode?: "auto" | "full" | "unlimited") =>
   renderToStaticMarkup(createElement(LocalComputerAutoWarning, { open: true, mode, onCancel: () => {}, onConfirm: () => {} }));
 
 describe("the this-computer warning names the mode being switched on", () => {
@@ -37,12 +38,21 @@ describe("the this-computer warning names the mode being switched on", () => {
     expect(render("full")).not.toContain("Destructive and sensitive actions still stop");
   });
 
+  it("says what No limits still asks about, a command it cannot read in full among them", () => {
+    const markup = render("unlimited");
+    expect(markup).toContain("Allow No limits on this computer?");
+    expect(markup).toContain(LOCAL_COMPUTER_NO_LIMITS_WARNING);
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("It still asks before a wipe it can read and before a command it cannot read in full");
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("A script file can still run unread.");
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).not.toMatch(/\bsafe\b|\u2014/i);
+  });
+
   it("renders nothing while closed", () => {
     expect(renderToStaticMarkup(createElement(LocalComputerAutoWarning, { open: false, mode: "full", onCancel: () => {}, onConfirm: () => {} }))).toBe("");
   });
 
-  it("is told which mode by every caller that can switch on Full access", () => {
-    expect(read("./Composer.tsx")).toMatch(/mode=\{autoWarn === false \? "auto" : autoWarn\}/);
-    expect(read("./SettingsPanel.tsx")).toMatch(/mode=\{localAutoWarning === "full" \|\| localAutoWarning === "unlimited" \? localAutoWarning : "auto"\}/);
+  it("is Auto's alone in both callers: a higher pick to Full access or No limits is the confirm card, which says this itself", () => {
+    expect(read("./Composer.tsx")).toContain('<LocalComputerAutoWarning\n        open={autoWarn}\n        mode="auto"');
+    expect(read("./SettingsPanel.tsx")).toMatch(/<LocalComputerAutoWarning\s+open=\{localAutoWarning !== null\}\s+mode="auto"/);
   });
 });
