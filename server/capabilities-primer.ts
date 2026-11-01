@@ -152,6 +152,16 @@ export type ImageInput = "inline" | "file-reference" | "model-not-listed" | "uns
  * the panel reads a link, works out sign-in, and holds the key. */
 const OWN_SERVER_LINE = "If the owner wants a new tool server, tell them to open Connected apps, then MCP servers, and paste the link the service gives them. Murage handles sign-in. Do not write mcp-remote or npx commands for them.";
 
+/** Engine setup, sign-in and subscription questions take the checked answer, on any engine. The steps live in the capability
+ * records (shared/capabilities/engines.yaml), reached through murage_help or the facts block; this line only sends the bot there. */
+export const ENGINE_SETUP_LINE = "Engine or plan setup: look it up, step by step; never run sign-in or take a code or key in chat.";
+/** The same rule for an engine with no murage_help: its steps come as "Murage facts". */
+export const ENGINE_SETUP_FACTS_LINE = "Engine or plan setup: use those facts, step by step; never run sign-in or take a code or key in chat.";
+
+/** What a Codex bot on Windows says about a command refused at a named pipe. A sentence the bot can use, not a driver error
+ * line: a command the sandbox refuses is not a failed turn (runtime.error would mark it one, index.ts:18025). */
+export const CODEX_WINDOWS_PIPE_LINE = "On Windows, Codex can refuse a command that talks to another app on this PC through a named pipe. If that happens, say so in plain words and offer to run that command on a Claude bot.";
+
 export interface PrimerFacts {
   /** The owner direct turn mounted the venue reader. */
   readonly venueRead?: boolean;
@@ -206,6 +216,8 @@ export interface PrimerFacts {
    * Murage mounts nothing and its approval cards and stop-line do not see what
    * the engine runs. Absent is the same as false. */
   readonly runsOnOwnTools?: boolean;
+  /** The engine is Codex on a Windows computer (CODEX_WINDOWS_PIPE_LINE). Absent is the same as false. */
+  readonly codexOnWindows?: boolean;
   /** The mounted browser starts this turn protected. Persisted profile state,
    * not turn state: it holds until the page is left or the owner reopens it. */
   readonly browserLock?: BrowserProtection;
@@ -328,6 +340,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
     // can plainly do.
     facts.imageProvider ? imageConnectionsLine(facts) : "",
     "That is what Murage mounts for you; your engine's own built-in tools are separate. Never promise a Murage capability this block does not list: say plainly that you do not have it and name the setting that would change it.",
+    facts.codexOnWindows ? CODEX_WINDOWS_PIPE_LINE : "",
     IMAGE_INPUT_LINE[facts.imageInput],
     MEMORY_LINE[facts.memory],
     facts.folder === "trusted"
@@ -379,8 +392,8 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
       ? "The only bots you can reach are the ones your coordination instructions above name; follow that chain rather than picking a bot yourself, and never write or act in another bot's name."
       : "",
     facts.mounted.agents
-      ? `When you are unsure what Murage can do, or how the owner does something in it, call ${murageTool("murage_help")} before answering. Do not guess at product behaviour.`
-      : "You cannot look Murage's documentation up from here. When Murage has checked facts for the owner's question, they come with the message as \"Murage facts\"; outside them, if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour.",
+      ? `When you are unsure what Murage can do, or how the owner does something in it, call ${murageTool("murage_help")} before answering. Do not guess at product behaviour.${facts.ownerAudience ? ` ${ENGINE_SETUP_LINE}` : ""}`
+      : `You cannot look Murage's documentation up from here. When Murage has checked facts for the owner's question, they come with the message as "Murage facts"; outside them, if you are unsure how Murage itself works, say you are not sure instead of guessing at product behaviour.${facts.ownerAudience ? ` ${ENGINE_SETUP_FACTS_LINE}` : ""}`,
   ];
   return ` ${lines.filter(Boolean).join("\n")}`;
 }
@@ -441,6 +454,8 @@ export function turnCapabilityFacts(input: {
   browserLock?: BrowserProtection;
   /** Bot email: the mount's line for an owner turn without the tools (email/admission.ts). */
   emailAbsentLine?: string | null;
+  /** The computer this harness runs on; a test passes it, a live turn reads the process. */
+  platform?: NodeJS.Platform;
 }): PrimerFacts {
   const modelId = input.providerRoute?.model ?? input.model ?? input.instance.models.default;
   const label = input.instance.models.options.find((option) => option.id === modelId)?.label ?? modelId;
@@ -491,6 +506,7 @@ export function turnCapabilityFacts(input: {
     peers: input.peers,
     canAskOwner: input.canAskOwner,
     ...(input.instance.adapter.capabilities.runsOnOwnTools === true ? { runsOnOwnTools: true } : {}),
+    ...(input.instance.driverKind === "codex" && (input.platform ?? process.platform) === "win32" ? { codexOnWindows: true } : {}),
     ownerAudience: input.ownerAudience === true,
     customMcpEngine: input.instance.adapter.capabilities.customMcp === true,
     ...(input.browserLock && mounted.browser ? { browserLock: input.browserLock } : {}),

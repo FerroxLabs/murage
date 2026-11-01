@@ -5,27 +5,108 @@ entries:
     name: Sign in with a ChatGPT or Grok plan
     status: can
     questions:
-      - Can I use my ChatGPT plan in Murage?
+      - I want to set up Codex with my ChatGPT plan
+      - I want to set up Grok with my plan
+      - Can I use my ChatGPT subscription in Murage?
       - Continue with ChatGPT
       - Use my SuperGrok plan for my bots
       - Sign in with Grok instead of an API key
     answer: >
-      Yes. Open Settings, then Models & engines, and under Use a plan you already have press
-      Continue with ChatGPT or Continue with Grok. Your bots can then use the models that come with
-      that plan, and the plan's limits apply.
+      One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT
+      or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and
+      Grok apps are separate.
     limits: >
-      Desktop app only: on a phone or in a browser, finish sign-in on the computer running Murage.
-      The Grok sign-in is marked Unofficial and needs a SuperGrok or X Premium plan.
+      Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs
+      SuperGrok or X Premium. Never put a sign-in code or key in a chat.
+    settings_path: Settings → Models & engines → Use a plan you already have
+    platforms: [mac, windows, linux]
+    engines: [fuigo, codex, grok, qwen, hermes, openai-compatible]
+    anchors:
+      - settings-control:models/plan-sign-in
+      - "file:electron/model-signin-presets.mjs#const DEFAULT_ON = Object.freeze({ chatgpt: true, supergrok: true })"
+      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unofficial
+      - "file:shared/provider-engine.ts#if (preset === \"chatgpt\" || preset === \"supergrok\") {"
+    verified: 1.0.13
+    doc: providers#use-a-plan-you-already-have
+    internal: CANNOT-ANSWERS-109 item a. On by default; MURAGE_SIGNIN_CHATGPT or MURAGE_SIGNIN_GROK set to 0 hides a button.
+  - id: engines.use-my-subscription
+    name: Use a subscription you already pay for
+    status: can
+    questions:
+      - I want to use my subscription
+      - Use a subscription I already pay for
+      - Can I use my plan instead of an API key?
+      - Which subscriptions work with Murage?
+    answer: >
+      Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with
+      nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi
+      Code and other apps set up from the Engines list.
+    limits: >
+      Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used
+      through Fuigo.
     settings_path: Settings → Models & engines → Use a plan you already have
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
       - settings-control:models/plan-sign-in
-      - "file:electron/model-signin-presets.mjs#const DEFAULT_ON = Object.freeze({ chatgpt: true, supergrok: true })"
-      - file:src/components/SubscriptionSignIn.tsx#modelSignIn.grok.unofficial
-    verified: 1.0.10
+      - "file:src/locales/en.json#\"modelPicker.signIn.claude\": \"Claude Code runs Claude models."
+    verified: 1.0.13
     doc: providers#use-a-plan-you-already-have
-    internal: CANNOT-ANSWERS-109 item a. On by default; MURAGE_SIGNIN_CHATGPT or MURAGE_SIGNIN_GROK set to 0 hides a button.
+  - id: engines.set-up-claude-code
+    name: Claude subscription through Claude Code
+    status: can
+    questions:
+      - I want to set up Claude
+      - Set up Claude Code
+      - Use my Claude subscription
+      - Use my Claude plan in Murage
+      - Log in to Claude Code
+      - Install Claude Code
+    answer: >
+      Let's set up Claude Code and log you in. Find Claude and tell me what it shows. No Node.js
+      yet? Install the LTS version from nodejs.org first. Open install in Terminal: press it,
+      paste into the new window, press Enter, wait, then press Check again. Open sign-in in
+      Terminal: the same, then follow what it shows. Signed in means ready.
+    limits: A Claude plan cannot be used through Fuigo. Never put a sign-in code or key in a chat.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:models/engines
+      - "file:src/locales/en.json#\"setup.openInstall\": \"Open install in Terminal\""
+      - "file:src/locales/en.json#\"setup.openSignIn\": \"Open sign-in in Terminal\""
+      - "file:src/locales/en.json#\"common.checkAgain\": \"Check again\""
+      - "file:server/drivers/claude.ts#signInCommand: \"claude auth login\""
+    verified: 1.0.13
+    doc: getting-started/installation#install-an-ai-app
+  - id: engines.set-up-from-the-app
+    name: Install an engine from Settings
+    status: can
+    questions:
+      - Set up Kimi Code
+      - I want to install an engine
+      - What is Terminal?
+      - Install the Codex app
+      - Terminal says npm is not found
+      - I do not have Node.js
+    answer: >
+      Terminal is a window for typed commands. Open install in Terminal copies the command and opens
+      a blank one; nothing has started yet. Paste (Cmd V on a Mac, right click elsewhere), press
+      Enter, wait, then press Check again. Open sign-in in Terminal is the same, then follow what it
+      shows. No button? Tell your bot what shows.
+    limits: >
+      No Node.js and the card asks for it? Install the LTS version from nodejs.org. Never put a
+      sign-in code or key in a chat.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - settings-card:models/engines
+      - "file:electron/main.mjs#clipboard.writeText(result.command);"
+      - "file:src/components/EngineSetup.tsx#Requires Node.js and"
+      - "file:src/components/EngineSetup.tsx#View setup guide"
+    verified: 1.0.13
+    doc: getting-started/installation#install-an-ai-app
 
   - id: engines.grok-images
     name: Make images with Grok

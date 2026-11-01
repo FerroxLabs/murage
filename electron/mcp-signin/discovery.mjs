@@ -81,8 +81,8 @@ async function fetchJson(url, { local, request, signal }) {
   return { status: response.status, json: isRecord(json) ? json : null };
 }
 
-const refused = (url) => ({ ok: false, error: "refused", message: `${hostOf(url)} gave sign-in details Murage cannot use. Use an API key instead.` });
-const noSignIn = (url) => ({ ok: false, error: "no-registration", message: `${hostOf(url)} does not let apps sign in this way. Use an API key instead.` });
+const refused = (url) => ({ ok: false, error: "refused", message: `${hostOf(url)} gave sign-in details Murage cannot use. Use a key instead.` });
+const noSignIn = (url) => ({ ok: false, error: "no-registration", message: `${hostOf(url)} does not let apps sign in this way. Use a key instead.` });
 const network = (url) => ({ ok: false, error: "network", message: `Murage could not reach ${hostOf(url)}. Check your connection and try again.` });
 
 /**

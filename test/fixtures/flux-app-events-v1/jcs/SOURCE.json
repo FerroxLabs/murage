@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "grade": "FINAL",
+  "repository": "https://github.com/cyberphone/json-canonicalization",
+  "commit": "32a48195b9b20fe67b1795e39e4509f14d860b45",
+  "path": "testdata/{input,output}",
+  "excluded": [
+    "values.json (floating point numbers; outside the integer-only profile, D-10)"
+  ],
+  "files": {
+    "arrays": {
+      "input_sha256": "e503b6d71d1afa595b1c74b1016445c944cd89f90418066b23de1aeda7d17563",
+      "output_sha256": "099601b171cafed97c333f8878d68e7f8c8f795412adb34b2fdcf0e7c7beac42"
+    },
+    "french": {
+      "input_sha256": "03676a951cd8753ac62589f72eb2105cc782c33425418cfe1d517c111f6e5d5a",
+      "output_sha256": "d99d0ebdcb0033cb858cfa830ae46bc0fb3309413b271f1da828c89901a27ed5"
+    },
+    "structures": {
+      "input_sha256": "d66893805be1784116af50af3110d08766c70a6b4aad93374723f72346e7aaa6",
+      "output_sha256": "605f65004ec2db7692522a0852c22f1c989e036d547e88963d1a3143cf3195d5",
+      "integral_float_literals_as_int": true,
+      "note": "Upstream input contains the number literal 56.0. The integer-only profile has no floats, so the vector loader reads an integral literal as the integer 56 (what JavaScript JSON.parse yields); the canonical output is unchanged."
+    },
+    "unicode": {
+      "input_sha256": "4621864e014d4a805a563f55b9ea20aba4a2d2dc09c7394f625496998c00702c",
+      "output_sha256": "0d99aad92a125196ff887876643fd3206786a84ddce2cee52ba4ad256d2381d3"
+    },
+    "weird": {
+      "input_sha256": "a3a905266bd4a49a969274ea69baa14ee0c4af0ead926d6fa2b7612b4af75387",
+      "output_sha256": "6af595a9aa80110b964b4de3f82a05fa6ae7423005019bacfa2620dddc4e94d1"
+    },
+    "rfc8785-sort": {
+      "input_sha256": "3ba7836254be03c9f248219cb14c94d2da1e61dd69846a9d80ccd1b09e4c2340",
+      "output_sha256": "5e321556d22018a9656991a9e94f77ec175fa193e52a2429d312f8419ec8b08c",
+      "note": "Authored from RFC 8785 section 3.2.3; not an upstream file."
+    }
+  }
+}
