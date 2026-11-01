@@ -1,0 +1,218 @@
+[
+  {
+    "code": "allowance_exhausted",
+    "httpStatus": 429,
+    "retryable": true,
+    "class": "capacity"
+  },
+  {
+    "code": "auth_required",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "billing_revoked",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "owner_binding"
+  },
+  {
+    "code": "body_read_timeout",
+    "httpStatus": 408,
+    "retryable": true,
+    "class": "shape"
+  },
+  {
+    "code": "body_too_large",
+    "httpStatus": 413,
+    "retryable": false,
+    "class": "shape"
+  },
+  {
+    "code": "capacity_exceeded",
+    "httpStatus": 429,
+    "retryable": true,
+    "class": "capacity"
+  },
+  {
+    "code": "child_ceiling_not_zero",
+    "httpStatus": 422,
+    "retryable": false,
+    "class": "shape"
+  },
+  {
+    "code": "claim_in_progress",
+    "httpStatus": 409,
+    "retryable": true,
+    "class": "lease"
+  },
+  {
+    "code": "credential_expired",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "credential_invalid",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "duplicate_member",
+    "httpStatus": 422,
+    "retryable": false,
+    "class": "shape"
+  },
+  {
+    "code": "epoch_stale",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "epoch"
+  },
+  {
+    "code": "event_expired",
+    "httpStatus": 410,
+    "retryable": false,
+    "class": "expiry"
+  },
+  {
+    "code": "grant_consumed",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "grant_expired",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "grant_invalid",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "grant_operation_mismatch",
+    "httpStatus": 403,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "idempotency_conflict",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "revision"
+  },
+  {
+    "code": "idempotency_key_required",
+    "httpStatus": 422,
+    "retryable": false,
+    "class": "shape"
+  },
+  {
+    "code": "invalid_request",
+    "httpStatus": 422,
+    "retryable": false,
+    "class": "shape"
+  },
+  {
+    "code": "lease_conflict",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "lease"
+  },
+  {
+    "code": "lease_expired",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "lease"
+  },
+  {
+    "code": "membership_conflict",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "revision"
+  },
+  {
+    "code": "model_key_refused",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "not_found",
+    "httpStatus": 404,
+    "retryable": false,
+    "class": "owner_binding"
+  },
+  {
+    "code": "owner_binding_missing",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "owner_binding"
+  },
+  {
+    "code": "provider_unavailable",
+    "httpStatus": 503,
+    "retryable": true,
+    "class": "service"
+  },
+  {
+    "code": "replacement_setup_required",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "owner_binding"
+  },
+  {
+    "code": "revision_conflict",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "revision"
+  },
+  {
+    "code": "role_not_permitted",
+    "httpStatus": 403,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "run_expired",
+    "httpStatus": 410,
+    "retryable": false,
+    "class": "expiry"
+  },
+  {
+    "code": "service_unavailable",
+    "httpStatus": 503,
+    "retryable": true,
+    "class": "service"
+  },
+  {
+    "code": "signature_invalid",
+    "httpStatus": 401,
+    "retryable": false,
+    "class": "auth"
+  },
+  {
+    "code": "subscription_inactive",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "revision"
+  },
+  {
+    "code": "subscription_limit_reached",
+    "httpStatus": 409,
+    "retryable": false,
+    "class": "capacity"
+  },
+  {
+    "code": "type_not_qualified",
+    "httpStatus": 422,
+    "retryable": false,
+    "class": "shape"
+  }
+]
