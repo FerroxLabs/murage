@@ -46,7 +46,6 @@ import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
 import { NewsSignupSettings } from "./NewsSignupSettings";
 import { BotEmailAccountCard } from "./BotEmailSettings";
-import { ComputerOnlyStub, SETTINGS_STUB_COPY } from "./SettingsStub";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
 import { WhatsAppSettings } from "./WhatsAppSettings";
@@ -245,9 +244,7 @@ export function updatesStatusLine(s: UpdaterState | null): string {
   );
 }
 
-/** The one button for the update in hand: Check, Download, Restart and install, Try again. The About card carries it (the
- *  page's only update control since 1.0.10). UpdatesRow is no longer on a page; it stays exported because the update-state
- *  tests and the localization spec render it to check the shared button and status line. */
+/** The one button for the update in hand: Check, Download, Restart and install, Try again. Shared by the Updates row and the About card. */
 function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
   const updater = window.muragebox?.updater;
   if (!updater || s?.status === "deferred") return null;
@@ -448,12 +445,6 @@ export function WorkspaceFeatureRow({ feature }: { feature: "skillRecorder" | "b
               ? desktopBrowser ? "settings.workspaceFeature.browser.note" : "settings.workspaceFeature.browser.desktopOnly"
               : "settings.workspaceFeature.recorder.note")}
           </div>
-          {/* Off is a state (SETTINGS-UX-1011 S1): one line says so and the switch beside it turns it back on. */}
-          {state.config != null && !enabled && (!browser || desktopBrowser) && (
-            <div data-settings-stub="off" className="mt-1 text-[12px] leading-relaxed text-ink-secondary opacity-80">
-              {SETTINGS_STUB_COPY.off(browser ? SETTINGS_STUB_COPY.letsBots.browser : SETTINGS_STUB_COPY.letsBots.skillRecorder)}
-            </div>
-          )}
         </div>
         <Switch
           checked={enabled}
@@ -760,9 +751,7 @@ function AboutVersionCard() {
   return (
     <Card title={t("settings.about.versionTitle", { version })} subtitle={window.muragebox?.updater ? updatesStatusLine(s) : undefined}>
       <div className="flex flex-wrap items-center gap-2">
-        {/* The page's one update control, as the sidebar footer has one: the version, where the update stands and the
-            action share this card. The "updates" search card lands here; a Cloud window has no updater, so it shows the this-computer stub (S1). */}
-        <Anchor id="updates-heading">{cloudCardHidden("updates-heading") ? <ComputerOnlyStub anchor="updates-heading" /> : <UpdateActionButton state={s} />}</Anchor>
+        <UpdateActionButton state={s} />
         {desktop === true && (
           <button
             type="button"
@@ -927,17 +916,16 @@ function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advance
         {" · "}
         <button type="button" onClick={() => go("models")} className={linkButton}>{t("settings.models.pasteTitle")}</button>
       </p>
-      {/* The MCP servers panel runs this computer's servers (mcp-servers:*), which a Cloud window's bridge refuses: there the
-        * card is the "set this on your computer" stub (SETTINGS-UX-1011 S1). */}
-      <AdvancedSection section="connections" summary={t("settings.l1.advanced.connections")} open={advancedOpen} onOpenChange={onAdvancedOpenChange}>
-        <div id="mcp-servers-heading" tabIndex={-1} className="outline-none">
-          {cloudCardHidden("mcp-servers-heading") ? <ComputerOnlyStub anchor="mcp-servers-heading" /> : (
+      {/* The MCP servers panel runs this computer's servers (mcp-servers:*), which a Cloud window's bridge refuses. */}
+      {!cloudCardHidden("mcp-servers-heading") && (
+        <AdvancedSection section="connections" summary={t("settings.l1.advanced.connections")} open={advancedOpen} onOpenChange={onAdvancedOpenChange}>
+          <div id="mcp-servers-heading" tabIndex={-1} className="outline-none">
             <Card title={t("settings.l1.mcp.title")} subtitle={t("settings.l1.mcp.note")}>
               <button type="button" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
             </Card>
-          )}
-        </div>
-      </AdvancedSection>
+          </div>
+        </AdvancedSection>
+      )}
     </>
   );
 }
@@ -1282,7 +1270,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 {/* The phone apps never send usage analytics and have no rail or startup, so a phone sees only what it has. */}
                 {(desktop === true || !inNativeShell()) && (
                   <AdvancedSection {...advancedFor("general")} summary={t("settings.l4.advanced.general")}>
-                    {desktop === true && <Anchor id="startup-heading">{cloudCardHidden("startup-heading", cloud) ? <ComputerOnlyStub anchor="startup-heading" /> : <StartupSettings />}</Anchor>}
+                    {desktop === true && !cloudCardHidden("startup-heading", cloud) && <Anchor id="startup-heading"><StartupSettings /></Anchor>}
                     {desktop === true && <Anchor id="sidebar-density-heading"><Card><SidebarDensityRow /></Card></Anchor>}
                     {!inNativeShell() && <Anchor id="analytics-heading"><AnalyticsRow /></Anchor>}
                   </AdvancedSection>
@@ -1300,7 +1288,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
             {desktop === true && section === "skills" && (
               <AdvancedHost>
-                <Anchor id="skill-recorder-heading">{cloudCardHidden("skill-recorder-heading", cloud) ? <ComputerOnlyStub anchor="skill-recorder-heading" /> : <WorkspaceFeatureRow feature="skillRecorder" />}</Anchor>
+                {!cloudCardHidden("skill-recorder-heading", cloud) && <Anchor id="skill-recorder-heading"><WorkspaceFeatureRow feature="skillRecorder" /></Anchor>}
                 <SkillsSettings />
                 <AdvancedSection {...advancedFor("skills")} summary={t("settings.l1.advanced.skills")}><AdvancedSlotTarget /></AdvancedSection>
               </AdvancedHost>
@@ -1313,7 +1301,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {desktop === true && section === "webSearch" && <ToolsSettings advanced={advancedFor("webSearch")} cloudImagesOnly={pageComputerOnly} />}
 
             {desktop === true && section === "connections" && <ConnectedAppsSettings advancedOpen={advancedOpen.connections} onAdvancedOpenChange={advancedFor("connections").onOpenChange} />}
-            {/* Settings > Bot email (1.0.9): always rendered; while the server does not say email is on, the card is its stub (SETTINGS-UX-1011 S1) */}
+            {/* Settings > Bot email (1.0.9): only while the server says email is on; renders nothing otherwise */}
             {desktop === true && section === "connections" && <Anchor id="bot-email-heading"><BotEmailAccountCard /></Anchor>}
 
             {desktop === true && section === "channels" && (
@@ -1334,9 +1322,10 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {section === "about" && (
               <>
                 <Anchor id="about-version-heading"><AboutVersionCard /></Anchor>
+                {window.muragebox?.updater && !cloudCardHidden("updates-heading", cloud) && <Anchor id="updates-heading"><UpdatesRow /></Anchor>}
                 {desktop === true && <Anchor id="whats-new-heading"><WhatsNewRow /></Anchor>}
                 {desktop === true && <Anchor id="news-heading"><NewsSignupSettings /></Anchor>}
-                {desktop === true && <Anchor id="setup-heading">{cloudCardHidden("setup-heading", cloud) ? <ComputerOnlyStub anchor="setup-heading" /> : <SetupAgainRow />}</Anchor>}
+                {desktop === true && !cloudCardHidden("setup-heading", cloud) && <Anchor id="setup-heading"><SetupAgainRow /></Anchor>}
                 <Anchor id="shortcuts-heading"><ShortcutsRow /></Anchor>
                 <Anchor id="previous-version-heading"><PreviousVersionRow /></Anchor>
                 <SourceCodeRow />
@@ -1345,7 +1334,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="health-heading"><SettingsHealthRow /></Anchor>
                 <AdvancedSection {...advancedFor("about")} summary={t("settings.l1.advanced.about")}>
                   {desktop === true && <Anchor id="announcements-heading"><AnnouncementsSettings /></Anchor>}
-                  <Anchor id="diagnostics-heading">{cloudCardHidden("diagnostics-heading", cloud) ? <ComputerOnlyStub anchor="diagnostics-heading" /> : <DiagnosticsRow />}</Anchor>
+                  {!cloudCardHidden("diagnostics-heading", cloud) && <Anchor id="diagnostics-heading"><DiagnosticsRow /></Anchor>}
                 </AdvancedSection>
               </>
             )}

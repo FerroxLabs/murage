@@ -22,7 +22,7 @@ import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../.
 // before the prompt is sent, and `_meta.isReplay` updates are dropped.
 import { applyProviderRoute, FUIGO_ALLOW_UPSTREAM_ENV, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
-import { fluxHeaderRefusal, fluxTurnDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
+import { fluxHeaderRefusal, fluxMemoryContextForTurn, fluxMemoryDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
 import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import { ApprovalDeliveryError, approvalWriteReason, deliverApproval, writeAcpResponse, type ApprovalDeliveryFailure, type ApprovalDeliveryResult, type ApprovalWriteCallback } from "./approval-delivery.ts";
@@ -38,8 +38,13 @@ import {
 import { QUESTION_TIMEOUT_MS } from "../../../shared/questions.ts";
 import { CURSOR_ASK_QUESTION, GROK_ASK_USER_QUESTION, reservedQuestionText, type AcpQuestionMethod } from "./question-methods.ts";
 import {
+  folderTrustChosenName,
+  FOLDER_TRUST_STORED_NO_NAME,
+  folderTrustDeclinedName,
+  folderTrustPassedName,
   folderTrustDecision,
   folderTrustQuestion,
+  folderTrustQuestionV2,
   folderTrustLateName,
   folderTrustWithheldName,
   type FolderTrustDecision,
@@ -50,13 +55,14 @@ import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { approvalSummary } from "../../../shared/approval-summary.ts";
 import { boundedToolInput, commandText } from "../../approval-text.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
-import { folderTrustKindNames } from "../../folder-trust.ts";
+import { canonicalFolder, folderHasGit, folderTrustDeclinesFor, folderTrustKindNames, folderTrustRejectFor, isUnrecordableTrustRoot } from "../../folder-trust.ts";
+import { cloudRenderFuigoSeed, cloudUnroutedFuigoHome, seedFuigoHome } from "../../folder-trust-seed.ts";
+import { fillFolderLineForEngine } from "../../capabilities-primer.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { sep as pathSep } from "node:path";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
-import { wakeAwareTimeout } from "../../sleep-clock.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -243,18 +249,6 @@ export function acpMalformedSource(toolCall: { locations?: unknown; rawInput?: u
     }
   }
   return undefined;
-}
-
-/** ISSUE-PERMS-1010 B: a call stamped codex/apply_patch and filed as an edit, with the patch's destinations
- *  (parseApplyPatch, the Codex driver's one reader) appended to `locations`. Any other call comes back as it was. */
-export function acpApplyPatchCall(toolCall: any, kind: string): { toolCall: any; unread: boolean } {
-  const stamp = acpStampedIdentity(toolCall);
-  if (kind !== "edit" || stamp?.namespace !== "codex" || stamp.name !== "apply_patch") return { toolCall, unread: false };
-  const raw = isPlainInput(toolCall.rawInput) ? toolCall.rawInput : undefined;
-  const parsed = parseApplyPatch(raw?.patch);
-  if (!parsed || (toolCall.locations !== undefined && !Array.isArray(toolCall.locations))) return { toolCall, unread: true };
-  const locations = [...(toolCall.locations ?? []), ...parsed.destinations.map((path) => ({ path }))];
-  return { toolCall: { ...toolCall, locations }, unread: false };
 }
 
 export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unknown }): string[] | undefined {
@@ -918,7 +912,6 @@ import type {
   SteerDelivery,
 } from "../../contracts.ts";
 import { newEventId, newId } from "../../contracts.ts";
-import { parseApplyPatch } from "../codex-hook.ts";
 import { computerProxyEnv } from "../../container-computer.ts";
 import { augmentedPath } from "../../env-path.ts";
 import { customMountEntries } from "../../custom-mcp-mounts.ts";
@@ -1010,10 +1003,6 @@ export interface AcpSupport {
    *  included, through the workspace's `.fuigo/agents/<id>.md` first, so a repo file could replace the bot's
    *  system prompt and permission mode). No mode is set, so the turn stays in the engine's default. */
   noSessionModes?: true;
-  /** The engine ends the whole prompt as `cancelled` on a bare `reject_once` (Fuigo 1.0.13, Grok Build: the same
-   *  xai-grok-shell, whose permission decisions include `FollowupMessage`). A deny from the owner or the card's own
-   *  deadline then carries `_meta.followup_message`, so the tool stays denied and the turn carries on without it. */
-  rejectNeedsFollowup?: true;
   /** Answer a permission request only with a one-time allow, at every level, Full access included: an
    *  allow-always option would leave a grant in the engine that answers later requests without Murage
    *  (Fuigo 1.0.32 remembered Bash grants). With no one-time allow on offer, Murage cancels the request. */
@@ -1104,6 +1093,14 @@ export interface AcpSupport {
    *  advertises `fuigo/folderTrust.interactive` and answers the engine's own
    *  `fuigo/folder_trust/request` from the same decision. */
   folderTrust?: boolean;
+  /** Which folder-trust protocol this engine version speaks. Absent is 1.
+   *  On 2 the engine is the judge: no `--trust`, no card before the spawn, the
+   *  client advertises `v2`, and a request carrying `scope` is answered by its
+   *  own `workspace` key from the stored records (FUIGO-TRUST-V2 R3). */
+  folderTrustGeneration?(version: string | undefined): 1 | 2;
+  /** Whether this version takes a trust reply for its own process only
+   * (`duration: "process"`). An unknown or unread version must answer false. */
+  folderTrustProcessReply?(version: string | undefined): boolean;
   /** Provider credential variables this ACP child is allowed to inherit. */
   credentialEnv?: readonly string[];
   /** Select the model through a session config option instead of argv, for
@@ -1200,11 +1197,6 @@ export interface AcpSupport {
   classifyError?(error: unknown): ProviderErrorCode | undefined;
   /** Compose the session/prompt text. Default prepends the persona. */
   buildPromptText?(turn: SendTurnInput): string;
-  /** One reading of a permission request's `rawInput`, run once before any reader (the command reader, the card,
-   *  the policy call, the stop line). Undefined: the request is read as sent. `ok: false`: the call could not be
-   *  read and is held as unread (`toolInputMissing`). Hermes: an ask its hook escalated carries a placeholder as
-   *  the command and the real arguments only in the hook's message. */
-  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string } | undefined;
   /** Rewrite a picker id (`omlx::model`) into the CLI-native id before spawn
    * and session/select. Local inject writers live here so the child sees a
    * model it already knows. */
@@ -1231,21 +1223,7 @@ export interface AcpSupport {
     /** `models.currentModelId` from the same session/new or session/load
      * response, when the agent reported one. */
     currentModelId?: string;
-    /** The turn's engine environment (the same object spawnArgs saw). */
-    env?: Record<string, string | undefined>;
-    /** With `modelsUpdateNotification`: the ids of the latest such notification on this process (already arrived, or arriving
-     *  within `ms`, while one status chip titled `title` shows), `ids: null` when it came in a shape with no readable id list,
-     *  null at the bound, "aborted" when the turn ended or was stopped first. */
-    awaitModelsUpdate?(ms: number, title: string): Promise<{ ids: string[] | null } | null | "aborted">;
-    /** True once any stop reached this turn (Stop, Stop All, shutdown, the process closing or the turn's end): nothing more goes to
-     *  the engine. Read it again right before each request; a stop can land on any await. */
-    cancelled?(): boolean;
-    /** One `model_pin` lifecycle record for this turn's pin (no slugs, no paths). */
-    recordModelPin?(fields: { outcome: "ok" | "repinned" | "timeout" | "unlisted" | "error" | "aborted"; waitedMs: number; cacheAtSpawn?: boolean }): void;
   }): Promise<void>;
-  /** Extension notification the engine sends when its model catalog changed (grok `_x.ai/models/update`): recorded per process
-   *  and handed to configureSession's awaitModelsUpdate. */
-  modelsUpdateNotification?: string;
   /** Extension notification the engine sends, per session, once every MCP
    *  server of that session has settled (connected or unavailable). Fuigo
    *  answers `session/new` before the `mcpServers` it was handed are
@@ -1309,6 +1287,10 @@ export interface AcpSupport {
  *  rather than passed through as NaN, which would disarm the timeout entirely. */
 const envOr = (key: string, fallback: number): number => boundedEnvMs(process.env[key], fallback);
 const INIT_TIMEOUT = envOr("MURAGE_ACP_INIT_MS", 60_000);
+/** How long an unanswered permission card waits before it is denied. Read
+ * lazily so a fixture can shorten it; a routine run's cards never use it
+ * (SendTurnInput.holdPermissionAsks). */
+const permissionDenyMs = (): number => envOr("MURAGE_PERMISSION_DENY_MS", 15 * 60_000);
 /** Longest the first prompt waits for `AcpSupport.mcpReadyNotification`.
  *  Past it the prompt is sent anyway (the model is told the servers are still
  *  connecting, which is the old behaviour) and a `mcp_ready_timeout`
@@ -1437,6 +1419,9 @@ const FUIGO_ELICIT_METHOD = "_fuigo/mcp/elicit";
  * `sessionId`, `cwd`, `workspace` and `configKinds`; the answer is
  * `{outcome: "trust" | "reject"}`, and anything else decodes to reject. */
 const FUIGO_FOLDER_TRUST_METHODS = new Set(["_fuigo/folder_trust/request", "fuigo/folder_trust/request"]);
+/** The longest the first prompt waits for rule 3b's reply. Measured: the request
+ * reaches Murage about 0.1 to 0.3 s after session/new. */
+const FOLDER_TRUST_HOLD_MS = 2000;
 /** The card's tool name; the server keys the folder-trust record on it. */
 const FOLDER_TRUST_TOOL = "folder_trust";
 /** A hosted tool row (Fuigo `_meta.backend`) whose attempt the engine threw
@@ -1500,25 +1485,6 @@ function osProcessAlive(pid: number | undefined): boolean {
  * requests in time: the engine and the step in plain words, never the
  * JSON-RPC method. "timed out" stays in it: the Inbox groups it with other
  * passing provider trouble (server/inbox-rollup.ts). */
-/** configureSession's context (AcpSupport.configureSession). */
-export type AcpSessionContext = Parameters<NonNullable<AcpSupport["configureSession"]>>[0];
-
-/** Model ids in a model-catalog notification, top level only: `models` as an array of `{id}` or `{modelId}` (or strings), or as an
- *  object keyed by id (every value an entry object), or `availableModels[].modelId`. Only a COMPLETE list counts, since only a complete
- *  list can show a model is absent: null when no shape matches, when any entry has no string id, or past 256 entries. */
-export function acpModelIdsIn(params: unknown): string[] | null {
-  const p = params && typeof params === "object" ? params as { models?: unknown; availableModels?: unknown } : null;
-  if (!p) return null;
-  const idOf = (entry: unknown): unknown => (typeof entry === "string" ? entry : entry && typeof entry === "object" ? (entry as { id?: unknown; modelId?: unknown }).id ?? (entry as { modelId?: unknown }).modelId : undefined);
-  const entryObject = (value: unknown) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
-  let raw: unknown[] | null = null;
-  if (Array.isArray(p.models)) raw = p.models.map(idOf);
-  else if (entryObject(p.models) && Object.values(p.models as object).every(entryObject)) raw = Object.keys(p.models as object);
-  else if (Array.isArray(p.availableModels)) raw = p.availableModels.map((entry) => (entry && typeof entry === "object" ? (entry as { modelId?: unknown }).modelId : undefined));
-  if (!raw || raw.length > 256) return null;
-  return raw.every((id) => typeof id === "string" && id.length > 0) ? raw as string[] : null;
-}
-
 export function acpRequestTimeoutMessage(engine: string, method: string): string {
   const step = method === "initialize" || method === "authenticate" ? " while starting"
     : method === "session/new" || method === "session/load" ? " while opening the conversation"
@@ -1650,6 +1616,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
   const decodeConfig = decodeAcpConfig(support.defaultCli, support.decodeExtra);
+  // Fuigo reads a bare reject_once as a Stop; this note keeps the turn going
+  // without the action when nobody answered the card in time.
+  const DENY_TIMEOUT_FOLLOWUP =
+    "Nobody answered this permission request in time. Do not retry it or perform an equivalent action through another tool. Finish what you can without it and say what was skipped.";
   /** Sessions an Ask turn put in the engine's read-only session mode (support.askStop.sessionMode). */
   const askStopModeSessions = new Set<string>();
 
@@ -1935,8 +1905,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         readonly mcpReadySessions: Set<string>;
         /** latest `{total, connected}` the engine reported per session */
         readonly mcpProgress: Map<string, { total: number; connected: number }>;
-        /** the latest `modelsUpdateNotification` this process sent (ids null: no readable id list) */
-        modelsUpdate?: { ids: string[] | null };
         /** the engine build this process runs (acpBuildKey), once a turn waited on it: its
          *  list answer (method-not-found or not) is remembered under it */
         mcpBuildKey?: string;
@@ -1990,6 +1958,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
        *  already in it. Per `thread + native session`, the hash of the stack
        *  that session last accepted; an unchanged stack is not sent again. */
       const systemDelivered = new Map<string, string>();
+      // The stored keys a thread has already been told said no (T2): one chip per
+      // key per thread, in memory only. A restart may say it once more.
+      const declineChipsShown = new Map<string, Set<string>>();
       const epochOf = (threadId: string) => threadEpochs.get(threadId) ?? 0;
       const retireThread = (threadId: string) => threadEpochs.set(threadId, epochOf(threadId) + 1);
       let processSeq = 0;
@@ -2224,7 +2195,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (typeof readyId === "string" && readyId) proc.mcpReadySessions.add(readyId);
         }
         if (support.mcpProgressNotification && msg.method === support.mcpProgressNotification) recordMcpProgress(proc, msg.params);
-        if (support.modelsUpdateNotification && msg.method === support.modelsUpdateNotification) proc.modelsUpdate = { ids: acpModelIdsIn(msg.params) };
       };
 
       /** Keep the engine's latest connect counts for a session. */
@@ -2481,8 +2451,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ? turn.providerRoute.preset === "flux"
           : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
         if (fluxRoutedTurn) {
-          // the memory decision plus the turn's usage tags: every ACP engine renders decision.headers into its own overlay
-          const fluxMemory = fluxTurnDecision(turn);
+          const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
           const headerRefusal = fluxHeaderRefusal(support.driverKind, fluxMemory);
           if (headerRefusal) throw new Error(headerRefusal);
           if (support.fluxHeaderGate && (support.fluxGateEveryTurn || fluxMemory.capture === "off" || fluxMemory.inject === "off")) {
@@ -2499,6 +2468,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // An engine that scopes its home needs the version to decide: a failed or backed-off probe is tried once more now,
         // and a version still unknown rejects the turn (the engine's scope function) instead of starting unscoped.
         if (support.spawnNeedsCliVersion && (support.versionRequired || (support.scopeKind && support.applyMountEnv)) && !lastCliVersion) await probeCliVersion(env);
+        // Fuigo's folder-trust generation (FUIGO-TRUST-V2): known here, before the
+        // gate, the spawn and the primer's folder line all read it.
+        const trustGeneration = support.folderTrust ? support.folderTrustGeneration?.(lastCliVersion) ?? 1 : 1;
         const cliTurn =
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
@@ -2531,6 +2503,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           browser: mcpServers.find(server => turn.integrations?.browser && server.command === turn.integrations.browser.command && server.args === turn.integrations.browser.args)?.name };
         turn = renderMurageTurn(turn, toolSurface, mounts, ownedMemoryAlias ? "murage-memory" : undefined);
         promptTurn = renderMurageTurn(promptTurn, toolSurface, mounts, ownedMemoryAlias ? "murage-memory" : undefined);
+        // Generation 2: the engine decides during the turn, so the primer's folder
+        // line claims neither way (R8). A replay is rebuilt from `turn`, so both carry it.
+        if (trustGeneration === 2) {
+          if (turn.system) turn = { ...turn, system: fillFolderLineForEngine(turn.system) };
+          if (promptTurn.system) promptTurn = { ...promptTurn, system: fillFolderLineForEngine(promptTurn.system) };
+        }
 
         // A pooled candidate is unavailable until its park check has succeeded: wait
         // for every pending settle check (bounded by TREE_BASELINE_WAIT_MS plus one
@@ -2564,10 +2542,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
-          /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
-           *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
-          deniedBy: undefined as "user" | "timeout" | "system" | undefined };
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined };
         // Existing 256 KiB diagnostic cap, preserving the start before any
         // redaction. Never keep a second raw tail that can lose a PEM header.
         let stderrDiagnostic = "", stderrDiagnosticTruncated = false;
@@ -2619,8 +2594,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // stdout, so a notification that arrives BEFORE the session/new
         // response is kept, not lost.
         let releaseMcpWait: (() => void) | null = null;
-        /** configureSession's wait for `modelsUpdateNotification` (awaitModelsUpdate): woken by the notification, the turn's end or a stop. */
-        let releaseModelsWait: (() => void) | null = null;
+        // Rule 3b's first prompt hold (r7 addendum 3): one wait, armed before the
+        // launch can see a request. Released by the reply, the bound, Stop or settle.
+        let trustHold: Promise<void> | null = null;
+        let releaseTrustHold: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
@@ -2646,7 +2623,40 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // its store whatever Murage recorded, so there is nothing to ask
         // and nothing was withheld. `--trust` is still passed only on
         // Murage's own decision: the engine's store needs no rewriting.
-        const upstreamTrusted = support.folderTrust === true && turn.folderTrust?.upstreamTrusted === true;
+        // Generation 2 reads no Fuigo store on this path: the engine says for itself.
+        const upstreamTrusted = trustGeneration === 1 && support.folderTrust === true && turn.folderTrust?.upstreamTrusted === true;
+        // Whether every Murage decline reached this turn's Fuigo home (R4). Only a
+        // fresh home whose seed was written can set it, so a missing value fails
+        // closed to the card (R3 rule 3).
+        let declinesSeeded = false;
+        // The stored key S5a names, set only when the written seed holds a decline for exactly this folder.
+        let seededDeclineChipKey: string | null = null;
+        // R4, R5: seeds go in before the spawn, and only into a home made for this turn.
+        // A decision that is not a stored record is a policy grant (a managed desk, Full access).
+        const seedGate = support.folderTrust ? turn.folderTrust : undefined;
+        const folderPolicyGrant = seedGate?.decision === "trust" && seedGate.fromRecord !== true;
+        const freshFuigoHome = providerBinding?.freshFuigoHome ?? cloudUnroutedFuigoHome(support.driverKind, Boolean(providerBinding));
+        // A Cloud seed lands when the launcher starts the engine, so its lines wait for the engine's first answer.
+        let cloudSeedPending = false;
+        let cloudPolicySeeded = false;
+        if (trustGeneration === 1) {
+          if (folderPolicyGrant) turn.onFolderPolicyApplied?.();
+        } else if (seedGate && freshFuigoHome && (freshFuigoHome.cloud || env.FUIGO_HOME === freshFuigoHome.path)) {
+          const seed = await seedFuigoHome(freshFuigoHome, {
+            trustKeys: seedGate.trustKeys ?? [],
+            rejects: seedGate.rejects ?? [],
+            realCwd: canonicalFolder(cwd),
+            policyGrant: folderPolicyGrant,
+            cloudHome: freshFuigoHome.cloud ? cloudEngineHome(support.driverKind) : null,
+          });
+          declinesSeeded = seed.declinesSeeded;
+          seededDeclineChipKey = seed.chipKey;
+          if (freshFuigoHome.cloud) {
+            cloudRenderFuigoSeed(env, seed);
+            cloudSeedPending = true;
+            cloudPolicySeeded = seed.policySeeded;
+          } else if (seed.policySeeded) turn.onFolderPolicyApplied?.();
+        }
 
         const send = (obj: unknown, done?: ApprovalWriteCallback) => {
           // Answering a server→client request (a permission decision, a file
@@ -2735,23 +2745,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", id, method, params });
           });
 
-        /** Any stop reached this turn. Stop All and shutdown call `stop` without `cancelRequested`, which also decides whether a
-         *  session/cancel went out and whether the process parks, so `stopRequested` is the wider latch for "send the engine nothing more". */
-        const turnHalted = () => state.settled || state.cancelRequested || state.stopRequested || disposed || Boolean(proc?.closing) || Boolean(proc?.dead);
-        /** A stop someone asked for, as opposed to the engine going away. An interrupt (`cancelRequested`) always is, and so is Stop All, before
-         *  and after the prompt. `dispose` (quit, restart, an engine retired) alone never is: that turn reads as the engine closing, before and
-         *  after its prompt, so the turn is retried and whoever waits on it hears. */
-        const stopWasAsked = () => state.cancelRequested || (state.stopRequested && !disposed);
-        /** The end of a turn `turnHalted` caught before its prompt: nothing was written, and it ends at once, read as `stopWasAsked` reads it. */
-        const settleHalted = () => {
-          if (state.cancelRequested || !disposed) { settle(true, "cancelled"); return; }
-          emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(ENGINE, null) });
-          settle(false, "exit_before_result");
-        };
         // Requesting termination is not closure; the teardown observes close.
         const stop = (reason: LifecycleStopReason) => {
-          state.stopRequested = true;
-          releaseModelsWait?.();
           lifecycle.record("stop_requested", {
             reason,
             pid: child?.pid ?? null,
@@ -2888,6 +2883,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ) => {
           if (state.settled) return;
           state.settled = true;
+          releaseTrustHold?.();
           approvalDeliveryStop.abort();
           endTurnTrace(threadId, ok ? (stopReason ?? "ok") : "failed");
           state.finished = ok && stopReason === null;
@@ -2905,7 +2901,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           for (const subtask of helpers.tracker.endAll(false)) emitSubtask(subtask);
           if (interruptTimer) clearTimeout(interruptTimer);
           releaseMcpWait?.();
-          releaseModelsWait?.();
           // FUIGOTRUST2 (1): a routed turn's per-turn FUIGO_HOME is removed
           // on the child's close — but a turn that never spawned (its card
           // timed out, was stopped, or its launch threw) has no child.
@@ -2947,9 +2942,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ASK_STOP_NOTE, toolKind: "notice" });
             emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
           }
-          // The engine ended the prompt itself right after a deny (no Stop, no host interrupt): say whose deny it was.
-          const deniedBy = ok && stopReason === "cancelled" && !state.cancelRequested ? state.deniedBy : undefined;
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(deniedBy ? { deniedBy } : {}), ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
           if (!park) stop(cause); // the agent process does not exit on its own
           forgetPrewarm();
         };
@@ -2993,7 +2986,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            timer?.clear();
+            clearTimeout(timer);
             const picks = behavior === "answer" && answers?.length ? answers : null;
             // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
             const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
@@ -3020,8 +3013,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source,
             });
           };
-          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
-          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          timer?.unref?.();
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3058,15 +3051,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           sources: string[],
           onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered") => void,
           late = false,
+          v2?: { key: string; folder: string; question: ReturnType<typeof folderTrustQuestionV2>; declines: string[] },
         ) => {
-          const folder = turn.folderTrust?.folder ?? cwd;
-          const key = turn.folderTrust?.key ?? cwd;
-          const question = folderTrustQuestion({ key, folder, sources });
+          const folder = v2?.folder ?? turn.folderTrust?.folder ?? cwd;
+          const key = v2?.key ?? turn.folderTrust?.key ?? cwd;
+          const question = v2?.question ?? folderTrustQuestion({ key, folder, sources });
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
             traceClose("permission.wait", requestId, behavior);
-            timer?.clear();
+            clearTimeout(timer);
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
             // FUIGOTRUST2 (6): a late card (the engine had already started)
             // closed by nobody: the turn finished, was stopped, or the ask
@@ -3087,8 +3081,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (decision) onDecided(decision);
             else onDecided(source === "user" ? "skipped" : "unanswered");
           };
-          // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
-          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          const timer = turn.holdProjectAsks ? undefined : setTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          timer?.unref?.();
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3100,8 +3094,120 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             summary: question.question.slice(0, 300),
             choices: question.options.map((option) => option.label),
             questions: [question],
-            folderTrust: { key, folder, sources },
+            folderTrust: { key, folder, sources, ...(v2 ? { v2: true as const } : {}), ...(v2?.declines.length ? { declines: v2.declines } : {}) },
           });
+        };
+
+        // T3: Fuigo remembers a reject per key for the life of the process and
+        // persists a trust, so a process that replied from anything but a record
+        // the launch digest already carries is never kept. Set before the reply
+        // leaves, so there is no ordering with a Forget or the park to get wrong.
+        const markFolderTrustUnfit = (reason: "folder-trust-card" | "folder-trust-undecided") => {
+          if (!proc) return;
+          proc.unfit = reason;
+          appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "unfit", reason } });
+        };
+        /** The chip for a stored "no", once per key per thread, whichever of the
+         * seed (S5a) or the reply (T2) gets there first. */
+        const seedLanded = () => {
+          cloudSeedPending = false;
+          if (cloudPolicySeeded) turn.onFolderPolicyApplied?.();
+          cloudPolicySeeded = false;
+          if (seededDeclineChipKey) noteDeclineOnce(seededDeclineChipKey, folderTrustPassedName(seededDeclineChipKey));
+          seededDeclineChipKey = null;
+        };
+        const noteDeclineOnce = (key: string, name: string) => {
+          if (state.settled) return;
+          let shown = declineChipsShown.get(threadId);
+          if (shown?.has(key)) return;
+          if (!shown) {
+            if (declineChipsShown.size >= 4096) declineChipsShown.delete(declineChipsShown.keys().next().value!);
+            shown = new Set();
+            declineChipsShown.set(threadId, shown);
+          }
+          shown.add(key);
+          noteFolderTrust(name);
+        };
+
+        // A request carrying `scope` (Fuigo 1.0.35 and later, FUIGO-TRUST-V2 R3).
+        // The engine asks only when nothing else trusts the folder, and `workspace`
+        // is the key a grant persists, so Murage answers that key from its stored
+        // records and computes none of its own. Rules run in order; a trust reply
+        // is the only grant, and it grants exactly K.
+        const handleFolderTrustV2 = (id: unknown, params: any, sources: string[]) => {
+          const reply = (decision: FolderTrustDecision) => {
+            send({ jsonrpc: "2.0", id, result: decision === "trust" ? { outcome: "trust", scope: "configAndCommands" } : { outcome: "reject" } });
+            releaseTrustHold?.();
+          };
+          const key: unknown = params.workspace;
+          // Rule 1: not the question this client understands, or a key nothing may hold.
+          if (params.scope !== "configAndCommands" || typeof key !== "string" || isUnrecordableTrustRoot(key)) {
+            markFolderTrustUnfit("folder-trust-undecided");
+            return reply("reject");
+          }
+          const rejects = turn.folderTrust?.rejects ?? [];
+          const realCwd = canonicalFolder(cwd);
+          // Rule 2: a stored "no" that answers for this turn. The digest carries it.
+          const answering = folderTrustRejectFor(rejects, key, realCwd);
+          if (answering) {
+            reply("reject");
+            return noteDeclineOnce(answering.key, folderTrustDeclinedName(sources, answering.key));
+          }
+          // Rule 3: this exact key, trusted at consent 2, with every decline known
+          // to be written. Any unwritten decline could sit inside K, so the card shows.
+          const storedTrust = turn.folderTrust?.trustKeys?.includes(key) === true;
+          if (storedTrust && (rejects.length === 0 || declinesSeeded)) {
+            reply("trust");
+            if (!state.settled) noteFolderTrust(folderTrustChosenName(sources));
+            return;
+          }
+          // Rule 3b: the owner's own No limits turn in a folder he picked. No card,
+          // and no lasting trust offered: a reject stays in this process only, so
+          // the process is unfit, nothing is stored, and the next launch decides
+          // again. The server sets the list only for such a turn (never fullAuto).
+          if (!storedTrust && !turn.prewarm && turn.folderTrust?.noCardPickKeys?.includes(key) === true && (rejects.length === 0 || declinesSeeded)) {
+            // Primary route, Fuigo 1.0.38 and later: trust for this process only.
+            // Written whole here, so this path has no durable form. Nothing is
+            // stored and the process never returns to the pool, because the
+            // digest does not carry a grant it holds.
+            if (support.folderTrustProcessReply?.(lastCliVersion) === true) {
+              markFolderTrustUnfit("folder-trust-card");
+              send({ jsonrpc: "2.0", id, result: { outcome: "trust", scope: "configAndCommands", duration: "process" } });
+              releaseTrustHold?.();
+              if (!state.settled) noteFolderTrust(folderTrustChosenName(sources));
+              return;
+            }
+            markFolderTrustUnfit("folder-trust-undecided");
+            reply("reject");
+            if (sources.length && !state.settled) noteFolderTrust(folderTrustWithheldName(sources));
+            return;
+          }
+          // Rule 4: Full access or No limits with nothing of its own to bring in.
+          const fullAccess = turnConfig.fullAuto || turn.stopLine === true;
+          if (!storedTrust && fullAccess && !sources.length) {
+            markFolderTrustUnfit("folder-trust-undecided");
+            return reply("reject");
+          }
+          // A warm on intent never raises a card: the turn that follows asks.
+          if (turn.prewarm) {
+            markFolderTrustUnfit("folder-trust-undecided");
+            return reply("reject");
+          }
+          // Rule 5: the owner decides, for exactly this key.
+          flushAssistantText();
+          const declines = declinesSeeded ? [] : folderTrustDeclinesFor(rejects, key);
+          const asked = typeof params.cwd === "string" && params.cwd ? params.cwd : realCwd;
+          const question = folderTrustQuestionV2({ key, cwd: asked, sources, repository: folderHasGit(key), fullAccess, declines });
+          askFolderTrust(sources, (decision) => {
+            const answered = decision === "trust" || decision === "reject";
+            markFolderTrustUnfit(answered ? "folder-trust-card" : "folder-trust-undecided");
+            reply(decision === "trust" ? "trust" : "reject");
+            if (decision === "unanswered") return noteFolderTrust(folderTrustWithheldName(sources));
+            if (state.settled) return;
+            noteFolderTrust(decision === "trust" ? folderTrustChosenName(sources)
+              : decision === "reject" ? folderTrustDeclinedName(sources, key)
+              : folderTrustWithheldName(sources));
+          }, true, { key, folder: turn.folderTrust?.folder ?? realCwd, question, declines });
         };
 
         // The engine's own trust request (Fuigo's `_fuigo/folder_trust/request`),
@@ -3110,8 +3216,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // engine gated something the server's scan did not name, such as a
         // `~/.claude.json` project entry — the owner is asked now, from the
         // engine's own `configKinds`. The engine reloads MCP servers, hooks and
-        // plugins on a grant but reads instructions and skills at start, so a
-        // late grant is noted as applying from the next turn.
+        // plugins on a grant but reads instructions at start, so a late grant
+        // is noted as applying in a new conversation: on Fuigo 1.0.37 a loaded
+        // session does not pick them up.
         const handleFolderTrustRequest = (msg: any) => {
           const raw = msg.params ?? {};
           const params = raw.params && typeof raw.params === "object" ? raw.params : raw;
@@ -3119,6 +3226,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             send({ jsonrpc: "2.0", id: msg.id, result: { outcome: decision === "trust" ? "trust" : "reject" } });
           const kinds = Array.isArray(params.configKinds) ? params.configKinds : [];
           const sources = folderSources().length ? folderSources() : folderTrustKindNames(kinds);
+          if (params.scope !== undefined) return handleFolderTrustV2(msg.id, params, sources);
           // FUIGOTRUST3 (1): the engine asks ONLY when its own store did not
           // trust the folder, so a request on an `upstreamTrusted` turn means
           // Murage's reading of trusted_folders.toml and the engine's
@@ -3127,6 +3235,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // a grant is never given on Murage's reading alone — the owner's
           // own record answers, else the owner is asked now.
           if (folderTrusted) {
+            // Only a decision copied from a stored record is in the launch digest.
+            // A card, a managed desk or Full access auto-trust is not (U1).
+            if (!(turn.folderTrust?.fromRecord === true && folderTrusted === turn.folderTrust.decision)) markFolderTrustUnfit("folder-trust-undecided");
             reply(folderTrusted);
             // the turn runs untrusted after all: the chip `upstreamTrusted`
             // suppressed before the spawn is owed now
@@ -3135,7 +3246,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           flushAssistantText();
           askFolderTrust(sources, (decision) => {
-            folderTrusted = decision === "trust" || decision === "reject" ? decision : "skipped";
+            const answered = decision === "trust" || decision === "reject";
+            folderTrusted = answered ? decision : "skipped";
+            markFolderTrustUnfit(answered ? "folder-trust-card" : "folder-trust-undecided");
             reply(folderTrusted);
             // FUIGOTRUST2 (6): nobody decided while the engine ran — it ran
             // untrusted, so the chip names what it asked about. A settle
@@ -3188,16 +3301,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               message: `${ENGINE} offered no way to ${want === "allow" ? "allow" : "decline"} this request, so Murage cancelled it instead of guessing.`,
             });
 
-          const sentToolCall = params.toolCall ?? {};
-          // The engine's own reading of what it sent, once, so every reader below takes the same input.
-          const normalAsk = support.normalizeAsk?.(sentToolCall.rawInput);
-          const normalCall = normalAsk?.ok ? { ...sentToolCall, rawInput: normalAsk.rawInput } : sentToolCall;
-          const kind = String(normalCall.kind ?? "");
-          // ISSUE-PERMS-1010 B: Fuigo's codex apply_patch carries its targets only inside the patch; they are read with the
-          // Codex driver's reader into `locations`, so every path check reads the real destinations (a patch it cannot read
-          // whole is unread, never an edit with no path)
-          const patchRead = acpApplyPatchCall(normalCall, kind);
-          const toolCall = patchRead.toolCall;
+          const toolCall = params.toolCall ?? {};
+          const kind = String(toolCall.kind ?? "");
           // An agent that routes its question tool (e.g. AskUserQuestion)
           // through request_permission names it in the tool call. That tool
           // asks the OWNER, so fullAuto must not select "allow" for it — that
@@ -3235,7 +3340,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
           const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
-          const summary = approvalSummary(normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
+          const summary = approvalSummary(commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
           // destination named only in the title is not lost.
@@ -3250,6 +3355,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const clearAsk = () => {
             asks.delete(requestId);
             nativeApprovals.delete(msg.id);
+            clearTimeout(timer);
           };
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.has(requestId)) return false;
@@ -3305,14 +3411,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               id: msg.id,
               result: optionId ? {
                 outcome: { outcome: "selected", optionId },
-                // Fuigo 1.0.13 and Grok Build treat a bare reject_once as turn
-                // cancellation (support.rejectNeedsFollowup). Their response-level
-                // feedback extension keeps the tool denied while allowing a safe
-                // explanation in this same native turn.
-                ...(support.rejectNeedsFollowup && !turnConfig.fullAuto && !questionTool &&
-                  behavior === "deny" && source === "user" &&
+                // Fuigo 1.0.13 treats a bare reject_once as turn cancellation.
+                // Its response-level feedback extension keeps the tool denied
+                // while allowing a safe explanation in this same native turn.
+                ...(support.driverKind === "fuigoAgent" && !turnConfig.fullAuto && !questionTool &&
+                  behavior === "deny" && (source === "user" || source === "timeout") &&
                   options.some(option => option.optionId === optionId && option.kind === "reject_once")
-                  ? { _meta: { followup_message: "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
+                  ? { _meta: { followup_message: source === "timeout" ? DENY_TIMEOUT_FOLLOWUP : "The user denied this operation. Do not retry it, bypass the denial, or perform an equivalent action through another tool. Keep the operation unexecuted and explain the limitation and any safe alternatives without taking further action." } }
                   : {}),
               } : cancelled,
             };
@@ -3341,7 +3446,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 return { ok: false, reason: "engine_stopped", terminal: true };
               }
               traceClose("permission.wait", requestId, behavior);
-              state.deniedBy = optionId && behavior === "allow" ? undefined : optionId ? source : "system";
               emit({
                 ...base(threadId, turnId),
                 type: "request.resolved",
@@ -3356,6 +3460,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               approvalDeliveryStop.signal.removeEventListener("abort", stopped);
               if (delivery === current) {
                 delivery = undefined;
+                // The deadline may have fired while this answer was in flight.
+                // A definite miss leaves a live ask that still needs a deadline.
+                if (asks.has(requestId) && !current.uncertain && !state.settled) armDenyDeadline();
               }
             };
             delivery = current;
@@ -3376,8 +3483,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
             return current.promise;
           };
-          // The card waits for the owner on every turn, direct chat and routine alike (Sean 10-29, H4): it closes
-          // only on an answer, on Stop, or when the turn or engine ends. There is no deny deadline.
+          // An unanswered card denies after 15 minutes. That is the owner not
+          // answering, not an engine failure, so it raises no runtime error
+          // (whose card sends people to Provider settings); request.resolved
+          // with source "timeout" is the record. A routine run holds its
+          // cards open instead (SendTurnInput.holdPermissionAsks).
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const armDenyDeadline = () => {
+            clearTimeout(timer);
+            if (turn.holdPermissionAsks) return;
+            timer = setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
+            timer.unref?.();
+          };
+          armDenyDeadline();
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           nativeApprovals.set(msg.id, { paramsKey, requestId });
@@ -3417,12 +3535,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(acpCommandShell ? { commandShell: acpCommandShell } : {}),
             // F5: no kind on the wire means nothing to resolve the call by;
             // the title is never a name.
-            ...(!questionTool && !kind ? { toolInputMissing: "kind" } : patchRead.unread ? { toolInputMissing: "patch" } : {}),
+            ...(!questionTool && !kind ? { toolInputMissing: "kind" } : {}),
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
-            // An ask the engine's reader could not read (Hermes: a hook message it does not recognise) is unread.
-            ...(normalAsk && !normalAsk.ok && !questionTool ? { toolInputMissing: normalAsk.why } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -3694,11 +3810,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (support.mcpProgressNotification && msg.method === support.mcpProgressNotification) {
             if (proc) recordMcpProgress(proc, msg.params);
             if (msg.params?.sessionId === sessionId) releaseMcpWait?.();
-            return;
-          }
-          if (support.modelsUpdateNotification && msg.method === support.modelsUpdateNotification) {
-            if (proc) proc.modelsUpdate = { ids: acpModelIdsIn(msg.params) };
-            releaseModelsWait?.();
             return;
           }
           // Vendor side-channels (e.g. grok's `_x.ai/*`) are teed to the
@@ -3983,7 +4094,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             promptSent: state.promptSent,
           });
           if (!state.settled) {
-            if (stopWasAsked()) {
+            if (state.cancelRequested) {
               settle(true, "cancelled");
               stderrDiagnostic = "";
               return;
@@ -4031,7 +4142,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // A turn still waiting for MCP readiness has sent no prompt: the
           // waiter wakes and settles it as cancelled at once.
           releaseMcpWait?.();
-          releaseModelsWait?.();
+          releaseTrustHold?.();
           if (!child) {
             // Nothing spawned yet: the turn is waiting on its folder-trust
             // card. Stop settles it as cancelled at once (the card is closed
@@ -4062,37 +4173,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** The per-server list showed every mounted server settled: the wait
          *  below ends as ready without a notification. */
         let mcpListShowsSettled = false;
-        /** configureSession's bounded wait for the engine's model catalog announcement (AcpSupport.modelsUpdateNotification). One
-         *  status chip shows only while it waits; one that already arrived on this process answers at once. */
-        const awaitModelsUpdate = (ms: number, title: string): Promise<{ ids: string[] | null } | null | "aborted"> => {
-          const arrived = () => (proc?.modelsUpdate ? { ids: proc.modelsUpdate.ids ? [...proc.modelsUpdate.ids] : null } : null);
-          // A stop or the turn's end outranks an announcement already recorded: nothing is pinned again after either.
-          if (turnHalted()) return Promise.resolve("aborted");
-          const now = arrived();
-          if (now) return Promise.resolve(now);
-          return new Promise((resolve) => {
-            const itemId = `models-wait-${turnId}`;
-            const finish = (outcome: { ids: string[] | null } | null | "aborted") => {
-              if (releaseModelsWait !== release) return;
-              releaseModelsWait = null;
-              clearTimeout(timer);
-              emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: outcome !== null && outcome !== "aborted" });
-              // A listener of that event may have stopped the turn.
-              resolve(turnHalted() ? "aborted" : outcome);
-            };
-            const release = () => {
-              if (turnHalted()) return finish("aborted");
-              const got = arrived();
-              if (got) finish(got);
-            };
-            releaseModelsWait = release;
-            const timer = setTimeout(() => finish(null), ms);
-            timer.unref?.();
-            // After the hook and the timer: a listener of this event may stop the turn, and a stop reaches the wait through the hook.
-            emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title });
-            release();
-          });
-        };
         const awaitMcpReady = (id: string, ownMounts: number, needsAllSettled = false, boundMs?: number) =>
           new Promise<"ready" | "own_ready" | "timeout" | "aborted">((resolve) => {
             const ready = proc?.mcpReadySessions ?? new Set<string>();
@@ -4273,19 +4353,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  mount unasked, so the host-computer route asks here before each call
          *  reaches the computer, with the tool's exact name and arguments. The
          *  card is the one a stamped MCP call on this turn's own mount gets;
-         *  a deny or the turn ending (asks are cancelled) stops it; like every card it waits for the owner. */
+         *  a deny, a timeout or the turn ending (asks are cancelled) stops it. */
         const askHostAction = (call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny"> => new Promise((resolveAsk) => {
           if (signal?.aborted || state.settled || state.cancelRequested || !controlsHost || !/^[A-Za-z0-9_.-]{1,128}$/.test(call.name)) return resolveAsk("deny");
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return false;
             traceClose("permission.wait", requestId, behavior);
+            clearTimeout(timer);
             signal?.removeEventListener("abort", withdrawn);
             const allow = behavior === "allow";
             resolveAsk(allow ? "allow" : "deny");
             emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allow ? "allow" : "deny", source: allow || behavior === "deny" ? source : "system", approvalScope: "local-computer" });
             return true;
           };
+          const timer = turn.holdPermissionAsks ? undefined : setTimeout(() => { finish("deny", "timeout"); }, permissionDenyMs());
+          timer?.unref?.();
           // the engine withdrew the call (its proxy request closed): the card closes, nothing runs
           const withdrawn = () => { finish("cancel", "system"); };
           signal?.addEventListener("abort", withdrawn, { once: true });
@@ -4349,6 +4432,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };
         contractKey = poolable
           ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+            ...(trustGeneration === 2 ? [{ folderTrustGeneration: 2 }] : []),
             ...(engineWrapsHostPower(hostPowerOptions) ? [{ hostPower: 1 }] : []),
             ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
             ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
@@ -4467,6 +4551,19 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         }
         if (!proc) spawnFresh();
+        // Rule 3b's primary route: the reply goes out before the first prompt, so
+        // a process-only grant lands in that prompt. Only a new process asks, and
+        // Fuigo does not ask at all for a folder its own store already answers.
+        const holdKey = turn.folderTrust?.key;
+        if (!reused && !turn.prewarm && holdKey && turn.folderTrust?.noCardPickKeys?.includes(holdKey) === true
+          && !turn.folderTrust.storedNoPick && !turn.folderTrust.upstreamTrusted && !turn.folderTrust.trustKeys?.includes(holdKey)
+          && (!turn.folderTrust.rejects?.length || declinesSeeded) && support.folderTrustProcessReply?.(lastCliVersion) === true) {
+          trustHold = new Promise<void>((resolve) => {
+            // The timer only ends the wait; the prompt path decides what happens next.
+            const bound = setTimeout(() => releaseTrustHold?.(), FOLDER_TRUST_HOLD_MS);
+            releaseTrustHold = () => { clearTimeout(bound); releaseTrustHold = null; resolve(); };
+          });
+        }
         if (turn.prewarm) prewarmChildren.set(threadId, () => child);
         start();
         turnTrace(threadId).mark("engine.acquire", { cold: !reused, pooling: poolingEnabled(), poolable });
@@ -4645,12 +4742,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 clientCapabilities: {
                   fs: { readTextFile: false, writeTextFile: false },
                   elicitation: { form: {}, url: {} },
-                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": { interactive: true } } } : {}),
+                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": trustGeneration === 2 ? { interactive: true, v2: true } : { interactive: true } } } : {}),
                 },
               },
               INIT_TIMEOUT,
             );
             proc!.initResult = init;
+            seedLanded();
             recordProbedImages(imagesKey(), init);
             retryDiscard = acpRetryDiscard(init);
             const methods: Array<{ id?: string }> = Array.isArray(init?.authMethods) ? init.authMethods : [];
@@ -4758,9 +4856,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             proc!.owner.sessionId = sessionId;
             proc!.retiredSessions.delete(sessionId);
             let selectedModel: string | null = null;
-            // Set only once the model pin (selectModel, configureSession) succeeded: a failed, refused or timed-out pin reports
-            // no model at all, never the session/new snapshot, the initialize default or the wanted slug.
-            let pinConfirmed = false;
             let sessionStarted = false;
             const emitSessionStarted = () => {
               if (sessionStarted) return;
@@ -4770,7 +4865,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...base(threadId, turnId),
                 type: "session.started",
                 sessionId,
-                model: pinConfirmed ? (selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null) : null,
+                model: selectedModel ?? init?._meta?.modelState?.currentModelId ?? cliTurn.model ?? null,
               });
             };
 
@@ -4799,7 +4894,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 }
               }
 
-              if (!support.configureSession) pinConfirmed = true;
               if (support.configureSession) {
                 await support.configureSession({
                   request: (method, params, timeoutMs) =>
@@ -4813,12 +4907,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ...(typeof sessionResult?.models?.currentModelId === "string"
                     ? { currentModelId: sessionResult.models.currentModelId }
                     : {}),
-                  env,
-                  ...(support.modelsUpdateNotification ? { awaitModelsUpdate } : {}),
-                  cancelled: turnHalted,
-                  recordModelPin: (fields) => lifecycle.record("model_pin", { method: "session/set_model", ...fields }),
                 });
-                pinConfirmed = true;
                 // initialize's currentModelId is the CLI default,
                 // not the model this turn asked for. After a successful pin,
                 // report the slug we set so the UI does not claim otherwise.
@@ -4866,10 +4955,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
-            // A stop while the session was being set up (a model pin can wait for the engine's catalog) ends the turn here:
-            // nothing is prompted after it.
-            if (state.settled) return;
-            if (turnHalted()) { settleHalted(); return; }
             // Fuigo: the servers in `mcpServers` start connecting at
             // session/new; prompting before they settle hands the model a
             // "currently connecting, do not use" reminder on its first step.
@@ -5007,6 +5092,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
             }
+            if (trustHold) {
+              await trustHold;
+              trustHold = null;
+              if (state.settled) return;
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
+            }
             // A command turn is the command alone. Fuigo and Grok Build
             // recognise "/name" only when it opens the FIRST text block
             // (fuigo-shell slash_authority::parse_slash_prefix), so the
@@ -5046,9 +5137,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : textTurn.system
                 ? `${textTurn.system}\n\n${textTurn.text}`
                 : textTurn.text;
-            // Every wait above checks a user's Stop; this one also covers Stop All and shutdown, with no await left before the write.
-            if (state.settled) return;
-            if (turnHalted()) { settleHalted(); return; }
             // The submission fence (SendTurnInput.beforeSubmit), for every
             // ACP engine: no await separates it from the session/prompt write
             // below. A refusal writes nothing. Before sendTurn handed the id
@@ -5061,9 +5149,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               settle(false, "submission_refused");
               return;
             }
-            // The fence is the harness's own code and can stop this turn. Nothing is written after a stop, and what the fence recorded
-            // for this write is withdrawn.
-            if (turnHalted()) { turn.notWritten?.(); settleHalted(); return; }
             state.promptSent = true; turnTrace(threadId).once("prompt.sent");
             promptStartedAt = Date.now();
             const promptIdleMs = acpPromptIdleTimeoutMs();
@@ -5083,6 +5168,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             );
             // The prompt is written: the memory worker's hold for this turn ends (turn-hold.ts).
             notePromptSent(threadId);
+            // Rule 3b cannot run for this folder: Fuigo's own store says no, so it does not ask.
+            if (turn.folderTrust?.storedNoPick && trustGeneration === 2 && !turn.prewarm && folderSources().length) {
+              noteDeclineOnce(`stored-no:${turn.folderTrust.key}`, FOLDER_TRUST_STORED_NO_NAME);
+            }
             const result = await prompted;
             if (stackKey && stackHash && !stackAlreadySent) {
               systemDelivered.delete(stackKey);
@@ -5115,11 +5204,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // that was still buffered as streamed text.
             if (reason === "end_turn") flushAssistantText();
             if (reason === "end_turn" && !state.cancelRequested && (helpers.open.size > 0 || helpers.wakePending)) holdForHelpers();
-            // A Stop the engine answers with end_turn (OpenCode does) and
-            // nothing to show is the stop it was asked for, never a lost turn
-            // (upstream 4463ba7be): the guard below would put a red "finished
-            // without a reply" card with Retry on a turn the person ended.
-            else if (reason === "end_turn" && state.cancelRequested && !state.producedItem) settle(true, "cancelled");
             else if (reason === "end_turn" && !state.producedItem) {
               // `end_turn` with nothing to show for it (no reply, no image,
               // no tool result) is a lost turn, not a success. A provider can
@@ -5169,7 +5253,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
           } catch (e) {
             if (!state.settled) {
-              if (stopWasAsked() || (disposed && !state.promptSent)) { settleHalted(); return; }
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
               const providerError = classifyProviderError(e);
@@ -5225,18 +5309,21 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // naming what was left out; no answer in time ends the turn as a
         // stopped turn (STOP2), never a hang and never a guess.
         const gate = turn.folderTrust;
-        const needsCard = Boolean(support.folderTrust && gate && !gate.decision && gate.sources.length && !upstreamTrusted);
+        // Generation 2: never a card before the spawn and never `--trust`. The engine
+        // asks during the turn and the request is answered there (R1).
+        const needsCard = Boolean(trustGeneration === 1 && support.folderTrust && gate && !gate.decision && gate.sources.length && !upstreamTrusted);
         // A warm on intent never raises a card: with no decision recorded there is nothing to warm.
         // Nor does a warm start an engine while Murage removes a deleted conversation from the engine's files (holdIdle); no await separates this from the launch.
         if (turn.prewarm && (needsCard || idleHeld > 0)) { endPrewarm(); forgetPrewarm(); return { turnId }; }
         if (!needsCard) {
           try {
-            launch(folderTrusted === "trust");
+            launch(trustGeneration === 1 && folderTrusted === "trust");
           } catch (error) {
             providerBinding?.cleanup();
             throw error;
           }
-          if (support.folderTrust && folderTrusted === "reject" && gate?.sources.length && !upstreamTrusted) noteFolderTrust(folderTrustWithheldName(gate.sources));
+          if (trustGeneration === 1 && support.folderTrust && folderTrusted === "reject" && gate?.sources.length && !upstreamTrusted) noteFolderTrust(folderTrustWithheldName(gate.sources));
+          if (!cloudSeedPending || reused) seedLanded();
           handedBack = true;
           return { turnId };
         }
@@ -5364,6 +5451,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             effortLevels: support.effortLevels,
             localComputerMcp: !config.fullAuto && !support.ownTools,
             folderTrust: support.folderTrust === true,
+            get folderTrustGeneration() { return support.folderTrust ? support.folderTrustGeneration?.(lastCliVersion) ?? 1 : 1; },
             ...(support.textOnlyTurn ? { textOnlyTurn: true as const } : {}),
             ...(support.interjection ? { queueing: true } : {}),
           },
