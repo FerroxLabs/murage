@@ -148,15 +148,15 @@ Message your Chief of Staff from a **paired private Telegram chat**. Messages jo
 
 For supported ordinary tool requests, the paired owner gets **Approve once** and **Deny** buttons. For stop-line actions such as deleting outside a folder, paying or messaging someone new, there is also **Allow for this task**, which covers the same kind of action in the same place until the task ends. Richer proposal reviews stay in Murage; typing “approve” in a message does not grant permission.
 
-Set it up in **Settings → Channels → Telegram** using your own bot token and a pairing code. Keep Murage running and pair again after restarting. Revoke the connection from Settings when you no longer want it active.
+Set it up in **Settings → Messaging apps → Telegram** using your own bot token and a pairing code. Keep Murage running and pair again after restarting. Revoke the connection from Settings when you no longer want it active.
 
 | Service | What you can do today |
 |---|---|
 | **Telegram** | Continue the Chief’s conversation and answer supported one-time approval requests from a paired private chat. |
-| **Slack** | Connect Slack as a connected app so capable agents can read channels and post updates, subject to the connected account and permissions. Inbound Slack control is not yet shipped. |
-| **Discord** | Control-channel support is coming soon. |
+| **Slack** | Message your Chief from one Slack direct message through your own private Slack app, and it answers there. Approvals arrive as Approve once and Deny buttons. Computer-control cards show Deny only. Slack as a connected app, where bots read and post in your workspace, is separate. |
+| **Discord** | Message your Chief from one Discord direct message through your own Discord bot, and it answers there. Approvals arrive as Approve once and Deny buttons. Computer-control cards show Deny only. Only your own direct messages are read. Server messages are ignored. |
 
-Telegram group routing and additional inbound messaging channels remain future work. [Telegram setup and boundaries](docs/telegram.md).
+Telegram group routing remains future work. Telegram, Slack and Discord read only your own paired direct messages. WhatsApp follows its own groups and contacts settings. [Telegram setup and boundaries](docs/telegram.md).
 
 ## Fuigo built in. Multi-vendor by design.
 

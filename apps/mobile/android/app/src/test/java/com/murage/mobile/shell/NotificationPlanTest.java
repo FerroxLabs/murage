@@ -14,7 +14,7 @@ public class NotificationPlanTest {
         assertEquals(Collections.singletonList("OPEN"), p.actions);
         assertFalse(p.authRequired);
         assertFalse(p.silent);
-        assertEquals("calls", p.channel);
+        assertEquals("calls_v2", p.channel);
     }
 
     @Test public void callOnApi31OffersAuthenticatedAnswerAndNotNow() {

@@ -94,4 +94,15 @@ describe("a routine's own conversation", () => {
     expect(routineEffectiveMode({ permissionMode: "auto" }, noLimitsBot)).toBe("auto");
     expect(routineEffectiveMode({}, { autoApprove: false, fullAccess: false })).toBe("ask");
   });
+
+  it("never shows more than the bot allows: the lower of the routine's ceiling and the bot, as the server runs it", () => {
+    const askBot = { autoApprove: false, fullAccess: false };
+    const autoBot = { autoApprove: true, fullAccess: false };
+    const fullBot = { autoApprove: true, fullAccess: true };
+    expect(routineEffectiveMode({ permissionMode: "unlimited" }, askBot)).toBe("ask");
+    expect(routineEffectiveMode({ permissionMode: "full" }, autoBot)).toBe("auto");
+    expect(routineEffectiveMode({ permissionMode: "unlimited" }, fullBot)).toBe("full");
+    expect(routineEffectiveMode({ permissionMode: "ask" }, fullBot)).toBe("ask");
+    expect(routineEffectiveMode({ permissionMode: "full" }, fullBot)).toBe("full");
+  });
 });

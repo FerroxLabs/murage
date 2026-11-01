@@ -5,6 +5,7 @@
 // asks before registering — the classic miss is a path the terminal sees
 // but this GUI app can't.
 import { useEffect, useRef, useState } from "react";
+import { t } from "@/lib/i18n";
 import { Check, ChevronDown, Loader2, TriangleAlert } from "lucide-react";
 
 import { owedSettingsLines } from "@/lib/deletion-notes";
@@ -135,11 +136,11 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
               setSelected(e.target.value);
               setManual("");
             }}
-            aria-label={`${instance.displayName} detected CLI`}
+            aria-label={t("ux.lcopyb.engines.foundLabel", { engine: instance.displayName })}
             disabled={busy}
             className="w-full appearance-none rounded-lg border border-hairline/40 bg-inset px-3 py-2 pr-8 font-mono text-[12px] text-ink focus:border-hairline focus:outline-none disabled:opacity-50"
           >
-            <option value="">Select a detected binary…</option>
+            <option value="">{t("ux.lcopyb.engines.chooseCopy")}</option>
             {candidates.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
@@ -157,8 +158,8 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
           if (!value || !dirty) return; // nothing to save — same hint the disabled button gives
           save();
         }}
-        placeholder={candidates?.length ? "Enter path manually…" : "/absolute/path/to/cli"}
-        aria-label={`${instance.displayName} custom CLI path`}
+        placeholder={candidates?.length ? t("ux.lcopyb.engines.typeLocation") : t("ux.lcopyb.engines.typeLocationEmpty")}
+        aria-label={t("ux.lcopyb.engines.customLocationLabel", { engine: instance.displayName })}
         spellCheck={false}
         disabled={busy}
         className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:font-sans placeholder:text-ink-secondary focus:border-hairline focus:outline-none disabled:opacity-50"
@@ -168,7 +169,7 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           <span>
             Test failed: {probe.message}
-            {" "}Register this path anyway?
+            {" "}{t("ux.lcopyb.engines.useAnyway")}
           </span>
         </div>
       )}
@@ -194,7 +195,7 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
               disabled={busy}
               className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised/50 hover:text-ink disabled:opacity-50"
             >
-              Edit path
+              {t("ux.lcopyb.engines.changeLocation")}
             </button>
             <button
               onClick={() => persist()}
@@ -280,7 +281,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
         {instance.enabled === false ? "Disabled" : needsCli(instance)
           ? instance.snapshot.reason ?? "Not detected"
           : instance.driverKind === "fuigoAgent"
-            ? needsSignIn(instance) ? "Included · connect an AI provider" : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
+            ? needsSignIn(instance) ? t("ux.lcopyb.engines.includedConnect") : instance.snapshot.authenticated === true ? "Included · connected" : "Included · connection not verified"
           : needsSignIn(instance) ? "Detected · sign-in required"
             : instance.snapshot.authenticated === true ? "Detected · signed in" : "Detected · sign-in not verified"}
       </p>
@@ -311,7 +312,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       {instance.enabled !== false && !(instance.driverKind === "codex" && needsCli(instance)) && <EngineManagement instance={instance} />}
       {confirmationOpen && (
         <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
-          <p>Changing engine availability reloads providers and interrupts running turns. Enabling an engine may probe its CLI and inherited configuration; it does not resume restored work.</p>
+          <p>{t("ux.lcopyb.engines.availabilityNote")}</p>
           <div className="mt-2 flex gap-2">
             <button disabled={switching} onClick={() => void setEnabled()} className="rounded-lg bg-raised px-3 py-2 disabled:opacity-50">
               {switching ? "Saving..." : instance.enabled === false ? "Confirm enable" : "Confirm disable"}
@@ -381,7 +382,7 @@ function EngineCommandLine({ instance }: { instance: InstanceInfo }) {
             open ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised/50 hover:text-ink",
           )}
         >
-          Set CLI…
+          {t("ux.lcopyb.engines.chooseLocation")}
         </button>}
       </div>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
@@ -396,10 +397,10 @@ function EngineCommandLines({ rows }: { rows: InstanceInfo[] }) {
     <div id="engine-command-lines-heading" tabIndex={-1} className="outline-none">
       <Card
         title="Engine command lines"
-        subtitle="Set CLI points an engine at a specific binary: a versioned build, a wrapper script, or an absolute path. Saving reloads providers and interrupts any running turns."
+        subtitle={t("ux.lcopyb.engines.commandLinesSubtitle")}
       >
         <div className="flex flex-col gap-4">
-          {rows.length === 0 && <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>}
+          {rows.length === 0 && <div className="text-[13px] text-ink-secondary">{t("ux.lcopyb.engines.noneFound")}</div>}
           {rows.map((instance) => <EngineCommandLine key={instance.instanceId} instance={instance} />)}
         </div>
       </Card>
@@ -447,7 +448,7 @@ export function EnginesSettings() {
       ))}
       {owedLines.map((line) => <p key={line} role="status" className="text-[12px] leading-relaxed text-ink-secondary">{line}</p>)}
       {rows.length === 0 && (
-        <div className="text-[13px] text-ink-secondary">No CLI engines detected yet.</div>
+        <div className="text-[13px] text-ink-secondary">{t("ux.lcopyb.engines.noneFound")}</div>
       )}
       {engineFamilies(rows).map(({primary,members})=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
         {/* The card's own border is the section boundary; the eyebrow is only
@@ -457,7 +458,7 @@ export function EnginesSettings() {
             (engineFamilyHeader, the one rule both surfaces use). */}
         {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
         <EngineRow instance={primary}/>
-        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">Uses the same executable; this configured account is preserved separately.</p>}</div>)}</div></div>}
+        {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
         {primary.driverKind === "claudeAgent" && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       </section>)}
       {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}

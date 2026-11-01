@@ -60,6 +60,7 @@ const HOLD_EXEMPT_MESSAGES:ReadonlySet<string>=new Set(["ready","model-ready","c
 /** A checkpoint roll whose evidence was still being checked is tried again this often, this many times (about a minute). */
 const CHECKPOINT_CHECK_RETRY_MS=500, CHECKPOINT_CHECK_RETRIES=120;
 
+const MEMORY_WORKER_STOP_GRACE_MS=5000, MEMORY_WORKER_KILL_WAIT_MS=500;
 export class MemoryWorkerController {
   private child: ChildProcess | null=null;
   private work: MemoryWork | null=null;
@@ -994,9 +995,14 @@ export class MemoryWorkerController {
     this.consolidationAbort.abort();
     await Promise.allSettled([...this.consolidationTasks,...this.admissionWaiters,this.idleTask,this.maintenanceTask,this.continuityTask]);
     const child=this.child;
-    if(child)await new Promise<void>((resolve,reject)=>{
-      const timeout=setTimeout(()=>reject(new Error("MEMORY_WORKER_STOP_TIMEOUT")),5000);
-      child.once("exit",()=>{clearTimeout(timeout);resolve();});
+    // Past the grace the helper is ended: what it owes is durable, its index survives a kill (SQLite WAL), and every caller goes on
+    // to work that must not depend on one busy helper (the rest of this stop, a change of memory mode, a Cloud home's drain).
+    if(child)await new Promise<void>(resolve=>{
+      let killed:ReturnType<typeof setTimeout>|undefined;
+      // A kill not seen to land by the wait: the helper is let go, so the next start gets a new one and its late exit changes nothing.
+      const letGo=()=>{if(this.child===child){this.clearHeartbeat();this.failWork("MEMORY_WORKER_STOPPED");this.child=null;this.ready=false;this.indexing=false;this.modelReady=false;this.idleExit=null;}resolve();};
+      const grace=setTimeout(()=>{child.kill("SIGKILL");killed=setTimeout(letGo,MEMORY_WORKER_KILL_WAIT_MS);},MEMORY_WORKER_STOP_GRACE_MS);
+      child.once("exit",()=>{clearTimeout(grace);if(killed)clearTimeout(killed);resolve();});
       child.disconnect();
     });
     ioBudget.sampleByteSource("memory-worker");this.unregisterBytes?.();this.unregisterBytes=null;

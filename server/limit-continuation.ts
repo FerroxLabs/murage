@@ -36,6 +36,8 @@ export interface LimitTurn {
   providerTurnId?: string;
   /** the engine produced something besides plain text (reasoning, a tool, an image) in this turn */
   activity: boolean;
+  /** chips Murage itself wrote into this turn: a driver's item.completed may not repeat the origin of its item.started */
+  murageItems?: Set<string>;
   /** the engine produced assistant text; a CLI that relays its refusal as text (Claude Code's api-error frame) lands here */
   textActivity?: boolean;
   /** that text, capped: a failed turn whose only text is a limit refusal is the refusal, not model activity */
@@ -80,7 +82,7 @@ export class LimitTurns {
     return turn;
   }
   /** Fold one engine event into the thread's record. */
-  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
+  observe(event: { type: string; threadId: string; turnId?: string; streamKind?: string; itemType?: string; itemId?: string; origin?: string; message?: string; errorKind?: unknown; engineCode?: unknown; limitResetsAt?: unknown; delta?: unknown; text?: unknown }): void {
     const turn = this.turns.get(event.threadId);
     if (!turn) return;
     if (event.type === "turn.started") { if (event.turnId && !turn.providerTurnId) turn.providerTurnId = event.turnId; return; }
@@ -92,7 +94,8 @@ export class LimitTurns {
       turn.textActivity = true;
       if (typeof event.text === "string") turn.text = event.text.slice(0, TEXT_CAP);
     } else if (event.type === "content.delta" || (event.type === "item.started" && (event.itemType === "tool" || event.itemType === "reasoning") && event.origin !== "murage")
-      || (event.type === "item.completed" && (event.itemType === "assistant_image" || event.itemType === "tool") && event.origin !== "murage")) turn.activity = true;
+      || (event.type === "item.completed" && (event.itemType === "assistant_image" || event.itemType === "tool") && event.origin !== "murage" && !(event.itemId && turn.murageItems?.has(event.itemId)))) turn.activity = true;
+    else if (event.type === "item.started" && event.origin === "murage" && event.itemId) (turn.murageItems ??= new Set()).add(event.itemId);
     if (event.type === "runtime.error" && typeof event.message === "string") {
       turn.errorText = event.message.slice(0, 2000);
       turn.errorKind = typeof event.errorKind === "string" ? event.errorKind : undefined;

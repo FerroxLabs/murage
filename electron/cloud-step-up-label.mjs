@@ -42,6 +42,7 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx(`/api/bots/${ID}/sharing/skills`), label: "Share a bot's skills", summary: "settings" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/sharing/copy`), label: "Make a copy of a bot for a team", summary: "settings" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/always-allow(?:/remove)?`), label: "Change what a bot is always allowed to do", summary: "settings" },
+  { methods: ["POST"], path: rx(`/api/bots/${ID}/task-allow/(?:remove|clear)`), label: "Take back what a bot was allowed to do for a task" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/(?:assistant-profile|skills|skills/library)`), label: "Change a bot's skills", summary: "settings" },
   { methods: ANY, path: rx(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), label: "Change or roll back a bot's skill", summary: "settings" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/held-continuations/${ID}/retry`), label: "Let a held step of a bot continue" },
@@ -107,6 +108,7 @@ export const STEP_UP_LABELS = Object.freeze([
   // 1.0.9 bot calls: the owner's call settings, from a chat-only Cloud browser.
   { methods: ["PUT"], path: rx(`/api/bots/${ID}/calls/rules`), label: "Change when a bot can call you", summary: "bot" },
   { methods: ["POST"], path: rx("/api/calls/off-today"), label: "Turn bot calls off for today" },
+  { methods: ["POST"], path: rx("/api/no-limits/terms"), label: "Accept the No limits terms" },
   { methods: ["POST"], path: rx("/api/calls/rearm"), label: "Turn bot calls back on" },
 
   // Routines, webhooks, connectors.

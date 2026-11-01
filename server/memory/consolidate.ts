@@ -20,6 +20,8 @@ import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
 import { redactSecretsInText } from "../redact.ts";
+import { ensureScope } from "./policy.ts";
+import { memoryState } from "./repository.ts";
 import { evidenceEmailDerived } from "./email-derived.ts";
 import { fenceEmailDerived } from "../email/external-marks.ts";
 
@@ -178,15 +180,34 @@ function afterSlice(state:ConsolidationIntent,length:number):{cursor:number;extr
 export const SLICE_SKIPPED_MESSAGE="Could not learn from part of this conversation. Try again";
 /** Skips the slice in work: the main cursor moves past it (a retried slice leaves the queue instead), its coordinates are kept, and a learning
  * event offers the retry. Caller owns the transaction. */
-function skipSlice(db:DatabaseSync,source:Record<string,unknown>,state:ConsolidationIntent,length:number,persist:(scope:unknown,intent:ConsolidationIntent)=>unknown){
+function skipSlice(db:DatabaseSync,source:Record<string,unknown>,state:ConsolidationIntent,length:number,persist:(scope:unknown,intent:ConsolidationIntent)=>unknown,label="attempts"){
   const at=Date.now(),skippedAt=sliceInWork(state).at,next=afterSlice(state,length),cursor=next.cursor;
   const status=cursor===state.totalBytes&&!next.retries?.length?"complete" as const:"partial" as const;
   const skipped=[...(state.skipped??[]).filter(entry=>entry.cursor!==skippedAt),{cursor:skippedAt,length,reason:"extraction-attempts",at}];
   persist(source.scope_id,{...state,...next,status,candidateIds:[],skipped,reason:"slice-skipped",retryAfter:status==="partial"?at:null,updatedAt:at});
-  recordLearningEvent(db,{kind:"run-completed",scopeId:String(source.scope_id),sourceId:String(source.id),sourceRevision:Number(source.revision),botId:learningSourceBot(String(source.thread_id))?.id,
+  // every skipped slice retries by itself; only a first skip or an owner's own retry says so in the learning feed
+  const bindingId=consolidationId(state.jobId),dueId=skipDueId(bindingId,skippedAt),prior=readSkipDue(db,dueId);
+  for(const entry of skipped)addSkipDue(db,bindingId,source.scope_id,entry.cursor,at+SKIP_RETRY_MS[0]!);
+  if(prior?.auto)writeSkipDue(db,dueId,{...prior,auto:false});
+  else recordLearningEvent(db,{kind:"run-completed",scopeId:String(source.scope_id),sourceId:String(source.id),sourceRevision:Number(source.revision),botId:learningSourceBot(String(source.thread_id))?.id,
     detail:{outcome:"slice-skipped",message:SLICE_SKIPPED_MESSAGE,sourceId:String(source.id),cursor:skippedAt,length,retry:{action:"retry-skipped",sourceId:String(source.id),cursor:skippedAt}}});
+  const due=readSkipDue(db,dueId);
+  try{console.warn(`[memory] slice skipped: reason=${label} attempts=${state.extractionAttempts??0} bytes=${length} run=${due?.run??0} next=${new Date(due?.dueAt??at).toISOString()}`);}catch{/* logging is best effort */}
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
   return {status,reason:"slice-skipped",candidateIds:[] as string[],cursor,candidateCount:state.candidateCount,retryAfter:status==="partial"?at:null};
+}
+const consolidationId=(jobId:string)=>`consolidation:${hash(jobId)}`;
+/** A skipped slice's own retry schedule: one row per slice beside the consolidation receipt, so the receipt keeps the shape every build reads.
+ * Coordinates only, never text. A row whose slice is settled goes at its next firing, so a stale one costs nothing. */
+const SKIP_DUE="consolidation-skip-due",SKIP_CURSOR="consolidation-skip-cursor",SKIP_BACKFILL_ID="skip-due-backfill";
+const HOUR_MS=3_600_000,SKIP_RETRY_MS=[HOUR_MS,6*HOUR_MS,24*HOUR_MS,168*HOUR_MS,720*HOUR_MS];
+interface SkipDue{bindingId:string;cursor:number;dueAt:number;run:number;auto:boolean}
+const skipDueId=(bindingId:string,cursor:number)=>`skip-due:${hash(`${bindingId}:${cursor}`)}`;
+function readSkipDue(db:DatabaseSync,id:string){const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_id=?").get(id,SKIP_DUE);return row?JSON.parse(String(row.intent)) as SkipDue:undefined;}
+function writeSkipDue(db:DatabaseSync,id:string,due:SkipDue){db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(due),id);}
+function addSkipDue(db:DatabaseSync,bindingId:string,scope:unknown,cursor:number,dueAt:number){
+  const due:SkipDue={bindingId,cursor,dueAt,run:0,auto:false};
+  db.prepare("INSERT OR IGNORE INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?)").run(skipDueId(bindingId,cursor),scope as string,SKIP_DUE,JSON.stringify(due));
 }
 const consolidationRows=(db:DatabaseSync,sourceId:string)=>db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN ('consolidation','consolidation-pending') AND json_extract(intent,'$.sourceId')=?").all(sourceId);
 /** The answer to a `retry-skipped` press: `queued` (added to the source's retry queue now), `already-queued` (an earlier press is
@@ -203,20 +224,80 @@ export function retrySkippedSlice(db:DatabaseSync,sourceId:string,cursor:number)
     if(!entry)continue;
     // a slice in flight commits from what it read at its claim: queueing now would be overwritten by that commit
     if(intent.status==="running"&&typeof intent.expiresAt==="number"&&intent.expiresAt>Date.now())throw Object.assign(new Error("MEMORY_CONSOLIDATION_RUNNING"),{status:409});
-    const now=Date.now(),queue=intent.retries??[];
-    // the first queued slice becomes the slice in work: fresh counters for it, the main slice's own set aside until the queue drains
-    const counters=queue.length?{}:{candidateIds:[],extractionAttempts:0,sliceCalls:0,parked:{extractionAttempts:Number(intent.extractionAttempts)||0,sliceCalls:Number(intent.sliceCalls)||0}};
-    // an expired claim is revoked here (its generation goes): its later charges count nothing and its commit throws, so it can never
-    // write back the queue it read before this press
-    const unclaimed={...intent};delete unclaimed.generation;delete unclaimed.expiresAt;
-    const next:ConsolidationIntent={...unclaimed,...counters,status:"deferred",retries:[...queue,{cursor,length:entry.length}],skipped:intent.skipped!.filter(item=>item.cursor!==cursor),
-      retried:(intent.retried??[]).filter(item=>item!==cursor),reason:"retry-skipped",retryAfter:now,updatedAt:now};
-    writeConsolidationIntent(db,id,null,next);
+    queueSkipped(db,id,intent,entry,0);
     return {status:"queued",sourceId,cursor};
   }
   if(rows.some(({intent})=>intent.retried?.includes(cursor)))return {status:"done",sourceId,cursor};
   throw Object.assign(new Error("MEMORY_SKIPPED_SLICE_UNKNOWN"),{status:404});
 }
+/** One skipped slice joins the retry queue. `attemptsUsed`: an owner's press gets the full SLICE_ATTEMPT_LIMIT run; an automatic one starts one short. */
+function queueSkipped(db:DatabaseSync,id:string,intent:ConsolidationIntent,entry:SkippedSlice,attemptsUsed:number){
+  const now=Date.now(),queue=intent.retries??[],cursor=entry.cursor;
+  // the first queued slice becomes the slice in work: fresh counters for it, the main slice's own set aside until the queue drains
+  const counters=queue.length?{}:{candidateIds:[],extractionAttempts:attemptsUsed,sliceCalls:0,parked:{extractionAttempts:Number(intent.extractionAttempts)||0,sliceCalls:Number(intent.sliceCalls)||0}};
+  // an expired claim is revoked here (its generation goes): its later charges count nothing and its commit throws, so it can never
+  // write back the queue it read before this press
+  const unclaimed={...intent};delete unclaimed.generation;delete unclaimed.expiresAt;
+  const next:ConsolidationIntent={...unclaimed,...counters,status:"deferred",retries:[...queue,{cursor,length:entry.length}],skipped:intent.skipped!.filter(item=>item.cursor!==cursor),
+    retried:(intent.retried??[]).filter(item=>item!==cursor),reason:"retry-skipped",retryAfter:now,updatedAt:now};
+  writeConsolidationIntent(db,id,null,next);
+}
+/** One due row, decided in its own transaction. Whatever holds the source back holds the retry too: a row only ever pushes itself later. */
+function settleSkipDue(db:DatabaseSync,id:string,now:number):number{
+  const due=readSkipDue(db,id);
+  if(!due||due.dueAt>now)return 0;
+  const drop=()=>{db.prepare("DELETE FROM memory_scope_bindings WHERE id=?").run(id);return 0;};
+  const later=()=>{writeSkipDue(db,id,{...due,dueAt:now+HOUR_MS});return 0;};
+  const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(due.bindingId);
+  if(!row)return drop();
+  const intent=JSON.parse(String(row.intent)) as ConsolidationIntent;
+  const source=db.prepare("SELECT s.id,s.revision FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision WHERE j.id=? AND j.status='complete' AND s.state='active'").get(intent.jobId);
+  if(!source||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.id,source.revision))return drop();
+  if(intent.retries?.some(item=>item.cursor===due.cursor))return later();
+  const entry=intent.skipped?.find(item=>item.cursor===due.cursor);
+  if(!entry)return drop();
+  const claimed=intent.status==="running"&&typeof intent.expiresAt==="number"&&intent.expiresAt>now;
+  const waiting=intent.status==="deferred"&&!(typeof intent.retryAfter==="number"&&intent.retryAfter<=now);
+  if(intent.retries?.length||claimed||waiting||!isLearnableSource(db,String(source.id),Number(source.revision)).learnable)return later();
+  queueSkipped(db,due.bindingId,intent,entry,SLICE_ATTEMPT_LIMIT-1);
+  const run=due.run+1;
+  // written with the promotion: a crash cannot run the same step twice
+  writeSkipDue(db,id,{...due,run,auto:true,dueAt:now+SKIP_RETRY_MS[Math.min(run,SKIP_RETRY_MS.length-1)]!});
+  return 1;
+}
+/** Slices skipped before retries were automatic: a bounded page each pass, resumable by the immutable id (rowid moves in a VACUUM). */
+function backfillSkipDue(db:DatabaseSync){
+  const mark=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(SKIP_BACKFILL_ID);
+  const state=mark?JSON.parse(String(mark.intent)) as {after:string;done?:boolean}:{after:""};
+  if(state.done)return;
+  transaction(()=>{
+    const page=db.prepare("SELECT id,scope_id,subject_type,subject_id,intent FROM memory_scope_bindings WHERE id>? ORDER BY id LIMIT 256").all(state.after);
+    for(const row of page){
+      if(row.subject_type!=="system"||(row.subject_id!=="consolidation"&&row.subject_id!=="consolidation-pending"))continue;
+      for(const entry of (JSON.parse(String(row.intent)) as ConsolidationIntent).skipped??[])addSkipDue(db,String(row.id),row.scope_id,entry.cursor,Date.now());
+    }
+    const next=JSON.stringify({after:page.length?String(page[page.length-1]!.id):state.after,done:!page.length});
+    db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,0,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(SKIP_BACKFILL_ID,ensureScope("workspace",memoryState().installationId),SKIP_CURSOR,next);
+  });
+}
+/** Skipped slices whose time has come join their source's retry queue, through the same step as an owner's press, so the ordinary claim and
+ * every gate on it run next. Called with an extractor in hand, before the pending scan. Bounded like that scan. */
+export function promoteDueSkippedSlices(limit=1,now=Date.now()):number{
+  const db=database();
+  backfillSkipDue(db);
+  const statement=db.prepare("SELECT rowid,id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=? AND rowid>? ORDER BY rowid LIMIT 64");
+  let rows=statement.all(SKIP_DUE,skipDueScanCursor);
+  if(!rows.length){skipDueScanCursor=0;rows=statement.all(SKIP_DUE,0);}
+  let promoted=0;
+  for(const row of rows){
+    skipDueScanCursor=Number(row.rowid);
+    if((JSON.parse(String(row.intent)) as SkipDue).dueAt>now)continue;
+    promoted+=transaction(()=>settleSkipDue(db,String(row.id),now));
+    if(promoted>=limit)break;
+  }
+  return promoted;
+}
+let skipDueScanCursor=0;
 /** A raised ceiling applies now: every source waiting for next month's ceiling is due at once. Caller owns the transaction. */
 export function releaseCeilingDeferrals(db:DatabaseSync,now=Date.now()){
   return Number(db.prepare(`UPDATE memory_scope_bindings SET intent=json_set(intent,'$.retryAfter',?) WHERE subject_type='system' AND subject_id='consolidation-pending'
@@ -271,7 +352,7 @@ export async function consolidateCompletedMemorySource(jobId:string,extractor:Te
  return consolidateMemorySource(jobId,extractor,signal,options);
 }
 export async function consolidateMemorySource(completedJobId:string,extractor:TextOnlyExtractor|null,signal:AbortSignal,options:{connection?:string|null;reviewOnly?:boolean;budgetGate?:(scopeId:string)=>boolean}={}){
-  const db=database(),id=`consolidation:${hash(completedJobId)}`;
+  const db=database(),id=consolidationId(completedJobId);
   const persist=(scope:unknown,intent:ConsolidationIntent)=>writeConsolidationIntent(db,id,scope,intent);
   const budgetSource=completedSource(completedJobId);
   const existing=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
@@ -365,10 +446,12 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
     if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     // the counters as the reserve transactions left them
-    const counted:ConsolidationIntent={...state!,extractionAttempts:Number(intent.extractionAttempts)||0,sliceCalls:Number(intent.sliceCalls)||0};
+    // a call that never reached the provider gives back what it charged: a network failure is no mark against the slice
+    const refund="noReply" in result&&result.noReply===true;
+    const counted:ConsolidationIntent={...state!,extractionAttempts:refund?state!.extractionAttempts??0:Number(intent.extractionAttempts)||0,sliceCalls:refund?state!.sliceCalls??0:Number(intent.sliceCalls)||0};
     if(result.status!=="complete"||signal.aborted){
       const reason=result.status!=="complete"?result.reason:"extraction-incomplete";
-      if((counted.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return skipSlice(db,source!,counted,length!,persist);
+      if((counted.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return skipSlice(db,source!,counted,length!,persist,"failure" in result?result.failure:undefined);
       const nextRetry=("retryAfter" in result?result.retryAfter:undefined)??retryAfter(reason);
       persist(source!.scope_id,{...counted,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
       return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry};
@@ -409,6 +492,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const status=cursor===state!.totalBytes&&!next.retries?.length?"complete" as const:"partial" as const;
     // a retried slice that committed is remembered, so a later press on it answers "done"
     const retried=counted.retries?.length?{retried:[...(counted.retried??[]).filter(item=>item!==at),at!]}:{};
+    if(counted.retries?.length)db.prepare("DELETE FROM memory_scope_bindings WHERE id=?").run(skipDueId(id,at!));
     persist(source!.scope_id,{...counted,...next,...retried,status,candidateIds,candidateCount,retryAfter:status==="partial"?Date.now():null,updatedAt:Date.now()});
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
     return {status,candidateIds,cursor,candidateCount,retryAfter:status==="partial"?Date.now():null};

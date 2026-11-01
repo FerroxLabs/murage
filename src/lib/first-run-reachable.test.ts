@@ -182,7 +182,7 @@ describe("the Chief's own screen, on every machine", () => {
       for (const row of rows) {
         expect(said(row.title), `${label} ${row.id}`).toBe(true);
         expect(said(row.sub), `${label} ${row.id}`).toBe(true);
-        expect(said(row.tag.text), `${label} ${row.id}`).toBe(true);
+        if (row.tag) expect(said(row.tag.text), `${label} ${row.id}`).toBe(true);
       }
     }
   });
@@ -199,7 +199,7 @@ describe("the Chief's own screen, on every machine", () => {
       checked += 1;
       for (const row of firstRunJobRows(world)) {
         expect(row.press, `${JSON.stringify(world)} ${row.id}`).toBe("connect");
-        expect(row.tag.text, `${JSON.stringify(world)} ${row.id}`).not.toBe(FIRST_RUN_COPY.chat.jobs.tags.ready);
+        expect(row.tag?.text, `${JSON.stringify(world)} ${row.id}`).toBe(FIRST_RUN_COPY.chat.jobs.tags.flux);
       }
     }
     // The signed-out row of the sweep really is in here, not filtered away.
@@ -468,8 +468,12 @@ describe("every result has a body and a way on, whatever was typed", () => {
     const spoken = clockLabel(request.time);
     expect(briefRoutineOfferHeading()).toBeTruthy();
     const offer = morningOffer(true);
-    expect(offer.button, "the button schedules one time and offers another").toContain(spoken);
-    expect(offer.body).toContain(spoken);
+    // §1.7 says the hour the plain way ("every weekday at 8"), so the offer is
+    // held to the hour and the confirmation to the full time.
+    const hour = spoken.replace(/:00 (am|pm)$/, "");
+    const atHour = new RegExp(`\\bat ${hour}\\b`);
+    expect(offer.button, "the button schedules one time and offers another").toMatch(atHour);
+    expect(offer.heading, "the question offers a different hour").toMatch(atHour);
     expect(offer.taken).toContain(spoken);
   });
 });

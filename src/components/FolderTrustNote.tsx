@@ -1,8 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ShieldCheck, ShieldOff } from "lucide-react";
 
 import { api } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { FolderTrustRecords } from "./FolderTrustRecords";
+
+/** One stored decision, as GET /api/folder-trust lists it. `onPath` is a
+ * display hint: it groups rows and decides nothing. */
+export interface FolderTrustRecordRow {
+  key: string;
+  folder: string;
+  decision: "trust" | "reject";
+  consent?: 2;
+  source: "picker" | "card" | "upgrade";
+  decidedAt: number;
+  onPath: boolean;
+}
 
 export interface FolderTrustStatus {
   /** The folder the server looked at (for a conversation, its actual folder). */
@@ -26,6 +39,21 @@ export interface FolderTrustStatus {
   /** The turn's own refusal, when a turn on this bot would not start (a
    * disabled connection, an unavailable model). */
   refused?: string | null;
+  /** Every stored decision, whatever folder it was made on. */
+  records?: FolderTrustRecordRow[];
+  /** The engine's own trust file for this bot, own home only. */
+  upstreamTrustFile?: string | null;
+  /** Keys that file answers no for, exactly as written there. */
+  upstreamDeclines?: string[];
+  /** That file exists and could not be read or parsed. */
+  upstreamUnreadable?: boolean;
+  /** The trust protocol of the engine a turn would run on. */
+  trustGeneration?: 1 | 2;
+}
+
+/** The request that forgets one stored decision: the key alone says which. */
+export function folderTrustForgetKeyPath(target: string, key: string): string {
+  return `/api/folder-trust?${target}&key=${encodeURIComponent(key)}`;
 }
 
 /** One bot the note describes: a bot's picker names one; a room's names its
@@ -103,12 +131,14 @@ function StatusLine({ status, name }: { status: FolderTrustStatus; name?: string
 
 /** The note, rendered from what the server said (no fetching): a bot's
  * picker has one subject, a room's has its Fuigo members. */
-export function FolderTrustNoteView({ folder, results, error, busy, onForget, onTrust, conversation }: {
+export function FolderTrustNoteView({ folder, results, error, busy, onForget, onForgetKey, onTrust, conversation }: {
   folder: string | undefined;
   results: FolderTrustResult[] | null;
   error: string | null;
   busy: boolean;
   onForget: () => void;
+  /** Forgets one stored decision by its exact key. */
+  onForgetKey?: (key: string) => void;
   /** Present for a conversation's own folder: records Trust for that exact folder. */
   onTrust?: () => void;
   /** The note describes the conversation's actual folder, not a picked one. */
@@ -178,6 +208,7 @@ export function FolderTrustNoteView({ folder, results, error, busy, onForget, on
           )}
         </div>
       )}
+      {(folder || conversation) && results && onForgetKey && <FolderTrustRecords results={results} busy={busy} onForgetKey={onForgetKey} />}
       {error && <div className="mt-1 text-danger">{error}</div>}
     </div>
   );
@@ -198,24 +229,30 @@ export function FolderTrustNote({ folder, botId, members, threadId }: { folder: 
   const subjects: Array<FolderTrustSubject | null> = members ? members : [botId ? { id: botId, name: "" } : null];
   const subjectKey = subjects.map((subject) => subject?.id ?? "").join(" ");
 
-  useEffect(() => {
-    let cancelled = false;
-    setResults(null);
-    setError(null);
-    if (!folder && !threadId) return;
+  // the newest read wins: a Forget's re-read never lands on a note that has moved to another folder
+  const readSeq = useRef(0);
+  const read = () => {
+    const seq = ++readSeq.current;
     const query = (subject: FolderTrustSubject | null) =>
       api(`/api/folder-trust?${threadId ? `thread=${encodeURIComponent(threadId)}` : `folder=${encodeURIComponent(folder ?? "")}`}${subject ? `&bot=${encodeURIComponent(subject.id)}` : ""}`).then(
         (status: FolderTrustStatus): FolderTrustResult => ({ subject, status }),
       );
-    Promise.all(subjects.map(query))
+    return Promise.all(subjects.map(query))
       .then((fetched) => {
-        if (!cancelled) setResults(fetched);
+        if (seq === readSeq.current) setResults(fetched);
       })
       .catch(() => {
         /* the note is advisory; a failed read shows only the sentence */
       });
+  };
+
+  useEffect(() => {
+    setResults(null);
+    setError(null);
+    if (!folder && !threadId) return;
+    void read();
     return () => {
-      cancelled = true;
+      readSeq.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subjects is derived from subjectKey
   }, [folder, threadId, subjectKey]);
@@ -250,6 +287,20 @@ export function FolderTrustNote({ folder, botId, members, threadId }: { folder: 
     } catch {
       setError(t("folderTrust.forgetError"));
     } finally {
+      await read();
+      setBusy(false);
+    }
+  };
+
+  const forgetKey = async (key: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(folderTrustForgetKeyPath(target(subjects[0]?.id), key), { method: "DELETE" });
+    } catch {
+      setError(t("folderTrust.forgetError"));
+    } finally {
+      await read();
       setBusy(false);
     }
   };
@@ -261,6 +312,7 @@ export function FolderTrustNote({ folder, botId, members, threadId }: { folder: 
       error={error}
       busy={busy}
       onForget={() => void forget()}
+      onForgetKey={(key) => void forgetKey(key)}
       {...(threadId && botId ? { onTrust: () => void trust(), conversation: true } : {})}
     />
   );

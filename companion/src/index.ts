@@ -60,6 +60,7 @@ import {
   type BrowserBindMode,
 } from "./browser.ts";
 import { createControlServer, hostCandidates, resolveControlToken } from "./control.ts";
+import { createLateTailscaleWatch, doorRouteReady } from "./tailscale-late.ts";
 import { createConnectedDeviceTracker } from "./connected-devices.ts";
 import { DeviceRegistry } from "./devices.ts";
 import { companionEndpointCandidates, hostedCompanionUrl } from "./endpoints.ts";
@@ -339,8 +340,27 @@ let deviceDoorHost: string | null | undefined;
  * now. Throws only in the explicit `tailnet` mode. */
 const desiredBrowserBindHost = (): string =>
   BROWSER_FRONT ? "127.0.0.1" : browserBindHost(BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
-    console.log(`browser door staying on loopback: ${reason}`),
+    noteOnce("decline", `browser door staying on loopback: ${reason}`, console.log),
   );
+
+/** Door notes the late-Tailscale watch would otherwise repeat once a minute.
+ * Each kind is written when it changes, and again after it has cleared. */
+const lastDoorNote = new Map<string, string>();
+function noteOnce(kind: string, line: string, write: (line: string) => void): void {
+  if (lastDoorNote.get(kind) === line) return;
+  lastDoorNote.set(kind, line);
+  write(line);
+}
+
+/** Tailscale refreshes, one at a time. The button and the late-Tailscale watch
+ * both read the name and then move the door; run side by side, one could move
+ * a door the other had just given a working front. */
+let tailscaleQueue: Promise<void> = Promise.resolve();
+function oneTailscaleRefresh(step: () => Promise<void>): Promise<void> {
+  const run = tailscaleQueue.then(step, step);
+  tailscaleQueue = run.catch(() => {});
+  return run;
+}
 
 /** A sentence naming what already owns this port, or null when nothing does. */
 const conflict = (name: string, port: number): string | null => {
@@ -559,11 +579,12 @@ const control = createControlServer({
   // a door on the tailnet, not a correctly spelled name for a door that is
   // still only on loopback. The control route awaits this before it replies,
   // so the state it sends back describes the door as it now is.
-  refreshTailscale: async () => {
-    const deadline = Date.now() + TAILSCALE_BUDGET_MS;
-    await refreshTailnetName();
-    await moveBrowserDoor(deadline);
-  },
+  refreshTailscale: () =>
+    oneTailscaleRefresh(async () => {
+      const deadline = Date.now() + TAILSCALE_BUDGET_MS;
+      await refreshTailnetName();
+      await moveBrowserDoor(deadline);
+    }),
   browserDoor,
 });
 
@@ -578,7 +599,8 @@ function moveBrowserDoor(deadline?: number): Promise<void> {
     const observed = await refreshBrowserServe(BROWSER_PORT, {deadline});
     BROWSER_FRONT = reconcileBrowserFront(observed.owner, observed.origin, CONFIGURED_FRONT);
     BROWSER_CLIENT_SCHEME = BROWSER_FRONT?.scheme ?? BROWSER_SCHEME;
-    if (observed.problem) console.warn(`browser HTTPS: ${observed.problem}`);
+    if (observed.problem) noteOnce("serve", `browser HTTPS: ${observed.problem}`, console.warn);
+    else lastDoorNote.delete("serve");
     const preserveHost = observed.owner === "other" || observed.owner === "unknown" ? browserBoundHost : null;
     const result = await rebindBrowserDoor({
       server: browser,
@@ -588,6 +610,7 @@ function moveBrowserDoor(deadline?: number): Promise<void> {
       listen,
     });
     browserBoundHost = result.host;
+    if (result.host !== "127.0.0.1") lastDoorNote.delete("decline");
     if (BROWSER_FRONT && observed.owner === "ours" && result.host !== "127.0.0.1") {
       BROWSER_FRONT = null;
       BROWSER_CLIENT_SCHEME = BROWSER_SCHEME;
@@ -717,6 +740,24 @@ async function main(): Promise<void> {
     desiredBrowserBindHost(); // Preserve the explicit-tailnet refusal detail.
     throw new Error("the browser door could not bind; see its startup diagnostic");
   }
+  // Murage opened at login can beat Tailscale to it. Keep asking until the
+  // door has a tailnet route, moving it the way the button would. The CLI hunt
+  // is silent and the door is only moved once Tailscale answers with a name,
+  // so a computer with no Tailscale pays one quiet subprocess a minute. A door
+  // that already has a route is not waiting, and is checked again right
+  // before every move in case the button got there first.
+  const routeReady = () => doorRouteReady(browserBoundHost, BROWSER_FRONT);
+  createLateTailscaleWatch({
+    waiting: () => !routeReady(),
+    recheck: () =>
+      oneTailscaleRefresh(async () => {
+        if (routeReady()) return;
+        await refreshTailnetName();
+        if (!tailnetName() || routeReady()) return;
+        await moveBrowserDoor(Date.now() + TAILSCALE_BUDGET_MS);
+      }),
+    log: (line) => console.log(line),
+  }).start();
 
   // After the tailnet probe for the same reason the browser door is: the
   // `tailnet` mode has no address to bind until Tailscale has been asked.
