@@ -193,7 +193,7 @@ export interface OptionCardData {
    * `late` (FUIGOTRUST2): a card raised from the engine's own request after
    * it had started, closed by nobody — the turn `finished`, was `stopped`,
    * or the ask hit its `timeout` — and so ran untrusted. */
-  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
+  folderTrust?: { key: string; folder: string; sources: string[]; v2?: true; declines?: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: AutomationRequestCardData;
@@ -391,10 +391,6 @@ export interface Message {
    * so no schema change. Absent on older rows and on rows no provider turn
    * wrote (user, Murage, copies): readers treat absence as unlabelled. */
   engine?: MessageEngine;
-  /** A bot reply Flux Router answered: the model that served it (x-flux-routed-model) and the one asked for (x-flux-original-model),
-   * read at the start of the response (flux-usage-tags.ts readServedModel). Stored in the row's JSON for Settings > Usage; the chat
-   * shows a quiet line when the two differ. Absent when the engine could not see Flux's response headers. */
-  servedModel?: { routed: string; requested: string };
   /** On a turn's closing message: its helpers (sub agents), summarised
    * (label, status, duration, tool count; never tool content). Owner threads
    * only. Source of the folded "Worked for" rows after a reload. */
@@ -3125,11 +3121,6 @@ export class Store {
   /** The rows of this thread that carry saved files (artifactIds), by index. */
   artifactRows(threadId: string): Message[] {
     return mdb.artifactRows(threadId).map(sanitizeMessageDiagnostic);
-  }
-
-  /** ROUTINE-DELIVER-1010: saved-file rows of one window of a conversation (message-db.ts artifactRowsBetween). */
-  artifactRowsBetween(threadId: string, from: number, to: number, limit: number): Message[] {
-    return mdb.artifactRowsBetween(threadId, from, to, limit).map(sanitizeMessageDiagnostic);
   }
 
   /** The first row of this thread that attaches `path`, by the message_image
