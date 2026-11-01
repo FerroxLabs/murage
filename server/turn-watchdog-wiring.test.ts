@@ -25,6 +25,15 @@ function fn(name: string): string {
 }
 
 describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
+  it("holds direct turns to a one hour no-activity limit by default (LONGWORK-STALL-60), with the setup and heartbeat caps unmoved", () => {
+    expect(SOURCE).toMatch(/const TURN_STALL_MS = Math\.max\(60_000, Number\(process\.env\.MURAGE_TURN_STALL_MS\) \|\| 60 \* 60_000\);/);
+    expect(SOURCE).toMatch(/const TURN_SETUP_STALL_MS = Math\.max\(TURN_STALL_MS, Number\(process\.env\.MURAGE_TURN_SETUP_STALL_MS\) \|\| 60 \* 60_000\);/);
+    expect(SOURCE).toMatch(/const TURN_HEARTBEAT_ONLY_MS = Math\.max\(TURN_STALL_MS, Number\(process\.env\.MURAGE_TURN_HEARTBEAT_ONLY_MS\) \|\| 60 \* 60_000\);/);
+    // the quiet-command proxy starts from the same hour until the harness answers with the turn's own limit
+    const proxy = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "computer-proxy.ts"), "utf8");
+    expect(proxy).toContain("const DEFAULT_TURN_SILENCE_MS = 60 * 60_000;");
+  });
+
   it("arms the direct watch at admission, in setup, under the turn's own generation", () => {
     const body = fn("startTurnAdmitting");
     const admit = body.indexOf("directRuns.admit(");

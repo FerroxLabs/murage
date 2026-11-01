@@ -3459,6 +3459,8 @@ CODEX_OVERRIDES = {
     "features.shell_tool": "false", "features.apps": "false", "web_search": '"disabled"',
     # codex.ts 658: Murage fences what a bot remembers, so Codex's own memories stay off (this value only).
     "features.memories": "false",
+    # CARDS-WAIT-CODEX-1013: a code cell stays in flight while a card waits; the driver sends it once every home has this launcher.
+    "features.code_mode.default_exec_yield_time_ms": "1728000000",
     "plugins": '{ "browser@openai-bundled" = { enabled = false }, "computer-use@openai-bundled" = { enabled = false }, "unified-computer-use@openai-bundled" = { enabled = false } }',
 }
 

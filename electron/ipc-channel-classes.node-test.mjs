@@ -61,7 +61,7 @@ test("every channel the preload can call has an explicit class, and none is buil
 
 test("only the known modules register IPC, so a new registrar cannot slip past the classes", () => {
   // cloud-home-engine-login.mjs (WP5) registers through the gate main.mjs hands it, only with the Cloud flag on; its channels are MAIN_ONLY_CLOUD_CHANNELS.
-  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs"]);
+  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs", "engine-login-local.mjs"]);
   const offenders = fs.readdirSync(electronDir)
     .filter((file) => /\.(mjs|cjs)$/.test(file) && !/\.(node-test|test|electron-smoke)\.mjs$/.test(file) && file !== "preload.cjs")
     .filter((file) => /\bipcMain\.(handle|on|once)\(/.test(read(file)) && !KNOWN.has(file));
@@ -116,7 +116,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   };
   const ok = run(["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-abc" });
   assert.equal(ok.exposed.key, "muragecloud");
-  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
   for (const [label, argv, location] of [
     ["no argument", ["electron"], { protocol: "murage-home:", hostname: "h-abc" }],
     ["another home's host", ["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-other" }],

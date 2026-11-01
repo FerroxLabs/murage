@@ -279,6 +279,19 @@ export class ProviderRegistry {
     return { instanceId, driverKind: entry.shadow?.driverKind ?? entry.live!.driverKind, snapshot };
   }
 
+  /** What the engine's own probe says about its login: true, false, or null when it does not answer. The rejection mark is left
+   *  out on purpose: it says a turn was refused, not whether a login exists, so a sign-in reads the engine itself. Undefined when the
+   *  registry lacks the id. */
+  async engineLogin(instanceId: InstanceId): Promise<boolean | null | undefined> {
+    const entry = this.byId.get(instanceId);
+    if (!entry) return undefined;
+    if (entry.shadow) return null;
+    try {
+      const snapshot = await entry.live.snapshot();
+      return snapshot.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
+    } catch { return null; }
+  }
+
   /** instance snapshots for the model picker: id, driver, models, health.
    *
    * `catalogs: "fresh"` (the default) refreshes every catalog first, for a

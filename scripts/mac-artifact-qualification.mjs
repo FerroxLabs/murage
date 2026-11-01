@@ -52,6 +52,9 @@ for (const relative of ["server/index.js", "ui/index.html", "app.asar", "app-upd
 assert(lstatSync(join(resources, "cua-sdk")).isDirectory());
 const gepaMetadata = JSON.parse(readFileSync("qualification-evidence/gepa-package-metadata.json", "utf8"));
 verifyGepaBundle(join(resources, "gepa-worker"), "darwin-arm64", gepaMetadata.extraMetadata.murageGepaManifests["darwin-arm64"]);
+for (const folder of ["Documents", "Desktop", "Downloads"]) {
+  assert.equal(run("/usr/libexec/PlistBuddy", ["-c", `Print :NS${folder}FolderUsageDescription`, join(app, "Contents/Info.plist")]), `Murage needs this so your bots can work with files in your ${folder} folder when you ask.`);
+}
 const update = readFileSync(join(resources, "app-update.yml"), "utf8");
 assert(/^owner: FerroxLabs$/m.test(update));
 assert(/^repo: murage-releases$/m.test(update));
