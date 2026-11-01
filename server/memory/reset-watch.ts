@@ -34,13 +34,14 @@ export function noteContinuationReset(threadId: string, engine: string, reason: 
   return line;
 }
 
-/** Thread recall (design S2): a turn on a sealed thread starts fresh by
+/** Thread recall (THREAD-SEAL 3.4): a turn the seal started fresh is fresh by
  * design, so it is not a loop and never reaches noteContinuationReset. It is
  * counted here instead, per thread, with no warning, for the beta telemetry. */
 const sealedTurns = new Map<string, { count: number; instances: Set<string>; lastAt: number }>();
 
-/** Count one sealed turn on this thread. Never warns. */
+/** Count one turn the seal started fresh on this thread. Never warns. */
 export function noteSealedTurn(threadId: string, instanceId: string, now = Date.now()): number {
+  taintedFresh++;
   const entry = sealedTurns.get(threadId) ?? { count: 0, instances: new Set<string>(), lastAt: now };
   entry.count++; entry.lastAt = now;
   if (entry.instances.size < 32) entry.instances.add(instanceId);
@@ -63,4 +64,9 @@ export function sealedTurnSummary(limit = 20): { threads: number; turns: number;
 }
 
 /** Tests only. */
-export function clearResetWatch() { seen.clear(); sealedTurns.clear(); }
+/** Lifetime counters for /api/health `warm` (THREAD-SEAL 3.6): turns the seal started fresh, and turns accepted on a resumed session. */
+let taintedFresh = 0, resumedTurns = 0;
+export function noteResumedTurn(): void { resumedTurns++; }
+export function sessionGauges(): { taintedFresh: number; resumedTurns: number } { return { taintedFresh, resumedTurns }; }
+
+export function clearResetWatch() { seen.clear(); sealedTurns.clear(); taintedFresh = 0; resumedTurns = 0; }

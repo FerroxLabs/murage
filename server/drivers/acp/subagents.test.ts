@@ -127,6 +127,35 @@ describe("ACP sub agents (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text.includes("Stopped waiting"))).toBe(true);
   });
 
+  it("a card open at the helper cap holds the turn; the cap waits again, and ends the turn once the card closes", async () => {
+    process.env.FAKE_ACP_BG_HOLD = "1";
+    process.env.FAKE_ACP_BG_ASKS = "1";
+    process.env.MURAGE_BACKGROUND_CAP_MS = "200";
+    const { turnId } = await send("t-sub-card");
+    const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+    await instance.adapter.respondToRequest("t-sub-card", opened.requestId, { behavior: "allow" });
+    const done = (await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)) as any;
+    expect(done).toMatchObject({ ok: true, stopReason: "background_wait_cap" });
+    expect(verdicts()).toHaveLength(1);
+  });
+
+  it("Stop wins while the cap waits under a card: one end, no cap note, nothing fires after it", async () => {
+    process.env.FAKE_ACP_BG_HOLD = "1";
+    process.env.FAKE_ACP_BG_ASKS = "1";
+    process.env.MURAGE_BACKGROUND_CAP_MS = "200";
+    const { turnId } = await send("t-sub-card-stop");
+    await recorder.until((e) => e.type === "request.opened");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await instance.adapter.interruptTurn("t-sub-card-stop");
+    const done = (await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)) as any;
+    expect(done.stopReason).not.toBe("background_wait_cap");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text.includes("Stopped waiting"))).toBe(false);
+  });
+
   it("a turn with no sub agents settles at the prompt result exactly as before", async () => {
     const { turnId } = await send("t-sub-none", "plain turn");
     const done = (await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)) as any;

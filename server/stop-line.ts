@@ -1835,7 +1835,10 @@ export function classifyStopLine(tool: string, input: unknown, summary: string, 
   // ISSUE-PERMS-1010 G3 (1.0.10, designs/ISSUE-PERMS-DESIGN-1010.md section 3 item 4): Codex keeps an apply_patch helper on
   // the shell's PATH, and which input it applies depends on the shell around it. So any shell text that names it, in any
   // spelling and on any OS, is a delete nobody can place. No form is accepted; this only adds a stop to the 1.0.9 reader.
-  if (command !== undefined && APPLY_PATCH_WORD.test(command)) return deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
+  if (command !== undefined && APPLY_PATCH_WORD.test(command)) {
+    const hit = deleteHit({ deletes: [], unknownDelete: short(command) }, place, command);
+    return hit ? { ...hit, what: `Run a patch that can change or delete files Murage cannot place, so it may reach outside its folder: ${short(command)}` } : hit;
+  }
   if (command !== undefined) return powershell || WIN_CANON.test(place.home) ? psHit(command, place) : shellHit(command, place);
   const paths = deleteToolPaths(tool, input);
   if (paths) {
@@ -1865,9 +1868,9 @@ export function classifyAsk(
   // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
   // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
   // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
-  // (Astra/GrokBuild subset M1): Codex's edit contract reads `changes`, so a contract miss would otherwise answer first
-  // and the card would say "could not read this call" instead of naming the outside delete. Only the Codex route answers
-  // first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds a stop last.
+  // (Astra/GrokBuild subset M1), so a call with a contract gap still names the outside delete on its card. Only the Codex
+  // route answers first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds
+  // a stop last.
   const editInput = ask.toolCall?.name === "edit" && ask.toolCall.input && typeof ask.toolCall.input === "object"
     ? ask.toolCall.input as { removed?: unknown; cwd?: unknown } : undefined;
   const editRemoved = editInput && "removed" in editInput

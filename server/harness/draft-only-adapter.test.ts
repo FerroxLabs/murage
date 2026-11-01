@@ -118,7 +118,7 @@ describe("every draft-only turn passes the one gate", () => {
 describe("no caller reaches an engine around the gate", () => {
   it("the registry wraps every live instance with the draft-only decorator, outermost", () => {
     const registry = readFileSync(join(SERVER, "harness", "registry.ts"), "utf8");
-    expect(registry).toMatch(/const decorated = decorateDraftOnlyInstance\(decorateHoldInstance\(decorateMemoryInstance\(live\), this\.holds\)\);/);
+    expect(registry).toMatch(/const decorated = decorateDraftOnlyInstance\(decorateAskNoteInstance\(decorateHoldInstance\(decorateMemoryInstance\(live\), this\.holds\)\)\);/);
     expect(registry.match(/driver\.create\(/g)).toHaveLength(1);
   });
 
@@ -130,6 +130,7 @@ describe("no caller reaches an engine around the gate", () => {
     "project-card-executor.ts": 1,
     "harness/memory-adapter.ts": 1,
     "harness/instance-holds.ts": 1,
+    "harness/ask-note-adapter.ts": 1,
   };
   it("every sendTurn, steer, prewarm and one-shot call site outside the drivers is on the reviewed list", () => {
     const sites: Record<string, number> = {};

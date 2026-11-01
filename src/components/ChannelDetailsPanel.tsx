@@ -21,6 +21,7 @@ import { autoFallbackBot, deciderRoutesRooms, effectiveDefaultResponder } from "
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import { openTeamSettings } from "@/lib/team-manage";
 import {
   CHANNEL_DETAILS_SECTIONS,
@@ -110,7 +111,7 @@ export function ChannelDetailsPanel({
 
   return (
     <div
-      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
@@ -118,9 +119,9 @@ export function ChannelDetailsPanel({
         role="dialog"
         aria-modal="true"
         aria-label={`${group.name} details`}
-        className="flex max-h-[min(760px,calc(var(--vvh,100dvh)-1.5rem))] w-[min(620px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-2xl"
+        className={cn(BOX_FRAME, "max-h-[min(760px,calc(var(--vvh,100dvh)-1.5rem))] w-[min(620px,calc(100vw-1.5rem))] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}
       >
-        <div className="flex items-start justify-between gap-3 border-b border-hairline/40 px-4 py-3.5">
+        <BoxHead className="items-start border-b border-hairline/40 px-4 py-3.5">
           <div className="min-w-0">
             <div className="truncate text-[15px] font-semibold text-ink">{group.name}</div>
             <div className="truncate text-[12.5px] text-ink-secondary">
@@ -130,9 +131,9 @@ export function ChannelDetailsPanel({
           <button type="button" onClick={onClose} aria-label="Close details" title="Close" className={BUTTON}>
             <X size={15} />
           </button>
-        </div>
+        </BoxHead>
 
-        <div role="tablist" aria-label="Channel details sections" className="flex gap-1 border-b border-hairline/40 px-3 py-2">
+        <div role="tablist" aria-label="Channel details sections" className="flex shrink-0 gap-1 border-b border-hairline/40 px-3 py-2">
           {CHANNEL_DETAILS_SECTIONS.map((id) => (
             <button
               key={id}
@@ -150,7 +151,7 @@ export function ChannelDetailsPanel({
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+        <BoxBody className="space-y-3 p-4">
           {section === "about" && group.section?.trim() && (
             <div className={CARD}>
               <span className={FIELD_LABEL}>Team</span>
@@ -172,7 +173,7 @@ export function ChannelDetailsPanel({
           {section === "members" && <MembersSection group={group} onSaved={onClose} />}
           {section === "files" && <FilesSection group={group} members={members} />}
           {section === "memory" && <MemorySection group={group} />}
-        </div>
+        </BoxBody>
       </div>
     </div>
   );
@@ -370,7 +371,7 @@ function MembersSection({ group, onSaved }: { group: Group; onSaved: () => void 
       <span className={FIELD_LABEL}>Members</span>
       <p className={FIELD_NOTE}>Tick a bot to add it, untick to take it out. What it already said stays in the chat.</p>
       <div className="mt-2">
-        <BotPickerList bots={bots} picked={picked} onToggle={toggle} emptyHint="Create a bot first. Channels are made of bots." />
+        <BotPickerList bots={bots} picked={picked} onToggle={toggle} emptyHint="Create a bot first. Channels are made of bots." bounded={false} />
       </div>
       {!memberIds.length && <p className="mt-2 text-[12.5px] text-ink-secondary">A channel needs at least one bot.</p>}
       <div className="mt-3 flex gap-2">

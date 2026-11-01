@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { AlertTriangle } from "lucide-react";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export const LOCAL_COMPUTER_AUTO_WARNING =
   "Auto mode will let this bot click, type, and run tools on this computer without asking first. Destructive and sensitive actions still stop. Continue only if you are watching.";
@@ -12,7 +13,7 @@ export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
   "Full access will let this bot click, type, and run tools on this computer without asking first. It still asks before deleting outside its folder, paying, messaging someone new, and reading your keys. Continue only if you are watching.";
 
 export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
-  "No limits will let this bot click, type, and run anything on this computer without asking first, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first. Continue only if you are watching.";
+  "In conversations you start, No limits will let this bot click, type and run commands on this computer without asking first, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full, and browser, email and publishing keep their own approvals. A script file can still run unread. Continue only if you are watching.";
 
 export function LocalComputerAutoWarning({
   open,
@@ -53,20 +54,20 @@ export function LocalComputerAutoWarning({
         aria-modal="true"
         aria-labelledby="local-auto-warning-title"
         aria-describedby="local-auto-warning-body"
-        className="w-full max-w-[420px] rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
+        className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-3rem)] w-full max-w-[420px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl`}
       >
-        <div className="flex items-start gap-3">
+        <BoxHead className="items-start justify-start px-5 pt-5">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-warning" />
-          <div>
-            <h2 id="local-auto-warning-title" className="text-[15px] font-semibold text-ink">
+            <h2 id="local-auto-warning-title" className="min-w-0 text-[15px] font-semibold text-ink">
               {mode === "unlimited" ? "Allow No limits on this computer?" : mode === "full" ? "Allow Full access on this computer?" : "Allow Auto mode on this computer?"}
             </h2>
+        </BoxHead>
+        <BoxBody className="pl-[50px] pr-5">
             <p id="local-auto-warning-body" className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
               {mode === "unlimited" ? LOCAL_COMPUTER_NO_LIMITS_WARNING : mode === "full" ? LOCAL_COMPUTER_FULL_ACCESS_WARNING : LOCAL_COMPUTER_AUTO_WARNING}
             </p>
-          </div>
-        </div>
-        <div className="mt-4 flex justify-end gap-2">
+        </BoxBody>
+        <BoxFoot className="px-5 pb-5 pt-4">
           <button
             type="button"
             onClick={onCancel}
@@ -82,7 +83,7 @@ export function LocalComputerAutoWarning({
           >
             OK
           </button>
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );

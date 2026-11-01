@@ -59,6 +59,16 @@ export const INBOX_BADGED_SEGMENTS = ["approval", "question", "connection"] as c
  *  the tab can never disagree about what a decision is. */
 export const INBOX_DECISION_STATUSES = ["pending", "waiting", "needs-input", "needs-you"] as const;
 
+/** A ROUTINE RUN PARKED ON A CARD IS NOT A SECOND THING OWED (1.0.11).
+ *  routines.ts sets a run's own status to 'waiting' when a card opens in its
+ *  conversation (an approval, a question) and to 'needs-you' when the run
+ *  limit comes while that card is still open. The card is the thing owed, and
+ *  the Inbox already counts it, so the run's card in the conversation the
+ *  routine reports to is not owed again: one approval read "Needs you 2".
+ *  A room goal that stops to ask has no card of its own; it carries goalStatus
+ *  'needs-input', which the projection reads first, so it stays owed. */
+export const INBOX_RUN_ON_CARD_STATUSES = ["waiting", "needs-you"] as const;
+
 /** Statuses that are news rather than a question. */
 export const INBOX_TO_READ_STATUSES = ["blocked", "limit-reached", "failed", "missed", "paused", "digest"] as const;
 
@@ -183,9 +193,9 @@ export interface InboxPage {
    *  Desktop only, counted in `decisions` (backups stay paused until it is
    *  cleared, so it is owed) and in no segment, gone once the review is
    *  cleared. See server/inbox-backup-notices.ts. */
-  backupFailed?: { sentence: string; at: number; inHealth?: true };
-  /** The owner's Health summary (1.0.9 Sentinel): only on a read that proved the owner. When `backupFailed.inHealth`
-   *  is set, the stopped backup is shown inside the Health card instead of as its own card, and counted once. */
+  backupFailed?: { sentence: string; at: number };
+  /** Health on the owner's read only: the quiet level, and `needs`, each one an ordinary Needs you item counted in
+   *  `decisions` and in no segment, gone by itself once the problem clears. Everything else is on the Health screen. */
   health?: HealthInbox;
   /** Lessons a bot suggested that wait for the owner's yes (Apply / Edit / Not now in the bot's
    *  Learning section). The only learning the Inbox shows. Desktop only; counted in `decisions`

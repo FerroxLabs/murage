@@ -37,6 +37,13 @@ test.beforeAll(async () => {
   ` });
   try {
     ids = JSON.parse(readFileSync(join(fixture.info.dataDir, "chats-fixture.json"), "utf8"));
+    // A workspace past its first run, before the app opens. On an unnamed one this bot is elected Chief and every setup read (a 3 s
+    // poll) moves the setup conversation into the open thread and titles a new chat "Getting you set up", so the New chat
+    // check below only passed when it looked first (ledger HUMAN-SETUP-FLAKE). This spec is about chats, not setup.
+    const { secret } = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json();
+    const named = await fetch(`${fixture.info.url}/api/config`, { method: "PUT", body: JSON.stringify({ profile: { name: "Chats owner" } }),
+      headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": secret, "content-type": "application/json" } });
+    if (!named.ok) throw new Error(`Could not name the fixture owner: ${named.status}`);
     const root = fileURLToPath(new URL("../../", import.meta.url));
     vite = await createServer({ configFile: false, root, envFile: false, cacheDir: join(fixture.info.dataDir, "chats-vite-cache"),
       resolve: { alias: { "@": join(root, "src") } }, plugins: [react(), tailwindcss()],
@@ -52,7 +59,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await fixture
 async function open(page: Page) {
   await page.goto(origin);
   await openSidebar(page);
-  await page.getByTestId("all-chats-entry").click();
+  await page.locator('[data-door="chats"]').first().click();
   await expect(page.getByRole("textbox", { name: "Search all chats", exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: "Bot", exact: true }).selectOption(ids.bot);
   await expect(page.locator("[data-chat-row]")).toHaveCount(50);
@@ -105,7 +112,10 @@ test("shortcuts, Expand, and the header button use the current bot", async ({ pa
   const created = page.waitForResponse(response => response.request().method() === "POST" && response.url().endsWith(`/api/bots/${ids.bot}/tasks`));
   await page.keyboard.press("Control+Shift+N");
   expect((await created).status()).toBe(201);
-  await expect(page.getByRole("button", { name: "Chat list", exact: true })).toContainText("New chat");
+  // The fixture's only bot is the Chief with setup still open, so whenever a setup read lands after the new chat
+  // opens, setup carries on in it and names it (server nameTheSetupTask); either title is that new chat, and the
+  // count (122 + 1) proves it was added to the current bot.
+  await expect(page.getByRole("button", { name: "Chat list", exact: true })).toContainText(/^(New chat|Getting you set up)123/);
   if (await phoneLayout(page)) {
     // The phone header is one row, so the + beside the chip folds away
     // (chip-trim); the chat list's own New chat row is the way in there.

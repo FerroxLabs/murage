@@ -125,7 +125,7 @@ function writeConfig() {
       : { driver: "claudeAgent", displayName: "Claude (fake stand-in)", config: { cli: FAKE_CLI } },
     verification: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLI } },
     slow: { driver: "claudeAgent", displayName: "Slow fixture", config: { cli: FAKE_CLI }, environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_REPLY_GATE: replyGate(), FAKE_CLAUDE_DUMP_EACH_TURN: "1" } },
-    expiring: { driver: "claudeAgent", displayName: "Expiring questions", config: { cli: FAKE_CLI, questionTimeoutMs: 1000 } },
+    expiring: { driver: "claudeAgent", displayName: "Expiring questions", config: { cli: FAKE_CLI } },
     coder: { driver: "claudeAgent", displayName: "Coder fixture", config: { cli: FAKE_CLI }, environment: { FAKE_CLAUDE_REPLIES: JSON.stringify(["Here is the script you asked for:\n\n```python\nprint(\"hello from the smoke test\")\n```\n\nSave it wherever you like."]) } },
     crasher: { driver: "claudeAgent", displayName: "Crashes after prompt", config: { cli: FAKE_CLI }, environment: { FAKE_CLAUDE_MODE: "exit-early" } },
     // Dies once at startup WITHOUT reading stdin; the driver may relaunch

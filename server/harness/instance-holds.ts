@@ -130,6 +130,19 @@ export class InstanceHolds {
     });
   }
 
+  /** Holds these instances at once, in one synchronous step, and returns how to let them go (once, however often it is called).
+   * For the moment before the port opens: nothing is running yet, so there is nothing to wait for and no idle process to close. */
+  holdNow(instanceIds: readonly string[]): () => void {
+    const ids = [...new Set(instanceIds)];
+    for (const id of ids) this.held.set(id, (this.held.get(id) ?? 0) + 1);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      for (const id of ids) this.unhold(id);
+    };
+  }
+
   /** Holds these instances. `idleOf` closes the idle processes of one instance and returns how to let them start again and
    * whether they are all confirmed gone; an adapter that fails to say so, or throws, leaves its instance reported busy. */
   async hold(instanceIds: readonly string[], waitMs: number, idleOf: (instanceId: string) => Promise<IdleHold | undefined>): Promise<HoldResult> {

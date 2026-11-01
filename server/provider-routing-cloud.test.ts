@@ -49,6 +49,22 @@ describe("cloud provider route custody", () => {
   it("refuses legacy Flux model selection before a Claude home environment can be routed", () => {
     expect(() => claudeEnvironment("flux-auto", {})).toThrow(cloudHomeCopy.claudeFluxOnHome);
   });
+  it("(R4) reports only a Fuigo home made for this turn as fresh", () => {
+    const env: NodeJS.ProcessEnv = {};
+    const binding = applyProviderRoute("fuigoAgent", env, route, { threadId: "cloud-thread" });
+    expect(binding.freshFuigoHome).toEqual({ path: env.FUIGO_HOME, cloud: true });
+    binding.cleanup();
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+    const local: NodeJS.ProcessEnv = {};
+    const desktop = applyProviderRoute("fuigoAgent", local, route, { threadId: "desktop-thread" });
+    expect(desktop.freshFuigoHome).toEqual({ path: local.FUIGO_HOME, cloud: false });
+    desktop.cleanup();
+    const caller = join(fixture.root, "caller-home");
+    expect(applyProviderRoute("fuigoAgent", {}, route, { threadId: "caller-thread", homeRoot: caller }).freshFuigoHome).toBeUndefined();
+    const hermes = applyProviderRoute("hermesAgent", {}, route, { threadId: "hermes-thread" });
+    expect(hermes.freshFuigoHome).toBeUndefined();
+    hermes.cleanup();
+  });
   it("keeps a routed Fuigo turn within its selected engine mount and its key out of every file", () => {
     const env: NodeJS.ProcessEnv = {};
     const binding = applyProviderRoute("fuigoAgent", env, route, { threadId: "cloud-thread" });
