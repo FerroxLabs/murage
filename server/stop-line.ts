@@ -1865,9 +1865,9 @@ export function classifyAsk(
   // ISSUE-PERMS-1010 Rev 3 G2: the Codex driver's apply_patch ask carries what the patch takes away as `removed` on its
   // edit call; each is a delete, judged from the delivery's folder. A Murage-built input only ever adds a stop: a
   // `removed` that is not a list of paths stops as a delete nobody can place. It is judged BEFORE the contract below
-  // (Astra/GrokBuild subset M1): Codex's edit contract reads `changes`, so a contract miss would otherwise answer first
-  // and the card would say "could not read this call" instead of naming the outside delete. Only the Codex route answers
-  // first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds a stop last.
+  // (Astra/GrokBuild subset M1), so a call with a contract gap still names the outside delete on its card. Only the Codex
+  // route answers first (its ask carries no stamp, so nothing below could); any other engine's `removed` still only adds
+  // a stop last.
   const editInput = ask.toolCall?.name === "edit" && ask.toolCall.input && typeof ask.toolCall.input === "object"
     ? ask.toolCall.input as { removed?: unknown; cwd?: unknown } : undefined;
   const editRemoved = editInput && "removed" in editInput

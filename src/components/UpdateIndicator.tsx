@@ -3,12 +3,12 @@
 //
 // The round update button beside the account menu. Idea from OpenMaus (Apache-2.0, UpdateIndicator.tsx); ours hangs off the
 // same updater bridge as UpdateBanner, so it exists only in the packaged desktop app: no bridge (browser, dev, the phone
-// app) renders nothing. It opens the centred card (lib/update-card.ts).
+// app) renders nothing. It opens the centred card; during a download it brings the pop-up back instead (lib/update-card.ts).
 import { ArrowDownToLine, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { indicatorLabelKey, indicatorShows, openUpdateCard } from "@/lib/update-card";
+import { indicatorLabelKey, indicatorShows, openUpdateCard, showUpdatePopup } from "@/lib/update-card";
 import { useUpdaterState } from "@/lib/updater";
 
 export function UpdateIndicator() {
@@ -23,7 +23,7 @@ export function UpdateIndicator() {
   return (
     <button
       type="button"
-      onClick={openUpdateCard}
+      onClick={s.status === "downloading" ? showUpdatePopup : openUpdateCard}
       aria-label={label}
       title={label}
       data-testid="update-indicator"

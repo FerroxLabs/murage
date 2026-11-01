@@ -20,6 +20,7 @@ import { saveSectionContext } from "@/lib/section-context-client";
 import { api, useStore, type Bot } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 import { BotPickerList } from "./BotPickerList";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export interface NewTeamDraftState {
   name: string;
@@ -68,12 +69,15 @@ export function NewTeamDialogBody({
       aria-modal="true"
       aria-labelledby="new-team-title"
       aria-describedby="new-team-help"
-      className="max-h-[calc(var(--vvh,100dvh)-24px)] w-[380px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
+      className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[380px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}
     >
+      <BoxHead className="block border-b border-hairline/40 px-4 pb-3 pt-4">
       <div id="new-team-title" className="text-[15px] font-semibold text-ink">New Team</div>
-      <p id="new-team-help" className="mb-3 mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
+      <p id="new-team-help" className="mt-1 text-[12.5px] leading-relaxed text-ink-secondary">
         A team is a group of bots that work together. It gets its own heading in the sidebar.
       </p>
+      </BoxHead>
+      <BoxBody className="px-4 pt-3">
       <input
         autoFocus
         aria-label="Team name"
@@ -93,6 +97,7 @@ export function NewTeamDialogBody({
         onToggle={onToggle}
         emptyHint="Create a bot first. Teams are made of bots."
         detail={newTeamBotDetail}
+        bounded={false}
       />
       {chosen.length > 0 && (
         <label className="mt-3 block">
@@ -131,7 +136,8 @@ export function NewTeamDialogBody({
       <div role="status" aria-live="polite" className={cn("mt-2 min-h-[1.25rem] text-[12.5px] leading-relaxed", error ? "text-danger" : "text-ink-secondary")}>
         {error ?? problem ?? ""}
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      </BoxBody>
+      <BoxFoot className="justify-start border-t border-hairline/40 px-4 py-3">
         <button
           type="button"
           onClick={onClose}
@@ -147,7 +153,7 @@ export function NewTeamDialogBody({
         >
           {busy ? "Creating…" : `Create Team${chosen.length ? ` · ${chosen.length} ${chosen.length === 1 ? "bot" : "bots"}` : ""}`}
         </button>
-      </div>
+      </BoxFoot>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { PermissionModeMenu } from "./PermissionModeMenu";
+import { PERMISSION_MODES, PermissionModeMenu } from "./PermissionModeMenu";
 
 const render = (desktop: boolean | undefined, engineCannotAsk?: string, engineOwnApprovals?: string) =>
   renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "auto", desktop, onPick: () => {}, engineCannotAsk, engineOwnApprovals }));
@@ -16,24 +16,38 @@ const item = (markup: string, label: string) => {
 };
 
 describe("composer approval-level menu", () => {
+  it("Astra r1 item 8: names the levels exactly Ask, Auto, Full access, No limits", () => {
+    expect(PERMISSION_MODES.map((entry) => entry.label)).toEqual(["Ask", "Auto", "Full access", "No limits"]);
+    expect(PERMISSION_MODES.map((entry) => entry.chip)).toEqual(["Ask", "Auto", "Full access", "No limits"]);
+    const markup = render(true);
+    for (const old of ["Ask for approval", "Auto mode"]) expect(markup).not.toContain(old);
+    // Fable r1 L4: the detail is read when used, not frozen at module load
+    const auto = PERMISSION_MODES.find((entry) => entry.mode === "auto")!;
+    expect(Object.getOwnPropertyDescriptor(auto, "detail")?.get).toBeTypeOf("function");
+    expect(auto.detail.length).toBeGreaterThan(10);
+  });
+
   it("says what Full access still stops before", () => {
     const full = item(render(true), "Full access");
-    expect(full).toContain("stops before deleting outside its folder, paying, messaging someone new, or reading your keys");
+    // UX-TRUST-MOMENTS-1012 section 8 row 17
+    expect(full).toContain("Still asks before paying, emailing someone new, posting in public, deleting outside its folder, or reading your keys and passwords.");
   });
 
   it("offers No limits with its plain description, on the desktop only", () => {
     expect(item(render(true), "No limits")).toContain("Runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.");
+    // 3.4: greyed on the phone, with where it is set
     const remote = item(render(false), "No limits");
-    expect(remote).toContain(' disabled=""');
-    expect(remote).toContain("No limits can only be turned on in the Murage desktop app.");
+    expect(remote).toContain(' aria-disabled="true"');
+    expect(remote).toContain("Set this on your computer.");
   });
 
   it("does not offer Full access away from the desktop app, and says why", () => {
     const remote = item(render(false), "Full access");
-    expect(remote).toContain(' disabled=""');
-    expect(remote).toContain("Full access can only be turned on in the Murage desktop app.");
-    expect(item(render(false), "Auto mode")).not.toContain(' disabled=""');
-    for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' disabled=""');
+    expect(remote).toContain(' aria-disabled="true"');
+    expect(remote).toContain("Set this on your computer.");
+    expect(render(false)).toContain("Full access and No limits are set on your computer, where you can see what they change.");
+    expect(item(render(false), ">Auto<")).not.toContain(' aria-disabled="true"');
+    for (const desktop of [true, undefined]) expect(item(render(desktop), "Full access")).not.toContain(' aria-disabled="true"');
   });
 
   // Antigravity's print mode cannot ask, so at every level Murage runs it
@@ -41,7 +55,7 @@ describe("composer approval-level menu", () => {
   // menu has to say so on every level, Ask and Auto included.
   it("says when this bot's engine cannot ask, on every level", () => {
     const markup = render(true, "Antigravity");
-    for (const label of ["Ask for approval", "Auto mode", "Full access", "No limits"])
+    for (const label of [">Ask<", ">Auto<", "Full access", "No limits"])
       expect(item(markup, label)).toContain("Antigravity can&#x27;t stop to ask, so it works without commands, teammates, memory or connected apps.");
     expect(render(true)).not.toContain("stop to ask");
   });
@@ -51,7 +65,8 @@ describe("composer approval-level menu", () => {
   it("says which level it changes: this conversation's, or the routine's", () => {
     const menu = (scope: { routine?: string } = {}) =>
       renderToStaticMarkup(createElement(PermissionModeMenu, { botName: "Ember", current: "ask", desktop: true, onPick: () => {}, scope }));
-    expect(menu()).toContain("Changes this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.");
+    // UX-TRUST-MOMENTS-1012 3.1: routines keep their own level (T10)
+    expect(menu()).toContain("Changes this conversation only. Routines keep their own level. Ember&#x27;s default for new conversations is Ask, under Ember › Level.");
     expect(menu({ routine: "Log tick" })).toContain("Changes the level of the routine Log tick. Every run of it works here.");
     expect(menu({ routine: "Log tick" })).toContain("How should runs of Log tick be approved?");
   });

@@ -62,7 +62,7 @@ test("resolved approval cards no longer request approval", async ({ page }, info
   await page.goto(origin + "/__approvals");
   const held = "This task started outside the desktop. Your approval is required before this action can continue.";
   await expect(page.locator('[data-fixture-state="pending"]')).toContainText(held);
-  await expect(page.locator('[data-fixture-state="allow"]')).toContainText("Allowed");
+  await expect(page.locator('[data-fixture-state="allow"]')).toContainText("Approved");
   await expect(page.locator('[data-fixture-state="deny"]')).toContainText("Denied");
   await expect(page.locator('[data-fixture-state="allow"]')).not.toContainText(held);
   await expect(page.locator('[data-fixture-state="deny"]')).not.toContainText(held);
