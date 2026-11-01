@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "rea
 import { RefreshCw } from "lucide-react";
 import { api } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import { HealthCard } from "./HealthCard";
 import type { NextAction } from "../../shared/sentinel-view";
 import type { OptionCardData } from "@/state/store";
@@ -405,16 +406,17 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
   const sections = signedOut.length + restoreRows.length + (health ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
-  return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
-    <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
+  return <section aria-labelledby="inbox-title" aria-busy={loading} className={`${BOX_FRAME} mx-auto h-full w-full max-w-4xl bg-panel text-ink`}>
+    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
         <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
           <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
         </button>
         {onClose && <button className={button} onClick={onClose}>Close Inbox</button>}
       </div>
-    </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
+    </BoxHead>
+    <BoxBody className="flex flex-col p-4 sm:p-6">
+    <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot
@@ -630,5 +632,6 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.ceil(result.total / result.pageSize)}</span>
       <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => { const next = result.next; setCursors(current => { const kept = [...current]; kept[page + 1] = next; return kept; }); setPage(current => current + 1); }}>Next</button>
     </footer>}
+    </BoxBody>
   </section>;
 }

@@ -130,7 +130,7 @@ export function SkillReaderView(props: SkillReaderViewProps) {
       )}
 
       {pending?.kind === "enable" && (
-        <div role="alertdialog" aria-label="Use this skill anyway?" className="mt-3 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
+        <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Use this skill anyway?" className="mt-3 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
           <div className="font-medium">Use {skill.name} anyway?</div>
           <p className="mt-1 text-ink-secondary">The skill check found:</p>
           <ul className="mt-1 list-disc pl-4 text-ink-secondary">{findings.map((line) => <li key={line}>{line}</li>)}</ul>
@@ -141,7 +141,7 @@ export function SkillReaderView(props: SkillReaderViewProps) {
         </div>
       )}
       {pending?.kind === "delete" && (
-        <div role="alertdialog" aria-label="Delete this skill?" className="mt-3 rounded-lg border border-danger/40 bg-card p-3 text-[12.5px] text-ink">
+        <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Delete this skill?" className="mt-3 rounded-lg border border-danger/40 bg-card p-3 text-[12.5px] text-ink">
           <div className="font-medium">Delete {skill.name}?</div>
           <p className="mt-1 text-ink-secondary">{pending.bots.length ? `${pending.bots.join(", ")} ${pending.bots.length === 1 ? "uses" : "use"} it. It will be removed from ${pending.bots.length === 1 ? "that bot" : "them"} too.` : "It will be removed from your skills."}</p>
           <div className="mt-3 flex gap-2">

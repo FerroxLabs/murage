@@ -12,6 +12,7 @@ export function BotPickerList({
   onToggle,
   emptyHint,
   detail,
+  bounded = true,
 }: {
   bots: Bot[];
   picked: Set<string>;
@@ -20,9 +21,11 @@ export function BotPickerList({
   emptyHint: string;
   /** an optional second line under a bot's name */
   detail?: (bot: Bot, picked: boolean) => string | undefined;
+  /** false inside a box whose body already scrolls: no scroller in a scroller */
+  bounded?: boolean;
 }) {
   return (
-    <div className="flex max-h-64 flex-col gap-0.5 overflow-y-auto">
+    <div className={cn("flex flex-col gap-0.5", bounded && "max-h-64 overflow-y-auto")}>
       {bots.length === 0 && <div className="px-2 py-4 text-center text-[13px] text-ink-secondary">{emptyHint}</div>}
       {bots.map((b) => (
         // The WHOLE row is the checkbox: avatar, name, second line and the

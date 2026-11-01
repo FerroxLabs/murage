@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { Switch } from "./SettingsPrimitives";
 import {
   SHARING_COPY,
@@ -113,7 +114,7 @@ export function TeamsSectionBody(props: TeamsSectionBodyProps) {
                   </div>
                 </div>
               ) : changed && (
-                <div className="mt-3 flex gap-2">
+                <div className={cn(BOX_SAVE_ROW, "mt-1 flex gap-2 bg-card")}>
                   <button type="button" className={PRIMARY} disabled={busy || mode === "list" && picked.size === 0} onClick={() => props.onSave()}>Save</button>
                   <button type="button" className={BUTTON} disabled={busy} onClick={props.onCancelChange}>Cancel</button>
                 </div>

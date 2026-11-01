@@ -38,6 +38,7 @@ import { CloudDevicesSettings } from "./cloud/CloudDevicesSettings";
 import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from "./cloud/CloudDisconnectComputer";
 import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
+import { TimeZoneSettings } from "./TimeZoneSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { CallsSettings } from "./CallsSettings";
 import { BackupSettings } from "./BackupSettings";
@@ -55,6 +56,7 @@ import { RemoteSignOut } from "./RemoteSignOut";
 import { PhoneNotifications } from "./PhoneNotifications";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
+import { BOX_PANES, BoxBody, BoxHead } from "./ui/BoxShell";
 import { useDesktopSurface, useSurfaceState } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
@@ -1115,7 +1117,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         aria-labelledby="app-settings-title"
         tabIndex={-1}
         className={cn(
-          "settings-dialog flex w-full max-w-[920px] overflow-clip rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          BOX_PANES,
+          "settings-dialog w-full max-w-[920px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
           // overflow-clip, not overflow-hidden: a hidden box can still be
           // scrolled by focus, which slid the title and header off the top.
           // The list and the page each scroll on their own; the dialog never
@@ -1218,7 +1221,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-start justify-between gap-3 px-5 py-3">
+          <BoxHead className="items-start px-5 py-3">
             <div className="min-w-0">
               {q ? (
                 <>
@@ -1243,9 +1246,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             >
               <X size={18} />
             </button>
-          </div>
+          </BoxHead>
 
-          <div ref={paneRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-5">
+          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
             {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}
@@ -1262,6 +1265,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <ProfileFields />
                   </Card>
                 </Anchor>
+                {desktop === true && <Anchor id="time-zone-heading"><TimeZoneSettings /></Anchor>}
                 {desktop === true && <AboutMeSettings />}
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
@@ -1350,7 +1354,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               </>
             )}
             </div>
-          </div>
+          </BoxBody>
         </div>
       </div>
     </div>

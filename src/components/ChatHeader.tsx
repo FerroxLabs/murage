@@ -38,6 +38,7 @@ import { useStore, type AppState, type Bot, type InstanceInfo, type Message } fr
 import { BotAvatar } from "./Avatar";
 import { CallButton } from "./CallControls";
 import { ChatHeaderMenu, type HeaderMenuItem } from "./ChatHeaderMenu";
+import { StillWorkingLine } from "./shell/StillWorkingLine";
 import { openFiles } from "./Files";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { modShortcut } from "@/lib/mod-shortcut";
@@ -349,6 +350,7 @@ export function ChatHeader({
   );
 
   return (
+    <>
     <div
       ref={headerRef}
       data-chat-header
@@ -601,5 +603,8 @@ export function ChatHeader({
         )}
       </div>
     </div>
+    {/* UX 1.0.13 (L2A): after ten quiet minutes, Stop and "Ask what is taking long" under the header. */}
+    {bot.busy && <StillWorkingLine bot={bot} messages={messages} />}
+    </>
   );
 }
