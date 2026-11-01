@@ -30,8 +30,10 @@ export interface EngineHistoryJob {
    * `plans` that are not done and reports each finished step as it goes. No kind runs the whole plan / execute / verify loop
    * inline (the facade removeEngineHistoryFiles). "probe" only reads the process list: which homes a program Murage did not start has
    * open (engine-closed.ts foreignEngineHolders), so an attempt leaves them alone before it pauses or holds anything. */
-  kind?: "plan" | "execute" | "recover" | "probe" | "openPass";
+  kind?: "plan" | "execute" | "recover" | "probe" | "openPass" | "removeTrees";
   homes: DeletionEngineHome[]; folders: string[]; memoryFolders: string[]; sessions: Partial<Record<DeletionEngine, string[]>>;
+  /** removeTrees: folders a boot or retry attempt removes off the serving thread, each confined to its root (engine-exec.ts removeConfined) */
+  trees?: Array<{ root: string; target: string }>;
   /** ids saved by an earlier plan; a plan works from these as well as from what it can still see */
   known?: EngineDiscovery;
   /** plan: only these homes (`engine\0home`) */
@@ -101,6 +103,8 @@ let closing = false;
 let current: { worker: Worker; exited: Promise<void> } | null = null;
 
 function failedResult(job: EngineHistoryJob, code?: string): EngineHistoryResult {
+  // A job that did not finish removed nothing it can vouch for: every folder stays owed.
+  if (job.kind === "removeTrees") return { removed: [], failed: (job.trees ?? []).map(tree => tree.target), leftovers: [] };
   // Only the homes this job was about: a plan job names them in `only`, an execute job in `plans`.
   const scope = job.only ?? (job.plans ? Object.keys(job.plans) : undefined);
   const about = job.homes.filter(home => !scope || scope.includes(`${home.engine}\0${home.home}`));
@@ -172,6 +176,9 @@ export function runEngineHistoryOffThread(job: EngineHistoryJob, given: EngineHi
     try {
       const free = await settlesWithin(previous, options.exitWaitMs ?? 5 * 60_000);
       if (!free || closing) { void previous.then(release); return failedResult(job); }
+      // Tests: a slow engine folder, planted. The job holds the queue for this long, on a timer, as a real slow job would.
+      const testHoldMs = Number(process.env.MURAGE_TEST_ENGINE_JOB_HOLD_MS) || 0;
+      if (testHoldMs > 0) await new Promise<void>(resolve => { setTimeout(resolve, testHoldMs); });
       const { result, exited } = runOne(job, options);
       void exited.then(release);
       return await result;

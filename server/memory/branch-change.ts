@@ -15,13 +15,16 @@
 // slices off the write path. While a change is pending for a thread, a memory
 // recall or a job claim waits for it (drainBranchChanges), so nothing reads a
 // source that is on the wrong side. A second change to a thread whose first is
-// still pending finishes the first.
+// still pending finishes the first. A change of a thread the owner has excluded is dropped: the exclusion retired every source of the
+// thread, and from this build on no change sets one active again. That covers this writer only: what an older build already flipped stays
+// until BRANCH-EXCLUDE-HEAL, so state='active' is not by itself a full exclusion answer.
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground, isDatabaseBusy } from "../db-busy.ts";
 import { branchOracle, threadKey } from "../branch-index.ts";
 import { fillOneSliceOn, queueFrontFill, threadIsReady } from "../branch-fill.ts";
 import { memoryClaimIndex } from "./claim-index.ts";
 import { noteBranchChangeStored, pendingBranchChanges } from "./branch-change-flag.ts";
+import { threadExcluded } from "./deny.ts";
 
 export { branchChangesMayBePending, pendingBranchChanges } from "./branch-change-flag.ts";
 import { parkRetiredThreadJobs, reopenParkedThreadJobs } from "./park.ts";
@@ -56,6 +59,7 @@ const SET_STATE = "UPDATE memory_sources SET state=? WHERE thread_id=? AND messa
 /** Flip up to `steps` rows of each side; returns whether the change is complete. Runs inside the caller's transaction. */
 function step(db: DatabaseSync, change: Change, steps: number): boolean {
   const threadId = change.thread_id;
+  if (threadExcluded(db, threadId)) { change.leave_done = change.join_done = 1; return true; }
   if (!threadIsReady(db, threadId)) return false; // never filled here: the drain fills the thread a slice at a time, then steps
   const tk = threadKey(db, threadId);
   const toRow = rowidOf(db, threadId, change.to_id);

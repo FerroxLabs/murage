@@ -10,7 +10,7 @@ import { AlertTriangle, Check, KeyRound, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { displayArgs, hostOf, installStage, secretsInArgs, type HeaderChoice } from "@/lib/mcp-add-flow";
+import { displayArgs, hostOf, probeToolCount, secretsInArgs, testWaitKey, type HeaderChoice } from "@/lib/mcp-add-flow";
 import { connectedSentence, draftView, probeSentence, type DraftCardState } from "@/lib/mcp-card-view";
 
 export interface McpDraftCardActions {
@@ -161,7 +161,7 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
       {view === "testing" && <Spinner>{t("mcp.card.testing")}</Spinner>}
       {view === "installing" && (
         <div>
-          <Spinner>{installStage(state.elapsed) === "start" ? t("mcp.card.install.start") : installStage(state.elapsed) === "setup" ? t("mcp.card.install.setup") : t("mcp.card.install.still")}</Spinner>
+          <Spinner>{t(testWaitKey(state.elapsed, true))}</Spinner>
         </div>
       )}
 
@@ -180,7 +180,7 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
             <button type="button" className={buttonPrimary} disabled={bridgeless || nameTaken} title={t("mcp.card.signin.tip", { host })} onClick={actions.onSignIn}>
               {failed?.reason === "sign-in-ended" || failed?.reason === "needs-more-access" ? t("mcp.card.signin.again") : t("mcp.card.signin.button", { host })}
             </button>
-            {failed?.apiKey && <button type="button" className={linkButton} onClick={actions.onUseKey}>{t("mcp.card.signin.useKey")}</button>}
+            {(failed?.apiKey || state.signInFailed) && <button type="button" className={linkButton} onClick={actions.onUseKey}>{t("mcp.card.signin.useKey")}</button>}
           </div>
           {bridgeless && <p className="mt-2 text-[12px] text-ink-secondary">{t("mcp.card.signin.desktopOnly")}</p>}
           {state.message && <p role="alert" className="mt-2 text-[12.5px] text-danger">{state.message}</p>}
@@ -257,7 +257,7 @@ export function McpDraftCard({ state, actions }: { state: DraftCardState; action
 
       {view === "connected" && (
         <div>
-          <Heading tone="ok" icon={<Check size={16} />}>{connectedSentence(toolCount)}</Heading>
+          <Heading tone="ok" icon={<Check size={16} />}>{connectedSentence(probe && probe.ok ? probeToolCount(probe) : 0)}</Heading>
           {probe && probe.ok && toolCount > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-[12.5px] text-ink-secondary hover:text-ink">{t("mcp.card.tools")}</summary>

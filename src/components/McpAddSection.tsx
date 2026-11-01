@@ -14,7 +14,7 @@ import {
   envValues, headerFor, headerValues, inspectInput, moveArgSecretsToEnv, saveCommand, saveRemote, setEnabled, signInTo, testServer,
   type FlowDeps, type HeaderChoice, type LocalKind, type MergedDraft,
 } from "@/lib/mcp-add-flow";
-import { newCardState, pasteHoldsSecret, withProbe, type DraftCardState } from "@/lib/mcp-card-view";
+import { afterSignIn, CHOSE_KEY, newCardState, pasteHoldsSecret, withProbe, type DraftCardState } from "@/lib/mcp-card-view";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
 import { api } from "@/state/store";
 import { McpDraftCard, type McpDraftCardActions } from "./McpDraftCard";
@@ -121,13 +121,13 @@ export function McpAddSection({ onClose, onChanged, onNotice }: {
       return { draft: { ...state.draft, ...moved.draft }, typed: moved.typed };
     }),
     onHeader: (header: HeaderChoice, custom) => patch(index, { header, ...(custom !== undefined ? { customHeader: custom } : {}) }),
-    onUseKey: () => patch(index, { useKey: true, message: undefined }),
+    onUseKey: () => patch(index, CHOSE_KEY),
     onUseSignIn: () => patch(index, { useKey: false, message: undefined }),
     onSignIn: async () => {
       const state = cardsRef.current[index]!;
       if (state.draft.kind !== "remote") return;
       const draft = state.draft;
-      patch(index, { busy: "saving", message: undefined });
+      patch(index, { busy: "saving", message: undefined, signInFailed: false });
       const name = state.name.trim();
       const saved = await saveRemote(deps(), { name, draft, auth: "oauth", headers: {}, confirmLocal: state.confirmed, existing: state.savedName === name });
       if (!saved.ok) { patch(index, { busy: null, message: saved.message }); return; }
@@ -135,7 +135,7 @@ export function McpAddSection({ onClose, onChanged, onNotice }: {
       patch(index, { savedName: name, busy: "signing" });
       const signed = await signInTo(deps(), name);
       if (!signed.ok) {
-        patch(index, { busy: null, message: signed.cancelled ? undefined : signed.message || t("mcp.card.signin.desktopOnly") });
+        patch(index, { busy: null, ...afterSignIn(signed) });
         return;
       }
       // the saved row's status changed with the sign-in

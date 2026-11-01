@@ -6,14 +6,14 @@ import {mkdtempSync,readFileSync,statSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
-import {announceBackupFailure,announceBackupResult,backupFailureNotice,backupResultNotice} from "./backup-failure-notice.mjs";
+import {announceBackupFailure,announceBackupResult,backupFailureNotice,backupResultNotice,backupStopCommitted,serialAnnouncer} from "./backup-failure-notice.mjs";
 
 const failed={phase:"needs-review",job:{id:"job-1"},captureFailure:{stage:"capture",code:"ENCRYPTED_BACKUP_FAILED"}};
 
 test("only a backup that needs review is reported, with the finite stage and code",()=>{
  assert.deepEqual(backupFailureNotice(failed,null),{body:{action:"report",stage:"capture",code:"ENCRYPTED_BACKUP_FAILED",notify:true},key:"job-1:capture:ENCRYPTED_BACKUP_FAILED"});
  assert.equal(backupFailureNotice(failed,"job-1:capture:ENCRYPTED_BACKUP_FAILED").body.notify,false);
- for(const status of [{phase:"returned"},{phase:"idle"},{phase:"needs-review"},null])assert.deepEqual(backupFailureNotice(status,null).body,{action:"clear"});
+ for(const status of [{phase:"returned"},{phase:"idle"},null])assert.deepEqual(backupFailureNotice(status,null).body,{action:"clear"});
  // Anything else in the record never leaves: an unknown code is named as unknown.
  assert.equal(backupFailureNotice({...failed,captureFailure:{stage:"capture",code:"C:\\Users\\Sam Lee"}},null).body.code,"UNKNOWN_CAPTURE_FAILURE");
 });
@@ -104,4 +104,33 @@ test("announceBackupResult shows once per backup and keeps only the job id, owne
   assert.equal(announceBackupResult({status:done({job:{id:"c".repeat(64),occurrence:"3:manual:y",phase:"returned"},lastVerified:{jobId:"c".repeat(64)}}),userData:dir,showNotice:()=>{throw Error("no notifications");}}).key,"c".repeat(64),"a failed notification never throws");
   assert.equal(announceBackupResult({status:done(),userData:path.join(dir,"missing","deeper")}),null,"an unwritable profile never throws");
  }finally{safeWipeSync(dir);}
+});
+
+// BACKUP-SILENT-STOP (1.0.13).
+test("a backup that needs review is reported even with no recorded reason",()=>{
+ const {body,key}=backupFailureNotice({phase:"needs-review",enabled:true,job:{id:"job-9"}},null);
+ assert.deepEqual(body,{action:"report",stage:"unknown",code:"UNKNOWN_CAPTURE_FAILURE",notify:true,next:"paused"});
+ assert.equal(key,"job-9:unknown:UNKNOWN_CAPTURE_FAILURE");
+ // Daily backups already off: nothing is paused, so the row doesn't say so.
+ assert.equal(backupFailureNotice({phase:"needs-review",enabled:false,job:{id:"job-9"}},null).body.next,undefined);
+});
+test("a stop the owner cleared stays up, without a second notification, until a backup succeeds",()=>{
+ const status={phase:"idle",enabled:true,retainedFailure:{stage:"unknown",code:"RECOVERY_OPERATION_FAILED"}};
+ assert.deepEqual(backupFailureNotice(status,null),{body:{action:"report",stage:"unknown",code:"RECOVERY_OPERATION_FAILED",notify:false,next:"retry"},key:null});
+ assert.equal(backupFailureNotice({...status,enabled:false},null).body.next,"off");
+});
+test("only a commit into review asks for the notice",()=>{
+ assert.equal(backupStopCommitted({job:{phase:"needs-review"}}),true);
+ for(const state of [{job:{phase:"capturing"}},{job:{phase:"returned"}},{},null])assert.equal(backupStopCommitted(state),false);
+});
+test("two announcements never overlap, so one failure can't notify twice",async()=>{
+ let active=0,most=0,runs=0;
+ const announce=serialAnnouncer(async()=>{active++;most=Math.max(most,active);await new Promise(resolve=>setImmediate(resolve));active--;runs++;if(runs===1)throw Error("one bad run");});
+ await Promise.allSettled([announce(),announce(),announce()]);
+ assert.equal(runs,3);assert.equal(most,1);
+});
+test("the desktop announces on the commit that stops the schedule, outside backup mode",()=>{
+ const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+ assert.match(main,/onCommitted:state=>\{sentinelHost\?\.backupCommitted\(state\);if\(backupStopCommitted\(state\)&&!desktopRecoveryMode\)setImmediate/);
+ assert.match(main,/const announceLastBackupFailure=serialAnnouncer\(announceLastBackupFailureNow\)/);
 });

@@ -340,5 +340,12 @@ process.on("message",input=>{
     else process.send?.({type:"error",reason:"INVALID_MEMORY_WORK"});
   }
 });
+// A send with no callback reports its failure as an "error" event on process, and with no listener that event ends the helper with
+// code 1 before the close below. Murage closing the channel can land between two turns of this loop, so a report sent in that gap
+// fails with EPIPE; the channel's end of file follows on the next turn and "disconnect" closes the index as usual.
+process.on("error",error=>{
+  const code=(error as NodeJS.ErrnoException).code;
+  if(code!=="EPIPE"&&code!=="ECONNRESET"&&code!=="ERR_IPC_CHANNEL_CLOSED")console.error(`message send failed: ${describe(error)}`);
+});
 process.on("disconnect",()=>{index?.close();eligibility?.close();try{authority?.close();}catch{/* already closed */}process.exit(0);});
 process.send?.({type:"ready"});

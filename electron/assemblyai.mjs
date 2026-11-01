@@ -14,7 +14,7 @@ export async function mintAssemblyAIStreamingToken(
   { fetchImpl = fetch, expiresInSeconds = 480 } = {},
 ) {
   const secret = String(apiKey ?? "").trim();
-  if (!secret) throw new Error("Add an AssemblyAI API key before recording.");
+  if (!secret) throw new Error("Add your AssemblyAI key in Transcription settings before recording.");
   const lifetime = Math.max(1, Math.min(600, Math.round(expiresInSeconds)));
   let response;
   try {
@@ -28,7 +28,7 @@ export async function mintAssemblyAIStreamingToken(
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new Error("AssemblyAI rejected this API key. Replace it in Transcription settings.");
+      throw new Error("AssemblyAI did not accept this key. Replace it in Transcription settings.");
     }
     if (response.status === 429) {
       throw new Error("AssemblyAI is receiving too many requests from this key right now. Wait a minute, then try again.");
@@ -39,6 +39,6 @@ export async function mintAssemblyAIStreamingToken(
     throw new Error("Could not start cloud transcription. Check your AssemblyAI key in Transcription settings, then try again.");
   }
   const token = String(body?.token ?? "").trim();
-  if (!token) throw new Error("AssemblyAI returned an invalid temporary token.");
+  if (!token) throw new Error("AssemblyAI could not start the recording session. Try again in a moment.");
   return { token, expiresInSeconds: lifetime };
 }

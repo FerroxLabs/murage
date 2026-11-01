@@ -74,7 +74,7 @@ const control = createControlClient({ cacheMs: Math.min(750, CONTROL_POLL_MS) })
 // no engine events and the turn's silence watch would otherwise stop it.
 const EXEC_OPTIONS = boxExecOptionsFromEnv();
 /** The direct turns' default silence limit, used until the harness answers. */
-const DEFAULT_TURN_SILENCE_MS = 20 * 60_000;
+const DEFAULT_TURN_SILENCE_MS = 60 * 60_000;
 const ACTIVITY_EVERY_MS = 15_000;
 const activity = (() => {
   const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";

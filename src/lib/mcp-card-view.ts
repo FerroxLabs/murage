@@ -13,6 +13,14 @@ export type DraftView =
   | "sign-in" | "key" | "ready" | "local-confirm" | "moved" | "error" | "still-installing"
   | "connected" | "added";
 
+/** The key link was clicked: the card moves to the key box and the failure is over. */
+export const CHOSE_KEY = { useKey: true, message: undefined, signInFailed: false } as const;
+
+/** What a sign-in that did not finish leaves on the card. A cancel says nothing. */
+export function afterSignIn(signed: { message: string; cancelled: boolean }): Pick<DraftCardState, "message" | "signInFailed"> {
+  return { message: signed.cancelled ? undefined : signed.message || t("mcp.card.signin.desktopOnly"), signInFailed: !signed.cancelled };
+}
+
 export interface DraftCardState {
   draft: MergedDraft;
   name: string;
@@ -23,6 +31,8 @@ export interface DraftCardState {
   tested: boolean;
   /** The owner chose an API key over sign-in. */
   useKey: boolean;
+  /** A sign-in ran and did not finish, so the card offers a key. A failed save does not set this. */
+  signInFailed?: boolean;
   header: HeaderChoice;
   customHeader: string;
   keyValue: string;
@@ -126,6 +136,12 @@ export function probeSentence(probe: Extract<ProbeView, { ok: false }>, host: st
   return key ? t(key, { host }) : probe.error;
 }
 
-export function connectedSentence(count: number): string {
+/** The same on a saved server's card: the harness reports a long wait on an
+ * installer command as still installing, which is the add flow's reading. */
+export function savedProbeSentence(probe: Extract<ProbeView, { ok: false }>, host: string): string {
+  return probe.reason === "still-installing" ? t("mcp.card.test.noAnswer") : probeSentence(probe, host);
+}
+
+export function connectedSentence(count: number | string): string {
   return count === 0 ? t("mcp.card.connected.none") : count === 1 ? t("mcp.card.connected.one") : t("mcp.card.connected.other", { count });
 }

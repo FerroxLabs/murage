@@ -12,6 +12,7 @@ import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { rankByName } from "@/lib/palette-rank";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
 
@@ -200,9 +201,9 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
-        className="flex max-h-[min(480px,calc(0.7*var(--vvh,100dvh)))] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/60"
+        className={`${BOX_FRAME} max-h-[min(480px,calc(0.7*var(--vvh,100dvh)))] w-full max-w-[560px] rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/60`}
       >
-        <div className="flex items-center gap-3 border-b border-hairline/40 px-4 py-3">
+        <BoxHead className="justify-start border-b border-hairline/40 px-4 py-3">
           <Search size={16} className="shrink-0 text-ink-secondary" />
           <input
             autoFocus
@@ -214,8 +215,8 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
           <kbd className="shrink-0 rounded-md border border-hairline/40 px-1.5 py-0.5 text-[11px] text-ink-secondary">
             esc
           </kbd>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        </BoxHead>
+        <BoxBody className="p-2">
           {entries.length === 0 && (
             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
               {q ? `Nothing matches “${query}”` : "Nothing to switch to yet"}
@@ -300,7 +301,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
                 true,
               );
             })}
-        </div>
+        </BoxBody>
       </div>
     </div>
   );

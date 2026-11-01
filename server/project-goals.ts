@@ -623,6 +623,15 @@ export function markCriterionMet(
 
 // ── grouped decisions (5.6) ─────────────────────────────────────────────────
 
+/** What a project row adds to the Inbox's Needs you number beyond the cards
+ *  the Inbox already counts itself (index.ts GET /api/inbox). The approval
+ *  cards in `approvals` are message rows the Inbox projection counts once,
+ *  so they are never added again: only goal rows and dead-wait cards, which
+ *  have no message of their own. */
+export function projectOwedBeyondCards(row: Pick<GroupedDecisions, "goals" | "deadWaitCards">): number {
+  return row.goals.length + row.deadWaitCards.length;
+}
+
 export interface GroupedDecisions {
   /** In-memory approval cards in this project's threads, passed in by the
    * caller (they do not survive a restart; after one, the dead-wait entries

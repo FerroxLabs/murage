@@ -338,8 +338,10 @@ describe("the offer to do it every morning", () => {
 
   it("promises the brief in the app and never in their inbox", () => {
     const offer = morningOffer(false);
-    expect(offer.body).toContain("It never goes to your inbox");
-    expect(offer.body).toContain("waiting here when you open this computer");
+    // §1.7: one line and two buttons. The line says the press also builds
+    // one now, and nothing on the card offers to email it.
+    expect(offer.body).toBe("I will build the first one now so you can see what arrives.");
+    expect(offer.dismiss).toBe("Not now");
     expect(`${offer.heading} ${offer.body} ${offer.button}`).not.toMatch(/\bemail(ed)? (it|you|the brief)\b|send it to your inbox/i);
   });
 
@@ -351,9 +353,16 @@ describe("the offer to do it every morning", () => {
     expect(request.template).toBe("brief");
     // One value, spoken three times. The shipped card had a picker and a
     // confirmation that disagreed with it.
-    expect(offer.button).toBe("7:00 am, weekdays");
-    expect(offer.body).toContain("7:00 am");
-    expect(offer.taken).toBe("Set. Weekdays at 7:00 am. The first one is building now.");
+    expect(request.time).toBe("08:00");
+    expect(offer.heading).toBe("Would you like one of these every weekday at 8?");
+    expect(offer.button).toBe("Yes, every weekday at 8");
+    // A Wednesday: the next run is tomorrow.
+    const wednesday = new Date(2026, 9, 28, 10, 0);
+    expect(morningOffer(true, wednesday).taken).toBe("Morning brief saved. Next run tomorrow at 8:00 am. The first one is building now.");
+    // A Friday: the next weekday is Monday, and the line says so.
+    const friday = new Date(2026, 9, 30, 10, 0);
+    expect(morningOffer(true, friday).taken).toBe("Morning brief saved. Next run Monday at 8:00 am. The first one is building now.");
+    expect(offer.taken).toMatch(/^Morning brief saved\. Next run /);
   });
 
   it("does not claim it is set before it is", () => {
