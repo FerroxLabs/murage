@@ -1,6 +1,6 @@
 ---
 title: Desktop updates
-description: Recover from a stuck download or restart and understand supported update paths.
+description: Fix a stuck download or restart, and see how each kind of install updates.
 icon: RefreshCw
 ---
 
@@ -8,7 +8,7 @@ Murage checks for updates in the background and offers the download in a card at
 
 | Build | What the button does |
 |---|---|
-| macOS, Windows, Linux AppImage | **Restart to update**: the app replaces itself and reopens. An AppImage is always rewritten at the path you launch, so your launcher, symlink or dock pin keeps working. |
+| macOS, Windows, Linux AppImage | **Restart to update**: the app replaces itself and reopens. An AppImage is always rewritten in the place you open it from, so your launcher, symlink or dock pin keeps working. |
 | Ubuntu `.deb` (and rpm/pacman) | **Install**: Murage downloads and verifies the package, copies the install command, and opens a terminal for you to paste it into. The app never installs a system package itself, so it never asks for your administrator password. |
 
 Ubuntu packages are installed from the releases repository by hand, so the app hands you the exact line rather than guessing at a package handler:
@@ -39,7 +39,7 @@ Use `apt-get`, not `dpkg -i`: only `apt-get` resolves dependencies, and on Ubunt
 
 ## Verify the installed version
 
-Open **App settings** and check the displayed version. A commit merged to `main` is not in the desktop app until a release workflow publishes a new version.
+Open **App settings** and check the displayed version. A change the team has made reaches the desktop app only when a new version is published.
 
 <Callout type="warn" title="Use official artifacts">
   Do not install update files forwarded through chat or uploaded to an unrelated repository. Use the Murage releases repository and its checksums.

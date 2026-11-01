@@ -155,13 +155,13 @@ export function parseStoredMcpServer(
   if (nameError) return { ok: false, error: nameError };
   const parsed = storedEntrySchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid MCP server." };
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "That connected tool's settings could not be read. Check them, then try again." };
   }
   const rawEnv = parsed.data.env ?? {};
   const invalidEnv = Object.keys(rawEnv).map(environmentNameError).find((error) => error !== null);
   if (invalidEnv) return { ok: false, error: invalidEnv };
   if (Object.keys(rawEnv).length > MAX_ENV) {
-    return { ok: false, error: `Use at most ${MAX_ENV} environment variables.` };
+    return { ok: false, error: `Use at most ${MAX_ENV} settings for one connected tool. Remove one, then save again.` };
   }
   const pendingEnv = parsed.data.pendingEnv ?? [];
   const invalidPending = pendingEnvError(pendingEnv, rawEnv);
@@ -217,13 +217,13 @@ export function parseMcpServerMutation(
   if (nameError) return { ok: false, error: nameError };
   const parsed = mutationEntrySchema.safeParse(raw);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid MCP server." };
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "That connected tool's settings could not be read. Check them, then try again." };
   }
   const incomingEnv = parsed.data.env ?? {};
   const invalidEnv = Object.keys(incomingEnv).map(environmentNameError).find((error) => error !== null);
   if (invalidEnv) return { ok: false, error: invalidEnv };
   if (Object.keys(incomingEnv).length > MAX_ENV) {
-    return { ok: false, error: `Use at most ${MAX_ENV} environment variables.` };
+    return { ok: false, error: `Use at most ${MAX_ENV} settings for one connected tool. Remove one, then save again.` };
   }
   const packaged = options.secretsInBody === false;
   const env: Record<string, string> = {};
@@ -434,7 +434,7 @@ function buildRemote(
   const aliased = normalizeRemoteAliases(raw);
   if (!aliased.ok) return aliased;
   const parsed = remoteEntrySchema.safeParse(aliased.value);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid MCP server." };
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "That connected tool's settings could not be read. Check them, then try again." };
   const urlError = storedUrlError(parsed.data.url, parsed.data.urlSecret === true);
   if (urlError) return { ok: false, error: urlError };
   const headers = parsed.data.headers ?? {};
@@ -457,7 +457,7 @@ function buildRemote(
   if (Object.keys(headers).length + pendingHeaders.length > MAX_MCP_HEADERS) return { ok: false, error: `Use at most ${MAX_MCP_HEADERS} headers.` };
   const auth = parsed.data.auth ?? (Object.keys(headers).length > 0 ? "header" : "none");
   if (auth === "header" && Object.keys(headers).length === 0 && pendingHeaders.length === 0) {
-    return { ok: false, error: "Add the header that carries the API key." };
+    return { ok: false, error: "Add the header that carries the key." };
   }
   // Key order is fixed so a normalized entry serialises the same every time.
   const out: StoredRemoteMcpServer = {
@@ -684,9 +684,9 @@ export function listAllMcpServers(
  */
 export function renameMcpServer(raw: Record<string, unknown> | undefined, from: string, to: string): { ok: true; next: Record<string, unknown> } | { ok: false; error: string } {
   const current = raw ?? {};
-  if (!Object.hasOwn(current, from)) return { ok: false, error: "MCP server not found." };
+  if (!Object.hasOwn(current, from)) return { ok: false, error: "That connected tool is no longer here. Refresh the list, then try again." };
   if (to === from) return { ok: false, error: "That is already this server's name." };
-  if (Object.hasOwn(current, to)) return { ok: false, error: "An MCP server with that name already exists." };
+  if (Object.hasOwn(current, to)) return { ok: false, error: "A connected tool with that name already exists. Pick another name." };
   const nameError = mcpServerNameError(to, Object.keys(current).filter((name) => name !== from));
   if (nameError) return { ok: false, error: nameError };
   const next: Record<string, unknown> = {};

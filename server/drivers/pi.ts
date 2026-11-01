@@ -178,6 +178,9 @@ const PI_ERROR_DETAIL_MAX = 200;
 // survives, so the row does not reveal the machine's layout.
 const PI_ABS_PATH = /(?:[A-Za-z]:\\(?:[^\s\\'"`]+\\)+|\/(?:Users|home|root|data|var|opt|tmp|private|Volumes|mnt|srv)(?:\/[^\s/'"`]+)*\/)([^\s/\\'"`]+)/g;
 
+const PI_MASK = /«redacted (\d+) chars»/g;
+const PI_MASK_TOKEN = /«redacted-(\d+)-chars»/g;
+
 /** The short reason a failed pi tool call gives, for its activity row: the
  * result's own text (a string, or text content parts), first line, redacted,
  * paths cut to their last segment. Never the call's arguments. */
@@ -185,7 +188,10 @@ export function piToolErrorDetail(evt: { result?: unknown; error?: unknown }): s
   const raw = typeof evt.result === "string" ? evt.result : toolFailureText(evt.result) ?? (typeof evt.error === "string" ? evt.error : undefined);
   const line = raw?.split("\n").map((l) => l.trim()).find(Boolean);
   if (!line) return undefined;
-  const text = redactSecretsInText(line.replace(PI_ABS_PATH, "…/$1")).slice(0, PI_ERROR_DETAIL_MAX).trim();
+  // Redact first: the fold cuts a path to its last segment, so `token=/tmp/sk-…/rest` would reach the redactor as a key with no body.
+  // The mask has spaces, so it goes through the fold as one token and the path around it is cut whole (acpEngineErrorText does the same).
+  const redacted = redactSecretsInText(line).replace(PI_MASK, "«redacted-$1-chars»");
+  const text = redacted.replace(PI_ABS_PATH, "…/$1").replace(PI_MASK_TOKEN, "«redacted $1 chars»").slice(0, PI_ERROR_DETAIL_MAX).trim();
   return text || undefined;
 }
 

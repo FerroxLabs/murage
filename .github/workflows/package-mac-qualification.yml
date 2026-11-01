@@ -12,6 +12,11 @@ on:
         required: false
         default: false
         type: boolean
+      include_x64:
+        description: Also package, notarize and staple x64 as release.yml does
+        required: false
+        default: false
+        type: boolean
       source_sha:
         description: Full reviewed commit SHA; must equal the workflow commit
         required: true
@@ -24,8 +29,8 @@ concurrency:
 jobs:
   mac:
     if: ${{ inputs.preflight_only != true }}
-    runs-on: macos-14
-    timeout-minutes: 90
+    runs-on: macos-15
+    timeout-minutes: 180
     defaults:
       run:
         shell: bash
@@ -129,6 +134,8 @@ jobs:
           test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json"
           test -f "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/native-host.mjs"
           if [ -n "${MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG:-}" ]; then node scripts/release-guard.mjs browser-extension-build "release/mac-arm64/Murage.app/Contents/Resources/browser-extension/build.json" "$MURAGE_BROWSER_EXTENSION_RELEASE_CONFIG"; fi
+      - name: "Gate: no binary asks for a newer macOS than this app allows"
+        run: bash scripts/mac-minos-gate.sh release/mac-arm64/Murage.app qualification-evidence/minos-arm64.json
       - name: Notarize only the two exact arm64 artifacts
         env:
           APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
@@ -159,6 +166,45 @@ jobs:
           rm "release/Murage-$v-arm64.zip"
           ditto -c -k --sequesterRsrc --keepParent "$app" "release/Murage-$v-arm64.zip"
           shasum -a 256 "release/Murage-$v-arm64.dmg" "release/Murage-$v-arm64.zip" > qualification-evidence/SHA256SUMS
+      # release.yml packages x64 on this same arm64 runner; this runs that path when asked.
+      - name: Package x64 the way release.yml does
+        if: ${{ inputs.include_x64 == true }}
+        env:
+          CSC_KEYCHAIN: ${{ runner.temp }}/mac-qualification.keychain-db
+        run: |
+          set -euo pipefail
+          /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null || sudo softwareupdate --install-rosetta --agree-to-license
+          sudo sysctl -w kern.maxfiles=524288 kern.maxfilesperproc=262144 >/dev/null
+          ulimit -n 262144 || ulimit -n "$(ulimit -Hn)"
+          gepa_hash="$(node -p 'require("./qualification-evidence/gepa-package-metadata.json").extraMetadata.murageGepaManifests["darwin-arm64"]')"
+          pnpm exec electron-builder --mac dmg:x64 zip:x64 --publish never "--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash" "--config.extraMetadata.murageGepaManifests.darwin-x64=unavailable"
+          bash scripts/mac-minos-gate.sh release/mac/Murage.app qualification-evidence/minos-x64.json
+          codesign --verify --deep --strict release/mac/Murage.app
+          test "$(lipo -archs release/mac/Murage.app/Contents/MacOS/Murage)" = x86_64
+          test ! -e release/mac/Murage.app/Contents/Resources/gepa-worker
+      - name: Notarize and staple the two exact x64 artifacts
+        if: ${{ inputs.include_x64 == true }}
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/mac-qualification-notary.p8"
+          trap 'rm -f "$RUNNER_TEMP/mac-qualification-notary.p8"' EXIT
+          v=$(node -p "require('./package.json').version")
+          for extension in dmg zip; do
+            f="release/Murage-$v-x64.$extension"
+            test -f "$f"
+            xcrun notarytool submit "$f" --key "$RUNNER_TEMP/mac-qualification-notary.p8" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" --wait --timeout 30m --output-format json > "qualification-evidence/notary-x64-$extension.json"
+            node -e 'const fs=require("fs"); if(JSON.parse(fs.readFileSync(process.argv[1])).status!=="Accepted") process.exit(1)' "qualification-evidence/notary-x64-$extension.json"
+          done
+          xcrun stapler staple "release/Murage-$v-x64.dmg"
+          xcrun stapler staple release/mac/Murage.app
+          xcrun stapler validate "release/Murage-$v-x64.dmg"
+          xcrun stapler validate release/mac/Murage.app
+          shasum -a 256 "release/Murage-$v-x64.dmg" "release/Murage-$v-x64.zip" >> qualification-evidence/SHA256SUMS
       - name: Preserve sanitized GEPA stage evidence
         if: always()
         run: node scripts/collect-gepa-build-evidence.mjs "$RUNNER_TEMP/gepa-mac-build" "$PWD/qualification-evidence"
@@ -203,10 +249,19 @@ jobs:
             release/*-arm64.zip
           if-no-files-found: error
           retention-days: 7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ success() && inputs.include_x64 == true }}
+        with:
+          name: mac-qualification-x64-${{ env.SOURCE_SHA }}
+          path: |
+            release/*-x64.dmg
+            release/*-x64.zip
+          if-no-files-found: error
+          retention-days: 7
 
   notification-auth-compile:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.preflight_only == true }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

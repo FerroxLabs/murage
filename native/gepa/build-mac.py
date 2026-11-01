@@ -20,7 +20,9 @@ def deadline_expired(_signum,_frame): raise TimeoutError("45 minute cap reached"
 signal.signal(signal.SIGALRM,deadline_expired)
 signal.alarm(2700)
 for d in ("home","cache","tmp","inputs","wheelhouse","source","logs","prefix","work","dist"):(R/d).mkdir(exist_ok=True,mode=0o700)
-env={"HOME":str(R/"home"),"PATH":"/usr/bin:/bin:/usr/sbin:/sbin","TMPDIR":str(R/"tmp"),"LC_ALL":"C","PYINSTALLER_CONFIG_DIR":str(R/"cache"),"PIP_CONFIG_FILE":"/dev/null","PIP_DISABLE_PIP_VERSION_CHECK":"1","SDKROOT":subprocess.check_output(["/usr/bin/xcrun","--show-sdk-path"],text=True).strip()}
+# CPython configure takes the build machine's macOS as its target when this is unset, so a runner
+# image move would raise the worker's minimum macOS. 14.8 is what shipped from the macos-14 image.
+env={"HOME":str(R/"home"),"MACOSX_DEPLOYMENT_TARGET":"14.8","PATH":"/usr/bin:/bin:/usr/sbin:/sbin","TMPDIR":str(R/"tmp"),"LC_ALL":"C","PYINSTALLER_CONFIG_DIR":str(R/"cache"),"PIP_CONFIG_FILE":"/dev/null","PIP_DISABLE_PIP_VERSION_CHECK":"1","SDKROOT":subprocess.check_output(["/usr/bin/xcrun","--show-sdk-path"],text=True).strip()}
 # Security.framework must see the same disposable runner account that imported
 # the explicit task keychain. Keep compiler/package HOME isolated; inherit no
 # credential environment when using the runner HOME for signing operations.

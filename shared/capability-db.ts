@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "854fd480c72aca4baca1eecfacaad173f6cbc0763a9d376e3703fa29323995eb";
+export const CAPABILITY_DB_REV = "008b6b0034543c82a843f03809cac07b9c3c73a2fc52f146250494612de39990";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -49,6 +49,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
     "rev": "83b400798a5b8f4b749b659e483bfa6a53a14cd83d1d6b8a3507b1e12c4e21c7"
+  },
+  {
+    "id": "cap:apps.bot-email",
+    "title": "A bot's own email address",
+    "description": "Murage can do this.",
+    "heading": "Can my bot have its own email address? / Give a bot an email address / Can a bot send email for me? / Does a bot need my approval to send email?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Connected apps → Bot email",
+    "url": "https://murage.ai/docs/features/bot-tools#bot-email",
+    "text": "Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person. Needs a Flux Router account with email on. Anything long, with attachments or with many addresses still waits for you, and there is a daily limit.",
+    "capability": "apps.bot-email",
+    "status": "can",
+    "answer": "Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person.",
+    "limits": "Needs a Flux Router account with email on. Anything long, with attachments or with many addresses still waits for you, and there is a daily limit.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "33d830fc42532391c4ef4a8217b890f5b4378e3f27f7dfdd05c0c57c82c6c4c7"
   },
   {
     "id": "cap:apps.own-browser",

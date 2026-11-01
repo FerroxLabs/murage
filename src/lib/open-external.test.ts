@@ -26,6 +26,23 @@ describe("opening a page outside Murage", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it("uses the Cloud window's bridge, not a blank tab it would refuse", async () => {
+    const openExternal = vi.fn(async () => true);
+    const open = vi.fn(() => null);
+    vi.stubGlobal("window", { muragecloud: { openExternal }, open });
+    await openExternalPage("https://composio.dev/auth", "blocked");
+    expect(openExternal).toHaveBeenCalledWith("https://composio.dev/auth");
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("shows the Cloud bridge's refusal instead of falling back to a tab", async () => {
+    const openExternal = vi.fn(async () => { throw new Error("Only secure web links can be opened"); });
+    const open = vi.fn(() => null);
+    vi.stubGlobal("window", { muragecloud: { openExternal }, open });
+    await expect(openExternalPage("http://example.com/", "blocked")).rejects.toThrow("Only secure web links can be opened");
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it("uses the phone app when it offers openExternal", async () => {
     const openExternal = vi.fn(async () => undefined);
     const open = vi.fn();
