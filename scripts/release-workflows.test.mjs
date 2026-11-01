@@ -691,26 +691,30 @@ describe("release.yml provenance gates (audit C8)", () => {
 });
 
 describe("release-ci-gate verdict (audit C8)", () => {
-  let ciVerdict;
-  beforeAll(async () => { ({ ciVerdict } = await import("./release-ci-gate.mjs")); });
+  let verdict;
+  beforeAll(async () => {
+    const { ciVerdict, FULL_RUN_JOBS, REQUIRED_JOB } = await import("./release-ci-gate.mjs");
+    const jobsFor = job => [...FULL_RUN_JOBS.map(name => ({ name, conclusion: "success" })), { name: REQUIRED_JOB, conclusion: job.conclusion === "success" ? "success" : "failure" }];
+    verdict = (runs, sha) => ciVerdict(runs, sha, { jobsFor });
+  });
   const SHA = "a".repeat(40);
   const run = (over = {}) => ({ head_sha: SHA, status: "completed", conclusion: "success", event: "push", ...over });
 
   it("passes when a CI run on that commit concluded success", () => {
-    expect(ciVerdict([run()], SHA)).toEqual({ state: "pass", reason: expect.any(String) });
+    expect(verdict([run()], SHA)).toEqual({ state: "pass", reason: expect.any(String) });
   });
   it("fails on a failed run, even next to an older green one", () => {
-    expect(ciVerdict([run({ conclusion: "failure" })], SHA).state).toBe("fail");
-    expect(ciVerdict([run({ conclusion: "failure", run_attempt: 1 }), run({ run_attempt: 2 })], SHA).state).toBe("pass");
+    expect(verdict([run({ conclusion: "failure" })], SHA).state).toBe("fail");
+    expect(verdict([run({ conclusion: "failure", run_attempt: 1 }), run({ run_attempt: 2 })], SHA).state).toBe("pass");
   });
   it("waits while the run is queued or in progress, and fails with none at all", () => {
-    expect(ciVerdict([run({ status: "in_progress", conclusion: null })], SHA).state).toBe("wait");
-    expect(ciVerdict([], SHA).state).toBe("none");
+    expect(verdict([run({ status: "in_progress", conclusion: null })], SHA).state).toBe("wait");
+    expect(verdict([], SHA).state).toBe("none");
   });
   it("ignores runs for other commits and cancelled or skipped runs", () => {
-    expect(ciVerdict([run({ head_sha: "b".repeat(40) })], SHA).state).toBe("none");
-    expect(ciVerdict([run({ conclusion: "cancelled" })], SHA).state).toBe("fail");
-    expect(ciVerdict([run({ conclusion: "skipped" })], SHA).state).toBe("fail");
+    expect(verdict([run({ head_sha: "b".repeat(40) })], SHA).state).toBe("none");
+    expect(verdict([run({ conclusion: "cancelled" })], SHA).state).toBe("fail");
+    expect(verdict([run({ conclusion: "skipped" })], SHA).state).toBe("fail");
   });
 });
 

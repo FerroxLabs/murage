@@ -141,7 +141,7 @@ async function runningFuigo(echoMs: number) {
   for (let i = 0; i < 500 && !prompted(); i++) await new Promise((r) => setTimeout(r, 20));
   expect(prompted()).toBe(true);
   // the running turn's lineage and its engine session (v6 marks every session it saw)
-  const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", session: "s-desk", generation: "g-desk", turn: { threadId: "desk", turnId: "t-desk", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
+  const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "fuigo-steer", startGeneration: 0, session: "s-desk", generation: "g-desk", turn: { threadId: "desk", turnId: "t-desk", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
   recordSessionRoots("desk", "fuigo-steer", "s-desk", lineage.roots);
   return { adapter: instance.adapter, lineage };
 }
@@ -269,7 +269,7 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
       });
       const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
       await instance.adapter.sendTurn({ threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
-      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
+      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const turn = openTurn("desk", "t-desk");
       const session = { threadId: "desk", driverInstance: "claude-steer", nativeSession: "claude-session" };
       writeSessionLineage(database(), session, turn);

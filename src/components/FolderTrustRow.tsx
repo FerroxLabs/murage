@@ -1,23 +1,29 @@
 import { useState } from "react";
 import { ShieldCheck, ShieldOff } from "lucide-react";
+import type { FolderTrustNotice } from "../../shared/folder-trust";
 import { t } from "@/lib/i18n";
+import { isPhoneClient } from "@/lib/phone-client";
 import { api } from "@/state/store";
 import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
 
 /** A turn that ran with its folder's own files held back — the person said
  * "Don't trust", or nobody has decided yet and the engine asked on its own —
  * and which sources were left out; or a folder trusted after the engine had
- * already started, whose instructions apply from the next turn. Neutral,
+ * already started, whose instructions apply in a new conversation. Neutral,
  * like StoppedRow: not a tool run (so it stays visible with Settings → Tool
  * calls off) and not an error (FUIGOTRUST1).
  *
  * A withheld notice with a bot and conversation carries "Trust this folder":
  * it records the decision for this conversation's own folder, the way the
- * trust card does, so the next turn applies the folder's files. */
-export function FolderTrustRow({ kind, sources, botId, threadId }: { kind: "withheld" | "late"; sources: string; botId?: string; threadId?: string }) {
+ * trust card does, so the next turn applies the folder's files. A phone
+ * never carries it: folder decisions are made on the computer (S7). */
+export function FolderTrustRow({ kind, sources, forgetKey, botId, threadId, phone = isPhoneClient() }: { kind: FolderTrustNotice["kind"]; sources: string; forgetKey?: string; botId?: string; threadId?: string; phone?: boolean }) {
   const withheld = kind === "withheld";
+  // S5a: a decline Murage passed to Fuigo for this folder. Its sentence names the way back itself.
+  // A stored no in Fuigo's own store needs no way back here: it is his own answer, kept in his Fuigo.
+  const passed = kind === "passed" ? t("folderTrust.passedLabel", { key: forgetKey ?? "" }) : kind === "storedNo" ? t("folderTrust.storedNoLabel") : null;
   const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle");
-  const canTrust = withheld && Boolean(botId && threadId);
+  const canTrust = withheld && !phone && Boolean(botId && threadId);
   const trust = async () => {
     setState("busy");
     try {
@@ -33,14 +39,15 @@ export function FolderTrustRow({ kind, sources, botId, threadId }: { kind: "with
         role="status"
         data-testid="folder-trust-row"
         data-folder-trust={kind}
-        title={withheld ? t("folderTrust.withheldDescription") : t("folderTrust.lateDescription")}
+        title={passed ?? (withheld ? t("folderTrust.withheldDescription") : kind === "chosen" ? t("folderTrust.chosenDescription") : t("folderTrust.lateDescription"))}
         className={`${CHIP} text-ink-secondary`}
       >
         <span className="shrink-0" aria-hidden="true">
-          {withheld ? <ShieldOff size={12} className="opacity-70" /> : <ShieldCheck size={12} className="opacity-70" />}
+          {withheld || passed ? <ShieldOff size={12} className="opacity-70" /> : <ShieldCheck size={12} className="opacity-70" />}
         </span>
         <span className={CHIP_NAME}>
-          {withheld ? t("folderTrust.withheldLabel", { sources }) : t("folderTrust.lateLabel", { sources })}
+          {passed ?? (withheld ? t("folderTrust.withheldLabel", { sources }) : kind === "chosen" ? t("folderTrust.chosenLabel", { sources }) : t("folderTrust.lateLabel", { sources }))}
+          {forgetKey && !passed ? ` ${t("folderTrust.forgetToAsk", { key: forgetKey })}` : ""}
         </span>
         {canTrust && state !== "done" && (
           <button

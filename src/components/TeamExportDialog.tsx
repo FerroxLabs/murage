@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
+import { BOX_DIALOG, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { downloadSelectedBotPackage, downloadSelectedBotPackageZip, type ZipExportSelection } from "@/lib/team-files";
 
 interface Options {
@@ -82,9 +83,12 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
   const teams = [...new Set(visibleBots.map(bot => bot.team || "General"))];
   const roleLabel = (role: Options["bots"][number]["role"]) => role === "chief" ? "Chief of Staff" : role === "leader" ? "Team leader" : role === "individual" ? "Individual bot" : "Team member";
   return <dialog ref={dialog} onCancel={event => { event.preventDefault(); if (!busy) onClose(); }} aria-labelledby="team-export-title"
-    className="m-auto max-h-[calc(100dvh-2rem-2*max(var(--inset-top),var(--inset-bottom)))] w-[calc(100%-2rem)] max-w-[680px] overflow-y-auto rounded-xl border border-hairline/50 bg-panel p-5 text-ink backdrop:bg-black/60">
+    className={`${BOX_DIALOG} m-auto w-[calc(100%-2rem)] max-w-[680px] rounded-xl border border-hairline/50 bg-panel p-0 text-ink backdrop:bg-black/60`}>
+    <BoxHead className="block border-b border-hairline/40 px-5 pb-3 pt-5">
     <h2 id="team-export-title" className="text-[18px] font-semibold">Export bots and teams</h2>
     <p className="mt-1 text-[12px] text-ink-secondary">{selection.botIds.length} bots selected. Choose the instructions and assets to share.</p>
+    </BoxHead>
+    <BoxBody className="px-5 pb-5">
     <fieldset className="mt-3 flex flex-wrap gap-4 text-[13px]"><legend className="mb-1 text-[12px] font-medium text-ink-secondary">File format</legend>
       <label className="flex items-center gap-2"><input type="radio" name="export-format" checked={format === "zip"} disabled={Boolean(busy)} onChange={() => changeFormat("zip")} />ZIP package (.zip)</label>
       <label className="flex items-center gap-2"><input type="radio" name="export-format" checked={format === "markdown"} disabled={Boolean(busy)} onChange={() => changeFormat("markdown")} />Markdown (.md)</label>
@@ -98,7 +102,7 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
       <section aria-label="Choose bots">
         <label className="block text-[12px] font-medium" htmlFor="export-bot-search">Find a bot or team</label>
         <input id="export-bot-search" type="search" value={search} onChange={event => setSearch(event.target.value)} className="mt-1 w-full rounded-lg border border-hairline bg-inset px-3 py-2 text-[13px]" />
-        <div className="mt-2 max-h-60 space-y-3 overflow-y-auto rounded-lg border border-hairline p-3">
+        <div className="mt-2 space-y-3 rounded-lg border border-hairline p-3">
           {teams.map(team => <fieldset key={team}><legend className="text-[13px] font-semibold">{team}</legend>
             <button type="button" disabled={Boolean(busy)} onClick={() => {
               setSelection(current => ({ ...current, botIds: [...new Set([...current.botIds, ...options.bots.filter(bot => (bot.team || "General") === team).map(bot => bot.id)])] }));
@@ -146,25 +150,29 @@ export function TeamExportDialog({ onClose, onExported, initialBotIds = [] }: { 
       {preview.scan.findings.length > 0 && <ul className="mt-2 space-y-1 text-[12px] text-ink-secondary">{preview.scan.findings.map((finding, i) => <li key={i} className="break-words">{finding.path}: {finding.rule}{finding.line ? ` (line ${finding.line})` : ""}</li>)}</ul>}
       {!preview.scan.blocked && preview.markdown && <details className="mt-3 text-[12px]">
         <summary className="cursor-pointer font-medium">Review exported text</summary>
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-panel p-2 text-[11px] text-ink-secondary">{preview.markdown}</pre>
+        <pre className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-panel p-2 text-[11px] text-ink-secondary">{preview.markdown}</pre>
       </details>}
       {!preview.scan.blocked && preview.files && <details className="mt-3 text-[12px]">
         <summary className="cursor-pointer font-medium">Review included files ({preview.files.length})</summary>
         <ul className="mt-2 space-y-2">{preview.files.map(file => <li key={file.path} className="min-w-0 rounded-lg bg-panel p-2">
           <p className="break-all font-medium">{file.path}</p><p className="text-ink-secondary">{file.bytes.toLocaleString()} bytes</p>
           <details className="mt-1"><summary className="cursor-pointer text-ink-secondary">File hash</summary><code className="block break-all text-[10px]">{file.sha256}</code></details>
-          {file.content !== undefined && <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-[11px] text-ink-secondary">{file.content}</pre>}
+          {file.content !== undefined && <pre className="mt-2 whitespace-pre-wrap break-words text-[11px] text-ink-secondary">{file.content}</pre>}
         </li>)}</ul>
       </details>}
       {!preview.scan.blocked && Boolean(preview.reviewWarnings?.length) && <ul aria-label="Dependency review warnings" className="mt-3 space-y-1 text-[12px] text-ink-secondary">{preview.reviewWarnings!.map((warning, index) => <li key={index} className="break-words">{warning}</li>)}</ul>}
       {(preview.scan.reviewRequired || Boolean(preview.reviewWarnings?.length)) && !preview.scan.blocked && <label className="mt-3 flex items-start gap-2 text-[12px]"><input type="checkbox" checked={acknowledged} disabled={Boolean(busy)} onChange={event => setAcknowledged(event.target.checked)} />I reviewed the warnings and want to export this selection.</label>}
     </section>}
-    {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
-    <div className="mt-4 flex flex-wrap justify-end gap-2">
+    </BoxBody>
+    {/* The error sits by the buttons that raise it: the body may be scrolled far from here. */}
+    <BoxFoot className="block border-t border-hairline/40 px-5 py-3">
+    {error && <p role="alert" className="mb-2 text-[12px] text-danger">{error}</p>}
+    <div className="flex flex-wrap justify-end gap-2">
       <button type="button" disabled={Boolean(busy)} onClick={onClose} className="rounded-lg px-3 py-2 text-[13px] text-ink-secondary disabled:opacity-50">Cancel</button>
       {!options && !busy && <button type="button" onClick={() => void load()} className="rounded-lg bg-control px-3 py-2 text-[13px]">Retry</button>}
       {options && <button type="button" disabled={Boolean(busy) || !selection.botIds.length} onClick={() => void inspect()} className="rounded-lg bg-control px-3 py-2 text-[13px] disabled:opacity-50">{busy === "preview" ? "Checking contents…" : "Preview selection"}</button>}
       {preview && <button type="button" disabled={Boolean(busy) || preview.scan.blocked || ((preview.scan.reviewRequired || Boolean(preview.reviewWarnings?.length)) && !acknowledged)} onClick={() => void download()} className="rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:opacity-50">{busy === "download" ? "Downloading…" : format === "zip" ? "Download ZIP package" : "Download package"}</button>}
     </div>
+    </BoxFoot>
   </dialog>;
 }

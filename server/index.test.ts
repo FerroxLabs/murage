@@ -120,7 +120,7 @@ describe("harness HTTP API", () => {
         return Boolean(errorMessage);
       }, { timeout: 10000 }).toBe(true);
       expect(errorMessage).toMatchObject({ role: "bot", kind: "activity", tool: { ok: false, providerError: { kind: "credits", httpStatus: 402 } } });
-      expect(errorMessage.tool.name).toContain("credit balance is exhausted");
+      expect(errorMessage.tool.name).toContain("account is out of credit");
       expect(errorMessage.tool.errorDetails).toContain("Provider response: HTTP 402");
       // The driver reads the engine's typed kind out of `error.data.error_kind`
       // and carries it as the runtime.error event's own `errorKind` field. That

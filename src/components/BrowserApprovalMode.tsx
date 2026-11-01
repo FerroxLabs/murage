@@ -28,7 +28,7 @@ export function setActionCheck(request: Request, botId: string, check: ActionChe
 }
 
 export function FullPermissiveDialog({ botName, typed, pending, error, onTyped, onConfirm, onCancel }: { botName: string; typed: string; pending: boolean; error: string; onTyped: (value: string) => void; onConfirm: () => void; onCancel: () => void }) {
-  return <div role="dialog" aria-label={t("browserExt.full.title", { bot: botName })} className="flex flex-col gap-3 rounded-lg bg-card p-3 text-sm text-ink">
+  return <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label={t("browserExt.full.title", { bot: botName })} className="flex flex-col gap-3 rounded-lg bg-card p-3 text-sm text-ink">
     <HazardStripe />
     <h4 className="font-medium">{t("browserExt.full.title", { bot: botName })}</h4>
     <p>{t("browserExt.full.body1", { bot: botName })}</p>

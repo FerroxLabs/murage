@@ -227,9 +227,9 @@ describe("PiDriver config + install", () => {
   it("publishes the npm installer on every platform and points docs at pi.dev", () => {
     expect(PiDriver.install).toMatchObject({
       command: {
-        darwin: "npm install -g @earendil-works/pi-coding-agent",
-        linux: "npm install -g @earendil-works/pi-coding-agent",
-        win32: "npm install -g @earendil-works/pi-coding-agent",
+        darwin: "npm install -g --force @earendil-works/pi-coding-agent",
+        linux: "npm install -g --force @earendil-works/pi-coding-agent",
+        win32: "npm install -g --force @earendil-works/pi-coding-agent",
       },
       docsUrl: "https://pi.dev",
       needsNode: true,
@@ -329,25 +329,15 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-happy")).toBe(false);
   });
 
-  it("resumes a prior pi session using the sessionFile resume cursor", async () => {
-    await create();
-    const first = await instance.adapter.sendTurn({ threadId: "t-resume", text: "first" });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
-    const firstSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === first.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(firstSession?.sessionId).toMatch(/\/fake\/pi-session-\d+\.json/);
-
-    const second = await instance.adapter.sendTurn({
-      threadId: "t-resume",
-      text: "second",
-      resumeCursor: firstSession!.sessionId,
-    });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
-    const secondSession = recorder.events.find((e) => e.type === "session.started" && e.turnId === second.turnId) as
-      | { sessionId: string }
-      | undefined;
-    expect(secondSession?.sessionId).toBe(firstSession?.sessionId);
+  it("keeps no session: pi under --no-session names no file, so no cursor comes back and each turn starts a new one", async () => {
+    await create(undefined, { FAKE_PI_NO_SESSION: "1" });
+    expect(instance.keepsNoSession).toBe(true);
+    for (const text of ["first", "second"]) {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-no-session", text });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    }
+    expect(recorder.events.filter((e) => e.type === "session.started").map((e) => (e as { sessionId: string | null }).sessionId)).toEqual([null, null]);
+    expect(outboundCommands("t-no-session").filter((command) => String(command).endsWith("_session"))).toEqual(["new_session", "new_session"]);
   });
 
   it("fails promptly when the pi process exits before replying", async () => {
@@ -1536,6 +1526,28 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, input: { command: "rm -rf ~/Documents/old" } });
   });
 
+  it.each([
+    ["a call over the cap", { tool: "bash", truncated: true }],
+    ["an unproven mount", { tool: "x_y", mount: "not_mounted", mcpTool: "y", input: { a: 1 } }],
+    ["a missing required field", { tool: "bash", input: {} }],
+  ])("S4: on %s Allow tells the gate to run what it holds, and Deny stays a deny", async (_name, call) => {
+    const dump = await create(false, { FAKE_PI_GATE_CALL: JSON.stringify(call) });
+    const threadId = `t-gate-keep-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ threadId, text: "go" });
+    await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, keep: true });
+    const denied = `t-gate-keep-deny-${newId()}`;
+    const second = await instance!.adapter.sendTurn({ threadId: denied, text: "go" });
+    await recorder!.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
+    await instance!.adapter.respondToRequest(denied, "ask-host", { behavior: "deny", message: "no" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+    const after = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    expect(JSON.parse(after.at(-1).uiResponse.value)).toEqual({ deny: true, reason: "no" });
+  });
+
   it("T14: a confirm from any other extension is unproven (empty identity), whatever its title says", async () => {
     await create(false, { FAKE_PI_GATE_FORGE: "1" });
     const threadId = `t-gate-forge-${newId()}`;
@@ -1694,6 +1706,19 @@ describe("piToolErrorDetail", () => {
     const out = piToolErrorDetail({ result: "401 with key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789" }); // secret-scan: fixture
     expect(out).toContain("401");
     expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+  it("masks a credential held in a path whole, before the path is cut", () => {
+    const value = `/tmp/${"sk-" + "abcdefghijklmnopqrst"}/rest`;
+    expect(piToolErrorDetail({ result: `open failed: token=${value}` })).toBe(`open failed: token=«redacted ${value.length} chars»`);
+  });
+  it("cuts a path to its last segment when a key sits in the middle of it", () => {
+    const key = "sk-" + "abcdefghijklmnopqrst";
+    expect(piToolErrorDetail({ result: `open /tmp/${key}/subdir/id_rsa` })).toBe("open …/id_rsa");
+    expect(piToolErrorDetail({ result: `open C:\\tmp\\${key}\\Users\\alice\\file.txt failed` })).toBe("open …/file.txt failed");
+  });
+  it("keeps the mask readable when a key is the last segment of a path", () => {
+    const key = "sk-" + "abcdefghijklmnopqrst";
+    expect(piToolErrorDetail({ result: `open /tmp/subdir/${key} failed` })).toBe(`open …/«redacted ${key.length} chars» failed`);
   });
   it("keeps to about 200 characters", () => {
     expect(piToolErrorDetail({ result: "x".repeat(900) })!.length).toBeLessThanOrEqual(200);

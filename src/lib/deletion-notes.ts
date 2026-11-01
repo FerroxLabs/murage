@@ -33,17 +33,17 @@ export const OWED_UPDATE_TITLE = "Deleted. Murage tries the rest again after its
 
 /** One line of the owed note as the server sent it: what it covers, which engine it is, and whether it is a copy still owed.
  * `waitsForUpdate`: the helper cannot load on this system, so the copy is tried again only after Murage's next update. */
-export interface OwedLine { text: string; tryAgain: boolean; covers: string[]; label?: string; waitsForUpdate?: true }
+export interface OwedLine { text: string; tryAgain: boolean; covers: string[]; label?: string; waitsForUpdate?: true; /** the engine is open: a retry cannot change that, Murage finishes once it closes */ byItself?: true }
 export interface OwedNote { title: string; items: string[]; retry: false; owed: true; ids: string[]; covers: string[]; lines: OwedLine[] }
 
 /** The engine copies still owed after a Delete (the server's fixed sentences, one line per engine), kept with the ids of the lines and
  * the obligations they cover. 1.0.7 (Sean, 10-26): this is never a banner over a chat and never offers "Try again now": Murage retries
- * by itself, and the owner sees it only as one quiet line in Settings > Engines (owedSettingsLines). */
+ * by itself, and the owner sees it as one quiet line in Settings > Engines and on the Health screen, the only place with Try again now (owedSettingsLines). */
 export function owedNote(notices: unknown): OwedNote | null {
-  const list = (Array.isArray(notices) ? (notices as Array<{ id?: unknown; text?: unknown; tryAgain?: unknown; covers?: unknown; label?: unknown; waitsForUpdate?: unknown } | null>) : [])
-    .filter((item): item is { id?: unknown; text: string; tryAgain?: unknown; covers?: unknown; label?: unknown; waitsForUpdate?: unknown } => Boolean(item) && typeof item!.text === "string" && item!.text !== "");
+  const list = (Array.isArray(notices) ? (notices as Array<{ id?: unknown; text?: unknown; tryAgain?: unknown; covers?: unknown; label?: unknown; waitsForUpdate?: unknown; byItself?: unknown } | null>) : [])
+    .filter((item): item is { id?: unknown; text: string; tryAgain?: unknown; covers?: unknown; label?: unknown; waitsForUpdate?: unknown; byItself?: unknown } => Boolean(item) && typeof item!.text === "string" && item!.text !== "");
   const strings = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []);
-  const lines: OwedLine[] = list.map((item) => ({ text: item.text, tryAgain: item.tryAgain !== false, covers: strings(item.covers), ...(typeof item.label === "string" && item.label ? { label: item.label } : {}), ...(item.waitsForUpdate === true ? { waitsForUpdate: true as const } : {}) }));
+  const lines: OwedLine[] = list.map((item) => ({ text: item.text, tryAgain: item.tryAgain !== false, covers: strings(item.covers), ...(typeof item.label === "string" && item.label ? { label: item.label } : {}), ...(item.byItself === true ? { byItself: true as const } : {}), ...(item.waitsForUpdate === true ? { waitsForUpdate: true as const } : {}) }));
   if (!lines.length) return null;
   const ids = list.map((item) => (typeof item.id === "string" ? item.id : "")).filter(Boolean);
   const owedLines = lines.filter((line) => line.tryAgain);

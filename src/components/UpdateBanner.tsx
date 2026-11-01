@@ -1,15 +1,20 @@
-import { t } from "@/lib/i18n";
-// Auto-update card — centred, opened from the round button beside the account menu (UpdateIndicator), driven by the
-// preload's updater bridge. Renders nothing in the browser/dev (no bridge), on the phone app, and while idle/checking.
-// It is the same state machine as the button: both read useUpdaterState, and only "is the card open" is shared
-// (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+// Auto-update surface, driven by the preload's updater bridge. Renders nothing in the browser/dev (no bridge), on the phone
+// app, and while idle/checking. Two frames, one content (UpdateCardBody):
+// - the centred card, opened from the round button beside the account menu (UpdateIndicator);
+// - the pop-up: comes up by itself when a download starts, stays through to the restart, and never takes focus or sits over
+//   the composer. A download always shows here, so the card never holds the app while one runs.
+// All of it is the same state machine as the button: everything reads useUpdaterState, and only "is the card open" and how the
+// pop-up stands are shared (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
-import { useUpdaterState } from "@/lib/updater";
-import { closeUpdateCard, useUpdateCardOpen } from "@/lib/update-card";
+import { useUpdaterState, type UpdaterState } from "@/lib/updater";
+import { closeUpdateCard, closeUpdatePopup, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, type UpdatePopupPlace } from "@/lib/update-card";
+import { useUndoToast } from "@/lib/undo";
+import { t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
 import { wrapTabTarget } from "@/lib/focus-wrap";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 // The one action button in the card. Disabled drops the accent fill for the
 // flat raised grey — the "I heard you" the click needs while the main process
@@ -33,16 +38,19 @@ function friendlyError(message?: string): string {
 export function UpdateBanner() {
   const s = useUpdaterState();
   const cardOpen = useUpdateCardOpen();
+  const popupUp = useUpdatePopup(s);
   const cardRef = useRef<HTMLDivElement>(null);
-  // Closing is just closing the card: the round button stays while there is anything to do.
-  const setDismissed = (_key: string) => closeUpdateCard();
-  // A click has to go renderer → main → broadcast before the real status
-  // arrives. Latch the pressed button as busy on the same frame so it greys
-  // out immediately; the incoming status clears the latch.
-  const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
   const status = s?.status;
-  useEffect(() => setPending(null), [status]);
-  const busyNow = status === "downloading" || status === "installing";
+  // Closing is just closing: the round button stays while there is anything to do.
+  const dismiss = () => {
+    closeUpdateCard();
+    closeUpdatePopup(status);
+  };
+  // The card hands a download over to the pop-up, so pressing Download never leaves the app held behind a scrim.
+  const cardShows = cardOpen && status !== "downloading";
+  useEffect(() => {
+    if (cardOpen && status === "downloading") closeUpdateCard();
+  }, [cardOpen, status]);
   // Focus goes into the card when it opens and back to the control that opened it (the round button) when it closes.
   useEffect(() => {
     if (!cardOpen) return;
@@ -55,9 +63,9 @@ export function UpdateBanner() {
   }, [cardOpen]);
   // Escape and Tab belong to the card while it is open (handlers on the card, not the document).
   const onCardKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape" && !busyNow) {
+    if (event.key === "Escape" && status !== "installing") {
       event.stopPropagation();
-      closeUpdateCard();
+      dismiss();
     } else if (event.key === "Tab") {
       const items = [...event.currentTarget.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input, [tabindex]:not([tabindex='-1'])")];
       const target = wrapTabTarget(items.length, items.indexOf(document.activeElement as HTMLElement), event.shiftKey);
@@ -68,12 +76,103 @@ export function UpdateBanner() {
     }
   };
 
-  if (!cardOpen || !s || s.status === "idle" || s.status === "checking") return null;
-  const key = `${s.status}:${s.version ?? ""}`;
+  if (!s || s.status === "idle" || s.status === "checking") return null;
+  if (cardShows) {
+    const busy = s.status === "installing";
+    return (
+      <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="update-card-layer">
+        <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) dismiss(); }} />
+        <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={updateTitle(s)} onKeyDown={onCardKeyDown} data-testid="update-card" className={cn(BOX_FRAME, "animate-panel-in relative max-h-[calc(var(--vvh,100dvh)-2rem)] w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel pb-4 shadow-2xl shadow-black/50 focus:outline-none")}>
+          <UpdateCardBody s={s} onDismiss={dismiss} />
+        </div>
+      </div>
+    );
+  }
+  return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
+}
+
+/** Bottom-left, no scrim, no focus. Sits under dialogs (z-50) and under the Undo toast, and moves up when one is showing. */
+function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void }) {
+  const toast = useUndoToast();
+  const frame = useRef<HTMLElement>(null);
+  // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page.
+  const close = () => {
+    const held = frame.current?.contains(document.activeElement) ?? false;
+    onDismiss();
+    if (held) document.querySelector<HTMLElement>('[data-testid="update-indicator"], [data-testid="update-button"]')?.focus();
+  };
+  const [place, setPlace] = useState<UpdatePopupPlace>({ left: 16, width: 300, bottom: 16 });
+  useLayoutEffect(() => {
+    const anchor = document.querySelector<HTMLElement>("[data-update-popup-anchor]");
+    const measure = () => {
+      const rect = anchor?.getBoundingClientRect();
+      // Off to the left means the drawer is shut.
+      const footer = rect && rect.left >= 0 ? { left: rect.left, top: rect.top, width: rect.width } : null;
+      const toastHeight = document.querySelector("[data-undo-toast]")?.getBoundingClientRect().height ?? 0;
+      setPlace(updatePopupPlace({ footer, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, toastHeight }));
+    };
+    measure();
+    const footerResize = anchor && typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+    if (anchor) footerResize?.observe(anchor);
+    window.addEventListener("resize", measure);
+    return () => {
+      footerResize?.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [toast]);
+  return (
+    <section
+      ref={frame}
+      aria-label={t("updates.title")}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        close();
+      }}
+      data-testid="update-popup"
+      style={place}
+      className={cn(BOX_FRAME, "animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel pb-3.5 shadow-2xl shadow-black/50")}
+    >
+      <UpdateCardBody s={s} popup onDismiss={close} />
+    </section>
+  );
+}
+
+function updateTitle(s: UpdaterState): string {
+  const installing = s.status === "installing";
+  const deferred = s.status === "deferred";
+  const handoff = s.installMode === "handoff";
+  const verificationRefused = s.status === "error" && s.action === "download-from-murage";
+  return verificationRefused ? t("updates.title") : deferred ? "Update waiting for backup" : s.status === "available"
+    ? `Murage ${s.version} is available`
+    : s.status === "downloading"
+      ? `Downloading ${s.version ?? "update"}…`
+      : s.status === "downloaded"
+        ? `${s.version} is ready`
+        : installing
+          ? handoff
+            ? "Opening a terminal…"
+            : "Restarting to update…"
+          : s.status === "handed-off"
+            ? "Finish in a terminal"
+            : "Update could not finish";
+}
+
+// What the pop-up reads out: tens of percent, so a screen reader is not talking over the owner for the whole download.
+const spokenPercent = (percent: number) => `${Math.floor(percent / 10) * 10}%`;
+
+/** The content of both frames. In the pop-up it drops the highlights (the card has them) and can always be closed. */
+function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popup?: boolean; onDismiss: () => void }) {
+  // A click has to go renderer → main → broadcast before the real status
+  // arrives. Latch the pressed button as busy on the same frame so it greys
+  // out immediately; the incoming status clears the latch.
+  const [pending, setPending] = useState<"download" | "install" | "check" | null>(null);
+  const status = s.status;
+  useEffect(() => setPending(null), [status]);
   const highlights = releaseHighlights(s.releaseNotesText);
   const updater = window.muragebox!.updater!;
 
-  // while busy the card owns the moment: no dismissing, no second click
+  // while busy the card owns the moment: no second click, and no dismissing it (the pop-up can always go)
   const installing = s.status === "installing";
   const deferred = s.status === "deferred";
   const busy = s.status === "downloading" || installing;
@@ -83,20 +182,7 @@ export function UpdateBanner() {
   const handoff = s.installMode === "handoff";
   const verificationRefused = s.status === "error" && s.action === "download-from-murage";
 
-  const title =
-    verificationRefused ? t("updates.title") : deferred ? "Update waiting for backup" : s.status === "available"
-      ? `Murage ${s.version} is available`
-      : s.status === "downloading"
-        ? `Downloading ${s.version ?? "update"}…`
-        : s.status === "downloaded"
-          ? `${s.version} is ready`
-          : installing
-            ? handoff
-              ? "Opening a terminal…"
-              : "Restarting to update…"
-            : s.status === "handed-off"
-              ? "Finish in a terminal"
-              : "Update could not finish";
+  const title = updateTitle(s);
   const subtitle =
     verificationRefused ? t("updates.verificationRefused") : deferred ? "This update is waiting for the pre-upgrade backup flow. Review Settings → Backups if it needs attention." : s.status === "available"
       ? "A newer version is ready to download."
@@ -119,32 +205,38 @@ export function UpdateBanner() {
                 : "Command copied. Paste it in a terminal to finish."
               : friendlyError(s.message);
 
+  // The pop-up is a status region, except for an error, which stays the alert it is on the card.
+  const liveRegion = popup && s.status !== "error";
+  const counting = popup && s.status === "downloading" && s.percent != null;
+  const side = popup ? "px-3.5" : "px-4";
+
   return (
-    <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="update-card-layer">
-    <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) closeUpdateCard(); }} />
-    <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} onKeyDown={onCardKeyDown} data-testid="update-card" className="animate-panel-in relative w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel p-4 shadow-2xl shadow-black/50 focus:outline-none">
-      <div className="flex items-start gap-2.5">
+    <>
+      <BoxHead className={cn("items-start justify-start gap-2.5", side, popup ? "pt-3.5" : "pt-4")}>
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
           <Sparkles size={14} />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1" role={liveRegion ? "status" : undefined} aria-live={liveRegion ? "polite" : undefined}>
           <div className="text-[13.5px] font-semibold text-ink">{title}</div>
-          <div className="mt-0.5 break-words text-[12.5px] text-ink-secondary" role={s.status === "error" ? "alert" : deferred ? "status" : undefined} title={subtitle}>
+          <div className="mt-0.5 break-words text-[12.5px] text-ink-secondary" role={s.status === "error" ? "alert" : deferred && !liveRegion ? "status" : undefined} title={subtitle} aria-hidden={counting || undefined}>
             {subtitle}
           </div>
+          {counting && <span className="sr-only">{spokenPercent(s.percent!)}</span>}
         </div>
-        {!busy && (
+        {(popup || !busy) && (
           <button
-            onClick={() => setDismissed(key)}
+            onClick={onDismiss}
             className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink"
-            title="Dismiss"
+            title={t("ux.l5a.dismiss")}
+            aria-label={t("ux.l5a.dismiss")}
           >
             <X size={14} />
           </button>
         )}
-      </div>
+      </BoxHead>
 
-      {highlights.length > 0 && !verificationRefused && s.status !== "error" && (
+      <BoxBody className={side}>
+      {!popup && highlights.length > 0 && !verificationRefused && s.status !== "error" && (
         <div className="mt-3" data-testid="update-highlights">
           <div className="text-[12px] font-medium text-ink-secondary">{t("updates.whatsNew")}</div>
           <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[12.5px] text-ink">
@@ -172,20 +264,21 @@ export function UpdateBanner() {
           />
         </div>
       )}
+      </BoxBody>
 
       {installing && (
-        <div className="mt-2.5 flex gap-2">
+        <BoxFoot className={cn("justify-start pt-2.5", side)}>
           <button
             disabled
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[13px] font-medium text-ink-secondary"
           >
             <Loader2 size={13} className="animate-spin" /> {handoff ? "Opening…" : "Restarting…"}
           </button>
-        </div>
+        </BoxFoot>
       )}
 
       {!busy && !deferred && (
-        <div className="mt-2.5 flex gap-2">
+        <BoxFoot className={cn("justify-start pt-2.5", side)}>
           {s.status === "available" && (
             <button
               onClick={() => {
@@ -253,16 +346,15 @@ export function UpdateBanner() {
             </button>
           )}
           <button
-            onClick={() => setDismissed(key)}
+            onClick={onDismiss}
             disabled={pending !== null}
             className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-control hover:text-ink disabled:opacity-50 disabled:hover:bg-transparent"
           >
             {/* after a hand-off there is nothing left to postpone */}
             {s.status === "handed-off" ? "Done" : t("updates.later")}
           </button>
-        </div>
+        </BoxFoot>
       )}
-    </div>
-    </div>
+    </>
   );
 }

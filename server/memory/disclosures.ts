@@ -8,6 +8,7 @@ import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { denyGeneration, denyLookup, denyReadMeter, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
 import { totalChanges } from "./revoke-marker.ts";
 import { STALE_MEM_LSN, type LineageReader, type LineageRef } from "./lineage-types.ts";
+import { withSecondLook } from "./lineage-allowance.ts";
 import { addTurnParents, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
 import { noteReceiptOutput, noteReceiptSession, wakeFlipMarker } from "./receipt-outputs.ts";
 import { threadNo } from "./thread-no.ts";
@@ -648,8 +649,8 @@ export function readerWithheldMessage(access: MemoryAccess): ((threadId: string,
 }
 
 // ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----
-/** continuationMemoryRevoked, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time). */
-export function continuationMemoryRevoked(...args: Parameters<typeof continuationMemoryRevokedWork>): ReturnType<typeof continuationMemoryRevokedWork> { return args[0].timed(() => continuationMemoryRevokedWork(...args)); }
+/** continuationMemoryRevoked, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time), with one second look when the clock stopped it. */
+export function continuationMemoryRevoked(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why: { reason?: string } = {}): boolean { return withSecondLook(allowance, why, turn => continuationMemoryRevokedWork(turn, threadId, driverInstance, nativeSession, access, why)); }
 
 /** A receipt as a write-time ref (DESIGN-WRITETIME 2.2, "receipts"): its lsn for the watermark, and the scopes of the records and sources it
  * holds for the footprint. A receipt already stale against the current policy revision or deletion epoch takes STALE_MEM_LSN, below every

@@ -380,6 +380,8 @@ describe("ACP turns (fake CLI)", () => {
       const text = existsSync(file) ? readFileSync(file, "utf8") : "";
       return text ? JSON.parse(text) as string[] : [];
     };
+    // A poll can also land mid-write and read a torn text (macOS, run 41194173862): that read simply has not seen it yet.
+    const polled = (file: string, method: string) => { try { return rpcs(file).includes(method); } catch (error) { if (error instanceof SyntaxError) return false; throw error; } };
     const until = async (seen: () => boolean) => { while (!seen()) await new Promise((resolve) => setTimeout(resolve, 10)); };
     const errors = (turnId: string) => recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId);
 
@@ -408,7 +410,7 @@ describe("ACP turns (fake CLI)", () => {
       Object.assign(process.env, { FAKE_ACP_RPC_DUMP: rpcFile, FAKE_ACP_SESSION_NEW_REFUSE_GATE: refuse, FAKE_ACP_TERM: "gate", FAKE_ACP_EXIT_GATE: exit });
       await create(driver());
       const { turnId } = await instance.adapter.sendTurn({ threadId: "t-setup-stopped", text: "hi" });
-      await until(() => rpcs(rpcFile).includes("session/new"));
+      await until(() => polled(rpcFile, "session/new"));
       const stopping = instance.adapter.stopAll().catch(() => undefined);
       writeFileSync(refuse, "");
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
@@ -432,7 +434,7 @@ describe("ACP turns (fake CLI)", () => {
       process.env.FAKE_ACP_RPC_DUMP = rpcFile;
       await create(driver(), "hang");
       const { turnId } = await instance.adapter.sendTurn({ threadId: "t-prompt-stopped", text: "hi" });
-      await until(() => rpcs(rpcFile).includes("session/prompt"));
+      await until(() => polled(rpcFile, "session/prompt"));
       await instance.adapter.stopAll();
       expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
       expect(errors(turnId)).toEqual([]);
@@ -897,6 +899,28 @@ describe("ACP turns (fake CLI)", () => {
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "permission", summary: want });
       await instance.adapter.respondToRequest(id, (opened as any).requestId, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed");
+    }
+  });
+
+  it("stamps a shell call whose only text is a title past the card's cap, and only that one", async () => {
+    const long = "x".repeat(5000);
+    for (const [id, toolCall, cut] of [
+      ["t-acp-title-cut", { toolCallId: "c1", kind: "execute", title: `${long} rm -rf ~` }, true],
+      ["t-acp-title-short", { toolCallId: "c2", kind: "execute", title: "Run it" }, false],
+      ["t-acp-command-long", { toolCallId: "c3", kind: "execute", title: "Run it", rawInput: { command: `echo ${long}` } }, false],
+      ["t-acp-fetch-title", { toolCallId: "c4", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
+    ] as const) {
+      process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+      await create(GrokAgentDriver, "permission");
+      await instance.adapter.sendTurn({ threadId: id, text: "go" } as any);
+      const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
+      expect(opened.toolInputTruncated === true, id).toBe(cut);
+      if (cut) {
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputCut: true, inputTruncated: true });
+        expect(verdict.approve).toBeNull();
+      }
+      await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     }
   });
@@ -1500,13 +1524,13 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
   });
 
-  it("a project question stays open past its normal deadline", async () => {
+  it("a question stays open past 31 minutes", async () => {
     await create(GrokAgentDriver, "fuigo-question");
     const original = globalThis.setTimeout;
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose" });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -2460,7 +2484,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     await create(GrokAgentDriver, "credit-exhausted");
     await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
-    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
   });
 
@@ -2476,7 +2500,7 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(await recorder.until(event=>event.type==="turn.completed")).toMatchObject({ok:false,stopReason:"rpc_error"});
     await expect(instance.adapter.awaitTurnTeardown!(threadId,turnId)).resolves.toEqual({closeConfirmed:true});
     const errors=recorder.events.filter(event=>event.type==="runtime.error");expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatchObject({message:"Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.",providerError:{kind:"payment",httpStatus:402},details:"ACP request: session/prompt\nProvider response: HTTP 402\nEngine error code: -32603"});
+    expect(errors[0]).toMatchObject({message:"Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.",providerError:{kind:"payment",httpStatus:402},details:"ACP request: session/prompt\nProvider response: HTTP 402\nEngine error code: -32603"});
     expect(errors[0].setup).not.toBe(true);expect(errors[0].providerError?.provider).toBeUndefined();
     expect(recorder.events.filter(event=>event.type==="turn.completed")).toHaveLength(1);
     expect(lifecycleRows(threadId).filter(row=>row.event==="rpc_requested"&&row.method==="session/prompt")).toHaveLength(1);
@@ -3173,9 +3197,9 @@ createInterface({ input: process.stdin }).on("line", line => {
 
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
-    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.");
+    expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
     expect(acpRpcErrorMessage({ message: "Authentication required", data: { token: "fake-secret-canary" } })).toBe("Authentication required");
-    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.");
+    expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. Top up at https://fluxrouter.ai/home/billing?token=fake-secret-canary" } })).toBe("Flux Router is out of credits. Add credits in Flux Router, then try again, or pick another AI in Models & engines.");
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai.evil.invalid/" } })).not.toContain("Flux Router is out of credits");
   });
 
@@ -3185,13 +3209,13 @@ createInterface({ input: process.stdin }).on("line", line => {
   it("answers a monthly spending limit without the credits advice the provider contradicts", () => {
     const capped = "API error (status 402 Payment Required): This account has reached its $10.00 monthly spend ceiling. The ceiling rises automatically as your account builds payment history — adding credit will not lift it. Email support@fluxrouter.ai if you need it raised sooner.";
     const message = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: capped } });
-    expect(message).toBe("Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine.");
+    expect(message).toBe("Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or pick another AI.");
     expect(message.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
     expect(message).not.toMatch(/\$10|support@|Add credits in/);
     // Without a fluxrouter.ai locator the limit is still recognised, but the
     // provider is not named on the strength of provider prose alone.
     const bare = acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "account_monthly_budget_exhausted" } });
-    expect(bare).toBe("This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.");
+    expect(bare).toBe("This account has reached its monthly spending limit with your AI service. Adding credit will not lift it: ask them to raise it, or pick another AI.");
     expect(bare.length).toBeLessThanOrEqual(ERROR_MESSAGE_MAX);
     // A ceiling is not an exhausted balance: the credits copy must not move.
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 402, message: "Your credit balance is exhausted. https://fluxrouter.ai/home/billing" } })).toContain("Add credits in Flux Router");
@@ -4011,6 +4035,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
         threadId: "t-timeout",
         text: "go",
         cwd: folder,
+        unattendedAskNote: true,
         folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
       });
       const opened = recorder.events.find((e) => e.type === "request.opened");
@@ -4088,6 +4113,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
         text: "go",
         cwd: folder,
         providerRoute: route,
+        unattendedAskNote: true,
         folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
       });
       expect(providerTurnHomes().length).toBe(before.length + 1);

@@ -6,7 +6,7 @@
 // --backend wasm runs the worker on the packaged ONNX Runtime WebAssembly files even where the native binding
 // loads (on Intel macOS that is the only executor, so the default run already proves it).
 import assert from "node:assert/strict";
-import { fork, spawn } from "node:child_process";
+import { fork, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -78,6 +78,7 @@ async function probe(configPath) {
   const checks = [];
   // On the harness deadline, reap the task-owned worker before the parent removes its fixture.
   const terminate = async () => {
+    console.error(`Probe hit the harness deadline after: ${checks.at(-1) ?? "no check"}\nWorker output:\n${workerOutput || "(none)"}`);
     if (worker && worker.exitCode === null && worker.signalCode === null) {
       await new Promise(done => { worker.once("exit", done); worker.kill("SIGKILL"); });
     }
@@ -117,13 +118,30 @@ async function probe(configPath) {
     worker.send({ type: "init", indexPath, authorityPath, modelDirectory: config.model, manifest });
     return worker.wait("initialised");
   }
+  /** What every thread of a held worker is doing (macOS only; the sample tool ships with the system). */
+  function nativeStacks(pid) {
+    if (process.platform !== "darwin") return "";
+    const sampled = spawnSync("/usr/bin/sample", [String(pid), "2"], { encoding: "utf8", timeout: 8000 });
+    return `\n${sampled.stdout ?? ""}`.slice(0, 16000);
+  }
   async function stop() {
     const child = worker;
     if (!child) return;
-    assert(child.exitCode === null && child.signalCode === null, "Worker exited before disconnect");
+    assert(child.exitCode === null && child.signalCode === null, `Worker exited before disconnect: ${child.exitCode}/${child.signalCode}\n${workerOutput}`);
     const exited = new Promise((done, reject) => {
-      const timer = setTimeout(() => { child.kill("SIGKILL"); reject(Error("Worker failed graceful disconnect deadline")); }, 10000);
-      child.once("exit", (code, signal) => { clearTimeout(timer); code === 0 && signal === null ? done() : reject(Error(`Worker exit ${code}/${signal}`)); });
+      const timer = setTimeout(() => {
+        const held = `still running${nativeStacks(child.pid)}`;
+        child.kill("SIGKILL");
+        reject(Error(`Worker failed graceful disconnect deadline: ${held}`));
+      }, 10000);
+      // Not "close": it never fires after the parent's own disconnect() (Node counts the IPC channel towards it and only a
+      // channel the other side closed settles that count). The worker's last stderr lines arrive with its pipes' own close.
+      const piped = Promise.all([child.stdout, child.stderr].map(stream => new Promise(ended => stream.once("close", ended))));
+      child.once("exit", async (code, signal) => {
+        clearTimeout(timer);
+        await Promise.race([piped, new Promise(waited => setTimeout(waited, 2000))]);
+        code === 0 && signal === null ? done() : reject(Error(`Worker exit ${code}/${signal}`));
+      });
     });
     child.disconnect();
     await exited;
@@ -162,6 +180,10 @@ async function probe(configPath) {
       model: `${manifest.model}@${manifest.revision}`, runtimeVersion: actualPackage.version, schemaSha256: digest(schemaPath), workerSha256: digest(workerPath),
       modelManifestSha256: digest(join(config.server, "memory-model-manifest.json")), runtimeManifestSha256: digest(join(config.server, "memory-runtime-manifest.json")),
       workerPeakRssBytes: semantic.workerPeakRssBytes, limitation: "Focused worker smoke; not full-service latency, UI, MCP, restore or cross-platform proof" }));
+  } catch (error) {
+    // Every failure path, assertions and the disconnect deadline included: what the worker printed, and the last check it passed.
+    console.error(`Probe failed after: ${checks.at(-1) ?? "no check"}\nWorker output:\n${workerOutput || "(none)"}`);
+    throw error;
   } finally {
     if (worker && worker.exitCode === null && worker.signalCode === null) {
       await new Promise(done => { worker.once("exit", done); worker.kill("SIGKILL"); });
