@@ -40,6 +40,7 @@
 //   FAKE_CODEX_CALL_LOG   file: one "<pid> <method>" line per request received
 //   (mode late-approval: turn/completed and an approval request arrive in one write)
 //   (mode split-approval: turn/completed, then an approval request split across two writes)
+//   FAKE_CODEX_UNIQUE_THREADS  1: thread/start hands out a new id each time, as the real one does
 //   FAKE_CODEX_RESUME_GATE  gate path: hold the thread/resume answer until that file exists (a slow start)
 //   FAKE_CODEX_RESUME_MODEL  thread/resume answers like Codex 0.163: `{thread, model, modelProvider}`, echoing the requested model
 //                     (default) | stale: names another model ("stale-model") | none: names no model
@@ -181,7 +182,10 @@ async function playSubagents(ask: (id: number, method: string, params: Record<st
   const asks = Number(process.env.FAKE_CODEX_BG_ASKS ?? "2");
   for (let i = 0; i < asks; i += 1) {
     out({ jsonrpc: "2.0", method: "item/started", params: { threadId: "child-1", turnId: "child-turn", item: { id: `c${i}`, type: "commandExecution", command: "cat file" } } });
-    const answer = await ask(9500 + i, "item/commandExecution/requestApproval", { threadId: "child-1", turnId: "child-turn", itemId: `c${i}`, command: `cat /outside/cwd/file-${i}.md` });
+    const asked = ask(9500 + i, "item/commandExecution/requestApproval", { threadId: "child-1", turnId: "child-turn", itemId: `c${i}`, command: `cat /outside/cwd/file-${i}.md` });
+    // FAKE_CODEX_BG_NO_WAIT: the helper finishes with its ask still open (a cell it yielded itself)
+    if (process.env.FAKE_CODEX_BG_NO_WAIT === "1") { void asked; continue; }
+    const answer = await asked;
     bgLog(`verdict:${answer?.decision ?? JSON.stringify(answer)}`);
   }
   if (process.env.FAKE_CODEX_BG_HOLD === "1") { bgLog("held"); return; }
@@ -388,7 +392,10 @@ const runFakeHooks = async (event: string, payload: Record<string, unknown>): Pr
         if (code === 2) return resolve({ kind: "block", reason: stderr.trim() });
         if (code !== 0) return resolve({ kind: "none" });
         try {
-          const out = JSON.parse(stdout)?.hookSpecificOutput;
+          const printed = JSON.parse(stdout);
+          // a Stop handler's documented output (rig, Codex 0.166.0)
+          if (printed?.decision === "block") return resolve({ kind: "block", reason: String(printed.reason ?? "") });
+          const out = printed?.hookSpecificOutput;
           if (out?.permissionDecision === "deny") return resolve({ kind: "deny", reason: String(out.permissionDecisionReason ?? "") });
         } catch { /* nothing printed */ }
         // a clean exit is a completed run and the call proceeds (rig, Codex 0.129.0 and 0.163.0: a printed allow is "unsupported", a silent exit is not)
@@ -461,6 +468,17 @@ const playScriptedTurn = async () => {
   dump();
   notify("item/completed", { item: { id: "m1", type: "agentMessage", text: "done from fake codex" } });
   dump();
+  // As Codex does before a turn ends: the Stop handlers run, and a block goes on with its reason as the next input (turn.rs).
+  // FAKE_CODEX_STOP_GATE: the Stop handlers run once this file exists (the test has seen the card open)
+  if (process.env.FAKE_CODEX_STOP_GATE) await waitForGate(process.env.FAKE_CODEX_STOP_GATE);
+  for (let active = false, n = 2; ; active = true, n++) {
+    const stop = await runFakeHooks("Stop", { stop_hook_active: active, last_assistant_message: "done from fake codex" });
+    if (stop.kind !== "block") break;
+    hookLog.push({ id: `stop-${n}`, name: "Stop", input: null, verdict: "block", reason: stop.reason });
+    notify("item/completed", { item: { id: `hp${n}`, type: "hookPrompt", fragments: [{ text: stop.reason }] } });
+    notify("item/completed", { item: { id: `m${n}`, type: "agentMessage", text: `went on ${n}` } });
+    dump();
+  }
   notify("turn/completed", { turn: { status: "completed" } });
 };
 
@@ -604,11 +622,13 @@ process.stdin.on("data", (chunk) => {
             process.exit(1);
           }
         }
-        out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-thread-1" }, model: "fake-codex-model" } });
+        out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: process.env.FAKE_CODEX_UNIQUE_THREADS === "1" ? `codex-thread-${process.pid}-${Date.now()}` : "codex-thread-1" }, model: "fake-codex-model" } });
         break;
       case "turn/start": {
         nativeThreadId = msg.params.threadId;
         noteExecutionPolicy(msg.params);
+        // Plan usage: an account rate-limit notification on the connection, as Codex sends after a model response.
+        if (process.env.FAKE_CODEX_RATE_LIMITS_EVENT) out({ jsonrpc: "2.0", method: "account/rateLimits/updated", params: JSON.parse(process.env.FAKE_CODEX_RATE_LIMITS_EVENT) });
         if (warmMode) nativeTurnId = `turn-${++turnSeq}`;
         if (process.env.FAKE_CODEX_STOP_RACE) {
           const heldId = msg.id;
@@ -997,6 +1017,15 @@ process.stdin.on("data", (chunk) => {
       // Command turns (codex-cli 0.156 v2 protocol, `codex app-server
       // generate-ts`). skills/list answers `{}` unless FAKE_CODEX_SKILLS
       // (a JSON SkillMetadata[]) is set, so older tests see no report.
+      // Plan usage (codex-cli >= 0.100 v2 protocol): FAKE_CODEX_RATE_LIMITS is the JSON result, "absent" answers as a
+      // Codex without the method does, "hang" never answers.
+      case "account/rateLimits/read": {
+        const mode = process.env.FAKE_CODEX_RATE_LIMITS;
+        if (mode === "hang") break;
+        if (mode === "absent") { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32600, message: "Invalid request: unknown variant `account/rateLimits/read`" } }); break; }
+        out({ jsonrpc: "2.0", id: msg.id, result: mode ? JSON.parse(mode) : { rateLimits: { limitId: "codex", limitName: null, primary: { usedPercent: 42, windowDurationMins: 300, resetsAt: 1900000000 }, secondary: { usedPercent: 7, windowDurationMins: 10080, resetsAt: 1900500000 }, credits: null, planType: "plus" }, rateLimitsByLimitId: null } });
+        break;
+      }
       case "skills/list":
         if (process.env.FAKE_CODEX_SKILLS_BATCHED) batched = [];
         out({

@@ -63,7 +63,7 @@ describe("a bot files a command server switched off", () => {
       expect(rev).toMatch(/^[0-9a-f]{12}$/);
 
       const messages = await messagesOf(botId);
-      expect(messages.some((m) => m.kind === "activity" && m.tool?.name === `${botName} added MCP server notes (off)`)).toBe(true);
+      expect(messages.some((m) => m.kind === "activity" && m.tool?.name === `${botName} added the connected tool notes (off)`)).toBe(true);
       const enableCard = messages.find((m) => m.kind === "options" && m.card?.kind === "mcpEnable");
       expect(enableCard.card).toMatchObject({ title: "Turn on notes?", mcpEnable: { name: "notes", rev, command: "npx", args: ["-y", "@x/notes-mcp"], pendingKeys: ["NOTES_TOKEN"] } });
       const keyCard = messages.find((m) => m.kind === "secret" && m.secret?.target === `mcp:notes:NOTES_TOKEN:${rev}`);

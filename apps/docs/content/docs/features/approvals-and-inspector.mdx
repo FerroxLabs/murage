@@ -12,6 +12,8 @@ When a bot wants to do something that needs your permission, Murage shows an app
 
 The same choices appear on the desktop, in the Inbox and on Telegram (where the first button reads Approve once). The Always allow buttons are offered in the desktop app only.
 
+A card waits for you on every engine, until you answer or the turn stops. A card that closes without your answer reads Not answered.
+
 <ProductScreenshot name="approval-card" alt="A Murage approval card shown inside a conversation" caption="Approvals stay in context with the request and the agent's explanation." />
 
 ## Approval levels: Ask, Auto, Full access and No limits
@@ -21,7 +23,7 @@ Choose how a conversation is approved from the permission chip beside the messag
 - **Ask** (Ask for approval): ask before actions that need your permission.
 - **Auto** (Auto mode): keep going automatically; destructive and sensitive actions still ask.
 - **Full access**: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.
-- **No limits**: runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.
+- **No limits**: in conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read. Publishing, browser payments and new email recipients keep their own approvals, and your own Telegram, Slack and Discord messages keep the cards they have now.
 
 The chip changes the level for this conversation. To set the level new conversations start at, open **Bot settings → Permissions → Approvals**. (Bot settings opens from the Bot settings button in the conversation header.)
 
@@ -40,11 +42,15 @@ Steps approved under Full access or No limits fold into one quiet line, "Approve
 
 ## No limits
 
-No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords, and before a command Murage recognizes as able to wipe your computer. Choose it when you want the behaviour Full access had before 0.1.59.
+In conversations you start at the Murage app or your paired phone, No limits runs commands and tools without asking. That includes reading and sending your keys and passwords and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it.
+
+It still asks before a wipe it can read, before an unknown program touches your home folder or a whole disk, before a command or file tool names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run. Publishing, browser payments and steps, and new email recipients keep their own approvals. Follow-on work after you answer a sign-in or setup card can still ask. Messages from other people, group chats, other bots, webhooks, routines, and your own Telegram, Slack and Discord messages keep the cards they have now.
+
+If a bot of yours was at No limits before 1.0.13, you accept the new terms once in the desktop app, and it applies to every bot. Until you do, your bots keep asking as they did. A bot at No limits shows a Review button under **Bot settings → Permissions → Approvals**.
 
 Full access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning ("Give @bot full access?" or "Give @bot no limits?", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.
 
-Some things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto. Images follow the level: under Full access and No limits they are made without asking in your own conversations and routines, with a record of each, unless you change **Bot settings → Permissions → Images**. A webhook, a contact or anyone else still gets the card. Your own messages from Telegram, Slack or Discord always show the card for images. Questions your bot asks you still reach you. Your own messages from Telegram, Slack or Discord, and setup requests like installing skills, proposing routines or trusting folders, also ask unless you switch on the two options under **Bot settings → Permissions → Approvals**. Routines run at their own level: see Routines.
+Some things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto. Images follow the level: under Full access and No limits they are made without asking in your own conversations and routines, with a record of each, unless you change **Bot settings → Permissions → Images**. A webhook, a contact or anyone else still gets the card. Your own messages from Telegram, Slack or Discord always show the card for images. Questions your bot asks you still reach you. Your own messages from Telegram, Slack or Discord, and setup requests like installing skills, proposing routines or trusting folders, also ask unless you switch on the two options under **Bot settings → Permissions → Approvals**; reading keys on your own channel messages still asks. Routines run at their own level: see Routines.
 
 ## Images
 
