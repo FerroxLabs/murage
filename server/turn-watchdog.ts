@@ -239,6 +239,14 @@ export class TurnWatchdog {
     }
   }
 
+  /** Change this turn's own silence limit while it runs (a room turn with a
+   * tool open). The number alone: no clock moves, so a late event can never
+   * buy a turn time through this, and another turn's watch is left alone. */
+  setRunningLimit(threadId: string, generation: string, stallMs: number): void {
+    const turn = this.owned(threadId, generation);
+    if (turn) turn.stallMs = stallMs;
+  }
+
   /** The silence a running turn on this thread is allowed (its own limit,
    * else the default). A tool whose work emits no engine events, such as a
    * long computer_exec, measures its own quiet against this. */

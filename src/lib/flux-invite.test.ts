@@ -226,6 +226,9 @@ describe("nothing in the app is gated on a Flux key", () => {
     // ("replace" the saved key or "connect" a first one) for the Bot email stub's Sign in with Flux (1.0.11
     // FLUX-SIGNIN-DEFAULT). It gates nothing: the stub and the section render either way.
     "lib/bot-email.ts",
+    // today/use-engine-health.ts reads `configured` only to word the Health line when the server has no answer yet
+    // (UX L2A). It gates nothing: every screen and engine works either way.
+    "components/today/use-engine-health.ts",
   ]);
 
   const sources = (): string[] => {

@@ -17,6 +17,7 @@ import { buildMemoryBundle, supersededThreadCheckpoint } from "./bundle.ts";
 import { threadCheckpointId } from "./checkpoints.ts";
 import { buildMemoryBundleAfterReset, MemoryDispatchReceipt } from "./dispatch.ts";
 import { forgetMemory } from "./forget.ts";
+import { drainRevokeMarker, INLINE_REVOCATION } from "./memory-revocation.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { continuationMemoryRevoked, filterMemoryReplay } from "./disclosures.ts";
 import { ownerMemoryTicket } from "./authority.ts";
@@ -37,14 +38,18 @@ function fixture(){
   const token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});
   return {registry,access:memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster)};
 }
-function checkpoint(text:string){
+function capture(text:string){
   const sourceId=`message:${threadId}:${randomUUID()}`;
   { const anchorId = randomUUID(); storeAnchorMessage(database(), threadId, anchorId, text); captureSource(database(),{id:sourceId,threadId,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
   const work=claimMemoryJob("dispatch-reset-fixture");
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
-  const result=refreshMemoryCheckpoint(work.id);
-  if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+  return {sourceId,jobId:work.id};
+}
+function checkpoint(text:string){
+  const {sourceId,jobId}=capture(text);
+  const result=refreshMemoryCheckpoint(jobId);
+  if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
   return {sourceId,id:result.checkpointId,version:result.version};
 }
 
@@ -136,13 +141,31 @@ it("keeps every other revocation of a disclosed checkpoint fail-closed",async()=
   {const {first,receipt}=await prepared("Forgotten evidence.");checkpoint("Roll.");
     forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
-    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
+    // The forget's window closes inline within 8 ms, or on the marker's next run on a slow box. The next checkpoint below waits for it.
+    drainRevokeMarker(database());}
   // An owner archive refuses the record itself, successor or not. It is a
   // change to one record, not to policy, so the refusal is the record's own.
   {const {first,receipt}=await prepared("Owner-archived.");
     archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
     expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+});
+
+// A forget holds everything newer as "checking" until its marker has run. The
+// marker gets 8 ms inline; past that (a loaded macOS runner, CI 41293546787
+// shard 3) a message captured at once rolls no checkpoint yet. The checkpoint
+// is not lost: worker-controller.ts tries again for a minute and it saves.
+it("saves a checkpoint that lands in a forget's open window once the window closes",()=>{
+  const first=checkpoint("Before the forget."),inline=INLINE_REVOCATION.ms;
+  INLINE_REVOCATION.ms=0;
+  try {
+    forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
+    const {jobId}=capture("After the forget.");
+    expect(refreshMemoryCheckpoint(jobId)).toEqual({status:"deferred",reason:"evidence-checking"});
+    expect(drainRevokeMarker(database()).pending).toBe(false);
+    expect(refreshMemoryCheckpoint(jobId)).toMatchObject({status:"updated",checkpointId:first.id});
+  } finally { INLINE_REVOCATION.ms=inline; }
 });
 
 // A direct turn reaches every thread its bot owns for recall, but a sibling
@@ -161,7 +184,7 @@ it("discloses only the dispatched thread's own checkpoint, so a busy sibling rol
     { const anchorId = randomUUID(); storeAnchorMessage(database(), sibling, anchorId, text); captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
     const work=claimMemoryJob("dispatch-sibling-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-fixture",captureWork(work));
-    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
     return {id:result.checkpointId,version:result.version};
   };
   const other=siblingCheckpoint("The sibling thread's working state.");
@@ -190,7 +213,7 @@ it("keeps a sibling thread's checkpoint out of recall too, even when it matches 
     { const anchorId = randomUUID(); storeAnchorMessage(database(), sibling, anchorId, text); captureSource(database(),{id:`message:${sibling}:${randomUUID()}`,threadId:sibling,messageId:anchorId,kind:"text",speaker:"owner",outcome:"recorded",text}); }
     const work=claimMemoryJob("dispatch-sibling-recall-fixture");if(!work)throw Error("No actual capture job");
     publishMemoryWork(work,"dispatch-sibling-recall-fixture",captureWork(work));
-    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+    const result=refreshMemoryCheckpoint(work.id);if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
     return {id:result.checkpointId,version:result.version};
   };
   const other=siblingCheckpoint("The sibling thread's result is its working state.");
@@ -239,7 +262,7 @@ function roomCheckpoint(thread:string,text:string,speaker="owner"){
   if(!work)throw Error("No actual capture job");
   publishMemoryWork(work,"dispatch-reset-fixture",captureWork(work));
   const result=refreshMemoryCheckpoint(work.id);
-  if(result.status!=="updated")throw Error("Expected actual checkpoint publication");
+  if(result.status!=="updated")throw Error(`Expected actual checkpoint publication: ${JSON.stringify(result)}`);
   return {sourceId,id:result.checkpointId,version:result.version};
 }
 
@@ -314,13 +337,16 @@ it("keeps owner revocation of a disclosed room checkpoint fail-closed for the me
   {const {first,receipt}=await prepared("Forgotten room evidence.");roomCheckpoint(roomThread,"Roll.");
     forgetMemory(ownerMemoryTicket(),{kind:"source",id:first.sourceId,revision:1});
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_CONTEXT_REVOKED");
-    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
+    drainRevokeMarker(database());}
   // An owner archive of the room checkpoint refuses that record (a record
   // change, not a policy change).
   {const {first,receipt}=await prepared("Owner-archived room checkpoint.");
     archiveMemoryRecord(ownerMemoryTicket(),first.id,first.version);
     expect(()=>receipt.assertCurrent()).toThrow("MEMORY_RECORD_UNAVAILABLE");
-    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");}
+    expect(()=>receipt.accepted()).toThrow("MEMORY_CONTEXT_REVOKED");
+    // An owner archive opens the same window as a forget.
+    drainRevokeMarker(database());}
   // Archived without a successor is not supersession.
   {const {first,receipt}=await prepared("Archived room checkpoint, no successor.");
     database().prepare("UPDATE memory_records SET state='archived' WHERE id=? AND version=?").run(first.id,first.version);

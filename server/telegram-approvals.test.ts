@@ -26,11 +26,10 @@ it("deny button uses the same single-action binding", async () => {
   const f = fixture(); await f.publish(); await f.callback({ data: f.sendMessage.mock.calls[0][0].buttons[1].data });
   expect(f.resolve).toHaveBeenCalledWith(expect.anything(), "deny");
 });
-it.each(["sender", "chat", "message", "forged", "expired", "changed", "resolved", "revoked"])("rejects %s callbacks", async scenario => {
+it.each(["sender", "chat", "message", "forged", "changed", "resolved", "revoked"])("rejects %s callbacks", async scenario => {
   const f = fixture(); await f.publish();
   const patch: any = scenario === "sender" ? { senderId: "8" } : scenario === "chat" ? { chatId: "8" }
     : scenario === "message" ? { messageId: 20 } : scenario === "forged" ? { data: "forged:a" } : {};
-  if (scenario === "expired") f.expire();
   if (scenario === "changed") f.change();
   if (scenario === "resolved") f.remove();
   if (scenario === "revoked") f.manager.clear();
@@ -52,10 +51,15 @@ it("settles denied card once and repeats the actual result for a second click", 
   expect(f.answerCallbackQuery.mock.calls.at(-1)![0].text).toBe("Denied.");
   expect(f.resolve).toHaveBeenCalledTimes(1);
 });
-it("expires visible buttons without resolving the action", async () => {
+it("an approval button still works past 31 minutes", async () => {
   const f = fixture(); await f.publish(); f.expire(); await f.publish(); await f.callback();
-  expect(f.settleApprovalMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("Expired.") }));
-  expect(f.resolve).not.toHaveBeenCalled();
+  expect(f.settleApprovalMessage).not.toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("Expired.") }));
+  expect(f.resolve).toHaveBeenCalledTimes(1); expect(f.sendMessage).toHaveBeenCalledTimes(1);
+});
+it("an unknown outcome keeps its offer past the cap while the card waits, so no fresh buttons come back", async () => {
+  const f = fixture(); f.resolve.mockRejectedValueOnce(new Error("uncertain"));
+  await f.publish(); await f.callback(); await f.publish();
+  expect(f.sendMessage).toHaveBeenCalledTimes(1);
 });
 it("card edit failure does not undo or repeat an allowed decision", async () => {
   const f = fixture(); f.settleApprovalMessage.mockRejectedValueOnce(new Error("offline"));
@@ -125,7 +129,7 @@ it("publishes a question with one button per option, numbered text, and the desk
   expect(f.sendMessage).toHaveBeenCalledTimes(1);
   const sent = f.sendMessage.mock.calls[0][0];
   expect(sent.text).toContain("Ember has a question\nFormat: Which format should the report use?\n\n1. Summary: A short overview\n2. Detailed");
-  expect(sent.text).toContain("Expires in 30 minutes");
+  expect(sent.text).not.toMatch(/expires in/i);
   expect(sent.keyboard.map((row: any[]) => row.map(item => item.text))).toEqual([["Summary"], ["Detailed"], ["Reply with text", "Skip question"]]);
   for (const item of f.buttons()) expect(Buffer.byteLength(item.data)).toBeLessThanOrEqual(64);
   await f.tap(f.button("Detailed").data);
@@ -205,7 +209,7 @@ it("Skip tells the bot nobody answered, exactly once, and a delivery error is re
   expect(g.answer).toHaveBeenCalledTimes(1);
   expect(g.lastToast()).toBe("Not delivered: This question was already settled.");
 });
-it("rejects forged, foreign, stale and expired question taps and never answers a question that left the card list", async () => {
+it("rejects forged, foreign and stale question taps, takes one past 31 minutes, and never answers a question that left the card list", async () => {
   const f = questionFixture([closed]); await f.publish();
   const data = f.button("Yes").data;
   await f.tap("f".repeat(48) + ":q0:o0"); await f.tap(data.replace(/:o0$/, ":o7")); await f.tap(data, 18);
@@ -214,8 +218,8 @@ it("rejects forged, foreign, stale and expired question taps and never answers a
   f.remove(); await f.tap(data); expect(f.answer).not.toHaveBeenCalled();
 
   const g = questionFixture([closed]); await g.publish(); g.expire(); await g.publish();
-  expect(g.settleApprovalMessage).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining("Expired.") }));
-  await g.tap(g.button("Yes").data); expect(g.answer).not.toHaveBeenCalled();
+  expect(g.sendMessage.mock.calls[0][0].text).not.toMatch(/expires in/i);
+  await g.tap(g.button("Yes").data); expect(g.answer).toHaveBeenCalledTimes(1);
 });
 it("keeps a question in-app when it cannot be shown whole or when the harness offers no answer path", async () => {
   const wide = { ...closed, question: "x".repeat(2000), options: Array.from({ length: 10 }, (_, i) => ({ label: `Option ${i}`, description: "y".repeat(200) })) };

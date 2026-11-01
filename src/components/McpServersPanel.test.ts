@@ -114,9 +114,9 @@ describe("every card state", () => {
     expect(html).toContain('data-view="sign-in"');
     expect(html).toContain("cloud.comfy.org uses sign-in.");
     expect(html).toContain("Sign in to cloud.comfy.org");
-    expect(html).toContain("Use an API key instead");
+    expect(html).toContain("Use a key instead");
     // the key field is not drawn until the owner asks for it
-    expect(html).not.toContain("Paste your API key");
+    expect(html).not.toContain("Paste your key");
   });
 
   it("leads a key card with the field, the header chooser and the ComfyUI header pre-picked", () => {
@@ -124,7 +124,7 @@ describe("every card state", () => {
     expect(state.header).toBe("x-api-key");
     const html = card(state);
     expect(html).toContain('data-view="key"');
-    expect(html).toContain("This server needs an API key.");
+    expect(html).toContain("This tool connection needs a key.");
     expect(html).toContain('type="password"');
     expect(html).toContain("Sent as");
     expect(html).toContain("Authorization: Bearer");
@@ -135,9 +135,9 @@ describe("every card state", () => {
   });
 
   it("names a rejected key, and a sign-in that ended", () => {
-    expect(card(comfy({ ok: false, reason: "key-rejected", error: "x", apiKey: { headerHint: "authorization" } }, { tested: true }))).toContain("cloud.comfy.org did not accept this API key. Check it and try again.");
+    expect(card(comfy({ ok: false, reason: "key-rejected", error: "x", apiKey: { headerHint: "authorization" } }, { tested: true }))).toContain("cloud.comfy.org did not accept this key. Check it and try again.");
     const ended = card(comfy({ ok: false, reason: "sign-in-ended", error: "x", signIn: { host: "cloud.comfy.org" } }, { tested: true }));
-    expect(ended).toContain("Your sign-in to cloud.comfy.org has ended. Sign in again.");
+    expect(ended).toContain("cloud.comfy.org signed you out. Sign in again to keep using it.");
     expect(ended).toContain("Sign in again");
   });
 
@@ -163,7 +163,7 @@ describe("every card state", () => {
     const expected: Array<[string, string]> = [
       ["not-found", "Murage could not find cloud.comfy.org. Check the link and your internet connection."],
       ["unreachable", "cloud.comfy.org did not accept the connection. Check the link, or try again in a moment."],
-      ["wrong-address", "Nothing at this address answers as an MCP server. Check that you copied the whole link."],
+      ["wrong-address", "Nothing at this address answers as a tool connection. Check that you copied the whole link."],
       ["https-required", "Murage connects to servers on the internet over https only. Check the link starts with https://."],
       ["address-changed", "This name now points somewhere else than when you added it. Remove it and add it again if that is expected."],
       ["server-error", "cloud.comfy.org had a problem answering. Try again in a moment."],
@@ -295,8 +295,8 @@ describe("every card state", () => {
     const html = card(comfy(COMFY_401));
     expect(html).toContain("cloud.comfy.org verwendet eine Anmeldung.");
     expect(html).toContain("Bei cloud.comfy.org anmelden");
-    expect(html).toContain("Stattdessen einen API-Schlüssel verwenden");
-    expect(html).not.toContain("Use an API key instead");
+    expect(html).toContain("Stattdessen einen Schlüssel verwenden");
+    expect(html).not.toContain("Use a key instead");
   });
 });
 

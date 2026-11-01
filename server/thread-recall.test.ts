@@ -83,7 +83,7 @@ function rig(opts: { thread?: string; botId?: string; notOwnerAudience?: boolean
   const access = () => memoryAccess(registry, claim, () => roster);
   const turn = openTurnLineage(db(), { threadId: thread, turnId: memberTurnId(botId) + generation });
   if (opts.session !== false) transaction(tx => writeSessionLineage(tx, { ...S1, threadId: thread }, turn));
-  const lineage = beginTurnLineage({ threadId: thread, botId, roots: { roots: new Set(), over: false }, instanceId: "claude", generation, turn, shown: [], withheldNow: () => false });
+  const lineage = beginTurnLineage({ threadId: thread, botId, roots: { roots: new Set(), over: false }, instanceId: "claude", generation, turn, startGeneration: 0, shown: [], withheldNow: () => false });
   const events: string[] = [];
   const state: ThreadRecallState = { calls: 0, released: new Map(), sealed: false };
   const hooks: Rig["hooks"] = { ownerGeneration: generation };

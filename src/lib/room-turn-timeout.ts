@@ -1,5 +1,8 @@
 // A room reply's silence limit (server/config.ts): minutes with no activity
-// before the reply is stopped. Never under the direct chats' 20 minutes.
+// before the reply is stopped. The minimum is 20 minutes; direct chats use
+// their own, longer limit (one hour). While a tool is open a room reply gets at
+// least ROOM_OPEN_TOOL_MINUTES (server/room-turn-timeout.ts).
+export const ROOM_OPEN_TOOL_MINUTES = 60;
 export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;

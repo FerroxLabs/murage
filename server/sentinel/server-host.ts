@@ -21,7 +21,8 @@ import { BackupCoordinator } from "../backup-coordinator.ts";
 import { realpathSync } from "node:fs";
 import { sentinelInstallationIdOf } from "../../shared/sentinel-installation.mjs";
 import type { HealthPageNotification } from "../../shared/notification-preferences.ts";
-import { DIGEST_ROWS, severityRank, type HealthDigest, type HealthInbox, type SentinelView, type ViewRow } from "../../shared/sentinel-view.ts";
+import { foldHealthRows, strongestHealthLevel } from "../../shared/health-levels.ts";
+import type { HealthDigest, HealthInbox, SentinelView } from "../../shared/sentinel-view.ts";
 import { HealthPublisher, startHealthProducer, stopHealthProducer, type ProducerRuntime } from "../health/publisher.ts";
 import { StatsPublisher, type DbStatsObservationRow } from "../health/stats-publisher.ts";
 import { HealthDelivery, deliverPages } from "./delivery.ts";
@@ -76,17 +77,18 @@ export interface ServerSentinel {
   publishStats(): Promise<void>;
   /** Health for an owner's Inbox read. Never attach this to a less privileged response. */
   inbox(): HealthInbox;
+  /** The latest daily summary, for the Health screen. */
+  digest(): HealthDigest | null;
   /** Where the owner API reads from (cached for a minute). */
   locate(): LocateResult;
   stop(): Promise<void>;
 }
 
-/** Unresolved rows for a card: impact, then recency, at most DIGEST_ROWS. */
-export function cardRows(view: SentinelView | null): ViewRow[] {
-  if (!view) return [];
-  return view.rows.filter(row => row.state !== "resolved")
-    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || b.lastSeenAt - a.lastSeenAt)
-    .slice(0, DIGEST_ROWS);
+/** What the Inbox read carries from a view: the strongest open level, and the issues the owner must act on, folded. */
+export function inboxHealth(status: HealthInbox["status"], view: SentinelView | null): HealthInbox {
+  const open = view ? view.rows.filter(row => row.state !== "resolved") : [];
+  const needs = foldHealthRows(open).filter(fold => fold.level === "act").map(fold => ({ titleKey: fold.titleKey, issues: fold.issues, lastSeenAt: fold.lastSeenAt }));
+  return { status, level: strongestHealthLevel(open), needs };
 }
 
 export function startServerSentinel(options: ServerSentinelOptions): ServerSentinel {
@@ -166,12 +168,13 @@ export function startServerSentinel(options: ServerSentinelOptions): ServerSenti
     inbox(): HealthInbox {
       try {
         const where = locate();
-        if (!where.ok) return { status: where.reason === "descriptor-missing" || where.reason === "output-root" ? "waiting" : "unavailable", summary: null, rows: [], digest: delivery?.currentDigest() ?? null };
+        if (!where.ok) return inboxHealth(where.reason === "descriptor-missing" || where.reason === "output-root" ? "waiting" : "unavailable", null);
         // The owner's view: the host's stale heartbeat or registration-needed reads as waiting coverage.
         const view = readOwnerView(where.value);
-        return { status: view ? "ready" : "waiting", summary: view?.summary ?? null, rows: cardRows(view), digest: delivery?.currentDigest() ?? null };
-      } catch { return { status: "unavailable", summary: null, rows: [], digest: null }; }
+        return inboxHealth(view ? "ready" : "waiting", view);
+      } catch { return inboxHealth("unavailable", null); }
     },
+    digest(): HealthDigest | null { try { return delivery?.currentDigest() ?? null; } catch { return null; } },
     async stop() {
       for (const timer of timers.splice(0)) { clearInterval(timer); clearTimeout(timer as unknown as ReturnType<typeof setTimeout>); }
       if (runtime) await stopHealthProducer(runtime);
