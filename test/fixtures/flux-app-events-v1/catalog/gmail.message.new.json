@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "grade": "DRAFT",
+  "spec": {
+    "eventType": "gmail.message.new",
+    "toolkit": "gmail",
+    "triggerSlug": "GMAIL_NEW_GMAIL_MESSAGE",
+    "kind": "poll",
+    "candidate": true,
+    "reserve": false,
+    "qualified": false,
+    "grade": "DRAFT",
+    "sourceKeyPrefix": "gmail:",
+    "sourceKeyFields": [
+      "id"
+    ],
+    "occurredAtField": "message_timestamp",
+    "occurredAtFormat": "iso8601_or_epoch_ms",
+    "maxAgeSec": 3600,
+    "triggerConfigSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "labelIds": {
+          "type": "string",
+          "maxLength": 256,
+          "default": "INBOX"
+        }
+      }
+    },
+    "filterSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "projectionFields": [
+      "label_ids",
+      "message_timestamp"
+    ],
+    "resourceRefFields": [
+      {
+        "field": "id",
+        "kind": "gmail.message_id"
+      },
+      {
+        "field": "thread_id",
+        "kind": "gmail.thread_id"
+      }
+    ],
+    "matchedResourceRead": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+    "matchedResourceArgs": {
+      "message_id": "payload.id",
+      "user_id": "literal.me",
+      "format": "literal.metadata"
+    },
+    "docUrl": "https://docs.composio.dev/toolkits/gmail.md",
+    "notes": "Polling: the adapter never sends an interval (Composio floor is 15 minutes) and the first poll is a baseline, not a backfill. id and message_timestamp are optional in the payload; a missing one makes the event unidentifiable. sender, subject, to, message_text, payload, preview and attachment_list never enter a projection."
+  },
+  "example": {
+    "data": {
+      "id": "19b11732c1b578fd",
+      "message_id": "<synthetic-1@mail.example.test>",
+      "thread_id": "19b11732c1b578fd",
+      "label_ids": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "message_timestamp": "2026-10-26T09:15:30Z",
+      "sender": "sender@example.test",
+      "to": "owner@example.test",
+      "subject": "synthetic subject",
+      "message_text": "synthetic message body",
+      "attachment_list": []
+    },
+    "projection": {
+      "fields": {
+        "label_ids": [
+          "INBOX",
+          "UNREAD"
+        ],
+        "message_timestamp": "2026-10-26T09:15:30Z"
+      },
+      "resourceRefs": [
+        {
+          "kind": "gmail.message_id",
+          "id": "19b11732c1b578fd"
+        },
+        {
+          "kind": "gmail.thread_id",
+          "id": "19b11732c1b578fd"
+        }
+      ]
+    },
+    "sourceKey": "gmail:19b11732c1b578fd",
+    "occurredAt": "2026-10-26T09:15:30Z"
+  }
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  desktopFluxEnvironment,
   migrateMcpServerSecrets,
   dropMcpServerSecrets,
   migrateWorkspaceCredentials,
@@ -454,5 +455,45 @@ describe("command servers: env values leave config.json (MCP-LINK T16)", () => {
     expect(dropMcpServerSecrets(credentials, "notes", 100)).toBe(credentials);
     expect(dropMcpServerSecrets(credentials, "notes", 101).mcpServerSecrets.notes).toBeUndefined();
     expect(dropMcpServerSecrets(credentials, "notes").mcpServerSecrets.notes).toBeUndefined();
+  });
+});
+
+describe("desktop child Flux env: newest saved key wins over the launching shell", () => {
+  const SHELL = "sk-flux-FAKE_STALE_SHELL", SAVED = "sk-flux-FAKE_SAVED";
+  const childFlux = (base, credentials, platform = "darwin") => ({ ...desktopFluxEnvironment(base, credentials, platform), ...workspaceCredentialEnv(credentials) });
+  it("a managed store key beats a stale shell key and offers no environment choice", () => {
+    const env = childFlux({ PATH: "/bin", FLUX_API_KEY: SHELL }, { fluxApiKey: SAVED, fluxConnectionManaged: "true" });
+    expect(env.FLUX_API_KEY).toBe(SAVED);
+    expect(env.MURAGE_FLUX_AMBIENT_KEY).toBe("");
+    expect(env.PATH).toBe("/bin");
+  });
+  it("a managed disconnect stays empty; the shell key never fills it", () => {
+    const env = childFlux({ FLUX_API_KEY: SHELL }, { fluxApiKey: "", fluxConnectionManaged: "true" });
+    expect(env.FLUX_API_KEY).toBe("");
+    expect(env.MURAGE_FLUX_AMBIENT_KEY).toBe("");
+  });
+  it("with no stored key the shell key is a choice, never FLUX_API_KEY (config.json stays the seed)", () => {
+    const env = childFlux({ FLUX_API_KEY: SHELL, MURAGE_FLUX_CONNECTION_ALIASES: "[]" }, {});
+    expect(Object.hasOwn(env, "FLUX_API_KEY")).toBe(false);
+    expect(Object.hasOwn(env, "MURAGE_FLUX_CONNECTION_ALIASES")).toBe(false);
+    expect(env.MURAGE_FLUX_AMBIENT_KEY).toBe(SHELL);
+  });
+  it("an unmanaged stored key wins; a different shell key is offered, the same one is not", () => {
+    expect(childFlux({ FLUX_API_KEY: SHELL }, { fluxApiKey: SAVED })).toMatchObject({ FLUX_API_KEY: SAVED, MURAGE_FLUX_AMBIENT_KEY: SHELL });
+    expect(childFlux({ FLUX_API_KEY: SAVED }, { fluxApiKey: SAVED })).toMatchObject({ FLUX_API_KEY: SAVED, MURAGE_FLUX_AMBIENT_KEY: "" });
+  });
+  it("an inherited ambient value is never passed through", () => {
+    expect(childFlux({ MURAGE_FLUX_AMBIENT_KEY: SHELL }, { fluxApiKey: SAVED, fluxConnectionManaged: "true" }).MURAGE_FLUX_AMBIENT_KEY).toBe("");
+  });
+  it("on Windows any casing of FLUX_API_KEY is removed", () => {
+    const env = childFlux({ Flux_Api_Key: SHELL, Path: "C:\\bin" }, { fluxApiKey: SAVED, fluxConnectionManaged: "true" }, "win32");
+    expect(Object.keys(env).filter(name => name.toUpperCase() === "FLUX_API_KEY")).toEqual(["FLUX_API_KEY"]);
+    expect(env.FLUX_API_KEY).toBe(SAVED);
+    expect(env.Path).toBe("C:\\bin");
+  });
+  it("never changes the env it was given", () => {
+    const base = { FLUX_API_KEY: SHELL };
+    desktopFluxEnvironment(base, {}, "darwin");
+    expect(base).toEqual({ FLUX_API_KEY: SHELL });
   });
 });

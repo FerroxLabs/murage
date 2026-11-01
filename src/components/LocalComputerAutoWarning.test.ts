@@ -41,8 +41,8 @@ describe("the this-computer warning names the mode being switched on", () => {
     expect(renderToStaticMarkup(createElement(LocalComputerAutoWarning, { open: false, mode: "full", onCancel: () => {}, onConfirm: () => {} }))).toBe("");
   });
 
-  it("is told which mode by every caller that can switch on Full access", () => {
-    expect(read("./Composer.tsx")).toMatch(/mode=\{autoWarn === false \? "auto" : autoWarn\}/);
-    expect(read("./SettingsPanel.tsx")).toMatch(/mode=\{localAutoWarning === "full" \|\| localAutoWarning === "unlimited" \? localAutoWarning : "auto"\}/);
+  it("is Auto's alone in both callers: a higher pick to Full access or No limits is the confirm card, which says this itself", () => {
+    expect(read("./Composer.tsx")).toContain('<LocalComputerAutoWarning\n        open={autoWarn}\n        mode="auto"');
+    expect(read("./SettingsPanel.tsx")).toMatch(/<LocalComputerAutoWarning\s+open=\{localAutoWarning !== null\}\s+mode="auto"/);
   });
 });

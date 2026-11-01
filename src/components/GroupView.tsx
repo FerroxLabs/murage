@@ -30,6 +30,8 @@ import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { settledHeldQueue } from "./EngineNotes";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { FolderPromptRow } from "./FolderPromptRow";
+import { folderPromptShowing } from "../../shared/mac-folder-prompt";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { roomTranscript } from "@/lib/room-transcript";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -465,7 +467,9 @@ const Transcript = memo(function Transcript({
                   : undefined}
               />
             </div>
-          ) : m.kind === "activity" && m.murage?.held && settledHeldQueue(m.murage.held.count) ? null : m.kind === "activity" && m.tool ? (
+          ) : m.kind === "activity" && m.murage?.held && settledHeldQueue(m.murage.held.count) ? null : m.kind === "activity" && m.folderPrompt ? (
+            folderPromptShowing(m, Date.now()) && m.tool ? <FolderPromptRow text={m.tool.name} /> : null
+          ) : m.kind === "activity" && m.tool ? (
             isApprovedStepsLine(m) ? (
               <ApprovedStepsRow message={m} />
             ) : isImageRecordLine(m) ? (
