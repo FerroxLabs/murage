@@ -32,9 +32,12 @@ it("rejects wrong provider, app, team, owner, DM, message and ordinary text with
   }
   expect(f.resolve).not.toHaveBeenCalled(); expect(await f.manager.receive(f.event())).toBe(true);
 });
-it.each(["expired", "changed", "answered", "inactive", "cleared"])("rejects %s offers", async kind => {
+it("a button still works past 11 minutes", async () => {
+  const f = fixture(); await f.manager.publish(); const event = f.event(); f.expire(); await f.manager.publish();
+  expect(await f.manager.receive(event)).toBe(true); expect(f.resolve).toHaveBeenCalledTimes(1);
+});
+it.each(["changed", "answered", "inactive", "cleared"])("rejects %s offers", async kind => {
   const f = fixture(); await f.manager.publish(); const event = f.event();
-  if (kind === "expired") f.expire();
   if (kind === "changed") f.pending([{ id: "card", fingerprint: "changed", summary: "Delete fixture.txt" }]);
   if (kind === "answered") f.pending([]);
   if (kind === "inactive") f.disconnect();

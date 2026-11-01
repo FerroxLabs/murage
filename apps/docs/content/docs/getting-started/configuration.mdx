@@ -1,40 +1,40 @@
 ---
 title: Configuration
-description: Understand engine paths, credentials, and the local configuration boundary.
+description: Point Murage at your AI apps, add optional keys, and see what developers can change in the settings file.
 icon: Settings
 ---
 
-Most users configure Murage from the app. The packaged desktop validates credentials before saving them and stores supported secrets with the operating system's secure storage.
+Most people set Murage up from the app. The desktop app checks what you enter before saving it (for some services, such as Box and voice, it also tests the key), and keeps keys in your computer's own secure storage.
 
 ## Engine discovery
 
-Murage checks the inherited process path, common install locations, and the login shell. If an engine is installed somewhere unusual, open **Settings → Engines** and choose its executable explicitly.
+Murage looks for your AI apps in the usual install places and in the same places your terminal looks. If an engine is installed somewhere unusual, open **Settings → Models & engines** and use **Choose location…** on that engine.
 
-Explicit paths are useful when you:
+Choosing the location yourself helps when you:
 
-- keep multiple CLI versions;
-- use a wrapper script;
-- installed an engine in a directory desktop apps cannot discover; or
-- launch Murage from a Windows shortcut or Linux application menu with a different environment from your terminal.
+- keep more than one version of an AI app;
+- start the app through your own wrapper;
+- installed it in a folder desktop apps cannot see; or
+- open Murage from a Windows shortcut or a Linux app menu, which can see different settings from your terminal.
 
-## Optional credentials
+## Optional keys
 
-| Credential | Enables |
+| Key | What it turns on |
 |---|---|
 | Flux Router key | Models and connected apps |
-| Box API key | Hosted Linux computers |
-| ElevenLabs API key | Spoken replies and voice mode |
-| OpenCode API key | Optional alternative to an existing OpenCode provider login |
+| Box key | Linux computers that run online |
+| ElevenLabs key | Spoken replies and voice mode |
+| OpenCode key | Another way to use OpenCode, instead of your OpenCode sign-in |
 
-Local agent chat works without these credentials.
+Chatting with the AI apps on this computer works without any of these keys.
 
 ## Environment configuration
 
-Source and headless runs can set supported environment variables before starting the harness. The app-level settings are preferable for normal packaged use because they validate inputs and keep secret values out of the renderer.
+For developers who run Murage from source or without a window: you can set supported startup settings (environment variables, settings a program reads when it starts) before starting Murage's background service. In the normal desktop app, use Settings instead: it checks what you enter and keeps keys out of the window's own code.
 
 ### Per-instance Claude tool scope
 
-Source and headless installations can give separate Claude instances different built-in tool sets in `~/.murage/config.json`:
+For developers who run Murage from source or without a window: separate Claude engines can get different built-in tools in Murage's settings file (`~/.murage/config.json`, a text file in JSON format):
 
 ```json
 {
@@ -50,8 +50,8 @@ Source and headless installations can give separate Claude instances different b
 }
 ```
 
-`tools` selects Claude's available built-ins; an explicit empty array disables every built-in, while omitting it keeps Claude's default set. `disallowedTools` applies Claude tool-name patterns as an additional deny list. These settings do not grant or pre-approve MCP integrations, which remain controlled by the instance's mounted integrations and Murage permission flow.
+`tools` picks which of Claude's built-in tools it gets: an empty list turns them all off, and leaving it out keeps Claude's usual set. `disallowedTools` lists Claude tool names, or name patterns, it may never use. These settings do not give or pre-approve connected tools (MCP servers, the add-on tools a bot can use); those still follow that engine's connected tools and Murage's approval cards.
 
-<Callout type="warn" title="Do not put secrets in prompts">
-  A prompt becomes conversation history and may be sent to an agent provider. Use App Settings or environment configuration for credentials.
+<Callout type="warn" title="Keep keys and passwords out of messages">
+  A message becomes part of the conversation and may be sent to your AI service. Add keys in Settings instead.
 </Callout>

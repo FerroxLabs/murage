@@ -142,6 +142,8 @@ export function rememberEngine(file: string, choice: EngineChoice): void {
   } catch { /* a missing memory only means the next start probes first */ }
 }
 
+export const BOOT_PROBE_WAIT_MS = 20_000;
+
 /** The choice to start with. With bots present and a remembered choice, that
  * choice at once and `refreshed` resolves once the probe has run; otherwise
  * the probe is awaited (a first run, or nothing remembered). */
@@ -152,11 +154,22 @@ export async function bootEngineChoice(opts: {
    * A choice that fails this is not adopted, and the probe is awaited as on a
    * first run. Omitted means every remembered choice counts. */
   usable?: (choice: EngineChoice) => boolean;
+  /** With bots in place, the longest the start waits for the probe when nothing can be remembered (default BOOT_PROBE_WAIT_MS). */
+  probeWaitMs?: number;
 }): Promise<{ refreshed: Promise<void> }> {
   const run = async () => { const choice = await opts.probe(); opts.adopt(choice); rememberEngine(opts.file, choice); };
   const saved = opts.hasBots ? readRememberedEngine(opts.file) : null;
   const remembered = saved && (opts.usable?.(saved) ?? true) ? saved : null;
-  if (!remembered) { await run(); return { refreshed: Promise.resolve() }; }
+  if (!remembered) {
+    // A first run needs the choice to seed its first bot: the probe is awaited whole. Bots in place need it only for the next new bot,
+    // so a slow probe finishes in the background and the port opens on time.
+    if (!opts.hasBots) { await run(); return { refreshed: Promise.resolve() }; }
+    const probing = run();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => { timer = setTimeout(resolve, opts.probeWaitMs ?? BOOT_PROBE_WAIT_MS); });
+    try { await Promise.race([probing, waited]); } finally { clearTimeout(timer); }
+    return { refreshed: probing.catch(() => {}) };
+  }
   opts.adopt(remembered);
   return { refreshed: run().catch(() => {}) };
 }

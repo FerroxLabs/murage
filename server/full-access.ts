@@ -1,13 +1,14 @@
 // Full access: the approval level above Auto.
 //
 // Auto keeps a bot working but still stops at anything that looks
-// destructive or sensitive. Full access stops at nothing the owner started:
-// no approval card for commands, credential or personal-file reads, the
-// host-control guard, or bot-to-bot contact. What still asks, because it is
-// not the owner's own input or not a permission at all, is decided where each
-// card is raised — `autoVerdict` for tool permissions, the peer-contact gate
-// for ask/delegate — and the desktop's warning (src/components/FullAccessWarning.tsx)
-// says so.
+// destructive or sensitive. Full access keeps going on what the owner started
+// but stops at the stop line and the key guard. No limits lifts the stop line,
+// and on a turn the owner started himself, once he has accepted the current
+// terms, the key guard too, all but its gate files. A wipe the reader finds
+// asks at every level. What still asks, because it is not the owner's own
+// input or not a permission at all, is decided where each card is raised:
+// `autoVerdict` for tool permissions, the peer-contact gate for ask/delegate.
+// The desktop's warning (src/components/FullAccessWarning.tsx) says so.
 //
 // This module owns only how the level is switched on. It is the desktop app's
 // decision alone: a paired phone, a script or a bot calling the loopback API,
@@ -31,8 +32,15 @@ export const FULL_ACCESS_ACK_REQUIRED =
 export const NO_LIMITS_ACK_REQUIRED =
   "No limits requires confirming the warning first (acknowledgeNoLimits)";
 
+/** The No limits warning the owner has to have confirmed before a turn he starts runs with no cards. Raised whenever
+ * that warning's promise changes. It is one install-wide value, and a value below this keeps today's cards. */
+export const NO_LIMITS_TERMS = 2;
+export function noLimitsTermsAccepted(version: number | undefined): boolean {
+  return version !== undefined && version >= NO_LIMITS_TERMS;
+}
+
 export type FullAccessChange =
-  | { ok: true; autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean; acknowledgedAt?: number; noLimitsAcknowledgedAt?: number }
+  | { ok: true; autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean; acknowledgedAt?: number; noLimitsAcknowledgedAt?: number; noLimitsTerms?: true }
   | { ok: false; status: number; error: string };
 
 /** What a settings PATCH does to the approval level.
@@ -73,6 +81,7 @@ export function fullAccessChange(
       ok: true, autoApprove: true, fullAccess: true, noLimits: true,
       ...(typeof bot?.fullAccessAcknowledgedAt === "number" ? {} : { acknowledgedAt: now }),
       ...(acknowledged ? {} : { noLimitsAcknowledgedAt: now }),
+      ...(body.acknowledgeNoLimits === true ? { noLimitsTerms: true as const } : {}),
     };
   }
   if (body.fullAccess === true) {

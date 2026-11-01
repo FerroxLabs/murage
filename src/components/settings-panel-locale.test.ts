@@ -71,6 +71,7 @@ vi.mock("./FolderTrustNote", async (orig) => ({ ...(await orig<object>()), Folde
 vi.mock("./LocalComputerAutoWarning", async (orig) => ({ ...(await orig<object>()), LocalComputerAutoWarning: none }));
 vi.mock("./FullAccessWarning", async (orig) => ({ ...(await orig<object>()), FullAccessWarning: none }));
 vi.mock("./BotPermissionDefault", async (orig) => ({ ...(await orig<object>()), BotPermissionDefault: none }));
+vi.mock("./approval/use-level-change", () => ({ useLevelChange: () => ({ pick: () => {} }) }));
 vi.mock("./BotImageApproval", async (orig) => ({ ...(await orig<object>()), BotImageApproval: none }));
 vi.mock("./RememberedApprovals", async (orig) => ({ ...(await orig<object>()), RememberedApprovals: none }));
 vi.mock("./VoiceSettings", async (orig) => ({ ...(await orig<object>()), VoiceSettings: none }));
