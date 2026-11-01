@@ -8,15 +8,21 @@
 //   SHA=<40 hex> GH_TOKEN=... GITHUB_REPOSITORY=owner/repo node scripts/release-ci-gate.mjs
 //
 // It lists the CI workflow's runs for that exact commit through `gh api` and
-// exits 0 only when the newest attempt concluded `success`. A merge to main
-// starts CI and Release together, so a run that is still queued or in progress
-// is waited for (bounded); no run at all is given a short grace period to
-// appear, then refused. Cancelled, skipped, failed and timed-out all refuse.
+// exits 0 only when the newest run's latest attempt concluded `success` and the
+// newest run that tested the whole matrix passed every job: its required
+// completion job ran and every job that job needs appears green. ci.yml skips
+// that job on a scoped dispatch (windows_only, vitest_file, human_files), so a
+// scoped green confirms a fix but never proves a commit. A `gh run rerun
+// --failed` counts: GitHub keeps one entry per run, and the jobs of its newest
+// attempt carry the jobs the rerun left alone. A merge to main starts CI and
+// Release together, so any run that is still queued or in progress is waited for
+// (bounded); no run at all is given a short grace period to appear, then
+// refused. Cancelled, skipped, failed and timed-out all refuse.
 //
 // One narrow exception: a reviewed, approved waiver (docs/releases/ci-waiver-template.md).
 // CI_WAIVER names a waiver file; it is honoured only on a workflow_dispatch run,
 // only when the file is committed in the pinned commit, names that commit and
-// the exact CI run that failed for it, states "Critical: 0", lists the reviewed
+// the exact full CI run that failed for it, states "Critical: 0", lists the reviewed
 // failure classes and carries an approval line. Anything else stays strict.
 //
 // The latest nightly (nightly.yml: the tests over 60 s on all three OSes and
@@ -30,19 +36,74 @@ import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 
-/** Newest attempt first: a re-run that went green replaces the red one. */
-function newestRun(runs, sha) {
-  const mine = (Array.isArray(runs) ? runs : []).filter(run => run?.head_sha === sha);
-  return [...mine].sort((a, b) => (Number(b.run_attempt ?? 1) - Number(a.run_attempt ?? 1)) || (Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0)))[0];
+/** The job that proves a run tested everything. ci.yml skips it on a scoped dispatch. */
+export const REQUIRED_JOB = "required CI completion";
+
+/** ci.yml's Vitest shards per OS. release-ci-gate-full-run.test.mjs holds these lists to ci.yml itself. */
+export const VITEST_SHARDS = { "macos-latest": 10, "ubuntu-24.04": 10, "windows-latest": 12 };
+
+/** Every job a complete run must show green, by its name in the Actions API. These are the jobs REQUIRED_JOB needs. */
+export const FULL_RUN_JOBS = [
+  ...Object.keys(VITEST_SHARDS).map(os => `quality gates (${os})`),
+  ...Object.entries(VITEST_SHARDS).flatMap(([os, shards]) => Array.from({ length: shards }, (_, i) => `Vitest shard ${i + 1}/${shards} (${os})`)),
+  ...Array.from({ length: 6 }, (_, i) => `human specs ${i + 1}/6 (Ubuntu)`),
+  "S4 power block (Linux arm64)",
+  "control-plane check + workerd tests + dry run",
+  "phone app shell contracts (Ubuntu)",
+  "package + smoke (Ubuntu 24.04 x64)",
+];
+
+/**
+ * What a run's jobs (its newest attempt) prove:
+ * - "full": the required job and every job in FULL_RUN_JOBS ran and passed.
+ * - "red": the required job ran and did not pass, so this was a full run that failed.
+ * - "partial": the required job was skipped or missing, or a job it needs is not there: a scoped run proves nothing.
+ */
+export function judgeRun(jobs) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  const required = list.find(job => job?.name === REQUIRED_JOB);
+  if (!required) return { proof: "partial", reason: `it has no "${REQUIRED_JOB}" job` };
+  if (required.conclusion === "skipped") return { proof: "partial", reason: `its "${REQUIRED_JOB}" job was skipped, so it was a scoped run` };
+  if (required.conclusion !== "success") return { proof: "red", reason: `its "${REQUIRED_JOB}" job ended ${required.conclusion ?? "without a result"}` };
+  const green = new Set(list.filter(job => job?.conclusion === "success").map(job => job.name));
+  const missing = FULL_RUN_JOBS.filter(name => !green.has(name));
+  if (missing.length) return { proof: "partial", reason: `${missing.length} required jobs did not pass, first "${missing[0]}"` };
+  return { proof: "full", reason: "every required job passed" };
 }
 
-/** What the runs for `sha` say: pass, fail, wait (still running) or none. */
-export function ciVerdict(runs, sha) {
-  const newest = newestRun(runs, sha);
-  if (!newest) return { state: "none", reason: `no CI run found for ${sha}` };
-  if (newest.status !== "completed") return { state: "wait", reason: `CI is ${newest.status ?? "not finished"} for ${sha}` };
-  if (newest.conclusion === "success") return { state: "pass", reason: `CI concluded success for ${sha}` };
-  return { state: "fail", run: newest, reason: `CI concluded ${newest.conclusion ?? "without a result"} for ${sha}` };
+/** This commit's runs, latest attempt first. A rerun restarts its run, so it counts from when that attempt started. */
+function runsNewestFirst(runs, sha) {
+  const started = run => Date.parse(run.run_started_at ?? run.created_at ?? 0) || 0;
+  const mine = (Array.isArray(runs) ? runs : []).filter(run => run?.head_sha === sha);
+  return [...mine].sort((a, b) => (started(b) - started(a)) || (Number(b.run_attempt ?? 1) - Number(a.run_attempt ?? 1)));
+}
+
+/**
+ * What the runs for `sha` say: pass, fail, wait (still running) or none. `jobsFor(run)` gives a run's jobs (newest
+ * attempt); without it nothing can pass. A pass needs the newest run green and the newest run that tested everything
+ * green and complete. `waivable` marks a failure a waiver may cover: only a full run that went red.
+ */
+export function ciVerdict(runs, sha, { jobsFor } = {}) {
+  const mine = runsNewestFirst(runs, sha);
+  if (!mine.length) return { state: "none", reason: `no CI run found for ${sha}` };
+  const live = mine.find(run => run.status !== "completed");
+  if (live) return { state: "wait", reason: `CI is ${live.status ?? "not finished"} for ${sha}` };
+  const judge = run => judgeRun(jobsFor ? jobsFor(run) : []);
+  const redFull = run => ({ state: "fail", run, waivable: true, reason: `CI concluded ${run.conclusion ?? "without a result"} for ${sha}` });
+  const [newest] = mine;
+  if (newest.conclusion !== "success") {
+    const judged = judge(newest);
+    if (judged.proof !== "partial") return redFull(newest);
+    return { state: "fail", run: newest, reason: `CI run ${newest.id ?? "?"} concluded ${newest.conclusion ?? "without a result"} for ${sha} and ${judged.reason}` };
+  }
+  let scoped = "";
+  for (const run of mine) {
+    const judged = judge(run);
+    if (judged.proof === "partial") { scoped ||= `run ${run.id ?? "?"}: ${judged.reason}`; continue; }
+    if (judged.proof === "full" && run.conclusion === "success") return { state: "pass", reason: `CI run ${run.id ?? "?"} (attempt ${run.run_attempt ?? 1}) passed every required job for ${sha}` };
+    return redFull(run);
+  }
+  return { state: "fail", reason: `no complete full CI run for ${sha} (${scoped}); run the full CI on this commit` };
 }
 
 /**
@@ -161,7 +222,7 @@ export function failedTestsInLog(log) {
  * succeed must have failed on tests, every one of them named by a class: a job that failed with no test named (a build,
  * install or setup failure, a cancel, a timeout) or on a test no class names refuses the waiver.
  */
-export function failuresVerdict({ waiver, jobs, aggregateJob = "required CI completion" }) {
+export function failuresVerdict({ waiver, jobs, aggregateJob = REQUIRED_JOB }) {
   const waived = new Set(waiver.tests ?? []);
   const outside = [];
   for (const job of jobs ?? []) {
@@ -187,7 +248,7 @@ function realDate(value) {
  * Whether a waiver lets a red CI through. `ok` is true only when every rule
  * holds; the reason names the first rule that did not.
  */
-export function waiverVerdict({ eventName, waiverPath, waiverText, sha, runs }) {
+export function waiverVerdict({ eventName, waiverPath, waiverText, sha, runs, jobsFor }) {
   const refuse = reason => ({ ok: false, reason });
   if (!waiverPath) return refuse("no waiver given; CI must pass");
   if (eventName !== "workflow_dispatch") return refuse(`a ${eventName || "non-dispatch"} run can never waive CI`);
@@ -197,8 +258,8 @@ export function waiverVerdict({ eventName, waiverPath, waiverText, sha, runs }) 
   try { waiver = parseWaiver(waiverText); } catch (error) { return refuse(error.message); }
   if (waiver.commit !== sha) return refuse(`waiver names commit ${waiver.commit || "(none)"}, not the pinned ${sha}`);
   if (!/^[1-9]\d*$/.test(waiver.runId)) return refuse(`waiver CI run ${JSON.stringify(waiver.runId)} is not a run id`);
-  const verdict = ciVerdict(runs, sha);
-  if (verdict.state !== "fail") return refuse(`CI for ${sha} is not a completed failure (${verdict.reason}); nothing to waive`);
+  const verdict = ciVerdict(runs, sha, { jobsFor });
+  if (verdict.state !== "fail" || !verdict.waivable) return refuse(`CI for ${sha} is not a completed failure of a full run (${verdict.reason}); nothing to waive`);
   if (String(verdict.run.id) !== waiver.runId) return refuse(`waiver names CI run ${waiver.runId}, but the CI run that decided ${sha} is ${verdict.run.id}`);
   if (waiver.critical !== "0") return refuse(`waiver states Critical: ${waiver.critical || "(blank)"}; only Critical: 0 can be waived`);
   if (waiver.classes.length === 0) return refuse("waiver lists no reviewed failure classes");
@@ -220,13 +281,17 @@ function listRuns({ repository, workflow, sha }) {
   return JSON.parse(result.stdout || "[]");
 }
 
-/** The jobs of a run's newest attempt, each with the failing test files its log names (logs only for jobs that did not succeed). */
-function listRunJobs({ repository, run }) {
+/** The jobs of a run's newest attempt. A rerun of failed jobs lists every job here, the ones it left alone included. */
+function listAttemptJobs({ repository, run }) {
   const attempt = Number(run.run_attempt) > 0 ? Number(run.run_attempt) : 1;
   const result = spawnSync("gh", ["api", "--paginate", `repos/${repository}/actions/runs/${run.id}/attempts/${attempt}/jobs?per_page=100`, "--jq", ".jobs[]"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
-  const jobs = String(result.stdout).split("\n").filter(Boolean).map(line => JSON.parse(line));
-  return jobs.map(job => {
+  return String(result.stdout).split("\n").filter(Boolean).map(line => JSON.parse(line));
+}
+
+/** The jobs of a run's newest attempt, each with the failing test files its log names (logs only for jobs that did not succeed). */
+function listRunJobs({ repository, run }) {
+  return listAttemptJobs({ repository, run }).map(job => {
     if (["success", "skipped", "neutral"].includes(job.conclusion)) return { name: job.name, conclusion: job.conclusion, failedTests: [] };
     const log = spawnSync("gh", ["api", `repos/${repository}/actions/jobs/${job.id}/logs`], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
     if (log.status !== 0) throw new Error(`could not read the log of job "${job.name}": ${(log.stderr || log.stdout).trim()}`);
@@ -339,9 +404,10 @@ async function main() {
     console.log(`${pending ? `a ${nativeWorkflow} run is still running` : native.reason}; checking again in 60s`);
     await new Promise(resolve => setTimeout(resolve, 60_000));
   }
+  const jobsFor = run => listAttemptJobs({ repository, run });
   for (;;) {
     const runs = listRuns({ repository, workflow, sha });
-    const verdict = ciVerdict(runs, sha);
+    const verdict = ciVerdict(runs, sha, { jobsFor });
     if (verdict.state === "pass") {
       recheckNightly();
       console.log(`ok: ${verdict.reason}`);
@@ -355,7 +421,7 @@ async function main() {
       // which must descend from the pinned commit.
       const waiverFrom = /^[0-9a-f]{40}$/.test(process.env.WAIVER_FROM ?? "") ? process.env.WAIVER_FROM : sha;
       if (!isAncestor(sha, waiverFrom)) { console.error(`::error::${verdict.reason}; waiver refused: dispatch commit ${waiverFrom} does not descend from the pinned ${sha}`); process.exit(1); }
-      const result = waiverVerdict({ eventName, waiverPath, waiverText: readCommitted(waiverFrom, waiverPath), sha, runs });
+      const result = waiverVerdict({ eventName, waiverPath, waiverText: readCommitted(waiverFrom, waiverPath), sha, runs, jobsFor });
       if (!result.ok) { console.error(`::error::${verdict.reason}; waiver refused: ${result.reason}`); process.exit(1); }
       recheckNightly();
       // The waiver covers its named classes only: every red in the run must be one of the test files they name.

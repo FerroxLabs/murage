@@ -17,8 +17,8 @@ describe("the learning limit helpers", () => {
     expect(doubleLimitRequest({ input: 10, output: 4 }, 7)).toEqual({ action: "configure", ceiling: { input: 20, output: 8 }, learningRevision: 7 });
   });
   it("reads real figures as tokens and percent", () => {
-    expect(readLine({ input: 100_000_000, inputUsed: 2_100_000 })).toBe("Read: 2.1M of 100M tokens");
-    expect(writtenLine({ output: 15_000_000, outputUsed: 300_000 })).toBe("Written: 300k of 15M tokens");
+    expect(readLine({ input: 100_000_000, inputUsed: 2_100_000 })).toBe("Read: 2.1M of 100M");
+    expect(writtenLine({ output: 15_000_000, outputUsed: 300_000 })).toBe("Written: 300k of 15M");
     expect(ceilingPercent(2_100_000, 100_000_000)).toBe(2);
     expect(ceilingPercent(5, 0)).toBe(100);
     expect(ceilingPercent(999, 100)).toBe(100);

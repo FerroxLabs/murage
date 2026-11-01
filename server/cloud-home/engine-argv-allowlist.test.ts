@@ -22,7 +22,7 @@ const FULL: Record<string, { args: string[]; render?: Record<string, unknown> }>
     "--append-system-prompt-file", CLOUD_RENDER_SYSTEM_PROMPT, "--strict-mcp-config", "--resume", SESSION],
     render: { mcp: { muragebox: { proxy: "permission", socket: "/data/broker/perm-abcd1234.sock" } }, systemPrompt: "You are a bot.\n" } },
   codex: { args: ["app-server", "-c", "model_context_window=129024", "-c", "features.browser_use=false", "-c", "features.browser_use_external=false", "-c", "features.computer_use=false",
-    "-c", plugins, "-c", "features.memories=false", "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", 'web_search="disabled"'] },
+    "-c", plugins, "-c", "features.memories=false", "-c", "features.shell_tool=false", "-c", "features.apps=false", "-c", 'web_search="disabled"', "-c", "features.code_mode.default_exec_yield_time_ms=1728000000"] },
   grokAgent: { args: ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "-m", "murage_0123456789abcdef01234567", "--reasoning-effort", "high", "stdio"] },
   kimiAgent: { args: ["-m", "kimi-code/kimi-for-coding", "acp"] },
   opencodeGo: { args: ["acp"] },
@@ -81,6 +81,9 @@ it.each([
   ["codex", ["app-server", "-c", "features.memory=false"], "-c"],
   ["codex", ["app-server", "-c", "features.telepathy=false"], "-c"],
   ["codex", ["app-server", "-c", "features.memories"], "-c"],
+  // CARDS-WAIT-CODEX-1013: the exact value only
+  ["codex", ["app-server", "-c", "features.code_mode.default_exec_yield_time_ms=1"], "-c"],
+  ["codex", ["app-server", "-c", "features.code_mode=true"], "-c"],
   ["grokAgent", ["--permission-mode", "default", "--no-memory=1", "agent", "--no-leader", "stdio"], "--no-memory"],
   ["grokAgent", ["--permission-mode", "default", "--no-memory", "--memory", "agent", "--no-leader", "stdio"], "--memory"],
   ["codex", ["-c", "features.apps=false", "app-server"], "missing app-server"],

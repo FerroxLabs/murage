@@ -295,6 +295,9 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
 
   return (
     <DesktopImg
+      // A new element per picture: a reused <img> keeps showing the previous
+      // bot's face until the next one loads, which on a slow link is a while.
+      key={profile.avatarUrl}
       src={profile.avatarUrl}
       alt={label ?? (bot.name ? `${bot.name} avatar` : "Bot avatar")}
       width={size}
