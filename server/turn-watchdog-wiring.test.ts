@@ -25,6 +25,15 @@ function fn(name: string): string {
 }
 
 describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
+  it("holds direct turns to a one hour no-activity limit by default (LONGWORK-STALL-60), with the setup and heartbeat caps unmoved", () => {
+    expect(SOURCE).toMatch(/const TURN_STALL_MS = Math\.max\(60_000, Number\(process\.env\.MURAGE_TURN_STALL_MS\) \|\| 60 \* 60_000\);/);
+    expect(SOURCE).toMatch(/const TURN_SETUP_STALL_MS = Math\.max\(TURN_STALL_MS, Number\(process\.env\.MURAGE_TURN_SETUP_STALL_MS\) \|\| 60 \* 60_000\);/);
+    expect(SOURCE).toMatch(/const TURN_HEARTBEAT_ONLY_MS = Math\.max\(TURN_STALL_MS, Number\(process\.env\.MURAGE_TURN_HEARTBEAT_ONLY_MS\) \|\| 60 \* 60_000\);/);
+    // the quiet-command proxy starts from the same hour until the harness answers with the turn's own limit
+    const proxy = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "computer-proxy.ts"), "utf8");
+    expect(proxy).toContain("const DEFAULT_TURN_SILENCE_MS = 60 * 60_000;");
+  });
+
   it("arms the direct watch at admission, in setup, under the turn's own generation", () => {
     const body = fn("startTurnAdmitting");
     const admit = body.indexOf("directRuns.admit(");
@@ -126,8 +135,9 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     // 0.1.61: no absolute ceiling on a room turn that keeps working
     expect(SOURCE).not.toContain("RoomTurnDeadline");
     expect(body).toContain("const silenceMinutes = roomTurnTimeoutMinutes(cfg);");
-    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(silenceMinutes) })");
-    expect(body).toContain("tool: { name: roomTurnStallMessage(silenceMinutes), ok: false }");
+    expect(body).toContain("const currentSilenceMinutes = () => openTools.limitMinutes(silenceMinutes);");
+    expect(body).toContain("watchdog.dispatched(threadId, bot.id, internalGeneration, { stallMs: roomTurnSilenceMs(currentSilenceMinutes()) })");
+    expect(body).toContain("tool: { name: roomTurnStallMessage(currentSilenceMinutes()), ok: false }");
     // the room turn binds its engine turn to its watch, so a completion that
     // names another turn leaves the watch (and any open card) in place; if an
     // unbound completion cleared it first, the running turn re-arms and rebinds
@@ -135,7 +145,7 @@ describe("stall watchdog wiring (admission, exemptions, setup latch)", () => {
     expect(body).toContain("watchdog.bindProviderTurn(threadId, internalGeneration, dispatch.value.turnId);");
     // re-armed only when the watch is gone: re-arming a live watch would
     // restart its silence clock on another turn's completion
-    expect(body).toMatch(/if \(e\.type === "turn\.completed" && !done && !watchdog\.watching\(threadId\)\) \{\s*watchdog\.dispatched\(threadId, bot\.id, internalGeneration, \{ stallMs: roomTurnSilenceMs\(silenceMinutes\) \}\);\s*watchdog\.bindProviderTurn\(threadId, internalGeneration, providerTurnId\);/);
+    expect(body).toMatch(/if \(e\.type === "turn\.completed" && !done && !watchdog\.watching\(threadId\)\) \{\s*watchdog\.dispatched\(threadId, bot\.id, internalGeneration, \{ stallMs: roomTurnSilenceMs\(currentSilenceMinutes\(\)\) \}\);\s*watchdog\.bindProviderTurn\(threadId, internalGeneration, providerTurnId\);/);
     // a stopped room turn on an engine without a close receipt is released by
     // its own terminal event
     expect(SOURCE).toContain("if (pendingRoomStop) { const turnId = event.turnId; queueMicrotask(() => pendingRoomStop.terminal(turnId)); }");

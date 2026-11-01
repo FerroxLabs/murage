@@ -22,7 +22,7 @@ it("actual direct and room submission callbacks reject changed provider revision
       const callback = (current: unknown, route: unknown, receipt: unknown, opts: unknown) => compileBody(body)(current, route, receipt, opts, { mark() {} }, ...liveRoom());
       const current = (route?: { connectionId: string; revision: string }) => !route || service.isCurrent(route.connectionId, route.revision);
       const accepted = vi.fn(); const boundary = new TurnSubmissionBoundary(); boundary.started(); revision = "r2";
-      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed before submission");
+      expect(() => boundary.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r1" }, { accepted }, undefined))).toThrow("changed just before sending");
       expect(accepted).not.toHaveBeenCalled(); expect(() => boundary.assertNotRefused()).toThrow();
       const valid = new TurnSubmissionBoundary(); valid.started(); valid.beforeSubmit(() => callback(current, { connectionId: "fixture", revision: "r2" }, { accepted }, undefined)); expect(accepted).toHaveBeenCalledTimes(1);
       // The new provider guard must not break memory acceptance on native/no-route turns.
@@ -31,7 +31,7 @@ it("actual direct and room submission callbacks reject changed provider revision
   } finally { removeTempDirSync(cacheDir); }
 });
 
-const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration"] as const;
+const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration", "assertCursorNotSealed", "store", "bot", "instance", "instanceId", "resumeCursor", "keptSession"] as const;
 // The callback bodies are lifted from index.ts as written, TypeScript included (the direct one casts `error as { code?: string }`):
 // esbuild erases the types first, so the real body runs and not a syntax error.
 const BODY_PARAMS = ["providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", ...LIVE_ROOM_NAMES];
@@ -40,7 +40,9 @@ const compileBody = (body: string) => new Function(...BODY_PARAMS,
 // `revoked`: the attempt's capability generation was revoked (CANCEL-TREE-104 R1: its request cancelled) while the turn owner still reads live
 const liveRoom = (stopped: { abandoned?: boolean; cancelled?: boolean; generation?: number; revoked?: boolean } = {}) =>
   [stopped.abandoned === true, () => stopped.cancelled === true, new Map([["room-t", { generation: stopped.generation ?? 1 }]]),
-    { activeGeneration: (threadId: string) => threadId === "room-t" && !stopped.revoked ? (stopped.generation ?? 1) : undefined }, "room-t", 1];
+    { activeGeneration: (threadId: string) => threadId === "room-t" && !stopped.revoked ? (stopped.generation ?? 1) : undefined }, "room-t", 1,
+    // THREAD-SEAL: both bodies check the seal first; an unsealed thread stands in for it here
+    () => {}, { taskByThread: () => undefined }, { id: "bot" }, { instanceId: "engine" }, "engine", undefined, undefined];
 
 it("U29 + CANCEL-TREE-104 R1: the room's one pre-submit check refuses a turn stopped after setup or whose generation was revoked, before the engine call and before memory acceptance", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");

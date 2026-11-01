@@ -72,6 +72,11 @@ describe("the sidebar footer has one update control", () => {
     expect(html(density).match(/<[^>]+class="[^"]*\banimate-spin\b[^"]*"[^>]*>/g)).toHaveLength(1);
   });
 
+  it.each(densities)("during a download the update control stays clickable, to bring the progress back, at %s density", (density) => {
+    updaterState.value = { status: "downloading", version: "1.0.8", percent: 42 };
+    expect(html(density)).not.toContain("disabled=");
+  });
+
   it.each(["compact", "comfortable"] as const)("keeps update guidance accessible at %s density", (density) => {
     const labels = {
       error: "Update needs attention, view details",
@@ -90,7 +95,7 @@ describe("the sidebar footer has one update control", () => {
     // so every guidance label opens the card before any updater action.
     const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
     const button = source.slice(source.indexOf("function UpdateButton()"), source.indexOf("export function SidebarUpdateControl"));
-    expect(source).toContain('import { openUpdateCard } from "@/lib/update-card"');
+    expect(source).toContain('import { openUpdateCard, showUpdatePopup } from "@/lib/update-card"');
     expect(button).toMatch(/onClick=\{\(\) => \{\s*if \(cardLabel\) return openUpdateCard\(\);/);
   });
 
@@ -159,7 +164,7 @@ describe("plain-text sidebar message previews", () => {
     const failed = (tool: NonNullable<Message["tool"]>) => message("", { kind: "activity", tool });
     const raw = "error: API error (status 429 Too Many Requests): api_error: Available credit is low because other requests have temporarily reserved it.";
     const rateLimited = sidebarBotPreview(bot([failed({ name: raw, ok: false, errorKind: "rate_limited" })]));
-    expect(rateLimited).toBe("The provider is limiting requests right now. Wait a moment, then retry.");
+    expect(rateLimited).toBe("Your AI service is limiting requests right now. Wait a moment, then retry.");
     expect(sidebarBotPreview(bot([failed({ name: raw, ok: false })]))).toBe("This request hit a problem.");
     expect(sidebarBotPreview(bot([failed({ name: "error: Flux Router needs credits", ok: false, providerError: { provider: "flux-router", kind: "credits", httpStatus: 402 } as never })])))
       .toBe("Flux Router needs credits.");
@@ -190,7 +195,7 @@ describe("plain-text sidebar message previews", () => {
     const line = bot([blocked]).sidebarLine!;
     expect(line.tool).toEqual({ name: "error: request failed", ok: false, blocked: true });
     expect(JSON.stringify(line)).not.toContain("safety systems");
-    expect(sidebarBotPreview(bot([blocked]))).toBe("The provider blocked this request.");
+    expect(sidebarBotPreview(bot([blocked]))).toBe("Your AI service blocked this request.");
     const run = message("", { kind: "goal.run", goalRun: { runId: "r", goal: "Ship the **launch** plan", status: "working", coordinatorBotId: "b", coordinatorName: "Kessler", turnCount: 1, maxTurns: 5, startedAt: 1 } });
     expect(sidebarGroupPreview(room([run]), [])).toMatch(/Ship the \*\*launch\*\* plan|Ship the launch plan/);
     expect(room([run]).sidebarLine!.goalRun).toEqual({ status: "working", goal: "Ship the **launch** plan" });

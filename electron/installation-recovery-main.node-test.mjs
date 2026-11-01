@@ -137,12 +137,16 @@ test("normal mode and incomplete writer cleanup cannot fork a recovery worker", 
 test("actual failed-server branch returns before background account work", async () => {
   const body = between('  if (app.isPackaged && !serverReady) {', '  if (serverReady && companionEnabledAtRest())');
   const events = [];
-  const run = new Function("app", "serverReady", "serverStartConflictOnly", "memoryUpgradeBlocked", "showDesktopRecovery", "events", body + ';events.push("background");');
-  run({ isPackaged: true }, false, false, null, reason => events.push(reason), events);
+  const run = new Function("app", "serverReady", "serverStartConflictOnly", "serverStartSlow", "memoryUpgradeBlocked", "showDesktopRecovery", "events", body + ';events.push("background");');
+  run({ isPackaged: true }, false, false, false, null, reason => events.push(reason), events);
   assert.deepEqual(events, ["STARTUP_FAILED"]);
+  // a child that stayed alive and silent to the limit has its own reason, and still returns before background work
+  const slow = [];
+  run({ isPackaged: true }, false, false, true, null, reason => slow.push(reason), slow);
+  assert.deepEqual(slow, ["STARTUP_SLOW"]);
   // an upgrade that could not run gets its own recovery reason, not the generic one
   const blocked = [];
-  new Function("app", "serverReady", "serverStartConflictOnly", "memoryUpgradeBlocked", "showDesktopRecovery", "events", body + ';events.push("background");')({ isPackaged: true }, false, false, { state: "blocked" }, reason => blocked.push(reason), blocked);
+  run({ isPackaged: true }, false, false, false, { state: "blocked" }, reason => blocked.push(reason), blocked);
   assert.deepEqual(blocked, ["MEMORY_UPGRADE_BLOCKED"]);
 });
 test("actual packaged early startup rejection opens recovery without exposing private error text", async () => {

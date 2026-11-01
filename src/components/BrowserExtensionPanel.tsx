@@ -47,7 +47,7 @@ export const upgradedToExtension = new Set<string>();
 export function rememberedBrowser(bot: Pick<Bot, "browserExtensionBrowser">): Browser { return bot.browserExtensionBrowser ?? "chrome"; }
 const control = "browser-extension-control min-h-11 rounded-lg bg-control px-3 py-2 text-sm text-ink disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 export function BrowserExtensionConsent({ botName, pending, onConfirm, onCancel }: { botName: string; pending: boolean; onConfirm: () => void; onCancel: () => void }) {
-  return <div role="dialog" aria-label="Use my browser" className="flex flex-col gap-3 rounded-lg bg-card p-3 text-sm text-ink">
+  return <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label="Use my browser" className="flex flex-col gap-3 rounded-lg bg-card p-3 text-sm text-ink">
     <p>{botName} can work in tabs you share through Murage for Chrome, using your signed-in accounts.</p>
     <p className="text-ink-secondary">You choose the sites it may access. Actions that send, post, buy or change something need separate approval. You can pause or stop in the browser.</p>
     <p className="text-ink-secondary">Setup is optional. Keep using Murage without the extension if you prefer.</p>
@@ -90,7 +90,7 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
     <button className={control} disabled={pending} onClick={onOwnBrowser}>Use {botName}'s own browser</button>
     {removedNote && <p role="status" className="text-ink-secondary">{removedNote}</p>}
     {onRemoveAsk && !removing && <button className={control} disabled={pending} onClick={onRemoveAsk}>Remove browser helper</button>}
-    {removing && <div role="dialog" aria-label="Remove browser helper" className="flex flex-col gap-3 rounded-lg bg-card p-3">
+    {removing && <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label="Remove browser helper" className="flex flex-col gap-3 rounded-lg bg-card p-3">
       <label className="flex flex-col gap-2">Browser<select className={control} value={connectBrowser} disabled={pending} onChange={event => onConnectBrowser(event.target.value as Browser)}><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option></select></label>
       <p>Remove Murage's helper registration for {BROWSER_NAMES[connectBrowser]}? Browser tasks must be stopped first.</p>
       {(status?.helper.shared?.[connectBrowser]?.length ?? 0) > 1 && <p>{browserList(connectBrowser, status?.helper.shared?.[connectBrowser])} share one helper registration on this computer, so removing it affects both.</p>}

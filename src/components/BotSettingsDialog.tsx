@@ -9,6 +9,8 @@ import { returnFocus } from "@/lib/return-focus";
 import { lastBotSection, rememberBotSection } from "@/lib/last-bot-section";
 import { badgeLabel, badgeText, useLearningBadge } from "@/lib/learning-counts";
 import { useEmailStatus } from "@/lib/bot-email";
+import { cn } from "@/lib/cn";
+import { BOX_PANES, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => void }) {
   const { state, dispatch } = useStore(), dialog = useRef<HTMLDialogElement>(null), content = useRef<HTMLDivElement>(null);
@@ -74,14 +76,14 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
   // top of the layout viewport and sized to the VISUAL viewport (--vvh), so the
   // on-screen keyboard shrinks it instead of covering its lower half.
   return <dialog ref={dialog} aria-labelledby="bot-settings-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}
-    className="fixed inset-x-0 top-0 bottom-auto mx-auto my-0 h-[var(--vvh,100dvh)] max-h-[var(--vvh,100dvh)] w-screen max-w-none overflow-hidden bg-panel p-0 text-ink backdrop:bg-black/60 sm:top-[max(calc((var(--vvh,100dvh)_-_840px)/2),calc(0.04*var(--vvh,100dvh)))] sm:h-[min(840px,calc(0.92*var(--vvh,100dvh)))] sm:max-h-[calc(0.92*var(--vvh,100dvh))] sm:w-[min(1040px,calc(100vw-32px))] sm:rounded-2xl sm:border sm:border-hairline sm:shadow-2xl">
-    <div className="flex h-full min-h-0 flex-col">
+    className={cn(BOX_PANES, "not-open:hidden fixed inset-x-0 top-0 bottom-auto mx-auto my-0 h-[var(--vvh,100dvh)] max-h-[var(--vvh,100dvh)] w-screen max-w-none bg-panel p-0 text-ink backdrop:bg-black/60 sm:top-[max(calc((var(--vvh,100dvh)_-_840px)/2),calc(0.04*var(--vvh,100dvh)))] sm:h-[min(840px,calc(0.92*var(--vvh,100dvh)))] sm:max-h-[calc(0.92*var(--vvh,100dvh))] sm:w-[min(1040px,calc(100vw-32px))] sm:rounded-2xl sm:border sm:border-hairline sm:shadow-2xl")}>
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {/* Below sm the dialog is the whole screen from its top edge, so the
           title and the Close button start below the status bar. */}
-      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-hairline/40 px-4 py-3 max-sm:pt-[calc(0.75rem+var(--inset-top))] sm:px-5">
+      <BoxHead className="border-b border-hairline/40 px-4 py-3 max-sm:pt-[calc(0.75rem+var(--inset-top))] sm:px-5">
         <div className="min-w-0"><h1 id="bot-settings-title" className="text-[18px] font-semibold">Bot settings</h1><p className="truncate text-[13px] text-ink-secondary">{bot.name}</p></div>
         <button type="button" aria-label="Close bot settings" onClick={close} className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-control focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"><X size={18} /></button>
-      </header>
+      </BoxHead>
       <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
         <nav aria-label="Bot settings sections" className="shrink-0 border-b border-hairline/40 p-3 sm:w-[230px] sm:overflow-y-auto sm:border-b-0 sm:border-r">
           {/* On a phone the search and the section choice share one row, so
@@ -98,17 +100,18 @@ export function BotSettingsDialog({ bot, onClose }: { bot: Bot; onClose?: () => 
           {!matches.length && <p className="mt-3 text-[12px] text-ink-secondary">No matching settings sections.</p>}
           {query && <button className="mt-2 min-h-9 text-[12px] text-ink-secondary underline" onClick={() => setQuery("")}>Clear search</button>}
         </nav>
-        <div ref={content} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* The page scrolls one level down, in [data-settings-scroll], under its own section title. */}
+        <BoxBody ref={content} className="flex flex-1 flex-col overflow-y-clip">
           {/* The section menu above already shows this name on a phone. */}
           <h2 className="shrink-0 px-5 pt-4 text-[17px] font-medium max-sm:sr-only">{label(selected)}</h2>
           <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
-        </div>
+        </BoxBody>
       </div>
       {/* The standing note gives way on a short screen; a notice or unsaved
           changes are always shown. */}
-      <footer className={`shrink-0 border-t border-hairline/40 px-4 py-2 max-sm:pb-[calc(0.5rem+var(--inset-bottom))] text-[12px] text-ink-secondary ${!notice && !dirty.length ? "[@media(max-height:640px)]:hidden" : ""}`}>
+      <BoxFoot className={`block border-t border-hairline/40 px-4 py-2 max-sm:pb-[calc(0.5rem+var(--inset-bottom))] text-[12px] text-ink-secondary ${!notice && !dirty.length ? "[@media(max-height:640px)]:hidden" : ""}`}>
         {notice ? <p role="status">{notice}</p> : dirty.length ? <p>Unsaved changes: {dirty.map(([key]) => key).join(", ")}</p> : <p>Most changes save immediately. Fields with a Save button wait for you.</p>}
-      </footer>
+      </BoxFoot>
     </div>
   </dialog>;
 }

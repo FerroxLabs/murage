@@ -214,13 +214,13 @@ test("an http authorization server is refused for a public server", async () => 
   assert.ok(seen.every((url) => url.startsWith("https://")));
 });
 
-test("no registration endpoint gives the API key sentence", async () => {
+test("no registration endpoint says new apps are turned away", async () => {
   const fake = await startFakeRemoteMcp({ auth: "bearer", dcr: false });
   try {
     const h = harness({ fake, entries: { comfy: { url: fake.mcpUrl, auth: "oauth", local: "this-computer" } } });
     const result = await h.service.signIn("comfy");
     assert.equal(result.error, "no-registration");
-    assert.equal(result.message, "127.0.0.1 does not let apps sign in this way. Use an API key instead.");
+    assert.equal(result.message, "127.0.0.1 does not let new apps sign in on their own. If it gave you a key or token, use that instead.");
   } finally { await fake.close(); }
 });
 

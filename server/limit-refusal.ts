@@ -24,6 +24,10 @@ const STATUS_LIMIT = new Set([429, 402]);
 
 export interface LimitRefusal { resetsAt?: number }
 
+/** Flux's short hold: credit is reserved by requests in flight and the 429 clears within seconds. It has the same code and
+ * error_kind as a real limit, so only this sentence tells them apart. Any other wording stays a limit, as before. */
+const CREDIT_HOLD = /because other requests have temporarily reserved it/i;
+
 function fromJson(text: string, now: number): number | undefined {
   const at = /"resets_at"\s*:\s*(\d{9,13})/.exec(text);
   if (at) { const value = Number(at[1]); return value < 1e12 ? value * 1000 : value; }
@@ -62,8 +66,12 @@ function fromRetryAfter(text: string, now: number): number | undefined {
 /** Structured limit kinds an ACP engine reports beside its prose (Fuigo's error.data.error_kind). */
 const LIMIT_KIND = /^(?:rate_limited|rate_limit|quota_exceeded|usage_limit(?:_reached)?|plan_limit(?:_reached)?|insufficient_quota|too_many_requests)$/;
 
+const RATE_KIND = /^(?:rate_limited|rate_limit|too_many_requests)$/;
+
 export function limitRefusal(family: EngineFamily, refusal: { status?: number; text?: string | null; kind?: string; code?: string; resetsAt?: number }, now = Date.now()): LimitRefusal | null {
   const text = refusal.text ?? "";
+  // A hold and a rate limit share one error kind, so the sentence decides. A kind that names a quota still counts.
+  if (CREDIT_HOLD.test(text) && (refusal.kind === undefined || RATE_KIND.test(refusal.kind))) return null;
   const byStatus = refusal.status !== undefined && STATUS_LIMIT.has(refusal.status);
   const byCode = family === "opencode-go" && (refusal.code === "QUOTA_EXCEEDED" || /QUOTA_EXCEEDED/.test(text));
   const byKind = refusal.kind !== undefined && LIMIT_KIND.test(refusal.kind);

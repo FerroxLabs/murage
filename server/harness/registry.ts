@@ -11,6 +11,7 @@ import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
 import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
+import { decorateAskNoteInstance } from "./ask-note-adapter.ts";
 import { decorateDraftOnlyInstance } from "./draft-only-adapter.ts";
 import type {
   AnyProviderDriver,
@@ -190,7 +191,7 @@ export class ProviderRegistry {
         config,
       });
       // Outermost: every engine call for a draft-only bot is judged here before any other wrapper runs (draft-only-adapter.ts).
-      const decorated = decorateDraftOnlyInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds));
+      const decorated = decorateDraftOnlyInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds)));
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
       return [instanceId, { instanceId, live: decorated }];
     } catch (e) {
