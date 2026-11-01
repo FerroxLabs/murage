@@ -14,15 +14,15 @@ import { connect, createServer as createNetServer, type Socket } from "node:net"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
+import { CLAUDE_BROKER_TOOL_TIMEOUT_MS, brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
+import { CLAUDE_ORG_LOGIN_LINE, bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
 import { PHONE_TOOL_NAMES } from "../../shared/phone-jobs-contract.ts";
 import { OWN_ALWAYS_ASK, OWN_BUILTINS, OWN_UNASKED, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { installMurageExec, murageExecPrefix, WRAPPER_SOURCE, writeExecEnvFile } from "./murage-exec.ts";
@@ -310,11 +310,11 @@ describe("ClaudeDriver.decodeConfig", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")("a project question stays open past its deadline", async () => {
+  it.skipIf(process.platform === "win32")("a question stays open with no note on its turn", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-project-question-"));
     const resolved: string[] = [];
-    const broker = await createPermissionBroker({ socketPaths: [join(dir, "question.sock")], questionTimeoutMs: 50,
-      holdProjectAsks: () => true, onAsk: () => {}, onResolve: ask => resolved.push(ask.source) });
+    const broker = await createPermissionBroker({ socketPaths: [join(dir, "question.sock")],
+      onAsk: () => {}, onResolve: ask => resolved.push(ask.source) });
     try {
       const conn = connect(broker.socketPath);
       await new Promise<void>((resolve, reject) => { conn.on("connect", resolve); conn.on("error", reject); });
@@ -576,6 +576,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     ]);
   });
 
+  it("gives an org-disabled login its plain line and the sign-in path, not a bot reply", async () => {
+    await create("org-login-off");
+    await instance.adapter.sendTurn({ threadId: "t-org-off", text: "hi" });
+    await recorder.until(event => event.type === "turn.completed");
+    expect(recorder.events.filter(event => event.type === "runtime.error")).toEqual([
+      expect.objectContaining({ message: CLAUDE_ORG_LOGIN_LINE, setup: true, authRequired: true }),
+    ]);
+    expect(recorder.events.some((event: any) => event.type === "item.completed" && event.itemType === "assistant_text")).toBe(false);
+    expect(recorder.events.filter(event => event.type === "turn.completed")).toEqual([
+      expect.objectContaining({ ok: false, stopReason: "auth_required" }),
+    ]);
+  });
+
   // Upstream #1840 (0.1.61 triage row 2): a model newer than the installed
   // Claude Code is a setup problem the owner fixes by updating, not a reply.
   it("settles an outdated CLI as update_required without emitting an assistant reply", async () => {
@@ -640,7 +653,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       providerRoute: { connectionId: "fixture-provider", revision: "fixture-revision", preset, protocol: "anthropic", baseUrl: preset === "flux" ? "https://fluxrouter.ai/api/v1" : "https://api.anthropic.com", apiKey: "fixture-only-not-real", model: "claude-fixture" } });
     await recorder.until(event => event.type === "turn.completed");
     const failure = recorder.events.find(event => event.type === "runtime.error");
-    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("selected model provider") });
+    expect(failure).toMatchObject({ setup: false, message: expect.stringContaining("did not accept the saved sign-in") });
     expect(failure).not.toHaveProperty("authRequired");
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: false, stopReason: "auth_required" });
   });
@@ -1767,6 +1780,41 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
   });
 
+  it("a card that opens in the steer follow-up wait holds the turn; its close lets the wait finish", async () => {
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-card", text: "first" });
+    const conn = await connectSocket(permissionSocketPath("t-hold-card"));
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    await expect(instance.adapter.steer!("t-hold-card", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.includes("steered: and also this"));
+    conn.write(JSON.stringify({ t: "ask", id: "hold-card", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "hold-card");
+    await new Promise((resolve) => setTimeout(resolve, 4_500));
+    expect(recorder.events.some((e) => e.type === "turn.completed")).toBe(false);
+    await instance.adapter.respondToRequest("t-hold-card", "hold-card", { behavior: "deny" });
+    const done = await recorder.until((e) => e.type === "turn.completed", 5_000);
+    expect(done).toMatchObject({ turnId, ok: true });
+    conn.destroy();
+  });
+
+  it("Stop wins in a steer wait held by a card: one end, as cancelled", async () => {
+    await create("slow");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-hold-card-stop", text: "first" });
+    const conn = await connectSocket(permissionSocketPath("t-hold-card-stop"));
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "tool");
+    await expect(instance.adapter.steer!("t-hold-card-stop", "and also this")).resolves.toBe(true);
+    await recorder.until((e) => e.type === "item.completed" && e.itemType === "assistant_text" && (e as { text: string }).text.includes("steered: and also this"));
+    conn.write(JSON.stringify({ t: "ask", id: "hold-stop", tool: "Bash", input: { command: "echo hi" } }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "hold-stop");
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    await instance.adapter.interruptTurn("t-hold-card-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ turnId, stopReason: "cancelled" });
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    conn.destroy();
+  });
+
   it("reuses the live process for the next compatible turn", async () => {
     await create();
     const dump = join(scratch, "dump.json");
@@ -2294,6 +2342,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(lines[0].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("first-capability");
     expect(lines[1].credFile.content.agents.MURAGE_COMMS_TOKEN).toBe("second-capability");
     expect(lines[1].credFile.path).toBe(lines[0].credFile.path);
+    // the warm turn's line names its bot and thread too, though the mcp config file went when the first turn settled
+    expect(lines.map((line) => [line.botId, line.threadId])).toEqual([["fixture-bot", "t-rotate"], ["fixture-bot", "t-rotate"]]);
     expect(readFileSync(lines[1].credFile.path, "utf8")).toBe("{}");
   });
 
@@ -3383,12 +3433,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await endTurn("t-auq-bogus", conn);
   });
 
-  it("tells the engine honestly when the wait runs out, and never guesses an answer", async () => {
-    // The shipped wait is 30 minutes; the driver clamps a configured one to
-    // one second, which is what makes this assertable without inflating any
-    // other timeout.
-    await create("hang", {}, { questionTimeoutMs: 1_000 });
-    await instance.adapter.sendTurn({ threadId: "t-auq-timeout", text: "go" });
+  it("on a turn nobody is at, tells the engine honestly at 30 minutes, and never guesses an answer", async () => {
+    const original = globalThis.setTimeout;
+    const shortNote = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+      original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
+    onTestFinished(() => shortNote.mockRestore());
+    await create("hang", {});
+    await instance.adapter.sendTurn({ threadId: "t-auq-timeout", text: "go", unattendedAskNote: true });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-auq-timeout"));
     const nextAnswer = answerQueue(conn);
@@ -3400,7 +3451,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // reports as "The user did not answer the questions") and never the old
     // "use your best judgment", which the model read as the owner's words
     expect(reply).toMatchObject({ id: "auq-7", behavior: "deny" });
-    expect(reply.message).toMatch(/did not answer within 1 min/i);
+    expect(reply.message).toMatch(/did not answer within 30 min/i);
     expect(reply.message).not.toMatch(/best judgment/i);
     expect(reply.answers).toBeUndefined();
     const resolved = await recorder.until((e) => e.type === "request.resolved" && e.requestId === "auq-7");
@@ -3408,15 +3459,19 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await endTurn("t-auq-timeout", conn);
   });
 
-  it("keeps a permission ask on its own 15-minute wait, untouched by the question wait", async () => {
-    await create("hang", {}, { questionTimeoutMs: 1_000 });
-    await instance.adapter.sendTurn({ threadId: "t-auq-mixed", text: "go" });
+  it("a permission ask never takes the note, even on a turn nobody is at", async () => {
+    const original = globalThis.setTimeout;
+    const shortNote = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
+      original(callback, delay === 30 * 60_000 ? 300 : delay, ...args)) as typeof setTimeout);
+    onTestFinished(() => shortNote.mockRestore());
+    await create("hang", {});
+    await instance.adapter.sendTurn({ threadId: "t-auq-mixed", text: "go", unattendedAskNote: true });
     await recorder.until((e) => e.type === "session.started");
     const conn = await connectSocket(permissionSocketPath("t-auq-mixed"));
     const nextAnswer = answerQueue(conn);
     conn.write(JSON.stringify({ t: "ask", id: "perm-1", tool: "Bash", input: { command: "echo hi" } }) + "\n");
     await recorder.until((e) => e.type === "request.opened" && e.requestId === "perm-1");
-    // well past the 1s question wait: a permission must still be pending
+    // well past the note: a permission must still be pending
     await new Promise((resolve) => setTimeout(resolve, 1_400));
     expect(recorder.events.filter((e) => e.type === "request.resolved" && e.requestId === "perm-1")).toHaveLength(0);
     await expect(instance.adapter.respondToRequest("t-auq-mixed", "perm-1", { behavior: "allow" })).resolves.toBe("allowed-once");
@@ -3655,6 +3710,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       expect(statSync(env.MURAGE_EXEC_ENV_FILE!).mode & 0o777).toBe(0o600);
       // every stdio server Claude starts through the prefix names its own env for murage-exec to keep
       expect(mcpConfig.mcpServers.muragebox!.env).toEqual({ ELECTRON_RUN_AS_NODE: "1", MURAGE_EXEC_KEEP: "ELECTRON_RUN_AS_NODE" });
+      // a card outlives Claude's 30 minute idle limit on a stdio server
+      expect((mcpConfig.mcpServers.muragebox as { timeout?: number }).timeout).toBe(CLAUDE_BROKER_TOOL_TIMEOUT_MS);
     }
   });
 
@@ -3993,6 +4050,7 @@ describe("the sign-in command Murage hands people", () => {
 // then denied with the turn-ended reply, and their notifications were ignored.
 // The fake CLI replays the frame shapes of that session's native.ndjson.
 describe("ClaudeDriver background tasks (fake CLI)", () => {
+  const AUQ_INPUT = { questions: [{ question: "Which format?", header: "Format", options: [{ label: "Summary" }, { label: "Detailed" }], multiSelect: false }] };
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
@@ -4106,6 +4164,42 @@ describe("ClaudeDriver background tasks (fake CLI)", () => {
     expect(note.turnId).toBe(turnId);
     const subs = recorder.events.filter((e) => e.type === "turn.subtask") as any[];
     expect(subs[subs.length - 1].subtasks.every((s: any) => s.status === "failed")).toBe(true);
+  });
+
+  it("a card open at the helper cap holds the turn; the cap waits again", async () => {
+    await create({ backgroundTaskCapMs: 300 });
+    process.env.FAKE_CLAUDE_BG_HOLD = "1";
+    process.env.FAKE_CLAUDE_BG_ASKS = "0";
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-card", text: "__fixture_background__" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-bg-card"));
+    conn.write(JSON.stringify({ t: "ask", id: "bg-card", kind: "question", tool: "AskUserQuestion", input: AUQ_INPUT }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "bg-card");
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    expect(recorder.events.some((e) => e.type === "turn.completed" && e.turnId === turnId)).toBe(false);
+    await instance.adapter.respondToRequest("t-bg-card", "bg-card", { behavior: "deny" });
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ stopReason: "background_wait_cap" });
+    conn.destroy();
+  });
+
+  it("Stop wins while the cap waits under a card: one end, no cap note, nothing fires after it", async () => {
+    await create({ backgroundTaskCapMs: 300 });
+    process.env.FAKE_CLAUDE_BG_HOLD = "1";
+    process.env.FAKE_CLAUDE_BG_ASKS = "0";
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-bg-card-stop", text: "__fixture_background__" });
+    await recorder.until((e) => e.type === "session.started");
+    const conn = await connectSocket(permissionSocketPath("t-bg-card-stop"));
+    conn.write(JSON.stringify({ t: "ask", id: "bg-stop", kind: "question", tool: "AskUserQuestion", input: AUQ_INPUT }) + "\n");
+    await recorder.until((e) => e.type === "request.opened" && e.requestId === "bg-stop");
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await instance.adapter.interruptTurn("t-bg-card-stop");
+    const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    expect(done).toMatchObject({ stopReason: "cancelled" });
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    expect(recorder.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+    expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.origin === "murage")).toBe(false);
+    conn.destroy();
   });
 
   it("re-arms the background cap after a steer hold adopts a follow-up with new helpers", async () => {

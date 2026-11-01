@@ -106,9 +106,9 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   {
     id: "windows-credential-files",
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
-    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](gcloud|npm)[\\/]|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
-    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/**", "**/Login Data"],
-    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*.config/gcloud*", "*AppData*Roaming*npm*", "*Login Data*"],
+    re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](?:gcloud|npm[\\/]etc)[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
+    read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/**", "**/Login Data"],
+    bash: ["*_netrc*", "*_npmrc*", "*.azure*", "*AppData*Roaming*gcloud*", "*.config/gcloud*", "*AppData*Roaming*npm*etc*", "*Login Data*"],
   },
   {
     id: "keys-and-cluster-configs",
@@ -146,9 +146,10 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "project-tooling",
-    re: /(^|[\s/"'])(\.claude[\\/]settings[^\\/\s"']*\.json\b|\.vscode[\\/]tasks\.json\b|\.husky([\\/]|$)|node_modules[\\/]\.bin([\\/]|$))/i,
-    read: [".claude/settings*.json", ".vscode/tasks.json", ".husky/**", "node_modules/.bin/**"],
-    bash: ["*.claude/settings*", "*.vscode/tasks.json*", "*.husky*", "*node_modules/.bin*"],
+    // NOLIMITS-KEY-TEXT A4: the global npm shims under AppData\Roaming\npm change what runs, so they are tooling, not a key place
+    re: /(^|[\s/"'])(\.claude[\\/]settings[^\\/\s"']*\.json\b|\.vscode[\\/]tasks\.json\b|\.husky([\\/]|$)|node_modules[\\/]\.bin([\\/]|$))|appdata[\\/]roaming[\\/]npm[\\/](?!etc[\\/])/i,
+    read: [".claude/settings*.json", ".vscode/tasks.json", ".husky/**", "node_modules/.bin/**", "~/AppData/Roaming/npm/**"],
+    bash: ["*.claude/settings*", "*.vscode/tasks.json*", "*.husky*", "*node_modules/.bin*", "*AppData*Roaming*npm*"],
   },
   // Rule 74b/74d: Murage's own murage-exec wrapper and the per-turn env
   // file it reads; a write to either would change what every command runs.
@@ -214,11 +215,14 @@ const SENSITIVE_TEXT: readonly SensitiveTextRow[] = [
   { id: "keychain", re: /security\s+find-(generic|internet)-password|\bkeychain\b/i },
   { id: "key-name", re: /\b[A-Z][A-Z0-9_]*_(API_KEY|SECRET_KEY|ACCESS_TOKEN|AUTH_TOKEN)\b/ },
   { id: "bearer", re: /\bBearer\s+\$\{?[A-Za-z_]/i },
-  { id: "key-literal", re: /\bsk-(proj|ant|or)?[-_]?[A-Za-z0-9]/ },
+  // NOLIMITS-KEY-TEXT A7: a key has length, so `pip install sk-learn` names none
+  { id: "key-literal", re: /\bsk-(?:proj|ant|or)?[-_]?[A-Za-z0-9_-]{16,}/ },
   { id: "env-grep", re: /\benv\b[^|;&]*\|\s*grep\b/i },
-  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone.
+  // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone,
+  // and (NOLIMITS-KEY-TEXT A8) `declare -p NAME`, `typeset -p NAME`, `export -p NAME`, `Get-ChildItem Env:`, `gci env:`, `dir env:` alone. Piped, the
+  // PowerShell listing keeps its 1.0.3 standing: Claude's own gate lists the environment that way at Full access.
   // Only at the start of a command, so `env VAR=x cmd`, `export FOO=1` and a word like "environment" are ordinary.
-  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|export\s+-p|declare\s+-[xp]+|set)\s*(?=$|[;&|)>`\n])/i },
+  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset|export)\s+-[a-oq-z]*p[a-z]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset)\s+-x+|(?:Get-ChildItem|gci|dir|ls)\s+(?:-Path\s+)?Env:[\\/]?\*?(?!\s*\|)|set)\s*(?=$|[;&|)>`\n])/i },
   // Rule 74b: cmd's AutoRun runs on every cmd start; a change to it is a
   // sensitive write.
   { id: "cmd-autorun", re: /Command Processor[\s\S]*\bAutoRun\b/i },
@@ -295,6 +299,12 @@ function sensitivePathRow(path: string, inProject: boolean, onTheWay = false, te
     if ((onTheWay && row.ancestor ? row.ancestor : row.re).test(path)) return row.id;
   }
   return null;
+}
+
+/** NOLIMITS-KEY-TEXT section 10: the one row test over a named path, the same `re` the key guard runs, for the key guard
+ * and the home-glob lane both. No Read tails, no Bash patterns, no second matcher. */
+function sensitiveNameRow(spelling: string): string | null {
+  return sensitivePathRow(spelling, false);
 }
 
 /** Rule 63/69c: the Claude `permissions.ask` projection, generated from the
@@ -897,7 +907,7 @@ export function piGateMessage(tool: string, input: Record<string, unknown> | und
 }
 
 // The whole-module inlines carry names the gate does not call.
-void [SENSITIVE_RULES, claudeSensitiveAskRules];
+void [SENSITIVE_RULES, claudeSensitiveAskRules, sensitiveNameRow];
 
 // ---- the search-result filter (Rule 60) -----------------------------------
 
@@ -1100,6 +1110,12 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     const parsed: unknown = JSON.parse(answer);
     if (!isObject(parsed)) return block(PI_GATE_NOT_ALLOWED);
     if (parsed.deny === true) return block(typeof parsed.reason === "string" && parsed.reason ? parsed.reason.slice(0, 2_000) : PI_GATE_NOT_ALLOWED);
+    // NOLIMITS-MEANS-IT 3.4: the server never saw this call whole, so there is nothing to echo. Allow means run what is
+    // held here, unchanged; a malformed call then gets Pi's own tool error.
+    if (parsed.allow === true && parsed.keep === true) {
+      walks = new WalkCache();
+      return undefined;
+    }
     if (parsed.allow !== true || !isObject(parsed.input) || !isObject(event.input)) return block(PI_GATE_NOT_ALLOWED);
     const rows = allowedKeys(event.toolName, event.input, entry);
     const keys = Object.keys(parsed.input);

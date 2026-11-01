@@ -219,6 +219,10 @@
 //   __fixture_wake_after_turn__  (prompt marker) finish the turn, then 2 s later
 //                        report turn_completed on _fuigo/session_notification,
 //                        the way Fuigo starts a turn of its own after end_turn
+//   FAKE_ACP_SESSION_NEW_GATE  path: answer session/new only once this file exists
+//                        (writes `<path>.waiting` while held): the window between
+//                        the turn's id going back and its prompt's write, where a
+//                        memory revoke makes the fence refuse the send
 //   FAKE_ACP_INIT_DELAY_MS  answer initialize only after this long: a startup
 //                        cost, so a reused process's saving is measurable
 //   __fixture_child_later__  (prompt marker) finish the turn, then start
@@ -1120,6 +1124,12 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      const sessionGate = process.env.FAKE_ACP_SESSION_NEW_GATE;
+      if (sessionGate && !existsSync(sessionGate)) {
+        writeFileSync(`${sessionGate}.waiting`, "");
+        whenFile(sessionGate, () => handle(msg));
+        break;
+      }
       if (process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE) {
         const id = msg.id;
         whenFile(process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE, () => out({ jsonrpc: "2.0", id, error: { code: -32000, message: "The session could not start" } }));

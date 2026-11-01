@@ -21,6 +21,10 @@ let turnNodesOverride: number | null = null;
 export const TURN_LINEAGE_MS = 50;
 /** A check made outside a turn's setup (a bot's own memory tool, a route) on the same thread. */
 export const TOOL_LINEAGE_MS = 100;
+/** The time of a resume check's one second look (designs/RESUME-SECOND-LOOK-1013.md). A check that ran out of time on the coldest read of
+ * a process, the first turn after a start, is unfinished, not failed: this bounds the check that finishes it. Used only where the cost
+ * today is a whole reset and replay; nodes bound its reads as they bound every other. */
+export const RESUME_SECOND_LOOK_MS = 500;
 let timeOverride: number | null | undefined;
 /** Tests set the time budget of the default allowances (null: none). Unset, a test run has none, so a slow runner does not change what the
  * existing suites prove; the time tests set it. */
@@ -55,6 +59,8 @@ export class LineageAllowance {
   everHit = false;
   /** How many times the allowance was renewed (renew): at most once. */
   private renewals = 0;
+  /** The one allowance every second look of this allowance draws on (secondLook). */
+  private second: LineageAllowance | undefined;
   /** Rows read and not yet paid for (a node pays for ROWS_PER_NODE rows). */
   debt = 0;
   closed = false;
@@ -118,6 +124,15 @@ export class LineageAllowance {
     return true;
   }
 
+  /** The allowance of a resume check's second look (designs/RESUME-SECOND-LOOK-1013.md): the same scope and nodes, its own time. Null unless
+   * this allowance ran out of time with nodes left: a read too big for its nodes stays too big, and a closed allowance is over. A turn
+   * makes up to three checks, so every look of this allowance draws on this ONE allowance: looks add at most one allowance in all. */
+  secondLook(): LineageAllowance | null {
+    if (this.closed || this.depth > 0 || this.remaining <= 0 || !this.overTime()) return null;
+    return this.second ??= new LineageAllowance(this.scope, this.nodesAtStart, this.reason, defaultMs(RESUME_SECOND_LOOK_MS));
+  }
+  /** The second look finished and passed: the cold read that stopped the first look says nothing about the rest of the turn. */
+  restartClock(): void { this.msUsed = 0; this.hitNow = false; }
   /** What may still be spent (0: closed or spent). */
   room(): number { return this.closed || this.overTime() ? 0 : Math.max(0, this.remaining); }
   /** Whether nothing more can be paid for. */
@@ -168,4 +183,18 @@ export class LineageAllowance {
       take: rows => { this.spendRows(thread, rows); allowanceHooks.progress(); },
     };
   }
+}
+
+/** A resume check, timed against its allowance, with one second look when it stopped on the clock (designs/RESUME-SECOND-LOOK-1013.md). A
+ * reason other than these two is a real answer and stands. Not finishing is not a pass: a second look that does not finish clean resets
+ * the session as the first would have, with its own reason. */
+export function withSecondLook(allowance: LineageAllowance, why: { reason?: string }, check: (allowance: LineageAllowance) => boolean): boolean {
+  if (!allowance.timed(() => check(allowance))) return false;
+  if (why.reason !== "lineage-warming" && why.reason !== "checking") return true;
+  const second = allowance.secondLook();
+  if (!second) return true;
+  delete why.reason;
+  if (second.timed(() => check(second))) return true;
+  allowance.restartClock();
+  return false;
 }

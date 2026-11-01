@@ -1,5 +1,6 @@
 import { track } from "@/lib/analytics";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { plainText } from "@/lib/plain-text";
 import { LibraryArt } from "./LibraryArt";
 import { teamImportPreview, type PendingTeamImport } from "@/lib/team-import";
@@ -921,9 +922,9 @@ export function TeamLibraryPanel({
         aria-modal="true"
         aria-labelledby="team-library-title"
         tabIndex={-1}
-        className="animate-pop-in flex h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className={cn(BOX_FRAME, "animate-pop-in h-[min(780px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[1040px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none")}
       >
-        <header className="flex items-start justify-between gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
+        <BoxHead className="items-start gap-4 px-6 pb-3 pt-6 sm:px-8 sm:pt-7">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               {pending && (
@@ -962,11 +963,11 @@ export function TeamLibraryPanel({
               <X size={21} />
             </button>
           </div>
-        </header>
+        </BoxHead>
 
         {pending ? (
           <>
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6 sm:px-8">
+            <BoxBody className="px-6 pb-6 pt-6 sm:px-8">
               {pendingArt && (
                 <LibraryArt slug={pendingArt} name={pending.name} team={pending.members.length > 1} size={512} className="mb-5 size-40 rounded-2xl sm:size-48" fallback={null} />
               )}
@@ -1053,9 +1054,9 @@ export function TeamLibraryPanel({
                   )}
                 </section>
               )}
-            </div>
+            </BoxBody>
 
-            <footer className="flex flex-col gap-3 border-t border-hairline/35 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <BoxFoot className="flex-col items-stretch gap-3 border-t border-hairline/35 px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <div className="text-[12.5px] text-ink-secondary">
                 {currentBotCount > 0 ? (
                   <>
@@ -1079,11 +1080,11 @@ export function TeamLibraryPanel({
                       ? pending.members.length === 1 ? "Load bot" : "Load team"
                       : pending.members.length === 1 ? "Add bot" : "Add team"}
               </button>
-            </footer>
+            </BoxFoot>
           </>
         ) : (
           <>
-            <div className="flex flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <div className="flex shrink-0 flex-col gap-3 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
               <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label="Team source">
                 <button
                   role="tab"
@@ -1159,7 +1160,7 @@ export function TeamLibraryPanel({
               )}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5 sm:px-8">
+            <BoxBody className="px-6 pb-7 pt-5 sm:px-8">
               {tab === "explore" && (
                 <div>
                   {/* THE PANEL'S MISSING TABS. It had `activeFacet` and a
@@ -1618,7 +1619,7 @@ export function TeamLibraryPanel({
                   {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
                 </div>
               )}
-            </div>
+            </BoxBody>
           </>
         )}
       </div>

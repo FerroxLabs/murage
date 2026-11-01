@@ -57,6 +57,7 @@ function foldable(message: Message): boolean {
  * the rest did. */
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
+  if (message?.folderPrompt) return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
 }
