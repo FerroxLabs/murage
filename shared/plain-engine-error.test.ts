@@ -12,11 +12,11 @@ describe("raw API errors read as plain sentences naming the bot (G11)", () => {
 
   it("says what kind of refusal it was without the provider's words", () => {
     expect(plainEngineError("API error (status 400): {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"tools[3] schema invalid\"}}", "Dax"))
-      .toBe("Dax's model provider turned this request down. The details below say why.");
-    expect(plainEngineError("HTTP 404: model `deepseek-v9` does not exist", "Dax")).toBe("Dax's model isn't available from its provider. Choose another model for Dax.");
-    expect(plainEngineError("API error (status 502 Bad Gateway): upstream connect error", "Dax")).toBe("Dax's model provider had a problem on its side. Try again in a moment.");
-    expect(plainEngineError("API error (status 400): prompt is too long: 250000 tokens > 200000 maximum", "Dax")).toBe("This conversation is too long for Dax's model. Start a new conversation, or choose a model with a larger context.");
-    expect(plainEngineError("{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"Internal server error\"}}", "Dax")).toBe("Dax's model provider had a problem on its side. Try again in a moment.");
+      .toBe("Dax's AI service turned this request down. The details below say why. Change the request or pick another model, then send it again.");
+    expect(plainEngineError("HTTP 404: model `deepseek-v9` does not exist", "Dax")).toBe("Dax's model isn't available from its AI service. Choose another model for Dax.");
+    expect(plainEngineError("API error (status 502 Bad Gateway): upstream connect error", "Dax")).toBe("Dax's AI service had a problem on its side. Try again in a moment.");
+    expect(plainEngineError("API error (status 400): prompt is too long: 250000 tokens > 200000 maximum", "Dax")).toBe("This conversation is too long for Dax's model. Start a new conversation, or choose a model that handles longer conversations.");
+    expect(plainEngineError("{\"type\":\"error\",\"error\":{\"type\":\"api_error\",\"message\":\"Internal server error\"}}", "Dax")).toBe("Dax's AI service had a problem on its side. Try again in a moment.");
   });
 
   it("leaves Murage's own plain sentences alone", () => {
@@ -29,17 +29,17 @@ describe("raw API errors read as plain sentences naming the bot (G11)", () => {
 describe("audit round (0.1.61 polish)", () => {
   it("says a model can't read images only when the provider says so", () => {
     expect(plainEngineError("API error (status 400): Invalid image data", "Dax"))
-      .toBe("Dax's model provider couldn't use the picture. Send it again, or send the message without it.");
+      .toBe("Dax's AI service couldn't use the picture. Send it again, or send the message without it.");
     expect(plainEngineError("API error (status 400): flux-pinned-deepseek-v4-pro does not accept image input", "Dax")).toMatch(/^Dax's model can't read images/);
   });
 
   it("puts a too-long conversation before any mention of images", () => {
     expect(plainEngineError("API error (status 400): maximum context length exceeded; image tokens count toward the total", "Dax"))
-      .toBe("This conversation is too long for Dax's model. Start a new conversation, or choose a model with a larger context.");
+      .toBe("This conversation is too long for Dax's model. Start a new conversation, or choose a model that handles longer conversations.");
   });
 
   it("does not promise details where there are none", () => {
-    expect(plainEngineError("API error (status 400): tools[3] schema invalid", "Dax", { details: false })).toBe("Dax's model provider turned this request down.");
+    expect(plainEngineError("API error (status 400): tools[3] schema invalid", "Dax", { details: false })).toBe("Dax's AI service turned this request down. Change the request or pick another model, then send it again.");
   });
 });
 

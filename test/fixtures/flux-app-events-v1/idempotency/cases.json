@@ -1,0 +1,708 @@
+{
+  "cases": [
+    {
+      "description": "Same tenant, method, path, key and body: the recorded response is returned, nothing runs twice.",
+      "expected": {
+        "replay": true,
+        "status": 202
+      },
+      "name": "replay-same-key-same-body",
+      "priorReceipts": [
+        {
+          "ageSec": 60,
+          "body": {
+            "connectedAccountId": "ca_e702e9def9c1",
+            "eventType": "slack.channel.message",
+            "filter": {},
+            "triggerConfig": {
+              "channel_id": "C0AE97TEST1"
+            },
+            "version": 1
+          },
+          "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+          "idempotencyHeader": "e1bfc7a1-3058-52d2-9bf1-79701c9db5ad",
+          "method": "POST",
+          "response": {
+            "operationId": "703c6696-ba0c-596c-b052-cc1f43b470d6",
+            "state": "registering",
+            "subscriptionId": "754ff2fc-423d-5573-bded-ccf9fb7cde23"
+          },
+          "route": "/v1/app-events/subscriptions",
+          "status": 202,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": "e1bfc7a1-3058-52d2-9bf1-79701c9db5ad",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "The digest is over the integer-only JCS bytes, so member order and whitespace do not matter.",
+      "expected": {
+        "replay": true,
+        "status": 202
+      },
+      "name": "replay-reordered-members-and-whitespace",
+      "priorReceipts": [
+        {
+          "ageSec": 30,
+          "body": {
+            "connectedAccountId": "ca_e702e9def9c1",
+            "eventType": "slack.channel.message",
+            "filter": {},
+            "triggerConfig": {
+              "channel_id": "C0AE97TEST1"
+            },
+            "version": 1
+          },
+          "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+          "idempotencyHeader": "3d0ac61f-99b6-51ff-8500-5343b0f16fcc",
+          "method": "POST",
+          "response": {
+            "operationId": "703c6696-ba0c-596c-b052-cc1f43b470d6",
+            "state": "registering",
+            "subscriptionId": "754ff2fc-423d-5573-bded-ccf9fb7cde23"
+          },
+          "route": "/v1/app-events/subscriptions",
+          "status": 202,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "bodyText": "{ \"filter\": {}, \"triggerConfig\": {\"channel_id\": \"C0AE97TEST1\"}, \"version\": 1,\n  \"connectedAccountId\": \"ca_e702e9def9c1\", \"eventType\": \"slack.channel.message\" }",
+        "idempotencyHeader": "3d0ac61f-99b6-51ff-8500-5343b0f16fcc",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "Same scope and key but a different body digest: 409 idempotency_conflict, nothing runs.",
+      "expected": {
+        "code": "idempotency_conflict",
+        "replay": false,
+        "status": 409
+      },
+      "name": "conflict-same-key-different-body",
+      "priorReceipts": [
+        {
+          "ageSec": 60,
+          "body": {
+            "connectedAccountId": "ca_e702e9def9c1",
+            "eventType": "slack.channel.message",
+            "filter": {},
+            "triggerConfig": {
+              "channel_id": "C0AE97TEST1"
+            },
+            "version": 1
+          },
+          "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+          "idempotencyHeader": "61bc3a5d-8ec3-5db9-9076-b0c1e2d8f2cf",
+          "method": "POST",
+          "response": {
+            "operationId": "703c6696-ba0c-596c-b052-cc1f43b470d6",
+            "state": "registering",
+            "subscriptionId": "754ff2fc-423d-5573-bded-ccf9fb7cde23"
+          },
+          "route": "/v1/app-events/subscriptions",
+          "status": 202,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST2"
+          },
+          "version": 1
+        },
+        "bodyDigest": "wH6L5aC0P7BwXs7c4aio7V-fkB2tu00HLUqknAT4TQ4",
+        "idempotencyHeader": "61bc3a5d-8ec3-5db9-9076-b0c1e2d8f2cf",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "The scope includes the route: the same key on resume does not see the pause receipt.",
+      "expected": {
+        "replay": false,
+        "status": 200
+      },
+      "name": "independent-other-route",
+      "priorReceipts": [
+        {
+          "ageSec": 60,
+          "body": {
+            "expectedRevision": 4,
+            "version": 1
+          },
+          "bodyDigest": "okr0j8RW1fylnTY38Ldc0YHHo49PBGFW5fSWIMwVoBU",
+          "idempotencyHeader": "a400bc5d-021d-57ed-80dc-775957ed4e30",
+          "method": "POST",
+          "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23/pause",
+          "status": 200,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "expectedRevision": 4,
+          "version": 1
+        },
+        "bodyDigest": "okr0j8RW1fylnTY38Ldc0YHHo49PBGFW5fSWIMwVoBU",
+        "idempotencyHeader": "a400bc5d-021d-57ed-80dc-775957ed4e30",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23/resume",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "subscriptionRevision": 4,
+        "subscriptionState": "paused"
+      }
+    },
+    {
+      "description": "The scope is the concrete path: the same key on another subscription id is independent.",
+      "expected": {
+        "replay": false,
+        "status": 200
+      },
+      "name": "independent-other-concrete-path",
+      "priorReceipts": [
+        {
+          "ageSec": 60,
+          "body": {
+            "expectedRevision": 4,
+            "version": 1
+          },
+          "bodyDigest": "okr0j8RW1fylnTY38Ldc0YHHo49PBGFW5fSWIMwVoBU",
+          "idempotencyHeader": "ed6b6e31-907f-5b86-8b97-2bbf1cd7c5c2",
+          "method": "POST",
+          "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23/pause",
+          "status": 200,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "expectedRevision": 4,
+          "version": 1
+        },
+        "bodyDigest": "okr0j8RW1fylnTY38Ldc0YHHo49PBGFW5fSWIMwVoBU",
+        "idempotencyHeader": "ed6b6e31-907f-5b86-8b97-2bbf1cd7c5c2",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions/6f3d8239-b4a2-574d-90c5-246414e9dcce/pause",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "subscriptionRevision": 4,
+        "subscriptionState": "active"
+      }
+    },
+    {
+      "description": "The scope includes the tenant: another tenant using the same key and body executes normally.",
+      "expected": {
+        "replay": false,
+        "status": 202
+      },
+      "name": "independent-other-tenant",
+      "priorReceipts": [
+        {
+          "ageSec": 60,
+          "body": {
+            "connectedAccountId": "ca_e702e9def9c1",
+            "eventType": "slack.channel.message",
+            "filter": {},
+            "triggerConfig": {
+              "channel_id": "C0AE97TEST1"
+            },
+            "version": 1
+          },
+          "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+          "idempotencyHeader": "c0a4c2d7-40e9-5c6c-9bb8-137907b307cf",
+          "method": "POST",
+          "response": {
+            "operationId": "703c6696-ba0c-596c-b052-cc1f43b470d6",
+            "state": "registering",
+            "subscriptionId": "754ff2fc-423d-5573-bded-ccf9fb7cde23"
+          },
+          "route": "/v1/app-events/subscriptions",
+          "status": 202,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": "c0a4c2d7-40e9-5c6c-9bb8-137907b307cf",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_b"
+      }
+    },
+    {
+      "description": "A mutation without Idempotency-Key is refused before anything runs.",
+      "expected": {
+        "code": "idempotency_key_required",
+        "replay": false,
+        "status": 422
+      },
+      "name": "key-missing",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": null,
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "A key that is not a UUID is refused the same way.",
+      "expected": {
+        "code": "idempotency_key_required",
+        "replay": false,
+        "status": 422
+      },
+      "name": "key-not-a-uuid",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": "not-a-uuid",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "An empty key is treated as missing.",
+      "expected": {
+        "code": "idempotency_key_required",
+        "replay": false,
+        "status": 422
+      },
+      "name": "key-empty",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": "",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "Body shape is decided before the key: no version member and no key reports invalid_request.",
+      "expected": {
+        "code": "invalid_request",
+        "replay": false,
+        "status": 422
+      },
+      "name": "shape-error-before-key-check",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 2
+        },
+        "bodyDigest": "wqx27jU2XS4xU3Z6uazGiJJhUo2ENd90y0MmpyqV_Cg",
+        "idempotencyHeader": null,
+        "method": "DELETE",
+        "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "DELETE carries a JSON body with version 1 like every other mutation.",
+      "expected": {
+        "code": "invalid_request",
+        "replay": false,
+        "status": 422
+      },
+      "name": "delete-body-needs-version",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 2
+        },
+        "bodyDigest": "wqx27jU2XS4xU3Z6uazGiJJhUo2ENd90y0MmpyqV_Cg",
+        "idempotencyHeader": "f3897cdd-7478-5879-abeb-c86fef049557",
+        "method": "DELETE",
+        "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "expectedRevision 3 against a subscription at revision 4: 409 revision_conflict.",
+      "expected": {
+        "code": "revision_conflict",
+        "replay": false,
+        "status": 409
+      },
+      "name": "revision-mismatch",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 3,
+          "version": 1
+        },
+        "bodyDigest": "dEKt61HD-N7Xv9XNNq4Yeo1D93kBY7lC5oS_rFC0iUw",
+        "idempotencyHeader": "4939ebc4-8a78-5072-b765-3e46364be623",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23/pause",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "subscriptionRevision": 4,
+        "subscriptionState": "active"
+      }
+    },
+    {
+      "description": "expectedRevision equal to the current revision executes and returns the new view.",
+      "expected": {
+        "replay": false,
+        "status": 200
+      },
+      "name": "revision-match",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 4,
+          "version": 1
+        },
+        "bodyDigest": "okr0j8RW1fylnTY38Ldc0YHHo49PBGFW5fSWIMwVoBU",
+        "idempotencyHeader": "410dd567-9088-5c51-b7f7-b7cd9fba8ff3",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions/754ff2fc-423d-5573-bded-ccf9fb7cde23/pause",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "subscriptionRevision": 4,
+        "subscriptionState": "active"
+      }
+    },
+    {
+      "description": "The first start transition grants the single submission right: newlyStarted true.",
+      "expected": {
+        "newlyStarted": true,
+        "replay": false,
+        "status": 200
+      },
+      "name": "start-first-time",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 1,
+          "version": 1
+        },
+        "bodyDigest": "l9PsPMbWLjwIAkATYAXdACr5cA6iLnZyiJU5Z2c2M2Y",
+        "idempotencyHeader": "5e629583-901a-5607-8a93-546e95e4ab89",
+        "method": "POST",
+        "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "runRevision": 1,
+        "runState": "reserved"
+      }
+    },
+    {
+      "description": "A replay of the start returns the recorded response, and newlyStarted is always false.",
+      "expected": {
+        "newlyStarted": false,
+        "replay": true,
+        "status": 200
+      },
+      "name": "start-replay-same-key",
+      "priorReceipts": [
+        {
+          "ageSec": 120,
+          "body": {
+            "expectedRevision": 1,
+            "version": 1
+          },
+          "bodyDigest": "l9PsPMbWLjwIAkATYAXdACr5cA6iLnZyiJU5Z2c2M2Y",
+          "idempotencyHeader": "5e629583-901a-5607-8a93-546e95e4ab89",
+          "method": "POST",
+          "response": {
+            "newlyStarted": true
+          },
+          "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+          "status": 200,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "expectedRevision": 1,
+          "version": 1
+        },
+        "bodyDigest": "l9PsPMbWLjwIAkATYAXdACr5cA6iLnZyiJU5Z2c2M2Y",
+        "idempotencyHeader": "5e629583-901a-5607-8a93-546e95e4ab89",
+        "method": "POST",
+        "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "runRevision": 2,
+        "runState": "working"
+      }
+    },
+    {
+      "description": "A different key against an already started run is not a new start: newlyStarted false.",
+      "expected": {
+        "newlyStarted": false,
+        "replay": false,
+        "status": 200
+      },
+      "name": "start-new-key-after-started",
+      "priorReceipts": [
+        {
+          "ageSec": 120,
+          "body": {
+            "expectedRevision": 1,
+            "version": 1
+          },
+          "bodyDigest": "l9PsPMbWLjwIAkATYAXdACr5cA6iLnZyiJU5Z2c2M2Y",
+          "idempotencyHeader": "5e629583-901a-5607-8a93-546e95e4ab89",
+          "method": "POST",
+          "response": {
+            "newlyStarted": true
+          },
+          "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+          "status": 200,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "expectedRevision": 2,
+          "version": 1
+        },
+        "bodyDigest": "zQneK8Kyvs8Xe3VgSynCd7DyuDX9O-NtRsoayBZIlr4",
+        "idempotencyHeader": "0671e9ee-3284-525b-bcb0-aa23bf90b2a0",
+        "method": "POST",
+        "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "runRevision": 2,
+        "runState": "working"
+      }
+    },
+    {
+      "description": "Receipts are kept at least 8 days (691200 s): one second short of that still replays.",
+      "expected": {
+        "replay": true,
+        "status": 202
+      },
+      "name": "receipt-retained-just-under-eight-days",
+      "priorReceipts": [
+        {
+          "ageSec": 691199,
+          "body": {
+            "connectedAccountId": "ca_e702e9def9c1",
+            "eventType": "slack.channel.message",
+            "filter": {},
+            "triggerConfig": {
+              "channel_id": "C0AE97TEST1"
+            },
+            "version": 1
+          },
+          "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+          "idempotencyHeader": "53f685c3-4495-565b-af1b-fcb3c7e3ca18",
+          "method": "POST",
+          "response": {
+            "operationId": "703c6696-ba0c-596c-b052-cc1f43b470d6",
+            "state": "registering",
+            "subscriptionId": "754ff2fc-423d-5573-bded-ccf9fb7cde23"
+          },
+          "route": "/v1/app-events/subscriptions",
+          "status": 202,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "connectedAccountId": "ca_e702e9def9c1",
+          "eventType": "slack.channel.message",
+          "filter": {},
+          "triggerConfig": {
+            "channel_id": "C0AE97TEST1"
+          },
+          "version": 1
+        },
+        "bodyDigest": "SCGy3ojvbI7_X288nHAgfuXpwjwyIAdFfftPz--2bu0",
+        "idempotencyHeader": "53f685c3-4495-565b-af1b-fcb3c7e3ca18",
+        "method": "POST",
+        "route": "/v1/app-events/subscriptions",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "After the receipt is pruned the key is new, but the logical run id still decides: no second start.",
+      "expected": {
+        "newlyStarted": false,
+        "replay": false,
+        "status": 200
+      },
+      "name": "receipt-pruned-logical-id-authoritative",
+      "priorReceipts": [],
+      "request": {
+        "body": {
+          "expectedRevision": 1,
+          "version": 1
+        },
+        "bodyDigest": "l9PsPMbWLjwIAkATYAXdACr5cA6iLnZyiJU5Z2c2M2Y",
+        "idempotencyHeader": "5e629583-901a-5607-8a93-546e95e4ab89",
+        "method": "POST",
+        "route": "/v1/app-events/runs/710684d8-651c-5299-b3fc-551127abe5a8/start",
+        "tenant": "acct_owner_a"
+      },
+      "state": {
+        "runRevision": 2,
+        "runState": "working"
+      }
+    },
+    {
+      "description": "A response that carries credentials can be recovered by replay for 900 s.",
+      "expected": {
+        "credentialsReturned": true,
+        "replay": true,
+        "status": 201
+      },
+      "name": "credential-replay-within-window",
+      "priorReceipts": [
+        {
+          "ageSec": 899,
+          "body": {
+            "displayName": "Test home",
+            "homeKey": "murage-home-0001",
+            "version": 1
+          },
+          "bodyDigest": "icNQd17_bPR133XdqzfBYkpH_3Eq05p69u5CFJm-z4k",
+          "idempotencyHeader": "a59c929d-8c92-5dff-a7f4-8a65e72653eb",
+          "method": "POST",
+          "route": "/v1/app-events/homes",
+          "status": 201,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "displayName": "Test home",
+          "homeKey": "murage-home-0001",
+          "version": 1
+        },
+        "bodyDigest": "icNQd17_bPR133XdqzfBYkpH_3Eq05p69u5CFJm-z4k",
+        "idempotencyHeader": "a59c929d-8c92-5dff-a7f4-8a65e72653eb",
+        "method": "POST",
+        "route": "/v1/app-events/homes",
+        "tenant": "acct_owner_a"
+      }
+    },
+    {
+      "description": "After 900 s the same replay no longer returns credentials: 409 replacement_setup_required.",
+      "expected": {
+        "code": "replacement_setup_required",
+        "replay": false,
+        "status": 409
+      },
+      "name": "credential-replay-after-window",
+      "priorReceipts": [
+        {
+          "ageSec": 901,
+          "body": {
+            "displayName": "Test home",
+            "homeKey": "murage-home-0001",
+            "version": 1
+          },
+          "bodyDigest": "icNQd17_bPR133XdqzfBYkpH_3Eq05p69u5CFJm-z4k",
+          "idempotencyHeader": "a59c929d-8c92-5dff-a7f4-8a65e72653eb",
+          "method": "POST",
+          "route": "/v1/app-events/homes",
+          "status": 201,
+          "tenant": "acct_owner_a"
+        }
+      ],
+      "request": {
+        "body": {
+          "displayName": "Test home",
+          "homeKey": "murage-home-0001",
+          "version": 1
+        },
+        "bodyDigest": "icNQd17_bPR133XdqzfBYkpH_3Eq05p69u5CFJm-z4k",
+        "idempotencyHeader": "a59c929d-8c92-5dff-a7f4-8a65e72653eb",
+        "method": "POST",
+        "route": "/v1/app-events/homes",
+        "tenant": "acct_owner_a"
+      }
+    }
+  ],
+  "contractRevision": 1,
+  "credentialRecoveryWindowSec": 900,
+  "description": "Idempotency-Key behaviour (D-10). Scope is (tenant, method, concrete path, key); the body digest is body_digest(body) from src/app_events/jcs.py. Only 2xx responses are recorded as receipts.",
+  "grade": "FINAL",
+  "receiptRetentionSec": 691200,
+  "version": 1
+}

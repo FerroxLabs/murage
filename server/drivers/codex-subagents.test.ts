@@ -5,7 +5,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { ChildProcess } from "node:child_process";
 import * as procs from "../procs.ts";
 
@@ -156,6 +156,31 @@ describe("CodexDriver sub agents (fake app-server)", () => {
     const done = await stopHeld("t-cx-stop-cap");
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(recorder.events.some((e) => e.type === "item.completed" && e.itemType === "assistant_text" && e.text.includes("Stopped waiting"))).toBe(false);
+  });
+
+  it("a helper finishing does not end the turn under an open card; the answer does", async () => {
+    process.env.FAKE_CODEX_BG_ASKS = "1";
+    process.env.FAKE_CODEX_BG_NO_WAIT = "1";
+    onTestFinished(() => { delete process.env.FAKE_CODEX_BG_NO_WAIT; });
+    const { turnId } = await send("t-cx-end-card");
+    const card: any = await recorder.until((e) => e.type === "request.opened");
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(recorder.events.some((e) => e.type === "turn.completed" && e.turnId === turnId)).toBe(false);
+    expect(recorder.events.some((e) => e.type === "request.resolved" && e.requestId === card.requestId)).toBe(false);
+    await instance.adapter.respondToRequest("t-cx-end-card", card.requestId, { behavior: "allow" } as never);
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+  });
+
+  it("the cap comes round again while a helper's card is open, and ends the turn once it is answered", async () => {
+    process.env.FAKE_CODEX_BG_HOLD = "1";
+    process.env.FAKE_CODEX_BG_ASKS = "1";
+    process.env.MURAGE_BACKGROUND_CAP_MS = "200";
+    const { turnId } = await send("t-cx-cap-card");
+    const card: any = await recorder.until((e) => e.type === "request.opened");
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    expect(recorder.events.some((e) => e.type === "turn.completed" && e.turnId === turnId)).toBe(false);
+    await instance.adapter.respondToRequest("t-cx-cap-card", card.requestId, { behavior: "deny" } as never);
+    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true, stopReason: "background_wait_cap" });
   });
 
   it("ends at the cap with a plain note", async () => {
