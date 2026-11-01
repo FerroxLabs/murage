@@ -30,6 +30,8 @@ import { ApprovedStepsRow, isApprovedStepsLine } from "./ApprovedStepsRow";
 import { settledHeldQueue } from "./EngineNotes";
 import { ImageRecordRow, isImageRecordLine } from "./ImageRecordRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { FolderPromptRow } from "./FolderPromptRow";
+import { folderPromptShowing } from "../../shared/mac-folder-prompt";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { roomTranscript } from "@/lib/room-transcript";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
@@ -101,6 +103,7 @@ import { HelpersLine, HelpersSummary } from "./HelpersLine";
 import { pickSubtasks } from "@/lib/subtasks";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { OpenBotListButton } from "./OpenBotListButton";
 import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
@@ -465,7 +468,9 @@ const Transcript = memo(function Transcript({
                   : undefined}
               />
             </div>
-          ) : m.kind === "activity" && m.murage?.held && settledHeldQueue(m.murage.held.count) ? null : m.kind === "activity" && m.tool ? (
+          ) : m.kind === "activity" && m.murage?.held && settledHeldQueue(m.murage.held.count) ? null : m.kind === "activity" && m.folderPrompt ? (
+            folderPromptShowing(m, Date.now()) && m.tool ? <FolderPromptRow text={m.tool.name} /> : null
+          ) : m.kind === "activity" && m.tool ? (
             isApprovedStepsLine(m) ? (
               <ApprovedStepsRow message={m} />
             ) : isImageRecordLine(m) ? (
@@ -1319,7 +1324,7 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
   };
   return (
     <div
-      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
@@ -1330,11 +1335,12 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
           event.preventDefault();
           save();
         }}
-        className="w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
+        className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-[340px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}
       >
-        <div id="rename-channel-title" className="mb-3 text-[15px] font-semibold text-ink">
+        <BoxHead className="px-4 pt-4"><div id="rename-channel-title" className="text-[15px] font-semibold text-ink">
           Rename {channelNoun(group)}
-        </div>
+        </div></BoxHead>
+        <BoxBody className="px-4 pb-1 pt-3">
         <input dir="auto"
           autoFocus
           value={draft}
@@ -1345,7 +1351,8 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
           onKeyDown={(event) => event.key === "Escape" && onClose()}
           className="w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink focus:outline-none focus:ring-1 focus:ring-accent"
         />
-        <div className="mt-3 flex gap-2">
+        </BoxBody>
+        <BoxFoot className="px-4 pb-4 pt-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110">
             Cancel
           </button>
@@ -1356,7 +1363,7 @@ function RenameChannelDialog({ group, onClose }: { group: Group; onClose: () => 
           >
             Save
           </button>
-        </div>
+        </BoxFoot>
       </form>
     </div>
   );
@@ -1377,7 +1384,7 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
   };
   return (
     <div
-      className="overlay-inset fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-3"
+      className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40 p-3"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <form
@@ -1388,12 +1395,13 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
           event.preventDefault();
           save();
         }}
-        className="w-[420px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl"
+        className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-[420px] max-w-[calc(100vw-1.5rem)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}
       >
-        <div id="make-project-title" className="text-[15px] font-semibold text-ink">
+        <BoxHead className="px-4 pt-4"><div id="make-project-title" className="text-[15px] font-semibold text-ink">
           Make {group.name} a project
-        </div>
-        <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">
+        </div></BoxHead>
+        <BoxBody className="px-4 pb-1 pt-1">
+        <p className="text-[13px] leading-relaxed text-ink-secondary">
           The chat, the bots, the instructions and the folder all stay. Say what the work is for and it gets a home page.
         </p>
         <label htmlFor="make-project-goal" className="mt-3 block text-[13px] font-semibold text-ink">
@@ -1413,7 +1421,8 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
           placeholder="For example: Get the new website open in time for the spring."
           className="mt-2 w-full resize-y rounded-xl border border-hairline/40 bg-inset px-3 py-2.5 text-[14px] leading-relaxed text-ink placeholder:text-ink-secondary focus:border-accent focus:outline-none"
         />
-        <div className="mt-3 flex gap-2">
+        </BoxBody>
+        <BoxFoot className="px-4 pb-4 pt-2">
           <button type="button" onClick={onClose} className="flex-1 rounded-lg bg-raised py-2 text-[14px] font-medium text-ink hover:brightness-110">
             Cancel
           </button>
@@ -1424,7 +1433,7 @@ function MakeProjectDialog({ group, onClose, onMade }: { group: Group; onClose: 
           >
             Make it a project
           </button>
-        </div>
+        </BoxFoot>
       </form>
     </div>
   );

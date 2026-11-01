@@ -120,7 +120,7 @@ export async function expectFinishTogether(page: Page, on: boolean): Promise<voi
 }
 
 /** The approval level the composer shows for the visible conversation: the
- *  chip by its name ("Ask for approval", "Auto mode") on a wide screen, or the
+ *  chip by its name ("Ask for approval", "Auto") on a wide screen, or the
  *  phone + menu's "Approval level" entry, which reads the chip's word ("Ask",
  *  "Auto"). The menu is closed again. */
 export async function expectApprovalLevel(page: Page, label: string, chip: string): Promise<void> {

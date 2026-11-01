@@ -1,4 +1,3 @@
-import { isSharedWorkRow } from "./shared-work.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { SendTurnInput, TurnStartResult } from "./contracts.ts";
@@ -46,7 +45,7 @@ export async function dispatchProjectUsageTurn(turn: SendTurnInput, run: Project
   run.stop = deps.interrupt;
   deps.pending.set(turn.threadId, run);
   try {
-    const result = await deps.send({ ...turn, ...(deps.project || isSharedWorkRow(run.request) ? { holdProjectAsks: true } : {}) });
+    const result = await deps.send(turn);
     run.providerTurnId = result.turnId;
     if (!run.settled) deps.turns.set(JSON.stringify([turn.threadId, result.turnId]), run);
     return result;

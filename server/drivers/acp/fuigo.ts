@@ -148,7 +148,12 @@ export const FUIGO_SUBAGENTS_OFF = { FUIGO_SUBAGENTS: "0" } as const;
 export const FUIGO_AGENT_SPAWNS_OFF = { FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" } as const;
 
 /** Every name Murage pins on a Fuigo bot turn's env, last, over any inherited value. */
-export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF } as const;
+/** Fuigo's own 30 minute limit on ask_user_question off: the owner's answer or Stop ends a question card, and Murage's
+ *  note ends one on a turn nobody is at. Read in fuigo-shell toolset.rs at 1.0.32 and 1.0.37: env outranks user and
+ *  managed config. Without it the tool returns unanswered at 30 minutes and the card sits open under a moved-on turn. */
+export const FUIGO_ASK_CLOCK_OFF = { FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false" } as const;
+
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF } as const;
 
 /**
  * Names a Fuigo bot turn never inherits, in any casing. `FUIGO_AGENT` starts

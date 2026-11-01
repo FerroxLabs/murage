@@ -52,8 +52,8 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 };
 
 const SLICE = [
-  "apps.chat-approval-buttons", "apps.own-browser", "bots.channel-turns", "bots.rename-chief",
-  "engines.continue-with-chatgpt-grok", "engines.grok-images", "engines.openai-compatible-tools",
+  "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "bots.channel-turns", "bots.rename-chief",
+  "engines.continue-with-chatgpt-grok", "engines.grok-images", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
   "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
 ];
@@ -65,7 +65,7 @@ describe("capability database", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("holds exactly the twelve 1.0.10 slice entries", () => {
+  it("holds exactly the reviewed entries", () => {
     expect(CAPABILITY_ENTRIES.map((record) => record.capability).sort()).toEqual(SLICE);
     for (const record of CAPABILITY_ENTRIES) expect(record.id).toBe(`cap:${record.capability}`);
     expect(CAPABILITY_DB_REV).toMatch(/^[0-9a-f]{64}$/);

@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_HOUSE_RULES } from "../../server/house-rules/default";
-import { ALWAYS_ON_RULES, HOUSE_RULES_LONG_WORDS, HouseRulesSettings, lengthHint, wordCount } from "./HouseRulesSettings";
+import { alwaysOnRules, HOUSE_RULES_LONG_WORDS, HouseRulesSettings, lengthHint, wordCount } from "./HouseRulesSettings";
 import { richEditable } from "./skills/SkillEditor";
 
 describe("house rules settings", () => {
@@ -35,7 +35,7 @@ describe("house rules settings", () => {
   });
 
   it("uses plain words: no em dashes and no \"safe\" in the copy", () => {
-    for (const text of [DEFAULT_HOUSE_RULES, ...ALWAYS_ON_RULES, lengthHint(5).text, lengthHint(5000).text]) {
+    for (const text of [DEFAULT_HOUSE_RULES, ...alwaysOnRules(), lengthHint(5).text, lengthHint(5000).text]) {
       expect(text).not.toMatch(/—/);
       expect(text).not.toMatch(/\bsafe\b/i);
     }

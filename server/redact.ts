@@ -180,11 +180,21 @@ const NUMERIC_VALUE = /^\d+$/;
 /** The rules of `redactSecretsInText`, in the order it runs them, each by
  * name and on its own. This is the list the function runs, and the list the
  * clock in redact.test.ts puts a number on rule by rule: no rule here is
- * called linear without a measured number for that rule. */
+ * called linear without a measured number for that rule.
+ *
+ * Whole spans first, shapes after. A shape rule stops at the first character
+ * outside its class, and its mask has spaces and guillemets that no span rule
+ * can run across: with the shapes first, `token=sk-…/rest` kept `/rest`, the
+ * rest of the same credential. Every shape class fits inside the span value
+ * class, so a span rule takes all of a credential or none of it, and the shape
+ * rules still run over whatever the span rules leave.
+ *
+ * BEARER stays ahead of KEY_VALUE: the value of `token=x-x-x-x-Bearer abc…` ends
+ * in the word `Bearer`, and masking that first would hide the token after it
+ * from BEARER. JWT stays ahead of the prefixes for the reason above: a `-sk-…`
+ * run inside a signature must not split the token. */
 export const TEXT_RULES: readonly (readonly [string, (text: string) => string])[] = [
   ["PEM_BLOCK", redactPemBlocks],
-  ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string) => text.replace(re, (m) => mask(m))] as const),
-  ["JWT", (text) => text.replace(JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
   ["BEARER", (text) => text.replace(BEARER, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
   ["KEY_VALUE", (text) => text.replace(
     KEY_VALUE,
@@ -192,6 +202,8 @@ export const TEXT_RULES: readonly (readonly [string, (text: string) => string])[
       `${leadA ?? leadB}${keyA ?? keyB}${sep}${quote}${mask(value)}${quote}`,
   )],
   ["QUERY_KEY", (text) => text.replace(QUERY_KEY, (match: string, lead: string, value: string) => (NUMERIC_VALUE.test(value) ? match : `${lead}${mask(value)}`))],
+  ["JWT", (text) => text.replace(JWT, (_m, lead: string, tok: string) => `${lead}${mask(tok)}`)],
+  ...KEY_PREFIXES.map((re, index) => [`KEY_PREFIXES[${index}]`, (text: string) => text.replace(re, (m) => mask(m))] as const),
   // Bank, card, account and personal id numbers keep their shape and lose
   // their digits, byte for byte (shared/financial-ids.ts). Last, so a secret
   // rule above sees the text as typed.

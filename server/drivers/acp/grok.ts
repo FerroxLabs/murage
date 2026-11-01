@@ -362,6 +362,9 @@ export const GROK_EXTERNAL_COMPAT_GATES = [
   "GROK_CODEX_MCPS_ENABLED", "GROK_CODEX_HOOKS_ENABLED", "GROK_CODEX_SESSIONS_ENABLED",
 ] as const;
 
+/** In grok 1.0.62 and 1.0.70 (binary strings); the same switch as Fuigo's. */
+export const GROK_ASK_CLOCK = "GROK_ASK_USER_QUESTION_TIMEOUT_ENABLED";
+
 export function isolateGrokFromPersonalSetup(env: Record<string, string | undefined>): void {
   const present = new Set(Object.keys(env).map((name) => name.toUpperCase()));
   for (const name of GROK_EXTERNAL_COMPAT_GATES) if (!present.has(name)) env[name] = "0";
@@ -370,6 +373,13 @@ export function isolateGrokFromPersonalSetup(env: Record<string, string | undefi
   // Murage owns memory. --no-memory on argv already outranks GROK_MEMORY
   // (docs 13-memory.md); the env default covers a build that drops the flag.
   if (!present.has("GROK_MEMORY")) env.GROK_MEMORY = "0";
+  // Grok's own 30 minute limit on a question off, whatever the owner's env says: the owner's answer or Stop ends the card.
+  pinGrokAskClockOff(env);
+}
+
+function pinGrokAskClockOff(env: Record<string, string | undefined>): void {
+  for (const name of Object.keys(env)) if (name.toUpperCase() === GROK_ASK_CLOCK) delete env[name];
+  env[GROK_ASK_CLOCK] = "false";
 }
 
 const PLUGIN_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
@@ -499,6 +509,8 @@ export function applyGrokFluxMemory(env: Record<string, string | undefined>, hea
 
 const support: AcpSupport = {
   driverKind: "grokAgent",
+  // The map handed to the engine skips a value equal to Murage's own env, so the pin is set on it too.
+  scrubHandedEnv: (map) => pinGrokAskClockOff(map),
   displayName: "Grok",
   // The same shell as Fuigo: a bare reject_once ends the prompt as `cancelled`
   // (10-29: a 15-minute card timeout ended a live image turn as "Stopped by
