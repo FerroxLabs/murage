@@ -5,31 +5,31 @@
  */
 export const CREDENTIAL_TARGETS = {
   xaiApiKey: {
-    label: "xAI API key",
-    description: "Used by the built-in Grok provider.",
+    label: "xAI key",
+    description: "Used by the built-in Grok AI.",
     placeholder: "xai-…",
     helpUrl: "https://console.x.ai/",
   },
   boxToken: {
-    label: "Box API key",
+    label: "Box key",
     description: "Gives bots an isolated cloud computer when Box is selected.",
-    placeholder: "Paste your Box API key",
+    placeholder: "Paste your Box key",
     helpUrl: "https://docs.ascii.dev/box/api-keys",
   },
   opencodeGoApiKey: {
-    label: "OpenCode API key",
-    description: "Used for OpenCode Go and other key-backed OpenCode providers.",
-    placeholder: "Paste your OpenCode API key",
+    label: "OpenCode key",
+    description: "Used for OpenCode Go and other OpenCode AI services that take a key.",
+    placeholder: "Paste your OpenCode key",
     helpUrl: "https://opencode.ai/docs/providers/",
   },
   ttsKey: {
-    label: "ElevenLabs API key",
+    label: "ElevenLabs key",
     description: "Enables text-to-speech voices in calls.",
-    placeholder: "Paste your ElevenLabs API key",
+    placeholder: "Paste your ElevenLabs key",
     helpUrl: "https://elevenlabs.io/app/settings/api-keys",
   },
   openaiImageApiKey: {
-    label: "OpenAI API key",
+    label: "OpenAI key",
     description: "Used only to generate custom bot avatar images.",
     placeholder: "sk-…",
     helpUrl: "https://platform.openai.com/api-keys",

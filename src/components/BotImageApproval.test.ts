@@ -25,18 +25,18 @@ const radio = (markup: string, label: string) => {
 };
 
 describe("the Images setting", () => {
-  it("offers the three choices, Follow permission level pressed by default", () => {
+  it("offers the three choices, Follow the level pressed by default", () => {
     const markup = render();
-    for (const label of ["Follow permission level", "Ask before each image", "Make images without asking"]) expect(markup).toContain(`>${label}<`);
-    expect(pressed(markup)).toEqual(["Follow permission level"]);
+    for (const label of ["Follow the level", "Ask before each image", "Make images without asking"]) expect(markup).toContain(`>${label}<`);
+    expect(pressed(markup)).toEqual(["Follow the level"]);
     expect(pressed(render({ imageApproval: "ask" }))).toEqual(["Ask before each image"]);
     expect(pressed(render({ imageApproval: "allow" }))).toEqual(["Make images without asking"]);
   });
 
   it("gives each choice a one-line tooltip, and says what the pressed one means", () => {
     const markup = render({ imageApproval: "allow" });
-    expect(radio(markup, "Follow permission level")).toContain('title="Full access and No limits make images without asking; Ask and Auto ask first."');
-    expect(radio(markup, "Ask before each image")).toContain('title="Every image waits for your answer, whatever the permission level."');
+    expect(radio(markup, "Follow the level")).toContain('title="Full access and No limits make images without asking; Ask and Auto ask first."');
+    expect(radio(markup, "Ask before each image")).toContain('title="Every image waits for your answer, whatever the level."');
     expect(radio(markup, "Make images without asking")).toContain('title="');
     expect(markup).toContain("Contacts and anyone else still get the card.");
   });
@@ -91,7 +91,7 @@ describe("the Images setting follows the chosen language", () => {
   it("renders German", async () => {
     await setLocale("de");
     const markup = render();
-    expect(markup).not.toContain("Follow permission level");
+    expect(markup).not.toContain("Follow the level");
     expect(markup).toContain(">Bilder<");
   });
 });
