@@ -164,7 +164,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
       await start("x.ai/ask_user_question", GROK_PARAMS);
-      await instance!.adapter.sendTurn({ threadId: "t-grok-timeout", text: "go" });
+      await instance!.adapter.sendTurn({ threadId: "t-grok-timeout", text: "go", unattendedAskNote: true });
       const opened = await recorder.until((e) => e.type === "request.opened");
       expect(await recorder.until((e) => e.type === "request.resolved")).toMatchObject({ behavior: "deny", source: "timeout" });
       await recorder.until((e) => e.type === "turn.completed");

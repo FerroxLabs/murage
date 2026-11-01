@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   CODEX_FLOORS, CODEX_GATE_MIN, CODEX_HOOK_SCRIPT, CODEX_LOCAL_ORDINARY, CODEX_SHELL_FORM_FEATURES, CODEX_UNTRUSTED_RETIRED_MIN,
@@ -78,8 +78,8 @@ describe("T100a: what Murage writes into the scoped home", () => {
     // 03-1: the env file is this process's own, under the scope's hook-env/
     expect(files.envFile).toBe(join(home, "hook-env", `${process.pid}-abc.env`));
     const json = JSON.parse(readFileSync(files.hooksJson, "utf8"));
-    expect(Object.keys(json.hooks).sort()).toEqual(["PreToolUse", "SessionStart"]);
-    for (const event of ["PreToolUse", "SessionStart"]) {
+    expect(Object.keys(json.hooks).sort()).toEqual(["PreToolUse", "SessionStart", "Stop", "SubagentStop"]);
+    for (const event of ["PreToolUse", "SessionStart", "Stop", "SubagentStop"]) {
       expect(json.hooks[event]).toHaveLength(1);
       expect(json.hooks[event][0]).not.toHaveProperty("matcher");
       expect(json.hooks[event][0].hooks).toHaveLength(1);
@@ -333,6 +333,35 @@ describe("T100b: trust through hooks/list and config/batchWrite", () => {
     ] }],
   });
 
+  const stopEntry = (trustStatus: string) => ({ key: `${hooksJson}:stop:0:0`, eventName: "stop", trustStatus, enabled: true, isManaged: false, sourcePath: hooksJson, currentHash: "sha256:t" });
+  it("trusts the Stop handler when listed, and needs it only then", async () => {
+    let trusted = false;
+    const writes: any[] = [];
+    const rpc = async (method: string, params: any) => {
+      if (method === "config/batchWrite") { writes.push(params); trusted = true; return { status: "ok" }; }
+      return listing({ pre: "trusted", start: "trusted" }, [stopEntry(trusted ? "trusted" : "modified")]);
+    };
+    await expect(trustHooks(rpc, hooksJson, "/work")).resolves.toEqual({ ok: true, managed: 0 });
+    expect(Object.keys(writes[0].edits[0].value)).toEqual([`${hooksJson}:stop:0:0`]);
+    // a listed Stop that will not take trust refuses the turn, as any other handler of ours
+    await expect(trustHooks(async (m: string) => (m === "config/batchWrite" ? { status: "ok" } : listing({ pre: "trusted", start: "trusted" }, [stopEntry("untrusted")])), hooksJson, "/work")).resolves.toMatchObject({ ok: false, kind: "refused" });
+    // the final listing is held to what Murage wrote: no gate handler may go missing or double after the trust write
+    let wrote = false;
+    const dropped = async (m: string) => {
+      if (m === "config/batchWrite") { wrote = true; return { status: "ok" }; }
+      return wrote ? { data: [{ cwd: "/work", hooks: listing({ pre: "trusted", start: "trusted" }, [stopEntry("trusted")]).data[0]!.hooks.slice(1) }] } : listing({ pre: "untrusted", start: "trusted" }, [stopEntry("untrusted")]);
+    };
+    await expect(trustHooks(dropped as never, hooksJson, "/work")).resolves.toMatchObject({ ok: false, kind: "refused" });
+    wrote = false;
+    const doubled = async (m: string) => {
+      if (m === "config/batchWrite") { wrote = true; return { status: "ok" }; }
+      return wrote ? listing({ pre: "trusted", start: "trusted" }, [stopEntry("trusted"), { ...stopEntry("trusted"), key: "x" }]) : listing({ pre: "untrusted", start: "trusted" });
+    };
+    await expect(trustHooks(doubled as never, hooksJson, "/work")).resolves.toMatchObject({ ok: false, kind: "refused" });
+    // a Codex that does not list it runs as before
+    await expect(trustHooks(async () => listing({ pre: "trusted", start: "trusted" }), hooksJson, "/work")).resolves.toEqual({ ok: true, managed: 0 });
+  });
+
   it("trusts both handlers that list untrusted or modified, then requires both trusted and enabled", async () => {
     const writes: any[] = [];
     let trusted = false;
@@ -412,13 +441,16 @@ describe("T100b: trust through hooks/list and config/batchWrite", () => {
       const calls: { method: string; ms?: number }[] = [];
       let lists = 0;
       const startedAt = Date.now();
+      // Silent for the whole bound by the same clock trustHooks reads. A timer alone can wake before Date.now() reaches
+      // the bound on a busy loop, which leaves 1 ms of the deadline and so one more listing inside it.
+      const silentFor = async (ms = 0) => { const end = Date.now() + ms; while (Date.now() < end) await new Promise((r) => setTimeout(r, Math.max(1, end - Date.now()))); };
       const slowStart = async (method: string, _params: unknown, ms?: number) => {
         calls.push({ method, ms });
         if (method === "config/batchWrite") return { status: "ok" };
         lists++;
-        if (lists === 1) { await new Promise((r) => setTimeout(r, ms)); throw noAnswer(); }
+        if (lists === 1) { await silentFor(ms); throw noAnswer(); }
         if (lists === 2) { await new Promise((r) => setTimeout(r, 200)); return listing({ pre: "untrusted", start: "untrusted" }); }
-        await new Promise((r) => setTimeout(r, ms)); throw noAnswer();
+        await silentFor(ms); throw noAnswer();
       };
       const result = await trustHooks(slowStart, hooksJson, "/work");
       expect(result).toMatchObject({ ok: false, kind: "slow" });
@@ -489,6 +521,44 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     expect(JSON.parse((await run(home, pre())).stdout).hookSpecificOutput).toMatchObject({ updatedInput: { command: "ls -a" }, additionalContext: "excluded .git" });
   });
 
+  // CARDS-WAIT-CODEX-1013
+  it("a Stop prints the block reason as Codex reads it, and ends silently otherwise", async () => {
+    const stop = { hook_event_name: "Stop", stop_hook_active: false };
+    gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }), onStop: async () => ({ decision: "block", reason: "go on" }) });
+    for (const event of ["Stop", "SubagentStop"]) {
+      const blocked = await run(home, { ...stop, hook_event_name: event });
+      expect(blocked.code).toBe(0);
+      expect(JSON.parse(blocked.stdout)).toEqual({ decision: "block", reason: "go on" });
+    }
+    gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }), onStop: async () => ({ decision: "end" }) });
+    expect(await run(home, stop)).toMatchObject({ code: 0, stdout: "" });
+    gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }), onStop: async () => { throw new Error("no"); } });
+    expect(await run(home, stop)).toMatchObject({ code: 0, stdout: "" });
+    arm({ decision: "deny", reason: "x" }); // no onStop
+    expect(await run(home, stop)).toMatchObject({ code: 0, stdout: "" });
+  });
+
+  it("a Stop fails open and is never a tool answer: wrong token, no socket, a turn that moved on", async () => {
+    const stop = { hook_event_name: "Stop" };
+    gate.arm({ token: "other", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }), onStop: async () => ({ decision: "block", reason: "x" }) });
+    const refused = await run(home, stop);
+    expect(refused.code).toBe(0);
+    expect(refused.stdout).toBe("");
+    gate.close();
+    expect(await run(home, stop)).toMatchObject({ code: 0, stdout: "" });
+    gate = new CodexHookGate(hookSocketPath());
+    await gate.listen();
+    envPath = hookEnvPathOf(home, gate.id);
+    writeHookFiles(home, gate.path, "good-token", envPath);
+    let release!: (a: { decision: "block"; reason: string }) => void;
+    gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "allow" }), onStop: () => new Promise((r) => { release = r; }) });
+    const held = run(home, stop);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    gate.disarm("good-token");
+    release({ decision: "block", reason: "too late" });
+    expect(await held).toMatchObject({ code: 0, stdout: "" });
+  });
+
   it("posts the SessionStart liveness with the session id and prints nothing", async () => {
     const sessions: string[] = [];
     arm({ decision: "allow" }, [], sessions);
@@ -525,7 +595,7 @@ describe("T100d: the script can only allow, deny or exit 2", () => {
     // no env file, malformed stdin, an unknown event
     writeHookFiles(home, gate.path, "good-token", envPath);
     blocked(await run(home, "not json"));
-    blocked(await run(home, { hook_event_name: "Stop" }));
+    blocked(await run(home, { hook_event_name: "PostToolUse" }));
     // a malformed answer from the gate
     gate.arm({ token: "good-token", onSession: () => {}, onPreTool: async () => ({ decision: "ask" } as never) });
     blocked(await run(home, pre()));

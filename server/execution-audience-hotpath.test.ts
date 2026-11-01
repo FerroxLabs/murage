@@ -97,7 +97,7 @@ it("projectBotForTask reads the thread's human once and projects as before for o
   const bot = store.createBot(); const contact = person("UP");
   const owned = store.createTask(bot.id, "mine", false)!, theirs = store.createTask(bot.id, "theirs", false)!;
   bindHumanThread(theirs.threadId, contact);
-  store.patchTask(bot.id, owned.threadId, { autoApprove: true, alwaysAllow: ["Bash"] } as never);
+  store.patchTask(bot.id, owned.threadId, { autoApprove: true, alwaysAllow: ["Bash:git"] } as never);
   BINDING_MEMO_LIMITS.BULK_MAX = 0;
   const db = database();
   db.exec("UPDATE memory_scope_bindings SET revision=revision WHERE 0");
@@ -105,7 +105,7 @@ it("projectBotForTask reads the thread's human once and projects as before for o
   const start = reads();
   const mine = store.projectBotForTask(bot.id, owned.threadId)!;
   expect(reads() - start).toBeLessThanOrEqual(1);
-  expect(mine.autoApprove).toBe(true); expect(mine.alwaysAllow).toEqual(["Bash"]);
+  expect(mine.autoApprove).toBe(true); expect(mine.alwaysAllow).toEqual(["Bash:git"]);
   const other = store.projectBotForTask(bot.id, theirs.threadId)!;
   expect(other.computer).toBe("off"); expect(other.autoApprove).toBe(false); expect(other.alwaysAllow).toEqual([]);
 });

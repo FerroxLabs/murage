@@ -28,10 +28,13 @@ const realAvailable = exclOps.available;
 const realBarriers = { fsyncFile: mutOps.fsyncFile, fsyncDir: mutOps.fsyncDir };
 afterAll(() => { for (const db of openDatabases) db.close(); removeTempDirSync(scratch); });
 beforeEach(() => { exclOps.available = () => false; });
-afterEach(() => {
+afterEach(async () => {
+  // An attempt in flight at dispose goes on to its next job. Left running, it planned its own home through the NEXT test's
+  // createWorker hook (CI 41307336676 macOS 1/10: two homes planned, one from another fixture). It ends here, under its own hooks.
+  const running = services.splice(0).flatMap((service) => { service.dispose(); return [...(service as unknown as { inFlight: Map<string, Promise<unknown>> }).inFlight.values()]; });
+  await Promise.allSettled(running);
   exclOps.available = realAvailable;
   Object.assign(mutOps, realBarriers);
-  for (const service of services.splice(0)) service.dispose();
   for (const name of Object.keys(engineHistoryTestHooks)) delete (engineHistoryTestHooks as Record<string, unknown>)[name];
 });
 

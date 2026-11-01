@@ -38,6 +38,7 @@ import { CloudDevicesSettings } from "./cloud/CloudDevicesSettings";
 import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from "./cloud/CloudDisconnectComputer";
 import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
+import { TimeZoneSettings } from "./TimeZoneSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { CallsSettings } from "./CallsSettings";
 import { BackupSettings } from "./BackupSettings";
@@ -55,6 +56,7 @@ import { RemoteSignOut } from "./RemoteSignOut";
 import { PhoneNotifications } from "./PhoneNotifications";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
+import { BOX_PANES, BoxBody, BoxHead } from "./ui/BoxShell";
 import { useDesktopSurface, useSurfaceState } from "@/lib/use-surface";
 import {
   browserProfileDeletionBlockReason,
@@ -88,7 +90,6 @@ import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import { copyText } from "@/lib/copy-text";
-import { HealthCard, healthDestination } from "./HealthCard";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -628,11 +629,13 @@ export function BrowserProfilesRow() {
   );
 }
 
-/** The Health card in Settings: reads its own owner summary; next actions open existing Settings pages. */
+/** Health in Settings: one quiet line to the Health screen, the one place issues are shown. */
 function SettingsHealthRow() {
   const { dispatch } = useStore();
-  return <HealthCard onOpenBackups={() => dispatch({ type: "toggleAppSettings", open: true, section: "backups" })}
-    onNavigate={action => { const to = healthDestination(action); if (to) dispatch({ type: "toggleAppSettings", open: true, section: to.section, ...(to.anchor ? { anchor: to.anchor } : {}) }); }} />;
+  return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline/50 bg-panel p-4 text-[13px]">
+    <div className="min-w-0"><h2 className="text-[15px] font-semibold text-ink">{t("ux.l2a.health.title")}</h2><p className="mt-1 text-ink-secondary">{t("ux.l2b.health.settingsLine")}</p></div>
+    <button type="button" className="min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" onClick={() => dispatch({ type: "showHealth" })}>{t("ux.l2b.health.openHealth")}</button>
+  </div>;
 }
 
 /** Writes a redacted diagnostics file to a location the user picks. The
@@ -1115,7 +1118,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         aria-labelledby="app-settings-title"
         tabIndex={-1}
         className={cn(
-          "settings-dialog flex w-full max-w-[920px] overflow-clip rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          BOX_PANES,
+          "settings-dialog w-full max-w-[920px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
           // overflow-clip, not overflow-hidden: a hidden box can still be
           // scrolled by focus, which slid the title and header off the top.
           // The list and the page each scroll on their own; the dialog never
@@ -1218,7 +1222,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         </nav>
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div className="flex items-start justify-between gap-3 px-5 py-3">
+          <BoxHead className="items-start px-5 py-3">
             <div className="min-w-0">
               {q ? (
                 <>
@@ -1243,9 +1247,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             >
               <X size={18} />
             </button>
-          </div>
+          </BoxHead>
 
-          <div ref={paneRef} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-5 pb-5">
+          <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
             {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
               * saved there (a skill being written, House rules) are still there when the search clears. */}
@@ -1262,6 +1266,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     <ProfileFields />
                   </Card>
                 </Anchor>
+                {desktop === true && <Anchor id="time-zone-heading"><TimeZoneSettings /></Anchor>}
                 {desktop === true && <AboutMeSettings />}
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
@@ -1350,7 +1355,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
               </>
             )}
             </div>
-          </div>
+          </BoxBody>
         </div>
       </div>
     </div>

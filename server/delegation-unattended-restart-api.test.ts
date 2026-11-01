@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 let fixture: VerificationServer, desktop: Record<string, string>;
 
@@ -45,7 +46,7 @@ describe.skipIf(process.platform === "win32")("a queued unattended handoff acros
     const peer = await newBot("Peer");
     const third = await newBot("Third");
     // the peer is on Full access and asks the owner before contacting another bot
-    const level = await post(`/api/bots/${peer.id}`, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true, approvePeerComms: true }, desktop, "PATCH");
+    const level = await raiseLevel((method, path, body) => post(path, body, desktop, method), peer.id, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true, approvePeerComms: true });
     expect(level.status, JSON.stringify(level.body)).toBe(200);
     // the peer is busy with the owner's own turn
     await post(`/api/bots/${peer.id}/messages`, { text: "Hold on. __fixture_hold_authority__ PEER_HOLD" });

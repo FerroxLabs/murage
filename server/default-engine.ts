@@ -120,6 +120,52 @@ export function pickDefaultEngine(described: readonly EngineReading[]): EngineCh
   return { instanceId: pick?.instanceId ?? "", model: pick ? defaultModel(pick) : "" };
 }
 
+/**
+ * WHERE A CHIEF THAT MURAGE SEEDED SHOULD MOVE WHEN A KEY LANDS LATER.
+ *
+ * The first bot is seeded before any Flux key exists, so on a machine whose
+ * only usable engine is an unsigned Claude it lands there. If the person skips
+ * the key step, or adds the key later from Settings, nothing else re-picks.
+ *
+ * Returns the Fuigo choice to move to, or null to leave the bot alone. It acts
+ * only on a bot still carrying the `engineSeeded` mark (nobody has set its
+ * engine since Murage did), only when the re-derived default really is Fuigo
+ * (so a signed-in Claude keeps winning), and never when it is already there.
+ */
+export function repickSeededChief(
+  chief: { engineSeeded?: boolean; modelSelection: { instanceId: string; model: string } },
+  described: readonly EngineReading[],
+): EngineChoice | null {
+  if (!chief.engineSeeded) return null;
+  return chiefMoveToShippedEngine(chief, described);
+}
+
+/**
+ * The one rule both Chief moves share (the guided first run's setup read and the
+ * key saved later): the Fuigo choice to move to, or null to stay. The re-derived
+ * default must really be Fuigo, the Chief must not already be on it, and the Chief
+ * may leave where it is only if that is nothing yet (an empty selection), already
+ * Fuigo (a newer model), or an engine confirmed NOT signed in
+ * (`authenticated === false`). An unknown state, such as a probe that timed out,
+ * may be a paid, signed-in session, so it stays put.
+ */
+export function chiefMoveToShippedEngine(
+  chief: { modelSelection: { instanceId: string; model: string } },
+  described: readonly EngineReading[],
+): EngineChoice | null {
+  const selection = pickDefaultEngine(described);
+  if (!selection.instanceId || !selection.model) return null;
+  const picked = described.find((instance) => instance.instanceId === selection.instanceId);
+  if (picked?.driverKind !== "fuigoAgent") return null;
+  const current = chief.modelSelection;
+  if (current.instanceId) {
+    const on = described.find((instance) => instance.instanceId === current.instanceId);
+    if (on?.driverKind !== "fuigoAgent" && on?.snapshot?.authenticated !== false) return null;
+  }
+  if (current.instanceId === selection.instanceId && current.model === selection.model) return null;
+  return selection;
+}
+
 // The last engine choice, remembered between launches. Probing every engine
 // costs about two seconds, and it only matters when a bot is created, so a
 // start with bots already in place reads this and refreshes it in the
@@ -142,6 +188,8 @@ export function rememberEngine(file: string, choice: EngineChoice): void {
   } catch { /* a missing memory only means the next start probes first */ }
 }
 
+export const BOOT_PROBE_WAIT_MS = 20_000;
+
 /** The choice to start with. With bots present and a remembered choice, that
  * choice at once and `refreshed` resolves once the probe has run; otherwise
  * the probe is awaited (a first run, or nothing remembered). */
@@ -152,11 +200,22 @@ export async function bootEngineChoice(opts: {
    * A choice that fails this is not adopted, and the probe is awaited as on a
    * first run. Omitted means every remembered choice counts. */
   usable?: (choice: EngineChoice) => boolean;
+  /** With bots in place, the longest the start waits for the probe when nothing can be remembered (default BOOT_PROBE_WAIT_MS). */
+  probeWaitMs?: number;
 }): Promise<{ refreshed: Promise<void> }> {
   const run = async () => { const choice = await opts.probe(); opts.adopt(choice); rememberEngine(opts.file, choice); };
   const saved = opts.hasBots ? readRememberedEngine(opts.file) : null;
   const remembered = saved && (opts.usable?.(saved) ?? true) ? saved : null;
-  if (!remembered) { await run(); return { refreshed: Promise.resolve() }; }
+  if (!remembered) {
+    // A first run needs the choice to seed its first bot: the probe is awaited whole. Bots in place need it only for the next new bot,
+    // so a slow probe finishes in the background and the port opens on time.
+    if (!opts.hasBots) { await run(); return { refreshed: Promise.resolve() }; }
+    const probing = run();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => { timer = setTimeout(resolve, opts.probeWaitMs ?? BOOT_PROBE_WAIT_MS); });
+    try { await Promise.race([probing, waited]); } finally { clearTimeout(timer); }
+    return { refreshed: probing.catch(() => {}) };
+  }
   opts.adopt(remembered);
   return { refreshed: run().catch(() => {}) };
 }

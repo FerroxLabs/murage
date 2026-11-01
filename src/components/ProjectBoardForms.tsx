@@ -38,8 +38,8 @@ export function ProjectCardForm({ groupId, project, board, members, card, onClos
       }
     } finally { sending.current = false; setBusy(false); }
   };
-  return <ProjectBoardDialog title={card ? t("projects.cardForm.edit",{number:card.number ?? ""}) : t("projects.cardForm.new")} onClose={onClose}>
-    <form className="space-y-4" onSubmit={e => { e.preventDefault(); void submit(); }}>
+  return <ProjectBoardDialog title={card ? t("projects.cardForm.edit",{number:card.number ?? ""}) : t("projects.cardForm.new")} onClose={onClose} actions={<>{error && <p role="alert" className="min-w-0 flex-1">{error}</p>}<button type="submit" form="project-card-form" disabled={busy || !title.trim()} className={BOARD_BUTTON}>{busy ? t("projects.cardForm.saving") : card ? t("projects.cardForm.save") : t("projects.cardForm.create")}</button></>}>
+    <form id="project-card-form" className="space-y-4" onSubmit={e => { e.preventDefault(); void submit(); }}>
       <label className="block">{t("projects.cardForm.title")}<input autoFocus required minLength={1} maxLength={120} className={BOARD_INPUT} value={title} onChange={e => setTitle(e.target.value)} /></label>
       <label className="block">{t("projects.common.description")}<textarea maxLength={2000} rows={4} className={BOARD_INPUT} value={description} onChange={e => setDescription(e.target.value)} /></label>
       {!card && <><label className="block">{t("projects.cardForm.assignee")}<select className={BOARD_INPUT} value={assignee} onChange={e => setAssignee(e.target.value)}><option value="">{t("projects.cardForm.unassigned")}</option>{members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</select></label>
@@ -48,7 +48,6 @@ export function ProjectCardForm({ groupId, project, board, members, card, onClos
       <label className="block">{t("projects.cardForm.dueDate")}<input type="date" className={BOARD_INPUT} value={due} onChange={e => setDue(e.target.value)} /></label>
       <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={writes} onChange={e => setWrites(e.target.checked)} />{t("projects.cardForm.mayChange")}</label>
       <label className="block">{t("projects.cardForm.workFolder")}<select className={BOARD_INPUT} value={root} onChange={e => setRoot(e.target.value)}><option value="">{t("projects.cardForm.deskFolder")}</option>{project.settings.workRoots?.map((r, i) => <option key={r.path} value={i}>{r.label || r.path}</option>)}</select></label>
-      {error && <p role="alert">{error}</p>}<button type="submit" disabled={busy || !title.trim()} className={BOARD_BUTTON}>{busy ? t("projects.cardForm.saving") : card ? t("projects.cardForm.save") : t("projects.cardForm.create")}</button>
     </form>
   </ProjectBoardDialog>;
 }
@@ -76,7 +75,7 @@ export function ProjectColumnsEditor({ groupId, board, onClose, onSaved, onNotic
       } else { setError(result.reason); onNotice(result.reason, true); }
     } finally { sending.current = false; setBusy(false); }
   };
-  return <ProjectBoardDialog title={t("projects.columns.title")} onClose={onClose}>
+  return <ProjectBoardDialog title={t("projects.columns.title")} onClose={onClose} actions={<>{error && <p role="alert" className="min-w-0 flex-1">{error}</p>}<button type="button" disabled={busy} className={BOARD_BUTTON} onClick={() => void save()}>{t("projects.columns.save")}</button></>}>
     <p className="text-sm text-ink-secondary">{t("projects.columns.hint")}</p>
     {columns.map((col, index) => <fieldset key={col.id} className="space-y-2 rounded-lg border border-hairline/40 p-3"><legend>{col.title || t("projects.columns.fallbackTitle")} ({stateName(col.state)})</legend>
       <label className="block">{t("projects.columns.columnTitle")}<input className={BOARD_INPUT} maxLength={40} value={col.title} onChange={e => setColumns(columns.map(c => c.id === col.id ? { ...c, title: e.target.value } : c))} /></label>
@@ -87,7 +86,6 @@ export function ProjectColumnsEditor({ groupId, board, onClose, onSaved, onNotic
       <label className="block">{t("projects.columns.state")}<select className={BOARD_INPUT} value={state} onChange={e => setState(e.target.value)}>{["todo", "doing", "waiting", "review", "done"].map(s => <option value={s} key={s}>{stateName(s)}</option>)}</select></label>
       <button type="submit" className={BOARD_BUTTON} disabled={columns.length >= 12 || !title.trim()}>{t("projects.columns.add")}</button>
     </form>
-    {error && <p role="alert">{error}</p>}<button type="button" disabled={busy} className={BOARD_BUTTON} onClick={() => void save()}>{t("projects.columns.save")}</button>
     {deletion && <ProjectBoardDialog title={t("projects.columns.deleteTitle")} onClose={() => setDeletion(null)}><p>{deletion.count === 1 ? t("projects.columns.cardMoves",{count:deletion.count}) : t("projects.columns.cardsMove",{count:deletion.count})}</p><button className={BOARD_BUTTON} onClick={() => { edit({ type: "delete", id: deletion.id }); setDeletion(null); }}>{t("projects.columns.deleteTitle")}</button></ProjectBoardDialog>}
   </ProjectBoardDialog>;
 }

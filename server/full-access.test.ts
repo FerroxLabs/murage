@@ -192,7 +192,7 @@ describe("switching No limits on", () => {
   it("needs its own warning once per bot, and it covers Full access's too", () => {
     expect(fullAccessChange({ noLimits: true }, { fullAccessAcknowledgedAt: 1 }, true)).toEqual({ ok: false, status: 400, error: NO_LIMITS_ACK_REQUIRED });
     expect(fullAccessChange({ noLimits: true, acknowledgeNoLimits: true }, {}, true, 7)).toEqual({
-      ok: true, autoApprove: true, fullAccess: true, noLimits: true, acknowledgedAt: 7, noLimitsAcknowledgedAt: 7,
+      ok: true, autoApprove: true, fullAccess: true, noLimits: true, acknowledgedAt: 7, noLimitsAcknowledgedAt: 7, noLimitsTerms: true,
     });
     expect(fullAccessChange({ noLimits: true }, { fullAccessAcknowledgedAt: 1, noLimitsAcknowledgedAt: 2 }, true)).toEqual({ ok: true, autoApprove: true, fullAccess: true, noLimits: true });
   });

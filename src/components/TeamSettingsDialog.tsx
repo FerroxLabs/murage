@@ -14,6 +14,7 @@ import { Check, X } from "lucide-react";
 
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { LEADERSHIP_BLOCKED_HINT, TEAM_NAME_MAX, existingTeamNames, leadershipPromotionBlocked, teamCandidates } from "@/lib/new-team";
 import {
   loadTeam,
@@ -95,9 +96,9 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="team-settings-title"
-      className="flex max-h-[min(760px,calc(var(--vvh,100dvh)-1.5rem))] w-[min(560px,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-2xl"
+      className={cn(BOX_FRAME, "max-h-[min(760px,calc(var(--vvh,100dvh)-1.5rem))] w-[min(560px,calc(100vw-1.5rem))] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}
     >
-      <div className="flex items-start justify-between gap-3 border-b border-hairline/40 px-4 py-3">
+      <BoxHead className="items-start border-b border-hairline/40 px-4 py-3">
         <div className="min-w-0">
           <div id="team-settings-title" className="truncate text-[15px] font-semibold text-ink">
             {team.name}
@@ -113,9 +114,9 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
         >
           <X size={16} />
         </button>
-      </div>
+      </BoxHead>
 
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+      <BoxBody className="space-y-3 p-4">
         <section className={CARD} aria-labelledby="team-settings-name">
           <h3 id="team-settings-name" className={LABEL}>
             Name
@@ -148,7 +149,7 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
             Bots on this team
           </h3>
           <p className={NOTE}>Bots on a team can ask and hand work to each other. Bots you remove stay, without a team.</p>
-          <div className="mt-2 flex max-h-72 flex-col gap-0.5 overflow-y-auto" role="group" aria-label="Bots on this team">
+          <div className="mt-2 flex flex-col gap-0.5" role="group" aria-label="Bots on this team">
             {candidates.length === 0 && <p className={NOTE}>Create a bot first. Teams are made of bots.</p>}
             {candidates.map((bot, index) => {
               const on = picked.has(bot.id);
@@ -291,18 +292,18 @@ export function TeamSettingsDialogBody(props: TeamSettingsDialogBodyProps) {
             </div>
           )}
         </section>
-      </div>
+      </BoxBody>
 
-      <div
+      <BoxFoot
         role="status"
         aria-live="polite"
         className={cn(
-          "min-h-[2.25rem] border-t border-hairline/40 px-4 py-2 text-[12.5px] leading-relaxed",
+          "block min-h-[2.25rem] border-t border-hairline/40 px-4 py-2 text-[12.5px] leading-relaxed",
           status?.error ? "text-danger" : "text-ink-secondary",
         )}
       >
         {busy ? "Saving…" : status?.text ?? ""}
-      </div>
+      </BoxFoot>
     </div>
   );
 }
@@ -529,13 +530,17 @@ export function TeamSettingsDialog({
           }}
         />
       ) : (
-        <div role="dialog" aria-modal="true" aria-label="Team settings" className="rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
+        <div role="dialog" aria-modal="true" aria-label="Team settings" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}>
+          <BoxBody className="px-4 pt-4">
           <p className={cn("text-[13px]", loadError ? "text-danger" : "text-ink-secondary")} role="status">
             {loadError ?? "Loading the team…"}
           </p>
-          <button type="button" onClick={onClose} className={cn(BUTTON, "mt-3")}>
+          </BoxBody>
+          <BoxFoot className="justify-start px-4 pb-4 pt-3">
+          <button type="button" onClick={onClose} className={BUTTON}>
             Close
           </button>
+          </BoxFoot>
         </div>
       )}
     </div>

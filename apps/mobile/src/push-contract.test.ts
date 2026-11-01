@@ -53,7 +53,7 @@ describe("the phone's reading of the push contract", () => {
     expect([...EXPIRING_CATEGORIES]).toEqual(push.expiringCategories);
     expect(IOS_CATEGORY.call).toBe("CALL");
     expect(IOS_CATEGORY["call-note"]).toBe("CALL_NOTE");
-    expect(ANDROID_CHANNEL.call).toBe("calls");
+    expect(ANDROID_CHANNEL.call).toBe("calls_v2");
     expect(ANDROID_CHANNEL["call-note"]).toBe("questions");
   });
   it("expiresAt rides only the call kinds, in both directions", () => {

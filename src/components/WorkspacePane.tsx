@@ -50,6 +50,8 @@ import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDra
 import { saveBlob } from "@/lib/save-file";
 import type { MarkdownEditorController } from "./MarkdownEditor";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { openHelp } from "./help/HelpHost";
+import { hx } from "./help/help-copy";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Files, artifactNativeAction, artifactPreviewHtml } from "./Files";
 import { MemorySettings } from "./MemorySettingsLazy";
@@ -344,6 +346,8 @@ export function WorkspacePaneSurface({
             {pane.expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
           </button>
         )}
+        {/* The Workspace pane carries its own "?": the floating tab would sit on its Save and Download buttons (styles.css hides it here). */}
+        <button type="button" className={cn(iconButton, "text-[14px] font-semibold")} aria-label={hx("ux.l4a.panel.open")} title={hx("ux.l4a.panel.open")} data-testid="workspace-pane-help" onClick={() => openHelp()}>?</button>
         <button type="button" className={iconButton} aria-label={t("workspacePane.close")} title={t("workspacePane.close")} data-testid="workspace-pane-close" onClick={() => dispatch({ type: "setOpen", open: false })}>
           <X size={16} />
         </button>
@@ -378,7 +382,7 @@ export function WorkspacePaneSurface({
       <TabStrip pane={pane} dispatch={dispatch} currentScope={scope} labelForScope={labelForScope} />
 
       {closeQuestion && (
-        <div role="alertdialog" aria-labelledby="workspace-pane-close-title" aria-describedby="workspace-pane-close-body" data-testid="workspace-pane-close-question" className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
+        <div role="alertdialog" data-box-exempt="inline confirm inside the workspace pane" aria-labelledby="workspace-pane-close-title" aria-describedby="workspace-pane-close-body" data-testid="workspace-pane-close-question" className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
           <p id="workspace-pane-close-title" className="font-medium">{t("workspacePane.closeUnsaved.title")}</p>
           <p id="workspace-pane-close-body" className="text-ink-secondary">{t("workspacePane.closeUnsaved.body", { name: fileName(closeQuestion.relativePath) })}</p>
           <div className="flex flex-wrap gap-2">
