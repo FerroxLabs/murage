@@ -39,7 +39,7 @@ function writes(table: string, events: readonly string[] = ALL_EVENTS, when?: st
  * roster, a bot grant, the owner's settings) moves the epoch when it is written. */
 const NOISY_SYSTEM_SUBJECTS = [
   "observability", "reveal-capture", "reveal-scan", "procedure-review", "procedure-review-pending", "pip-stance", "pip-render",
-  "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "parked-sweep", "parked-reconcile", "origin-backfill",
+  "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "consolidation-skip-due", "consolidation-skip-cursor", "parked-sweep", "parked-reconcile", "origin-backfill",
   "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
   // The roster binding is rewritten on every save that adds a bot, a task or a room (a widening: nothing a hold rests on changes); what a
   // save WITHDRAWS is bumped by policy.ts itself (bumpAuthorityHard on a removal, the policy revision on an audience change). A notebook

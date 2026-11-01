@@ -2,6 +2,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
+import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
 import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
@@ -292,19 +293,19 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
  * into the transcript, where they may contain credentials or request text. */
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
   const info = classifyProviderError(error);
-  if (info?.kind === "payment") return "Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.";
+  if (info?.kind === "payment") return "Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.";
   // A ceiling the account reached, not a balance it spent. Saying "add
   // credits" here would be advice the provider itself contradicts.
   if (info?.kind === "spend-cap") {
     return info.provider === "flux-router"
-      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine."
-      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.";
+      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or pick another AI."
+      : "This account has reached its monthly spending limit with your AI service. Adding credit will not lift it: ask them to raise it, or pick another AI.";
   }
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
-      return "Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.";
+      return "Flux Router is out of credits. Add credits in Flux Router, then try again, or pick another AI in Models & engines.";
     }
-    return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
+    return "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.";
   }
   if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
   // "Request failed." is the generic line the error card already recognises.
@@ -1204,7 +1205,7 @@ export interface AcpSupport {
    *  the policy call, the stop line). Undefined: the request is read as sent. `ok: false`: the call could not be
    *  read and is held as unread (`toolInputMissing`). Hermes: an ask its hook escalated carries a placeholder as
    *  the command and the real arguments only in the hook's message. */
-  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string } | undefined;
+  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string; cut?: true } | undefined;
   /** Rewrite a picker id (`omlx::model`) into the CLI-native id before spawn
    * and session/select. Local inject writers live here so the child sees a
    * model it already knows. */
@@ -1471,7 +1472,7 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * goes silent forever without ever answering the RPC.
  *
  * Off by default (0.1.61): the thread's silence watch (server/turn-watchdog.ts,
- * 20 minutes, or the room's own setting) is the one place silence is judged.
+ * one hour, or the room's own setting) is the one place silence is judged.
  * A three-minute guard here cut long tool calls short and ignored the owner's
  * setting. Setting the knob turns it back on for an engine that needs a
  * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */
@@ -2338,7 +2339,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // kind (and none past the activity window or after a background turn).
         void warmPool.markIdle(proc, {
           engine: "acp", threadId, pid: () => proc.child.pid, spawnedAt: spawnedAtOf(proc.child), ...(proc.scope ? { scope: proc.scope } : {}),
-          background: backgroundThreads.has(threadId), hold,
+          background: !hold && backgroundThreads.has(threadId), hold,
           // adopted by a turn (or replaced): not idle, whatever the shared pool holds
           busy: () => pool.get(threadId) !== proc || proc.owner.hooks !== null,
           close: (reason) => closeProcess(threadId, proc, reason),
@@ -3235,7 +3236,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
           const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
-          const summary = approvalSummary(normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool)));
+          const headline = normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool));
+          const summary = approvalSummary(headline);
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
           // destination named only in the title is not lost.
@@ -3423,6 +3425,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
             // An ask the engine's reader could not read (Hermes: a hook message it does not recognise) is unread.
             ...(normalAsk && !normalAsk.ok && !questionTool ? { toolInputMissing: normalAsk.why } : {}),
+            // Provenance (design R3): a cut hook message, and a shell call whose only text is a title past the card's cap.
+            ...((normalAsk && !normalAsk.ok && normalAsk.cut === true) || (!normalAsk && kind === "execute" && !commandLine && summary !== headline) ? { toolInputTruncated: true } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -4483,6 +4487,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let mcpReadyWaited = false;
             /** How the last MCP-ready wait ended. */
             let mcpOutcome: "ready" | "own_ready" | "timeout" | "aborted" | null = null;
+            /** What the ready wait has cost this turn, for the gate line. */
+            let mcpWaitedMs = 0;
+            /** The engine's own words on each server, kept with the statuses they came with: only the gate line reads them. */
+            const listDetails = new WeakMap<Map<string, string>, Map<string, AcpMcpServerDetail>>();
             /** Each server's status from the engine's list (`mcpListMethod`), or
              *  null when it has none or did not answer. */
             const readStates = async (timeoutMs = 3_000): Promise<Map<string, string> | null> => {
@@ -4495,9 +4503,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const body = Array.isArray(answer?.servers) ? answer : answer?.result;
                 if (!Array.isArray(body?.servers)) return null;
                 const states = new Map<string, string>();
+                const details = new Map<string, AcpMcpServerDetail>();
                 for (const entry of body.servers) {
                   if (entry && typeof entry.name === "string" && typeof entry.session?.status === "string") states.set(entry.name, entry.session.status);
+                  // A disabled or blocked server is listed with a session and no status.
+                  if (entry && typeof entry.name === "string" && entry.session && typeof entry.session === "object") details.set(entry.name, acpMcpServerDetail(entry.session));
                 }
+                listDetails.set(states, details);
                 return states;
               } catch (error) {
                 if (buildKey && methodNotFound(error)) acpMcpListUnsupported.add(buildKey);
@@ -4510,6 +4522,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const waitMcpReady = async (): Promise<boolean> => {
               mcpReadyWaited = true;
               mcpDeadline ??= Date.now() + mcpRecoveryMs();
+              const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
               const names = mcpServers.map(server => server.name);
@@ -4540,6 +4553,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 void poll;
               }
               mcpOutcome = outcome;
+              mcpWaitedMs += Date.now() - waitStartedAt;
               mcpDone(outcome);
               if (state.settled) return false;
               if (state.cancelRequested) { settle(true, "cancelled"); return false; }
@@ -4945,6 +4959,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const notReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
               const absentFrom = (states: Map<string, string>) => requiredNames.filter(name => !states.has(name));
+              const gateStartedAt = Date.now();
+              let gateReconnected: string[] = [];
+              let gateBackedOff: string[] = [];
+              // Everything the wait learned, one line per turn, as the Claude gate logs it: fixed words, counts and server names only.
+              const logGate = (states: Map<string, string> | null, missing: string[]) => {
+                const buildKey = proc?.mcpBuildKey;
+                const gate: AcpMcpGateFacts = {
+                  threadId, engine: DRIVER_KIND, waitedMs: mcpWaitedMs + Date.now() - gateStartedAt, waitOutcome: mcpOutcome,
+                  required: requiredNames, mounted: mcpServers.map(server => server.name),
+                  reconnected: gateReconnected, backedOff: gateBackedOff, missing,
+                  standIn: requiredNames.filter(holdsStandIn), states, details: states ? listDetails.get(states) ?? null : null,
+                  ...(states ? {} : { unchecked: buildKey && acpMcpListUnsupported.has(buildKey) ? "unsupported" as const : "no-answer" as const }),
+                };
+                if (!acpMcpGateWorthLogging(gate)) return;
+                const line = acpMcpGateLine(gate);
+                console.info(line);
+                appendNative(threadId, { dir: "out", source: SOURCE, msg: { mcpGate: line } });
+              };
               let states = await readStates();
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -4953,11 +4985,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // A server that keeps failing is not reconnected on every turn.
                 const backoffKey = (name: string) => `${threadId}\0${name}`;
                 const retry = missing.filter(name => !acpMcpBackoff.blocked(backoffKey(name)));
+                gateBackedOff = missing.filter(name => !retry.includes(name));
                 // One deadline for the turn: what the ready wait left of it.
                 mcpDeadline ??= Date.now() + mcpRecoveryMs();
                 const windowMs = Math.min(mcpReconnectWaitMs(), mcpDeadline - Date.now());
                 if (retry.length && windowMs >= Math.min(1_000, mcpReconnectWaitMs())) {
                   lifecycle.record("mcp_reconnect");
+                  gateReconnected = retry;
                   const marker = String(Date.now());
                   const reconnecting = mcpServers.map(server => retry.includes(server.name)
                     ? { ...server, env: [...(server.env ?? []).filter((item: { name: string }) => item.name !== "MURAGE_MCP_RECONNECT"), { name: "MURAGE_MCP_RECONNECT", value: marker }] }
@@ -4988,11 +5022,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // waits for the real list), so the bot is not told they are missing.
                 const unavailable = statusNotReady(states);
                 requiredMissing = unavailable.length || !absent.length ? unavailableLabels(unavailable) : null;
-                if (requiredMissing?.length) {
-                  state.toolsUnavailable = requiredMissing;
-                  console.info(`acp mcp gate thread=${threadId} engine=${DRIVER_KIND} missing=${unavailable.join(",")}`);
-                }
-              }
+                if (requiredMissing?.length) state.toolsUnavailable = requiredMissing;
+                logGate(states, unavailable);
+              } else logGate(null, []);
             }
             // The process tree before the prompt goes out (MCP servers included): a
             // child beyond it once the turn settles is the turn's leftover work.

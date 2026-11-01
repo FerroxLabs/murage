@@ -9,8 +9,9 @@ export const MAX_CONCURRENT_BOT_THREADS = 3;
  * stopped, replaced or the process ends, with its place in line shown. */
 export const RESOURCE_WAIT_TIMEOUT_MS = 60 * 60_000;
 /** SL-L L3: after this long in line a turn writes one "still waiting" line
- * (never repeated; the live chip carries the position). Longer than the
- * 20-minute inactivity watchdog that interrupts a stalled holder. */
+ * (never repeated; the live chip carries the position). The same hour as the
+ * inactivity watchdog that interrupts a stalled holder (60 minutes since 1.0.12); the notice is
+ * one line and the wait itself is not on that clock. */
 export const RESOURCE_STILL_WAITING_MS = 60 * 60_000;
 /** What is left of the "still waiting" hour for a wait that began at `firstWaitAt` (at least 1 ms, so the notice still fires). */
 export function stillWaitingRemainingMs(firstWaitAt: number | undefined, now: number): number {
@@ -127,7 +128,7 @@ export class IndependentThreadRuns<T> {
       return run;
     } catch (error) {
       // the takeover did not happen: the thread is free now, as after any release
-      if (takenOver !== undefined) this.freed(threadId, takenOver);
+      if (takenOver !== undefined) this.freed(threadId, takenOver, options.takeOver!);
       throw error;
     }
   }
@@ -330,14 +331,14 @@ export class IndependentThreadRuns<T> {
   }
 
   /** Told the conversation whose run was just released, and its bot (the shared queue wakes the teams waiting on that conversation, and on the bot's slot). */
-  onReleased?: (threadId: string, botId: string | undefined) => void;
+  onReleased?: (threadId: string, botId: string | undefined, generation: string) => void;
 
   /** Only after teardown/final capture is confirmed. Late cleanup is harmless. */
   release(owner: TurnOwner): boolean {
     if (!this.current(owner)) return false;
     const botId = this.runs.get(owner.threadId)?.botId;
     this.drop(owner);
-    this.freed(owner.threadId, botId);
+    this.freed(owner.threadId, botId, owner.generation);
     return true;
   }
 
@@ -352,8 +353,8 @@ export class IndependentThreadRuns<T> {
     this.ownerSends.delete(owner.generation);
   }
 
-  private freed(threadId: string, botId: string | undefined): void {
-    try { this.onReleased?.(threadId, botId); } catch { /* a listener never keeps a run from being released */ }
+  private freed(threadId: string, botId: string | undefined, generation: string): void {
+    try { this.onReleased?.(threadId, botId, generation); } catch { /* a listener never keeps a run from being released */ }
     this.pump();
   }
 

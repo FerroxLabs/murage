@@ -83,7 +83,7 @@ describe("R12: a turn's sources are everything whose text entered it, bounded ho
     const roots = { roots: new Set<string>(), over: false } as unknown as RunningTurnLineage["roots"];
     turns.set(threadId, lineage.beginTurnLineage
       ? lineage.beginTurnLineage({ threadId, botId, roots, instanceId: "claude", shown: [], ownLines: ownLines(threadId), ownLinesIncomplete: resumed, withheldNow })
-      : { roots, instanceId: "claude", botId, generation: "g", turn: {} as never, sources: resumed ? "over" : turnSources(ownLines(threadId), withheldNow) });
+      : { roots, instanceId: "claude", botId, generation: "g", startGeneration: 0, turn: {} as never, sources: resumed ? "over" : turnSources(ownLines(threadId), withheldNow) });
   };
   /** The prompt a turn will be sent, built as the server builds it (promptForTurn keeps what it quotes for that turn). */
   const promptFor = (threadId: string, botId: string, build: () => string) => lineage.promptForTurn ? lineage.promptForTurn(threadId, botId, build) : build();

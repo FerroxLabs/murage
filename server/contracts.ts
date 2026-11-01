@@ -131,6 +131,8 @@ export type RuntimeEvent = RuntimeEventBase &
         delayMs: number;
         /** Why this failure was judged retry-worthy (classifyError's reason). */
         reason: string;
+        /** All attempts, the first try included, when the engine counts them itself. */
+        maxAttempts?: number;
       }
     | {
         type: "turn.completed";
@@ -440,6 +442,8 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  /** The thread is sealed (thread recall): this turn is cold by design. Read by the reuse gauge only. */
+  sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string;
@@ -532,7 +536,8 @@ export interface SendTurnInput {
    * Codex `approvalPolicy: never`, an ACP engine's `fullAuto`, Antigravity's
    * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
    * answers everything else at once. Also set on No limits, which drops the
-   * stop line but keeps the key guard: that guard holds only if Murage sees
+   * stop line but keeps the wipe list and the gate files, and the whole key
+   * guard on any turn the owner did not start: those hold only if Murage sees
    * the asks. When both stopLine and routeAsks are absent, the instance's
    * own setting stands. */
   stopLine?: true;
@@ -704,7 +709,7 @@ export interface ProviderAdapter {
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
-  resetSession?(threadId: ThreadId): Promise<void>;
+  resetSession?(threadId: ThreadId, why?: { route: string }): Promise<void>;
   /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
    * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
    * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
@@ -855,6 +860,13 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** True when this engine keeps no session between turns (pi runs with --no-session): each turn is a new session, so the
+   * harness replays the thread, and that replay says the session was restarted, not that the bot was switched over. */
+  readonly keepsNoSession?: boolean;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */

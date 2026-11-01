@@ -8,7 +8,13 @@
 // chunk behind `import()`, fetched when that language is chosen: seven packs
 // in the entry chunk cost every phone over cellular ~20 KiB brotli for text
 // it will never show (src/first-paint.test.ts).
-import en from "./en.json";
+import enCatalogue from "./en.json";
+import { enUx, type EnUx } from "./en-ux";
+
+// English is en.json plus the UX lanes' fragments (./en-ux, 1.0.12 to 1.0.14).
+// en.json is spread last, so a fragment can never change an existing string;
+// locale-copy.test.ts also refuses a fragment key en.json already has.
+const en = { ...enUx, ...enCatalogue } as typeof enCatalogue & EnUx;
 
 export { en };
 export type LocaleKey = keyof typeof en;

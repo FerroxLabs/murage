@@ -23,7 +23,7 @@ function hostElements(node: ReactNode, found: Array<{ type: string; props: Props
   if (Array.isArray(node)) { for (const child of node) hostElements(child, found); return found; }
   if (!isValidElement(node)) return found;
   const props = node.props as Props;
-  if (typeof node.type !== "string") return found;
+  // BoxBody and its kin hold the row list as plain children.
   if (typeof node.type === "string") found.push({ type: node.type, props });
   hostElements(props.children, found);
   return found;

@@ -23,7 +23,7 @@ function fixture() {
     instances: { fixture: { driver: "fuigoAgent", enabled: true, environment: { TOKEN: "env-secret-canary" }, config: { cli: "custom", apiKey: "config-secret-canary" } } },
     mcpServers: { secret: { command: "anything", env: { TOKEN: "mcp-secret-canary" } } },
   }));
-  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" } }]));
+  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" }, tasks: [{ threadId: "thread", resumeCursors: { provider: "native-cursor-canary" }, resumeSeals: { provider: { cursor: "native-cursor-canary", generation: 1 } } }] }]));
   writeFileSync(join(data, "webhooks.json"), JSON.stringify({ version: 1, webhooks: [{ id: "hook", endpointId: "endpoint", name: "Hook", prompt: "Task", botId: "bot", runOn: "ember", createdAt: 1, updatedAt: 1, deliveryCount: 1, secretHash: "a8".repeat(32), enabled: true }], deliveries: [{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }] }));
   mkdirSync(join(data, "attachments"));
   writeFileSync(join(data, "attachments", "fixture.txt"), "Private attachment content");
@@ -136,6 +136,21 @@ it("round trips notification privacy and quiet hours through an inactive restore
   expect(config.notifications).toEqual(notifications);
   expect(restored.activationAvailable).toBe(false);
   expect(readFileSync(file)).toEqual(before);
+});
+
+// 1.0.8 owner zone: the owner's chosen time zone is part of the profile, so a backup carries it and a restore
+// brings it back instead of falling back to the new computer's zone.
+it("round trips the owner's time zone on the profile through a backup and an inactive restore", async () => {
+  const f = fixture();
+  const file = join(f.data, "config.json");
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, "utf8")), profile: { name: "Fixture owner", timeZone: "America/Chicago" } }));
+  const staged = await stageInstallationState(f.data, f.parent);
+  expect(JSON.parse(readFileSync(join(staged.directory, "state", "config.json"), "utf8")).profile).toEqual({ name: "Fixture owner", timeZone: "America/Chicago" });
+  expect(staged.manifest.omitted.map(item => item.path)).not.toContain("config.json/profile/timeZone");
+  const archive = join(f.parent, "owner-zone.zip");
+  await writeInstallationArchive(f.data, archive);
+  const restored = await prepareInstallationRestore(archive, f.parent);
+  expect(JSON.parse(readFileSync(join(restored.stateDirectory, "config.json"), "utf8")).profile).toEqual({ name: "Fixture owner", timeZone: "America/Chicago" });
 });
 
 it("refuses malformed notification preferences rather than silently defaulting during snapshot", async () => {

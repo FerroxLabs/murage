@@ -186,7 +186,7 @@ export function forgetEscapeHatch(): void {
  * need the machine, so both are nullable, and on a view that has not arrived
  * they are simply absent rather than guessed at.
  */
-type JobRowView = Pick<FirstRunJobRow, "id" | "title" | "sub" | "note"> & {
+type JobRowView = Pick<FirstRunJobRow, "id" | "title" | "sub" | "note" | "recommended"> & {
   tag: FirstRunJobRow["tag"] | null;
 };
 
@@ -199,10 +199,11 @@ type JobRowView = Pick<FirstRunJobRow, "id" | "title" | "sub" | "note"> & {
  * rows arrive untagged and unpressable and fill in the moment the view lands.
  * `readSetupView` retries a failed read, so "the moment" really arrives.
  */
-const UNKNOWN_ROWS: readonly JobRowView[] = jobsCopy.rows.map((row) => ({
+const UNKNOWN_ROWS: readonly JobRowView[] = jobsCopy.rows.map((row, index) => ({
   id: row.id,
   title: row.title,
   sub: row.sub,
+  recommended: index === 0 ? jobsCopy.tags.recommended : "",
   tag: null,
   note: null,
 }));
@@ -296,7 +297,14 @@ export function FirstRunJobsCard({ settled }: { settled: boolean }) {
               } bg-inset disabled:opacity-60`}
             >
               <span className="min-w-0">
-                <span className="block text-[14px] font-medium text-ink">{row.title}</span>
+                <span className="block text-[14px] font-medium text-ink">
+                  {row.title}
+                  {row.recommended && (
+                    <span className="ml-2 rounded-full border border-accent/60 px-2 py-0.5 align-middle text-[11.5px] font-medium text-accent">
+                      {row.recommended}
+                    </span>
+                  )}
+                </span>
                 <span className="block text-[12.5px] leading-relaxed text-ink-secondary">{row.sub}</span>
               </span>
               {row.tag && (
@@ -371,9 +379,9 @@ export function FirstRunConnectView({
 }) {
   return (
     <FirstRunBubble>
-      <div className="text-[15px] font-semibold text-ink">{screen.heading}</div>
       <FirstRunLine>{screen.lead}</FirstRunLine>
-      {screen.appsUnreadable && <FirstRunLine quiet>{flowCopy.connect.unreadable}</FirstRunLine>}
+      <div className="mt-2 text-[15px] font-semibold text-ink">{screen.heading}</div>
+      {screen.appsUnreadable && <FirstRunLine quiet>{screen.unreadable}</FirstRunLine>}
 
       <ul className="mt-3 grid gap-2">
         {screen.rows.map((row) => (
@@ -404,7 +412,7 @@ export function FirstRunConnectView({
                 onClick={() => onConnect(row.need)}
                 className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
               >
-                {busy === row.need ? appsCopy.connecting : appsCopy.connect}
+                {busy === row.need ? appsCopy.connecting : (screen.connectLabel?.(row.need) ?? appsCopy.connect)}
               </button>
             ) : (
               <span className="text-[12.5px] text-ink-secondary">{appsCopy.desktopOnly}</span>
@@ -526,6 +534,7 @@ export function FirstRunDayResultView({
   onMorning: () => void;
   onAgain: () => void;
 }) {
+  const [declined, setDeclined] = useState(false);
   return (
     <FirstRunBubble>
       <div className="text-[17px] font-semibold text-ink">{result.header}</div>
@@ -554,16 +563,22 @@ export function FirstRunDayResultView({
         <ResultColumn column={result.waiting} />
       </div>
 
-      {result.morning && (
+      {result.morning && !(declined && !result.morning.taken) && (
         <div className="mt-4 rounded-xl border border-hairline/50 bg-inset px-3 py-2.5">
           <div className="text-[14px] font-semibold text-ink">{result.morning.heading}</div>
           <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{result.morning.body}</p>
           {result.morning.taken ? (
             <FirstRunNote>{result.morning.taken}</FirstRunNote>
           ) : (
-            <button type="button" disabled={busy} onClick={onMorning} className={`mt-2 ${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
-              {busy ? result.morning.working : result.morning.button}
-            </button>
+            // One primary, on the right; "Not now" folds the offer away.
+            <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+              <button type="button" disabled={busy} onClick={() => setDeclined(true)} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+                {result.morning.dismiss}
+              </button>
+              <button type="button" disabled={busy} onClick={onMorning} className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`}>
+                {busy ? result.morning.working : result.morning.button}
+              </button>
+            </div>
           )}
           <FirstRunFailure message={failure} />
         </div>

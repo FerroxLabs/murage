@@ -48,8 +48,10 @@ const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "memory/extractor-connections.ts": "hands FLUX_OPENAI_BASE to memory/extract.ts, which calls fluxCallHeaders('memory-extraction')",
   "flux-key-health.ts": "key validity GET /key/info: no model turn, nothing to capture or recall",
   "email/email-secrets.ts": "bot email key storage; names fluxKey() in a comment, makes no request",
+  "engine-health-routes.ts": "the Health line; the key check is flux-key-health.ts, GET /key/info: no model turn, nothing to capture or recall",
   "email/flux-email-client.ts": "bot email /v1/email/* (BOT-EMAIL-MURAGE-109): inbox, send and read routes, no model turn, nothing to capture or recall",
   "email/runtime.ts": "bot email wiring: hands the Flux base to email/flux-email-client.ts, makes no request itself",
+  "app-trigger-delivery.ts": "connected-app events /v1/app-events/*: claim, ack and the run ledger, no model turn, nothing to capture or recall",
 };
 /** Call-site ids whose code is owned by another lane. They may be unused until that lane lands. */
 const PENDING_OTHER_LANE: readonly FluxCallSiteId[] = [];
@@ -135,6 +137,7 @@ const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
   "tts/elevenlabs.ts": "ElevenLabs; mentions Flux in a comment",
   "email/runtime.ts": "wiring; email/flux-email-client.ts makes the tagged requests",
   "email/email-secrets.ts": "bot email key storage; makes no request",
+  "engine-health-routes.ts": "the Health line; flux-key-health.ts checks the key, no model turn",
 };
 
 describe("every Flux request carries the usage tags", () => {

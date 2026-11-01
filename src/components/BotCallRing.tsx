@@ -102,7 +102,7 @@ export function BotCallRing() {
   };
 
   return (
-    <div role={ring ? "alertdialog" : "status"} aria-label={ring ? BOT_CALL_WORDS.ringing(botName) : undefined}
+    <div role={ring ? "alertdialog" : "status"} data-box-exempt="a small call banner, nothing in it scrolls" aria-label={ring ? BOT_CALL_WORDS.ringing(botName) : undefined}
       className="fixed left-1/2 top-3 z-50 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-2 rounded-2xl border border-hairline/40 bg-card px-3 py-2 text-[13px] text-ink shadow-xl">
       {ring ? (
         <>

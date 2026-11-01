@@ -29,8 +29,18 @@
 //     file, or a link that leaves the bundle keeps the card.
 //
 // User-chosen folders never match: they are not the thread desk.
+//
+// 1.0.8 thread-trust (docs/designs/THREAD-TRUST-108.md): the desk is the one
+// Murage itself computes for this bot and thread (`taskWorkspacePath`), which
+// for a bot whose work is partitioned lives under a partition root —
+// `workspaces/<botId>.teams/<teamId>/threads/<threadId>`, `.projects/<groupId>`,
+// `.rooms/<key>` or `<botId>.general` — not only `workspaces/<botId>/threads`.
+// Hand-offs to a team member or a project desk run there, and each one raised
+// the card. The shape is still checked here, not taken on trust from the
+// caller: inside `<dataDir>/workspaces`, owned by this bot by name, ending in
+// `threads/<threadId>`, every component a real directory (no symlink, no `..`).
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { canonicalFolder, gitRootOf, type FolderTrustScan } from "./folder-trust.ts";
 
@@ -50,6 +60,32 @@ export interface ManagedWorkspaceTrustInput {
   threadId: string;
   /** Bundle ids pinned for this turn. A link into any other bundle fails. */
   bundleIds: readonly string[];
+  /** The desk Murage made for this bot and thread (`taskWorkspacePath`,
+   * partition-aware). Omitted = the home desk
+   * `<dataDir>/workspaces/<botId>/threads/<threadId>`. Either way it must
+   * have a Murage desk's shape (`deskComponents`), or nothing matches. */
+  desk?: string;
+}
+
+/** Partition suffixes `partitionRoots` (execution-audience.ts) appends to a
+ * bot id: `.general` is a root of its own, the others hold one keyed folder. */
+const KEYED_SUFFIXES = new Set(["teams", "projects", "rooms"]);
+
+/** The components of `desk` below `dataDir` when it has the shape of a desk
+ * Murage makes for `botId`/`threadId`, else null:
+ * `workspaces/<botId>[.general]/threads/<threadId>` or
+ * `workspaces/<botId>.<teams|projects|rooms>/<key>/threads/<threadId>`. */
+export function deskComponents(dataDir: string, desk: string, botId: string, threadId: string): string[] | null {
+  if (!SAFE_ID.test(botId) || !SAFE_ID.test(threadId) || !isAbsolute(desk) || desk.split(/[\\/]+/).includes("..")) return null;
+  const rel = relative(resolve(dataDir), resolve(desk));
+  if (!rel || isAbsolute(rel)) return null;
+  const parts = rel.split(/[\\/]+/);
+  if (parts[0] !== "workspaces" || parts.at(-2) !== "threads" || parts.at(-1) !== threadId) return null;
+  const owner = parts[1] ?? "";
+  if (parts.length === 4) return owner === botId || owner === `${botId}.general` ? parts : null;
+  if (parts.length !== 5 || !SAFE_ID.test(parts[2] ?? "")) return null;
+  const dot = owner.indexOf(".");
+  return dot > 0 && owner.slice(0, dot) === botId && KEYED_SUFFIXES.has(owner.slice(dot + 1)) ? parts : null;
 }
 
 function realDirectory(path: string): boolean {
@@ -72,9 +108,11 @@ function realFile(path: string): boolean {
 
 /** The canonical thread desk when `folder` is this turn's desk reached
  * without any symlink below the data dir; null otherwise. */
-export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTrustInput, "dataDir" | "botId" | "threadId">): string | null {
+export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTrustInput, "dataDir" | "botId" | "threadId" | "desk">): string | null {
   if (!SAFE_ID.test(input.botId) || !SAFE_ID.test(input.threadId)) return null;
   if (!isAbsolute(folder) || folder.split(/[\\/]+/).includes("..")) return null;
+  const parts = deskComponents(input.dataDir, input.desk ?? join(input.dataDir, "workspaces", input.botId, "threads", input.threadId), input.botId, input.threadId);
+  if (!parts) return null;
   let data: string;
   try {
     data = realpathSync.native(input.dataDir);
@@ -82,7 +120,7 @@ export function managedThreadDesk(folder: string, input: Pick<ManagedWorkspaceTr
     return null;
   }
   let at = data;
-  for (const part of ["workspaces", input.botId, "threads", input.threadId]) {
+  for (const part of parts) {
     at = join(at, part);
     if (!realDirectory(at)) return null;
   }

@@ -228,7 +228,7 @@ export function WhatsAppSettings() {
       <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => void run("status", refresh)}>{t("whatsapp.refresh")}</button>
       {linkState !== "idle" && !confirmUnlink && <button type="button" className={`${buttonClass} text-danger`} disabled={off} onClick={() => setConfirmUnlink(true)}>{t("whatsapp.unlink")}</button>}
     </div>
-    {confirmUnlink && <div role="alertdialog" aria-label={t("whatsapp.unlink")} className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
+    {confirmUnlink && <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label={t("whatsapp.unlink")} className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
       <p>{t("whatsapp.unlinkConfirm")}</p>
       <div className="mt-2 flex gap-2">
         <button type="button" className={`${buttonClass} text-danger`} disabled={off} onClick={() => void run("unlink", async expected => { await api("/api/whatsapp/unlink", { method: "POST", body: "{}" }); setConfirmUnlink(false); await refresh(expected); })}>{busy === "unlink" ? t("whatsapp.unlinking") : t("whatsapp.unlinkYes")}</button>
