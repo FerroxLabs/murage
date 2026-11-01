@@ -1695,6 +1695,19 @@ describe("piToolErrorDetail", () => {
     expect(out).toContain("401");
     expect(out).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
   });
+  it("masks a credential held in a path whole, before the path is cut", () => {
+    const value = `/tmp/${"sk-" + "abcdefghijklmnopqrst"}/rest`;
+    expect(piToolErrorDetail({ result: `open failed: token=${value}` })).toBe(`open failed: token=«redacted ${value.length} chars»`);
+  });
+  it("cuts a path to its last segment when a key sits in the middle of it", () => {
+    const key = "sk-" + "abcdefghijklmnopqrst";
+    expect(piToolErrorDetail({ result: `open /tmp/${key}/subdir/id_rsa` })).toBe("open …/id_rsa");
+    expect(piToolErrorDetail({ result: `open C:\\tmp\\${key}\\Users\\alice\\file.txt failed` })).toBe("open …/file.txt failed");
+  });
+  it("keeps the mask readable when a key is the last segment of a path", () => {
+    const key = "sk-" + "abcdefghijklmnopqrst";
+    expect(piToolErrorDetail({ result: `open /tmp/subdir/${key} failed` })).toBe(`open …/«redacted ${key.length} chars» failed`);
+  });
   it("keeps to about 200 characters", () => {
     expect(piToolErrorDetail({ result: "x".repeat(900) })!.length).toBeLessThanOrEqual(200);
   });

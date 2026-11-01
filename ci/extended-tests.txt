@@ -73,6 +73,7 @@ scripts/import-wayland-skills.test.mjs	delete (pending review; runs here until t
 scripts/installer-terms.test.mjs	delete (pending review; runs here until then)
 scripts/issue-template.test.mjs	delete (pending review; runs here until then)
 scripts/library-packages-branding.test.mjs	delete (pending review; runs here until then)
+scripts/mac-minos-report.test.mjs	extended
 scripts/mainstream-profiles.test.mjs	extended
 scripts/model-vision-table.test.mjs	delete (pending review; runs here until then)
 scripts/prepare-cloudflared.test.mjs	extended
@@ -97,6 +98,7 @@ server/backup-exfat.test.ts	extended
 server/backup-failure-naming.test.ts	extended
 server/backup-failure-notice-api.test.ts	extended
 server/backup-many-files.test.ts	extended
+server/backup-real-full-disk.test.ts	extended
 server/backup-waiting-api.test.ts	extended
 server/backup-waiting.test.ts	extended
 server/blake3.test.ts	extended
@@ -368,6 +370,7 @@ server/inbox-activity-writes.test.ts	extended
 server/inbox-fill-hold.test.ts	extended
 server/inbox-first-fill.test.ts	extended
 server/inbox-learning-paused.test.ts	extended
+server/inbox-needs-you-count.growth.test.ts	extended
 server/inbox-rollup.test.ts	extended
 server/inbox-version.test.ts	extended
 server/inbox.base-equivalence.test.ts	extended
@@ -1087,7 +1090,6 @@ src/components/ThreadFollowControls.test.ts	extended
 src/components/TranscriptRows.test.ts	extended
 src/components/TranscriptWidth.test.ts	delete (pending review; runs here until then)
 src/components/UnifiedBrowserPanel.test.ts	extended
-src/components/UpdateBanner.test.ts	extended
 src/components/UpdateDot.test.ts	extended
 src/components/UsagePopover.test.ts	extended
 src/components/UseAsReferenceButton.test.ts	extended
@@ -1388,7 +1390,6 @@ src/lib/tts/native-player.test.ts	extended
 src/lib/tts/voicefast.test.ts	extended
 src/lib/turn-tail.test.ts	extended
 src/lib/unloadable-routines.test.ts	extended
-src/lib/update-card.test.ts	extended
 src/lib/usage-card.test.ts	extended
 src/lib/usage.test.ts	extended
 src/lib/use-action.test.ts	extended
@@ -1463,3 +1464,4 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/lib/clock-format.test.ts	extended
