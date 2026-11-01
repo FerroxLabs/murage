@@ -22,9 +22,15 @@ export type ProbeReason =
 
 export type LocalKind = "this-computer" | "local-network";
 
+/** How many tools a server has, as far as the probe knows: its whole first page, and "113+" when there is a further page. */
+export function probeToolCount(probe: { tools: unknown[]; toolsTotal?: number; toolsMore?: true }): number | string {
+  const count = probe.toolsTotal ?? probe.tools.length;
+  return probe.toolsMore ? `${count}+` : count;
+}
+
 /** What a probe said: fixed sentences and codes only, never a value. */
 export type ProbeView =
-  | { ok: true; tools: Array<{ name: string; description?: string }>; transport?: "http" | "sse" }
+  | { ok: true; tools: Array<{ name: string; description?: string }>; transport?: "http" | "sse"; toolsTotal?: number; toolsMore?: true }
   | {
     ok: false; error: string; reason?: ProbeReason;
     signIn?: { host: string };
@@ -98,6 +104,15 @@ export function defaultHeaderChoice(hint: "x-api-key" | "authorization" | undefi
 /** The staged wording for a first run that downloads before it starts. */
 export function installStage(elapsedSeconds: number): "start" | "setup" | "still" {
   return elapsedSeconds < 8 ? "start" : elapsedSeconds < 60 ? "setup" : "still";
+}
+
+/** The words while a Test waits. The stages are a timer, so the first-time ones
+ * are only for a server being added; a saved one just says it is slow. */
+export function testWaitKey(elapsedSeconds: number, firstTime: boolean): LocaleKey {
+  const stage = installStage(elapsedSeconds);
+  if (stage === "start") return "mcp.card.install.start";
+  if (!firstTime) return "mcp.card.test.slow";
+  return stage === "setup" ? "mcp.card.install.setup" : "mcp.card.install.still";
 }
 
 // ── secrets and bodies ──────────────────────────────────────────────────

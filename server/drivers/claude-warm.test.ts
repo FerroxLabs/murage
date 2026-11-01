@@ -1659,6 +1659,44 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     expect(prewarms()).toHaveLength(1);
   });
 
+  it("the first-token line tells a fresh session from a resumed one, cold or hot", async () => {
+    await create();
+    await goCold("t-pw-first"); // a new session on a new process
+    await run("t-pw-first", "two", base); // a new process on the kept session
+    await run("t-pw-first", "three", base); // the kept process
+    await eventually(() => lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first")).length === 3);
+    const tokens = lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first"));
+    expect(tokens[0]).toContain("process=spawned sealed=false resumed=false");
+    expect(tokens[1]).toContain("process=spawned sealed=false resumed=true");
+    expect(tokens[2]).toContain("process=reused sealed=false resumed=true");
+  });
+
+  it("a prewarm on a thread whose last turn was a routine stays parked, and the next send reuses it", async () => {
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "60000";
+    await create();
+    await run("t-pw-stale", "one", base);
+    await run("t-pw-stale", "routine", { ...base, background: true });
+    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-stale reason=background turn")));
+    await eventually(() => warmPool.idleCount() === 0);
+    const closesBefore = lines.filter((l) => l.startsWith("claude close thread=t-pw-stale")).length;
+    expect(await instance.adapter.prewarm!("t-pw-stale")).toBe(true);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(lines.filter((l) => l.startsWith("claude close thread=t-pw-stale"))).toHaveLength(closesBefore);
+    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(1);
+    await run("t-pw-stale", "two", base);
+    expect(dispatches().at(-1)).toContain("process=reused");
+  });
+
+  it("the parked line prints only when the engine is still there and idle", async () => {
+    await create();
+    await goCold("t-pw-gone");
+    const spy = vi.spyOn(warmPool, "markIdle").mockImplementation(async (_member, info) => { info.close("low memory"); });
+    try {
+      expect(await instance.adapter.prewarm!("t-pw-gone")).toBe(false);
+    } finally { spy.mockRestore(); }
+    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(0);
+  });
+
   it("prewarm then a changed warm key recycles the process instead of reusing it", async () => {
     await create();
     await goCold("t-pw-key");

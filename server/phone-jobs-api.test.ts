@@ -101,7 +101,7 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
     try {
       const off = await ask();
-      expect(off.body).toEqual({ offered: false, flag: false, shareAsk: false });
+      expect(off.body).toEqual({ offered: false, flag: false, shareAsk: false, shareAskFlag: false, blocked: null });
     } finally {
       expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     }
@@ -184,6 +184,61 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     expect(JSON.stringify(await messages(bot.threadId))).not.toContain("SECRET-TITLE");
     // a late second answer for the same job is refused
     expect((await phone("POST", `/api/phones/self/jobs/${offer.operationId}/result`, result)).status).toBe(409);
+    release(); await idle(bot.id);
+  }, 120000);
+
+  it("turning phone tools off mid-card ends the open jobs at once (leased: may have run, queued: did not run), never waiting out the deadline", async () => {
+    const bot = await createBot("Jobs flag off", { calendar: "read" });
+    const token = await holdTurn(bot, "turn that is open when phone tools are turned off");
+    const leased = deviceCall(token, CAL);
+    const head = (await phone("GET", "/api/phones/self/jobs")).body.jobs[0];
+    expect(head?.action).toBe("calendar.read");
+    expect((await phone("POST", `/api/phones/self/jobs/${head.operationId}/lease`, { offerId: head.offerId })).body.active).toBe(true);
+    const queued = deviceCall(token, CAL);
+    await quiet(800);
+    expect(await state(leased)).toBe("pending");
+    expect(await state(queued)).toBe("pending");
+    const turnedOff = Date.now();
+    expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
+    try {
+      // the request deadline is 2 minutes and the lease 45 s: an answer inside a few seconds can only be the switch
+      const bound = <T>(p: Promise<T>) => Promise.race([p, quiet(10000).then(() => { throw new Error("still waiting 10 s after phone tools were turned off"); })]);
+      expect((await bound(leased)).body).toMatchObject({ ok: false, code: "timeout" }); // may have run
+      expect((await bound(queued)).body).toMatchObject({ ok: false, code: "denied" }); // did not run
+      expect(Date.now() - turnedOff).toBeLessThan(10000);
+      // the phone's routes are absent while the flag is off, so its open card cannot answer either
+      expect((await phone("POST", `/api/phones/self/jobs/${head.operationId}/result`, { leaseToken: "x".repeat(43), ok: true })).status).toBe(404);
+      expect((await phone("GET", "/api/phones/self/jobs")).status).toBe(404);
+    } finally {
+      expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
+    }
+    release(); await idle(bot.id);
+  }, 120000);
+
+  it("a phone call whose body is still arriving when phone tools are turned off opens no job", async () => {
+    const bot = await createBot("Jobs flag off late body", { calendar: "read" });
+    const token = await holdTurn(bot, "turn with a call still uploading when phone tools are turned off");
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { finish = resolve; });
+    const text = JSON.stringify(CAL);
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        controller.enqueue(new TextEncoder().encode(text.slice(0, 5)));
+        await gate;
+        controller.enqueue(new TextEncoder().encode(text.slice(5)));
+        controller.close();
+      },
+    });
+    const sent = fetch(`${fixture.info.url}/api/internal/device/call`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body, duplex: "half" } as RequestInit);
+    await quiet(600);
+    expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
+    try {
+      finish();
+      expect((await sent).status).toBe(404);
+    } finally {
+      expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
+    }
+    expect((await phone("GET", "/api/phones/self/jobs")).body.jobs).toEqual([]);
     release(); await idle(bot.id);
   }, 120000);
 

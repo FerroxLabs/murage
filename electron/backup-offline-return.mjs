@@ -20,11 +20,14 @@
 /** How long app.quit() gets before the app exits by itself. */
 export const BACKUP_QUIT_GRACE_MS = 5_000;
 
-/** The ceiling for a whole closed backup. The capture's own budget is at most
- * 30 minutes (main.mjs refuses a larger maxDurationMs as INVALID_BACKUP_BUDGET)
- * and the worker gets 30 s on top of it before RECOVERY_WORKER_TIMEOUT; the
- * rest covers the reference checks, the backup tool check and cleanup. */
+/** The least a whole closed backup gets. The worker gets 30 s on top of the
+ * capture's budget before RECOVERY_WORKER_TIMEOUT; the rest covers the
+ * reference checks, the backup tool check and cleanup. */
 export const OFFLINE_BACKUP_CEILING_MS = 35 * 60_000;
+
+/** The ceiling for one run: its budget plus the same 5 minutes, never less
+ * than the fixed ceiling. A budget that can't be used gets the fixed one. */
+export const offlineCeilingFor = budgetMs => Number.isSafeInteger(budgetMs) ? Math.max(OFFLINE_BACKUP_CEILING_MS, budgetMs + 5 * 60_000) : OFFLINE_BACKUP_CEILING_MS;
 
 /** Destroy the progress window, quit, and make sure the process really ends. */
 export function quitForRelaunch({ app, progress, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {

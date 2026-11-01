@@ -198,7 +198,7 @@ export const SETUP_CARD_COPY: Record<SetupCardVariant, { title: string; subtitle
       + "or keep an eye on one thing and speak up when it changes.",
   },
   next: {
-    title: "What would you like to do next?",
+    title: "Done",
     subtitle: "That is you set up. Ask me for anything, or just tell me what is on today.",
   },
   phone: {

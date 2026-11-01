@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "grade": "DRAFT",
+  "spec": {
+    "eventType": "slack.channel.message",
+    "toolkit": "slack",
+    "triggerSlug": "SLACK_CHANNEL_MESSAGE_RECEIVED",
+    "kind": "webhook",
+    "candidate": true,
+    "reserve": false,
+    "qualified": false,
+    "grade": "DRAFT",
+    "sourceKeyPrefix": "slack:",
+    "sourceKeyFields": [
+      "channel",
+      "ts"
+    ],
+    "occurredAtField": "ts",
+    "occurredAtFormat": "slack_ts",
+    "maxAgeSec": 3600,
+    "triggerConfigSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel_id"
+      ],
+      "properties": {
+        "channel_id": {
+          "type": "string",
+          "maxLength": 256
+        }
+      }
+    },
+    "filterSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {
+        "includeBotMessages": {
+          "type": "boolean",
+          "default": false
+        },
+        "includeThreadReplies": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "projectionFields": [
+      "channel_type",
+      "subtype",
+      "bot_id"
+    ],
+    "resourceRefFields": [
+      {
+        "field": "channel",
+        "kind": "slack.channel"
+      },
+      {
+        "field": "ts",
+        "kind": "slack.message_ts"
+      },
+      {
+        "field": "thread_ts",
+        "kind": "slack.thread_ts"
+      },
+      {
+        "field": "user",
+        "kind": "slack.user"
+      },
+      {
+        "field": "team_id",
+        "kind": "slack.team"
+      }
+    ],
+    "matchedResourceRead": "SLACK_FETCH_CONVERSATION_HISTORY",
+    "matchedResourceArgs": {
+      "channel": "payload.channel",
+      "oldest": "payload.ts",
+      "latest": "payload.ts",
+      "inclusive": "literal.true",
+      "limit": "literal.1"
+    },
+    "docUrl": "https://docs.composio.dev/toolkits/slack.md",
+    "notes": "Edits and deletes (message subtypes message_changed and message_deleted) are always filtered. text, blocks, attachments and files never enter a projection. The managed Slack app may need workspace-admin approval.",
+    "threadReplyRead": "SLACK_FETCH_MESSAGE_THREAD_FROM_A_CONVERSATION",
+    "threadReplyArgs": {
+      "channel": "payload.channel",
+      "ts": "payload.thread_ts",
+      "oldest": "payload.ts",
+      "latest": "payload.ts",
+      "inclusive": "literal.true",
+      "limit": "literal.1"
+    }
+  },
+  "example": {
+    "data": {
+      "channel": "C0123456789",
+      "channel_type": "channel",
+      "ts": "1793000000.000200",
+      "team_id": "T0123456789",
+      "user": "U0123456789",
+      "text": "synthetic message text",
+      "blocks": [],
+      "files": []
+    },
+    "projection": {
+      "fields": {
+        "channel_type": "channel"
+      },
+      "resourceRefs": [
+        {
+          "kind": "slack.channel",
+          "id": "C0123456789"
+        },
+        {
+          "kind": "slack.message_ts",
+          "id": "1793000000.000200"
+        },
+        {
+          "kind": "slack.user",
+          "id": "U0123456789"
+        },
+        {
+          "kind": "slack.team",
+          "id": "T0123456789"
+        }
+      ]
+    },
+    "sourceKey": "slack:C0123456789:1793000000.000200",
+    "occurredAt": "2026-10-26T07:33:20.000200Z"
+  }
+}
