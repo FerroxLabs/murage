@@ -1,26 +1,26 @@
 ---
-title: MCP servers
-description: Give your bots more tools by pasting a link, a command or a config snippet. Sign in or add an API key, and what each message from Test means.
+title: Connected tools (MCP servers)
+description: Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.
 icon: Plug
 ---
 
-An MCP server gives your bots extra tools, such as running a workflow in ComfyUI or searching your notes. You add one in **Connected apps → MCP servers**. Tool calls still follow your normal approval settings, and new servers stay off until you turn them on.
+A connected tool lets your bots use another app, such as running a workflow in ComfyUI or searching your notes. Many services call this an MCP server. You add one in **Connected apps → Connected tools**. Each tool still follows your normal approval settings, and a new one stays off until you turn it on.
 
 ## Add a server
 
 Press Add server and paste one of three things into the box, then press Continue.
 
 - **A link.** Most services give you one, for example https://cloud.comfy.org/mcp. Murage connects to it and works out what it needs.
-- **A config snippet.** Paste the JSON from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.
+- **Settings text.** Paste the block of settings from the service's own instructions. Murage reads it and shows any secret it needs as a labelled field.
 - **A command.** Paste a command such as npx -y @scope/server. It runs on this computer.
 
 You do not choose the type. Murage works it out from what you paste.
 
-## Sign in or use an API key
+## Sign in or use a key
 
 If a link needs you to sign in, Murage shows a "Sign in to (site)" button. It opens your browser, you sign in there, and Murage takes it from there. Murage keeps the sign-in, renews it when it can, and never gives it to a bot.
 
-If the service takes an API key instead, press Use an API key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat.
+If the service gives you a key instead (often called an API key), press Use a key instead, paste the key in the field and press Save and test. The key is kept by the Murage desktop app. Never paste a key into a chat.
 
 ## Servers on this computer or your network
 
@@ -31,10 +31,10 @@ A link that points at this computer, or at a device on your local network, asks 
 Test connects and lists the tools it finds. When it cannot, it says why in plain words.
 
 - **Needs you to sign in.** Press Sign in.
-- **Needs an API key, or did not accept it.** Check the key and try again.
+- **Needs a key, or did not accept it.** Check the key and try again.
 - **Sign-in has ended.** Sign in again. Some services end a sign-in after a while.
 - **Could not find it, or did not accept the connection.** Check the link and your internet connection.
-- **Nothing answers as an MCP server.** Check that you copied the whole link.
+- **Nothing answers as a connected tool.** Check that you copied the whole link.
 - **Has moved.** Murage offers the new link.
 - **Did not answer in time.** Try again in a moment.
 
@@ -42,9 +42,9 @@ The first time you run a command that downloads before it starts, such as npx or
 
 ## Turn it on, and who can use it
 
-When Test passes, press Turn on for my bots. Bots that can use your own MCP servers get the tools in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.
+When Test passes, press Turn on for my bots. Bots that can use your own connected tools get them in your own chats: Fuigo, Claude, Codex and the other engines that mount tools. Each call asks you first unless the bot is on Full access.
 
-Only you can use them. People who message your bots on Telegram, Slack or Discord never get your servers.
+Only you can use them. People who message your bots on Telegram, Slack or Discord never get your connected tools.
 
 If a sign-in ends while a bot is working, the chat shows a Sign in card. On the computer running Murage the button signs you in and the bot carries on. On your phone the card says to finish sign-in on the computer running Murage.
 

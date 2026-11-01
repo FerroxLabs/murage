@@ -8,6 +8,7 @@ import type { SendTurnInput } from "../contracts.ts";
 import { awaitCliTreeStopped, killCliTree } from "../procs.ts";
 import { hasPlatformRss, platformRss, processHandleInfo } from "../platform-process-hooks.ts";
 import { windowsListing } from "./process-tree.ts";
+import { reuseStats } from "./reuse-stats.ts";
 
 const MB = 1024 * 1024;
 const GB = 1024 * MB;
@@ -109,6 +110,8 @@ export function createPrewarmGate() {
       pending.delete(threadId);
       entry.finish();
     },
+    /** Ends when this thread's prewarm has really ended, however long that takes. */
+    settled: (threadId: string): Promise<void> => pending.get(threadId)?.done ?? Promise.resolve(),
     /** A send's wait for the prewarm ran out: cancel it and wait for it to end and free
      * its dispatch slot; if it will not, end the process it owns now (`child()`, the exact
      * handle the driver holds at this moment, never a remembered PID) through the owned
@@ -478,7 +481,7 @@ export function createWarmPool(overrides: Partial<WarmPoolDeps> = {}) {
       const bytes = sizes.get(key);
       if (bytes !== undefined) d.log(`warm pool rss engine=${m.engine} thread=${m.threadId} rssMB=${mb(bytes)}`);
     }
-    d.log(`warm pool engines=${idle.size} idle=${idle.size} poolMB=${mb(poolBytes())} budgetMB=${mb(budgetBytes())} freeMB=${mb(d.freemem())}`);
+    d.log(`warm pool engines=${idle.size} idle=${idle.size} poolMB=${mb(poolBytes())} budgetMB=${mb(budgetBytes())} freeMB=${mb(d.freemem())} ${reuseStats.line()}`);
   };
 
   const check = (force: boolean): Promise<void> => {

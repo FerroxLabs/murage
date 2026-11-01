@@ -53,7 +53,8 @@ describe("approval feedback pieces", () => {
 
 describe.each([
   ["InboxRequest.tsx", ["allow", "allow-task", "deny"]],
-  ["PendingApproval.tsx", ["deny", "program", "task", "routine", "exact", "allow"]],
+  // UX-TRUST-MOMENTS-1012 1.3: a fold row is a choice too, run through the same controller as decide(row.id, …)
+  ["PendingApproval.tsx", ["deny", "allow"]],
 ] as const)("%s wiring", (file, choices) => {
   const source = read(file);
   it("runs every decision through the shared controller and holds the other buttons", () => {

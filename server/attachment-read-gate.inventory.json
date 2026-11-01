@@ -1589,6 +1589,13 @@
   "count": 1
  },
  {
+  "file": "server/feedback-relay.ts",
+  "function": "feedbackInstallId",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/flux-composio-dev-token.ts",
   "function": "readDevFluxTokenDocument",
   "callee": "readFileSync",

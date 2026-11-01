@@ -82,7 +82,7 @@ const CONNECTED_STATUS = "Connected. Smart routing on, and your apps are a click
  *  asking for a connection" can be answered without scoping past the jobs card
  *  that is still sitting above it in the transcript. */
 const CONNECT_HEADING_TAIL = /and then I can do it\./;
-const CONNECT_LEAD = "Everything this job needs is on this screen. Nothing else gets asked, and you can stop after any of them.";
+const CONNECT_LEAD = "On it. Everything this job needs is on one screen, and you can stop after any of it.";
 const CONNECT_SKIP = "Skip that and let me type it in instead";
 const ELSEWHERE = "Something else";
 const AGAIN = "Take something else off my plate";
@@ -106,6 +106,11 @@ const CALENDAR_REASON = "so I know what is already fixed in your day.";
  *  read without leaving the connect screen. */
 const connectRow = (app: Page, reason: string) => app.locator("li", { hasText: reason });
 
+const BRIEF_TAG = "2 to connect";
+const DAY_TAG = "needs your calendar";
+const BUSINESS_TAG = "asks for the apps it needs as it goes";
+const NO_KEY_TAG = "needs Flux Router";
+
 /**
  * THE TAGS THIS MACHINE MUST SHOW ONCE FLUX IS CONNECTED.
  *
@@ -115,15 +120,16 @@ const connectRow = (app: Page, reason: string) => app.locator("li", { hasText: r
  * a machine with a key and no Google account attached — which the test asserts
  * against the server's own view before it trusts them.
  */
-const CONNECTED_TAGS: ReadonlyArray<readonly [string, string]> = [
+const CONNECTED_TAGS: ReadonlyArray<readonly [string, string | null]> = [
   // Calendar and Gmail, neither connected, and Flux no longer in the list.
-  [BRIEF, "2 to connect"],
-  // One thing missing is NAMED. Two or more is counted; that difference is
-  // the whole point of `jobTag`.
-  [DAY, "connect Google Calendar"],
-  [NOTES, "ready now"],
-  [RESEARCH, "ready now"],
-  [BUSINESS, "ready now"],
+  // The count matches the connect screen this row opens.
+  [BRIEF, BRIEF_TAG],
+  [DAY, DAY_TAG],
+  // Nothing is missing, and a row with nothing missing has no tag at all.
+  [NOTES, null],
+  [RESEARCH, null],
+  // Nothing is missing yet, and it says the apps come up as it goes.
+  [BUSINESS, BUSINESS_TAG],
 ];
 
 // ── the rig ────────────────────────────────────────────────────────────
@@ -223,13 +229,21 @@ async function expectConnectedWorld(): Promise<any> {
 }
 
 /** The tag on one job row, read as the person reads it: the second of the
- *  row's two spans. A row with one span has no tag at all, which is the state
- *  the card is in before the view lands and is never acceptable here. */
+ *  row's two spans. A row with one span has no tag. */
 async function tagOf(app: Page, job: string): Promise<string> {
   const row = app.getByRole("button", { name: new RegExp(job, "i") });
   const spans = row.locator(":scope > span");
   await expect(spans, `${job}: the row must carry a live tag, not arrive untagged`).toHaveCount(2);
   return (await spans.last().innerText()).trim();
+}
+
+/** A row with nothing missing has no tag (section 1.6). The card also draws
+ *  untagged rows before the view lands, and those are disabled, so the row
+ *  has to be pressable first or "no tag" would only mean "not loaded yet". */
+async function expectNoTag(app: Page, job: string): Promise<void> {
+  const row = app.getByRole("button", { name: new RegExp(job, "i") });
+  await expect(row, `${job}: the row must arrive live`).toBeEnabled();
+  await expect(row.locator(":scope > span"), `${job}: nothing is missing, so the row has no tag`).toHaveCount(1);
 }
 
 /**
@@ -241,7 +255,8 @@ async function tagOf(app: Page, job: string): Promise<string> {
  */
 async function assertConnectedWorldTags(app: Page): Promise<void> {
   for (const [job, expected] of CONNECTED_TAGS) {
-    expect(await tagOf(app, job), `${job}: the tag must say what this job still needs, with Flux connected`).toBe(expected);
+    if (expected === null) await expectNoTag(app, job);
+    else expect(await tagOf(app, job), `${job}: the tag must say what this job still needs, with Flux connected`).toBe(expected);
   }
 }
 
@@ -249,8 +264,8 @@ async function assertConnectedWorldTags(app: Page): Promise<void> {
  * THIS SCREEN IS NOT ASKING FOR A CONNECTION.
  *
  * Both sentences are unique to `FirstRunConnectView`, so this is indifferent
- * to the jobs card still sitting above it in the transcript with "connect
- * Google Calendar" written on one of its rows.
+ * to the jobs card still sitting above it in the transcript with "needs your
+ * calendar" written on one of its rows.
  */
 async function assertNoConnectAsk(app: Page, where: string): Promise<void> {
   await expect(
@@ -327,8 +342,8 @@ test.describe("the first run with Flux Router connected", () => {
     await chiefHasSpoken(app);
     await reachTheJobs("connected");
     const view = await expectConnectedWorld();
-    // The machine these expectations ran against, in the log, because "2 to
-    // connect" is only the right answer on a machine with no Google account
+    // The machine these expectations ran against, in the log, because the
+    // brief's tag is only the right answer on a machine with no Google account
     // attached and `nothingCanAnswer` is what decides three of the five rows
     // on the other road.
     console.info(
@@ -351,7 +366,7 @@ test.describe("the first run with Flux Router connected", () => {
     await expectConnectedWorld();
     await app.reload();
 
-    expect(await tagOf(app, BRIEF), "the brief still wants mail and calendar once Flux is connected").toBe("2 to connect");
+    expect(await tagOf(app, BRIEF), "the brief still wants mail and calendar once Flux is connected").toBe(BRIEF_TAG);
     await choose(app, BRIEF);
 
     // TWO, AND THE HEADING COUNTS THEM. Flux is NOT among them: a key is
@@ -392,10 +407,9 @@ test.describe("the first run with Flux Router connected", () => {
     await expectConnectedWorld();
     await app.reload();
 
-    // ONE MISSING THING IS NAMED, NOT COUNTED. That is `jobTag`'s own rule
-    // and it is the difference between a row a person can decide about and a
-    // row they have to press to find out about.
-    expect(await tagOf(app, DAY), "one missing thing is named on the row").toBe("connect Google Calendar");
+    // THE MISSING THING IS NAMED ON THE ROW. That is the difference between a
+    // row a person can decide about and a row they have to press to find out.
+    expect(await tagOf(app, DAY), "the one missing thing is named on the row").toBe(DAY_TAG);
     await choose(app, DAY);
 
     await expect(app.getByText("One thing, and then I can do it."), "one thing, said as one thing").toBeVisible();
@@ -431,7 +445,7 @@ test.describe("the first run with Flux Router connected", () => {
       await expectConnectedWorld();
       await app.reload();
 
-      expect(await tagOf(app, job), `${job}: nothing is missing, so the row says so`).toBe("ready now");
+      await expectNoTag(app, job);
       await choose(app, job);
 
       await expect(app.getByText(lead), `${job}: it must land on its own box`).toBeVisible();
@@ -452,7 +466,7 @@ test.describe("the first run with Flux Router connected", () => {
     await expectConnectedWorld();
     await app.reload();
 
-    expect(await tagOf(app, BUSINESS), "the one job with no box and nothing to connect is simply ready").toBe("ready now");
+    expect(await tagOf(app, BUSINESS), "the one job with no box says the apps come up as it goes").toBe(BUSINESS_TAG);
     await choose(app, BUSINESS);
 
     // THE ONE SCREEN IN THIS FLOW WITH NOTHING TO PRESS, AND IT IS ALLOWED
@@ -502,8 +516,8 @@ test.describe("the checks in this file can fail", () => {
     // between the worlds whatever engines this computer happens to have.
     // `brief` and `day` both mark Flux `required`, so they carry it in their
     // missing list here and cannot carry it once a key is saved.
-    expect(await tagOf(app, BRIEF), "with no key, the brief is waiting on three things").toBe("3 to connect");
-    expect(await tagOf(app, DAY), "and the day on two").toBe("2 to connect");
+    expect(await tagOf(app, BRIEF), "with no key, the brief is waiting on Flux Router").toBe(NO_KEY_TAG);
+    expect(await tagOf(app, DAY), "and so is the day").toBe(NO_KEY_TAG);
 
     // THE OTHER SCREAM. Every connected-world test asserts that the Flux
     // connect row is NOT there, and a locator that can never match anything

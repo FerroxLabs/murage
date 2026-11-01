@@ -2,6 +2,7 @@ import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCl
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
+import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
 import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
@@ -57,6 +58,7 @@ import { homedir, tmpdir } from "node:os";
 import { sep as pathSep } from "node:path";
 import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
 import { wakeAwareTimeout } from "../../sleep-clock.ts";
+import { humanWaitOpen } from "../../harness/human-wait.ts";
 import { stripVTControlCharacters } from "node:util";
 
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
@@ -292,19 +294,19 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
  * into the transcript, where they may contain credentials or request text. */
 export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
   const info = classifyProviderError(error);
-  if (info?.kind === "payment") return "Your model provider rejected this request with HTTP 402. Check its billing and account access; this response does not establish that credits are exhausted.";
+  if (info?.kind === "payment") return "Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.";
   // A ceiling the account reached, not a balance it spent. Saying "add
   // credits" here would be advice the provider itself contradicts.
   if (info?.kind === "spend-cap") {
     return info.provider === "flux-router"
-      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or use another engine."
-      : "This account has reached its monthly spending limit with the model provider. Adding credit will not lift it: ask them to raise it, or use another engine.";
+      ? "Your Flux Router account has reached its monthly spending limit. Adding credit will not lift it; ask Flux Router to raise it, or pick another AI."
+      : "This account has reached its monthly spending limit with your AI service. Adding credit will not lift it: ask them to raise it, or pick another AI.";
   }
   if (info?.kind === "credits") {
     if (info.provider === "flux-router") {
-      return "Flux Router is out of credits. Add credits in Flux Router, then retry, or choose another configured provider.";
+      return "Flux Router is out of credits. Add credits in Flux Router, then try again, or pick another AI in Models & engines.";
     }
-    return "Your model provider's credit balance is exhausted (HTTP 402). Review billing with your provider or choose another configured engine.";
+    return "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.";
   }
   if (reasoningOnlyData(error.data)) return "The model returned reasoning without a visible answer. No reply was produced.";
   // "Request failed." is the generic line the error card already recognises.
@@ -1471,7 +1473,7 @@ const LOAD_SESSION_TIMEOUT = envOr("MURAGE_ACP_SESSION_LOAD_MS", 120_000); // hi
  * goes silent forever without ever answering the RPC.
  *
  * Off by default (0.1.61): the thread's silence watch (server/turn-watchdog.ts,
- * 20 minutes, or the room's own setting) is the one place silence is judged.
+ * one hour, or the room's own setting) is the one place silence is judged.
  * A three-minute guard here cut long tool calls short and ignored the owner's
  * setting. Setting the knob turns it back on for an engine that needs a
  * sooner, engine-named failure; 0 or unset leaves the watch as the only bound. */
@@ -2338,7 +2340,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // kind (and none past the activity window or after a background turn).
         void warmPool.markIdle(proc, {
           engine: "acp", threadId, pid: () => proc.child.pid, spawnedAt: spawnedAtOf(proc.child), ...(proc.scope ? { scope: proc.scope } : {}),
-          background: backgroundThreads.has(threadId), hold,
+          background: !hold && backgroundThreads.has(threadId), hold,
           // adopted by a turn (or replaced): not idle, whatever the shared pool holds
           busy: () => pool.get(threadId) !== proc || proc.owner.hooks !== null,
           close: (reason) => closeProcess(threadId, proc, reason),
@@ -2706,13 +2708,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // instead of failing the turn under someone's cursor. The
                 // same for a tool the agent is running: a quiet build or
                 // `sleep` sends nothing until it ends.
-                if (asks.size || runningTools.size) {
+                if (asks.size || humanWaitOpen(threadId) || runningTools.size) {
                   // An open card waits on a person for as long as it takes; a
                   // tool is bounded, so a tool never reported finished ends
                   // the turn instead of holding it forever.
-                  if (!asks.size) toolWaitedMs += idleMs;
+                  if (!asks.size && !humanWaitOpen(threadId)) toolWaitedMs += idleMs;
                   else toolWaitedMs = 0;
-                  if (asks.size || toolWaitedMs < acpToolMaxMs()) { armIdle(true); return; }
+                  if (asks.size || humanWaitOpen(threadId) || toolWaitedMs < acpToolMaxMs()) { armIdle(true); return; }
                 }
                 rpcPending.delete(id);
                 const toolCapped = !asks.size && runningTools.size > 0;
@@ -2992,6 +2994,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
+            fallbackChanged();
             traceClose("permission.wait", requestId, behavior);
             timer?.clear();
             const picks = behavior === "answer" && answers?.length ? answers : null;
@@ -3021,7 +3024,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             });
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
-          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3065,6 +3068,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
             if (!asks.delete(requestId)) return;
+            fallbackChanged();
             traceClose("permission.wait", requestId, behavior);
             timer?.clear();
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
@@ -3088,7 +3092,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             else onDecided(source === "user" ? "skipped" : "unanswered");
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
-          const timer = turn.holdProjectAsks ? undefined : wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS);
+          const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
           emit({
@@ -3250,6 +3254,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const clearAsk = () => {
             asks.delete(requestId);
             nativeApprovals.delete(msg.id);
+            fallbackChanged();
           };
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.has(requestId)) return false;
@@ -3462,15 +3467,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  fallback turn running or queued, and no helper open or wake pending
          *  (the same gate a turn held for its helpers uses). */
         const fallbackQuiet = () => interjectionsPending.size === 0 && fallback.running === null && !fallback.queued
-          && helpers.open.size === 0 && !helpers.wakePending;
-        /** Any change to what the held turn waits on. The grace restarts from
-         *  it, and the turn settles only once it has fully elapsed quiet. */
+          && helpers.open.size === 0 && !helpers.wakePending && asks.size === 0 && !humanWaitOpen(threadId);
+        /** Any change to what the held turn waits on, a card closing among them. The grace restarts
+         *  from it, and the turn settles only once it has fully elapsed quiet. */
         const fallbackChanged = () => {
           if (fallback.grace) { clearTimeout(fallback.grace); fallback.grace = undefined; }
-          if (state.settled || !fallback.holding || !fallbackQuiet()) return;
+          // A stop closes the turn's cards; that close is never the quiet that finishes a turn cleanly. Stop and the engine's close end it.
+          const graceCanRun = () => !state.settled && !state.cancelRequested && !state.stopRequested && fallback.holding && fallbackQuiet();
+          if (!graceCanRun()) return;
           fallback.grace = setTimeout(() => {
             fallback.grace = undefined;
-            if (state.settled || !fallback.holding || !fallbackQuiet()) return;
+            if (!graceCanRun()) return;
             flushAssistantText();
             settle(true, null);
           }, fallbackGraceMs());
@@ -3486,8 +3493,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (!fallback.holding) {
             fallback.holding = true;
-            fallback.cap = setTimeout(() => {
+            const fallbackCapFired = () => {
               if (state.settled) return;
+              // An open card is never ended by a cap: wait the cap again.
+              if (asks.size || humanWaitOpen(threadId)) { fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs()); fallback.cap.unref?.(); return; }
               noteFallback("fallback_cap", { capMs: fallbackCapMs(), running: fallback.running, queued: fallback.queued });
               flushAssistantText();
               // The cap firing is never a clean end: a fallback still running or
@@ -3495,7 +3504,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // owner steered in did not finish.
               emit({ ...base(threadId, turnId), type: "runtime.error", message: FALLBACK_CAP_LINE });
               settle(false, "interject_fallback_cap");
-            }, fallbackCapMs());
+            };
+            fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs());
             fallback.cap.unref?.();
           }
           fallbackChanged();
@@ -3519,7 +3529,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           fallbackChanged();
         };
         const endHeldAtCap = () => {
-          if (!helpers.holding || state.settled) return;
+          if (!helpers.holding || state.settled || state.cancelRequested || state.stopRequested) return;
+          // An open card is never ended by a cap: wait the cap again.
+          if (asks.size || humanWaitOpen(threadId)) { helpers.cap = setTimeout(endHeldAtCap, backgroundWaitCapMs()); helpers.cap.unref?.(); return; }
           // An accepted follow-up still running, queued or unconfirmed did not
           // finish: the helper cap ending it is a failure, never a clean end.
           const followUpHelper = fallback.helpersAtAccept !== null
@@ -4279,6 +4291,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {
             if (!asks.delete(requestId)) return false;
+            fallbackChanged();
             traceClose("permission.wait", requestId, behavior);
             signal?.removeEventListener("abort", withdrawn);
             const allow = behavior === "allow";
@@ -4483,6 +4496,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let mcpReadyWaited = false;
             /** How the last MCP-ready wait ended. */
             let mcpOutcome: "ready" | "own_ready" | "timeout" | "aborted" | null = null;
+            /** What the ready wait has cost this turn, for the gate line. */
+            let mcpWaitedMs = 0;
+            /** The engine's own words on each server, kept with the statuses they came with: only the gate line reads them. */
+            const listDetails = new WeakMap<Map<string, string>, Map<string, AcpMcpServerDetail>>();
             /** Each server's status from the engine's list (`mcpListMethod`), or
              *  null when it has none or did not answer. */
             const readStates = async (timeoutMs = 3_000): Promise<Map<string, string> | null> => {
@@ -4495,9 +4512,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const body = Array.isArray(answer?.servers) ? answer : answer?.result;
                 if (!Array.isArray(body?.servers)) return null;
                 const states = new Map<string, string>();
+                const details = new Map<string, AcpMcpServerDetail>();
                 for (const entry of body.servers) {
                   if (entry && typeof entry.name === "string" && typeof entry.session?.status === "string") states.set(entry.name, entry.session.status);
+                  // A disabled or blocked server is listed with a session and no status.
+                  if (entry && typeof entry.name === "string" && entry.session && typeof entry.session === "object") details.set(entry.name, acpMcpServerDetail(entry.session));
                 }
+                listDetails.set(states, details);
                 return states;
               } catch (error) {
                 if (buildKey && methodNotFound(error)) acpMcpListUnsupported.add(buildKey);
@@ -4510,6 +4531,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const waitMcpReady = async (): Promise<boolean> => {
               mcpReadyWaited = true;
               mcpDeadline ??= Date.now() + mcpRecoveryMs();
+              const waitStartedAt = Date.now();
               const mcpDone = turnTrace(threadId).span("mcp.ready.wait", { servers: mcpServers.length });
               const id = sessionId!;
               const names = mcpServers.map(server => server.name);
@@ -4540,6 +4562,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 void poll;
               }
               mcpOutcome = outcome;
+              mcpWaitedMs += Date.now() - waitStartedAt;
               mcpDone(outcome);
               if (state.settled) return false;
               if (state.cancelRequested) { settle(true, "cancelled"); return false; }
@@ -4945,6 +4968,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const notReady = (states: Map<string, string>) => requiredNames.filter(name => states.has(name) && (states.get(name) !== "ready" || holdsStandIn(name)));
               // A required server the list does not name at all is unknown, not ready.
               const absentFrom = (states: Map<string, string>) => requiredNames.filter(name => !states.has(name));
+              const gateStartedAt = Date.now();
+              let gateReconnected: string[] = [];
+              let gateBackedOff: string[] = [];
+              // Everything the wait learned, one line per turn, as the Claude gate logs it: fixed words, counts and server names only.
+              const logGate = (states: Map<string, string> | null, missing: string[]) => {
+                const buildKey = proc?.mcpBuildKey;
+                const gate: AcpMcpGateFacts = {
+                  threadId, engine: DRIVER_KIND, waitedMs: mcpWaitedMs + Date.now() - gateStartedAt, waitOutcome: mcpOutcome,
+                  required: requiredNames, mounted: mcpServers.map(server => server.name),
+                  reconnected: gateReconnected, backedOff: gateBackedOff, missing,
+                  standIn: requiredNames.filter(holdsStandIn), states, details: states ? listDetails.get(states) ?? null : null,
+                  ...(states ? {} : { unchecked: buildKey && acpMcpListUnsupported.has(buildKey) ? "unsupported" as const : "no-answer" as const }),
+                };
+                if (!acpMcpGateWorthLogging(gate)) return;
+                const line = acpMcpGateLine(gate);
+                console.info(line);
+                appendNative(threadId, { dir: "out", source: SOURCE, msg: { mcpGate: line } });
+              };
               let states = await readStates();
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
@@ -4953,11 +4994,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // A server that keeps failing is not reconnected on every turn.
                 const backoffKey = (name: string) => `${threadId}\0${name}`;
                 const retry = missing.filter(name => !acpMcpBackoff.blocked(backoffKey(name)));
+                gateBackedOff = missing.filter(name => !retry.includes(name));
                 // One deadline for the turn: what the ready wait left of it.
                 mcpDeadline ??= Date.now() + mcpRecoveryMs();
                 const windowMs = Math.min(mcpReconnectWaitMs(), mcpDeadline - Date.now());
                 if (retry.length && windowMs >= Math.min(1_000, mcpReconnectWaitMs())) {
                   lifecycle.record("mcp_reconnect");
+                  gateReconnected = retry;
                   const marker = String(Date.now());
                   const reconnecting = mcpServers.map(server => retry.includes(server.name)
                     ? { ...server, env: [...(server.env ?? []).filter((item: { name: string }) => item.name !== "MURAGE_MCP_RECONNECT"), { name: "MURAGE_MCP_RECONNECT", value: marker }] }
@@ -4988,11 +5031,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // waits for the real list), so the bot is not told they are missing.
                 const unavailable = statusNotReady(states);
                 requiredMissing = unavailable.length || !absent.length ? unavailableLabels(unavailable) : null;
-                if (requiredMissing?.length) {
-                  state.toolsUnavailable = requiredMissing;
-                  console.info(`acp mcp gate thread=${threadId} engine=${DRIVER_KIND} missing=${unavailable.join(",")}`);
-                }
-              }
+                if (requiredMissing?.length) state.toolsUnavailable = requiredMissing;
+                logGate(states, unavailable);
+              } else logGate(null, []);
             }
             // The process tree before the prompt goes out (MCP servers included): a
             // child beyond it once the turn settles is the turn's leftover work.
