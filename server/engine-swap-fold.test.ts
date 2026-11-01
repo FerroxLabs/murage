@@ -64,6 +64,7 @@ function foldFixture() {
   const scope: Record<string, unknown> = {
     ...productionImports,
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
+    internalCapabilities: { activeGeneration: () => undefined },
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
     noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production

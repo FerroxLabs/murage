@@ -31,11 +31,11 @@ import { t } from "@/lib/i18n";
 import { companionPairingMode } from "../lib/phone-setup";
 import { tailnetHttpsHelp } from "../lib/tailnet-https";
 import { useDesktopSurface } from "../lib/use-surface";
-import { api } from "@/state/store";
 import { Card, Switch } from "./SettingsPrimitives";
 import { KeepAwakeOffer } from "./KeepAwakeOffer";
 import { LanPairing } from "./LanPairing";
 import { ReplaceOldDevice } from "./ReplaceOldDevice";
+import { PhonePreviewSwitches, type PhoneOfferAnswer } from "./PhonePreviewSwitches";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 import { useCopyFeedback } from "@/lib/copy-text";
 
@@ -533,21 +533,10 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
   const desktop = useDesktopSurface();
   const c = usePhoneSetupController(profileEmail);
   const state = c.state;
-  // Share and ask has its own offer; it does not follow phone tools.
+  // Share and ask has its own offer; it does not follow phone tools. The Preview card below asks GET /api/phones/offered
+  // (on mount and after each switch) and hands every answer here, so a switch change shows on each device row at once.
   const [shareAskOffered, setShareAskOffered] = useState<boolean | null>(null);
-  useEffect(() => {
-    if (desktop !== true) return;
-    let active = true;
-    void (async () => {
-      try {
-        const answer = await api("/api/phones/offered");
-        if (active) setShareAskOffered(answer?.shareAsk === true);
-      } catch {
-        if (active) setShareAskOffered(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [desktop]);
+  const onOfferAnswer = (answer: PhoneOfferAnswer | null) => setShareAskOffered(answer?.shareAsk === true);
   // "both": the main switch (the door and remote access). "remote": the
   // separate remote-access switch below, with the door already on.
   const [confirming, setConfirming] = useState<"both" | "remote" | null>(null);
@@ -843,6 +832,8 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
         )}
         {pairedCount > 0 && <KeepAwakeOffer c={c} className="mt-3 border-t border-hairline/30 pt-3" />}
       </Card>
+
+      <PhonePreviewSwitches onAnswer={onOfferAnswer} />
 
       <Card title="Recent activity">
         <div className="-mt-2 mb-3 flex items-center justify-between gap-3">

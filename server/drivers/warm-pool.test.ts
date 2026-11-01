@@ -191,7 +191,7 @@ describe("activity-scaled warm pool", () => {
     await r.settle(1, "claude").p;
     const lines = () => r.logs.filter((l) => l.startsWith("warm pool engines="));
     expect(lines()).toHaveLength(1);
-    expect(lines()[0]).toMatch(/^warm pool engines=1 idle=1 poolMB=100 budgetMB=8000 freeMB=64000$/);
+    expect(lines()[0]).toMatch(/^warm pool engines=1 idle=1 poolMB=100 budgetMB=8000 freeMB=64000 userTurns=0 repeatTurns=0 hot=0 reuseRate=none /);
     expect(r.logs).toContain("warm pool rss engine=claude thread=t1 rssMB=100");
     r.clock.t += 60_000; await r.settle(2, "codex").p;
     expect(lines()).toHaveLength(1);
@@ -382,8 +382,24 @@ describe("activity-scaled warm pool", () => {
     const start = source.indexOf("// Warm on intent: the owner focused");
     expect(start).toBeGreaterThan(-1);
     const route = source.slice(start, source.indexOf("viewer-close", start));
-    expect(route).toContain("warmPool.warmIntent(threadId)");
+    expect(route).toContain('warmThread(bot, threadId, "intent")');
     expect(route).not.toContain("noteUserActivity");
+    const warm = source.slice(source.indexOf("function warmThread("), source.indexOf("K2 step 2: the failover ended"));
+    expect(warm).toContain("warmPool.warmIntent(threadId)");
+    expect(warm).not.toContain("noteUserActivity");
+  });
+
+  it("settled follows the start itself, past any bounded wait", async () => {
+    const gate = createPrewarmGate();
+    gate.begin("t1");
+    let ended = false;
+    void gate.settled("t1").then(() => { ended = true; });
+    expect(await gate.wait("t1", 5)).toBe(false);
+    expect(ended).toBe(false);
+    gate.end("t1");
+    await gate.settled("t1");
+    await Promise.resolve();
+    expect(ended).toBe(true);
   });
 });
 

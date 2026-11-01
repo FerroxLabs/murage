@@ -18,7 +18,8 @@ import { execFileSync } from "node:child_process";
 import { BROKER_LOST, BROKER_LOST_MESSAGE, ClaudeDriver, claudeGitRoots, claudeSettingsRevision, managedClaudeSettingsPaths, type ClaudeConfig } from "./claude.ts";
 import { credentialDigest, diffWarmKey, warmKey } from "./warm-key.ts";
 import { cacheEnvFromProcess, markMountIncomplete, markMountReady } from "../connector-cache.ts";
-import { warmPool } from "./warm-pool.ts";
+import { PrewarmRefused, warmPool } from "./warm-pool.ts";
+import { reuseStats } from "./reuse-stats.ts";
 
 // The process probe, replaceable per test: `probe.override` answers instead of `ps`.
 const probe = vi.hoisted(() => ({
@@ -1606,6 +1607,79 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     hold.release();
   });
 
+  describe("the prewarm fence", () => {
+    const lostOf = (reason: string) => reuseStats.snapshot().spares.lost[reason] ?? 0;
+    const startLogged = () => {
+      const startLog = join(scratch, "starts.log");
+      process.env.FAKE_CLAUDE_START_LOG = startLog;
+      process.env.FAKE_CLAUDE_START_DELAY_MS = "50";
+      return () => (existsSync(startLog) ? readFileSync(startLog, "utf8").split("\n").filter(Boolean).length : 0);
+    };
+
+    it("is handed the exact cursor the launch resumes, once, and a pass starts the engine", async () => {
+      await create();
+      await goCold("t-fence-pass");
+      const fence = vi.fn();
+      expect(await instance.adapter.prewarm!("t-fence-pass", { fence })).toBe(true);
+      expect(fence.mock.calls).toEqual([[sessions.get("t-fence-pass")]]);
+      expect(warmPool.idleCount()).toBe(1);
+    });
+
+    it("a stale remembered cursor spawns nothing: prewarm answers false and the spare ends lost fence:cursor-moved", async () => {
+      await create();
+      await goCold("t-fence-stale");
+      const started = startLogged();
+      const before = lostOf("fence:cursor-moved");
+      const fence = () => { throw new PrewarmRefused("cursor-moved"); };
+      expect(await instance.adapter.prewarm!("t-fence-stale", { fence })).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(started()).toBe(0);
+      expect(warmPool.idleCount()).toBe(0);
+      expect(lostOf("fence:cursor-moved")).toBe(before + 1);
+      expect(prewarms().filter((line) => line.includes("failed="))).toEqual([]);
+    });
+
+    it("a seal landing between the harness check and the launch refuses at the spawn, and the next warm can pass", async () => {
+      await create();
+      await goCold("t-fence-seal");
+      const started = startLogged();
+      let sealed = false;
+      const fence = () => { if (sealed) throw new PrewarmRefused("sealed"); };
+      let open = () => {};
+      const gate = new Promise<void>((resolve) => { open = resolve; });
+      const spy = vi.spyOn(warmPool, "beforeSpawn").mockImplementation(async () => { await gate; }); // the prewarm is parked just before its spawn
+      try {
+        const warming = instance.adapter.prewarm!("t-fence-seal", { fence });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        sealed = true;
+        open();
+        expect(await warming).toBe(false);
+        expect(started()).toBe(0);
+        spy.mockRestore();
+        sealed = false;
+        expect(await instance.adapter.prewarm!("t-fence-seal", { fence })).toBe(true);
+      } finally { open(); spy.mockRestore(); }
+    });
+
+    it("an instance that moved refuses the launch as fence:instance-moved", async () => {
+      await create();
+      await goCold("t-fence-moved");
+      const started = startLogged();
+      const before = lostOf("fence:instance-moved");
+      expect(await instance.adapter.prewarm!("t-fence-moved", { fence: () => { throw new PrewarmRefused("instance-moved"); } })).toBe(false);
+      expect(started()).toBe(0);
+      expect(lostOf("fence:instance-moved")).toBe(before + 1);
+    });
+
+    it("a parked spare holding another cursor is refused at dispatch: spawned reason=cursor", async () => {
+      await create();
+      await goCold("t-fence-wrong");
+      expect(await instance.adapter.prewarm!("t-fence-wrong", { fence: () => {} })).toBe(true);
+      await run("t-fence-wrong", "two", { ...base, resumeCursor: "another-session" });
+      expect(dispatches().at(-1)).toContain("spawned reason=cursor");
+    });
+  });
+
   it("a prewarm that is already starting meets the hold at its spawn: no engine is started, and the hold is confirmed", async () => {
     await create();
     await goCold("t-pw-hold-race");
@@ -1657,6 +1731,44 @@ describe("ClaudeDriver intent prewarm (fake CLI)", () => {
     expect(mine.at(-1)).toBe("turn.completed");
     // the send ended the hold: the engine follows the normal rules again
     expect(prewarms()).toHaveLength(1);
+  });
+
+  it("the first-token line tells a fresh session from a resumed one, cold or hot", async () => {
+    await create();
+    await goCold("t-pw-first"); // a new session on a new process
+    await run("t-pw-first", "two", base); // a new process on the kept session
+    await run("t-pw-first", "three", base); // the kept process
+    await eventually(() => lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first")).length === 3);
+    const tokens = lines.filter((l) => l.startsWith("claude first-token thread=t-pw-first"));
+    expect(tokens[0]).toContain("process=spawned sealed=false resumed=false");
+    expect(tokens[1]).toContain("process=spawned sealed=false resumed=true");
+    expect(tokens[2]).toContain("process=reused sealed=false resumed=true");
+  });
+
+  it("a prewarm on a thread whose last turn was a routine stays parked, and the next send reuses it", async () => {
+    process.env.MURAGE_WARM_ACTIVITY_WINDOW_MS = "60000";
+    await create();
+    await run("t-pw-stale", "one", base);
+    await run("t-pw-stale", "routine", { ...base, background: true });
+    await eventually(() => lines.some((l) => l.includes("claude close thread=t-pw-stale reason=background turn")));
+    await eventually(() => warmPool.idleCount() === 0);
+    const closesBefore = lines.filter((l) => l.startsWith("claude close thread=t-pw-stale")).length;
+    expect(await instance.adapter.prewarm!("t-pw-stale")).toBe(true);
+    await new Promise((r) => setTimeout(r, 150));
+    expect(lines.filter((l) => l.startsWith("claude close thread=t-pw-stale"))).toHaveLength(closesBefore);
+    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(1);
+    await run("t-pw-stale", "two", base);
+    expect(dispatches().at(-1)).toContain("process=reused");
+  });
+
+  it("the parked line prints only when the engine is still there and idle", async () => {
+    await create();
+    await goCold("t-pw-gone");
+    const spy = vi.spyOn(warmPool, "markIdle").mockImplementation(async (_member, info) => { info.close("low memory"); });
+    try {
+      expect(await instance.adapter.prewarm!("t-pw-gone")).toBe(false);
+    } finally { spy.mockRestore(); }
+    expect(prewarms().filter((l) => l.includes("parked=true"))).toHaveLength(0);
   });
 
   it("prewarm then a changed warm key recycles the process instead of reusing it", async () => {
