@@ -72,7 +72,9 @@ import type { InstalledPackageMetadata } from "../shared/installed-package.ts";
 import { openingLine } from "../shared/bot-openers.ts";
 import { readPublishedSites } from "../shared/published-sites.ts";
 import { withoutBareCommandGrants, withoutQuestionGrants } from "./auto-approve.ts";
+import { permissionLevel, type PermissionHolder, type PermissionLevel, type PermissionPrev } from "./thread-permissions-refresh.ts";
 import { withoutPreSchemaGrants, withoutStaleGrants } from "../shared/app-action-words.ts";
+import { durableGrantAllowed, withoutRefusedGrants } from "../shared/durable-grant-allowed.ts";
 import { parseAcpToolKey } from "../shared/mount-identity.ts";
 import { imageApprovalOf, imageAskAfterOf } from "../shared/image-approval-setting.ts";
 import { settledTurnHelpers, type TurnHelper } from "../shared/turn-helpers.ts";
@@ -157,6 +159,12 @@ export interface OptionCardData {
   grantRequest?: ApprovalGrantRequest;
   /** Local actions never share remembered grants with cloud/tool approvals. */
   approvalScope?: "local-computer";
+  /** UX-TRUST-MOMENTS-1012 1.2: the card's class, written once when it opens
+   * (server/approval-card-grants.ts); shared/fold-scopes.ts reads it with the
+   * keys above. Absent on a card an older build wrote. */
+  cardClass?: import("../shared/fold-scopes.ts").CardClass;
+  /** 1.4: the why-line, a locale key and its params (server/approval-card-why.ts). */
+  why?: import("./approval-card-why.ts").CardWhy;
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
   lowRisk?: boolean;
@@ -193,7 +201,7 @@ export interface OptionCardData {
    * `late` (FUIGOTRUST2): a card raised from the engine's own request after
    * it had started, closed by nobody — the turn `finished`, was `stopped`,
    * or the ask hit its `timeout` — and so ran untrusted. */
-  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
+  folderTrust?: { key: string; folder: string; sources: string[]; v2?: true; declines?: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** A durable chat-created routine proposal. The scheduler only applies it
    * after this card is explicitly confirmed by the user. */
   routineRequest?: AutomationRequestCardData;
@@ -457,6 +465,9 @@ export interface Message {
    * waits, the line offers Stop for this queued handoff (server/delegations.ts).
    * Server-written only, and removed once the handoff leaves the queue. */
   delegationWait?: { id: string };
+  /** activity messages: macOS's folder prompt is holding this turn (server/mac-folder-prompt.ts). Server-written only.
+   * `done` keeps the marker once the wait ends, so the row draws nothing instead of turning into a tool chip. */
+  folderPrompt?: { folder: import("../shared/mac-folder-prompt.ts").MacPromptFolder; done?: boolean };
   /** activity messages: a hand-off a restart cut off after the provider may have taken it (server/delegations.ts reconcileStartedDelegations). The line offers
    * Send again (queued as a new hand-off) and Dismiss. Server-written only, and removed once the owner chose. */
   delegationHeld?: { id: string };
@@ -602,8 +613,47 @@ export interface GroupRecord {
 /** Thread recall (design S1): recall output was released on this thread. */
 export const threadSealed = (task: Pick<TaskRecord, "sealGeneration"> | undefined | null): boolean => (task?.sealGeneration ?? 0) > 0;
 
+type SealRead = Pick<TaskRecord, "sealGeneration" | "resumeSeals"> & Partial<Pick<TaskRecord, "resumeCursors">>;
+
+/** Thread recall (THREAD-SEAL 3.4 item 2): is this cursor a session started at the task's current seal? Unsealed: every cursor is
+ * clean, and no cursor is clean on any task. A sealed task holds a cursor to it only through an entry bound to that exact value at
+ * a generation no lower than the seal. Every missing or malformed shape refuses. */
+export const cursorStartedBelowSeal = (task: SealRead | undefined | null, instanceId: string, cursor: unknown): boolean => {
+  const seal = Number(task?.sealGeneration ?? 0);
+  if (!(seal > 0) || cursor === undefined) return false;
+  const entry = task?.resumeSeals?.[instanceId];
+  return entry === undefined || entry.cursor !== String(cursor) || !(Number(entry.generation) >= seal);
+};
+
+/** Thread recall (THREAD-SEAL 3.1): the session this task would resume on this engine may not be resumed. The session that received
+ * recall output is below the seal, and so is every session started before the seal moved; a sealed task with nothing to resume, or a
+ * cursor with no binding, starts fresh. */
+/** Thread recall (THREAD-SEAL 3.2): the seal generation the session of this dispatch starts under. A fresh session takes the task's at
+ * this instant; a resumed one inherits what is bound to its snapshotted cursor, never the current number, and an entry for another id
+ * lends it nothing. */
+export const dispatchSealStart = (task: SealRead | undefined | null, instanceId: string, resumeCursor: unknown): number => {
+  if (resumeCursor === undefined) return task?.sealGeneration ?? 0;
+  const entry = task?.resumeSeals?.[instanceId];
+  return entry?.cursor === String(resumeCursor) ? entry.generation : 0;
+};
+
+export const sessionTainted = (task: SealRead | undefined | null, instanceId: string): boolean => {
+  if (!threadSealed(task)) return false;
+  const cursor = task?.resumeCursors?.[instanceId];
+  return cursor === undefined || cursorStartedBelowSeal(task, instanceId, cursor);
+};
+
 /** 1.0.4 SL-K K4: a task copy whose session was reset forgets what its engine was last sent. */
-function withoutEffortSent<T extends { effortSent?: unknown }>(task: T): T { const { effortSent: _effortSent, ...rest } = task; return rest as T; }
+/** UX-TRUST-MOMENTS-1012 2.3.3: a bot patch's remembered lists (its own and
+ * each task's) keep only what durableGrantAllowed keeps. */
+function durableGrantsOnly(patch: Partial<BotRecord>): Partial<BotRecord> {
+  return {
+    ...patch,
+    ...(patch.alwaysAllow ? { alwaysAllow: withoutRefusedGrants(patch.alwaysAllow).kept } : {}),
+    ...(patch.tasks ? { tasks: patch.tasks.map((task) => task.alwaysAllow ? { ...task, alwaysAllow: withoutRefusedGrants(task.alwaysAllow).kept } : task) } : {}),
+  };
+}
+function withoutEffortSent<T extends { effortSent?: unknown; resumeSeals?: unknown }>(task: T): T { const { effortSent: _effortSent, resumeSeals: _resumeSeals, ...rest } = task; return rest as T; }
 
 export interface TaskRecord {
   /** Server-owned: what this conversation's hand-offs still owe it (asker-wake.ts), kept so a restart still continues the work. */
@@ -638,6 +688,9 @@ export interface TaskRecord {
   /** The incarnation each cursor's session was started under (lineage S6 rule 27, memory/session-incarnation.ts), from 2 on: the memory
    * session key is formed from the cursor and this. Absent for n = 1 and for a cursor from before. */
   resumeIncarnations?: Record<string, number>;
+  /** Thread recall (THREAD-SEAL 3.1), per engine: the cursor this entry is bound to and the task's `sealGeneration` at the START of
+   * that session. For one native id the number only ever goes down. Never on the wire. */
+  resumeSeals?: Record<string, { cursor: string; generation: number }>;
   /** This chat's own model, set only when the owner picked one in this chat
    * (1.0.4 SL-K K1). Absent: the chat follows its bot's model. */
   modelSelection?: ModelSelection;
@@ -651,6 +704,10 @@ export interface TaskRecord {
   /** 1.0.9 phone tools X3: when the first accepted phone call of this thread was made. Set once, cleared only with the task
    * (deleteTask). Server bookkeeping, never on the wire (wireTask strips it). */
   phoneUsedAt?: number;
+  /** 1.0.13 UX-TRUST-L1B: moves only with this conversation's level, in the same write; absent on older records and read as 0. */
+  permissionRev?: number;
+  /** The level and revision before the last level write. Server bookkeeping, never on the wire. */
+  permissionPrev?: PermissionPrev;
   autoApprove?: boolean;
   /** Full access for this task: above Auto, and only while autoApprove is on. */
   fullAccess?: boolean;
@@ -1034,6 +1091,10 @@ export interface BotRecord {
    * working instead of stopping to ask. Questions it asks YOU still come
    * through, and a short list of destructive commands still stops it. */
   autoApprove?: boolean;
+  /** 1.0.13 UX-TRUST-L1B: moves only with this bot's level, in the same write; absent on older records and read as 0. */
+  permissionRev?: number;
+  /** The level, revision and routines before the last level write, the proof an exact step back needs. Never on the wire. */
+  permissionPrev?: PermissionPrev;
   /** Full access, the level above Auto: no approval card at all for turns
    * the owner starts (webhook turns are judged as Auto, a routine run at its
    * routine's level, and images are made without a card only in the owner's own turns:
@@ -1045,7 +1106,7 @@ export interface BotRecord {
   fullAccessAcknowledgedAt?: number;
   /** No limits, the level above Full access: no stop line (deleting outside
    * its folder, paying, messaging someone new all go ahead); the key guard
-   * still asks. Counts only while fullAccess is on. Set only from the
+   * still asks, on a turn the owner started only for its gate files. Counts only while fullAccess is on. Set only from the
    * desktop app, after its own one-time warning. Absent = guarded. */
   noLimits?: boolean;
   /** When the owner confirmed this bot's one-time No limits warning. */
@@ -1092,6 +1153,10 @@ export interface BotRecord {
   /** true while `voice` is the default the app gave this bot (server/bot-voice.ts)
    *  rather than the owner's pick. Dropped on any edit of the voice. */
   voiceAssigned?: boolean;
+  /** true on the bot Murage seeded on first launch, on whatever engine was
+   *  usable before any Flux key existed. Dropped the moment anyone sets its
+   *  engine, so a later key may re-pick it and an owner's choice never is. */
+  engineSeeded?: boolean;
   /** true after an edit/branch-switch rewound the visible conversation:
    * provider sessions still hold the abandoned branch, so the next turn
    * must start fresh (drop cursors) and replay the surviving path. */
@@ -1508,6 +1573,12 @@ const messageBytes = (m: Message): number => 512 + (m.text?.length ?? 0) * 2 + (
 /** bots.json never carries runtime activity: `busy`/`activity` are transient
  * per bot and per task, so every writer (ordinary saves and the package
  * transaction) serializes the same durable shape. */
+/** The fields a level write adds to a record, in the same write as the level. */
+function levelMove(record: PermissionHolder, from: PermissionLevel, routinesId?: string): { permissionRev: number; permissionPrev: PermissionPrev } {
+  const rev = record.permissionRev ?? 0;
+  return { permissionRev: rev + 1, permissionPrev: { level: from, rev, ...(routinesId !== undefined ? { routinesId } : {}) } };
+}
+
 function persistedBotsJson(bots: readonly BotRecord[]): string {
   return JSON.stringify(bots.map(({ busy: _busy, activity: _activity, ...bot }) => ({
     ...bot,
@@ -1932,6 +2003,9 @@ export class Store {
     // permission card), so strip any such remembered grant — from the bot
     // and from every task that inherited or recorded one. Runs after task
     // adoption above so a freshly inherited copy is cleaned too.
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a
+    // payment, a browser stop) is never kept for good; counted once, no payee
+    let refusedGrants = 0;
     for (const b of this.bots) {
       for (const holder of [b, ...(b.tasks ?? [])] as { alwaysAllow?: string[] }[]) {
         if (!holder.alwaysAllow?.length) continue;
@@ -1940,12 +2014,15 @@ export class Store {
         // (shared/app-action-grant.ts). The owner is asked again, per action.
         // ...and a command tool's bare name (an older PowerShell grant): its
         // next command asks again and is remembered by program (1.0.4 G09-3)
-        const kept = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const cleaned = withoutBareCommandGrants(withoutPreSchemaGrants(withoutStaleGrants(withoutQuestionGrants(holder.alwaysAllow)), b.grantSchema));
+        const { kept, dropped } = withoutRefusedGrants(cleaned);
+        refusedGrants += dropped;
         if (kept.length === holder.alwaysAllow.length) continue;
         holder.alwaysAllow = kept;
         botsMigrated = true;
       }
     }
+    if (refusedGrants) console.warn(`[grants] dropped ${refusedGrants} remembered ${refusedGrants === 1 ? "approval" : "approvals"} that are never kept for good (payments, browser stops)`);
     // 1.0.4 SL-K K1: once, drop every chat model that only copied its bot's (marker written after the save lands).
     const followCleanup = !followCleanupDone(DATA_DIR);
     if (followCleanup && clearFollowingPins(this.bots) > 0) botsMigrated = true;
@@ -4147,6 +4224,8 @@ export class Store {
     const bot = this.bot(id);
     if (!bot) return null;
     if (Object.hasOwn(patch, "section")) { assertSectionUnlocked(); assertHomeMove(bot, patch.section); }
+    // UX-TRUST-MOMENTS-1012 2.3.3: a remembered list keeps only what durableGrantAllowed keeps, whoever writes it
+    if (patch.alwaysAllow || patch.tasks?.some((task) => task.alwaysAllow)) patch = durableGrantsOnly(patch);
     // 1.0.4 SL-K K1: a bot's account change resets the session of every chat that follows the bot; a chat's own pick is left alone.
     if (patch.modelSelection && patch.modelSelection.connectionId !== bot.modelSelection.connectionId) {
       const tasks = patch.tasks ?? bot.tasks;
@@ -4157,22 +4236,46 @@ export class Store {
     const formerName = bot.name;
     const continuityChanged = (bot.continuity === true || patch.continuity === true) && ["continuity", "continuityOptions", "modelSelection"].some(key => Object.hasOwn(patch, key) && JSON.stringify(bot[key as keyof BotRecord]) !== JSON.stringify(patch[key as keyof BotRecord]));
     const continuityGeneration = bot.continuityGeneration ?? 0;
+    const levelBefore = permissionLevel(bot);
     Object.assign(bot, patch);
+    // an internal caller's level move counts like any other (the routes' level writes use setPermissionLevel)
+    if (permissionLevel(bot) !== levelBefore) Object.assign(bot, levelMove(bot, levelBefore));
     if (continuityChanged) bot.continuityGeneration = continuityGeneration + 1;
     // an owner's edit of the voice makes it theirs
     if ((Object.hasOwn(patch, "voice") || Object.hasOwn(patch, "voiceProvider"))) delete bot.voiceAssigned;
+    if (Object.hasOwn(patch, "modelSelection")) delete bot.engineSeeded;
     if (bot.name !== formerName) for (const task of bot.tasks ?? []) {
       const team = task.sharedWork ? teamLabel(task.sharedWork.teamId) : null;
       if (team && task.title === workThreadTitle(formerName, team)) task.title = workThreadTitle(bot.name, team);
     }
     if (partitionedAt !== undefined) bot.partitionedAt = partitionedAt;
     if(bot.tasks?.length===1){
-      const task=bot.tasks[0];
+      const task=bot.tasks[0],taskLevel=permissionLevel(task);
       // 1.0.4 SL-K K1: the model is no longer mirrored onto the one task (it follows the bot unless picked); the permission mirror stays.
       for(const key of ["autoApprove","fullAccess","noLimits","alwaysAllow","unread","rewound","pinnedMessageId","resumeCursors"] as const)if(Object.hasOwn(patch,key)&&(!options.preserveTaskSettings||!["autoApprove","fullAccess","noLimits","alwaysAllow"].includes(key)))Object.assign(task,{[key]:structuredClone(patch[key])});
+      if(permissionLevel(task)!==taskLevel)Object.assign(task,levelMove(task,taskLevel));
     }
     this.saveBots();
     this.emit({ type: "bot", botId: id });
+    return bot;
+  }
+
+  /** 1.0.13 UX-TRUST-L1B: a level change. The next file is written first and the live record moves only once that returned, so a failed
+   * write leaves the old level, revision and no event. Level flags, acknowledgements and the revision travel in one write. With `ifRev`
+   * a different revision answers null and writes nothing. `mirrorSoleTask` keeps a legacy PATCH's one-conversation mirror in this write;
+   * a PATCH of the default alone never sets it, so the conversation stays out of the change. */
+  setPermissionLevel(botId: string, change: { flags: Pick<BotRecord, "autoApprove" | "fullAccess" | "noLimits">; acknowledgements?: Pick<BotRecord, "fullAccessAcknowledgedAt" | "noLimitsAcknowledgedAt">; ifRev?: number; routinesId?: string; mirrorSoleTask?: boolean }): BotRecord | null {
+    const bot = this.bot(botId);
+    if (!bot || (change.ifRev !== undefined && change.ifRev !== (bot.permissionRev ?? 0))) return null;
+    const next = { ...change.acknowledgements, ...change.flags, ...levelMove(bot, permissionLevel(bot), change.routinesId) };
+    const sole = change.mirrorSoleTask && bot.tasks?.length === 1 ? bot.tasks[0] : undefined;
+    const soleNext = sole && { ...change.flags, ...(permissionLevel({ ...sole, ...change.flags }) !== permissionLevel(sole) ? levelMove(sole, permissionLevel(sole)) : {}) };
+    const revision = this.recordRevision;
+    try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, ...next, ...(sole ? { tasks: [{ ...sole, ...soleNext }] } : {}) } : current)); }
+    catch (error) { this.recordRevision = revision; throw error; }
+    Object.assign(bot, next);
+    if (sole) Object.assign(sole, soleNext);
+    this.emit({ type: "bot", botId });
     return bot;
   }
 
@@ -4197,6 +4300,8 @@ export class Store {
     if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
     const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
     if (taskThreadId !== undefined && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    // UX-TRUST-MOMENTS-1012 2.3.3: a key durableGrantAllowed refuses (a payment) is never saved, whoever asks
+    if (keys.some((key) => !durableGrantAllowed(key))) throw Object.assign(new Error("This approval can only be allowed once."), { status: 400 });
     const unique = [...new Set(keys)];
     const addBot = unique.filter((key) => !(bot.alwaysAllow ?? []).includes(key));
     const addTask = task ? unique.filter((key) => !(task.alwaysAllow ?? []).includes(key)) : [];
@@ -4204,6 +4309,25 @@ export class Store {
       throw Object.assign(new Error("This bot already remembers 200 approvals. Remove some in Settings, Permissions, then try again."), { status: 409 });
     }
     return { bot, task, added: { bot: addBot, task: addTask } };
+  }
+
+  /** UX-TRUST-MOMENTS-1012 1.3, M06: Undo of one card's "Always" takes back
+   * exactly what that save added, by holder: `bot` from the bot's defaults,
+   * `task` from the one task it was saved on, nothing anywhere else. One
+   * durable write, staged like rememberBotGrants. Returns what it removed. */
+  removeBotGrants(botId: string, taskThreadId: string | undefined, keys: { bot: readonly string[]; task: readonly string[] }): { bot: BotRecord; removed: { bot: string[]; task: string[] } } {
+    const bot = this.bot(botId);
+    if (!bot) throw Object.assign(new Error("no such bot"), { status: 404 });
+    const task = taskThreadId === undefined ? undefined : bot.tasks?.find((item) => item.threadId === taskThreadId);
+    if (keys.task.length && !task) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
+    const fromBot = (bot.alwaysAllow ?? []).filter((key) => keys.bot.includes(key));
+    const fromTask = task ? (task.alwaysAllow ?? []).filter((key) => keys.task.includes(key)) : [];
+    const removed = { bot: [...new Set(fromBot)], task: [...new Set(fromTask)] };
+    if (!removed.bot.length && !removed.task.length) return { bot, removed };
+    const botKeys = (bot.alwaysAllow ?? []).filter((key) => !removed.bot.includes(key));
+    const taskKeys = task && removed.task.length ? (task.alwaysAllow ?? []).filter((key) => !removed.task.includes(key)) : undefined;
+    const staged = this.stageBotGrants(bot, taskKeys ? task : undefined, botKeys, taskKeys, undefined, removed);
+    return { bot: staged.bot, removed: staged.added };
   }
 
   private stageBotGrants<T>(bot: BotRecord, task: TaskRecord | undefined, botKeys: string[], taskKeys: string[] | undefined, grantSchema: 2 | undefined, result: T): { bot: BotRecord; added: T } {
@@ -4510,7 +4634,25 @@ export class Store {
     return { ok: true, bot };
   }
 
-  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number) {
+  /** Thread recall (THREAD-SEAL 3.1): bind this native id to the generation its session started under. A later write for the same
+   * id can never raise what is stored; another id replaces the entry. */
+  private writeResumeSeal(task: TaskRecord, instanceId: string, cursor: string, sealStart: number) {
+    const prev = task.resumeSeals?.[instanceId];
+    const generation = prev !== undefined && prev.cursor === cursor ? Math.min(prev.generation, sealStart) : sealStart;
+    task.resumeSeals = { ...task.resumeSeals, [instanceId]: { cursor, generation } };
+  }
+
+  /** The acceptance step of the fold (THREAD-SEAL 3.3): a `session.started` that reached the fold before the dispatch knew its own
+   * provider turn is bound here, once that turn proved to be this dispatch's. Nothing happens when the slot moved on to another id. */
+  bindResumeSeal(botId: string, instanceId: string, threadId: string, cursor: string, sealStart: number) {
+    const task = this.taskByThread(botId, threadId);
+    const held = task?.resumeCursors[instanceId];
+    if (!task || held === undefined || String(held) !== cursor) return;
+    this.writeResumeSeal(task, instanceId, cursor, sealStart);
+    this.saveBots(this.bots, { defer: true });
+  }
+
+  setResumeCursor(botId: string, instanceId: string, cursor: unknown, threadId?: string, audience?: string, contract?: number, plainToolNames = false, incarnation?: number, sealStart?: number) {
     const bot = this.bot(botId);
     if (!bot) return;
     // the cursor belongs to the task that produced it, not to the bot
@@ -4538,6 +4680,13 @@ export class Store {
       else if (task.resumeIncarnations && Object.hasOwn(task.resumeIncarnations, instanceId)) {
         const { [instanceId]: _dropped, ...rest } = task.resumeIncarnations;
         task.resumeIncarnations = rest;
+      }
+      // and to the seal generation its session started under (THREAD-SEAL 3.1). An unbound save of the same id leaves the entry: it
+      // says what that id started under, which nothing later changes. Any other id, or no cursor, ends it.
+      if (cursor !== undefined && sealStart !== undefined) this.writeResumeSeal(task, instanceId, String(cursor), sealStart);
+      else if (task.resumeSeals && Object.hasOwn(task.resumeSeals, instanceId) && (cursor === undefined || task.resumeSeals[instanceId]!.cursor !== String(cursor))) {
+        const { [instanceId]: _dropped, ...rest } = task.resumeSeals;
+        task.resumeSeals = rest;
       }
     }
     // The legacy mirror follows the task visible in chat, never a detached
@@ -5017,7 +5166,10 @@ export class Store {
   patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
+    // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
+    if(rest.alwaysAllow)rest.alwaysAllow=withoutRefusedGrants(rest.alwaysAllow).kept;
     const next:TaskRecord={...task,...structuredClone(rest)};
+    if(permissionLevel(next)!==permissionLevel(task))Object.assign(next,levelMove(task,permissionLevel(task)));
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
     for(const key of ["modelSelection","effortSent","limitFailover"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
     if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
@@ -5025,6 +5177,8 @@ export class Store {
     if(patch.modelSelection&&patch.modelSelection.connectionId!==(task.modelSelection??bot.modelSelection)?.connectionId)next.resumeCursors={};
     // 1.0.4 SL-K K4: what the engine was last sent belongs to the session; a cursor reset ends it (unless this patch records the new one)
     if(Object.keys(next.resumeCursors??{}).length===0&&Object.keys(task.resumeCursors??{}).length>0&&!Object.hasOwn(patch,"effortSent"))delete next.effortSent;
+    // The seal record is bound to the cursors it describes (THREAD-SEAL 3.1): emptied with them in this same write.
+    if(Object.keys(next.resumeCursors??{}).length===0)next.resumeSeals=undefined;
     // The first pick adopts.
     //
     // A bot made before any engine could answer carries the honest-empty
@@ -5062,24 +5216,25 @@ export class Store {
   }
 
   /** Persist one candidate roster before publishing any changed task or event. */
-  raiseTaskPermissions(botId: string, threadIds: readonly string[], patch: { autoApprove: boolean; fullAccess: boolean; noLimits: boolean }): number {
+  raiseTaskPermissions(botId: string, threadIds: readonly string[], patch: { autoApprove: boolean; fullAccess: boolean; noLimits: boolean }): Array<{ threadId: string; from: PermissionLevel; to: PermissionLevel; rev: number }> {
     const bot = this.bot(botId);
-    if (!bot) return 0;
+    if (!bot) return [];
     const rank = (v: { autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean }) => !v.autoApprove ? 0 : !v.fullAccess ? 1 : v.noLimits ? 3 : 2;
     const selected = new Set(threadIds), changed = new Map<TaskRecord, TaskRecord>();
     const tasks = (bot.tasks ?? []).map(task => {
       if (!selected.has(task.threadId) || rank(task) >= rank(patch)) return task;
-      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits };
+      const next = { ...task, autoApprove: patch.autoApprove, fullAccess: patch.fullAccess, noLimits: patch.noLimits, ...levelMove(task, permissionLevel(task)) };
       changed.set(task, next); return next;
     });
-    if (!changed.size) return 0;
+    if (!changed.size) return [];
     const revision = this.recordRevision;
     try { this.saveBots(this.bots.map(current => current === bot ? { ...bot, tasks } : current)); }
     catch (error) { this.recordRevision = revision; throw error; }
+    const moved = [...changed].map(([task, next]) => ({ threadId: task.threadId, from: permissionLevel(task), to: permissionLevel(next), rev: next.permissionRev! }));
     for (const [task, next] of changed) Object.assign(task, next);
     // Permission defaults belong to the bot; its active task is projected separately.
     this.emit({ type: "bot", botId });
-    return changed.size;
+    return moved;
   }
 
   /** After a turn: the last pull or merge request the bot's reply named becomes the thread's link, unless
@@ -5103,7 +5258,7 @@ export class Store {
       if(task.busy||isBusy(task.threadId)){busy++;return task;}
       switched.push(task.threadId);if(task.limitFailover)endedFailovers.push(task.limitFailover);
       const {modelSelection:_modelSelection,effortSent:_effortSent,limitFailover:_limitFailover,...rest}=task;
-      const next={...rest,resumeCursors:{}};changed.set(task,next);return next;
+      const next={...rest,resumeCursors:{},resumeSeals:undefined};changed.set(task,next);return next;
     });
     if(!switched.length)return {switched,busy,endedFailovers};
     const mirrors=switched.includes(bot.threadId)?{resumeCursors:{}}:{};
@@ -5239,6 +5394,8 @@ export class Store {
    */
   seedIfEmpty() {
     if (this.bots.length) return;
-    this.createBot({}, { seedMessages: false });
+    const seeded = this.createBot({}, { seedMessages: false });
+    this.bot(seeded.id)!.engineSeeded = true;
+    this.saveBots();
   }
 }

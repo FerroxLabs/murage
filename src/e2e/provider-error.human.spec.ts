@@ -72,7 +72,7 @@ test("bound diagnostic tracking copies only its ID and rejects private or legacy
   for(const runtime of [false,true])for(const width of [390,820,1440]){
     await page.setViewportSize({width,height:900});await page.goto(origin+"/__provider?kind=payment&status=402&skin=dark&tracking=valid"+(runtime?"&runtime=1":""));await page.waitForLoadState("networkidle");
     expect(await page.evaluate(()=>[(window as any).retryCalls,(window as any).settingsCalls])).toEqual([0,0]);
-    for(const control of [page.getByRole("button",{name:"Provider settings",exact:true}),page.getByRole("button",{name:"Retry",exact:true}),page.getByText("Technical details",{exact:true})]){await page.keyboard.press("Tab");await expect(control).toBeFocused();}
+    for(const control of [page.getByRole("button",{name:"Models & engines",exact:true}),page.getByRole("button",{name:"Retry",exact:true}),page.getByText("Technical details",{exact:true})]){await page.keyboard.press("Tab");await expect(control).toBeFocused();}
     await page.keyboard.press("Enter");
     const facts=page.getByLabel("Diagnostic tracking facts");await expect(facts).toContainText("Terminal error kind");await expect(facts).toContainText("Observed error kind (not terminal)");await expect(facts).toContainText("session/prompt");await expect(facts).not.toContainText("Process generation");
     await page.keyboard.press("Tab");const copy=page.getByRole("button",{name:"Copy diagnostic ID",exact:true});await expect(copy).toBeFocused();
@@ -103,19 +103,19 @@ test("HTTP402 payment guidance is generic, translated and manual at three widths
     await page.setViewportSize({ width, height: 900 });
     await page.goto(origin + "/__provider?kind=payment&status=402&skin=" + skin); await page.waitForLoadState("networkidle");
     const alert = page.getByRole("alert");
-    await expect(page.getByRole("heading", { name: "Provider payment or account access required", exact: true })).toBeVisible();
-    await expect(alert).toContainText("does not establish that credits are exhausted");
-    await expect(alert).toContainText("billing, account and selected-model access"); await expect(alert).toContainText("BYOK");
+    await expect(page.getByRole("heading", { name: "Payment or account access needed", exact: true })).toBeVisible();
+    await expect(alert).toContainText("does not always mean you are out of credit");
+    await expect(alert).toContainText("the model you picked"); await expect(alert).toContainText("your own key"); await expect(alert).not.toContainText("BYOK");
     await expect(page.getByRole("link")).toHaveCount(0); await expect(alert).not.toContainText("Flux Router");
     expect(await page.evaluate(() => [(window as any).retryCalls, (window as any).settingsCalls])).toEqual([0, 0]);
-    const controls = [page.getByRole("button", { name: "Provider settings", exact: true }), page.getByRole("button", { name: "Retry", exact: true }), page.getByText("Technical details", { exact: true })];
+    const controls = [page.getByRole("button", { name: "Models & engines", exact: true }), page.getByRole("button", { name: "Retry", exact: true }), page.getByText("Technical details", { exact: true })];
     for (const control of controls) {
       await page.keyboard.press("Tab"); await expect(control).toBeFocused();
       expect(await control.evaluate(node => { const style = getComputedStyle(node); return style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0 || style.boxShadow !== "none"; })).toBe(true);
       await page.keyboard.press("Enter");
     }
     expect(await page.evaluate(() => [(window as any).retryCalls, (window as any).settingsCalls])).toEqual([1, 1]);
-    await expect(alert).toContainText("Provider response: HTTP 402");
+    await expect(alert).toContainText("Reply from your AI service: code 402");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.evaluate(axe); const audit = await page.evaluate(async () => (window as any).axe.run(document.querySelector('[role="alert"]'), { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"] } }));
     await info.attach(`payment-axe-${width}-${skin}`, { body: JSON.stringify(audit), contentType: "application/json" }); expect(audit.violations).toEqual([]);
@@ -139,7 +139,7 @@ test("provider safety card has no retry and keeps keyboard-readable details", as
   for (const width of [390, 820, 1440]) for (const skin of ["light", "dark"]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(origin + "/__provider?runtime=1&skin=" + skin + "&message=" + encodeURIComponent("429 request blocked by our safety systems"));
-    await expect(page.getByRole("heading", { name: "The provider blocked this request" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your AI service blocked this request" })).toBeVisible();
     await expect(page.getByRole("button")).toHaveCount(0);
     await page.keyboard.press("Tab");
     await expect(page.getByText("Technical details", { exact: true })).toBeFocused();
@@ -184,7 +184,7 @@ test("Flux credits render a billing action, useful recovery details and keyboard
   expect(await page.evaluate(() => (window as any).retryCalls)).toBe(0);
   await billing.focus();
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Provider settings" })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Models & engines" })).toBeFocused();
   await page.keyboard.press("Enter");
   expect(await page.evaluate(() => (window as any).settingsCalls)).toBe(1);
   await page.keyboard.press("Tab");
@@ -192,7 +192,7 @@ test("Flux credits render a billing action, useful recovery details and keyboard
   await page.keyboard.press("Enter");
   expect(await page.evaluate(() => (window as any).retryCalls)).toBe(1);
   await page.getByText("Technical details", { exact: true }).click();
-  await expect(alert).toContainText("Provider response: HTTP 402");
+  await expect(alert).toContainText("Reply from your AI service: code 402");
   await expect(alert).not.toContainText("request ID");
   await page.screenshot({ path: info.outputPath("flux-credits-dark-desktop.png") });
 });
@@ -202,7 +202,7 @@ for (const skin of ["light", "dark"]) test("provider recovery card fits mobile i
   await page.goto(origin + "/__provider?provider=flux-router&kind=credits&status=402&skin=" + skin);
   await expect(page.getByRole("alert")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  for (const label of ["Provider settings", "Retry"]) {
+  for (const label of ["Models & engines", "Retry"]) {
     const bounds = await page.getByRole("button", { name: label, exact: true }).boundingBox();
     expect(bounds?.height).toBeGreaterThanOrEqual(44);
   }
@@ -211,14 +211,14 @@ for (const skin of ["light", "dark"]) test("provider recovery card fits mobile i
 
 test("other provider failures use fixed recovery categories and never gain a billing link", async ({ page }) => {
   const scenarios = [
-    { kind: "credits", status: 402, title: /needs credits/, resolution: /choose another configured engine/ },
+    { kind: "credits", status: 402, title: /needs credits/, resolution: /pick another AI in Models & engines/ },
     // A reached ceiling, not a spent balance: the one 402 that must never
     // offer a way to buy past it.
     { kind: "spend-cap", status: 402, title: /monthly spending limit/, resolution: /adding credit will not lift it/ },
-    { kind: "authentication", status: 401, title: /could not authenticate/, resolution: /sign-in or API-key configuration/ },
-    { kind: "permission", status: 403, title: /denied access/, resolution: /account has access/ },
-    { kind: "rate-limit", status: 429, title: /request limit reached/, resolution: /limit and reset time before retrying/ },
-    { kind: "unavailable", status: 503, title: /temporarily unavailable/, resolution: /Retry later/ },
+    { kind: "authentication", status: 401, title: /did not accept the sign-in/, resolution: /Check the sign-in or key in Models & engines/ },
+    { kind: "permission", status: 403, title: /denied access/, resolution: /your account can use the model you picked/ },
+    { kind: "rate-limit", status: 429, title: /request limit reached/, resolution: /limit and when it resets/ },
+    { kind: "unavailable", status: 503, title: /temporarily unavailable/, resolution: /Wait a moment, then try again/ },
   ];
   for (const scenario of scenarios) {
     await page.goto(origin + "/__provider?kind=" + scenario.kind + "&status=" + scenario.status + "&skin=light&noRetry=1");
@@ -242,7 +242,7 @@ for (const width of [390, 1000]) test(`runtime errors explain missing context an
   await expect(page.locator("pre")).toContainText("Engine error code: -32603");
   await expect(page.locator("pre")).toContainText("<script>");
   expect(await page.evaluate(() => (window as any).injected)).toBeUndefined();
-  await page.getByRole("button", { name: "Provider settings", exact: true }).click();
+  await page.getByRole("button", { name: "Models & engines", exact: true }).click();
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   expect(await page.evaluate(() => [(window as any).settingsCalls, (window as any).retryCalls])).toEqual([1, 1]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -257,7 +257,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1000]) test(`loc
   await expect(page.getByRole("heading", { name: "Another thread is using this computer", exact: true })).toBeVisible();
   await expect(alert).toContainText("Wait for the other thread to finish, or stop it, then retry.");
   await expect(alert).not.toContainText(/provider|account|sign-in|API key|credits|configured model|hit a problem/i);
-  await expect(page.getByRole("button", { name: "Provider settings" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Models & engines" })).toHaveCount(0);
   await expect(page.getByRole("link")).toHaveCount(0);
   await expect(alert.getByRole("button")).toHaveCount(1);
   const retry = page.getByRole("button", { name: "Retry", exact: true });
@@ -286,5 +286,5 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1000]) test(`loc
 test("an ordinary runtime error whose details repeat the busy copy keeps the diagnostic card", async ({ page }) => {
   await page.goto(origin + "/__provider?runtime=1&detail=1&message=" + encodeURIComponent(BUSY));
   await expect(page.getByRole("heading", { name: "This request hit a problem" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Provider settings", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Models & engines", exact: true })).toBeVisible();
 });

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
 import { openBackupProgressWindow } from "./backup-progress-window.mjs";
-import { BACKUP_QUIT_GRACE_MS, OFFLINE_BACKUP_CEILING_MS, createBackupReturn, quitForRelaunch, runOfflineBackup } from "./backup-offline-return.mjs";
+import { BACKUP_QUIT_GRACE_MS, OFFLINE_BACKUP_CEILING_MS, offlineCeilingFor, createBackupReturn, quitForRelaunch, runOfflineBackup } from "./backup-offline-return.mjs";
 
 // A fake Electron that behaves like the real one where RC5 went wrong: a
 // window made with closable:false ignores close() on macOS, a "close"
@@ -198,12 +198,17 @@ it("quitForRelaunch destroys, quits, then bounds the wait", () => {
   expect(timers.pending.map(t => t.ms)).toEqual([BACKUP_QUIT_GRACE_MS]);
 });
 
-it("the ceiling is 35 minutes: the 30 minute capture budget, the worker's 30 s, and room for checks and cleanup", () => {
+it("the ceiling is at least 35 minutes and follows the budget: the worker's 30 s, and room for checks and cleanup", () => {
   expect(OFFLINE_BACKUP_CEILING_MS).toBe(35 * 60_000);
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
-  expect(main).toContain("parameters.maxDurationMs>30*60000");
+  expect(main).toContain("parameters.maxDurationMs>MAX_BACKUP_DURATION_MS");
+  expect(main).toContain("ceilingMs:backupScheduleHost.offlineCeilingMs()");
   expect(main).toContain("timeoutMs:parameters.maxDurationMs+30_000");
   expect(OFFLINE_BACKUP_CEILING_MS).toBeGreaterThan(30 * 60_000 + 30_000);
+  expect(offlineCeilingFor(30 * 60_000)).toBe(35 * 60_000);
+  expect(offlineCeilingFor(10 * 60_000)).toBe(35 * 60_000);
+  expect(offlineCeilingFor(79 * 60_000)).toBe(84 * 60_000);
+  expect(offlineCeilingFor(undefined)).toBe(35 * 60_000);
 });
 
 it("main.mjs routes every backup-mode ending through the bounded return", () => {

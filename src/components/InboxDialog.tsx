@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/state/store";
 import { openInboxLink } from "@/lib/open-inbox-link";
 import { Inbox } from "./Inbox";
-import { healthDestination } from "./HealthCard";
+import { BOX_DIALOG } from "./ui/BoxShell";
 import { openFiles } from "./Files";
 import type { InboxLink, InboxView } from "../../shared/inbox";
 import { t } from "@/lib/i18n";
@@ -23,12 +23,12 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
     } catch (cause) { setError(cause instanceof Error ? cause.message : t("inbox.openResultError")); }
     finally { gate.current = false; }
   };
-  return <dialog ref={dialog} aria-label={t("inbox.title")} onCancel={onClose} onClose={onClose}
-    className="m-auto h-[min(820px,90dvh)] max-h-[90dvh] w-[min(900px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-hairline bg-panel p-0 text-ink shadow-2xl backdrop:bg-black/60">
-    {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
+  return <dialog ref={dialog} data-box-content="Inbox" aria-label={t("inbox.title")} onCancel={onClose} onClose={onClose}
+    className={`${BOX_DIALOG} m-auto h-[min(820px,90dvh)] w-[min(900px,calc(100vw-24px))] rounded-2xl border border-hairline bg-panel p-0 text-ink shadow-2xl backdrop:bg-black/60`}>
+    {error && <p role="alert" className="shrink-0 px-4 pt-3 text-[13px] text-danger">{error}</p>}
     <Inbox initialView={initialView} onOpen={link => { void openSource(link); }} onClose={onClose} refreshKey={state.routineRuns.length}
       onOpenBackups={() => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section: "backups" }); }}
-      onOpenHealthAction={action => { const to = healthDestination(action); if (!to) return; onClose(); dispatch({ type: "toggleAppSettings", open: true, section: to.section, ...(to.anchor ? { anchor: to.anchor } : {}) }); }}
+      onOpenSettingsPage={section => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section }); }}
       onOpenLearning={botId => { onClose(); dispatch({ type: "select", id: botId }); dispatch({ type: "toggleSettings", open: true, intent: { section: "learning" } }); }}
       onOpenMemory={subject => {
         onClose();

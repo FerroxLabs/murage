@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -160,7 +161,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine pins No limits, keeps the stop line, and uses one conversation across runs", async () => {
     const bot = await makeBot("Dax");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
     expect((await routineState(routine.id)).permissionMode).toBe("unlimited");
     const runId = await runOnce(routine.id);
@@ -194,7 +195,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine on Auto stops at the stop line, and Always allow for this routine covers its next run", async () => {
     const bot = await makeBot("Rae");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const runId = await runOnce(routine.id);
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
@@ -221,24 +222,25 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine's own dated temp file is deleted inside its folder, with no card on Auto", async () => {
     const bot = await makeBot("Tem", "tempfile");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const run = await settled(await runOnce(routine.id));
     expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
     expect((await threadMessages(run!.threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
   }, 90_000);
 
-  it("a delete it cannot place still asks, and its card offers this task and this routine", async () => {
+  it("a delete it cannot place still asks, and its card offers this routine", async () => {
     const bot = await makeBot("Unp", "unplaced");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const runId = await runOnce(routine.id);
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
     const card = await poll(() => liveCard(threadId!), 20_000);
     expect(card, `no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(card.card.held).toContain("cannot place");
-    expect(card.card.taskAllowKey).toMatch(/^stop:delete:unplaced:/);
-    expect(card.card.routineAllowKey).toBe(card.card.taskAllowKey);
+    // a routine's card offers the routine's own row: the task allowance reader ignores automated turns (design 1.2)
+    expect(card.card.routineAllowKey).toMatch(/^stop:delete:unplaced:/);
+    expect(card.card.taskAllowKey).toBeUndefined();
     expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
     await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" });
     expect(await settled(runId)).toMatchObject({ status: "completed" });
@@ -249,7 +251,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine's write to a target a value holds runs on Auto, and the run's history records it", async () => {
     const bot = await makeBot("Var", "vartarget");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const run = await settled(await runOnce(routine.id));
     expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
@@ -259,7 +261,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine's literal home delete still holds, even at No limits", async () => {
     const bot = await makeBot("Hom", "homedelete");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
     expect((await routineState(routine.id)).permissionMode).toBe("unlimited");
     const runId = await runOnce(routine.id);
@@ -275,7 +277,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("the owner's message in a routine's conversation runs at the routine's level", async () => {
     const bot = await makeBot("Kit");
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
     const runId = await runOnce(routine.id);
     const routineThread = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);

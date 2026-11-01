@@ -63,7 +63,7 @@ describe("R10-01: a card note is released against the messages that hold its own
   /** Notes the server's link tied to a turn's roots, as [thread, message]. */
   const linked: Array<[string, string]> = [];
   /** A turn begins in `threadId` for `botId`: its sources are the lines it is shown, by the server's own rule (server/steer-lineage.ts). */
-  const beginTurn = (botId: string, threadId: string) => turns.set(threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId, generation: "g", turn: {} as never, 
+  const beginTurn = (botId: string, threadId: string) => turns.set(threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId, generation: "g", startGeneration: 0, turn: {} as never, 
     sources: turnSources(store.messagesFor(threadId).map(row => ({ threadId, id: row.id, role: row.role, copyOf: row.copyOf })), line => Boolean(store.messageById(threadId, line.id)?.withheldFromBots)) });
   /** A message written into a conversation joins the running turn there, as every stored reply does (linkOutput). */
   const say = (threadId: string, text: string, requestId?: string): Message => {
@@ -360,7 +360,7 @@ describe("R10-01: a card note is released against the messages that hold its own
       expect(sendProjectCardBack(db(), { cardId: "c1", actor: leadActor(), note: "Fresh words from nowhere", now: tick() }).ok).toBe(true);
       expect(store.messagesFor(group.threadId)).toHaveLength(before);
       expect(redo()).not.toContain("Fresh words from nowhere");
-      turns.set(group.threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId: lead.id, generation: "g", turn: {} as never, sources: "over" });
+      turns.set(group.threadId, { roots: { roots: new Set(), over: false }, instanceId: "claude", botId: lead.id, generation: "g", startGeneration: 0, turn: {} as never, sources: "over" });
       expect(runningTurnSources(turns.get(group.threadId), lead.id)).toBeUndefined();
       expect(turnSources(Array.from({ length: TURN_SOURCES_MAX + 1 }, (_, index) => ({ threadId: "t", id: `m${index}`, role: "bot" })), () => false)).toBe("over");
       // owner lines are never sources, and a line withheld when the turn began was carried as its withheld line

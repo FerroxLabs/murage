@@ -245,6 +245,7 @@ final class AskIntentTests: XCTestCase {
     }
 
     func testVerbatimEnglishAndFallback() {
+        XCTAssertEqual(AskDialog.update.text(botName: "Ember"), "Turn this on, or update Murage, on your computer.")
         XCTAssertEqual(AskDialog.sentNotify.text(botName: "Ember"), "Sent to Ember. I'll let you know when it answers.")
         XCTAssertEqual(AskDialog.sentChat.text(botName: "Ember"), "Sent to Ember. The answer will be in your chat.")
         XCTAssertEqual(AskDialog.question(botName: nil), "What do you want to ask?")

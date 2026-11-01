@@ -23,9 +23,13 @@
 // and draining it with background routines would make Murage the thing that
 // broke the tool they bought for their day job.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { pickDefaultEngine, type EngineReading } from "./default-engine.ts";
+import { DATA_DIR } from "./config.ts";
+import { closeMessageDb } from "./message-db.ts";
+import { Store } from "./store.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { pickDefaultEngine, repickSeededChief, type EngineReading } from "./default-engine.ts";
 
 const engine = (over: Partial<EngineReading> & { instanceId: string }): EngineReading => ({
   snapshot: { state: "available" },
@@ -139,5 +143,55 @@ describe("an engine with models but no default model", () => {
     const listed = engine({ instanceId: "local", models: { default: "", options: [{ id: "a" }] } });
     expect(pickDefaultEngine([listed, CLAUDE_SIGNED_IN]).instanceId).toBe("claude");
     expect(pickDefaultEngine([CLAUDE_SIGNED_IN]).model).toBe("claude-sonnet-5");
+  });
+});
+
+// A Flux key saved after the first run (skipped step, or added later from
+// Settings) must move a Chief that Murage seeded onto unsigned Claude over to
+// Fuigo, and must never touch an engine the owner picked.
+describe("the seeded Chief follows a key saved later", () => {
+  afterEach(() => { closeMessageDb(); removeTempDirSync(DATA_DIR); });
+
+  const CLAUDE_UNSIGNED = engine({
+    instanceId: "claude",
+    driverKind: "claudeAgent",
+    snapshot: { state: "available", authenticated: false },
+    models: { default: "claude-sonnet-5" },
+  });
+  const unsignedClaude = () => ({ instanceId: "claude", model: "claude-sonnet-5" });
+
+  it("marks the bot Murage seeds, and drops the mark when anyone sets its engine", () => {
+    const store = new Store(unsignedClaude);
+    store.seedIfEmpty();
+    const [seeded] = store.bots;
+    expect(seeded.engineSeeded).toBe(true);
+    store.patchBot(seeded.id, { modelSelection: unsignedClaude() });
+    expect(store.bot(seeded.id)!.engineSeeded).toBeUndefined();
+  });
+
+  it("moves a seeded Chief from unsigned Claude to Fuigo once the key makes Fuigo pickable", () => {
+    const store = new Store(unsignedClaude);
+    store.seedIfEmpty();
+    const chief = store.bots[0];
+    expect(chief.modelSelection.instanceId).toBe("claude");
+    const keyless = engine({ instanceId: "fuigo", driverKind: "fuigoAgent", models: { default: "", options: [] } });
+    expect(repickSeededChief(chief, [keyless, CLAUDE_UNSIGNED])).toBeNull();
+    expect(repickSeededChief(chief, [FUIGO, CLAUDE_UNSIGNED])).toEqual({ instanceId: "fuigo", model: "flux/auto" });
+  });
+
+  it("leaves an engine the owner chose alone, even when it is Claude", () => {
+    const store = new Store(unsignedClaude);
+    store.seedIfEmpty();
+    const chief = store.bots[0];
+    store.patchBot(chief.id, { modelSelection: unsignedClaude() });
+    expect(repickSeededChief(store.bot(chief.id)!, [FUIGO, CLAUDE_UNSIGNED])).toBeNull();
+  });
+
+  it("keeps a signed-in Claude winning, and does nothing when already on the pick", () => {
+    const store = new Store(unsignedClaude);
+    store.seedIfEmpty();
+    const chief = store.bots[0];
+    expect(repickSeededChief(chief, [FUIGO, CLAUDE_SIGNED_IN])).toBeNull();
+    expect(repickSeededChief({ ...chief, modelSelection: { instanceId: "fuigo", model: "flux/auto" } }, [FUIGO, CLAUDE_UNSIGNED])).toBeNull();
   });
 });

@@ -14,7 +14,8 @@ import org.json.JSONObject;
 final class PhoneJobsMintClient {
     enum Failure {
         NOT_OFFERED("Coming to Murage Cloud", R.string.ask_cloud),
-        UPDATE_COMPUTER("Update Murage on your computer", R.string.phone_update),
+        UPDATE_COMPUTER("Turn this on, or update Murage, on your computer.", R.string.phone_update),
+        TURNED_OFF("Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.", R.string.phone_turned_off),
         NO_APPROVAL_KEY("Set a passcode on this phone, then pair again", R.string.phone_no_key),
         REFUSED("Phone sign-in was refused. Pair this phone again.", R.string.phone_refused),
         RATE_LIMITED("Too many sign-in attempts. Try again shortly.", R.string.phone_rate_limited),
@@ -80,7 +81,9 @@ final class PhoneJobsMintClient {
         send(a, "GET", "/healthz", null, response -> {
             if (response.status != 200) { fail(a, Failure.UNAVAILABLE); return; }
             ProbeVerdict verdict = ProbeVerdict.classify(response.status, response.body, null);
-            if (!(ask ? verdict.phoneAskOk() : verdict.phoneJobsOk())) { fail(a, Failure.UPDATE_COMPUTER); return; }
+            if (!(ask ? verdict.phoneAskOk() : verdict.phoneJobsOk())) {
+                fail(a, verdict.phoneFlagsOk() ? Failure.TURNED_OFF : Failure.UPDATE_COMPUTER); return;
+            }
             send(a, "GET", "/api/phones/self/challenge?key=" + a.keyId, null, challenge -> sign(a, challenge));
         });
     }

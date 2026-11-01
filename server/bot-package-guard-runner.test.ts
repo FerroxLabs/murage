@@ -3,6 +3,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PerformanceObserver } from "node:perf_hooks";
 import { afterAll, describe, expect, it } from "vitest";
 import { importGuardSummary, scanBotPackageForImport } from "./bot-package-guard.ts";
 import { ImportScanCancelled, importScanProgress, scanBotPackageForImportAsync } from "./bot-package-guard-runner.ts";
@@ -43,17 +44,23 @@ describe("import guard in a worker", () => {
     // from time the OS gave its core to someone else.
     const cpuMs = () => { const used = process.threadCpuUsage(); return (used.user + used.system) / 1000; };
     let last = performance.now(), lastCpu = cpuMs();
-    const ticker = setInterval(() => { const now = performance.now(), cpu = cpuMs(); gaps.push(now - last); held.push(cpu - lastCpu); last = now; lastCpu = cpu; }, 10);
+    // CI 41307336676 macOS 4/10: one 62 ms main-thread run in a 36 s scan (Linux 13, Windows 16). Garbage collection on this thread
+    // counts as its CPU time; the log names it so the next red says whether the main thread worked or collected.
+    let worstGc = 0, gcTotal = 0;
+    const gc = new PerformanceObserver((list) => { for (const entry of list.getEntries()) { worstGc = Math.max(worstGc, entry.duration); gcTotal += entry.duration; } });
+    gc.observe({ entryTypes: ["gc"] });
+    let worstAt = 0;
+    const ticker = setInterval(() => { const now = performance.now(), cpu = cpuMs(); gaps.push(now - last); held.push(cpu - lastCpu); if (cpu - lastCpu >= Math.max(...held)) worstAt = now - started; last = now; lastCpu = cpu; }, 10);
     const started = performance.now();
     const seen: number[] = [];
     const scanId = "event-loop-check";
     const watcher = setInterval(() => { const p = importScanProgress(scanId); if (p) seen.push(p.filesDone); }, 50);
     let result;
     try { result = await scanBotPackageForImportAsync(files, { scanId, timeoutMs: SLOW_RUNNER_SCAN_MS }); }
-    finally { clearInterval(ticker); clearInterval(watcher); }
+    finally { clearInterval(ticker); clearInterval(watcher); gc.disconnect(); }
     const elapsed = performance.now() - started;
     const worst = Math.max(...gaps), worstHeld = Math.max(...held);
-    console.log(`50MB scan: ${Math.round(elapsed)} ms, ${gaps.length} ticks, worst timer gap ${Math.round(worst)} ms, worst main-thread run ${Math.round(worstHeld)} ms (10 ms timer)`);
+    console.log(`50MB scan: ${Math.round(elapsed)} ms, ${gaps.length} ticks, worst timer gap ${Math.round(worst)} ms, worst main-thread run ${Math.round(worstHeld)} ms at ${Math.round(worstAt)} ms (10 ms timer), worst GC pause ${Math.round(worstGc)} ms, GC total ${Math.round(gcTotal)} ms`);
     expect(result.state).toBeUndefined();
     expect(result.blocked).toBe(false);
     // The server's own thread never runs more than 50 ms between two ticks of
