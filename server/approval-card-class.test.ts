@@ -143,6 +143,10 @@ describe("1.4: the why-line per class", () => {
     for (const [source, key] of [["always-ask", "alwaysAsk"], ["sensitive-guard", "sensitiveGuard"], ["unread-call", "unreadCall"], ["destructive-guard", "destructiveGuard"], ["prompt-guard", "promptGuard"]] as const) {
       expect(why({ verdict: { source } })?.key).toBe(`ux.l1.why.${key}`);
     }
+    // NOLIMITS-WIPE-WORD B: a reader failure is never said to wipe this computer; a wipe the reader found is
+    expect(why({ verdict: { source: "always-ask" } }, "unlimited", { rule: "unreadable" })?.key).toBe("ux.l1.why.unreadable");
+    for (const level of ["ask", "auto", "full", "unlimited"] as const) expect(why({ verdict: { source: "always-ask" } }, level, { rule: "unreadable" })?.key).toBe("ux.l1.why.unreadable");
+    for (const rule of ["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target"]) expect(why({ verdict: { source: "always-ask" } }, "unlimited", { rule })?.key).toBe("ux.l1.why.alwaysAsk");
     // an ordinary no-grant card above Ask has no why-line to give
     expect(why({}, "auto")).toBeUndefined();
   });

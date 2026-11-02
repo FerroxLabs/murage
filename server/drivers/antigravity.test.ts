@@ -231,6 +231,40 @@ describe("Antigravity turns (fake CLI)", () => {
     }
   }, 10_000);
 
+  // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
+  for (const stopFirst of [false, true]) {
+    it(`CLOSE-STOP ${stopFirst ? "Stop then quit: the owner's Stop, once, with no error" : "quit alone: the engine closing, delivered before dispose resolves"}`, async () => {
+      const home = mkdtempSync(join(tmpdir(), "murage-agy-close-"));
+      const readyFile = join(home, "ready");
+      instance = await AntigravityDriver.create({
+        instanceId: "agy-close",
+        displayName: undefined,
+        environment: { HOME: home, FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      recorder = recordEvents(instance.adapter);
+      try {
+        const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close", text: "hold" });
+        await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+        if (stopFirst) await instance.adapter.interruptTurn("t-close");
+        await instance.dispose();
+        const ends = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+        const errors = recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId).map((e: any) => e.message);
+        if (stopFirst) {
+          expect(ends).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+          expect(errors).toEqual([]);
+        } else {
+          expect(ends).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+          expect(errors).toEqual([expect.stringContaining("closed")]);
+          expect(errors[0]).toContain("before it finished its reply");
+        }
+      } finally {
+        removeTempDirSync(home);
+      }
+    }, 20_000); // Windows: the job stop alone takes about 8 s here (same before CLOSE-STOP), as the Codex close tests allow
+  }
+
   it("a child that dies before result without a Stop still settles exit_before_result with an error", async () => {
     const home = mkdtempSync(join(tmpdir(), "murage-agy-crash-"));
     instance = await AntigravityDriver.create({
