@@ -356,6 +356,10 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
+  // a voice note's audio: the harness serves it only to a caller that may
+  // read the conversation, and only for a note that message lists
+  // (`server/voice/voice-note-audio.ts`). Never a path.
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/voice-note$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
@@ -602,6 +606,10 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
+  // a voice note's audio: the harness serves it only to a caller that may
+  // read the conversation, and only for a note that message lists
+  // (`server/voice/voice-note-audio.ts`). Never a path.
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/voice-note$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },

@@ -6,11 +6,12 @@
 // of the list is here, as a pure function of the setup view, so it can be
 // executed by a test rather than read out of a component's markup.
 //
-// THE SPLIT, AND WHO DECIDED IT. The approved simulation hand-picks three
-// detailed rows and collapses fifteen, on a machine with eighteen engines on
-// it. That split is an illustration, not a rule, and the rule was settled
-// afterwards: everything RUNNABLE gets a row, and the rest collapses behind
-// "and N more on this computer".
+// THE RULE. Everything RUNNABLE gets a row, and nothing else is listed.
+// The approved simulation collapsed the rest behind "and N more on this
+// computer"; since 1.0.14 first run shows Fuigo and Flux only and never names
+// an engine nobody is signed in to (FUIGO-FIRST-SIGNIN-PLACEMENT, MurageMain
+// 11-02). Those engines stay in Settings and in Needs you once a bot runs on
+// one.
 //
 // Runnable is not "available", and the difference is the whole release.
 // Murage SHIPS the Fuigo binary, so `fuigo --version` always answers and an
@@ -20,28 +21,22 @@
 // this module never re-decides what can think: it reads the two lists the
 // server already separated and arranges them.
 //
-// `view.signedOutAgents` is the collapsed half. Those engines are here and
-// ready and nobody is signed in to them, which is worth telling somebody
-// about and is not worth three lines each in the middle of their first
-// minute.
+// `view.signedOutAgents` is read nowhere here, on purpose: see THE RULE.
 
 import { FIRST_RUN_COPY } from "@/lib/first-run-copy";
 import type { SetupAgentReading, SetupView } from "../../shared/setup";
 
 /**
- * The three shapes a row can take, which is the same three the simulation
- * draws glyphs for.
+ * The shapes a row can take.
  *
  * `local` is an engine pointed at a model on this machine: the server decodes
  * its default as `host::model` and hands over both halves, which is also what
  * lets the row be titled the way its owner names it rather than by the
  * connection type Murage reaches it through.
  *
- * `cloud` is a remote engine that can answer right now. `off` is one that is
- * installed with nobody signed in to it, which is a true and unembarrassing
- * thing to say to somebody who has done nothing wrong.
+ * `cloud` is a remote engine that can answer right now.
  */
-export type FirstRunEngineIcon = "local" | "cloud" | "off";
+export type FirstRunEngineIcon = "local" | "cloud";
 
 export interface FirstRunEngineRow {
   /** The instance id, as `/api/instances` reports it. Keys the row. */
@@ -58,10 +53,6 @@ export interface FirstRunEngineRow {
 export interface FirstRunDetection {
   /** Everything this machine can think with, one detailed row each. */
   rows: FirstRunEngineRow[];
-  /** Here, ready, nobody signed in. Behind the "and N more" button. */
-  collapsed: FirstRunEngineRow[];
-  /** "and 15 more on this computer", or "" when there is nothing behind it. */
-  moreLabel: string;
 }
 
 const copy = FIRST_RUN_COPY.agents.detect;
@@ -112,10 +103,6 @@ function runnableRow(agent: SetupAgentReading, chiefInstanceId: string): FirstRu
   };
 }
 
-function signedOutRow(agent: SetupAgentReading): FirstRunEngineRow {
-  return { id: agent.id, icon: "off", title: engineRowTitle(agent), detail: copy.offDetail, tag: copy.offTag };
-}
-
 /**
  * The detection report for this machine.
  *
@@ -126,7 +113,5 @@ function signedOutRow(agent: SetupAgentReading): FirstRunEngineRow {
  */
 export function firstRunDetection(view: SetupView | null | undefined): FirstRunDetection {
   const chief = view?.chiefInstanceId ?? "";
-  const rows = (view?.agents ?? []).map((agent) => runnableRow(agent, chief));
-  const collapsed = (view?.signedOutAgents ?? []).map(signedOutRow);
-  return { rows, collapsed, moreLabel: collapsed.length > 0 ? copy.more(collapsed.length) : "" };
+  return { rows: (view?.agents ?? []).map((agent) => runnableRow(agent, chief)) };
 }

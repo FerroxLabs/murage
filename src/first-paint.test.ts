@@ -194,9 +194,17 @@ describe("the first paint", () => {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
-    // the cards themselves and the small loader are the first paint
-    for (const file of ["src/components/ApprovalCard.tsx", "src/components/PendingApproval.tsx", "src/lib/plain-approval.ts"]) {
+    // the chat card, the words it reads and the small loader are the first paint
+    for (const file of ["src/components/ApprovalCard.tsx", "src/lib/pending-approval.ts", "src/lib/plain-approval.ts"]) {
       expect(reached, file).toContain(file);
+    }
+  });
+
+  it("loads the composer's answer panel with the first card that waits (APPROVAL-ONE-CARD, 1.0.15)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/PendingApprovalQueue.tsx", "src/components/PendingApproval.tsx"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
     }
   });
 
@@ -215,6 +223,18 @@ describe("the first paint", () => {
     }
     // what the first paint does carry: the meta read that decides, and the workspace switch itself
     for (const file of ["src/lib/cloud-home-meta.ts", "src/components/cloud/WorkspaceSwitch.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
+  it("loads an engine sign-in's dialog and session on the press (1.0.14)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/EngineSignInDialog.tsx", "src/components/EngineChatLinkDialog.tsx", "src/lib/local-engine-login.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the buttons stay: a chat and a failed turn show them before anyone presses
+    for (const file of ["src/components/EngineSignInButton.tsx", "src/components/EngineChatLink.tsx", "src/lib/engine-signin-surface.ts"]) {
       expect(reached, file).toContain(file);
     }
   });
