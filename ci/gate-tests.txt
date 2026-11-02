@@ -169,6 +169,9 @@ server/sentinel/supervisor.test.ts	all	a stuck health check is stopped within 5 
 server/sentinel/cli.test.ts	all	the health checker never loads the app, its database, engines or network code
 server/setup-chief-local.test.ts	all	first run claims a local model only on this computer
 server/startup-cleanup-boot.test.ts	all	Murage opens while a deleted conversation is still being removed from a large engine history
+server/storage-pending-names.test.ts	all	a deleted conversation's file names stay hidden during startup and a paired browser client gets an engine
+server/flux-save-blocked.test.ts	all	a desktop with no unlocked keyring says why no Flux key can be saved instead of failing quietly
+electron/secret-save-refused.test.mjs	all	the no-keyring notice is told only by a launch whose store refuses writes, and carries no key
 server/thread-permissions-bulk-108.test.ts	all	Owner-only previewed raises persist one roster and leave higher levels and grants intact
 server/level-examples.test.ts	all	The level examples the owner reads match what each level really does
 server/permissions-preview-apply.test.ts	all	A level raise moves only what the owner reviewed, and a stale preview or Undo is refused with nothing written
@@ -545,7 +548,6 @@ server/cloud-request-auth.test.ts	linux	Cloud sensitive routes need signed devic
 server/cloud-session-streams.test.ts	linux	device and account revocation cut live streams
 server/cloud-sessions.test.ts	all	cloud recovery and resume keep access safe
 server/codex-async-question-api.test.ts	all	Codex questions asked mid-run reach the owner and the answer runs once
-server/codex-managed-windows.test.ts	all	pinned Codex binary verified before running
 server/comms-visibility.test.ts	all	Bot-to-bot channel context visibility
 server/comms.test.ts	all	mention routing and delivery of messages to bots
 server/companion-authority.test.ts	all	companion proof and token stripping
@@ -755,6 +757,9 @@ server/engine-history-r16.test.ts	all	dropped rows keep shape, no handle leaks
 server/engine-legacy-aside-inplace.test.ts	all	Legacy aside merges into index without loss
 server/engine-management-fuigo.test.ts	all	engine update activation and custom CLI opt-in
 server/engine-management.test.ts	all	managed engine install verifies before activation
+server/engine-native-install.test.ts	all	ENGINE-SIGNIN install: a vendor binary runs only after its checksum, no redirect or escaping path is followed, nothing is left behind, and the env is pinned
+server/engine-setup-check-api.test.ts	linux	ENGINE-SIGNIN install: the set-up check answers the desktop alone, spends one fixed prompt and adds no thread
+server/engine-reply-check.test.ts	all	ENGINE-SIGNIN install: one real reply maps to ready, sign in, limit or the engine's own refusal
 server/engine-open-proof-107.test.ts	all	the open-home pass removes nothing unless every process on the home is read and shown clear of the files
 server/engine-open-proof-win-107.test.ts	windows	on Windows the open-home pass reads every holder's working folder and refuses a file another process has open, so a CLI working in the deleted conversation keeps its files until it is closed
 server/engine-questions-api.test.ts	all	engine questions shown as cards, never auto-approved
@@ -1289,6 +1294,7 @@ server/reader-gaps-104-r3.test.ts	all	deno/bun run options that load code first,
 server/reader-gaps-104.test.ts	all	an unread script on disk, lua os.execute, a PowerShell member assignment or cmd /r slipping past Always ask or the stop line, and ENV leaking a value into Bash (approval boundary)
 server/reader-hang-105.test.ts	all	a command text that freezes Murage: the stop line or another command reader never returning on the server thread (approval boundary)
 server/reader-loaders-105.test.ts	all	an interpreter or shell running code it loads first (ruby -I, NODE_OPTIONS, BASH_ENV, python -m runpy) with no card, under the POSIX and the PowerShell reader
+server/reader-ps-crlf-1014.test.ts	all	a PowerShell delete split over a backtick and a Windows line ending running with no card (approval boundary)
 server/recovery-engine-discovery.test.ts	all	restore never resurrects default engine fleet
 server/redact.test.ts	all	secrets masked in logs and sessions
 server/remote-computer.test.ts	all	checksummed driver, no command injection via bot name
@@ -1661,6 +1667,8 @@ src/lib/group-call.test.ts	all	spoken message routed to correct room member
 src/lib/group-routing.test.ts	all	room message routes to the right bot
 src/lib/help-level-lint.test.ts	all	Help text names the real Ask Auto and Full access levels
 src/lib/i18n-intl-locale.test.ts	all	an owner who picks Portuguese sees app dates and numbers from a bare "pt" tag, a "pt_BR" setting falls back to English, or the voice cue cache and send-key default change key with the date format
+src/components/EngineSignInButton.test.ts	all	engine sign-in button on every surface: the dialog starts nothing until the press inside it, each kind, Terminal after 45 seconds
+src/lib/local-engine-login.test.ts	all	desktop sign-in bridge sends ids only, and a dialog that opens starts nothing
 src/lib/live-events.test.ts	all	live events replay delivers without dropping
 src/lib/local-vm-viewer.test.ts	all	is removed from the status a page keeps
 src/lib/markdown-drafts.test.ts	all	markdown drafts bounds and persistence
@@ -1694,6 +1702,7 @@ src/state/bot-patch-queue.test.ts	all	profile edits serialized, no stale resurre
 src/state/config-frame-decider.test.ts	all	the channel auto-routing switch reads off after a live config change and its click saves it back on
 src/state/conversation-switch.test.ts	all	withheld/forgotten message shows as withheld (withheld)
 src/state/deletion-dismiss-race.test.ts	all	dismissing the deletion banner keeps a deletion owed meanwhile
+src/state/hydrate-bodies.test.ts	all	a snapshot or config reply with a missing or bad body keeps the phone screen up and asks again
 src/state/send-delivery.test.ts	all	send outbox persists until server answers
 src/state/send-lookup-result.test.ts	all	a reloaded draft reads every send status the server answers correctly
 src/state/store-fresh-auth.test.ts	all	store Allow paths use fresh auth
@@ -1720,6 +1729,7 @@ server/bot-calls-facts.test.ts	all	a bot calls only for a fact a rule the owner 
 server/bot-calls-machine.test.ts	all	a bot call rings, escalates, is answered, missed or ended once, and never twice for one fact
 server/bot-calls-policy.test.ts	all	no bot call rings in quiet hours, while calls are off or while the owner's calendar says busy, unless the rule allows it
 server/bot-calls-runtime.test.ts	all	call routes are owner-only, a ring is sent once and never after a restart or while calls are off
+server/bot-calls-switch-on.test.ts	all	the owner can turn a bot's calls on in Bot settings or with Call me when this finishes; nothing else can, and the call tool is listed only then
 server/compound-read-109.test.ts	all	new compound spellings get their existing twin's verdict at every level; other shapes still ask
 server/drain-via.test.ts	all	via rows drain alone; a share line never joins an owner turn
 server/drivers/agents-proxy-needs-owner-now.test.ts	all	the needs-owner-now tool is offered only when the harness allows it and never on a proposal turn
@@ -1841,3 +1851,15 @@ server/memory/worker-disconnect-race.test.ts	all	smart search helper closes its 
 server/memory/embeddings-yield.test.ts	all	a long record never holds a stop behind its whole model run
 server/memory/controller-stop-held.test.ts	all	a busy memory helper cannot fail a memory mode change or a Cloud home drain
 server/memory/worker-send-failure.test.ts	all	smart search helper keeps running to its index close when a report meets a closed channel
+server/engine-signin-recipe.test.ts	all	ENGINE-SIGNIN: rows pinned to the table, a sign-in runs a fixed recipe, and no token, key, proxy, NODE_OPTIONS, DYLD or LD_PRELOAD reaches it; opener names come from the desktop session alone
+server/engine-signin-api.test.ts	linux	ENGINE-SIGNIN: the sign-in routes answer the desktop alone
+electron/engine-login-local.test.mjs	all	ENGINE-SIGNIN: all three stdio on ignore, so no sign-in output reaches Murage; done detection; a stale login needs a real reply; quit ends the sign-in
+electron/engine-login-terminal.test.mjs	all	ENGINE-SIGNIN: a terminal sign-in runs the recipe argv on the owner environment with account keys pinned, no command text from a window
+server/engine-link-records.test.ts	all	asking on any engine reaches the sign-in, set-up or plan link and never a list of keys
+src/components/EngineChatLink.test.ts	all	a chat link draws a button, never an href, and a press starts nothing by itself
+src/lib/engine-chat-link.test.ts	all	only the exact chat links are honoured and a link from outside the app does nothing
+src/components/EngineSetup.test.ts	all	the engine card picks install, sign-in or the one real reply by state, with no Node.js step for Claude Code or Codex
+server/voice/voice-note-audio.test.ts	all	a phone or browser plays a voice note it can read, and never reaches another saved file or conversation
+src/components/VoiceNoteDoors.test.ts	all	a voice note shows a working player on the phone, the browser door and the phone app, not only the caption
+server/setup-engine-users.test.ts	all	Needs you names the bots that run on an engine nobody is signed in to
+src/components/FuigoFirstSignIn.test.ts	all	Needs you shows only a used signed-out engine with Use Fuigo instead first; the first-run card offers no other engine sign-in

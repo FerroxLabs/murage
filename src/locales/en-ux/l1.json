@@ -14,6 +14,7 @@
   "ux.l1.why.channelUnnamed": "{bot} asked because this came in from a channel message. Your own messages there skip approvals only when you turn that on under Full access.",
   "ux.l1.why.unattended": "{bot} asked because nobody started this from your computer or your phone, so it does each step with you.",
   "ux.l1.why.alwaysAsk": "This could wipe this computer, so Murage asks every time, at every level.",
+  "ux.l1.why.unreadable": "Murage could not read this command, so it asks you before it runs.",
   "ux.l1.why.sensitiveGuard": "This reads a key or password file, so Murage asks at every level.",
   "ux.l1.why.unreadCall": "Murage could not read this whole, so it asks. Allow it once if it is right.",
   "ux.l1.why.destructiveGuard": "This looks destructive, so Auto asks. Full access runs it without asking.",
