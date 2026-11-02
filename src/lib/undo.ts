@@ -12,8 +12,9 @@
 
 import { useSyncExternalStore } from "react";
 import { t } from "@/lib/i18n";
+import { UNDO_WINDOW_MS } from "@/lib/undo-window";
 
-export const UNDO_WINDOW_MS = 8000;
+export { UNDO_WINDOW_MS };
 /** Leaving the toast resumes its window with at least this long left. */
 export const UNDO_RESUME_FLOOR_MS = 2000;
 /** How long a "Could not undo" line stays. */

@@ -51,7 +51,7 @@ const readers = await (async () => {
 const { autoVerdict, classifyAsk, classifyStopLine, deletesPlacedInside, routeDelivery, acpApplyPatchCall } = readers;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-type Row = { id: string; form: string; text: string | string[]; expect: "stop" | "unread" | "run" | "109"; removes?: string };
+type Row = { id: string; form: string; text: string | string[]; expect: "stop" | "unread" | "run" | "109"; removes?: string; noLimitsLifts?: string };
 const corpus = JSON.parse(readFileSync(join(HERE, "testing", "stop-line-bypass-corpus.json"), "utf8")) as { rows: Row[] };
 
 const AUTO: AutoApprover = { autoApprove: true };
@@ -175,8 +175,15 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
   it.each(columns)("frees only the patch envelope and marker forms both engines read, and nothing %s held besides", (_version, base) => {
     // the bounded claim: every hold this subset removes on these routes is a patch both engines apply the same way
     expect(corpus.rows.filter((row) => row.removes).map((row) => row.id).sort()).toEqual(["p-heredoc-envelope", "p-leading-blank", "p1-eof"]);
-    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]]));
+    const freed = corpus.rows.filter((row) => !row.removes && Object.entries(base[row.id]!.held).some(([level, held]) => held && !outcomes.get(row.id)!.held[level as keyof Outcome["held"]] && !(level === "noLimits" && row.noLimitsLifts)));
     expect(freed.map((row) => row.id)).toEqual([]);
+    // NOLIMITS-CODEX-EDIT: the bounded exception, and each is a stop-line row that was held at No limits only as unread
+    const lifted = corpus.rows.filter((row) => row.noLimitsLifts);
+    expect(lifted.map((row) => row.id).sort()).toEqual(["p1-delete", "p1-move-out"]);
+    for (const row of lifted) {
+      expect(base[row.id], row.id).toMatchObject({ reader: "delete", noLimitsSource: "unread-call" });
+      expect(outcomes.get(row.id), row.id).toMatchObject({ reader: "delete", noLimitsSource: "no-limits" });
+    }
   });
 
   const patchRows = corpus.rows.filter((row) => row.form === "patch" && (row.expect === "stop" || row.expect === "unread"));
@@ -241,7 +248,7 @@ describe.runIf(process.platform !== "win32")("ISSUE-PERMS-1010 bypass corpus (1.
     else if (was.reader !== null) expect(now.reader, "stop line").not.toBeNull();
     if (!row.removes && was.inside === false) expect(now.inside, "Auto guard placed inside").toBe(false);
     for (const level of ["fullRoutine", "fullOwner", "auto", "noLimits"] as const) {
-      if (!row.removes && was.held[level]) expect(now.held[level], level).toBe(true);
+      if (!row.removes && was.held[level] && !(level === "noLimits" && row.noLimitsLifts)) expect(now.held[level], level).toBe(true);
     }
     switch (row.expect) {
       case "stop":

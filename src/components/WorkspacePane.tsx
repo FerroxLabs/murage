@@ -382,7 +382,7 @@ export function WorkspacePaneSurface({
       <TabStrip pane={pane} dispatch={dispatch} currentScope={scope} labelForScope={labelForScope} />
 
       {closeQuestion && (
-        <div role="alertdialog" aria-labelledby="workspace-pane-close-title" aria-describedby="workspace-pane-close-body" data-testid="workspace-pane-close-question" className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
+        <div role="alertdialog" data-box-exempt="inline confirm inside the workspace pane" aria-labelledby="workspace-pane-close-title" aria-describedby="workspace-pane-close-body" data-testid="workspace-pane-close-question" className="mx-3 mt-2 flex flex-col gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-[13px]">
           <p id="workspace-pane-close-title" className="font-medium">{t("workspacePane.closeUnsaved.title")}</p>
           <p id="workspace-pane-close-body" className="text-ink-secondary">{t("workspacePane.closeUnsaved.body", { name: fileName(closeQuestion.relativePath) })}</p>
           <div className="flex flex-wrap gap-2">

@@ -5,6 +5,8 @@
 // transaction, three attempts skip a slice (across restarts), only retry-skipped runs it again, and a slice stops grounding at
 // SLICE_CALL_GUARD calls. A refusal charges nothing; spend-ceiling waits for the 1st of next month or a raise.
 import { mkdirSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -17,7 +19,7 @@ import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { memoryOwnerRoute } from "./settings.ts";
-import { extractCandidates, type TextOnlyExtractor } from "./extract.ts";
+import { extractCandidates, requestMemoryExtraction, type TextOnlyExtractor } from "./extract.ts";
 import { extractionOutcomes } from "./extraction-outcomes.ts";
 import { SLICE_CALL_GUARD, SLICE_CALL_LIMIT_REASON } from "../../shared/memory-learning-contract.ts";
 
@@ -43,7 +45,7 @@ const configure = (patch: Record<string, unknown>) => { const db = database(); u
 const signal = () => new AbortController().signal;
 const failing = () => { const fn = vi.fn(async () => { throw new Error("provider down"); }); return fn as unknown as TextOnlyExtractor & typeof fn; };
 
-it("three-then-skip: three admitted attempts, counted across a restart, skip the slice with a retry event; no automatic path tries it again", async () => {
+it("three-then-skip: three admitted attempts, counted across a restart, skip the slice with a retry event", async () => {
   const job = captured(), extractor = failing();
   expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject({ status: "deferred", reason: "extraction-incomplete" });
   expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject({ status: "deferred" });
@@ -58,6 +60,19 @@ it("three-then-skip: three admitted attempts, counted across a restart, skip the
   expect(JSON.parse(String(event.detail))).toMatchObject({ message: SLICE_SKIPPED_MESSAGE, sourceId: "src", cursor: 0, length: Buffer.byteLength(TEXT), retry: { action: "retry-skipped", sourceId: "src", cursor: 0 } });
   expect(await consolidateMemorySource(job, extractor, signal())).toMatchObject({ status: "unchanged" });
   expect(extractor).toHaveBeenCalledTimes(3);
+});
+
+it("a network failure uses none of the slice's attempts: three in a row through the real request leave the slice waiting, not skipped", async () => {
+  const job = captured();
+  // a port just closed: fetch rejects on connect with ECONNREFUSED and no reply ever exists (fetch refuses port 1 outright, as a bad port)
+  const closed = createServer();
+  await new Promise<void>(resolve => closed.listen(0, "127.0.0.1", resolve));
+  const { port } = closed.address() as AddressInfo;
+  await new Promise(resolve => closed.close(resolve));
+  const unreachable = ((text, max, sig, dispatch) => requestMemoryExtraction({ url: `http://127.0.0.1:${port}/v1`, apiKey: "rig", model: "rig" }, text, max, sig, dispatch?.messages)) as TextOnlyExtractor;
+  for (let n = 0; n < 3; n++) expect(await consolidateMemorySource(job, unreachable, signal())).toMatchObject({ status: "deferred" });
+  expect(intent().skipped ?? []).toHaveLength(0);
+  expect(intent()).toMatchObject({ extractionAttempts: 0, sliceCalls: 0, cursor: 0 });
 });
 
 it("three-then-skip after a crash with the third attempt charged: the next claim skips without dispatching", async () => {

@@ -309,7 +309,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
       {instance.enabled !== false && instance.install && (needsCli(instance) || needsSignIn(instance)) && (
         <EngineSetup instance={instance} className="mt-2" />
       )}
-      {instance.enabled !== false && !(instance.driverKind === "codex" && needsCli(instance)) && <EngineManagement instance={instance} />}
+      {instance.enabled !== false && !(instance.install?.native && needsCli(instance)) && <EngineManagement instance={instance} />}
       {confirmationOpen && (
         <div className="mt-2 rounded-lg bg-inset p-3 text-[12px] text-ink">
           <p>{t("ux.lcopyb.engines.availabilityNote")}</p>

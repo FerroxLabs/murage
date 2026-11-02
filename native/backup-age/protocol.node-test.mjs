@@ -40,7 +40,7 @@ test("rejects namespace, traversal, reparse-capable ambiguous and reserved path 
 });
 
 test("rejects malformed request identity, nonce, operation and numeric limits", () => {
-  for (const patch of [{ operation: "exec" }, { nonce: nonce.toUpperCase() }, { nonce: "x" }, { parentPid: 0 }, { parentPid: 2 ** 32 }, { maxBytes: 0 }, { maxBytes: limits.bytes + 1 }, { timeoutMs: 1800001 }, { closeTimeoutMs: 30001 }, { timeoutMs: NaN }, { parentDirectory: "C:\\bad\tpath" }]) assert.throws(() => encodeRequest({ ...request, ...patch }, key));
+  for (const patch of [{ operation: "exec" }, { nonce: nonce.toUpperCase() }, { nonce: "x" }, { parentPid: 0 }, { parentPid: 2 ** 32 }, { maxBytes: 0 }, { maxBytes: limits.bytes + 1 }, { timeoutMs: 14400001 }, { closeTimeoutMs: 30001 }, { timeoutMs: NaN }, { parentDirectory: "C:\\bad\tpath" }]) assert.throws(() => encodeRequest({ ...request, ...patch }, key));
   for (const identity of ["", key + "extra", key + key, key.trim(), "AGE-SECRET-KEY-1bad\n", `${key.trim()}\r\n`]) assert.throws(() => encodeRequest(request, identity));
 });
 

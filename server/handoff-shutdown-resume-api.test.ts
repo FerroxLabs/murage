@@ -42,6 +42,8 @@ const createBot = async (name: string, instanceId: string) => {
   return bot;
 };
 const leadGate = () => join(fixture.info.dataDir, "lead-gate");
+const setupGate = () => join(fixture.info.dataDir, "setup-gate");
+const wakesOnDisk = (bot: { id: string; threadId: string }) => (JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")) as any[]).find(row => row.id === bot.id)?.tasks?.find((task: any) => task.threadId === bot.threadId)?.askerWakes?.wakes as any[] ?? [];
 const onlyThese = async (...ids: string[]) => {
   for (const bot of (await api("GET", "/api/bots?messages=0")).body.bots) await api("PATCH", `/api/bots/${bot.id}`, { hidden: !ids.includes(bot.id) });
 };
@@ -76,6 +78,7 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       cfg.instances.lead={driver:'grokAgent',displayName:'Lead fixture',environment:{...ready,FAKE_ACP_MODE:'delegate-peer',FAKE_ACP_PROMPT_DUMP:path.join(data,'lead-prompt.json')},config:{cli,fullAuto:true}};
       cfg.instances.gated={driver:'grokAgent',displayName:'Gated fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'teammate-gate')},config:{cli,fullAuto:true}};
       cfg.instances.gatedLead={driver:'grokAgent',displayName:'Gated lead fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
+      cfg.instances.setupHeld={driver:'grokAgent',displayName:'Setup held fixture',environment:{...ready,FAKE_ACP_MCP_READY_GATE_FILE:path.join(data,'setup-gate'),FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
     gate = join(fixture.info.dataDir, "teammate-gate");
@@ -87,6 +90,7 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
     await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).body.bots.some((bot: any) => bot.busy), { timeout: 30_000 }).toBe(false);
     rmSync(gate, { force: true });
     rmSync(leadGate(), { force: true });
+    rmSync(setupGate(), { force: true });
   }, 40_000);
 
   /** The teammate is busy with the owner's work, and a hand-off is parked on it. */
@@ -222,4 +226,33 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
 
     await wokenWithReply(lead.threadId).toBe(true).catch(async error => { throw new Error(`${error}\n${await dump(lead.threadId)}`); });
   }, 180_000);
+
+  it("a wake on its last attempt, claimed and still in setup when the server closes, wakes the asker on the new server", async () => {
+    const lead = await createBot("LastLead", "lead"), helper = await createBot("LastHelper", "gated");
+    await onlyThese(lead.id, helper.id);
+    await parkOn(helper, lead.threadId, async () => { expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "please pick this up" })).status).toBe(202); });
+    await askerBusyAgain(lead);
+    writeFileSync(gate, "go");
+    await reachesAsker(lead.threadId, "LastHelper").toBe(true);
+
+    // the wake has spent five of its six attempts, and the asker's next engine holds its setup at a file gate: the claim is taken, the prompt is not sent
+    await fixture.stop();
+    const file = join(fixture.info.dataDir, "bots.json"), bots = JSON.parse(readFileSync(file, "utf8"));
+    const row = bots.find((bot: any) => bot.id === lead.id);
+    row.modelSelection.instanceId = "setupHeld";
+    const wake = row.tasks.find((task: any) => task.threadId === lead.threadId).askerWakes.wakes[0];
+    expect(wake.state).toBe("owed");
+    wake.attempts = 5;
+    writeFileSync(file, JSON.stringify(bots));
+    await fixture.restart();
+    await signIn();
+    await expect.poll(() => wakesOnDisk(lead).map(record => record.state), { timeout: 60_000 }).toEqual(["claimed"]);
+
+    await cleanRestart();
+    await signIn();
+    writeFileSync(setupGate(), "go");
+    writeFileSync(leadGate(), "go");
+
+    await wokenWithReply(lead.threadId).toBe(true).catch(async error => { throw new Error(`${error}\n${await dump(lead.threadId)}\n${JSON.stringify(wakesOnDisk(lead))}`); });
+  }, 240_000);
 });

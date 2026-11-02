@@ -658,7 +658,9 @@ export function listAllMcpServers(
       auth: server.auth,
       headerNames: [...Object.keys(server.headers), ...(server.pendingHeaders ?? [])].sort(),
       ...(server.local ? { local: server.local } : {}),
-      ...(server.rev || (server.pendingHeaders?.length ?? 0) > 0 ? { rev: mcpEntryRev(name, server) } : {}),
+      // Every link entry, stored stamp or not: a key save names the revision it
+      // was made for, so a moved entry cannot take it (see saveRemote).
+      rev: mcpEntryRev(name, server),
       enabled: server.enabled,
       ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
       ...((server.pendingHeaders?.length ?? 0) > 0 ? { pendingKeys: [...server.pendingHeaders!].sort() } : {}),
