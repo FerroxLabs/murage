@@ -63,7 +63,7 @@ export function signedOutEngineRows(view: SetupView | null | undefined): SignedO
  */
 export function withSignedOutEngines<T extends { decisions: number; connections: number }>(
   page: T,
-  rows: readonly SignedOutEngineRow[],
+  rows: ReadonlyArray<SignedOutEngineRow | { id: string }>,
 ): T {
   if (rows.length === 0) return page;
   return { ...page, decisions: page.decisions + rows.length, connections: page.connections + rows.length };
@@ -83,7 +83,9 @@ export function inboxTabCounts<T extends { decisions: number; connections: numbe
   page: T | null,
   view: SetupView | null | undefined,
   answered: ReadonlySet<string>,
+  /** Live rows of the same kind (engine-need.ts): one engine or Flux problem, or none. */
+  extra: ReadonlyArray<{ id: string }> = [],
 ): T | null {
   if (!page) return null;
-  return withSignedOutEngines(page, signedOutEngineRows(view).filter(row => !answered.has(`engine:${row.id}`)));
+  return withSignedOutEngines(page, [...signedOutEngineRows(view).filter(row => !answered.has(`engine:${row.id}`)), ...extra]);
 }

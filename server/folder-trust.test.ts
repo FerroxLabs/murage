@@ -443,6 +443,15 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(parseUpstreamTrustedFolders(`[meta]\nversion = 2\n[folders."/p"]\ntrusted = true\n`)).toEqual(new Map([["/p", true]]));
   });
 
+  it("reads a Fuigo 1.0.35 store: the consent stamp is accepted in every spelling and ignored (FUIGO-TRUST-V2 R7)", () => {
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\ndecided_at = 1780000000\nconsent = 2\n`)).toEqual(new Map([["/r", true]]));
+    expect(parseUpstreamTrustedFolders(`[folders]\n"/a" = { trusted = true, decided_at = 1, consent = 2 }\n"/b".trusted = false\n"/b".consent = 2\n`))
+      .toEqual(new Map([["/a", true], ["/b", false]]));
+    // a stamp that is not plain decimal digits is a document the engine would reject too
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\nconsent = -1\n`)).toBeNull();
+    expect(parseUpstreamTrustedFolders(`[folders."/r"]\ntrusted = true\nconsent = "2"\n`)).toBeNull();
+  });
+
   it("treats a document it cannot read exactly as empty: never a grant the engine might not give", () => {
     for (const bad of [
       `[folders."/p"]\ntrusted = yes\n`,
@@ -527,7 +536,7 @@ describe("the upstream trusted_folders.toml (read-only)", () => {
     expect(scanFolderTrustSources(join(dir, "sub"), { fuigoHome: home })).toMatchObject({ upstreamTrusted: true });
     // a declined record upstream is no grant; Murage's own record still governs
     writeFileSync(join(home, "trusted_folders.toml"), trustRecord(dir, false));
-    expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
+    expect(scanFolderTrustSources(dir, { fuigoHome: home })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"], upstreamDeclined: true });
     // an empty (provider-routed) home trusts nothing
     expect(scanFolderTrustSources(dir, { fuigoHome: fuigoHomeIn("routed-turn-home") })).toEqual({ key: dir, folder: dir, sources: ["AGENTS.md"] });
   });
@@ -625,7 +634,7 @@ describe("the card and the chip (shared)", () => {
     const name = folderTrustWithheldName(["AGENTS.md", "CLAUDE.md", ".mcp.json", ".fuigo/skills", ".claude/rules", ".envrc", ".fuigo/hooks", ".fuigo/agents"]);
     expect(name).toBe("untrusted folder: AGENTS.md, CLAUDE.md, .mcp.json, .fuigo/skills, .claude/rules, .envrc and 2 more");
     expect(folderTrustNotice(name)).toEqual({ kind: "withheld", sources: "AGENTS.md, CLAUDE.md, .mcp.json, .fuigo/skills, .claude/rules, .envrc and 2 more" });
-    expect(folderTrustDisplayName("trusted folder: AGENTS.md")).toBe("Folder trusted: AGENTS.md apply from the next turn");
+    expect(folderTrustDisplayName("trusted folder: AGENTS.md")).toBe("Folder trusted: AGENTS.md apply in a new conversation in this folder");
     expect(folderTrustNotice("stopped: the model connection was turned off")).toBeUndefined();
     expect(folderTrustNotice("error: boom")).toBeUndefined();
     expect(folderTrustNotice(undefined)).toBeUndefined();

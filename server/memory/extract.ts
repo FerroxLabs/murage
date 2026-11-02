@@ -24,6 +24,8 @@ export interface MemoryGroundingInput { text:string; quote:string; claimType:str
 export interface MemoryExtractionDispatch { policyRevision:string; messages:ReadonlyArray<Readonly<{role:string;content:string}>>; purpose?:"evaluation"|"reflection"|"continuity" }
 export type TextOnlyExtractor=((text:string,maximumOutputTokens:number,signal:AbortSignal,dispatch?:MemoryExtractionDispatch)=>Promise<string>) & {
   learningConnection?:string; learningModel?:()=>string|undefined; reviewOnly?:boolean;
+  /** Told when a reply that arrived could not be used, for a resolver that needs to know which model gave it. */
+  pinReplyUnusable?:(error:unknown,signal:AbortSignal)=>void;
   /** The health contract's engine category of the transport that answers (health/engine-kind.ts), set by the resolver. Never
    * inferred from which keys exist. */
   healthEngine?:import("../../shared/health-protocol.mjs").EngineKind;
@@ -128,7 +130,10 @@ async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtra
     if(!envelope.success)throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","schema-mismatch");
     const choice=envelope.data.choices[0];
     const stops=[choice.finish_reason,choice.stop_reason,envelope.data.stop_reason];
-    if(stops.some(reason=>reason==="length"||reason==="max_tokens"))throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","cut-off");
+    if(stops.some(reason=>reason==="length"||reason==="max_tokens")){
+      const visible=(choice.message as {content?:unknown}|null|undefined)?.content;
+      throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","cut-off",typeof visible==="string"&&visible.trim()?undefined:"no-text");
+    }
     const refusal=z.object({refusal:z.string().min(1)}).safeParse(choice.message);
     if(refusal.success||stops.some(reason=>reason==="content_filter"||reason==="refusal"))throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","refusal");
     const message=z.object({content:z.string().nullable().optional(),tool_calls:z.array(z.unknown()).optional(),function_call:z.unknown().optional()}).safeParse(choice.message);
@@ -152,6 +157,7 @@ export async function extractCandidates(text: string, extractor: TextOnlyExtract
   if(!extractor){recordCounter("extraction","deferred-unconfigured","none");return {status:"deferred" as const,reason:"extractor-unavailable",candidates:[]};}
   const outcomes=extractionOutcomes.forExtractor(extractor);
   const defer=(reason:string,retryAfter?:number,why:ExtractionDeferral="budget")=>{extractionOutcomes.deferred(outcomes,why);return {status:"deferred" as const,reason,candidates:[],retryAfter};};
+  if(outcomes.networkRetryAt>Date.now())return defer("extractor-unreachable",outcomes.networkRetryAt);
   if(!options.ownerRetry&&outcomes.retryAt>Date.now())return defer("extractor-backoff",outcomes.retryAt);
   if(learningSlot.inFlight)return defer("extractor-busy",undefined,"busy");
   if(!text.trim()||Buffer.byteLength(text)>65536)return defer("source-exceeds-extraction-budget");
@@ -172,13 +178,16 @@ export async function extractCandidates(text: string, extractor: TextOnlyExtract
   } catch(error) {
     // The reason code only (never the reply or the source): a slice that keeps failing says why in the log.
     const reason=extractionFailureReason(error);
+    extractor.pinReplyUnusable?.(error,signal);
     extractionOutcomes.unusable(outcomes,reason);
     // Health counts the same settlement in the transport-independent contract (HTTP and CLI alike): a call the caller
     // cancelled, a session that ended under it, or an unusable reply by its fixed code. Observation only.
     const health=extractionHealthOutcome(error,signal.aborted);
     extractionOutcomes.settled(outcomes,health.outcome,health.code);
     try{console.warn(`[memory] extraction attempt unusable: ${extractionFailureCode(error)} reason=${reason} extractor=${outcomes.extractor} engine=${outcomes.engine} model=${outcomes.model}`);}catch{/* logging is best effort */}
-    return {status:"deferred" as const,reason:"extraction-incomplete",candidates:[],retryAfter:outcomes.retryAt>Date.now()?outcomes.retryAt:undefined};
+    // Nothing reached the provider: the slice did nothing wrong, so the commit gives this attempt back.
+    if(reason==="network"&&!signal.aborted)return {status:"deferred" as const,reason:"extractor-unreachable",candidates:[],retryAfter:outcomes.networkRetryAt,noReply:true as const,failure:reason};
+    return {status:"deferred" as const,reason:"extraction-incomplete",candidates:[],retryAfter:outcomes.retryAt>Date.now()?outcomes.retryAt:undefined,failure:reason};
   }
   finally{try{finish();}finally{learningSlot.inFlight=false;}}
 }
@@ -309,25 +318,43 @@ export function reserveExtraction(messages:ReadonlyArray<Readonly<{role:string;c
  * that claim" (as before), `entailed` the support check alone. A reply without `updates` keeps the older meaning (entailed = supported). */
 export async function groundMemoryClaim(input:MemoryGroundingInput,extractor:TextOnlyExtractor|null,signal:AbortSignal,record?:ReservationRecord):Promise<{supported:boolean;reason:string;entailed?:boolean}>{
   if(!extractor?.ground)return {supported:false,reason:"grounding-unavailable"};
-  if(signal.aborted||learningSlot.inFlight)return {supported:false,reason:"grounding-busy-or-cancelled"};
+  const outcomes=extractionOutcomes.forExtractor(extractor);
+  if(signal.aborted||learningSlot.inFlight||outcomes.networkRetryAt>Date.now())return {supported:false,reason:"grounding-busy-or-cancelled"};
   if(Buffer.byteLength(JSON.stringify(input))>65536)return {supported:false,reason:"grounding-input-limit"};
   const {reserved,output,settle,finish}=reserveExtraction(memoryGroundingMessages(input),64,record,"grounding");
   if(reserved!==true)return {supported:false,reason:reserved};
   learningSlot.inFlight=true;
   try{
     const raw=await usageObserver.run(settle,()=>extractor.ground!(input,output,AbortSignal.any([signal,AbortSignal.timeout(60000)])));
-    const result=z.object({supported:z.boolean(),updates:z.boolean().optional()}).strict().parse(JSON.parse(raw));
+    const result=z.object({supported:z.boolean(),updates:z.boolean().optional()}).strict().parse(extractionJson(raw));
     const entailed=result.supported&&!signal.aborted;
     if(input.previousClaim===undefined)return {supported:entailed,reason:result.supported?"source-entailment":"unsupported-claim"};
     // with previousClaim, `supported` keeps its meaning for every caller (entailed AND an explicit update); `entailed` alone is the support check
     const updates=entailed&&(result.updates??true);
     return {supported:updates,reason:updates?"source-entailment":"unsupported-claim",entailed};
-  }catch{return {supported:false,reason:"grounding-incomplete"};}
+  }catch(error){
+    const label=signal.aborted?"cancelled":extractionFailureReason(error);
+    extractor.pinReplyUnusable?.(error,signal);
+    if(label==="network")extractionOutcomes.networkFailed(outcomes);
+    try{console.warn(`[memory] support check unfinished: reason=${label}`);}catch{/* logging is best effort */}
+    return {supported:false,reason:"grounding-incomplete"};
+  }
   finally{try{finish();}finally{learningSlot.inFlight=false;}}
 }
 
 /** Objective evaluation parses candidates without activating canonical memory. */
 export type MemoryExtractionCandidate=z.infer<typeof extractedCandidate>&{startByte:number;endByte:number};
+const NETWORK_CODES=new Set(["ETIMEDOUT","ENOTFOUND","EAI_AGAIN","ECONNREFUSED","ENETUNREACH","EHOSTUNREACH","EHOSTDOWN","ENETDOWN","EADDRNOTAVAIL","UND_ERR_CONNECT_TIMEOUT"]);
+/** The request never reached the provider: connect failed. Read from the error's code, its cause chain and an AggregateError's members; an HTTP
+ *  status, a reply or a reset after sending is never this, so a slice that makes a provider fail keeps counting. */
+export function isNetworkFailure(error:unknown,depth=0):boolean{
+  if(typeof error!=="object"||error===null||depth>4)return false;
+  const failure=error as {status?:unknown;code?:unknown;cause?:unknown;errors?:unknown};
+  if(failure.status!==undefined)return false;
+  if(typeof failure.code==="string"&&NETWORK_CODES.has(failure.code))return true;
+  if(Array.isArray(failure.errors)&&failure.errors.some(item=>isNetworkFailure(item,depth+1)))return true;
+  return isNetworkFailure(failure.cause,depth+1);
+}
 /** Fixed labels only: even an Error name or an uppercase message can contain user content. */
 function extractionFailureReason(error:unknown):ExtractionFailureReason{
   if(error instanceof ExtractionReplyError)return error.reason;
@@ -338,7 +365,7 @@ function extractionFailureReason(error:unknown):ExtractionFailureReason{
   if(["MEMORY_EXTRACTION_NONE_GROUNDED","MEMORY_EXTRACTION_INVALID_RESPONSE","MEMORY_EXTRACTION_RESPONSE_LIMIT"].includes(message))return "schema-mismatch";
   const status=typeof error==="object"&&error!==null&&"status" in error?error.status:undefined;
   if(status===401||status===403||message==="MEMORY_ENGINE_REFUSED")return "refusal";
-  return "transport-error";
+  return isNetworkFailure(error)?"network":"transport-error";
 }
 /** The health contract's settlement of a failed admitted attempt (GAP-SENTINEL-109 4.2), from fixed codes only: the caller's
  * own cancel, an engine session that ended under the attempt (interrupted: its outcome is unknown), or an unusable reply split
@@ -346,6 +373,8 @@ function extractionFailureReason(error:unknown):ExtractionFailureReason{
 export function extractionHealthOutcome(error:unknown,cancelled:boolean):{outcome:Exclude<ExtractionSettlement,"complete">;code?:string}{
   if(cancelled)return {outcome:"cancelled"};
   if(typeof error==="object"&&error!==null&&(error as {interrupted?:unknown}).interrupted===true)return {outcome:"interrupted"};
+  // no reply exists to call unusable
+  if(isNetworkFailure(error))return {outcome:"cancelled"};
   if(error instanceof ExtractionReplyError){
     if(error.detail==="tool-call")return {outcome:"unusable",code:"tool-call"};
     const code=({"empty-reply":"empty","not-json":"not-json","schema-mismatch":"schema","cut-off":"length","transport-error":"transport"} as Record<string,string>)[error.reason];

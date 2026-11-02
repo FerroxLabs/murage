@@ -148,7 +148,7 @@ describe("MCP proxies (tests 4, 5, r3 M5, Low)", () => {
   it("renders Claude's --mcp-config file from the launcher's own commands, with each stanza's env", () => {
     const plan = ok(rig.request("claudeAgent", { unit, args: [...MINIMAL_ARGV.claudeAgent, "--mcp-config", "@render:mcp"], render: { mcp: stanzas } }));
     const file = JSON.parse(plan.files[`${RENDER_DIR}/mcp.json`]);
-    expect(file.mcpServers.muragebox).toEqual({ command: "/usr/local/bin/node", args: [`${rig.proxyRoot}/permission-proxy.js`, socket], env: { ELECTRON_RUN_AS_NODE: "1" } });
+    expect(file.mcpServers.muragebox).toEqual({ command: "/usr/local/bin/node", args: [`${rig.proxyRoot}/permission-proxy.js`, socket], env: { ELECTRON_RUN_AS_NODE: "1" }, timeout: 1728000000 });
     expect(file.mcpServers.agents).toEqual({ command: "/usr/local/bin/node", args: [`${rig.proxyRoot}/drivers/agents-proxy.js`], env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8787", MURAGE_COMMS_TOKEN: "fixture-comms" } });
     expect(file.mcpServers.github.args).toEqual([`${rig.proxyRoot}/drivers/remote-mcp-proxy.js`, "--server", "github"]);
     expect(file.mcpServers.docs).toEqual({ type: "http", url: "https://mcp.fixture.example/mcp" });

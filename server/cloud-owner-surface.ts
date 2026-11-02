@@ -9,6 +9,13 @@ import { requestSurface } from "./sse-visibility.ts";
 export const isDesktopApp = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>
   requestSurface(headers, query) === "desktop" && !(process.env.MURAGE_CLOUD_ROLE === "home" && cloudIdentity(headers)?.scope === "owner-phone");
 
+/** The owner's physical computer, for bot-level and task-level "Always" grants only (L1A-GRANT-AUTHORITY-1013):
+ * the local desktop app with its renderer secret proven. On a Cloud home no surface is the computer, not the phone,
+ * not the passkey browser and not `owner-desktop`, whose ticket kind its caller chooses (proving the desktop there is
+ * a Cloud enrollment lane). Kept apart from `isDesktopApp`, which other handlers widen on purpose. */
+export const isOwnersComputer = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>
+  process.env.MURAGE_CLOUD_ROLE !== "home" && requestSurface(headers, query) === "desktop";
+
 /** True when the fresh-auth gate is skipped for this approval: the desktop app only. */
 export const skipsFreshAuth = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean =>
   isDesktopApp(headers, query);

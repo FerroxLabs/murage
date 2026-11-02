@@ -9,8 +9,9 @@ ci_waiver = that path. The gate reads the key lines below; each must start at
 the beginning of its line and appear exactly once. Everything else is free prose.
 
   Commit:      the full 40-hex SHA being released (the pinned commit)
-  CI run:      the numeric id of the CI (ci.yml) run that failed for that
+  CI run:      the numeric id of the full CI (ci.yml) run that failed for that
                commit, the newest attempt; the gate checks it against GitHub
+               and refuses a scoped run
   Critical:    must be 0; any other value refuses
   Reviewed failure classes:
                one "- " line per class of failure reviewed, directly below

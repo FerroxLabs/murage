@@ -1144,6 +1144,39 @@ describe("RoutineManager", () => {
     });
   });
 
+  it("a run with two cards open stays waiting until the last closes", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Two cards", prompt: "Wait", botId: "ember-two", schedule: { type: "daily", time: "23:59", weekdays: [1] } });
+    const run = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const base = { provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString() };
+    const opened = (requestId: string) => h.manager.handleRuntimeEvent({ ...base, eventId: `open-${requestId}`, type: "request.opened", requestId, requestType: "permission", tool: "write", summary: "Approve" } as never);
+    const resolved = (requestId: string) => h.manager.handleRuntimeEvent({ ...base, eventId: `done-${requestId}`, type: "request.resolved", requestId, behavior: "allow", source: "user" } as never);
+    opened("a"); opened("b");
+    resolved("a");
+    expect(h.manager.listRuns().find((item) => item.id === run.id)?.status).toBe("waiting");
+    resolved("b");
+    expect(h.manager.listRuns().find((item) => item.id === run.id)?.status).toBe("running");
+  });
+
+  it("a run at its limit keeps needs-you through a further card, and the limit restarts only when the last closes", async () => {
+    const h = harness();
+    const routine = h.manager.create({ name: "Limit cards", prompt: "Wait", botId: "ember-limit", schedule: { type: "daily", time: "23:59", weekdays: [1] } });
+    const run = h.manager.runNow(routine.id)!;
+    await h.manager.tick();
+    const base = { provider: "fake", threadId: "thread-1", createdAt: new Date().toISOString() };
+    const internal = (h.manager as unknown as { runs: RoutineRun[] }).runs.find((item) => item.id === run.id)!;
+    h.manager.handleRuntimeEvent({ ...base, eventId: "o1", type: "request.opened", requestId: "a", requestType: "permission", tool: "write", summary: "Approve" } as never);
+    internal.status = "needs-you";
+    h.manager.handleRuntimeEvent({ ...base, eventId: "o2", type: "request.opened", requestId: "b", requestType: "permission", tool: "write", summary: "Approve" } as never);
+    expect(internal.status).toBe("needs-you");
+    h.manager.handleRuntimeEvent({ ...base, eventId: "d1", type: "request.resolved", requestId: "a", behavior: "allow", source: "user" } as never);
+    expect(internal.resumedAt).toBeUndefined();
+    h.manager.handleRuntimeEvent({ ...base, eventId: "d2", type: "request.resolved", requestId: "b", behavior: "allow", source: "user" } as never);
+    expect(internal.status).toBe("running");
+    expect(internal.resumedAt).toBeDefined();
+  });
+
   it("retains an old waiting run when trimming terminal receipt history", async () => {
     const h = harness();
     const routine = h.manager.create({
