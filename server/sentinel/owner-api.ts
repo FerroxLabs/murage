@@ -31,7 +31,7 @@ import { join } from "node:path";
 import { realpathSync } from "node:fs";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 import { sentinelInstallationIdOf } from "../../shared/sentinel-installation.mjs";
-import type { HealthIssue, HealthIssuesResponse, HealthSummaryResponse } from "../../shared/sentinel-view.ts";
+import type { HealthDigest, HealthIssue, HealthIssuesResponse, HealthSummaryResponse } from "../../shared/sentinel-view.ts";
 import { ownerBrowserActs, type CloudRequestIdentity } from "../cloud-request-identity.ts";
 import { SENTINEL_OWNER_ROUTE, sentinelCloudDecision } from "../route-policy.ts";
 import { DESCRIPTOR_FILE, checkOwnedFile, defaultOutputRoot, loadDescriptor, readSmallVerified, type LoadOptions, type PlatformOptions } from "./paths.ts";
@@ -165,6 +165,8 @@ export interface SentinelReadContext {
   owner: boolean;
   /** Located lazily, only for an owner. */
   locate: () => LocateResult;
+  /** The latest daily summary (server-host.ts), read only for an owner. */
+  digest?: () => HealthDigest | null;
   platform?: NodeJS.Platform;
 }
 
@@ -199,7 +201,7 @@ export function handleSentinelRead(method: string, path: string, query: URLSearc
       const located = ctx.locate();
       if (!located.ok) return { status: 200, body: { status: located.reason === "descriptor-missing" || located.reason === "output-root" ? "waiting" : "unavailable", view: null } satisfies HealthSummaryResponse };
       const view = readOwnerView(located.value, ctx.platform);
-      return { status: 200, body: { status: view ? "ready" : "waiting", view } satisfies HealthSummaryResponse };
+      return { status: 200, body: { status: view ? "ready" : "waiting", view, digest: ctx.digest?.() ?? null } satisfies HealthSummaryResponse };
     }
     const parsed = parseIssuesQuery(query);
     if (!parsed) return { status: 400, body: { ok: false, reason: "bad-request" } satisfies HealthIssuesResponse };

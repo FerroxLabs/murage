@@ -10,6 +10,7 @@ import { activeSavedFilters, type SavedFilters, type SavedVersionResult } from "
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview } from "../../shared/artifacts";
 import type { WorkspaceScopeRef } from "../../shared/workspace-files";
 import { ArtifactImageMedia } from "./ImageMedia";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import { trustedPreviewDocument, useSanitizerReady } from "@/lib/trusted-html";
 import { WorkspaceFiles, type WorkspaceOpenInPane } from "./WorkspaceFiles";
 import { SandboxedFrame } from "./SandboxedFrame";
@@ -194,8 +195,11 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
     setNotice(t(saved.pinnedRevision ? "filesWorkspace.saved" : "filesWorkspace.savedUnpinned", { name: saved.artifact.name }));
     setPage(0); setRevision(value => value + 1);
   };
-  return <section className="mx-auto h-full w-full max-w-5xl overflow-y-auto bg-panel p-4 text-ink sm:p-6" aria-labelledby="files-title">
+  return <section className={`${BOX_FRAME} mx-auto h-full w-full max-w-5xl bg-panel text-ink`} aria-labelledby="files-title">
     <h1 id="files-title" className="sr-only">Files</h1>
+    {/* A saved version opened on its own hides the list and its controls; the way out stays. */}
+    <BoxHead className="flex-wrap border-b border-hairline/40 px-4 py-3 sm:px-6"><h2 className="text-[22px] font-semibold">Files</h2><div className="flex flex-wrap gap-2">{!focusedPreview && onShowPane && scope && <button className={button} data-pane-action="show" onClick={() => onShowPane(scope)}>{t("workspacePane.showPane")}</button>}{!focusedPreview && <button className={button} disabled={busy} onClick={refresh}>Refresh</button>}{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></BoxHead>
+    <BoxBody className="p-4 sm:p-6">
     {focusedPreview && !preview && <div className="space-y-3"><p role="status" className="text-[13px]">{error ?? "Opening saved version…"}</p><button className={button} onClick={() => { rescopeOpened.current = false; setFocusedPreview(false); }}>{t("filesWorkspace.savedTitle")}</button></div>}
     {preview && <section ref={previewPanel} role="region" aria-label="File preview" className="mb-5 rounded-xl border border-hairline p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h2 className="break-words text-[15px] font-medium">{preview.artifact.name}</h2><div className="flex flex-wrap gap-2"><button className={button} disabled={busy} onClick={() => void download(preview.artifact)}>Download saved copy</button><button className={button} onClick={() => { setPreview(null); setFocusedPreview(false); }}>Close preview</button></div></div>
       <p className="my-2 text-[12px] text-ink-secondary">{t("filesWorkspace.savedSubtitle")}</p>
@@ -205,8 +209,7 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
       {preview.mode === "download" && <p className="mt-3 text-[13px] text-ink-secondary">Preview is unavailable for this format or size. Download the saved copy to review it.</p>}
     </section>}
     <div hidden={focusedPreview}>
-    <header className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[22px] font-semibold">Files</h2><div className="flex flex-wrap gap-2">{onShowPane && scope && <button className={button} data-pane-action="show" onClick={() => onShowPane(scope)}>{t("workspacePane.showPane")}</button>}<button className={button} disabled={busy} onClick={refresh}>Refresh</button>{onClose && <button className={button} onClick={onClose}>Close Files</button>}</div></header>
-    <p className="mt-2 text-[13px] text-ink-secondary">The files in a bot's working folder, and the verified copies Murage has saved. Refresh reloads both. A path mentioned in chat is not automatically a saved file.</p>
+    <p className="text-[13px] text-ink-secondary">The files in a bot's working folder, and the verified copies Murage has saved. Refresh reloads both. A path mentioned in chat is not automatically a saved file.</p>
     <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
       <label className="text-[12px]">Bot<select className={`${field} mt-1 w-full`} value={botId} onChange={event => { rescopeOpened.current = false; setBotId(event.target.value); setThreadId(""); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All bots</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
       <label className="text-[12px]">Task<select className={`${field} mt-1 w-full`} value={threadId} disabled={!bot} onChange={event => { rescopeOpened.current = false; setThreadId(event.target.value); setPage(0); setSavedEveryBot(false); setNotice(null); }}><option value="">All tasks</option>{taskOptions.map(task => <option key={task.threadId} value={task.threadId}>{task.title}</option>)}</select></label>
@@ -245,5 +248,6 @@ export function Files({ bots, initialBotId = "", initialThreadId = "", initialAr
       {result && <footer className="mt-4 flex items-center justify-between gap-3"><button className={button} disabled={busy || !page} onClick={() => setPage(value => value - 1)}>Previous</button><span className="text-[12px]">Page {page + 1} · {result.total} files</span><button className={button} disabled={busy || (page + 1) * result.pageSize >= result.total} onClick={() => setPage(value => value + 1)}>Next</button></footer>}
     </section>
     </div>
+    </BoxBody>
   </section>;
 }

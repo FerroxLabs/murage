@@ -209,8 +209,10 @@ test("a refused Full access snaps back to the saved level and says why; away fro
   await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
   const full = dialog.getByRole("radio", { name: "Full access", exact: true });
   await full.click();
-  await page.getByRole("button", { name: "Turn on full access", exact: true }).click();
+  // The confirm card stands in place of the example table (3.3), and stays open with the refusal.
+  await dialog.getByRole("button", { name: "Use Full access", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveText(FULL_ACCESS_DESKTOP_ONLY);
+  await dialog.getByRole("button", { name: "Keep Ask", exact: true }).click();
   await expect(dialog.getByRole("radio", { name: "Ask", exact: true })).toBeChecked();
   await expect(full).not.toBeChecked();
   await expect(dialog.getByRole("switch", { name: /^Also approve setup requests/ })).toBeDisabled();

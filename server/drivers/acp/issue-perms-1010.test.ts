@@ -422,16 +422,16 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
         expect(c.stopLine, patch).toMatchObject({ kind: "delete" });
         expect(c.stopLine?.what, patch).toContain("ledger.csv");
         expect(c.stopLine?.what, patch).not.toMatch(/could not read/);
-        // the final verdict too, so this cannot pass on the stop-line hit alone: the Codex edit contract still reads `changes`
+        // the final verdict too, so this cannot pass on the stop-line hit alone; a routine keeps the stop line at No limits
         for (const bot of [FULL, NO_LIMITS]) {
-          expect(c.verdict(bot), patch).toMatchObject({ approve: null, source: "unread-call", rule: "the call does not carry what this tool needs (changes)" });
+          expect(c.verdict(bot), patch).toMatchObject({ approve: null, source: "stop-line", rule: "delete" });
         }
       }
-      // a readable outside edit that removes nothing is not a delete: the contract still holds it as one it cannot read
+      // a readable outside edit that removes nothing is not a delete, and is judged by its level (NOLIMITS-CODEX-EDIT)
       const edit = codexPatch(env(`*** Update File: ${outside()}`, "@@", "-a", "+b"));
       expect(edit.route).toMatchObject({ route: "ask", toolCall: { name: "edit" } });
       expect(edit.stopLine?.what ?? "").not.toContain("ledger.csv");
-      expect(edit.verdict(FULL)?.approve).toBeNull();
+      expect(edit.stopLine).toBeNull();
       // a missing patch keeps its unread card (R3-16), never a delete wording
       expect(codexPatch("").stopLine?.what ?? "").not.toContain("ledger.csv");
     });

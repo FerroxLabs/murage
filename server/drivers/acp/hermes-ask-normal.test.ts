@@ -154,6 +154,7 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
     ] as const) {
       const opened = await askedWith(id, hermesRequest("terminal", message));
       expect(opened.toolInputMissing).toBe("hermes-hook");
+      expect(opened.toolInputTruncated === true, id).toBe(id === "hermes-cut");
       // the card shows what the hook sent, never the placeholder
       expect(opened.summary).toContain("terminal: ");
       expect(opened.summary).not.toContain("plugin approval rule");
@@ -161,6 +162,9 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
       const verdict = autoVerdict({ autoApprove: true, fullAccess: true }, opened.tool, opened.summary, { call: callOf(opened) });
       expect(verdict.approve).toBeNull();
       expect(["unread-call", "always-ask"]).toContain(verdict.source);
+      // and at No limits on a turn the owner started: a call that did not arrive whole asks there too
+      const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
+      expect(owner.approve, id).toBeNull();
       await instance?.dispose();
       instance = undefined;
     }

@@ -48,6 +48,14 @@ describe("help keys", () => {
   });
 });
 
+describe("the shell's new screens", () => {
+  for (const activeView of ["today", "needs-you", "health"] as const) {
+    it(`${activeView} opens the general help page, never the chat behind it`, () => {
+      expect(resolveHelpScreen({ activeView, bot: { id: "b1", name: "Nova" }, connected: true }).key).toBe("help");
+    });
+  }
+});
+
 describe("help panel", () => {
   const screen = resolveHelpScreen({ activeView: "routines", connected: true });
   const props = (over: Partial<HelpPanelProps> = {}): HelpPanelProps => ({

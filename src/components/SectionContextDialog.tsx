@@ -9,6 +9,7 @@ import { BookOpen, Loader2, Save, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { loadSectionContext, saveSectionContext } from "@/lib/section-context-client";
 import { api } from "@/state/store";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export function SectionContextDialog({ section, label, onClose }: { section: string; label: string; onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -124,9 +125,9 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
         aria-modal="true"
         aria-labelledby="section-context-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[680px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className={cn(BOX_FRAME, "animate-pop-in max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[680px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none")}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-hairline/40 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
+        <BoxHead className="items-start gap-4 border-b border-hairline/40 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
             <div className="flex items-center gap-2">
               <BookOpen size={19} className="text-accent" />
@@ -146,9 +147,9 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
           >
             <X size={19} />
           </button>
-        </header>
+        </BoxHead>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
+        <BoxBody className="px-6 py-5 sm:px-8">
           {loading ? (
             <div className="flex min-h-[260px] items-center justify-center text-ink-secondary">
               <Loader2 size={20} className="animate-spin" aria-label="Loading team instructions" />
@@ -175,9 +176,9 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
             </>
           )}
           {error && <div className="mt-3 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
-        </div>
+        </BoxBody>
 
-        <footer className="flex items-center justify-end gap-2 border-t border-hairline/40 px-6 py-4 sm:px-8">
+        <BoxFoot className="border-t border-hairline/40 px-6 py-4 sm:px-8">
           <button onClick={requestClose} disabled={saving} className="rounded-lg px-3.5 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40">
             Cancel
           </button>
@@ -189,7 +190,7 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             Save instructions
           </button>
-        </footer>
+        </BoxFoot>
       </div>
     </div>,
     document.body,

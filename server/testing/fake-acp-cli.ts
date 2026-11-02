@@ -70,7 +70,25 @@
 //                     although Murage's own reader may have accepted it.
 //                     With FAKE_ACP_TRUST_FAIL_PROMPT=1 the prompt FAILS
 //                     with a JSON-RPC error while its trust request is
-//                     still open — a turn that fails under a late card)
+//                     still open — a turn that fails under a late card.
+//                     FAKE_ACP_TRUST_V=2 is the 1.0.35 protocol: it asks only a
+//                     client that advertised `v2`, whenever its store has no
+//                     consent-2 trust and no stored decline at the key; the
+//                     request carries `workspace`, `scope` and `reason` ("new",
+//                     or "upgrade" for an unstamped trust); a grant persists
+//                     consent 2 for exactly that key; a reject is not saved and
+//                     silences that key for the rest of this process. Without
+//                     FAKE_ACP_VERSION it reports a version on the matching side
+//                     of 1.0.35, so an unset V is generation 1.
+//                     FAKE_ACP_TRUST_WORKSPACE names any key for any cwd (default
+//                     the cwd). FAKE_ACP_TRUST_DISABLED=1 is Fuigo's trust switch
+//                     off: trusted, no request. FAKE_ACP_TRUST_KINDS is a comma
+//                     list of configKinds (default instructions; empty for none).
+//                     FAKE_ACP_TRUST_SCOPE replaces `scope` ("none" leaves it out,
+//                     the request a 1.0.34 engine sends). FAKE_ACP_TRUST_LOG gets
+//                     one JSON line per request and per raw reply.
+//                     FAKE_ACP_TRUST_DELAY_MS raises the V=2 request that long after
+//                     the session reply: a warm has parked by then.)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -219,6 +237,10 @@
 //   __fixture_wake_after_turn__  (prompt marker) finish the turn, then 2 s later
 //                        report turn_completed on _fuigo/session_notification,
 //                        the way Fuigo starts a turn of its own after end_turn
+//   FAKE_ACP_SESSION_NEW_GATE  path: answer session/new only once this file exists
+//                        (writes `<path>.waiting` while held): the window between
+//                        the turn's id going back and its prompt's write, where a
+//                        memory revoke makes the fence refuse the send
 //   FAKE_ACP_INIT_DELAY_MS  answer initialize only after this long: a startup
 //                        cost, so a reused process's saving is measurable
 //   __fixture_child_later__  (prompt marker) finish the turn, then start
@@ -276,7 +298,7 @@
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -393,6 +415,7 @@ const dumpEnv = Object.fromEntries(
     "KIMI_MODEL_DISPLAY_NAME",
     "TEST_TURN_MODEL",
     "FUIGO_HOME",
+    "MURAGE_CLOUD_TURN_RENDER",
     "FUIGO_DISABLE_MODEL_REFRESH",
     "FUIGO_SUBAGENTS",
     "FUIGO_WORKFLOWS",
@@ -446,12 +469,14 @@ if (argv.includes("--version")) {
   // FAKE_ACP_VERSION sets the reported version (the default is past every engine's scoped-home floor, so a turn is not rejected as too old); FAKE_ACP_VERSION_LOG counts probes; FAKE_ACP_VERSION_FAIL=1 makes `--version` fail (a working CLI with a broken probe).
   if (process.env.FAKE_ACP_VERSION_LOG) appendFileSync(process.env.FAKE_ACP_VERSION_LOG, "probe\n");
   if (process.env.FAKE_ACP_VERSION_FAIL === "1") process.exit(1);
-  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? "fake-acp 1.0.62");
+  await printProbeAndExit(process.env.FAKE_ACP_VERSION ?? (mode === "folder-trust" && process.env.FAKE_ACP_TRUST_V !== "2" ? "fake-acp 1.0.32" : "fake-acp 1.0.62"));
 }
 // Cursor's driver probes `agent status` / `agent models` on the same binary
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
 // so catalog/auth tests do not hang on stdin.
 if (argv[0] === "status" || argv[0] === "whoami") {
+  // FAKE_ACP_AUTH=crash: the status check dies with nothing said, so the login stays unverified.
+  if (process.env.FAKE_ACP_AUTH === "crash") { process.stderr.write("fake-acp: status crashed\n"); process.exit(2); }
   const authenticated = process.env.FAKE_ACP_AUTH !== "0";
   await printProbeAndExit(JSON.stringify({ isAuthenticated: authenticated }));
 }
@@ -629,6 +654,57 @@ let permissionAskedAt: number | null = null;
 // trusted when the session was built (argv --trust, the way `fuigo --trust`
 // grants the process cwd up front)
 let folderTrustInteractive = false;
+const trustV2 = process.env.FAKE_ACP_TRUST_V === "2";
+let folderTrustClientV2 = false;
+/** Keys a reject silenced: Fuigo keeps these for the life of the process, nowhere else. */
+const trustRejected = new Set<string>();
+/** The raw reply line, for byte-exact assertions. */
+let lastInboundLine = "";
+const trustLog = (entry: Record<string, unknown>) => { if (process.env.FAKE_ACP_TRUST_LOG) appendFileSync(process.env.FAKE_ACP_TRUST_LOG, `${JSON.stringify({ pid: process.pid, ...entry })}\n`); };
+const fuigoHomeDir = () => process.env.FUIGO_HOME || join(process.env.HOME || process.env.USERPROFILE || homedir(), ".fuigo");
+/** The key the engine names: the override, else the canonical cwd. */
+const trustWorkspace = (): string => {
+  if (process.env.FAKE_ACP_TRUST_WORKSPACE) return process.env.FAKE_ACP_TRUST_WORKSPACE;
+  try { return realpathSync.native(process.cwd()); } catch { return process.cwd(); }
+};
+/** The store's table for `key`, read fresh: the file a home holds, seeded or the owner's. */
+const storedTrust = (key: string): { trusted: boolean; consent: number | null } | null => {
+  try {
+    const text = readFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), "utf8");
+    const table = text.indexOf(`[folders.${JSON.stringify(key)}]`);
+    if (table < 0) return null;
+    const body = text.slice(table).split("\n").slice(1).join("\n");
+    const next = body.search(/^\[/m);
+    const own = next < 0 ? body : body.slice(0, next);
+    const consent = /^consent = (\d+)$/m.exec(own);
+    return { trusted: /^trusted = true$/m.test(own), consent: consent ? Number(consent[1]) : null };
+  } catch {
+    return null;
+  }
+};
+/** Store coverage (F5): the deepest record on the cwd's path that shares the key decides
+ * when it is a "no", so a declined subfolder beats a trusted parent with no question. A
+ * strict ancestor of the key shares no key with it. Otherwise the record of the key decides. */
+const trustCoverage = (key: string): { trusted: boolean; consent: number | null } | null => {
+  for (let folder = realpathSync.native(process.cwd()); ; folder = dirname(folder)) {
+    const entry = key.startsWith(`${folder}/`) ? null : storedTrust(folder);
+    if (entry) return entry.trusted ? storedTrust(key) : entry;
+    if (folder === dirname(folder)) return storedTrust(key);
+  }
+};
+/** What the 1.0.35 precedence says for this process's key. */
+const trustVerdict = (): "trusted" | "declined" | "new" | "upgrade" => {
+  if (process.env.FAKE_ACP_TRUST_DISABLED === "1") return "trusted";
+  const entry = trustCoverage(trustWorkspace());
+  if (!entry) return "new";
+  if (!entry.trusted) return "declined";
+  return (entry.consent ?? 0) >= 2 ? "trusted" : "upgrade";
+};
+/** A grant persists consent 2 for exactly the key the client was shown. */
+const persistGrant = (key: string) => {
+  mkdirSync(fuigoHomeDir(), { recursive: true });
+  appendFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), `[folders.${JSON.stringify(key)}]\ntrusted = true\nconsent = 2\ndecided_at = ${Math.floor(Date.now() / 1000)}\n`);
+};
 // the engine's own store (fuigo-workspace/src/trust.rs): an exact match on
 // the workspace key is enough for a fixture — the server's reader mirrors
 // the real cascade. The key is the cwd's git root, collapsed onto the main
@@ -665,7 +741,7 @@ const storeTrustsCwd = (): boolean => {
     return false;
   }
 };
-const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && storeTrustsCwd());
+const folderTrustedAtBuild = argv.includes("--trust") || (mode === "folder-trust" && (trustV2 ? trustVerdict() === "trusted" : storeTrustsCwd()));
 const agentsMdForReply = () => {
   if (!folderTrustedAtBuild) return "withheld";
   try {
@@ -945,6 +1021,7 @@ process.stdin.on("data", (c) => {
     } catch {
       continue;
     }
+    lastInboundLine = line;
     handle(msg);
   }
 });
@@ -960,6 +1037,29 @@ process.stdin.on("data", (c) => {
 // timing-dependent.)
 function afterSessionBuilt() {
   if (mode !== "folder-trust") return;
+  if (trustV2) {
+    const key = trustWorkspace();
+    const verdict = trustVerdict();
+    const asks = (verdict === "new" || verdict === "upgrade") && folderTrustClientV2 && !trustRejected.has(key);
+    let storeText: string | null = null;
+    try { storeText = readFileSync(join(fuigoHomeDir(), "trusted_folders.toml"), "utf8"); } catch { /* no store */ }
+    trustLog({ event: "start", key, verdict, asks, home: fuigoHomeDir(), store: storeText });
+    dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, v2: folderTrustClientV2, verdict, requested: asks };
+    if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
+    if (!asks) return;
+    pendingPermissionId = 9006;
+    const scope = process.env.FAKE_ACP_TRUST_SCOPE ?? "configAndCommands";
+    const kinds = process.env.FAKE_ACP_TRUST_KINDS ?? "instructions";
+    const params = { sessionId: "fake-acp-session", cwd: process.cwd(), workspace: key, configKinds: kinds ? kinds.split(",") : [], ...(scope === "none" ? {} : { scope }), reason: verdict };
+    const raise = () => {
+      trustLog({ event: "request", params });
+      out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_fuigo/folder_trust/request", params });
+    };
+    const delay = Number(process.env.FAKE_ACP_TRUST_DELAY_MS) || 0;
+    if (delay) setTimeout(raise, delay);
+    else raise();
+    return;
+  }
   dumpState.folderTrust = { trustedAtBuild: folderTrustedAtBuild, interactive: folderTrustInteractive, requested: false };
   if (process.env.FAKE_ACP_DUMP) writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
   if (!folderTrustedAtBuild && folderTrustInteractive) {
@@ -1063,6 +1163,11 @@ function handle(msg: any) {
       appendFileSync(process.env.FAKE_ACP_PERMISSION_TIMING_FILE, `${JSON.stringify({ askedAt: permissionAskedAt, waitMs: Date.now() - permissionAskedAt })}\n`);
       permissionAskedAt = null;
     }
+    if (trustV2 && msg.id === 9006) {
+      trustLog({ event: "reply", raw: lastInboundLine });
+      if (msg.result?.outcome === "trust" && msg.result?.scope === "configAndCommands") persistGrant(trustWorkspace());
+      else trustRejected.add(trustWorkspace());
+    }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1105,6 +1210,7 @@ function handle(msg: any) {
       // provider ids, item 175); unset keeps the one cached_token method.
       const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
+      folderTrustClientV2 = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.v2 === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1120,6 +1226,12 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      const sessionGate = process.env.FAKE_ACP_SESSION_NEW_GATE;
+      if (sessionGate && !existsSync(sessionGate)) {
+        writeFileSync(`${sessionGate}.waiting`, "");
+        whenFile(sessionGate, () => handle(msg));
+        break;
+      }
       if (process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE) {
         const id = msg.id;
         whenFile(process.env.FAKE_ACP_SESSION_NEW_REFUSE_GATE, () => out({ jsonrpc: "2.0", id, error: { code: -32000, message: "The session could not start" } }));
@@ -1306,6 +1418,7 @@ function handle(msg: any) {
       break;
     }
     case "session/prompt": {
+      trustLog({ event: "prompt" });
       mcpTimeline("prompt");
       if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
         writeFileSync(process.env.FAKE_ACP_FAIL_ONCE_FILE, "failed launch");
@@ -1744,7 +1857,9 @@ function handle(msg: any) {
           return;
         }
         if (pendingPermissionId === 9006 && !process.env.FAKE_ACP_TRUST_PROMPT_FIRST) {
-          onPermissionAnswered = answer;
+          // FAKE_ACP_TRUST_HOLD_MS: the turn keeps running this long after the reply
+          const hold = Number(process.env.FAKE_ACP_TRUST_HOLD_MS ?? 0);
+          onPermissionAnswered = hold > 0 ? () => { setTimeout(answer, hold); } : answer;
           return;
         }
         answer();

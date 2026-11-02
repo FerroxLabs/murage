@@ -82,7 +82,7 @@ async function fetchJson(url, { local, request, signal }) {
 }
 
 const refused = (url) => ({ ok: false, error: "refused", message: `${hostOf(url)} gave sign-in details Murage cannot use. Use a key instead.` });
-const noSignIn = (url) => ({ ok: false, error: "no-registration", message: `${hostOf(url)} does not let apps sign in this way. Use a key instead.` });
+const noDetails = (url, step) => ({ ok: false, error: "no-sign-in-details", step, message: `${hostOf(url)} did not share the details Murage needs to sign in. If it gave you a key or token, use that instead.` });
 const network = (url) => ({ ok: false, error: "network", message: `Murage could not reach ${hostOf(url)}. Check your connection and try again.` });
 
 /**
@@ -110,7 +110,7 @@ export async function discoverAuthorization(target, options = {}) {
       if (answer.json && typeof answer.json.resource === "string" && Array.isArray(answer.json.authorization_servers)) { prm = answer.json; break; }
     } catch { /* try the next place */ }
   }
-  if (!prm) return reached ? noSignIn(serverUrl) : network(serverUrl);
+  if (!prm) return reached ? noDetails(serverUrl, "resource-details") : network(serverUrl);
   if (!resourceMatches(prm.resource, serverUrl)) return refused(serverUrl);
   const issuer = prm.authorization_servers[0];
   if (typeof issuer !== "string") return refused(serverUrl);
@@ -128,7 +128,7 @@ export async function discoverAuthorization(target, options = {}) {
       if (answer.json) { meta = answer.json; break; }
     } catch { /* try the next place */ }
   }
-  if (!meta) return reached ? noSignIn(serverUrl) : network(serverUrl);
+  if (!meta) return reached ? noDetails(serverUrl, "authorization-details") : network(serverUrl);
   if (typeof meta.issuer !== "string" || trimSlash(meta.issuer) !== trimSlash(issuer)) return refused(serverUrl);
   if (!Array.isArray(meta.code_challenge_methods_supported) || !meta.code_challenge_methods_supported.includes("S256")) return refused(serverUrl);
   const endpoint = (key, required) => {

@@ -740,9 +740,15 @@ export async function reconcileSentinelRegistration(deps) {
     reg = await provider.read(next, descriptorPath);
   } catch (error) { reg = { failed: error?.code ?? "refused" }; }
   if (!reg || reg.failed || !boundary.registrationMatches(reg, next, descriptorPath)) {
-    // Keep the prior valid registration: put its descriptor back and re-register it when it existed.
-    restore();
-    if (current) { try { await provider.install(current, descriptorPath); } catch { /* the prior job may still be in place */ } }
+    // Keep the prior valid registration: put its descriptor back and re-register it when it existed. When the prior
+    // record names no OS registration (none yet, or only the independent `--watch` supervisor), there is nothing to
+    // keep: `next` stays, so a watcher started on the older revision sees the revision move on and retires, and the
+    // host's fallback runs on `next`. Putting the old revision back there left every older watcher running.
+    const priorOsRegistration = !!prior && (prior.state === "registered" || prior.state === "proven" || (prior.mechanism !== null && prior.mechanism !== "supervisor"));
+    if (priorOsRegistration) {
+      restore();
+      if (current) { try { await provider.install(current, descriptorPath); } catch { /* the prior job may still be in place */ } }
+    }
     const code = reg?.failed ?? "readback";
     return needed(code === "SENTINEL_NO_USER_MANAGER" ? "no-user-manager" : code === "readback" ? "readback" : "scheduler-refused");
   }

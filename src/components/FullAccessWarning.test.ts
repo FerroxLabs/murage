@@ -31,10 +31,23 @@ describe("FullAccessWarning", () => {
     expect(render(true)).toContain("your own screen, mouse and keyboard");
   });
 
+  it("the new terms: one line above the warning, Accept and Not now, for every bot and no one name", () => {
+    const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "", level: "unlimited", terms: true, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
+    expect(markup).toContain("No limits changed. Read this once and it applies to every bot.");
+    expect(markup).toContain(">Accept<");
+    expect(markup).toContain(">Not now<");
+    expect(markup).not.toContain("Give @");
+    expect(markup).not.toContain("Turn on no limits");
+    expect(markup).not.toContain("You are asked this once");
+  });
+
   it("has its own wording for No limits", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(markup).toContain("Give @Vega no limits?");
-    expect(markup).toContain("will do everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first");
+    expect(markup).toContain("In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking");
+    expect(markup).toContain("That includes reading and sending your keys and passwords");
+    expect(markup).toContain("before text downloaded from an https address goes to an administrator run");
+    expect(markup).toContain("your own Telegram, Slack and Discord messages keep the cards they have now");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
     expect(markup).not.toMatch(/\u2014|\bsafe\b/);
@@ -44,7 +57,7 @@ describe("FullAccessWarning", () => {
     const at = (scope: "conversation" | "bot" | { routine: string }) =>
       renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", scope, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(at("conversation")).toContain("This is for this conversation only. Routines use the level in Bot settings, Permissions, unless a routine has its own.");
-    expect(at("bot")).toContain("Routines use this level too, unless a routine has its own.");
+    expect(at("bot")).toContain("Routines keep their own level and never run above this one.");
     expect(at({ routine: "Log tick" })).toContain("This is for the routine Log tick only.");
   });
 

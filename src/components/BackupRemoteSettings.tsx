@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from "react";
 import {resticS3TargetSchema,resticS3CredentialsSchema,sftpFolderSchema,sftpHostSchema,sftpPortSchema,sftpUserSchema} from "../../server/backup-restic-target";
 import type {BackupRemoteStatus} from "../../server/backup-remote-host";
 import { copyText } from "@/lib/copy-text";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import {UNKNOWN_ACCOUNT_FIX} from "../../shared/windows-sddl.mjs";
 type RetentionPolicy={keepLast?:number;keepDaily?:number;keepWeekly?:number;keepMonthly?:number};
 // Retention methods are optional: an older desktop bridge simply does not offer removal.
@@ -265,7 +266,7 @@ export function OffsiteDetails({r}:{r:RemoteController}){
      <div className="space-y-3"><p className="text-[13px] font-medium text-ink">Connection option</p><label className="block text-[13px] text-ink-secondary">Bucket addressing<select className={inputClass} value={draft.bucketLookup} onChange={event=>change("bucketLookup",event.target.value)}><option value="auto">Automatic</option><option value="path">Path</option><option value="dns">DNS</option></select></label></div>
      {([['accessKeyId','Access key ID'],['secretAccessKey','Secret access key'],['sessionToken','Session token (optional)']]as const).map(([key,label])=><label key={key} className="block text-[13px] text-ink-secondary">{label}<input className={inputClass} type="password" value={draft[key]} maxLength={4096} autoComplete="off" spellCheck={false} onChange={event=>change(key,event.target.value)} required={key!=="sessionToken"}/></label>)}
      <p className="text-[12px] text-ink-secondary">Access keys are saved in the operating system’s encrypted store and cleared from this form after saving. Changing a destination requires entering its complete details and keys.</p>
-     </fieldset><button className={buttonClass} type="submit" disabled={locked||!payload}>{busy==="save"?"Saving destination…":"Save off-site destination"}</button>
+     </fieldset><div className={`${BOX_SAVE_ROW} bg-card`}><button className={buttonClass} type="submit" disabled={locked||!payload}>{busy==="save"?"Saving destination…":"Save off-site destination"}</button></div>
     </form>:<form className="space-y-3" onSubmit={event=>{event.preventDefault();if(locked||!sftpPayload)return;void run("save",async(api,expected)=>{
      await api.save(status.revision??0,sftpPayload);
      await refresh(expected);if(mounted.current){setEditing(false);setNotice("Destination saved. Murage made an SSH key for it: add the key shown below to the server, then test the connection. Nothing has been connected or uploaded.");}
@@ -274,7 +275,7 @@ export function OffsiteDetails({r}:{r:RemoteController}){
      <fieldset disabled={locked} className="min-w-0 space-y-3"><legend className="text-[13px] font-medium text-ink">SFTP server details</legend>
      {([['label','Destination name',80,"Off-site copy"],['host','Server (name or IP address)',253,"nas.example.com"],['port','Port',5,"22"],['user','User name',64,"backup"],['folder','Folder on the server',512,"murage-backups"]]as const).map(([key,label,maxLength,placeholder])=><label key={key} className="block text-[13px] text-ink-secondary">{label}<input className={inputClass} value={sftpDraft[key]} maxLength={maxLength} placeholder={placeholder} inputMode={key==="port"?"numeric":undefined} autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={event=>changeSftp(key,event.target.value)} required/></label>)}
      <p className="text-[12px] text-ink-secondary">A folder without a leading slash is inside the user's home folder on the server. Murage creates the folder if it is missing. Use letters, numbers, dots, dashes and underscores; spaces are not accepted.</p>
-     </fieldset><button className={buttonClass} type="submit" disabled={locked||!sftpPayload}>{busy==="save"?"Saving destination…":"Save off-site destination"}</button>
+     </fieldset><div className={`${BOX_SAVE_ROW} bg-card`}><button className={buttonClass} type="submit" disabled={locked||!sftpPayload}>{busy==="save"?"Saving destination…":"Save off-site destination"}</button></div>
     </form>}
    </div>}
    {configured&&!editing&&<div className="space-y-3">

@@ -4,6 +4,7 @@ import {
   DEFAULT_ROOM_TURN_TIMEOUT_MINUTES,
   MAX_ROOM_TURN_TIMEOUT_MINUTES,
   MIN_ROOM_TURN_TIMEOUT_MINUTES,
+  ROOM_OPEN_TOOL_MINUTES,
   parseRoomTurnTimeoutMinutes,
 } from "@/lib/room-turn-timeout";
 import { api, useStore, type ConfigStatus } from "@/state/store";
@@ -82,7 +83,7 @@ export function RoomTurnTimeoutSettings() {
         <span className="pr-3 text-[13px] text-ink-secondary">minutes</span>
       </div>
       <p id="room-turn-timeout-help" className="text-[12px] leading-relaxed text-ink-secondary">
-        Stop a room reply after {confirmedMinutes} minutes with no activity. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count.
+        Stop a room reply after {confirmedMinutes} minutes with no activity. A running tool can take up to {Math.max(confirmedMinutes, ROOM_OPEN_TOOL_MINUTES)} minutes. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count.
       </p>
       {error ? (
         <p id="room-turn-timeout-error" role="alert" className="text-[12px] text-danger">

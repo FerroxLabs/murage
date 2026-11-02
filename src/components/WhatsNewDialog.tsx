@@ -19,6 +19,7 @@
 // pictures all load with this lazy chunk, never with the first paint.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import teamHero from "@/assets/whats-new/team-hero.webp";
 import tileRooms from "@/assets/whats-new/tile-rooms.webp";
 import tileBlocks from "@/assets/whats-new/tile-blocks.webp";
@@ -205,34 +206,36 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
   const { hero, tiles, more } = WHATS_NEW_CONTENT[whatsNewContentFor(version)];
   if (index === 0) {
     return (
-      <section aria-labelledby={titleId} data-whats-new-card="hero" className="whats-new-card max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]">
+      <section aria-labelledby={titleId} data-whats-new-card="hero" className={cn(BOX_FRAME, "whats-new-card relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
+        {/* On the card, not in what scrolls: a short window cannot take Close away. */}
+        <button type="button" aria-label="Close" onClick={onClose} className={cn("absolute right-3.5 top-3.5 z-10 flex size-11 cursor-pointer items-center justify-center rounded-xl border-0 bg-[var(--wn-close-ground)] text-[var(--wn-close-ink)] hover:text-[var(--wn-ink-strong)]", focusRing)}><CloseIcon /></button>
+        <BoxBody>
         <div className="relative h-[342px] bg-[var(--wn-ground)] max-md:h-[260px] [@media(max-height:720px)]:h-[250px]">
           <img src={hero.img} alt={hero.alt} width={820} height={342} className={cn("block h-full w-full", hero.fit)} />
           <div className="absolute left-[34px] top-[26px] flex gap-2">
             <span className="rounded-full border border-[var(--wn-chip-edge)] bg-[var(--wn-chip-ground)] px-[11px] py-1.5 text-[12px] font-semibold tracking-[0.06em] text-[var(--wn-accent-ink)]">NEW IN MURAGE</span>
           </div>
-          <button type="button" aria-label="Close" onClick={onClose} className={cn("absolute right-3.5 top-3.5 flex size-11 cursor-pointer items-center justify-center rounded-xl border-0 bg-[var(--wn-close-ground)] text-[var(--wn-close-ink)] hover:text-[var(--wn-ink-strong)]", focusRing)}><CloseIcon /></button>
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>{hero.title}</h2>
         </div>
-        <div className="flex flex-col gap-3.5 px-[34px] pb-[26px] pt-6 max-sm:px-5">
-          <p className="m-0 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)]">{hero.body}</p>
-          <div className="mt-1.5 flex items-center gap-2.5">
+        <p className="m-0 px-[34px] pb-2 pt-6 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)] max-sm:px-5">{hero.body}</p>
+        </BoxBody>
+        <BoxFoot className="justify-start gap-2.5 px-[34px] pb-[26px] pt-3 max-sm:px-5">
             <button type="button" className={primaryDark} onClick={() => onAction(hero.action)}>{hero.button}</button>
             <button type="button" className={ghostDark} onClick={onNext}>Next</button>
             <span className="grow" />
             <Pager index={0} onGo={onGo} />
-          </div>
-        </div>
+        </BoxFoot>
       </section>
     );
   }
   if (index === 1) {
     return (
-      <section aria-labelledby={titleId} data-whats-new-card="highlights" className="whats-new-card box-border flex max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(1040px,calc(100vw-32px))] flex-col gap-5 overflow-y-auto rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] px-8 pb-[26px] pt-[30px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
-        <div className="flex flex-col gap-1.5">
+      <section aria-labelledby={titleId} data-whats-new-card="highlights" className={cn(BOX_FRAME, "whats-new-card box-border max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(1040px,calc(100vw-32px))] gap-4 rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
+        <BoxHead className="flex-col items-stretch gap-1.5 px-8 pt-[30px] max-sm:px-5">
           <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND THERE'S MORE</span>
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Made for bigger work</h2>
-        </div>
+        </BoxHead>
+        <BoxBody className="px-8 py-1 max-sm:px-5">
         <ul className="m-0 grid list-none grid-cols-3 gap-3.5 p-0 max-[820px]:grid-cols-2 max-sm:grid-cols-1">
           {tiles.map((tile) => (
             <li key={tile.action} className="flex">
@@ -251,26 +254,28 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
             </li>
           ))}
         </ul>
-        <div className="flex items-center gap-2.5">
+        </BoxBody>
+        <BoxFoot className="justify-start gap-2.5 px-8 pb-[26px] max-sm:px-5">
           <button type="button" className={ghostDark} onClick={onBack}>Back</button>
           <button type="button" className={primaryDark} onClick={onNext}>Next</button>
           <button type="button" className={ghostDark} onClick={onClose}>Got it</button>
           <span className="grow" />
           <span className="text-[12.5px] text-[var(--wn-ink-faint)] max-sm:hidden">Click any card to try it</span>
           <span className="ml-3.5"><Pager index={1} onGo={onGo} /></span>
-        </div>
+        </BoxFoot>
       </section>
     );
   }
   return (
-    <section aria-labelledby={titleId} data-whats-new-card="more" className="whats-new-card relative box-border flex max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(900px,calc(100vw-32px))] flex-col gap-[22px] overflow-y-auto overflow-x-hidden rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel)] px-[38px] pb-7 pt-[34px] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)] max-sm:px-5">
+    <section aria-labelledby={titleId} data-whats-new-card="more" className={cn(BOX_FRAME, "whats-new-card relative box-border max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(900px,calc(100vw-32px))] gap-[22px] rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
       <svg width="420" height="420" viewBox="0 0 420 420" aria-hidden="true" className="pointer-events-none absolute -right-[120px] -top-[150px]">
         <g fill="none" stroke="var(--wn-accent)" strokeOpacity="0.18"><circle cx="210" cy="210" r="90" /><circle cx="210" cy="210" r="140" /><circle cx="210" cy="210" r="190" /></g>
       </svg>
-      <div className="relative flex flex-col gap-1.5">
+      <BoxHead className="relative flex-col items-stretch gap-1.5 px-[38px] pt-[34px] max-sm:px-5">
         <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND A LOT MORE</span>
         <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Plus a long list of small wins</h2>
-      </div>
+      </BoxHead>
+      <BoxBody className="relative px-[38px] max-sm:px-5">
       <ul className="relative m-0 grid list-none grid-cols-2 gap-x-9 gap-y-3.5 p-0 max-sm:grid-cols-1">
         {more.map((line) => (
           <li key={line} className="flex items-start gap-3">
@@ -279,13 +284,14 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
           </li>
         ))}
       </ul>
-      <div className="relative flex items-center gap-2.5">
+      </BoxBody>
+      <BoxFoot className="relative justify-start gap-2.5 px-[38px] pb-7 max-sm:px-5">
         <button type="button" className={ghostDark} onClick={onBack}>Back</button>
         <button type="button" className={cn(primaryDark, "px-[22px]")} onClick={onClose}>Let's go</button>
         <a href={releaseNotesUrl} target="_blank" rel="noopener noreferrer" className={cn("flex min-h-11 items-center rounded-xl px-3 text-[13.5px] font-medium text-[var(--wn-accent-ink)] hover:text-[var(--wn-accent-ink-hover)]", focusRing)}>Read the full release notes</a>
         <span className="grow" />
         <Pager index={2} onGo={onGo} />
-      </div>
+      </BoxFoot>
     </section>
   );
 }
@@ -363,6 +369,7 @@ export function WhatsNewDialog({
     <dialog
       ref={dialog}
       aria-labelledby={`whats-new-title-${index + 1}`}
+      data-box-exempt="a clear carrier, the card inside it is the box"
       data-whats-new
       className="whats-new m-auto max-h-none max-w-none overflow-visible border-0 bg-transparent p-0 font-sans backdrop:bg-black/[0.66]"
       onCancel={(event) => { event.preventDefault(); onClose(); }}

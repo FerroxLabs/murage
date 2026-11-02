@@ -1,9 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { fileSlices, reportApp } from "./mac-minos-report.mjs";
 
 const encode = (major, minor = 0) => (major << 16) | (minor << 8);
@@ -30,7 +31,7 @@ function app(files) {
   for (const [name, bytes] of Object.entries(files)) writeFileSync(join(bundle, name), bytes);
   return bundle;
 }
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 const script = fileURLToPath(new URL("./mac-minos-report.mjs", import.meta.url));
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
 

@@ -40,6 +40,7 @@ export function resetRetainedSessionCursors(root: string): number {
     let changed = false;
     const clear = (holder: Record<string, unknown>) => {
       if (Object.hasOwn(holder, "resumeCursors") && nonEmpty(holder.resumeCursors)) { holder.resumeCursors = {}; cleared++; changed = true; }
+      if (Object.hasOwn(holder, "resumeSeals")) { delete holder.resumeSeals; changed = true; }
     };
     for (const record of records) {
       if (!record || typeof record !== "object") continue;
@@ -85,6 +86,7 @@ export function resetIncarnatedSessionCursors(root: string, db: DatabaseSync): n
         if (!later.has(pair(instance, String(cursor))) && !(n >= 2)) continue;
         delete (cursors as Record<string, unknown>)[instance];
         if (counted) delete counted[instance];
+        if (holder.resumeSeals && typeof holder.resumeSeals === "object") delete (holder.resumeSeals as Record<string, unknown>)[instance];
         cleared++; changed = true;
       }
     };

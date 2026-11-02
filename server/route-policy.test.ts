@@ -6,13 +6,20 @@
 // desktop-only. (a) discovery over the real source, (b) an injected route in
 // a fixture built on the real routing pattern and the real gate.
 // route-policy-api.test.ts is (c), the sweep against a running server.
+import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer, type IncomingMessage } from "node:http";
+import { createServer, request, type IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import ts from "typescript";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { createCloudRequestAuth, stepPurpose } from "./cloud-request-auth.ts";
+import { CloudSessions, type CloudScope } from "./cloud-sessions.ts";
+import { FolderTrustStore } from "./folder-trust.ts";
 import { cloudRouteDecision, conversationSubject, DESKTOP_ONLY_SENTENCE, ROUTE_POLICY, routeAdmits, routeClass, routePolicy, routeRefusal, type RoutePolicyEntry } from "./route-policy.ts";
 import { describeRoute, discoverRoutes, type DiscoveredRoute } from "./testing/route-discovery.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -112,6 +119,15 @@ describe("route policy (strict)", () => {
     }
     // the list keeps its own answer
     expect(cloudRouteDecision("GET", "/api/storage/attachments", "owner-browser", null)).toBe("allow");
+  });
+
+  it("accepting the No limits terms is the desktop's alone; phone, door, bot and nobody are refused", () => {
+    const route = "/api/no-limits/terms";
+    expect(routePolicy("POST", route)).toMatchObject({ class: "desktop", path: route, cloudWrite: "step-up" });
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(routeAdmits(routeClass("POST", route), { ...nobody, desktop: true })).toBe(true);
+    for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("POST", route), { ...nobody, [who]: true }), who).toBe(false);
+    expect(routeAdmits(routeClass("POST", route), nobody)).toBe(false);
   });
 
   it("an unclassified route is desktop-only; the named holes are closed", () => {
@@ -267,6 +283,121 @@ describe("route policy (strict)", () => {
       expect((await fetch(`http://127.0.0.1:${port}/api/bots`, { headers: { "x-fixture-desktop": DESKTOP } })).status).toBe(200);
     } finally {
       server.close();
+    }
+  });
+});
+
+describe("/api/folder-trust on a Cloud home (FUIGO-TRUST-V2 S7)", () => {
+  const route = "/api/folder-trust";
+  it("refuses the owner's phone on every method, stepped up or not, and keeps the other scopes as they were", () => {
+    for (const method of ["GET", "HEAD", ...ALL_METHODS]) for (const steppedUp of [false, true]) {
+      expect(cloudRouteDecision(method, route, "owner-phone", {}, steppedUp), `${method} ${steppedUp}`).toBe("deny");
+    }
+    for (const scope of ["owner-desktop", "owner-browser"] as const) {
+      expect(cloudRouteDecision("GET", route, scope, {}), scope).toBe("allow");
+      for (const method of ["POST", "DELETE"]) {
+        expect(cloudRouteDecision(method, route, scope, {}), `${scope} ${method}`).toBe("step-up required");
+        expect(cloudRouteDecision(method, route, scope, {}, true), `${scope} ${method} stepped up`).toBe("allow");
+      }
+    }
+    for (const scope of ["remembered-owner", "browser", "service", "anonymous"] as const) expect(cloudRouteDecision("GET", route, scope, {}), scope).toBe("deny");
+    // the phone keeps its ordinary owner reads
+    expect(cloudRouteDecision("GET", "/api/bots", "owner-phone", {})).toBe("allow");
+  });
+
+  it("the real Cloud gate stops the phone before the store; the desktop and the passkey browser still read and forget", async () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const origin = "https://home.example", rpId = "home.example";
+    const root = mkdtempSync(join(tmpdir(), "route-policy-trust-")), file = join(root, "folder-trust.json");
+    const sessions = new CloudSessions(new DatabaseSync(":memory:"), undefined, origin);
+    const folderTrust = new FolderTrustStore(file);
+    const folder = (name: string) => { const path = join(root, name); mkdirSync(path); return path; };
+    const declined = folderTrust.remember(folder("declined"), "reject", "card")!;
+    const pair = (scope: CloudScope) => {
+      const key = generateKeyPairSync("ed25519"), factor = generateKeyPairSync("ed25519");
+      const code = sessions.mint({ account: "owner", scope, publicKey: key.publicKey.export({ type: "spki", format: "pem" }).toString(), assertionKey: factor.publicKey.export({ type: "spki", format: "pem" }).toString() });
+      const message = Buffer.from(`murage-pair:${sessions.environmentId}:${code}:owner`);
+      const paired = sessions.redeem(code, "owner", sign(null, message, key.privateKey).toString("base64url"), sign(null, message, factor.privateKey).toString("base64url"));
+      const stepUp = (method: string, path: string, body: unknown) => {
+        const purpose = stepPurpose(method, path, body), challenge = sessions.challenge(paired.deviceId, purpose), at = Date.now();
+        const signature = sign(null, Buffer.from(`murage:${sessions.environmentId}:${paired.deviceId}:${purpose}:${challenge}:${at}`), factor.privateKey).toString("base64url");
+        return { "x-murage-step-up": Buffer.from(JSON.stringify({ challenge, at, signature })).toString("base64url") };
+      };
+      return { auth: { authorization: `Bearer ${paired.accessToken}` }, stepUp };
+    };
+    // The owner's passkey browser, as cloud-owner-browser.test.ts writes one: P-256 keys and a saved WebAuthn factor.
+    const passkeyBrowser = () => {
+      const pem = (key: { publicKey: KeyObject }) => key.publicKey.export({ format: "pem", type: "spki" }).toString();
+      const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" }), confirm = generateKeyPairSync("ec", { namedCurve: "prime256v1" }), id = randomUUID();
+      sessions.db.prepare("INSERT OR IGNORE INTO cloud_meta VALUES ('account','owner')").run();
+      sessions.db.prepare("INSERT INTO cloud_devices (id,account,scope,publicKey,assertionKey,revoked,addedAt,lastSeenAt) VALUES (?,?,?,?,?,0,?,?)").run(id, "owner", "browser", pem(key), pem(confirm), 0, 0);
+      sessions.db.prepare("INSERT INTO cloud_browser_factors (device,payload) VALUES (?,?)").run(id, JSON.stringify({ origin, rpId, credentialId: "fixture-credential", counter: 1 }));
+      const { accessToken, deviceId } = sessions.issue(id);
+      let counter = 1;
+      const stepUp = (method: string, path: string, body: unknown) => {
+        const purpose = stepPurpose(method, path, body), challenge = sessions.challenge(deviceId, purpose), at = Date.now();
+        const message = `murage:${sessions.environmentId}:${deviceId}:${purpose}:${challenge}:${at}`;
+        const client = Buffer.from(JSON.stringify({ type: "webauthn.get", origin, crossOrigin: false, challenge: Buffer.from(message).toString("base64url") }));
+        const authData = Buffer.alloc(37); createHash("sha256").update(rpId).digest().copy(authData); authData[32] = 5; authData.writeUInt32BE(++counter, 33);
+        const signature = sign("sha256", Buffer.concat([authData, createHash("sha256").update(client).digest()]), confirm.privateKey).toString("base64url");
+        return { "x-murage-step-up": Buffer.from(JSON.stringify({ challenge, at, webauthn: { credentialId: "fixture-credential", clientDataJSON: client.toString("base64url"), authenticatorData: authData.toString("base64url"), signature } })).toString("base64url") };
+      };
+      return { auth: { cookie: `__Host-murage=${accessToken}` }, stepUp };
+    };
+    // Stands in for the dispatcher's handler on the real store: anything that gets past the gate acts.
+    let reached = 0;
+    const gate = createCloudRequestAuth({ sessions, publicOrigin: origin, bootstrapSecret: () => "fixture-bootstrap-key-32-characters" });
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url!, origin);
+      if (await gate(req, res, url)) return;
+      reached++;
+      if (req.method === "POST") folderTrust.remember(join(root, "declined"), "trust", "card");
+      if (req.method === "DELETE") folderTrust.forgetKey(url.searchParams.get("key") ?? "");
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ records: folderTrust.list() }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const call = (method: string, path: string, headers: Record<string, string>) => new Promise<{ status: number; body: any }>((resolve, reject) => {
+      const data = method === "GET" ? undefined : Buffer.from("{}");
+      const req = request({ host: "127.0.0.1", port, method, path, agent: false, headers: { host: "home.example", origin, "content-type": "application/json", ...(data ? { "content-length": String(data.length) } : {}), ...headers } }, res => {
+        const chunks: Buffer[] = []; res.on("data", chunk => chunks.push(chunk)); res.on("end", () => resolve({ status: res.statusCode!, body: JSON.parse(Buffer.concat(chunks).toString()) }));
+      });
+      req.on("error", reject); req.end(data);
+    });
+    try {
+      const forget = (key: string) => `${route}?key=${encodeURIComponent(key)}`;
+      const phone = pair("owner-phone"), desktop = pair("owner-desktop"), browser = passkeyBrowser();
+      const before = readFileSync(file, "utf8");
+      const refused = { status: 403, body: { error: cloudHomeCopy.phoneCredential } };
+      expect(await call("GET", `${route}?folder=${encodeURIComponent(root)}`, phone.auth)).toEqual(refused);
+      for (const [method, path] of [["POST", route], ["DELETE", forget(declined)]] as const) {
+        expect(await call(method, path, phone.auth), method).toEqual(refused);
+        expect(await call(method, path, { ...phone.auth, ...phone.stepUp(method, path, {}) }), `${method} signed`).toEqual(refused);
+      }
+      expect(reached).toBe(0);
+      expect(readFileSync(file, "utf8")).toBe(before);
+
+      // The owner's two surfaces keep what they had: a read, and a Forget and a Trust on a fresh step-up.
+      for (const [name, owner] of [["desktop", desktop], ["passkey browser", browser]] as const) {
+        const kept = folder(`kept-${name.replace(" ", "-")}`), key = folderTrust.remember(kept, "reject", "card")!;
+        const read = await call("GET", route, owner.auth);
+        expect(read.status, name).toBe(200);
+        expect((read.body.records as Array<{ key: string }>).map(record => record.key), name).toContain(key);
+        expect((await call("DELETE", forget(key), owner.auth)).status, name).toBe(403);
+        expect(folderTrust.record(kept)?.decision, name).toBe("reject");
+        const forgotten = await call("DELETE", forget(key), { ...owner.auth, ...owner.stepUp("DELETE", forget(key), {}) });
+        expect(forgotten.status, name).toBe(200);
+        expect(folderTrust.record(kept), name).toBeUndefined();
+        expect((await call("POST", route, { ...owner.auth, ...owner.stepUp("POST", route, {}) })).status, name).toBe(200);
+      }
+    } finally {
+      const closed = once(server, "close");
+      server.close(); server.closeAllConnections(); await closed;
+      sessions.db.close();
+      removeTempDirSync(root);
+      vi.unstubAllEnvs();
     }
   });
 });

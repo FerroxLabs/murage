@@ -9,6 +9,7 @@ import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { createWindowsBackupResourceResolver } from "./windows-backup-resources.ts";
 import { redactCauseText } from "../shared/backup-capture-failure.mjs";
 import { safeBackupProgress } from "../shared/backup-progress.mjs";
+import { MAX_BACKUP_DURATION_MS } from "../shared/backup-budget.mjs";
 import { isNoSpaceError } from "./disk-space.ts";
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
@@ -54,7 +55,7 @@ export async function stopBackupAgeProcess(child: { kill: (signal: NodeJS.Signal
 async function runAge(executable: string,args: string[],input: Readable,output: string,options: BackupAgeLimits, inputFd?: number) {
   if(options.signal?.aborted) fail("SNAPSHOT_CANCELLED");
   const timeoutMs=options.timeoutMs??15*60_000,closeTimeoutMs=options.closeTimeoutMs??5000;
-  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>30*60_000||!Number.isSafeInteger(closeTimeoutMs)||closeTimeoutMs<1||closeTimeoutMs>30_000)fail("INVALID_AGE_PROCESS_LIMITS");
+  if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>MAX_BACKUP_DURATION_MS||!Number.isSafeInteger(closeTimeoutMs)||closeTimeoutMs<1||closeTimeoutMs>30_000)fail("INVALID_AGE_PROCESS_LIMITS");
   const outputFd=openSync(output,"wx",0o600);
   let bytes=0;
   const onBytes=safeBackupProgress(options.onBytes);
