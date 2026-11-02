@@ -146,7 +146,14 @@ describe("saveCommand, sign-in, test, remove", () => {
     await saveCommand({ api, bridge }, { name: "github", draft, env: { GITHUB_TOKEN: "abc123" } });
     expect(JSON.parse(calls[0]!.body)).toMatchObject({ name: "github", command: "npx", env: { GITHUB_TOKEN: true }, enabled: false });
     expect(calls[0]!.body).not.toContain("abc123");
-    expect(bridge.saveSecrets).toHaveBeenCalledWith("github", { env: { GITHUB_TOKEN: "abc123" } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("github", { env: { GITHUB_TOKEN: "abc123" }, rev: "" });
+  });
+
+  it("names the revision the harness answered with, so main can refuse a command entry that moved", async () => {
+    const draft = stdioDraft("GITHUB_TOKEN=abc123 npx -y @x/github");
+    const { api, bridge } = recorder({ "/api/mcp/servers": { servers: [{ name: "other", rev: "000000000000" }, { name: "github", rev: "abc123def456" }] } });
+    await saveCommand({ api, bridge }, { name: "github", draft, env: { GITHUB_TOKEN: "abc123" } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("github", { env: { GITHUB_TOKEN: "abc123" }, rev: "abc123def456" });
   });
 
   it("signs in through the shell and reports a cancel as a cancel", async () => {

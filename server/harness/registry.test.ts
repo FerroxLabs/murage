@@ -26,6 +26,22 @@ describe("saving a key ends the signed-out mark (item 139)", () => {
   });
 });
 
+describe("the login a sign-in reads", () => {
+  it("is the engine's own word, with the rejection mark left out, and null when the engine does not say", async () => {
+    resetKeyRejectionsForTests();
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ codex: { driver: "fake" } });
+    expect(await registry.engineLogin("codex")).toBeNull();
+    (registry as any).byId.get("codex").live.snapshot = async () => ({ state: "available", authenticated: true });
+    noteInstanceAuthFailure("codex");
+    expect((await registry.describeOne("codex"))?.snapshot.authenticated).toBe(false);
+    expect(await registry.engineLogin("codex")).toBe(true);
+    expect(await registry.engineLogin("nobody")).toBeUndefined();
+    resetKeyRejectionsForTests();
+  });
+});
+
 describe("ProviderRegistry", () => {
   it("disabled instances never reach driver configuration, creation or discovery", async () => {
     const fake = makeFakeDriver();
