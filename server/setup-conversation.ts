@@ -151,9 +151,13 @@ export const SETUP_CARD_COPY: Record<SetupCardVariant, { title: string; subtitle
     title: "Your bots need a brain first",
     subtitle: "Murage came with an engine. It did not come with anything to think with, and there is nothing on this computer I can use. One connection fixes that, and it is the same one your apps run through.",
   },
+  /** Detection found only engines nobody is signed in to and nothing can
+   *  answer yet. Fuigo and Flux only (Sean 11-02, FUIGO-FIRST-SIGNIN-PLACEMENT):
+   *  the blank machine's words (`bare-needs-key`), because the key is next.
+   *  Another engine stays in Settings and is never pushed here. */
   "signed-out": {
-    title: "You are not signed in to it yet",
-    subtitle: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
+    title: "Your bots need a brain first",
+    subtitle: "Murage came with an engine. It did not come with anything to think with, and there is nothing on this computer I can use. One connection fixes that, and it is the same one your apps run through.",
   },
   "sample-brief": {
     title: "This is what tomorrow morning could look like",
@@ -263,6 +267,13 @@ function variantForCurrentStep(step: SetupStep, view: SetupView): SetupCardVaria
       // `nothingToThinkWith` true, so `detect` is already settled and the
       // flow never stops on it, and the Flux step now opens on the one card
       // that can actually take a key. The variant is PARKED.
+      //
+      // FUIGO AND FLUX FRONT AND CENTER (Sean 11-02, FUIGO-FIRST-SIGNIN-PLACEMENT).
+      // The order above is reversed: an engine nobody is signed in to is never
+      // offered here. When the engine in the box can answer, the card says so
+      // (`bare`). `signed-out` is now only the machine where nothing can answer
+      // yet, and that card shows Fuigo and Flux only and says the key is next.
+      if (view.agents.length > 0) return "bare";
       return view.signedOutAgents.length > 0 ? "signed-out" : "bare";
     case "flux":
       // ONE CARD, AND IT FRAMES ITSELF.

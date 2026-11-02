@@ -122,6 +122,7 @@ const ROUTE_TERMS = {
   connectors: "connected apps",
   decisions: "decisions",
   discord: "Discord",
+  "engine-setup-check": "engines",
   "engine-setup-command": "engines",
   files: "files",
   "flux-connection": "Flux",
@@ -167,7 +168,7 @@ const ROUTE_TERMS = {
 };
 const ROUTE_PLUMBING = new Set([
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
-  "events", "health", "hermes", "instances", "internal", "no-limits", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
+  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
 ]);
 const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);
