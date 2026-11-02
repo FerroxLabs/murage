@@ -30,6 +30,8 @@
   "ux.l2b.health.issue.deletion.title": "Some deleted conversations are still being removed",
   "ux.l2b.health.issue.deletion.happened": "These conversations are gone from your chats. Murage is still clearing the copies left in an engine's files.",
   "ux.l2b.health.issue.deletion.matters": "No. Murage finishes this by itself.",
+  "ux.l2b.health.issue.deletion.mattersUpdate": "No. Murage tries again after its next update.",
+  "ux.l2b.health.issue.deletion.mattersSomeUpdate": "No. Murage finishes some of this by itself, and tries the rest again after its next update.",
   "ux.l2b.health.issue.deletion.canDo": "Nothing to do, Murage is on it.",
   "ux.l2b.health.issue.sendFence.title": "A conversation keeps rebuilding its history before sending",
   "ux.l2b.health.issue.sendFence.happened": "A conversation keeps rebuilding its history before each message goes out.",

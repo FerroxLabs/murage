@@ -153,7 +153,7 @@ import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, par
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
-import { createFluxConnectionApply } from "./flux-connection-apply.ts";
+import { createFluxConnectionApply, fluxSaveBlocked } from "./flux-connection-apply.ts";
 import { rememberedMomentsAwaitingReply, rememberedMomentsForJob, threadAwaitsRememberedChip } from "./memory/memory-moments.ts";
 import { forgetBotLearningData, sweepLearningRetention } from "./memory/evolution-forgetting.ts";
 import { consolidateCompletedMemorySource, consolidateMemorySource, pendingMemoryConsolidationJobs, promoteDueSkippedSlices } from "./memory/consolidate.ts";
@@ -200,6 +200,7 @@ import { EMAIL_TOOLS_ENV } from "./drivers/email-tool-schemas.ts";
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus, type PendingPermissionInput } from "./permission-status.ts";
 import { EngineManager } from "./engine-management.ts";
+import { checkEngineReply } from "./engine-reply-check.ts";
 import { bootSettled, firstHealthAnswered, noteHealthAnswered, readySettle, runAfterListen, startRecovery, startupWritesReady, trackBootJob } from "./after-listen.ts";
 import { invalidateCliVersions } from "./cli-version-cache.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
@@ -261,11 +262,11 @@ import { Presence, parsePresenceBody } from "./mobile-presence.ts";
 import { PushStore } from "./mobile-push-store.ts";
 import { PushOutbox } from "./mobile-push-outbox.ts";
 import { createBotCallsRuntime, type BotCallsRuntime } from "./bot-calls-runtime.ts";
-import { botWantsFact, needsOwnerNowRunId, routineRunFacts, runMovedAt } from "./bot-calls-facts.ts";
+import { needsOwnerNowOffered as needsOwnerNowOfferedFor, needsOwnerNowRunId, routineRunFacts, runMovedAt } from "./bot-calls-facts.ts";
 import { createCallChannel, createCallTickets, handleCallsRoute } from "./bot-calls-routes.ts";
 import { callCaller } from "./bot-calls-caller.ts";
 import { callOpener, ownerFirstName, writeCallCard } from "./bot-calls-card.ts";
-import { botCallsEnabled, deleteBotCallSettings, factReplayFrom, markFactReplay } from "./bot-calls-schema.ts";
+import { deleteBotCallSettings, factReplayFrom, markFactReplay } from "./bot-calls-schema.ts";
 import { CALL_PROTOCOL } from "../shared/bot-calls-contract.ts";
 import { createRelayClient, relayOrigin, relayRemovalSweeper } from "./mobile-push-relay.ts";
 import { mobilePushRoute, type PushRouteDeps } from "./mobile-push-routes.ts";
@@ -351,7 +352,7 @@ import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import { callAccess } from "./voice/call-access.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxPage, InboxView } from "../shared/inbox.ts";
-import { ARTIFACT_PREVIEW_MAX_BYTES, artifactsRequest, artifactOwner, retainedSourceRoots, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, sweepArtifactCandidates, runPublishedArtifactIds, publicationUnsettled, type ArtifactScope } from "./artifacts.ts";
+import { ARTIFACT_PREVIEW_MAX_BYTES, artifactsRequest, artifactOwner, describeArtifact, retainedSourceRoots, registerArtifact, readArtifact,artifactWorkspaceIdentity, authorizedArtifactRoot, sweepArtifactCandidates, runPublishedArtifactIds, publicationUnsettled, type ArtifactScope } from "./artifacts.ts";
 import { deliverRoutineRun, routineRunFallbackText, type RoutineDeliveryDeps } from "./routine-delivery.ts";
 import { storageReport } from "./storage-report.ts";
 import { AttachmentList } from "./storage-attachments.ts";
@@ -560,13 +561,14 @@ import {
 } from "./config.ts";
 import { customIntegrations } from "./custom-mcp-mounts.ts";
 import { ComputerControl } from "./computer-control.ts";
+import { buildEngineSigninRecipe } from "./engine-signin-recipe.ts";
 import { NarrowDenials } from "./narrow-denials.ts";
 import { augmentedPath, engineIdentities, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli, ownerEnvAfterDiscovery, setOwnerEnvStore } from "./env-path.ts";
 import { setExecEnvBotReader, setExecEnvOriginReader, handedPinsOf, noteStartupFileEvent, promptFactsOf, sshPinNotes } from "./engine-env.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { isFluxModel } from "./flux-surface.ts";
 import { fluxFirstTokenProbe } from "./flux-memory-first-token.ts";
-import { describeSpawnFailure, execCli } from "./procs.ts";
+import { describeSpawnFailure, execCli, resolveCli } from "./procs.ts";
 import { HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGapNoticeDue, markHostPowerGapNoticeShown, probeHostPowerEnvironment, startHostPowerStub } from "./host-power.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 import { engineSwitchLines } from "../shared/engine-switch.ts";
@@ -845,6 +847,7 @@ import { warmPool } from "./drivers/warm-pool.ts";
 import { reuseStats } from "./drivers/reuse-stats.ts";
 import { RateLimitedError, retryOnRateLimit } from "./tts/rate-limit.ts";
 import { admitVoiceNote, createVoiceNote, managedAudioOutputPath, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
+import { VOICE_NOTE_AUDIO_ROUTE, voiceNoteAudio } from "./voice/voice-note-audio.ts";
 import type { ChannelVoiceNote } from "./telegram-channel.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, fitRenderedReplay, replayMetadata, engineIsFresh, replaysTranscriptNatively, transcriptForDriver, type TranscriptEntry } from "./turn-context.ts";
@@ -867,9 +870,9 @@ import { appDecider, deciderAvailable } from "./decider/index.ts";
 import { appendDeciderLog } from "./decider/log.ts";
 import { decideRoomResponder, routeLogRow, type RoomRoute } from "./decider/room-routing.ts";
 import { describeDecisionModelSettings, readDecisionModelSettings } from "./decider/settings.ts";
-import { noteCatalogOutcome, onKeyRejectionChange } from "./key-rejections.ts";
+import { forgetInstanceMark, noteCatalogOutcome, onKeyRejectionChange } from "./key-rejections.ts";
 import { checkFluxKey, requestFluxKeyRecheck, noteFluxKeyAccepted, noteFluxKeyRefused, onFluxKeyHealthChange } from "./flux-key-health.ts";
-import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
+import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupEngineUsers, setupSignedOutReading } from "./setup.ts";
 import { deriveSetupBackup, initializeSetupBackup, setupBackupRequest } from "./setup-backup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
 import { type EngineChoice, bootEngineChoice, defaultModel, pickDefaultEngine } from "./default-engine.ts";
@@ -2045,7 +2048,7 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
 
 /** The bot may call the owner and has an enabled needs_owner_now rule. Read at launch; the route answers "Noted." either way. */
 function needsOwnerNowOffered(botId: string): boolean {
-  try { const db = database(); return botCallsEnabled(db, botId) && botWantsFact(db, botId, "needs_owner_now"); } catch { return false; }
+  try { return needsOwnerNowOfferedFor(database(), botId); } catch { return false; }
 }
 
 /** The built-in browser, when the desktop app has one running: the harness
@@ -3568,6 +3571,7 @@ const DELETION_HOLD_WAIT_MS = 250;
 /** Settings > Storage's attachment list: one snapshot, one walk at a time (storage-attachments.ts). */
 const storageAttachmentList = new AttachmentList({
   dir: join(DATA_DIR, "attachments"), database, bots: () => store.bots,
+  hidden: (name) => conversationDeletions.attachmentPending(name),
   threadLabel: (threadId) => {
     for (const bot of store.bots) if (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)) return bot.name;
     for (const group of store.groups) if (group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId)) return group.name;
@@ -4461,7 +4465,8 @@ async function setupLiveState({ seat = true }: { seat?: boolean } = {}): Promise
   return {
     ownerName: (cfg.profile?.name ?? "").trim(),
     agents: setupAgentsReading(described),
-    signedOutAgents: setupSignedOutReading(described),
+    // Who runs on each one: Needs you names only an engine a bot uses (setupEngineUsers).
+    signedOutAgents: setupEngineUsers(setupSignedOutReading(described), store.bots, routines?.listRoutines() ?? []),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps: connected.count,
@@ -4829,7 +4834,8 @@ const SIGNED_OUT_FRESH_MS = 60_000;
 
 function signedOutCountOf(view: SetupView): number {
   const firstRunOwnsView = view.conversationLive === true && view.next !== null;
-  return firstRunOwnsView ? 0 : view.signedOutAgents.length;
+  // Only an engine a bot runs on is reported (FUIGO-FIRST-SIGNIN-PLACEMENT), the same rows the Inbox shows.
+  return firstRunOwnsView ? 0 : view.signedOutAgents.filter((agent) => (agent.usedBy?.length ?? 0) > 0).length;
 }
 
 function noteSignedOutEngines(view: SetupView): void {
@@ -20929,7 +20935,8 @@ const fluxConnectionTransaction = new FluxConnectionTransaction({
   apply: fluxConnectionApply.apply,
 });
 /** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
-const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired() });
+const fluxSaveBlockedAtBoot = fluxSaveBlocked(process.env, Boolean(cloudHome), Boolean(utilityParentPort));
+const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired(), ...fluxSaveBlockedAtBoot });
 async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
@@ -20958,7 +20965,12 @@ function claudeAccountReferenced(instanceId: string) {
 const claudeUpdatesInFlight = new Set<string>();
 const engineManager = new EngineManager({
   root: join(DATA_DIR, "managed-engines"),
+  otherClis: id => Object.entries(instanceConfigs(cfg)).flatMap(([other, entry]) => {
+    const config = entry?.config;
+    return other !== id && config && typeof config === "object" && !Array.isArray(config) && "cli" in config && typeof config.cli === "string" ? [config.cli] : [];
+  }),
   get envPath() { return augmentedPath(); },
+  resetProbes: () => { resetPathCache(); invalidateCliVersions(); },
   getInstance: async id => {
     resetPathCache();
     // Only this engine is asked: describe() probed and refreshed every engine, so eight cards cost eight scans.
@@ -22616,10 +22628,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         clients.revoke(body.clientId);
         for (const binding of browserExtension?.status().bindings.filter(item => item.clientId === body.clientId) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
       } else {
+        // Picked here as the other new-bot routes do: a start can open the port with the engine probe still running and nothing remembered.
+        const modelSelection = await defaultSelection();
         if (!clients.enabled) return json(res, 409, { error: "Turn on external browser tools before pairing a client." });
         if (!browserExtension?.status().profiles.some(profile => profile.profileId === body.profileId)) return json(res, 409, { error: "Connect the browser profile before pairing a client." });
         if (store.bots.length >= MAX_WORKSPACE_BOTS) return json(res, 409, { error: "Workspace bot limit reached." });
-        const bot = store.createBot({ name: body.label, title: "External browser connection" }, { seedMessages: false });
+        const bot = store.createBot({ name: body.label, title: "External browser connection", modelSelection }, { seedMessages: false });
         store.patchBot(bot.id, { browser: true, computer: "off", composio: false, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: body.profileId });
         const paired = clients.pair({ label: body.label, profileId: body.profileId, botId: bot.id, threadId: bot.threadId });
         const clientDirectory = join(DATA_DIR, "browser-extension", "client-configs");
@@ -25012,6 +25026,42 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       return sendImage(res, url, `screen:${m[1]}:${message.id}`, String(message.png.length), Buffer.from(message.png, "base64"), message.mime ?? "image/png", {
         "cache-control": "private, no-store",
       });
+    }
+
+    // the audio of one voice note, for every door (server/voice/voice-note-audio.ts):
+    // the same visibility answer as the transcript and its images, then only
+    // a voice note this message lists and this conversation owns
+    m = path.match(VOICE_NOTE_AUDIO_ROUTE);
+    if (m && method === "GET") {
+      if (!mayReadThread(req, url, m[1]) || (!store.botByThread(m[1]) && !store.groupByThread(m[1]))) {
+        return json(res, 404, { error: "no such conversation" });
+      }
+      const storageRoot = join(DATA_DIR, "artifact-files");
+      // The host reads on the caller's behalf, scoped to the one saved file's
+      // own conversation, after the checks above and inside voiceNoteAudio.
+      const hostAccess = (id: string) => {
+        const owner = artifactOwner(database(), id);
+        return { owner: true, scopes: owner ? artifactScopes(owner) : [] };
+      };
+      const audio = voiceNoteAudio({
+        message: (threadId, messageId) => store.messageById(threadId, messageId),
+        owner: (id) => artifactOwner(database(), id),
+        describe: (id) => describeArtifact(database(), storageRoot, id, hostAccess(id)),
+        read: (id) => readArtifact(database(), storageRoot, id, hostAccess(id)),
+      }, m[1], m[2]!);
+      if (audio.status !== 200) return json(res, audio.status, { error: audio.error });
+      // NEVER KEPT IN A CACHE, for the image route's reason: the same URL is
+      // a 404 for a caller that may not read the conversation.
+      res.writeHead(200, {
+        "content-type": audio.mime,
+        "content-length": String(audio.bytes.length),
+        "content-disposition": "inline",
+        "cache-control": "private, no-store",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+      });
+      res.end(audio.bytes);
+      return;
     }
 
     // ── image attachments ────────────────────────────────────────────────
@@ -30201,6 +30251,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         pending: current.hidden ? [] : permissionStatus(store, current, current.id, pendingPermissionStatus(current)).pending });
     }
 
+    // One short real reply through an engine, on a press only: never a probe, never a schedule. It costs one small reply of the
+    // owner's plan and runs on a hidden session, so no bot, thread or message is touched and no owner data goes in.
+    if (method === "POST" && path === "/api/engine-setup-check") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const instance = registry.get(parsed.data.instanceId);
+      if (!instance) return json(res, 404, { error: "Engine not found." });
+      const reply = await checkEngineReply(instance);
+      // A real reply is the proof a rejection mark waits for: the engine reads as signed in again at once, not 15 minutes later.
+      if (reply.result === "ready") forgetInstanceMark(parsed.data.instanceId);
+      return json(res, 200, reply);
+    }
+
     if (method === "POST" && path === "/api/engine-setup-command") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
       const parsed = z.object({ instanceId: z.string().min(1).max(180), action: z.enum(["install", "connect"]) }).strict().safeParse(await readBody(req));
@@ -30219,6 +30284,47 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
       return json(res, 200, { command });
+    }
+
+    // Desktop engine sign-in (1.0.14). Local desktop only: a Cloud home has its own relay. The recipe is a fixed row per
+    // driver, built here so packaged PATH, npm shims and named Claude accounts are right. No text from the caller reaches it.
+    if (method === "POST" && path === "/api/engine-signin-recipe") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const instance = registry.get(parsed.data.instanceId);
+      const entry = instanceConfigs(cfg)[parsed.data.instanceId];
+      if (!instance || !entry) return json(res, 404, { error: "Engine not found." });
+      const driver = BUILT_IN_DRIVERS.find(candidate => candidate.driverKind === instance.driverKind);
+      const saved = entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) && "cli" in entry.config && typeof entry.config.cli === "string" ? entry.config.cli.trim() : "";
+      const fallback = driver?.defaultConfig() as { cli?: unknown } | undefined;
+      const cli = saved || (typeof fallback?.cli === "string" ? fallback.cli : undefined);
+      let namedClaude: string | undefined;
+      if (entry.driver === "claudeAgent") {
+        try { const account = claudeAccountInfo(parsed.data.instanceId, entry, cli ?? "claude"); namedClaude = account.managed ? account.configDir : undefined; }
+        catch { return json(res, 409, { error: "Review this Claude account's folder in Engines settings." }); }
+      }
+      return json(res, 200, buildEngineSigninRecipe({
+        driverKind: instance.driverKind, label: instance.displayName || driver?.metadata.displayName || parsed.data.instanceId, cli,
+        source: process.env, instanceEnvironment: entry.environment, searchPath: augmentedPath(), platform: process.platform,
+        ...(namedClaude ? { account: { CLAUDE_CONFIG_DIR: namedClaude }, accountRoot: namedClaude } : {}),
+        resolve: (name, args) => resolveCli(name, args, augmentedPath()),
+        candidates: (name) => { const found = findCliCandidates(name); if (found.length || instance.driverKind !== "fuigoAgent") return found; const bundled = bundledFuigoPath(); return bundled ? [bundled] : []; },
+        realpath: (file) => realpathSync.native(file),
+      }));
+    }
+    // One instance, on the press and while a sign-in runs. Only this engine is asked, never the whole fleet.
+    if (method === "POST" && path === "/api/engine-signin-probe") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180), signedIn: z.literal(true).optional() }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const authenticated = await registry.engineLogin(parsed.data.instanceId);
+      if (authenticated === undefined) return json(res, 404, { error: "Engine not found." });
+      // The sign-in went from signed out to signed in: a rejection from before it no longer says anything.
+      if (parsed.data.signedIn && authenticated === true) forgetInstanceMark(parsed.data.instanceId);
+      return json(res, 200, { authenticated });
     }
 
     // ── guided first run (/setup) ──

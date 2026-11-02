@@ -20,7 +20,7 @@ vi.mock("node:fs", async (original) => {
 import { ensureDirs } from "./config.ts";
 import type { FolderTrustTurnInput, ProviderInstance, RuntimeEvent, SendTurnInput } from "./contracts.ts";
 import type { ProviderTurnRoute } from "./provider-routing.ts";
-import { FuigoAgentDriver } from "./drivers/acp/fuigo.ts";
+import { FUIGO_PROCESS_TRUST_REPLY, FuigoAgentDriver, fuigoFolderTrustProcessReply, fuigoFolderTrustProcessReplyAt } from "./drivers/acp/fuigo.ts";
 import { FolderTrustStore, folderTrustRecordRows, noCardPickFields, readUpstreamTrustFile, upstreamFolderVerdict } from "./folder-trust.ts";
 import { folderPolicySeedAllowed, fuigoSeedPathValid, fuigoSeedText, planFuigoSeeds, writeFuigoSeed, CLOUD_SEED_MAX_PATHS } from "./folder-trust-seed.ts";
 import { resetIsolationCache } from "./drivers/isolation-cache.ts";
@@ -451,59 +451,46 @@ posixOnly("a routed turn on the real Fuigo driver", () => {
       await done(await send("t3b-e", { folderTrust: gate({ sources: ["AGENTS.md"], trustKeys: [K], noCardPickKeys: [K] }) }));
       expect(replies()).toEqual([TRUST_REPLY]);
     });
-    describe("the primary route, Fuigo 1.0.38 and later", () => {
+    // FUIGO-PROCESS-REPLY-OFF-1014: the process-only reply and its first-prompt hold stay off in 1.0.14, so Fuigo 1.0.38
+    // takes the same plain reject as 1.0.37. The primary-route rows (reply before prompt, the 2 s bound, Stop during the
+    // hold) live at 69cc04997 in this file and come back with FIX-LEDGER row FUIGO-PROCESS-REPLY-ON.
+    describe("the primary route is off in 1.0.14: Fuigo 1.0.38 answers as 1.0.37 does", () => {
       const picked = (extra = {}) => ({ folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [cwd], ...extra }) });
       const order = () => log().map((entry) => entry.event).filter((event) => event === "reply" || event === "prompt");
-      it("trusts for this process only, before the first prompt, and stores nothing", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_DELAY_MS: "300", FAKE_ACP_TRUST_CONFIG_KINDS: "agents" });
-        const before = store.list();
-        await done(await send("t3b-p", picked()));
-        expect(replies()).toEqual([PROCESS_REPLY]);
-        expect(order()).toEqual(["reply", "prompt"]);
-        expect(open()).toHaveLength(0);
-        expect(chips().filter((title) => folderTrustNotice(title)?.kind === "chosen")).toHaveLength(1);
-        expect(store.list()).toEqual(before);
+      it("the switch is off and the version rule stays: 1.0.38 and later only, never an unread version", () => {
+        expect(FUIGO_PROCESS_TRUST_REPLY).toBe(false);
+        for (const version of ["1.0.37", "fuigo 1.0.38", "1.0.38", "1.1.0", undefined]) expect(fuigoFolderTrustProcessReply(version)).toBe(false);
+        expect(fuigoFolderTrustProcessReplyAt("1.0.38", true)).toBe(true);
+        expect(fuigoFolderTrustProcessReplyAt("fuigo 1.0.39", true)).toBe(true);
+        for (const version of ["1.0.37", "not a version", "", undefined]) expect(fuigoFolderTrustProcessReplyAt(version, true)).toBe(false);
       });
-      it("a slow start does not use up the wait: the reply still goes first", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_INIT_DELAY_MS: "2500", FAKE_ACP_TRUST_DELAY_MS: "300" });
-        await done(await send("t3b-p2", picked()));
-        expect(order()).toEqual(["reply", "prompt"]);
+      it("1.0.38 gets the same reply, order, chip and store as 1.0.37: plain reject, no hold, no duration", async () => {
+        const run = async (version: string, thread: string) => {
+          await create({ FAKE_ACP_VERSION: version, FAKE_ACP_TRUST_CONFIG_KINDS: "agents" });
+          const at = { replies: replies().length, order: order().length, open: open().length, withheld: withheld().length };
+          const before = store.list();
+          await done(await send(thread, picked()));
+          expect(store.list()).toEqual(before);
+          return { replies: replies().slice(at.replies), open: open().length - at.open, withheld: withheld().length - at.withheld };
+        };
+        const old = await run("1.0.37", "t3b-p");
+        const next = await run("1.0.38", "t3b-p2");
+        expect(old).toEqual({ replies: [REJECT_REPLY], open: 0, withheld: 1 });
+        expect(next).toEqual(old);
+        expect(next.replies.some((line) => line?.includes("duration"))).toBe(false);
+        expect(next.replies).not.toContain(PROCESS_REPLY);
       });
-      it("each qualifying turn is asked and held again, in a fresh process", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_DELAY_MS: "300" });
-        await done(await send("t3b-q", picked()));
-        await done(await send("t3b-q", picked()));
-        expect(requests()).toHaveLength(2);
-        expect(order()).toEqual(["reply", "prompt", "reply", "prompt"]);
-      });
-      it("1.0.37 and an unread version take the plain reject", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.37" });
-        await done(await send("t3b-r", picked()));
-        await create({ FAKE_ACP_VERSION: "not a version" });
-        await done(await send("t3b-r2", picked()));
-        expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY]);
-      });
-      it("the bound lets the prompt go and the late request is still answered", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_DELAY_MS: "2600" });
-        const started = Date.now();
+      it("a slow trust request on 1.0.38 is still answered with the plain reject, and the prompt is sent", async () => {
+        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_DELAY_MS: "1500" });
         await done(await send("t3b-s", picked()));
-        expect(Date.now() - started).toBeGreaterThanOrEqual(2000);
-        expect(order()).toEqual(["prompt", "reply"]);
-        expect(replies()).toEqual([PROCESS_REPLY]);
+        expect(order()).toContain("prompt");
+        expect(replies()).toEqual([REJECT_REPLY]);
       });
-      it("a key not in the list has no hold and keeps the card", async () => {
+      it("a key not in the list keeps the card on 1.0.38, with no duration", async () => {
         await create({ FAKE_ACP_VERSION: "1.0.38" });
         await sendThroughCard("t3b-t", { folderTrust: gate({ sources: ["AGENTS.md"], noCardPickKeys: [join(scratch, "other")] }) });
         expect(requests()).toHaveLength(1);
         expect(replies().some((line) => line?.includes("duration"))).toBe(false);
-      });
-      it("Stop during the hold sends no prompt", async () => {
-        await create({ FAKE_ACP_VERSION: "1.0.38", FAKE_ACP_TRUST_DELAY_MS: "1500" });
-        const turn = await send("t3b-u", picked());
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        await instance!.adapter.interruptTurn("t3b-u");
-        await done(turn);
-        expect(log().some((entry) => entry.event === "prompt")).toBe(false);
       });
     });
     describe("a stored no in Fuigo's own store", () => {

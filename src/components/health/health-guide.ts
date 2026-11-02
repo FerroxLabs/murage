@@ -76,8 +76,9 @@ const GO_LABELS: Readonly<Record<Exclude<NextAction, "none">, LocaleKey>> = {
 export const goLabel = (to: Exclude<NextAction, "none">): string => t(GO_LABELS[to]);
 
 /** Every page a Health button opens is desktop only (lib/settings-sections.ts), and a phone sent there lands on General,
- * so a phone shows the words and no button. */
-export const settingsPagesHere = (desktop: boolean | undefined): boolean => desktop !== false;
+ * so a phone shows the words and no button. While the surface is still unknown the button waits too: a phone that has
+ * not said what it is yet must not get one. */
+export const settingsPagesHere = (desktop: boolean | undefined): boolean => desktop === true;
 
 /** Where a "go" button opens: existing Settings pages only. */
 export function healthDestination(to: NextAction): { section: "backups" | "storage" | "memory" | "engines" } | null {

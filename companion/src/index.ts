@@ -47,13 +47,13 @@ import { join } from "node:path";
 
 import { createAddressWatcher } from "./advertise-watch.ts";
 import {
-  browserBindHost,
   browserDoorLocation,
   browserFront,
   reconcileBrowserFront,
   createBrowserHandler,
   createBrowserStreamUpgrade,
   createSignInLimiter,
+  desiredBrowserDoorHost,
   rebindBrowserDoor,
   tailnetBindAddress,
   type BoundIdentity,
@@ -339,7 +339,7 @@ let deviceDoorHost: string | null | undefined;
 /** Where the door should be bound right now, given Tailscale as it is right
  * now. Throws only in the explicit `tailnet` mode. */
 const desiredBrowserBindHost = (): string =>
-  BROWSER_FRONT ? "127.0.0.1" : browserBindHost(BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
+  desiredBrowserDoorHost(BROWSER_FRONT, BROWSER_BIND, tailscaleAddress(), tailnetSelfAddress(), (reason) =>
     noteOnce("decline", `browser door staying on loopback: ${reason}`, console.log),
   );
 
