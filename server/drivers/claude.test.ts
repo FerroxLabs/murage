@@ -1594,6 +1594,17 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(instance.adapter.hasSession("t-int")).toBe(false);
   });
 
+  // CLOSE-STOP-1014 pin: Claude is unchanged. Its dispose clears listeners before the killed child closes, so a quit alone
+  // never hands the harness a "cancelled" (which would read as the owner's Stop). Red if dispose ever starts delivering it.
+  it("CLOSE-STOP pin: quit alone on a running turn delivers no Stop ending", async () => {
+    await create("hang");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-pin", text: "go" });
+    await recorder.until((e) => e.type === "session.started");
+    await instance.dispose(); // awaits the retired child's confirmed stop
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId && (e as any).ok === true && (e as any).stopReason === "cancelled")).toEqual([]);
+  });
+
   it("holds only when the hold-authority marker is on the current prompt line", async () => {
     await create(undefined, { HOME: scratch, USERPROFILE: scratch });
 

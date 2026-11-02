@@ -475,6 +475,8 @@ if (argv.includes("--version")) {
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
 // so catalog/auth tests do not hang on stdin.
 if (argv[0] === "status" || argv[0] === "whoami") {
+  // FAKE_ACP_AUTH=crash: the status check dies with nothing said, so the login stays unverified.
+  if (process.env.FAKE_ACP_AUTH === "crash") { process.stderr.write("fake-acp: status crashed\n"); process.exit(2); }
   const authenticated = process.env.FAKE_ACP_AUTH !== "0";
   await printProbeAndExit(JSON.stringify({ isAuthenticated: authenticated }));
 }

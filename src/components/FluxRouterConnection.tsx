@@ -33,6 +33,22 @@ export function serverSentence(cause: unknown): string {
   return MACHINERY.test(text) || RUNTIME_FAULT.test(text) ? "" : text;
 }
 
+/** LINUX-NOKEYRING-ENV-KEY: on a computer with no unlocked keyring, Murage
+ * saves no key. Shown up front (saveBlocked) and for a refused click. */
+export const FLUX_KEYRING_NOTICE = "Murage will not save a Flux Router key yet. This computer has no unlocked keyring, so a saved key would only be hidden, not protected. "
+  + "Install and unlock a keyring such as gnome-keyring or KWallet, then restart Murage. "
+  + "If you want keys kept as plain text on this computer anyway, start Murage with MURAGE_ALLOW_PLAINTEXT_SECRETS=1.";
+/** Added when the place Murage was started from holds a Flux Router key (the environment choice). */
+export const FLUX_KEYRING_ENVIRONMENT_LINE = "Murage found a Flux Router key in the place it was started from. Murage uses it only after you choose it here and it can be saved securely.";
+/** The opening of main's keyring refusal (electron/secret-storage-policy.mjs LINUX_KEYRING_REQUIRED), bare or wrapped by Electron. It
+ * names an environment variable, so serverSentence holds it back as plumbing; it is matched here and answered with local copy. */
+const KEYRING_REFUSAL = "Murage will not save this key yet. This computer has no unlocked keyring";
+export function keyringRefusal(cause: unknown): boolean {
+  const text = (cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "")
+    .replace(IPC_REJECTION, "").replace(/^Error:\s*/i, "").trim();
+  return text.startsWith(KEYRING_REFUSAL);
+}
+
 /** What the person is told when one of these actions is refused.
  *
  * This used to be a bare catch, so a refusal the server had explained in
@@ -40,6 +56,7 @@ export function serverSentence(cause: unknown): string {
  * nothing to refresh: a bot was mid-task. The card's own wording is the
  * fallback, for the failures that carry no sentence worth reading. */
 export function fluxActionError(kind: "save" | "test" | "disconnect" | "select", cause: unknown): string {
+  if (keyringRefusal(cause)) return FLUX_KEYRING_NOTICE;
   const sentence = serverSentence(cause);
   if (sentence) return sentence;
   if (kind === "test") return "Could not check the model catalog. Try again when Flux Router is available.";
@@ -57,13 +74,15 @@ export interface FluxRouterConnectionProps {
   onCancelSignin?: () => Promise<void> | void;
   onTest: () => Promise<{ modelCount: number; error?: string }>;
   onDisconnect: () => Promise<void>;
+  /** The desktop found no unlocked keyring at launch: no key can be saved here. */
+  saveBlocked?: "keyring";
   children?: ReactNode;
 }
 
 const focus = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 const button = `min-h-11 rounded-lg bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50 ${focus}`;
 
-export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onSignin, onCancelSignin, onTest, onDisconnect, children }: FluxRouterConnectionProps) {
+export function FluxRouterConnection({ configured, conflict = false, choices = [], onSelect, onSave, onSignin, onCancelSignin, onTest, onDisconnect, saveBlocked, children }: FluxRouterConnectionProps) {
   const selectionRequired = conflict || configured === false && choices.length > 0;
   const showSavedChoices = selectionRequired || choices.length > 1;
   const input = useRef<HTMLInputElement>(null);
@@ -103,7 +122,7 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
       await onSignin();
       setEditing(false); setNotice("Signed in. Flux Router is connected. Test the connection to check its model catalog.");
     } catch (cause) {
-      setError(serverSentence(cause) || "Sign-in did not finish. Try again, or paste your key instead.");
+      setError(keyringRefusal(cause) ? FLUX_KEYRING_NOTICE : serverSentence(cause) || "Sign-in did not finish. Try again, or paste your key instead.");
     } finally { running.current = false; setBusy(null); }
   };
   const cancelEdit = () => { if (input.current) input.current.value = ""; setEditing(false); setError(""); setInvalid(false); };
@@ -120,6 +139,7 @@ export function FluxRouterConnection({ configured, conflict = false, choices = [
       <span className="text-[12px] text-ink-secondary">{configured === null ? "Loading connection…" : selectionRequired ? "Choose a saved connection" : configured ? "Connected · key saved" : "Not connected"}</span>
     </div>
     <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">One key for Flux Router models. Choose a Flux model when you want to use it; model requests use your Flux Router balance.</p>
+    {saveBlocked === "keyring" && <div id="flux-router-keyring" role="note" className="mt-3 space-y-2 rounded-lg bg-card p-3 text-[13px] leading-relaxed text-ink"><p>{FLUX_KEYRING_NOTICE}</p>{choices.some(choice => choice.id === "legacy-flux-environment") && <p>{FLUX_KEYRING_ENVIRONMENT_LINE}</p>}</div>}
     {showSavedChoices && <div className="mt-4 space-y-3 text-[13px] text-ink"><p>{conflict ? "Different Flux Router keys are saved. Choose the connection to use for Flux models. Saved keys are never displayed." : "Choose a saved connection to use for Flux models. You do not need to enter its key again."}</p><div className="flex flex-wrap gap-2">{choices.map(choice => <button key={choice.id} type="button" className={`${button} break-words text-left`} disabled={Boolean(busy) || !onSelect} onClick={() => void selectExisting(choice.id)}>Use {choice.label}{choice.enabled ? "" : " (currently disabled)"}</button>)}</div></div>}
     {!selectionRequired && (!configured || editing) && <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void act("save"); }}>
       <label className="block text-[13px] text-ink">{configured ? "New Flux Router key" : "Flux Router key"}<input ref={input} name="flux-router-key" type="password" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy) || configured === null} aria-invalid={invalid || undefined} aria-describedby={invalid ? "flux-router-error" : undefined} onInput={() => { if (invalid) setInvalid(false); }} placeholder="Paste your Flux Router key…" className={`mt-1.5 min-h-11 w-full min-w-0 rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink ${focus}`} /></label>
