@@ -28,6 +28,7 @@ import { ChatProtocolError, ChatReasoningDetails, ChatToolCalls, object, type Ch
 import { buildMcpServers, piMountRecords } from "./mcp-mounts.ts";
 import { ChatMcpError, mountSecrets, openChatMcpServers, type ChatMcpSession } from "./chat-mcp-client.ts";
 import { ProviderStopUnconfirmedError, stopBudget } from "./child-teardown.ts";
+import { engineClosedLine } from "./stop-copy.ts";
 import { CLI_TERM_GRACE_MS } from "../procs.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
 import { boundedToolInput } from "../approval-text.ts";
@@ -180,6 +181,10 @@ interface TurnState {
   scoped: Set<string>;
   /** Resolves when the turn settled. */
   done: Promise<void>;
+  /** Resolves once the turn's turn.completed was emitted (a mounted turn emits after its children closed). */
+  emitted: Promise<void>;
+  /** interruptTurn or stopAll asked for this stop; dispose never sets it. An abort without it is the engine closing (CLOSE-STOP-1014). */
+  stopAsked: boolean;
 }
 
 /** Where one request goes: a provider connection route or a local server. */
@@ -1062,9 +1067,12 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     /** s8: the model-bound copy (assistant replay): every known secret removed from each string leaf, nothing else changed. */
     const forModel = <T,>(value: T): T => scrubKnownLeaves(value, secrets, 0, true);
     let markDone!: () => void;
+    let markEmitted!: () => void;
     const state: TurnState = {
       threadId, turnId, abort, mounted: servers !== null, ending: false, settled: false, steers: [], staged: [], uncertain: [], pending: new Map(), scoped: new Set(),
       done: new Promise<void>((resolve) => { markDone = resolve; }),
+      emitted: new Promise<void>((resolve) => { markEmitted = resolve; }),
+      stopAsked: false,
     };
     active.set(threadId, state);
     // Stop with a card open: the card is resolved as the system's deny and the tool never runs (s5.5).
@@ -1116,12 +1124,18 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
     const settle = (completed: RuntimeEvent) => {
       if (state.settled) return;
       state.settled = true;
+      // Only a stop someone asked for ends as Stop: an abort that only dispose (quit, restart) made is the engine closing,
+      // ended as ACP ends it (CLOSE-STOP-1014).
+      if (completed.type === "turn.completed" && completed.ok && completed.stopReason === "cancelled" && !state.stopAsked) {
+        emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(input.displayName?.trim() || options.httpErrorLabel, null) });
+        completed = { ...completed, ok: false, stopReason: "exit_before_result" };
+      }
       for (const steer of state.steers.splice(0)) steer.resolve("rejected");
       for (const { steer } of state.staged.splice(0)) steer.resolve("uncertain");
       for (const session of sessions) session.close();
       active.delete(threadId);
-      if (!mcpTeardowns.pending(threadId, turnId)) emit(completed);
-      else void mcpTeardowns.closed(threadId, turnId).then(() => emit(completed));
+      if (!mcpTeardowns.pending(threadId, turnId)) { emit(completed); markEmitted(); }
+      else void mcpTeardowns.closed(threadId, turnId).then(() => { emit(completed); markEmitted(); });
       markDone();
     };
     const completedEvent = (ok: boolean, stopReason: string | null, usage: Usage | null, denials: string[]): RuntimeEvent => {
@@ -1500,7 +1514,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       sendTurn,
       interruptTurn: async (threadId, turnId) => {
         const state = active.get(threadId);
-        if (state) await stopAndWait([state]);
+        if (state) { state.stopAsked = true; await stopAndWait([state]); }
         return stopConfirmed(threadId, turnId);
       },
       awaitTurnTeardown: (threadId, turnId) => mcpTeardowns.wait(threadId, turnId, stopBudget(CLI_TERM_GRACE_MS)),
@@ -1536,6 +1550,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         if (active.has(threadId)) throw new Error("MEMORY_SESSION_RESET_UNAVAILABLE: this engine must end its retained session before authorized replay");
       },
       stopAll: async () => {
+        for (const state of active.values()) state.stopAsked = true;
         await stopAndWait([...active.values()]);
         await stopConfirmed(undefined, undefined);
       },
@@ -1552,8 +1567,13 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       return text.trim() ? text : reasoning;
     },
     dispose: async () => {
-      await stopAndWait([...active.values()]);
+      // never sets stopAsked: a turn only this close ended reads as the engine closing (CLOSE-STOP-1014)
+      const all = [...active.values()];
+      await stopAndWait(all);
       await stopConfirmed(undefined, undefined);
+      // a mounted turn emits its ending after its children closed: deliver it before the listeners go, within the stop budget
+      const mounted = all.filter((state) => state.mounted);
+      if (mounted.length) await Promise.race([Promise.all(mounted.map((state) => state.emitted)), new Promise((resolve) => setTimeout(resolve, stopBudget(CLI_TERM_GRACE_MS).maxMs).unref?.())]);
       listeners.clear();
     },
   };
