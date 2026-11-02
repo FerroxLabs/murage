@@ -106,6 +106,7 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   },
   isActiveThread: f => f.m.isActiveThread(f.thread),
   activeRunOrigin: f => f.m.activeRunOrigin(f.thread),
+  liveGoalInRoom: f => f.m.liveGoalInRoom("group-1"),
   liveRunThreadIds: f => { expect(f.m.liveRunThreadIds("bot-a")).toBeInstanceOf(Set); },
   cardOpened: f => expect(f.m.cardOpened(f.thread, "card-1", "Approve the write")).toBe(true),
   cardClosed: f => { f.m.cardOpened(f.thread, "card-1", "Approve the write"); f.m.cardClosed(f.thread, "card-1"); },

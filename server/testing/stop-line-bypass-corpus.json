@@ -6,6 +6,7 @@
   "{H}": "home",
   "{SQDEL}": "an outside Delete patch, single-quote escaped"
  },
+ "noLimitsLifts": "a stop-line row whose only change is the No limits level on the owner's own turn; every other level keeps the strictness check",
  "removes": "a hold 1.0.9 had that the subset removes on purpose; the strictness check skips only these rows",
  "expect": {
   "stop": "stop line hit; held at Full access (routine and owner) and Auto",
@@ -16,6 +17,7 @@
  "rows": [
   {
    "id": "p1-delete",
+   "noLimitsLifts": "NOLIMITS-CODEX-EDIT: 1.0.9 held this at No limits only as an unread call; the stop line sees it and No limits lifts it on the owner's own turn, as on every engine",
    "round": "1",
    "source": "both",
    "form": "patch",
@@ -24,6 +26,7 @@
   },
   {
    "id": "p1-move-out",
+   "noLimitsLifts": "NOLIMITS-CODEX-EDIT: 1.0.9 held this at No limits only as an unread call; the stop line sees it and No limits lifts it on the owner's own turn, as on every engine",
    "round": "1",
    "source": "both",
    "form": "patch",

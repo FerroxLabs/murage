@@ -43,8 +43,8 @@ export default function NewProjectDialog({onClose,returnFocusRef}:{onClose:()=>v
   const showForm=plain||!options?.chief;
   const startNow=form.mode==="goal"&&<label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={form.startNow===true} aria-describedby="start-now-hint" onChange={e=>field("startNow",e.target.checked)} />{t("projects.new.startNow")}</label>;
   const startNowHint=form.mode==="goal"&&<p id="start-now-hint">{t("projects.new.startNowHint")}</p>;
-  return <ProjectBoardDialog title={t("projects.new.title")} onClose={onClose} returnFocusRef={returnFocusRef}>
-    <form className="space-y-4" onSubmit={e=>{e.preventDefault();void create();}}>
+  return <ProjectBoardDialog title={t("projects.new.title")} onClose={onClose} returnFocusRef={returnFocusRef} actions={(showForm||error)?<>{error&&<p role="alert" className="min-w-0 flex-1">{error}</p>}{showForm&&<button form="project-new-form" className={BOARD_BUTTON} disabled={busy||!options||!form.members.length}>{t("projects.new.create")}</button>}</>:undefined}>
+    <form id="project-new-form" className="space-y-4" onSubmit={e=>{e.preventDefault();void create();}}>
       <label className="block">{t("projects.new.purpose")}<textarea required maxLength={2000} rows={3} className={BOARD_INPUT} value={form.purpose} onChange={e=>field("purpose",e.target.value)} /></label>
       <label className="block">{t("projects.common.deadlineOptional")}<input type="date" className={BOARD_INPUT} value={form.deadline} onChange={e=>field("deadline",e.target.value)} /></label>
       <label className="block">{t("projects.new.folder")}<input className={BOARD_INPUT} maxLength={4096} value={form.folder} onChange={e=>field("folder",e.target.value)} /></label>
@@ -58,8 +58,7 @@ export default function NewProjectDialog({onClose,returnFocusRef}:{onClose:()=>v
         {proposal&&<fieldset className="space-y-3"><legend>{t("projects.new.proposedLegend")}</legend>{(["summary","doneMeans","rules"] as const).map(key=><label key={key} className="block">{key==="summary"?t("projects.new.summary"):key==="doneMeans"?t("projects.new.doneMeans"):t("projects.new.rules")}<textarea className={BOARD_INPUT} maxLength={key==="summary"?200:key==="doneMeans"?4000:12000} value={proposal.brief[key]} onChange={e=>setProposal({...proposal,brief:{...proposal.brief,[key]:e.target.value}})} /></label>)}{(["minutes","tokens"] as const).map(key=><label key={key} className="block">{key==="minutes"?t("projects.common.workMinutes"):t("projects.common.tokens")}<input type="number" step={1} min={1} max={key==="minutes"?100000:Number.MAX_SAFE_INTEGER} required className={BOARD_INPUT} value={proposal.budget[key]} onChange={e=>setProposal({...proposal,budget:{...proposal.budget,[key]:Number(e.target.value)}})} /></label>)}<label className="block">{t("projects.new.firstPlan")}<textarea className={BOARD_INPUT} rows={4} maxLength={2247} aria-describedby="first-plan-hint" value={proposal.planOutline.join("\n")} onChange={e=>setProposal({...proposal,planOutline:e.target.value.split("\n")})} /></label><p id="first-plan-hint">{t("projects.new.firstPlanHint")}</p>{startNow}{startNowHint}</fieldset>}
         {!proposal&&form.brief!==undefined&&<label className="block">{t("projects.new.chiefBrief")}<textarea className={BOARD_INPUT} rows={6} maxLength={12000} value={form.brief} onChange={e=>field("brief",e.target.value)} /></label>}
         {!proposal&&<fieldset className="space-y-3"><legend>{t("projects.new.budgetLegend")}</legend>{(["budgetMinutes","budgetTokens"] as const).map(key=><label key={key} className="block">{key==="budgetMinutes"?t("projects.common.workMinutes"):t("projects.common.tokens")}<input type="number" min={1} max={key==="budgetMinutes"?100000:Number.MAX_SAFE_INTEGER} step={1} className={BOARD_INPUT} value={form[key]??(key==="budgetMinutes"?"120":"3000000")} onChange={e=>field(key,e.target.value)} /></label>)}{startNow}{startNowHint}</fieldset>}
-        <button className={BOARD_BUTTON} disabled={busy||!options||!form.members.length}>{t("projects.new.create")}</button>
-      </>}{error&&<p role="alert">{error}</p>}
+      </>}
     </form>
   </ProjectBoardDialog>;
 }

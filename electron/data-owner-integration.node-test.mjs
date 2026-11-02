@@ -304,13 +304,14 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
     // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
     sentinelHost:{shutdown:async()=>{}},
-    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},mcpServers:{dispose(){}},
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the
     // first adb command and stays, so quitting has to stop it by name.
     androidDevice:{stop:()=>{androidStops++;return androidStop();}},
     // The phone's desk-presence reporting (mobile merge) is stopped on exit too.
     stopDeskPresence:()=>{},
+    serverStopReason:{note(){},logOnce(){}},
   };
   const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";

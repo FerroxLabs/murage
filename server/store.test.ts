@@ -15,6 +15,7 @@ import { usageMonthKey } from "../shared/usage-month.ts";
 import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
+import { murageLine } from "./murage-line.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
 import { canReach, isIndividualAssistant, isWorkspaceChief, Store, type BotRecord, type Message } from "./store.ts";
 import { BROWSER_CHECKING_REASON, BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
@@ -887,6 +888,17 @@ describe("Store", () => {
     // answering an intake card must not lose the payload the next turn reads
     expect(patched?.card?.intake).toEqual({ step: "open", asked: 1 });
     expect(store.patchMessage(bot.threadId, "nope", {})).toBeNull();
+  });
+
+  it("keeps the Mac folder prompt line across a reload, and its cleared state", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const row = store.appendMessage(bot.threadId, murageLine({ role: "bot", kind: "activity", folderPrompt: { folder: "Documents" }, tool: { name: "line", ok: true } }));
+    const stored = () => new Store(selection).messagesFor(bot.threadId).find((m) => m.id === row.id);
+    expect(stored()?.folderPrompt).toEqual({ folder: "Documents" });
+    store.patchMessage(bot.threadId, row.id, { folderPrompt: { folder: "Documents", done: true } });
+    expect(stored()?.folderPrompt).toEqual({ folder: "Documents", done: true });
+    expect(stored()?.tool?.name).toBe("line");
   });
 
   it("keeps memory and SQLite pending when a card patch cannot persist", () => {

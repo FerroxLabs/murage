@@ -903,6 +903,28 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
+  it("stamps a shell call whose only text is a title past the card's cap, and only that one", async () => {
+    const long = "x".repeat(5000);
+    for (const [id, toolCall, cut] of [
+      ["t-acp-title-cut", { toolCallId: "c1", kind: "execute", title: `${long} rm -rf ~` }, true],
+      ["t-acp-title-short", { toolCallId: "c2", kind: "execute", title: "Run it" }, false],
+      ["t-acp-command-long", { toolCallId: "c3", kind: "execute", title: "Run it", rawInput: { command: `echo ${long}` } }, false],
+      ["t-acp-fetch-title", { toolCallId: "c4", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
+    ] as const) {
+      process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
+      await create(GrokAgentDriver, "permission");
+      await instance.adapter.sendTurn({ threadId: id, text: "go" } as any);
+      const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
+      expect(opened.toolInputTruncated === true, id).toBe(cut);
+      if (cut) {
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputCut: true, inputTruncated: true });
+        expect(verdict.approve).toBeNull();
+      }
+      await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
+      await recorder.until((e) => e.type === "turn.completed");
+    }
+  });
+
   it("carries the tool input of a fetch ask and keeps the move title as the reason", async () => {
     for (const [id, toolCall, check] of [
       ["t-acp-fetch", { toolCallId: "f1", kind: "fetch", title: "Fetch docs", rawInput: { url: "https://x.test/a", method: "DELETE" } },
@@ -1502,13 +1524,13 @@ createInterface({ input: process.stdin }).on("line", line => {
     });
   });
 
-  it("a project question stays open past its normal deadline", async () => {
+  it("a question stays open past 31 minutes", async () => {
     await create(GrokAgentDriver, "fuigo-question");
     const original = globalThis.setTimeout;
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === QUESTION_TIMEOUT_MS ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose" });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -4013,6 +4035,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
         threadId: "t-timeout",
         text: "go",
         cwd: folder,
+        unattendedAskNote: true,
         folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
       });
       const opened = recorder.events.find((e) => e.type === "request.opened");
@@ -4090,6 +4113,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
         text: "go",
         cwd: folder,
         providerRoute: route,
+        unattendedAskNote: true,
         folderTrust: { key: folder, folder, sources: ["AGENTS.md"] },
       });
       expect(providerTurnHomes().length).toBe(before.length + 1);

@@ -4,6 +4,7 @@ import { api, useStore, type ConfigStatus } from "@/state/store";
 import { requestNotificationPermission } from "@/lib/notify";
 import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-sounds";
 import { t } from "@/lib/i18n";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { notificationPreferencesSchema, resolveNotificationPreferences, type NotificationPreferences } from "../../shared/notification-preferences";
 
 type Permission = NotificationPermission | "unavailable";
@@ -113,9 +114,9 @@ export function NotificationSettings() {
         {permissionPending ? t("notificationSettings.permissionPending") : t("notificationSettings.requestPermission")}
       </button>}
     </div>
-    {error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
-    {saved && <p role="status" className="mt-3 text-[12px] text-success">{t("notificationSettings.saved")}</p>}
-    <div className="mt-3 flex justify-end">
+    <div className={`${BOX_SAVE_ROW} mt-1 flex flex-wrap items-center justify-end gap-x-3 gap-y-1 bg-card`}>
+      {error && <p role="alert" className="min-w-0 flex-1 text-[12px] text-danger">{error}</p>}
+      {saved && <p role="status" className="min-w-0 flex-1 text-[12px] text-success">{t("notificationSettings.saved")}</p>}
       <button type="button" disabled={!state.config || !dirty || saving} onClick={() => void save()}
         className={"min-h-11 rounded-lg bg-control px-3 text-[13px] font-medium text-ink disabled:opacity-50 " + focus}>
         {saving ? t("notificationSettings.saving") : t("notificationSettings.save")}
