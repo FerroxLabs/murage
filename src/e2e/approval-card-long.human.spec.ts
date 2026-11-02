@@ -86,12 +86,13 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     if (SHOTS) await page.screenshot({ path: join(SHOTS, `on-open-${width}x${height}.png`) });
     const region = page.getByRole("region", { name: "Pending approval" });
     const allow = page.getByRole("button", { name: "Allow once" });
-    const composer = page.getByRole("textbox").last();
+    const composer = page.locator("textarea").last();
 
-    // the decisions and the send box are on screen with the long prompt pending
+    // the decisions are on screen with the long prompt pending; the panel is
+    // the composer until the card is answered (APPROVAL-ONE-CARD)
     await expectOnScreen(page, "Allow once", allow);
     await expectOnScreen(page, "Don't allow", page.getByRole("button", { name: "Don't allow", exact: true }));
-    await expectOnScreen(page, "composer", composer);
+    await expect(composer).toBeHidden();
     // the card is a few lines, not the whole screen, and the conversation keeps room
     expect((await region.boundingBox())!.height).toBeLessThan(height * 0.5);
     await expect(page.getByText("I will make that image now.")).toBeVisible();
@@ -106,7 +107,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     const less = region.getByRole("button", { name: "Show less" });
     await expect(less).toHaveAttribute("aria-expanded", "true");
     await expectOnScreen(page, "Allow once (expanded)", allow);
-    await expectOnScreen(page, "composer (expanded)", page.getByRole("textbox").last());
+    await expect(composer).toBeHidden();
     const scrolls = await region.evaluate((el) => {
       const pre = el.querySelector("[data-approval-held]") as HTMLElement | null;
       return { panelH: el.getBoundingClientRect().height, innerScrolls: pre ? pre.scrollHeight > pre.clientHeight : false };
@@ -123,5 +124,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     const answered = page.waitForRequest((request) => request.method() === "POST" && /respond|approval|decide/i.test(request.url()), { timeout: 10_000 });
     await allow.click({ timeout: 5_000 });
     await answered;
+    // the send box comes back once the card settles
+    await expectOnScreen(page, "composer (after the answer)", page.getByRole("textbox").last());
   });
 }

@@ -153,7 +153,7 @@ import { PROVIDER_PRESETS, assertProviderKey, keyIssuer, mutateProviderBank, par
 import { PROVIDER_BANK_FENCE_ERROR, applyProviderBankFenceMessage, modelProviderCommitAuthorized, providerBankDispatchFenced } from "./provider-bank-fence.ts";
 import { fluxCredentialStatus, resolveFluxAlias, type FluxCredentialState } from "../electron/flux-credential-policy.mjs";
 import { FluxConnectionTransaction } from "./flux-connection-transaction.ts";
-import { createFluxConnectionApply } from "./flux-connection-apply.ts";
+import { createFluxConnectionApply, fluxSaveBlocked } from "./flux-connection-apply.ts";
 import { rememberedMomentsAwaitingReply, rememberedMomentsForJob, threadAwaitsRememberedChip } from "./memory/memory-moments.ts";
 import { forgetBotLearningData, sweepLearningRetention } from "./memory/evolution-forgetting.ts";
 import { consolidateCompletedMemorySource, consolidateMemorySource, pendingMemoryConsolidationJobs, promoteDueSkippedSlices } from "./memory/consolidate.ts";
@@ -200,6 +200,7 @@ import { EMAIL_TOOLS_ENV } from "./drivers/email-tool-schemas.ts";
 import { botAccessPolicy } from "./bot-access-role.ts";
 import { permissionStatus, type PendingPermissionInput } from "./permission-status.ts";
 import { EngineManager } from "./engine-management.ts";
+import { checkEngineReply } from "./engine-reply-check.ts";
 import { bootSettled, firstHealthAnswered, noteHealthAnswered, readySettle, runAfterListen, startRecovery, startupWritesReady, trackBootJob } from "./after-listen.ts";
 import { invalidateCliVersions } from "./cli-version-cache.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
@@ -261,11 +262,11 @@ import { Presence, parsePresenceBody } from "./mobile-presence.ts";
 import { PushStore } from "./mobile-push-store.ts";
 import { PushOutbox } from "./mobile-push-outbox.ts";
 import { createBotCallsRuntime, type BotCallsRuntime } from "./bot-calls-runtime.ts";
-import { botWantsFact, needsOwnerNowRunId, routineRunFacts, runMovedAt } from "./bot-calls-facts.ts";
+import { needsOwnerNowOffered as needsOwnerNowOfferedFor, needsOwnerNowRunId, routineRunFacts, runMovedAt } from "./bot-calls-facts.ts";
 import { createCallChannel, createCallTickets, handleCallsRoute } from "./bot-calls-routes.ts";
 import { callCaller } from "./bot-calls-caller.ts";
 import { callOpener, ownerFirstName, writeCallCard } from "./bot-calls-card.ts";
-import { botCallsEnabled, deleteBotCallSettings, factReplayFrom, markFactReplay } from "./bot-calls-schema.ts";
+import { deleteBotCallSettings, factReplayFrom, markFactReplay } from "./bot-calls-schema.ts";
 import { CALL_PROTOCOL } from "../shared/bot-calls-contract.ts";
 import { createRelayClient, relayOrigin, relayRemovalSweeper } from "./mobile-push-relay.ts";
 import { mobilePushRoute, type PushRouteDeps } from "./mobile-push-routes.ts";
@@ -351,7 +352,7 @@ import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import { callAccess } from "./voice/call-access.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
 import type { InboxPage, InboxView } from "../shared/inbox.ts";
-import { ARTIFACT_PREVIEW_MAX_BYTES, artifactsRequest, artifactOwner, retainedSourceRoots, registerArtifact, readArtifact, artifactWorkspaceIdentity, authorizedArtifactRoot, sweepArtifactCandidates, runPublishedArtifactIds, publicationUnsettled, type ArtifactScope } from "./artifacts.ts";
+import { ARTIFACT_PREVIEW_MAX_BYTES, artifactsRequest, artifactOwner, describeArtifact, retainedSourceRoots, registerArtifact, readArtifact,artifactWorkspaceIdentity, authorizedArtifactRoot, sweepArtifactCandidates, runPublishedArtifactIds, publicationUnsettled, type ArtifactScope } from "./artifacts.ts";
 import { deliverRoutineRun, routineRunFallbackText, type RoutineDeliveryDeps } from "./routine-delivery.ts";
 import { storageReport } from "./storage-report.ts";
 import { AttachmentList } from "./storage-attachments.ts";
@@ -452,7 +453,7 @@ import * as checkpoints from "./checkpoints.ts";
 import { appendDecision, flushDecisionLog, readDecisions, redactDecisionsForThreads } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
 import { FolderTrustStore, canonicalFolder, folderTrustRecordRows, fuigoHomeFromEnv, noCardPickFields, readUpstreamTrustFile, scanFolderTrustSources, isUnrecordableTrustRoot } from "./folder-trust.ts";
-import { managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
+import { managedDeskQualifies, managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { folderTrustDecision } from "../shared/folder-trust.ts";
 import { NewsSignup } from "./news-signup.ts";
 import {
@@ -560,13 +561,14 @@ import {
 } from "./config.ts";
 import { customIntegrations } from "./custom-mcp-mounts.ts";
 import { ComputerControl } from "./computer-control.ts";
+import { buildEngineSigninRecipe } from "./engine-signin-recipe.ts";
 import { NarrowDenials } from "./narrow-denials.ts";
 import { augmentedPath, engineIdentities, findCliCandidates, resetPathCache, bundledFuigoPath, resolveFuigoCli, ownerEnvAfterDiscovery, setOwnerEnvStore } from "./env-path.ts";
 import { setExecEnvBotReader, setExecEnvOriginReader, handedPinsOf, noteStartupFileEvent, promptFactsOf, sshPinNotes } from "./engine-env.ts";
 import { fluxSelectionRefusal } from "./flux-surface.ts";
 import { isFluxModel } from "./flux-surface.ts";
 import { fluxFirstTokenProbe } from "./flux-memory-first-token.ts";
-import { describeSpawnFailure, execCli } from "./procs.ts";
+import { describeSpawnFailure, execCli, resolveCli } from "./procs.ts";
 import { HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGapNoticeDue, markHostPowerGapNoticeShown, probeHostPowerEnvironment, startHostPowerStub } from "./host-power.ts";
 import { updateClaudeCli } from "./claude-update.ts";
 import { engineSwitchLines } from "../shared/engine-switch.ts";
@@ -845,6 +847,7 @@ import { warmPool } from "./drivers/warm-pool.ts";
 import { reuseStats } from "./drivers/reuse-stats.ts";
 import { RateLimitedError, retryOnRateLimit } from "./tts/rate-limit.ts";
 import { admitVoiceNote, createVoiceNote, managedAudioOutputPath, rememberVoiceNote, takeVoiceNotes, VOICE_NOTE_MAX_CHARS, VOICE_NOTES_PER_TURN, VoiceNoteError } from "./voice/voice-notes.ts";
+import { VOICE_NOTE_AUDIO_ROUTE, voiceNoteAudio } from "./voice/voice-note-audio.ts";
 import type { ChannelVoiceNote } from "./telegram-channel.ts";
 import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildTurnContext, fitRenderedReplay, replayMetadata, engineIsFresh, replaysTranscriptNatively, transcriptForDriver, type TranscriptEntry } from "./turn-context.ts";
@@ -867,12 +870,13 @@ import { appDecider, deciderAvailable } from "./decider/index.ts";
 import { appendDeciderLog } from "./decider/log.ts";
 import { decideRoomResponder, routeLogRow, type RoomRoute } from "./decider/room-routing.ts";
 import { describeDecisionModelSettings, readDecisionModelSettings } from "./decider/settings.ts";
-import { noteCatalogOutcome, onKeyRejectionChange } from "./key-rejections.ts";
+import { forgetInstanceMark, noteCatalogOutcome, onKeyRejectionChange } from "./key-rejections.ts";
 import { checkFluxKey, requestFluxKeyRecheck, noteFluxKeyAccepted, noteFluxKeyRefused, onFluxKeyHealthChange } from "./flux-key-health.ts";
-import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupSignedOutReading } from "./setup.ts";
+import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupEngineUsers, setupSignedOutReading } from "./setup.ts";
 import { deriveSetupBackup, initializeSetupBackup, setupBackupRequest } from "./setup-backup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
-import { type EngineChoice, bootEngineChoice, defaultModel, pickDefaultEngine } from "./default-engine.ts";
+import { type EngineChoice, bootEngineChoice, defaultModel, fuigoBirthModel, fuigoUsable, pickDefaultEngine } from "./default-engine.ts";
+import { couldMoveEngine, createEngineRepick, targetCheck } from "./engine-repick.ts";
 import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { resumesLegacySession, withLegacyNames } from "../shared/connected-app-names.ts";
@@ -2045,7 +2049,7 @@ function agentsIntegration(botId: string, threadId: string, depth: number, skill
 
 /** The bot may call the owner and has an enabled needs_owner_now rule. Read at launch; the route answers "Noted." either way. */
 function needsOwnerNowOffered(botId: string): boolean {
-  try { const db = database(); return botCallsEnabled(db, botId) && botWantsFact(db, botId, "needs_owner_now"); } catch { return false; }
+  try { return needsOwnerNowOfferedFor(database(), botId); } catch { return false; }
 }
 
 /** The built-in browser, when the desktop app has one running: the harness
@@ -3568,6 +3572,7 @@ const DELETION_HOLD_WAIT_MS = 250;
 /** Settings > Storage's attachment list: one snapshot, one walk at a time (storage-attachments.ts). */
 const storageAttachmentList = new AttachmentList({
   dir: join(DATA_DIR, "attachments"), database, bots: () => store.bots,
+  hidden: (name) => conversationDeletions.attachmentPending(name),
   threadLabel: (threadId) => {
     for (const bot of store.bots) if (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)) return bot.name;
     for (const group of store.groups) if (group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId)) return group.name;
@@ -3766,7 +3771,7 @@ function managedDeskFor(botId: string, threadId: string): string {
  * which Fuigo never gates. `providerRouted` = the turn runs on a provider
  * connection (temporary FUIGO_HOME), so the user's own Fuigo store is not
  * consulted. */
-function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean, managed?: { botId: string; threadId: string; bundleIds: readonly string[] }, ownerNoLimits = false): SendTurnInput["folderTrust"] {
+function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined, providerRouted: boolean, managed?: { botId: string; threadId: string; bundleIds: readonly string[]; ownerPicked: boolean }, ownerNoLimits = false): SendTurnInput["folderTrust"] {
   if (instance.adapter.capabilities.folderTrust !== true || !cwd) return undefined;
   const fuigoHome = fuigoHomeForTrust(instance, providerRouted);
   const scan = scanFolderTrustSources(cwd, { fuigoHome });
@@ -3782,8 +3787,13 @@ function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined,
   // (a team hand-off or project desk lives under a partition root, 1.0.8
   // THREAD-TRUST-108); an id it refuses means no desk, so the card stays.
   const recorded = folderTrust.decision(scan.folder, { fuigoHome });
-  const decision = recorded ?? (managed && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, { dataDir: DATA_DIR, ...managed, desk: managedDeskFor(managed.botId, managed.threadId) }) ? "trust" as const : undefined);
-  return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(recorded ? { fromRecord: true as const } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}), ...folderTrust.turnRecords(), ...noCardPickFields(ownerNoLimits, folderTrust.plainPickKeys(), scan) };
+  const managedInput = managed ? { dataDir: DATA_DIR, botId: managed.botId, threadId: managed.threadId, bundleIds: managed.bundleIds, desk: managedDeskFor(managed.botId, managed.threadId) } : null;
+  const decision = recorded ?? (managedInput && !scan.upstreamTrusted && managedWorkspaceAutoTrust(cwd, scan, managedInput) ? "trust" as const : undefined);
+  // The desk rule (generation 2): Murage's own desk for this thread, which the
+  // owner did not pick, holding nothing for Fuigo to load. Checked every turn.
+  const managedDesk = managed && managedInput && !managed.ownerPicked && !scan.upstreamDeclined && managedDeskQualifies(cwd, scan, managedInput)
+    ? { botId: managed.botId, threadId: managed.threadId, desk: scan.key, bundleIds: [...managed.bundleIds], dataDir: DATA_DIR, ownerPicked: false as const } : undefined;
+  return { key: scan.key, folder: scan.folder, sources: scan.sources, ...(decision ? { decision } : {}), ...(managedDesk ? { managedDesk } : {}), ...(recorded ? { fromRecord: true as const } : {}), ...(scan.upstreamTrusted ? { upstreamTrusted: true as const } : {}), ...folderTrust.turnRecords(), ...noCardPickFields(ownerNoLimits, folderTrust.plainPickKeys(), scan) };
 }
 /** Full access with "approve setup requests" on (server/full-access.ts)
  * trusts a folder nobody has decided about, for this turn only: nothing is
@@ -3791,7 +3801,7 @@ function folderTrustForTurn(instance: ProviderInstance, cwd: string | undefined,
  * still wins. It is logged and shown in the conversation like any other
  * Full access approval. */
 function fullAccessFolderTrust(bot: BotRecord, origin: FullAccessOrigin, threadId: string, gate: SendTurnInput["folderTrust"]): { gate: SendTurnInput["folderTrust"]; onFolderPolicyApplied?: () => void } {
-  if (!gate || gate.decision || gate.upstreamTrusted || !gate.sources.length || !fullAccessApprovesSetup(bot, origin)) return { gate };
+  if (!gate || gate.managedDesk || gate.decision || gate.upstreamTrusted || !gate.sources.length || !fullAccessApprovesSetup(bot, origin)) return { gate };
   // The core says when the grant landed (R5): generation 2 only when the seed holding it is written.
   let applied = false;
   return {
@@ -4372,6 +4382,22 @@ await bootEngineChoice({ hasBots: store.bots.length > 0, file: join(DATA_DIR, "d
   } });
 store.seedIfEmpty();
 seedFolderTrustFromStore();
+// 1.0.14 FIRST-ENGINE-REPICK section 5: the only automatic engine mover. Triggers start a pass; the pass decides.
+const engineRepick = createEngineRepick({
+  store,
+  registry,
+  describe: options => describedInstances(options),
+});
+// One boot pass when a key is held (a Fuigo with a catalogue): a bot left empty or on a removed engine reaches Fuigo after a restart.
+// Astra 1015 M6: a Fuigo engine present is enough to start; the pass and its ladder wait for the catalogue.
+if (registry.instances().some(instance => instance.driverKind === "fuigoAgent") && store.bots.some(bot => couldMoveEngine(registry, bot))) {
+  void engineRepick.request("boot").catch(error => console.error(`boot engine pass: ${error instanceof Error ? error.message : String(error)}`));
+}
+/** After a key save: attempt 0 of a pass that started after the save, inside a catch that never fails the save. */
+async function repickAfterKeySave(): Promise<void> {
+  try { await engineRepick.request("key"); }
+  catch (error) { console.error(`engine pass after key save: ${error instanceof Error ? error.message : String(error)}`); }
+}
 
 configureLocalPinnedModels(() => store.bots.map(bot => bot.modelSelection?.model));
 
@@ -4461,7 +4487,8 @@ async function setupLiveState({ seat = true }: { seat?: boolean } = {}): Promise
   return {
     ownerName: (cfg.profile?.name ?? "").trim(),
     agents: setupAgentsReading(described),
-    signedOutAgents: setupSignedOutReading(described),
+    // Who runs on each one: Needs you names only an engine a bot uses (setupEngineUsers).
+    signedOutAgents: setupEngineUsers(setupSignedOutReading(described), store.bots, routines?.listRoutines() ?? []),
     flux: { configured: flux.configured, conflict: flux.conflict, looksValid: fluxKeyLooksValid(fluxKey()) },
     bundledEngine: bundledEngineStatus(),
     connectedApps: connected.count,
@@ -4741,51 +4768,16 @@ function driveSetupConversation(view: SetupView): void {
 }
 
 /**
- * THE KEY IS WHAT TURNS OUR OWN ENGINE ON, SO THE CHIEF HAS TO BE ABLE TO
- * MOVE TO IT.
- *
- * Fuigo is the engine Murage ships and the one the whole zero-terminal
- * promise rests on, but with no key and no login its catalogue merges down to
- * nothing, so at boot it is not pickable and `defaultSelection()` correctly
- * hands the first bot whatever else this machine has. On a developer's
- * machine that is Claude.
- *
- * Then the first run asks for the key, the key populates Fuigo's catalogue,
- * and nothing moved the Chief. It stayed on the engine it was given in the
- * one second before the thing that unlocks ours existed. The person went
- * through a flow whose entire middle step is "this key turns on our engine"
- * and ended up on somebody else's.
- *
- * Narrowly scoped on purpose. It acts only while the guided first run is
- * live, which is the only window in which nobody has chosen an engine: the
- * flow is the only thing that has acted, so there is no decision to overrule.
- * It acts only on the Chief, only when a key is actually routing, and only
- * when the re-derived default really is Fuigo. The moment the Chief is on
- * Fuigo it is a no-op, so polling this route cannot thrash a bot's engine.
+ * 1.0.14 FIRST-ENGINE-REPICK: the setup read no longer moves the Chief. It may only START an engine pass (server/engine-repick.ts), and
+ * only while a key is routing; the pass decides, reads no sign-in, and moves only a marked bot with no engine or a gone one. Polled
+ * reads start at most one pass a minute, so a waiting empty Chief does not turn every poll into a fresh catalogue scan.
  */
-async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<string>): Promise<void> {
-  if (!view.fluxReady || !view.chiefBotId) return;
-  if (!conversationLive(view, present)) return;
-  const chief = store.bot(view.chiefBotId);
-  if (!chief) return;
-  const described = await describedInstances({ catalogs: "due" });
-  const selection = pickDefaultEngine(described);
-  if (!selection.instanceId || !selection.model) return;
-  const picked = described.find((instance) => instance.instanceId === selection.instanceId);
-  if (picked?.driverKind !== "fuigoAgent") return;
-  // THE MODEL MOVES TOO, NOT ONLY THE ENGINE.
-  //
-  // Being on Fuigo already is not the finish line. Fuigo's catalogue is
-  // assembled from whatever it can reach, so before a key exists its default
-  // may be a local model it found on this machine, which is a perfectly good
-  // answer and is NOT the one the key card just promised. When the key lands
-  // the catalogue re-forms around it, and a Chief left pinned to the local
-  // model would make the flow's central sentence, that this key gives you all
-  // the latest models routed to the best one for the job, quietly untrue.
-  const current = chief.modelSelection;
-  if (current.instanceId === selection.instanceId && current.model === selection.model) return;
-  store.patchBot(chief.id, { modelSelection: selection });
-  console.log(`setup: put the Chief on the shipped engine (${selection.instanceId} ${selection.model})`);
+let setupRepickAt = 0;
+const SETUP_REPICK_EVERY_MS = 60_000;
+function requestRepickFromSetup(view: SetupView): void {
+  if (!view.fluxReady || Date.now() - setupRepickAt < SETUP_REPICK_EVERY_MS) return;
+  setupRepickAt = Date.now();
+  void engineRepick.request("setup").catch(error => console.error(`setup engine pass: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 /** The card keys already in the Chief's thread, which is what both the
@@ -4803,11 +4795,7 @@ function setupCardKeysInChiefThread(view: SetupView): Set<string> {
 
 /** One call for everything a setup route has to do after the view is built. */
 async function driveSetup(view: SetupView): Promise<void> {
-  try {
-    await moveChiefToShippedEngine(view, setupCardKeysInChiefThread(view));
-  } catch (error) {
-    console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  requestRepickFromSetup(view);
   driveSetupConversation(view);
   nameTheSetupTask(setupCardKeysInChiefThread(view));
   // Told to the client AFTER the cards are appended, so a view that carries
@@ -4829,7 +4817,8 @@ const SIGNED_OUT_FRESH_MS = 60_000;
 
 function signedOutCountOf(view: SetupView): number {
   const firstRunOwnsView = view.conversationLive === true && view.next !== null;
-  return firstRunOwnsView ? 0 : view.signedOutAgents.length;
+  // Only an engine a bot runs on is reported (FUIGO-FIRST-SIGNIN-PLACEMENT), the same rows the Inbox shows.
+  return firstRunOwnsView ? 0 : view.signedOutAgents.filter((agent) => (agent.usedBy?.length ?? 0) > 0).length;
 }
 
 function noteSignedOutEngines(view: SetupView): void {
@@ -8951,6 +8940,7 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
       const runTrigger = cardGrants.cardClass?.unattended ? routines?.activeRunOrigin(event.threadId)?.triggerSource : undefined;
       const why = cardGrants.cardClass && asker ? cardWhy({
         cardClass: cardGrants.cardClass, stopHit, level: cardLevelOf(judged), botName: asker.name,
+        ...(verdict?.rule !== undefined ? { rule: verdict.rule } : {}),
         ...(grantRequest?.routine?.routineName ? { routineName: grantRequest.routine.routineName } : {}),
         ...(runTrigger === "webhook" || runTrigger === "channel" ? { origin: runTrigger } : {}),
       }) : undefined;
@@ -11312,10 +11302,10 @@ async function startTurnAdmitting(
     const replacement = opts?.runOn === "cloud" ? null : staleModelReplacement(instance.driverKind, model, instance.models);
     if (replacement) {
       const old = model;
-      const switched = { ...bot.modelSelection, model: replacement };
-      store.patchBot(bot.id, { modelSelection: switched });
-      // The thread's own selection too, so the task picker shows the new id and a second thread does not repeat the notice.
-      store.patchTask(bot.id, threadId, { modelSelection: switched });
+      // 1.0.14 FIRST-ENGINE-REPICK section 4: a compare and set on the selection that owns this chat (its own pick, else the bot's), model
+      // only, the mark kept as it is. An owner pick that landed meanwhile wins and this turn runs on what it was handed.
+      const owning = store.taskByThread(bot.id, threadId)?.modelSelection ?? store.bot(bot.id)?.modelSelection;
+      if (owning && owning.instanceId === bot.modelSelection.instanceId && owning.model === old) store.repairStaleModel(bot.id, threadId, owning, replacement);
       model = replacement;
       try { store.appendMessage(threadId, { role: "bot", kind: "text", actorKind: "murage", murage: { kind: "status" }, from: { botId: bot.id, name: bot.name, color: bot.color }, text: staleModelNotice(instance.driverKind, old, replacement) }); } catch { /* the turn still runs on the new model */ }
     }
@@ -12593,7 +12583,7 @@ async function startTurnAdmitting(
       // twice could disagree if the folder changed between the two calls, and
       // a primer that says "trusted" over a turn dispatched untrusted is
       // exactly the kind of confident-and-wrong the primer exists to stop.
-      const { gate: folderTrust, onFolderPolicyApplied } = pre.sync("folder-trust", () => fullAccessFolderTrust(bot, fullAccessOrigin, threadId, folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }, ownerStartedRuns.has(run.generation) && hasNoLimits(bot))));
+      const { gate: folderTrust, onFolderPolicyApplied } = pre.sync("folder-trust", () => fullAccessFolderTrust(bot, fullAccessOrigin, threadId, folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId], ownerPicked: store.taskByThread(bot.id, threadId)?.cwdOwnerSet === true || Boolean(opts?.projectCardRun?.claim.writerRoot) }, ownerStartedRuns.has(run.generation) && hasNoLimits(bot))));
       const phoneLines = phoneInstructionLines({
         // An engine that cannot mount phone tools is never told about them, with or without an authority (S21).
         hasGrant: Object.keys(bot.phoneApps ?? {}).length > 0 && driverMountsPhoneJobs(instance.driverKind), offered: phonesOfferedNow(),
@@ -17907,12 +17897,15 @@ async function runGroupMemberTurn(
   // has its folder moved underneath it. Off-host members skip the folder
   // but must not decide the pin: the room's desk is a property of the
   // room, not of whichever member happened to speak first.
-  let cwd = groupTurnCwd(workspace, () => store.pinGroupCwd(group.id, threadId));
+  let roomPinnedCwd: string | null = null;
+  let cwd = groupTurnCwd(workspace, () => (roomPinnedCwd = store.pinGroupCwd(group.id, threadId)));
   if (workspace && bot.partitionedAt !== undefined && !isHomePartition(threadPartition(bot, threadId)) && (!cwd || partitionFileRefusal(bot, threadId, [cwd]))) cwd = workspace;
   // A project room turn that claimed the first work root works there; with a
   // writer card holding it, it answers from the room's own folder (5.4a).
   const claimedRoot = roomTurnClaims.get(roomRequestKey)?.writerRoot;
   if (workspace && claimedRoot) cwd = claimedRoot.canonicalPath;
+  // the room's own folder or a claimed work root is the owner's; only the desk Murage made is not
+  const roomCwdOwnerPicked = roomPinnedCwd !== null || Boolean(workspace && claimedRoot);
   // a pooled engine process on this room thread is not reused across audiences (SPEC-P 13.1)
   const roomSessionAudience = partitionSessionAudience(roomLineageRow?.notOwnerAudience ? roomLineageRow.audienceFingerprint : turnSessionAudience(threadId, { origin: latestUser?.origin }), bot, threadId, cwd);
   const roomSessionMoved = pooledSessionAudiences.changed(threadId, instance.instanceId, roomSessionAudience);
@@ -18429,7 +18422,7 @@ async function runGroupMemberTurn(
         cwd,
         integrations,
         preloadBrowserTools: browserIsThePlace(readyBot.computer, Boolean(integrations.browser)),
-        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId] }),
+        folderTrust: folderTrustForTurn(instance, cwd, Boolean(providerRoute), { botId: bot.id, threadId, bundleIds: [procedurePin.bundleId], ownerPicked: roomCwdOwnerPicked }),
         ...memberTurnSelection(bot.modelSelection),
         ...(roomSessionMoved || roomMemoryReset ? { sessionReset: true } : {}),
         // Full access still stops at the stop line, so the engine must ask
@@ -20929,8 +20922,9 @@ const fluxConnectionTransaction = new FluxConnectionTransaction({
   apply: fluxConnectionApply.apply,
 });
 /** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
-const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired() });
-async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
+const fluxSaveBlockedAtBoot = fluxSaveBlocked(process.env, Boolean(cloudHome), Boolean(utilityParentPort));
+const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired(), ...fluxSaveBlockedAtBoot });
+async function describedInstances(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
   return instances.map(instance => {
@@ -20958,7 +20952,12 @@ function claudeAccountReferenced(instanceId: string) {
 const claudeUpdatesInFlight = new Set<string>();
 const engineManager = new EngineManager({
   root: join(DATA_DIR, "managed-engines"),
+  otherClis: id => Object.entries(instanceConfigs(cfg)).flatMap(([other, entry]) => {
+    const config = entry?.config;
+    return other !== id && config && typeof config === "object" && !Array.isArray(config) && "cli" in config && typeof config.cli === "string" ? [config.cli] : [];
+  }),
   get envPath() { return augmentedPath(); },
+  resetProbes: () => { resetPathCache(); invalidateCliVersions(); },
   getInstance: async id => {
     resetPathCache();
     // Only this engine is asked: describe() probed and refreshed every engine, so eight cards cost eight scans.
@@ -22616,10 +22615,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         clients.revoke(body.clientId);
         for (const binding of browserExtension?.status().bindings.filter(item => item.clientId === body.clientId) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
       } else {
+        // Picked here as the other new-bot routes do: a start can open the port with the engine probe still running and nothing remembered.
+        const modelSelection = await defaultSelection();
         if (!clients.enabled) return json(res, 409, { error: "Turn on external browser tools before pairing a client." });
         if (!browserExtension?.status().profiles.some(profile => profile.profileId === body.profileId)) return json(res, 409, { error: "Connect the browser profile before pairing a client." });
         if (store.bots.length >= MAX_WORKSPACE_BOTS) return json(res, 409, { error: "Workspace bot limit reached." });
-        const bot = store.createBot({ name: body.label, title: "External browser connection" }, { seedMessages: false });
+        const bot = store.createBot({ name: body.label, title: "External browser connection", modelSelection }, { seedMessages: false });
         store.patchBot(bot.id, { browser: true, computer: "off", composio: false, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: body.profileId });
         const paired = clients.pair({ label: body.label, profileId: body.profileId, botId: bot.id, threadId: bot.threadId });
         const clientDirectory = join(DATA_DIR, "browser-extension", "client-configs");
@@ -25014,6 +25015,42 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       });
     }
 
+    // the audio of one voice note, for every door (server/voice/voice-note-audio.ts):
+    // the same visibility answer as the transcript and its images, then only
+    // a voice note this message lists and this conversation owns
+    m = path.match(VOICE_NOTE_AUDIO_ROUTE);
+    if (m && method === "GET") {
+      if (!mayReadThread(req, url, m[1]) || (!store.botByThread(m[1]) && !store.groupByThread(m[1]))) {
+        return json(res, 404, { error: "no such conversation" });
+      }
+      const storageRoot = join(DATA_DIR, "artifact-files");
+      // The host reads on the caller's behalf, scoped to the one saved file's
+      // own conversation, after the checks above and inside voiceNoteAudio.
+      const hostAccess = (id: string) => {
+        const owner = artifactOwner(database(), id);
+        return { owner: true, scopes: owner ? artifactScopes(owner) : [] };
+      };
+      const audio = voiceNoteAudio({
+        message: (threadId, messageId) => store.messageById(threadId, messageId),
+        owner: (id) => artifactOwner(database(), id),
+        describe: (id) => describeArtifact(database(), storageRoot, id, hostAccess(id)),
+        read: (id) => readArtifact(database(), storageRoot, id, hostAccess(id)),
+      }, m[1], m[2]!);
+      if (audio.status !== 200) return json(res, audio.status, { error: audio.error });
+      // NEVER KEPT IN A CACHE, for the image route's reason: the same URL is
+      // a 404 for a caller that may not read the conversation.
+      res.writeHead(200, {
+        "content-type": audio.mime,
+        "content-length": String(audio.bytes.length),
+        "content-disposition": "inline",
+        "cache-control": "private, no-store",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+      });
+      res.end(audio.bytes);
+      return;
+    }
+
     // ── image attachments ────────────────────────────────────────────────
     // Pasted/dropped images are stored as files and referenced by path in
     // the prompt (<attached-image path="…"/>); this pair of routes is the
@@ -27214,6 +27251,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }
       }
       let selection: ModelSelection;
+      // 1.0.14 FIRST-ENGINE-REPICK: no owner selection means Murage chose the engine, so the bot is marked (the choice is BIRTH-FUIGO-1014's).
+      const engineAutoPicked = body.modelSelection === undefined;
       if (body.modelSelection === undefined) {
         selection = await defaultSelection();
       } else {
@@ -27232,7 +27271,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // A caller that proved nothing (a script, a bot's own shell) gets a bot
       // with no access and in no team; the owner's surfaces keep the defaults.
       const proven = requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
-      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, modelSelection: selection }, { noAccess: !proven });
+      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, modelSelection: selection }, { noAccess: !proven, ...(engineAutoPicked ? { engineAutoPicked: true as const } : {}) });
       return json(res, 201, {
         bot: {
           ...wireBot(bot),
@@ -27342,6 +27381,31 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { switched: result.switched.length, busy: result.busy, bot: visible });
+    }
+    // 1.0.14 FIRST-ENGINE-REPICK section 6: the owner's "Use Fuigo instead" tap on a sign-in wall. The card sends the engineRev it was
+    // drawn with; an engine write since (an owner pick, a move) answers 409 stale and nothing is written. The fleet generation is read
+    // as the request arrives, and the target check T runs at the write. Clears the mark: the owner chose.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/use-fuigo$/);
+    if (m && method === "POST") {
+      const gen = registry.generation;
+      const body = await readBody(req) as { engineRev?: unknown; threadId?: unknown } | null;
+      const record = store.bot(m[1]);
+      if (!record) return json(res, 404, { error: "no such bot" });
+      if (!body || typeof body.engineRev !== "number" || !Number.isInteger(body.engineRev)) return json(res, 400, { error: "engineRev must be an integer" });
+      if (body.threadId !== undefined && typeof body.threadId !== "string") return json(res, 400, { error: "threadId must be a string" });
+      // Astra M4: the chat the wall was drawn in. Its own pick (and the failover row it carries) ends in the same write as the move.
+      const ownerThreadId = body.threadId as string | undefined;
+      const endedFailover = ownerThreadId === undefined ? undefined : store.taskByThread(record.id, ownerThreadId)?.limitFailover;
+      // BN3: the same Fuigo-usable reading birth and the engine pass use (fuigoBirthModel: keyless Flux rows filtered, defaultModel).
+      const fuigo = registry.instances().filter(instance => fuigoUsable(instance));
+      if (fuigo.length !== 1) return json(res, 409, { error: "Fuigo is not ready yet.", code: "fuigo_unavailable" });
+      const selection = { instanceId: fuigo[0]!.instanceId, model: fuigoBirthModel(fuigo[0]!) };
+      const result = store.casEngineMove(record.id, { expectRev: body.engineRev, selection, mark: "clear", requireMark: false, predicate: () => targetCheck(registry, gen, selection), ownerThreadId });
+      const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
+      if (result === "stale") return json(res, 409, { error: "This bot's engine changed. Check it and try again.", code: "stale", engineRev: store.bot(record.id)!.engineRev ?? 0, bot: visible });
+      if (endedFailover && store.taskByThread(record.id, ownerThreadId!)?.limitFailover === undefined) { try { limitFailovers.cancel(endedFailover); } catch (error) { console.error("limit failover: could not mark the row cancelled", error); } }
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
     }
     // 1.0.4 SL-I I4: the engine that takes over when this bot's engine hits its limit (the bot's model section). Desktop only (404 elsewhere).
     m = path.match(/^\/api\/bots\/([\w-]+)\/limit-backup$/);
@@ -29438,7 +29502,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const task = store.createTask(bot.id, typeof body.title === "string" ? body.title : undefined);
       if (!task) return json(res, 500, { error: "couldn't create that task" });
       if (startFolder) {
-        store.patchTask(bot.id, task.threadId, { cwd: startFolder });
+        store.patchTask(bot.id, task.threadId, { cwd: startFolder, cwdOwnerSet: true });
         rememberPickedFolder(startFolder, true);
       }
       const fresh = botWithThread(store.bot(bot.id)!);
@@ -29501,7 +29565,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       if(fullAccess.fullAccess!==undefined)patch.fullAccess=fullAccess.fullAccess;
       if(fullAccess.noLimits!==undefined)patch.noLimits=fullAccess.noLimits;
-      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd,desktopSurface);}
+      if(body.cwd!==undefined){const checked=validateBotCwd(body.cwd);if(!checked.ok)return json(res,400,{error:checked.error});patch.cwd=checked.cwd??ensureTaskWorkspace(current.id,current.threadId);patch.cwdOwnerSet=checked.cwd?true:undefined;patch.resumeCursors={};patch.rewound=true;rememberPickedFolder(checked.cwd,desktopSurface);}
       if(body.unread!==undefined){if(typeof body.unread!=="boolean")return json(res,400,{error:"unread must be true or false"});patch.unread=body.unread;}
       if(body.title!==undefined&&typeof body.title!=="string")return json(res,400,{error:"title must be text"});
       if(body.title!==undefined)patch.title=body.title;
@@ -30043,7 +30107,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
       const update = body as Record<string, unknown>;
       if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
-      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); await repickAfterKeySave(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
       if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
       return json(res, 400, { error: "Invalid Flux connection update." });
@@ -30051,9 +30115,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path === "/api/flux-connection/mutate" && method === "POST") {
       if (utilityParentPort && !cloudHome) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
       const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
-      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      let committed: Awaited<ReturnType<typeof fluxConnectionTransaction.commit>>;
+      try { committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); }
       catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
       finally { fluxConnectionTransaction.finish(reserved.lease); }
+      // The engine pass runs once the lease is released, so a scan never holds other Flux edits.
+      await repickAfterKeySave();
+      return json(res, 200, fluxConnectionStatusWithRestart(committed));
     }
 
     // ── provider instances (model picker) ──
@@ -30201,6 +30269,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         pending: current.hidden ? [] : permissionStatus(store, current, current.id, pendingPermissionStatus(current)).pending });
     }
 
+    // One short real reply through an engine, on a press only: never a probe, never a schedule. It costs one small reply of the
+    // owner's plan and runs on a hidden session, so no bot, thread or message is touched and no owner data goes in.
+    if (method === "POST" && path === "/api/engine-setup-check") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const instance = registry.get(parsed.data.instanceId);
+      if (!instance) return json(res, 404, { error: "Engine not found." });
+      const reply = await checkEngineReply(instance);
+      // A real reply is the proof a rejection mark waits for: the engine reads as signed in again at once, not 15 minutes later.
+      if (reply.result === "ready") forgetInstanceMark(parsed.data.instanceId);
+      return json(res, 200, reply);
+    }
+
     if (method === "POST" && path === "/api/engine-setup-command") {
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
       const parsed = z.object({ instanceId: z.string().min(1).max(180), action: z.enum(["install", "connect"]) }).strict().safeParse(await readBody(req));
@@ -30219,6 +30302,47 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       }
       if (!command) return json(res, 409, { error: "Use this engine's setup guide for your platform." });
       return json(res, 200, { command });
+    }
+
+    // Desktop engine sign-in (1.0.14). Local desktop only: a Cloud home has its own relay. The recipe is a fixed row per
+    // driver, built here so packaged PATH, npm shims and named Claude accounts are right. No text from the caller reaches it.
+    if (method === "POST" && path === "/api/engine-signin-recipe") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180) }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const instance = registry.get(parsed.data.instanceId);
+      const entry = instanceConfigs(cfg)[parsed.data.instanceId];
+      if (!instance || !entry) return json(res, 404, { error: "Engine not found." });
+      const driver = BUILT_IN_DRIVERS.find(candidate => candidate.driverKind === instance.driverKind);
+      const saved = entry.config && typeof entry.config === "object" && !Array.isArray(entry.config) && "cli" in entry.config && typeof entry.config.cli === "string" ? entry.config.cli.trim() : "";
+      const fallback = driver?.defaultConfig() as { cli?: unknown } | undefined;
+      const cli = saved || (typeof fallback?.cli === "string" ? fallback.cli : undefined);
+      let namedClaude: string | undefined;
+      if (entry.driver === "claudeAgent") {
+        try { const account = claudeAccountInfo(parsed.data.instanceId, entry, cli ?? "claude"); namedClaude = account.managed ? account.configDir : undefined; }
+        catch { return json(res, 409, { error: "Review this Claude account's folder in Engines settings." }); }
+      }
+      return json(res, 200, buildEngineSigninRecipe({
+        driverKind: instance.driverKind, label: instance.displayName || driver?.metadata.displayName || parsed.data.instanceId, cli,
+        source: process.env, instanceEnvironment: entry.environment, searchPath: augmentedPath(), platform: process.platform,
+        ...(namedClaude ? { account: { CLAUDE_CONFIG_DIR: namedClaude }, accountRoot: namedClaude } : {}),
+        resolve: (name, args) => resolveCli(name, args, augmentedPath()),
+        candidates: (name) => { const found = findCliCandidates(name); if (found.length || instance.driverKind !== "fuigoAgent") return found; const bundled = bundledFuigoPath(); return bundled ? [bundled] : []; },
+        realpath: (file) => realpathSync.native(file),
+      }));
+    }
+    // One instance, on the press and while a sign-in runs. Only this engine is asked, never the whole fleet.
+    if (method === "POST" && path === "/api/engine-signin-probe") {
+      if (cloudHome) return json(res, 404, { error: "not found" });
+      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return json(res, 415, { error: "content-type must be application/json" });
+      const parsed = z.object({ instanceId: z.string().min(1).max(180), signedIn: z.literal(true).optional() }).strict().safeParse(await readBody(req));
+      if (!parsed.success) return json(res, 400, { error: "Choose an engine." });
+      const authenticated = await registry.engineLogin(parsed.data.instanceId);
+      if (authenticated === undefined) return json(res, 404, { error: "Engine not found." });
+      // The sign-in went from signed out to signed in: a rejection from before it no longer says anything.
+      if (parsed.data.signedIn && authenticated === true) forgetInstanceMark(parsed.data.instanceId);
+      return json(res, 200, { authenticated });
     }
 
     // ── guided first run (/setup) ──
