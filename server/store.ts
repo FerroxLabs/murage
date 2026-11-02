@@ -765,6 +765,12 @@ export interface TaskRecord {
    * a folder that moved under a live session would break resume. `null`
    * = pinned to the default (home); absent = not pinned yet. */
   cwd?: string | null;
+  /** The owner chose `cwd` (a start folder, a folder picked for this
+   * conversation, or the bot's own folder copied at pin time). Set in the
+   * same write as the path, never from the client. A Murage-made thread desk
+   * with this unset may run with no folder trust card (server/
+   * managed-workspace-trust.ts); with it set the desk is the owner's pick. */
+  cwdOwnerSet?: true;
   /** Marks a project desk thread: one per bot and project (SPEC-P 3.12).
    * Close and End project set `archivedAt` (hidden from the task list),
    * Reopen and "Make this a project" clear it; the task is NEVER removed,
@@ -5016,6 +5022,8 @@ export class Store {
     }
     if (task.cwd === undefined) {
       task.cwd = Object.keys(task.resumeCursors).length === 0 ? (bot.cwd ?? fallbackCwd ?? null) : null;
+      // the bot's own folder is the owner's choice; the fallback desk is Murage's
+      if (task.cwd !== null && bot.cwd && task.cwd === bot.cwd) task.cwdOwnerSet = true;
       this.saveBots();
       this.emit({ type: "bot", botId });
     }
@@ -5158,7 +5166,7 @@ export class Store {
     try{this.saveGroups();}catch(error){holder.procedurePins=prior;throw error;}
   }
 
-  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
+  patchTask(botId:string,threadId:string,patch:Partial<Pick<TaskRecord,"title"|"modelSelection"|"autoApprove"|"fullAccess"|"noLimits"|"alwaysAllow"|"unread"|"rewound"|"pinnedMessageId"|"resumeCursors"|"cwd"|"cwdOwnerSet"|"link"|"linkAuto"|"effortSent"|"limitFailover">>&{pinned?:boolean}):TaskRecord|null {
     const bot=this.bot(botId),task=this.taskByThread(botId,threadId);if(!bot||!task)return null;
     const {pinned,...rest}=patch;
     // UX-TRUST-MOMENTS-1012 2.3.3: never a payment kept for good, whoever writes the list
@@ -5166,7 +5174,7 @@ export class Store {
     const next:TaskRecord={...task,...structuredClone(rest)};
     if(permissionLevel(next)!==permissionLevel(task))Object.assign(next,levelMove(task,permissionLevel(task)));
     // 1.0.4 SL-K: an explicit undefined removes the field (a chat returns to following its bot; a failover marker or effort record ends)
-    for(const key of ["modelSelection","effortSent","limitFailover"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
+    for(const key of ["modelSelection","effortSent","limitFailover","cwdOwnerSet"] as const)if(Object.hasOwn(patch,key)&&patch[key]===undefined)delete next[key];
     if(pinned===true)next.pinned=true;else if(pinned===false)delete next.pinned;
     if(patch.title!==undefined)next.title=patch.title.trim().slice(0,80)||UNTITLED_TASK;
     if(patch.modelSelection&&patch.modelSelection.connectionId!==(task.modelSelection??bot.modelSelection)?.connectionId)next.resumeCursors={};
@@ -5199,13 +5207,17 @@ export class Store {
     // security or routing state and keep their immediate, throwing write, and
     // so does `rewound`: lost on a crash, the next turn would resume a provider
     // session that still holds the abandoned branch.
+    // The live task object is updated in place, so a field this write removed
+    // (an explicit undefined, the pin, a reset effort record) leaves it too,
+    // the same as the saved roster: Object.assign alone would keep the old value.
+    const dropRemoved=()=>{for(const key of Object.keys(task) as (keyof TaskRecord)[])if(!Object.hasOwn(next,key))delete (task as Partial<TaskRecord>)[key];if(!next.pinned)delete task.pinned;};
     const cosmetic=Object.keys(patch).every(key=>["unread","pinnedMessageId","pinned","title","link","linkAuto"].includes(key))&&!adopts;
     if(cosmetic){
-      Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,{unread:candidate.unread});
+      Object.assign(task,next);dropRemoved();Object.assign(bot,mirrors,{unread:candidate.unread});
       this.saveBots(this.bots,{defer:true});
     }else{
     this.saveBots(this.bots.map(current=>current===bot?candidate:current));
-    Object.assign(task,next);if(!next.pinned)delete task.pinned;Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
+    Object.assign(task,next);dropRemoved();Object.assign(bot,mirrors,adopted,{unread:candidate.unread});
     }
     this.emit({type:"bot",botId});return task;
   }
