@@ -2705,12 +2705,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   // npm on all three: the one recipe that is genuinely cross-platform. The
   // native installers differ per OS and would need verifying separately.
   install: {
-    command: {
-      darwin: "npm install -g @anthropic-ai/claude-code",
-      linux: "npm install -g @anthropic-ai/claude-code",
-      win32: "npm install -g @anthropic-ai/claude-code",
-    },
-    needsNode: true,
+    native: true,
     docsUrl: "https://claude.com/claude-code",
     signInCommand: "claude auth login",
   },
@@ -5720,7 +5715,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const memorySession: MemorySessionRunner = async (prompt, signal) => {
       const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
       try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, { cwd }); }
-      catch (error) { throw error instanceof Error && !("status" in error) ? engineFailure(error.message) : error; }
+      catch (error) { throw error instanceof Error && !("status" in error) ? Object.assign(engineFailure(error.message), "code" in error ? { code: error.code } : {}) : error; }
       finally { rmSync(cwd, { recursive: true, force: true }); }
     };
     const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> => {
