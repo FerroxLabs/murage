@@ -46,6 +46,8 @@ export type DecisionKind =
    * authorization for a folder's own files, remembered by workspace. */
   | "folder-trusted"
   | "folder-untrusted"
+  /** The owner forgot one stored folder decision by its exact key. */
+  | "folder-forgotten"
   | "log-omitted";
 
 /** Who or what produced the decision. The AutoVerdictSource values carry

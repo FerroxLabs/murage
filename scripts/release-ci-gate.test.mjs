@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
-import { ciVerdict, failedTestsInLog, failuresVerdict, nativeAddonVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
+import { ciVerdict, failedTestsInLog, failuresVerdict, FULL_RUN_JOBS, nativeAddonVerdict, nightlyPending, nightlyRetryable, nightlyVerdict, parseWaiver, waiverVerdict } from "./release-ci-gate.mjs";
 
 const SHA = "a".repeat(40);
 const OTHER = "b".repeat(40);
@@ -31,17 +31,20 @@ const waiver = ({ commit = SHA, runId = "4242", critical = "0", classes = ["Wind
   "## Evidence",
   "Free prose.",
 ].join("\n");
-const dispatch = (over = {}) => ({ eventName: "workflow_dispatch", waiverPath: PATH, waiverText: waiver(), sha: SHA, runs: [run()], ...over });
+// A full run's jobs, green or with its required completion job red, as the jobs API returns them.
+const fullJobs = (required = "failure") => [...FULL_RUN_JOBS.map(name => ({ name, conclusion: "success" })), { name: "required CI completion", conclusion: required }];
+const jobsFor = candidate => fullJobs(candidate.conclusion === "success" ? "success" : "failure");
+const dispatch = (over = {}) => ({ eventName: "workflow_dispatch", waiverPath: PATH, waiverText: waiver(), sha: SHA, runs: [run()], jobsFor, ...over });
 
 describe("strict by default", () => {
   it("a red CI without a waiver is still a failure", () => {
-    expect(ciVerdict([run()], SHA).state).toBe("fail");
+    expect(ciVerdict([run()], SHA, { jobsFor }).state).toBe("fail");
     const result = waiverVerdict(dispatch({ waiverPath: "" }));
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/no waiver/);
   });
   it("a green CI still passes on its own", () => {
-    expect(ciVerdict([run({ conclusion: "success" })], SHA).state).toBe("pass");
+    expect(ciVerdict([run({ conclusion: "success" })], SHA, { jobsFor }).state).toBe("pass");
   });
 });
 

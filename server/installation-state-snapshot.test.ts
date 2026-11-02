@@ -23,7 +23,7 @@ function fixture() {
     instances: { fixture: { driver: "fuigoAgent", enabled: true, environment: { TOKEN: "env-secret-canary" }, config: { cli: "custom", apiKey: "config-secret-canary" } } },
     mcpServers: { secret: { command: "anything", env: { TOKEN: "mcp-secret-canary" } } },
   }));
-  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" } }]));
+  writeFileSync(join(data, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Fixture bot", cwd: join(parent, "external"), resumeCursors: { provider: "native-cursor-canary" }, tasks: [{ threadId: "thread", resumeCursors: { provider: "native-cursor-canary" }, resumeSeals: { provider: { cursor: "native-cursor-canary", generation: 1 } } }] }]));
   writeFileSync(join(data, "webhooks.json"), JSON.stringify({ version: 1, webhooks: [{ id: "hook", endpointId: "endpoint", name: "Hook", prompt: "Task", botId: "bot", runOn: "ember", createdAt: 1, updatedAt: 1, deliveryCount: 1, secretHash: "a8".repeat(32), enabled: true }], deliveries: [{ key: "endpoint:already-accepted", runId: "finished-run", at: 1 }] }));
   mkdirSync(join(data, "attachments"));
   writeFileSync(join(data, "attachments", "fixture.txt"), "Private attachment content");

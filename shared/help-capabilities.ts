@@ -678,6 +678,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/engine-health",
+    "term": "health checks",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/engine-setup-command",
     "term": "engines",
     "source": "server/index.ts"

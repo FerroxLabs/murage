@@ -311,6 +311,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     androidDevice:{stop:()=>{androidStops++;return androidStop();}},
     // The phone's desk-presence reporting (mobile merge) is stopped on exit too.
     stopDeskPresence:()=>{},
+    serverStopReason:{note(){},logOnce(){}},
   };
   const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";

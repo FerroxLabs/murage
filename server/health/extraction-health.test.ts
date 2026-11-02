@@ -14,8 +14,8 @@ import { closeDatabase } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
 import { extractCandidates, reportMemoryUsage, type TextOnlyExtractor } from "../memory/extract.ts";
-import { EXTRACTION_CATALOGUE_MODELS, EXTRACTION_SUMMARY_MS, extractionOutcomes } from "../memory/extraction-outcomes.ts";
-import { FLUX_EXTRACTORS, resolveMemoryExtractor } from "../memory/extractor-connections.ts";
+import { EXTRACTION_CATALOGUE_MODELS, EXTRACTION_SUMMARY_MS, extractionOutcomes, FLUX_PINNED_LEARNING_MODEL } from "../memory/extraction-outcomes.ts";
+import { clearPinQuarantineForTests, FLUX_EXTRACTORS, resolveMemoryExtractor } from "../memory/extractor-connections.ts";
 import { HEALTH_DIR } from "../../shared/health-protocol.mjs";
 import { drainServerWindows, factsOf, freshServerCounters, rows, total } from "./test-support.ts";
 
@@ -24,7 +24,7 @@ const SECRETS = [SOURCE, "PRIVATE_REPLY_SENTINEL", "PRIVATE_KEY_SENTINEL", "PRIV
 
 beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
-  extractionOutcomes.clear();
+  extractionOutcomes.clear(); clearPinQuarantineForTests();
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(new Date("2026-10-27T00:00:00Z"));
   vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -70,7 +70,7 @@ function noSecrets(windows: unknown) {
 
 describe("extraction outcomes as health counters", () => {
   it("the reported model catalogue is Murage's own extractor list", () => {
-    expect(FLUX_EXTRACTORS.map(item => item.model)).toEqual([...EXTRACTION_CATALOGUE_MODELS]);
+    expect([...FLUX_EXTRACTORS.map(item => item.model), FLUX_PINNED_LEARNING_MODEL]).toEqual([...EXTRACTION_CATALOGUE_MODELS]);
   });
 
   it("a valid empty reply is a complete attempt on HTTP and on a CLI engine alike", async () => {
@@ -190,16 +190,16 @@ describe("extraction outcomes as health counters", () => {
     await run(http({ body: envelope("[]") }));
     await run(cli(() => "PRIVATE_REPLY_SENTINEL"));
     vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);
-    const lines = vi.mocked(console.info).mock.calls.map(call => String(call[0]));
-    const shape = /^\[memory\] extraction outcomes complete=(\d+) deferred=(\d+) unusable=(\d+) interrupted=(\d+) extractor=([0-9a-f]{32}) engine=([a-z-]+) model=([a-z-]+) coverage=(complete|partial)$/;
+    const lines = vi.mocked(console.info).mock.calls.map(call => String(call[0])).filter(line => line.includes("extraction outcomes"));
+    const shape = /^\[memory\] extraction outcomes complete=(\d+) deferred=(\d+) unusable=(\d+) interrupted=(\d+) extractor=([0-9a-f]{32}) engine=([a-z-]+) model=([a-z0-9-]+) coverage=(complete|partial)$/;
     expect(lines).toHaveLength(2);
     for (const line of lines) expect(line).toMatch(shape);
-    expect(lines).toContainEqual(expect.stringMatching(/complete=1 deferred=0 unusable=0 interrupted=0 extractor=[0-9a-f]{32} engine=gateway model=flux-fast coverage=partial$/));
+    expect(lines).toContainEqual(expect.stringMatching(/complete=1 deferred=0 unusable=0 interrupted=0 extractor=[0-9a-f]{32} engine=gateway model=flux-pinned-gpt-5-nano coverage=partial$/));
     expect(lines).toContainEqual(expect.stringMatching(/complete=0 deferred=0 unusable=1 interrupted=0 extractor=[0-9a-f]{32} engine=codex model=custom coverage=partial$/));
     // a whole hour observed next is complete coverage
     await run(http({ body: envelope("[]") }));
     vi.advanceTimersByTime(EXTRACTION_SUMMARY_MS);
-    expect(vi.mocked(console.info).mock.calls.at(-1)?.[0]).toMatch(/engine=gateway model=flux-fast coverage=complete$/);
+    expect(vi.mocked(console.info).mock.calls.at(-1)?.[0]).toMatch(/engine=gateway model=flux-pinned-gpt-5-nano coverage=complete$/);
     noSecrets([]);
   });
 });

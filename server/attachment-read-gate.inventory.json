@@ -106,7 +106,7 @@
  },
  {
   "file": "server/backup-coordinator.ts",
-  "function": "captureFailure",
+  "function": "failureNote",
   "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
@@ -1624,6 +1624,20 @@
   "count": 1
  },
  {
+  "file": "server/folder-trust-seed.ts",
+  "function": "gitBelow",
+  "callee": "opendir",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust-seed.ts",
+  "function": "writeFuigoSeed",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/folder-trust.ts",
   "function": "gitCoreConfig",
   "callee": "readFileSync",
@@ -1640,6 +1654,13 @@
  {
   "file": "server/folder-trust.ts",
   "function": "readUpstreamTrustedFolders",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust.ts",
+  "function": "readUpstreamTrustFile",
   "callee": "readFileSync",
   "root": "config",
   "count": 1

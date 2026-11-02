@@ -262,7 +262,6 @@ server/drivers/claude-auth.test.ts	extended
 server/drivers/claude-browser-mount.test.ts	extended
 server/drivers/claude-catalog.test.ts	extended
 server/drivers/claude-idle-map.test.ts	extended
-server/drivers/claude-mcp-ready.test.ts	extended
 server/drivers/claude-reflection.test.ts	extended
 server/drivers/cli-memory-learning.test.ts	extended
 server/drivers/cloud-bot-sites.test.ts	extended
@@ -282,7 +281,6 @@ server/drivers/http-text-only.audit2.test.ts	extended
 server/drivers/http-text-only.test.ts	extended
 server/drivers/isolation-cache.test.ts	extended
 server/drivers/local-inject-probe.test.ts	extended
-server/drivers/mcp-readiness.test.ts	extended
 server/drivers/memory-proxy.test.ts	extended
 server/drivers/minimax.test.ts	extended
 server/drivers/murage-surface.test.ts	extended
@@ -294,7 +292,6 @@ server/drivers/phone-proxy.test.ts	extended
 server/drivers/pi-mcp-extension.test.ts	extended
 server/drivers/process-tree-hook-identity.test.ts	extended
 server/drivers/process-tree-win32.test.ts	extended
-server/drivers/process-tree.test.ts	extended
 server/drivers/provider-error-body.test.ts	extended
 server/drivers/provider-idle-cut.test.ts	extended
 server/drivers/remote-mcp-proxy-core.test.ts	extended
@@ -305,7 +302,6 @@ server/drivers/text-only-fence.test.ts	extended
 server/drivers/turn-refusal.structure.test.ts	extended
 server/drivers/unified-browser-proxy-mounted.test.ts	extended
 server/drivers/unified-browser-proxy.test.ts	extended
-server/drivers/warm-pool.test.ts	extended
 server/early-bundle.test.ts	extended
 server/engine-commands-api.test.ts	extended
 server/engine-commands.test.ts	extended
@@ -414,7 +410,6 @@ server/member-turn.test.ts	extended
 server/memory-pin-failure-line-api.test.ts	extended
 server/memory/age-order.perf.test.ts	extended
 server/memory/branch-change-unprepared.test.ts	extended
-server/memory/branch-delta.test.ts	extended
 server/memory/bundle-checkpoint-label.test.ts	extended
 server/memory/bundled-model-status.test.ts	extended
 server/memory/cache-triggers.test.ts	delete (pending review; runs here until then)
@@ -423,7 +418,6 @@ server/memory/claim-index-r103.test.ts	extended
 server/memory/claim-index-upgrade.test.ts	extended
 server/memory/claim-index.test.ts	extended
 server/memory/claim-wake.test.ts	extended
-server/memory/consolidate-limits.test.ts	extended
 server/memory/consolidate-resume.test.ts	extended
 server/memory/continuation-first-check.test.ts	extended
 server/memory/continuation-hold.test.ts	extended
@@ -723,7 +717,6 @@ server/room-speaker-lock-api.test.ts	extended
 server/room-transcript-api.test.ts	merge (pending; runs here until merged into Teammate replies kept, revoked reply withheld)
 server/room-turn-rows.test.ts	extended
 server/room-turn-silence-api.test.ts	extended
-server/room-turn-timeout.test.ts	extended
 server/roster-sidebar.test.ts	extended
 server/route-delegation.test.ts	extended
 server/route-discovery.test.ts	extended
@@ -1069,7 +1062,6 @@ src/components/SettingsShell.test.ts	extended
 src/components/Sidebar.test.ts	extended
 src/components/SidebarLeadership.test.ts	extended
 src/components/SidebarNav.test.ts	extended
-src/components/SidebarNeedsYou.test.ts	extended
 src/components/SidebarNewChatPanel.test.ts	extended
 src/components/SidebarPhoneButton.test.ts	extended
 src/components/SidebarRows.test.ts	delete (pending review; runs here until then)

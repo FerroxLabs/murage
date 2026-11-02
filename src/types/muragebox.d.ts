@@ -519,7 +519,7 @@ export interface McpSecretsInput {
 
 export type McpBridgeError =
   | "desktop-only" | "storage" | "not-found" | "invalid" | "stale" | "busy" | "headless"
-  | "not-sign-in" | "no-registration" | "refused" | "cancelled" | "denied" | "timeout"
+  | "not-sign-in" | "no-registration" | "no-sign-in-details" | "refused" | "cancelled" | "denied" | "timeout"
   | "port" | "browser" | "network" | "token" | "unknown";
 
 /** `message` is a plain sentence ready to show. */

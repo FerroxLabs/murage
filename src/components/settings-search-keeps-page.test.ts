@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const modal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "SettingsModal.tsx"), "utf8");
-const pane = modal.slice(modal.indexOf("<div ref={paneRef}"));
+const pane = modal.slice(modal.indexOf("<BoxBody ref={paneRef}"));
 
 describe("Settings search and the open page", () => {
   it("does not swap the page out for the results", () => {

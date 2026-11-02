@@ -22,6 +22,7 @@ import { sep } from "node:path";
 import { CRED_FILE_ENV, CRED_SERVER_ENV } from "../turn-credential.ts";
 import { anyMountIncomplete, clearMountsIncomplete, connectorMountRefsOf, CRED_FILE_PLACEHOLDER, connectorScopeOf, createTurnCredentialStore, splitTurnSecrets, type TurnCredentialStore } from "./turn-credentials.ts";
 import { descendantPids, untrackedDescendants } from "./process-tree.ts";
+import { reuseStats, type ReuseProcess, type SpareHandle } from "./reuse-stats.ts";
 import { diffWarmKey, stableJson, warmKey, type WarmKey } from "./warm-key.ts";
 
 import { DATA_DIR, stripCapturedProviderEnv, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
@@ -29,10 +30,10 @@ import { computerProxyEnv } from "../container-computer.ts";
 import { CODEX_APPROVAL_PIN_ARGS, codexIsolationArgs, codexTurnPolicy, scopedCodexHome } from "./codex-isolation.ts";
 import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withScopeRetry } from "./scoped-cli-home.ts";
 import {
-  CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexShellFormArgs,
+  CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
   HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
-  type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute,
+  type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { NarrowDenials } from "../narrow-denials.ts";
@@ -46,6 +47,7 @@ import { customMountEntries } from "../custom-mcp-mounts.ts";
 import { codexConfigMcpServerNames, externalMcpRecords, mountedMcpServerNames } from "./codex-mcp-names.ts";
 import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
+import { humanWaitOpen } from "../harness/human-wait.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
@@ -120,6 +122,8 @@ function decodeConfig(raw: unknown): CodexConfig {
   };
 }
 
+/** Read by the model, not the owner: a Stop hook's block reason. */
+const CARD_ANSWERED_NOTE = "The owner has now answered the approval you were waiting for. If a code cell is still running, call wait on it to get the result. Then report what really happened, and correct anything you said earlier that turned out not to be true.";
 const DENY_TIMEOUT_NOTE =
   "Murage: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
@@ -173,6 +177,8 @@ interface Retained {
   /** The bot whose engine home this process runs on. */
   bot?: string | null;
   closing: boolean;
+  /** Started on intent and not yet taken by a turn. */
+  spare?: SpareHandle;
   idleTimer?: ReturnType<typeof setTimeout>;
   settleCheck?: Promise<void>;
   detachIdle: () => void;
@@ -496,6 +502,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     const closeProcess = (r: Retained, threadId: string, why: string): Promise<boolean> => {
       if (r.closing) return Promise.resolve(true);
       r.closing = true;
+      reuseStats.closed(why);
+      r.spare?.lost(why === "idle" || why === "activity window" ? "no-send" : why);
       if (r.idleTimer) clearTimeout(r.idleTimer);
       r.detachIdle();
       warmPool.release(r);
@@ -548,7 +556,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         pid: () => r.child.pid,
         spawnedAt: spawnedAtOf(r.child),
         scope: { kind: "codex", bot: r.bot ?? null },
-        background: backgroundThreads.has(threadId),
+        background: !hold && backgroundThreads.has(threadId),
         hold,
         close: (reason) => void closeRetained(threadId, reason, r),
       });
@@ -583,6 +591,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
     /** Turn ids of intent warms: the engine starts but no turn exists, so nothing carrying one reaches a listener. */
     const prewarmTurnIds = new Set<string>();
+    const startingSpares = new Map<string, SpareHandle>();
     const emit = (event: RuntimeEvent) => {
       if (prewarmTurnIds.has((event as { turnId?: string }).turnId ?? "")) return;
       for (const l of [...listeners]) l(event);
@@ -674,6 +683,28 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // ...and the whole startup of the turn (every initialize and handshake, across the relaunch) ends by two handshake deadlines
       // after the first launch: no further relaunch once a slow handshake has used its one and this has passed.
       let startupCapAt = 0;
+      // What the reuse gauge needs of this logical turn, across its attempts.
+      let dispatchAt = Date.now();
+      let readyMs = 0;
+      let turnProcess: ReuseProcess = "spawned";
+      let dispatchSpawnReason: string | null = null;
+      let adoptedSpare: SpareHandle | undefined;
+      let accepted = false;
+      let firstTokenSeen = false;
+      const reuseTurn = () => ({ engine: DRIVER_KIND, threadId, turnId, background: turn.background === true, sealed: turn.sealed === true });
+      const noteAccepted = () => {
+        accepted = true;
+        reuseStats.submitted({ ...reuseTurn(), process: turnProcess, spawnReason: dispatchSpawnReason });
+        if (turn.background) adoptedSpare?.lost("background turn"); else adoptedSpare?.served();
+      };
+      /** The first assistant text of a real turn. No content, only how long it took. */
+      const noteFirstToken = () => {
+        if (firstTokenSeen || turn.prewarm || turn.engineCommand) return;
+        firstTokenSeen = true;
+        const firstTokenMs = Date.now() - dispatchAt;
+        console.info(`codex first-token thread=${threadId} process=${turnProcess} sealed=${turn.sealed === true} dispatchMs=${readyMs} gateMs=${readyMs} firstTokenMs=${firstTokenMs}`);
+        if (!turn.background) reuseStats.firstToken(turnProcess, firstTokenMs);
+      };
       const launchAttempt = async (attempt: number): Promise<void> => {
         if (attempt === 0 || !startupCapAt) { const b = hooksListBounds(); startupCapAt = Date.now() + 2 * (b.first + b.retry); }
         const env = childEnv();
@@ -893,6 +924,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const versionNow = probedVersion ?? (providerBinding ? codexVersion || undefined : undefined);
           gatePlan = cloudHome ? { mode: "legacy" } : codexGatePlan(versionNow);
           if (gatePlan.mode === "refuse") throw engineUpdateRequired(ENGINE, versionNow, CODEX_GATE_MIN);
+          // CARDS-WAIT-CODEX-1013: a cell that does not yield keeps the turn waiting on an open card, on the hook and the native path.
+          // The value is HOOK_ASK_BOUND_MS (codex.test.ts holds them equal). Not on a Cloud home: row CARDS-WAIT-CODEX-CLOUD.
+          if (!cloudHome && versionAtLeast(versionNow, CODEX_EXEC_YIELD_MIN)) appServerArgs.push("-c", "features.code_mode.default_exec_yield_time_ms=1728000000");
           // Rule 68a: the gate lives in the scoped home, so a gated provider-route turn gets one (or is refused as scope_unavailable);
           // a legacy provider-route turn keeps the provider's own home as before.
           scopedHome = cloudHome || (providerBinding && gatePlan.mode !== "gated") ? null : await withScopeRetry(() => scopedCodexHome(env, versionNow, turn.warmIdentity?.botId), ENGINE);
@@ -1063,6 +1097,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               ?? (anyMountIncomplete(mountRefs) ? "connector-mount-incomplete" : null);
           if (spawnReason !== null && live && !turn.prewarm) clearMountsIncomplete(mountRefs);
           console.info(`codex dispatch thread=${threadId} process=${spawnReason === null ? "reused reason=unchanged" : `spawned reason=${spawnReason}`}`);
+          dispatchAt = Date.now();
+          dispatchSpawnReason = spawnReason;
           if (turn.prewarm && live) {
             // an engine is already live on this thread: nothing to warm
             if (active.get(threadId) === slot) active.delete(threadId);
@@ -1078,11 +1114,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             try {
               live.cred?.write(secrets);
               reuse = live;
+              turnProcess = live.spare ? "spare" : "reused";
+              adoptedSpare = live.spare;
+              live.spare = undefined;
             } catch {
               spawnReason = "credential write failed";
               void closeProcess(live, threadId, "credential write failed");
             }
           } else if (live) {
+            if (!turn.sessionReset && spawnReason) live.spare?.lost(`key:${spawnReason}`);
             void closeRetained(threadId, turn.sessionReset ? "context reset" : spawnReason === "max-age" ? "max-age" : `spawn contract changed: ${spawnReason}`);
           }
         } else {
@@ -1203,6 +1243,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const HELPER_WAKE_GRACE_MS = Number(process.env.MURAGE_CODEX_WAKE_GRACE_MS) > 0 ? Number(process.env.MURAGE_CODEX_WAKE_GRACE_MS) : 5_000;
 
       const asks = new Map<string, AskFinish>();
+      /** Who waits for every open card to close: the Stop barrier (onStop). */
+      const askWaiters = new Set<() => void>();
+      /** Turns held at the barrier right now: such a turn ends by the model's next end, never by a helper finishing. */
+      let stopHolds = 0;
+      /** The barrier sent the model back to work: this turn ends by the engine's own turn/completed, never by a helper finishing. */
+      let resumedAtStop = false;
+      const askClosed = () => {
+        if (asks.size > 0) return;
+        for (const wake of [...askWaiters]) wake();
+        askWaiters.clear();
+        settleHeld();
+      };
       let codexThreadId: string | null = null;
       let codexTurnId: string | null = null;
       let awaitingTurnStart = false;
@@ -1303,6 +1355,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           else if (!live) return;
         }
         state.settled = true;
+        if (accepted) reuseStats.settled({ threadId, background: turn.background === true });
         if (helpers.cap) clearTimeout(helpers.cap);
         if (helpers.grace) clearTimeout(helpers.grace);
         for (const subtask of helpers.tracker.endAll(false)) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
@@ -1348,6 +1401,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           return;
         }
         console.info(`codex close thread=${threadId} reason=${recycle}`);
+        reuseStats.closed(recycle);
         if (!(await stop())) {
           emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.` });
         }
@@ -1363,6 +1417,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           detachIdle: () => {},
           ...(hookGate ? { hookGate } : {}), handed, ...(proof ? { proof } : {}),
         };
+        if (turn.prewarm) { kept.spare = startingSpares.get(threadId); kept.spare?.parked(); }
         attachIdle(threadId, kept);
         retained.set(threadId, kept);
         armIdle(threadId, kept, turn.prewarm === true);
@@ -1406,6 +1461,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // (codex-isolation.ts codexTurnPolicy).
       // paths each fileChange item announced, so its approval can name them
       const fileChangePaths = new Map<string, string[]>();
+      // and what each one changes, so its approval can be judged whole
+      const fileChangeItems = new Map<string, unknown>();
       const autoAccept = config.fullAuto && !enforceApproval;
       // Spelled for the installed Codex (0.56..0.66 take camelCase), read when the request is written: the
       // version is probed inside launchAttempt, after this line runs. An unprobed version gets the current spelling.
@@ -1464,6 +1521,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const finish: AskFinish = (behavior, message, source = "user", _answers, extra) => {
             behavior = refusal.verdict(behavior);
             if (!asks.delete(requestId)) return;
+            askClosed();
             timer.clear();
             const rewritten = extra?.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
             resolveAnswer(behavior === "allow"
@@ -1491,6 +1549,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             summary: route.summary,
             ...(toolInput ? { toolInput } : {}),
             toolCall: route.toolCall as { name: string; input: unknown },
+            // where it really lands, for the partition and the writer roots, and the key guard's own hold
+            ...(route.filePaths ? { filePaths: route.filePaths } : {}),
+            ...(route.localHold ? { localHold: route.localHold } : {}),
           });
         });
       };
@@ -1537,7 +1598,19 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           await settle(false, "gate_incident");
         })();
       };
-      if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool });
+      /** CARDS-WAIT-CODEX-1013: the barrier for a model that ended its turn under an open card (a cell it yielded itself). The call dies
+       *  with the turn, so the turn waits here for the owner, then goes on with the answer. Bounded by cards: a Stop with none ends. */
+      const onStop = async (): Promise<HookStopAnswer> => {
+        if (asks.size === 0) return { decision: "end" };
+        stopHolds++;
+        try {
+          while (asks.size > 0 && !stopRequested && !state.settled) await new Promise<void>((wake) => { askWaiters.add(wake); });
+        } finally { stopHolds--; }
+        if (stopRequested || state.settled) return { decision: "end" };
+        resumedAtStop = true;
+        return { decision: "block", reason: CARD_ANSWERED_NOTE };
+      };
+      if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool, onStop });
       const handleServerRequest = (msg: any) => {
         if (refusal.refused || stopRequested) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
         const method = msg.method as string;
@@ -1630,6 +1703,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // F12: the environment the call runs in, from the delivery's own cwd; the ask opens once the check has answered.
         const approvalCwd = typeof params.cwd === "string" && params.cwd ? params.cwd : turn.cwd ?? homedir();
         const execEnvP = tool === "shell" && !questions ? execEnvNow(threadId, shellForm, handed, approvalCwd).catch(() => undefined) : undefined;
+        // NOLIMITS-CODEX-EDIT: a native file change files the call the hook's apply_patch ask files, read from the changes the
+        // request carries (an older Codex) or the fileChange item Codex announced just before it.
+        const nativeEdit = tool === "edit" && !questions
+          ? codexNativeEditCall(params, params.fileChanges ?? fileChangeItems.get(approvalItem), { project: turn.cwd ?? homedir(), cwd: approvalCwd })
+          : undefined;
         // F5: which field the Rule 55 contract needed and the wire lacked.
         const inputMissing: string | undefined = questions
           ? undefined
@@ -1637,7 +1715,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ? params?._meta?.tool_params === undefined ? "_meta.tool_params" : undefined
             : tool === "shell"
               ? Array.isArray(params.command) || typeof params.command === "string" ? undefined : "command"
-              : undefined;
+              : nativeEdit?.inputMissing;
         // The headline is the real target (the command, the files); the
         // model's own `reason` rides apart and is labelled on the card. It
         // used to win whenever the command was an argv array (legacy
@@ -1655,6 +1733,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const finish: AskFinish = (behavior, _message, source = "user", answers) => {
           behavior = refusal.verdict(behavior);
           if (!asks.delete(requestId)) return;
+          askClosed();
           timer?.clear();
           if (questions) {
             // Only the owner's validated answers reach Codex. A skip, the
@@ -1685,11 +1764,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           });
           emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
         };
-        // A question waits for the owner up to 30 minutes (the shared
-        // question timeout). A permission card has no deadline on any turn:
-        // it waits until answered or the turn stops (Sean 10-29).
+        // A card waits until answered or the turn stops. Only a question on a
+        // turn nobody is at takes the 30 minute note (contracts: unattendedAskNote).
         // awake time (1.0.10 C3): a sleep with the question card open does not count toward its deadline
-        const timer = !questions || turn.holdProjectAsks ? undefined : wakeAwareTimeout(
+        const timer = !questions || !turn.unattendedAskNote ? undefined : wakeAwareTimeout(
           () => finish("deny", undefined, "timeout"),
           QUESTION_TIMEOUT_MS,
         );
@@ -1720,7 +1798,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ? { toolCall: inputMissing ? ({ name: mcpCallName } as { name: string; input: unknown }) : { name: mcpCallName, input: params._meta.tool_params } }
             : tool === "shell"
               ? { toolCall: inputMissing ? ({ name: "shell" } as { name: string; input: unknown }) : { name: "shell", input: { command: params.command, ...(typeof params.cwd === "string" ? { cwd: params.cwd } : {}) } } }
-              : {}),
+              : nativeEdit?.toolCall ? { toolCall: nativeEdit.toolCall, filePaths: nativeEdit.filePaths, ...(nativeEdit.localHold ? { localHold: nativeEdit.localHold } : {}) } : {}),
         });
         // F12: a shell call's environment is checked once per (generation, shell, cwd, map) when its card opens; any other call reports the handed map.
         if (execEnvP) void execEnvP.then((execEnv) => { if (asks.has(requestId)) openCard(execEnv); });
@@ -1752,16 +1830,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
        * start a reply to them within the grace. */
       const settleHeld = () => {
         if (!helpers.holding || state.settled || helpers.open.size > 0) return;
+        // CARDS-WAIT-CODEX-1013: a card waits for the owner, whoever asked (askClosed comes back here)
+        if (asks.size > 0 || stopHolds > 0 || resumedAtStop) return;
         if (helpers.woken) { void settle(true, null); return; }
         if (helpers.grace) return;
-        helpers.grace = setTimeout(() => { helpers.grace = undefined; if (helpers.open.size === 0 && !helpers.woken) void settle(true, null); }, HELPER_WAKE_GRACE_MS);
+        helpers.grace = setTimeout(() => { helpers.grace = undefined; if (helpers.open.size === 0 && !helpers.woken && asks.size === 0 && stopHolds === 0 && !resumedAtStop) void settle(true, null); }, HELPER_WAKE_GRACE_MS);
         helpers.grace.unref?.();
       };
       const holdForHelpers = () => {
         if (!helpers.holding) {
           helpers.holding = true;
-          helpers.cap = setTimeout(() => {
+          const armCap = () => { helpers.cap = setTimeout(() => {
             if (state.settled) return;
+            // CARDS-WAIT-CODEX-1013: a card waits for the owner, whoever asked; the cap comes round again.
+            if ((asks.size > 0 || humanWaitOpen(threadId)) && !stopRequested) { armCap(); return; }
             // a Stop already in: no cap note, the turn ends as that Stop (STOP1)
             if (stopRequested) { void settle(true, "cancelled"); return; }
             const note = backgroundCapNote(backgroundWaitCapMs());
@@ -1769,7 +1851,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: note });
             void settle(true, "background_wait_cap");
           }, backgroundWaitCapMs());
-          helpers.cap.unref?.();
+          helpers.cap.unref?.(); };
+          armCap();
         }
         helpers.woken = false;
         settleHeld();
@@ -1839,6 +1922,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           case "item/agentMessage/delta": {
             const delta = typeof p.delta === "string" ? p.delta : "";
             if (delta) {
+              noteFirstToken();
               state.sawStreamDelta = true;
               emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta });
             }
@@ -1875,6 +1959,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (item.type === "fileChange" && item.id && Array.isArray(item.changes)) {
               const paths = item.changes.map((c: any) => (typeof c?.path === "string" ? c.path : "")).filter(Boolean);
               if (paths.length) fileChangePaths.set(String(item.id), paths);
+              fileChangeItems.set(String(item.id), item.changes);
             }
             if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title, toolIdentity: { name: item.type === "commandExecution" ? "shell" : title }, input: item.arguments });
             break;
@@ -1899,6 +1984,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               if (item.text?.trim()) {
                 state.lastText = item.text;
                 if (!state.sawStreamDelta) {
+                  noteFirstToken();
                   emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: item.text });
                 }
                 state.sawStreamDelta = false;
@@ -1990,6 +2076,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
           case "turn/completed": {
             const t = p.turn ?? {};
+            resumedAtStop = false;
             // STOP1: an end Codex reports after the person's Stop (a clean end the Stop's own deny let it reach, an
             // interrupted or failed end while it dies) is that Stop: no error card, and settle ends it as cancelled.
             if (stopRequested) { void settle(true, "cancelled"); break; }
@@ -2406,11 +2493,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         try {
           turn.beforeSubmit?.();
         } catch {
+          if (!turn.prewarm) { reuseStats.refused({ ...reuseTurn(), reason: "submission refused" }); adoptedSpare?.lost("submission refused"); }
           if (handedBack && !state.settled) void settle(false, "submission_refused");
           return;
         }
         awaitingTurnStart = true;
         turnStartSent = true;
+        // Dispatch to here is the readiness boundary of the gate's timing row.
+        readyMs = Date.now() - dispatchAt;
+        if (!turn.prewarm) console.info(`codex turn-ready thread=${threadId} process=${turnProcess} ms=${readyMs}`);
         // Rule 68c: the bound runs from before turn/start, so nothing the turn starts is answered before the hook is proven
         if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) void proveLiveness();
         // The turn is written to the engine: the memory worker's hold for it ends (turn-hold.ts).
@@ -2464,6 +2555,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             handleNotification(notification);
           }
         });
+        if (!turn.prewarm) noteAccepted();
         // Rule 68c, as the rig has it (lane ag103-cx3, Codex 0.129.0 and 0.163.0): Codex runs the SessionStart handler when the turn begins,
         // after the turn/start answer and before the first model request. The proof was started before turn/start (above) and holds every
         // call, approval and clean end until it lands; here the attempt only waits for it, and an unproven hook has already refused the turn.
@@ -2474,6 +2566,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // A retired attempt's late rejection (an RPC timer after a close-path
         // relaunch) must neither report an error nor relaunch again.
         if (abandoned) return;
+        if (!turn.prewarm && !accepted) { reuseStats.refused({ ...reuseTurn(), reason: "turn not accepted" }); adoptedSpare?.lost("turn not accepted"); }
         // G03-2: once turn/start is written, the turn is relaunched only when Codex ANSWERED that it did not take it (an error answer with
         // nothing buffered and no ask open). A timeout says nothing, an ACK or a buffered notification says it ran: never sent again.
         // Read before anything below clears them.
@@ -2554,13 +2647,22 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
   const prewarm = async (threadId: string): Promise<boolean> => {
     const mem = lastTurns.get(threadId);
     if (idleHeld > 0 || !mem?.warmIdentity || active.has(threadId) || retained.has(threadId) || !prewarming.begin(threadId)) return false;
+    const spare = reuseStats.spare();
+    startingSpares.set(threadId, spare);
+    const finish = () => {
+      startingSpares.delete(threadId);
+      if (retained.get(threadId)?.spare !== spare) spare.lost("not parked");
+    };
     try {
       await sendTurn({ ...mem, prewarm: true, background: false, sessionReset: false });
     } catch {
       prewarming.end(threadId);
+      finish();
       return false;
     }
-    await prewarming.wait(threadId);
+    const ended = await prewarming.wait(threadId);
+    // a start that outlasted the wait is still running: its spare is counted when it ends
+    if (ended) finish(); else void prewarming.settled(threadId).then(finish);
     return retained.has(threadId);
   };
 

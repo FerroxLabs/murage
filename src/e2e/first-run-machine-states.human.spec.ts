@@ -621,6 +621,9 @@ test.describe("a machine with nothing on it", () => {
     ).toBeVisible();
     await expect(app.getByPlaceholder(/Paste your key here/i), "the card stays, still taking a key").toBeEditable();
     expect(stepOf(await harness("GET", "/api/setup"), "flux").skipped, "the step stays open").toBeFalsy();
+    const waiting = liveCard.locator('ul[aria-disabled="true"]');
+    await expect(waiting.getByText(/Brief me every morning/i), "the jobs are listed").toBeVisible();
+    await expect(waiting.getByRole("button"), "and none of them can be started until there is something to think with").toHaveCount(0);
 
     const needKey = app.getByRole("button", { name: /I need a key/i });
     await expect(needKey, "and somebody with no key has a way to get one").toBeEnabled();
@@ -633,13 +636,6 @@ test.describe("a machine with nothing on it", () => {
       app.getByPlaceholder(/Paste your key here/i),
       "and keep a box to bring the key back to",
     ).toBeEditable();
-
-    await harness("POST", "/api/setup/skip", { step: "flux" });
-    await reloadSettled(app);
-    await expect(
-      app.getByRole("button", { name: /Brief me every morning/i }),
-      "leaving the Flux screen without a key must land on the jobs, not on nothing",
-    ).toBeEnabled();
   });
 });
 

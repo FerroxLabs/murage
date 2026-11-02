@@ -31,6 +31,7 @@ import { ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TAR
 import { appEventScheduleSchema } from "../shared/app-triggers.ts";
 import type { AppEventRunStore } from "./app-trigger-store.ts";
 import { ROUTINE_GRANTS_MAX, isRoutineGrantKey, loadRoutinePermissionMode, routineGrantKeys, routinePermissionModeInput, type RoutinePermissionMode } from "./routine-permissions.ts";
+import { durableGrantAllowed } from "../shared/durable-grant-allowed.ts";
 
 export type RoutineSchedule =
   | { type: "once"; at: number }
@@ -1146,6 +1147,13 @@ export class RoutineManager {
       const diskRoutines = Array.isArray(disk.routines)
         ? disk.routines.map((routine) => (routine && typeof routine.id === "string" ? states.get(routine.id) as Routine | undefined : undefined) ?? routine)
         : undefined;
+      // UX-TRUST-MOMENTS-1012 2.3.3: a stored payment grant is never kept for
+      // good (routineGrantKeys drops it); counted once below, no payee
+      let refusedGrants = 0;
+      const countRefusedGrants = (keys: unknown): unknown => {
+        if (Array.isArray(keys)) refusedGrants += keys.filter((key) => typeof key === "string" && key.startsWith("stop:") && !durableGrantAllowed(key)).length;
+        return keys;
+      };
       this.routines = diskRoutines
         ? diskRoutines.flatMap((routine) => {
             const cleanedSchedule = loadSchedule(routine.schedule);
@@ -1168,7 +1176,7 @@ export class RoutineManager {
               deliverTo: routine.deliverTo === "list" ? "list" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
               permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
-              alwaysAllow: routineGrantKeys(routine.alwaysAllow),
+              alwaysAllow: routineGrantKeys(countRefusedGrants(routine.alwaysAllow)),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
             };
@@ -1191,6 +1199,7 @@ export class RoutineManager {
       // overlaid on the journal (the file is the newer copy when a downgrade
       // happened in between) and moved out below. Idempotent: a crash after the
       // journal write but before the file rewrite just repeats this on next boot.
+      if (refusedGrants) console.warn(`[routines] dropped ${refusedGrants} remembered routine ${refusedGrants === 1 ? "approval" : "approvals"} that are never kept for good (payments)`);
       let diskRuns: RoutineRun[] = journalRuns;
       if (Array.isArray(disk.runs) && disk.runs.length > 0) {
         const byId = new Map(journalRuns.map((run) => [run.id, run] as const));
@@ -1519,6 +1528,11 @@ export class RoutineManager {
     );
   }
 
+  /** A room goal is running in this room: nobody is at its turns, and its limit ends the run. */
+  liveGoalInRoom(groupId: string): boolean {
+    return this.runs.some((run) => run.target === "room-goal" && run.groupId === groupId && isLive(run.status));
+  }
+
   /** Why the run working in this thread exists, and for whom (Full access
    * reads it to tell the owner's channel message from everything else). */
   activeRunOrigin(threadId: string): { triggerSource: RoutineRunTrigger; humanPrincipal?: HumanPrincipal; notOwnerAudience?: true } | null {
@@ -1553,7 +1567,7 @@ export class RoutineManager {
       run.cardsOpen = run.cardsOpen!.filter((id) => id !== requestId);
       if (!run.cardsOpen.length) delete run.cardsOpen;
       if (resume) { run.turnEnded = undefined; run.resumedAt = this.now(); }
-      if (resume || (!run.cardsOpen && run.status === "waiting")) { run.status = "running"; run.attention = undefined; }
+      if (resume || (!run.cardsOpen && !this.openRequests.get(run.id)?.size && run.status === "waiting")) { run.status = "running"; run.attention = undefined; }
     });
     this.emitRun(run);
     return resume;
@@ -2316,6 +2330,9 @@ export class RoutineManager {
     return this.runs.filter((run) => run.delivery?.state === "pending" && !isOpen(run.status)).map(cloneRun);
   }
 
+  /** The cards open on a run's live turn, by run id. In memory: a restart fails live runs. */
+  private openRequests = new Map<string, Set<string>>();
+
   /** Set by stop() (server shutdown, a restore, a Cloud home pause) and cleared by start(): a tick already in flight
    * dispatches nothing more once it is set, and its queued runs stay queued for the next start (adapted from
    * OpenMausBot d5a85c700). */
@@ -3033,14 +3050,24 @@ export class RoutineManager {
       else if (call && all) for (const other of all.values()) if (other.op === call.op) other.failed = false;
       return null;
     }
+    if (event.type === "turn.completed") this.openRequests.delete(run.id);
     if (event.type === "request.opened") {
-      run.status = "waiting";
+      const open = this.openRequests.get(run.id) ?? new Set<string>();
+      if (event.requestId) open.add(event.requestId);
+      this.openRequests.set(run.id, open);
+      if (run.status !== "needs-you") run.status = "waiting";
       run.attention = redactSecretsInText(event.summary).trim().slice(0, 500) || undefined;
     } else if (event.type === "request.resolved") {
-      // answered after the run limit: the limit counts again from now
-      if (run.status === "needs-you") run.resumedAt = this.now();
-      run.status = "running";
-      run.attention = undefined;
+      const open = this.openRequests.get(run.id);
+      if (event.requestId) open?.delete(event.requestId);
+      // While another card is open the run stays as it is, so the run limit cannot end it under that card.
+      if (!open?.size) this.openRequests.delete(run.id);
+      if (!open?.size && !run.cardsOpen?.length) {
+        // answered after the run limit: the limit counts again from now
+        if (run.status === "needs-you") run.resumedAt = this.now();
+        run.status = "running";
+        run.attention = undefined;
+      }
     } else if (event.type === "item.completed" && event.itemType === "assistant_text") {
       run.output = redactSecretsInText(event.text).trim().slice(0, 2_000);
     } else if (event.type === "runtime.error") {
