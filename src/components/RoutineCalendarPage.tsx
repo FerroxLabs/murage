@@ -56,6 +56,7 @@ import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import {
   intakeFiles,
   type Attachment,
@@ -616,13 +617,13 @@ function EventEditor({
 
   return (
     <div className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/65 p-3 backdrop-blur-sm" onMouseDown={(event) => event.target === event.currentTarget && editorDirty.closeWithAsk(onClose)}>
-      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? "Edit routine" : "New routine"} className="max-h-[calc(0.94*var(--vvh,100dvh))] w-full max-w-[760px] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
-        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={existingRoutine || existingCall ? "Edit routine" : "New routine"} className={cn(BOX_FRAME, "max-h-[calc(0.94*var(--vvh,100dvh))] w-full max-w-[760px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
+        <BoxHead className="border-b border-hairline/40 px-5 py-3.5">
           <div className="text-[15px] font-semibold text-ink">{existingRoutine || existingCall ? (kind === "call" ? "Edit call" : "Edit routine") : (kind === "call" ? "New call" : "New routine")}</div>
           <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close"><X size={18} /></button>
-        </div>
+        </BoxHead>
 
-        <div className="space-y-5 px-5 py-5 sm:px-8">
+        <BoxBody className="space-y-5 px-5 py-5 sm:px-8">
           {canSwitchKind && (
             <div className="ml-10 inline-flex rounded-lg bg-inset p-1">
               <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-md px-4 py-1.5 text-[12.5px] font-medium", kind === "routine" ? "bg-raised text-ink shadow" : "text-ink-secondary")}>Routine</button>
@@ -890,12 +891,12 @@ function EventEditor({
             onRestored={routine=>{dispatch({type:"routinePatched",routine});setDescription(routine.prompt);setInstructionBase(routine.prompt);}}/></div>}
 
           {error && <div className="ml-10 flex items-start gap-2 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2.5 text-[12.5px] text-danger"><CircleAlert size={15} className="mt-0.5 shrink-0" />{error}</div>}
-        </div>
+        </BoxBody>
 
-        <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-hairline/40 bg-panel/95 px-5 py-3.5 backdrop-blur">
+        <BoxFoot className="border-t border-hairline/40 px-5 py-3.5">
           <button onClick={onClose} className="rounded-lg px-4 py-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink">Cancel</button>
           <button onClick={save} disabled={saving || !valid} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{saving && <Loader2 size={14} className="animate-spin" />}{existingRoutine || existingCall ? "Save" : kind === "call" ? "Schedule call" : isRoomGoal ? "Schedule team goal" : "Schedule routine"}</button>
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );
@@ -1009,12 +1010,12 @@ function QuickComposer({
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/25" onMouseDown={() => quickDirty.closeWithAsk(onClose)} />
-    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-label="Quick create" style={dialogPosition ?? undefined} className={cn("fixed z-50 max-h-[calc(var(--vvh,100dvh)-24px)] w-[min(430px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-[calc(var(--vvh,100dvh)/2)] -translate-x-1/2 -translate-y-1/2")}>
-      <div className="flex items-center justify-between bg-raised/70 px-4 py-2.5">
+    <div ref={dialogRef} tabIndex={-1} role="dialog" aria-label="Quick create" style={dialogPosition ?? undefined} className={cn(BOX_FRAME, "fixed z-50 max-h-[calc(var(--vvh,100dvh)-24px)] w-[min(430px,calc(100vw-24px))] rounded-2xl border border-hairline/60 bg-panel shadow-2xl", !dialogPosition && "left-1/2 top-[calc(var(--vvh,100dvh)/2)] -translate-x-1/2 -translate-y-1/2")}>
+      <BoxHead className="bg-raised/70 px-4 py-2.5">
         <div className="text-[12px] font-medium text-ink-secondary">{kind === "routine" ? "New routine" : "New call"}</div>
         <button onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-inset hover:text-ink" aria-label="Close"><X size={16} /></button>
-      </div>
-      <div className="space-y-3 p-4">
+      </BoxHead>
+      <BoxBody className="space-y-3 p-4">
         <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid) void save(); }} className="keep-font-size w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
         <div className="flex items-center gap-1 border-b border-hairline/35 pb-2">
           <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routine</button>
@@ -1057,11 +1058,11 @@ function QuickComposer({
           </div>
         </div>
         {error && <div className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
-      </div>
-      <div className="flex items-center justify-end gap-2 border-t border-hairline/40 px-4 py-3">
+      </BoxBody>
+      <BoxFoot className="border-t border-hairline/40 px-4 py-3">
         <button onClick={() => onMore({ ...seed, kind, botIds, name, description, recurrence })} className="rounded-lg px-3 py-2 text-[12px] font-medium text-accent hover:bg-accent/10">More options</button>
         <button onClick={save} disabled={!valid || working} className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-40">{working && <Loader2 size={13} className="animate-spin" />}Save</button>
-      </div>
+      </BoxFoot>
     </div>
     </>
   );
@@ -1435,8 +1436,8 @@ function EventDetails({
 
   return (
     <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-[2px]" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine details" className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
-        <div className="flex items-start gap-4 border-b border-hairline/40 px-5 py-4">
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine details" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
+        <BoxHead className="items-start justify-start gap-4 border-b border-hairline/40 px-5 py-4">
           <span className={cn("mt-1 size-4 shrink-0 rounded", isCall ? "bg-[#6d7cff]" : "bg-accent")} />
           <div className="min-w-0 flex-1">
             <div className="text-[19px] font-semibold text-ink">{title}</div>
@@ -1444,9 +1445,9 @@ function EventDetails({
             {timeCaption.schedule && <div className="mt-1 text-[11.5px] text-ink-secondary">{timeCaption.schedule}</div>}
           </div>
           <button onClick={onClose} className="rounded-full p-2 text-ink-secondary hover:bg-raised hover:text-ink" aria-label="Close"><X size={17} /></button>
-        </div>
+        </BoxHead>
 
-        <div className="max-h-[58vh] space-y-4 overflow-y-auto px-5 py-4">
+        <BoxBody className="space-y-4 px-5 py-4">
           <div className="flex items-start gap-3">
             {isRoomGoal ? <Target size={17} className="mt-1 shrink-0 text-ink-secondary" /> : <UserRoundPlus size={17} className="mt-1 shrink-0 text-ink-secondary" />}
             <div className="min-w-0 flex-1">
@@ -1476,9 +1477,9 @@ function EventDetails({
           {run?.status === "needs-you" && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">This run reached its time limit while waiting on you{run.attention ? `: ${run.attention}` : ""}. Answer it in the routine's conversation and the run carries on.</div>}
           {run?.status === "waiting" && !run.attention && <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-2.5 text-[11.5px] text-warning">{isRoomGoal ? "This team goal needs your answer. Open its channel task to continue the run." : "This bot needs your answer. Open its task to continue the run."}</div>}
           {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[11.5px] text-danger">{error}</div>}
-        </div>
+        </BoxBody>
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-hairline/40 px-4 py-3">
+        <BoxFoot className="flex-wrap justify-start border-t border-hairline/40 px-4 py-3">
           {roomId && <button onClick={() => onOpenRoom(roomId)} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Join channel</button>}
           {call && call.botIds.length > 1 && <button onClick={joinRoom} disabled={working} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110 disabled:opacity-50"><ExternalLink size={13} />Join channel</button>}
           {isRoomGoal && goalGroup && !executionThreadId && <button onClick={() => { onOpenRoom(goalGroup.id); onClose(); }} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-2 text-[12px] font-semibold text-white hover:brightness-110"><ExternalLink size={13} />Open channel</button>}
@@ -1492,7 +1493,7 @@ function EventDetails({
             {routine && <button disabled={working} onClick={() => void invoke(`/api/routines/${routine.id}`, "PATCH", { enabled: !routine.enabled })} className="rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40" aria-label={routine.enabled ? "Pause routine" : "Resume routine"} title={routine.enabled ? "Pause routine" : "Resume routine"}>{routine.enabled ? <Pause size={15} /> : <Play size={15} />}</button>}
             {(routine || call) && <button disabled={working} onClick={() => void deleteEvent()} className="rounded-lg p-2 text-ink-secondary hover:bg-danger/10 hover:text-danger disabled:opacity-40" aria-label={isCall ? "Delete call" : "Delete routine"} title={isCall ? "Delete call" : "Delete routine"}><Trash2 size={15} /></button>}
           </div>}
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );
@@ -1535,9 +1536,9 @@ function PausedList({
 
   return (
     <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Paused routines" className="w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl">
-        <div className="flex items-center justify-between border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></div>
-        <div className="max-h-[55vh] space-y-1 overflow-y-auto p-3">
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Paused routines" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-1.5rem)] w-full max-w-[520px] rounded-2xl border border-hairline/60 bg-panel shadow-2xl")}>
+        <BoxHead className="border-b border-hairline/40 px-5 py-4"><div><div className="text-[16px] font-semibold text-ink">Paused routines</div><div className="mt-0.5 text-[11.5px] text-ink-secondary">History is kept; no new tasks will run.</div></div><button onClick={onClose} aria-label="Close" className="rounded-full p-2 text-ink-secondary hover:bg-raised"><X size={17} /></button></BoxHead>
+        <BoxBody className="space-y-1 p-3">
           {error && <p role="alert" className="px-3 py-2 text-[12px] text-danger">{error}</p>}
           {routines.map((routine) => {
             const bot = bots.find((candidate) => candidate.id === routine.botId);
@@ -1557,7 +1558,7 @@ function PausedList({
               </div>
             );
           })}
-        </div>
+        </BoxBody>
       </div>
     </div>
   );
@@ -1581,9 +1582,9 @@ export function RoutineEditor({
   useModalDialog(modalRef, onClose);
   if (!canEdit) return (
     <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine editing" className="max-w-md rounded-xl border border-hairline bg-panel p-5 text-ink">
-        <p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p>
-        <button autoFocus onClick={onClose} className="mt-4 rounded-lg bg-accent px-4 py-2 text-white">Close</button>
+      <div ref={modalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Routine editing" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-2rem)] max-w-md rounded-xl border border-hairline bg-panel text-ink")}>
+        <BoxBody className="p-5 pb-0"><p>Create or change schedules in the desktop app, or ask the bot to propose a routine for your review here.</p></BoxBody>
+        <BoxFoot className="justify-start p-5 pt-4"><button autoFocus onClick={onClose} className="rounded-lg bg-accent px-4 py-2 text-white">Close</button></BoxFoot>
       </div>
     </div>
   );

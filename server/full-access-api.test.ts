@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 // The server is a child process, so its load probe is answered from a preload: see the file for why.
@@ -355,7 +356,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
     async () => {
       const bot = await makeBot("Hooked");
       // profile level, so the webhook's own task inherits Full access
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
       expect((await botState(bot.id)).fullAccess).toBe(true);
       const hook = await desktopApi("POST", "/api/webhooks", { name: "Inbound", prompt: "Handle the event", botId: bot.id, runOn: "ember" });
       expect(hook.status).toBe(201);
@@ -379,7 +380,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
     "still asks, as Auto would, when a routine starts the turn",
     async () => {
       const bot = await makeBot("Scheduled");
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+      expect((await raiseLevel(desktopApi, bot.id, { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
       const routine = await desktopApi("POST", "/api/routines", {
         name: "Nightly read",
         prompt: "Read the profile",

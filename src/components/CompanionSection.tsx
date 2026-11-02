@@ -38,6 +38,7 @@ import { ReplaceOldDevice } from "./ReplaceOldDevice";
 import { PhonePreviewSwitches, type PhoneOfferAnswer } from "./PhonePreviewSwitches";
 import { TailnetHttpsHelpCard } from "./TailnetHttpsHelp";
 import { useCopyFeedback } from "@/lib/copy-text";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 export {
   companionAccountActionError,
@@ -259,8 +260,9 @@ function ConfirmRemoteAccess({
 }) {
   return (
     <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className="w-full max-w-[440px] rounded-2xl bg-card p-5 shadow-xl">
-        <h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3>
+      <div role="dialog" aria-modal="true" aria-label="Serve Murage on your tailnet" className={`${BOX_FRAME} max-h-[calc(var(--vvh,100dvh)-2rem)] w-full max-w-[440px] rounded-2xl bg-card shadow-xl`}>
+        <BoxHead className="px-5 pt-5"><h3 className="text-[16px] font-semibold text-ink">Serve Murage on your tailnet?</h3></BoxHead>
+        <BoxBody className="px-5">
         <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">
           This turns on the part of Murage that answers your other devices, and asks Tailscale to
           serve it on your tailnet. If Tailscale is not on this computer, the first half still works
@@ -276,7 +278,8 @@ function ConfirmRemoteAccess({
           which is tailnet-only, never Funnel. Traffic stays encrypted end to end. It stays on until you
           turn it off, including after a restart.
         </p>
-        <div className="mt-5 flex justify-end gap-2">
+        </BoxBody>
+        <BoxFoot className="px-5 pb-5 pt-5">
           <button
             onClick={onCancel}
             disabled={busy}
@@ -291,7 +294,7 @@ function ConfirmRemoteAccess({
           >
             {busy ? "Turning on…" : "Serve on my tailnet"}
           </button>
-        </div>
+        </BoxFoot>
       </div>
     </div>
   );
@@ -315,6 +318,7 @@ export function RevokeDeviceConfirm({
   return (
     <div
       role="alertdialog"
+      data-box-exempt="inline confirm under a device row"
       aria-label={t("phone.revoke.title", { name })}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;

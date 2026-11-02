@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Plus, RefreshCw } from "lucide-react";
 
 import { api } from "@/state/store";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { copyTextOrThrow } from "@/lib/copy-text";
 import {
   LOCAL_SERVER_KIND_LABELS,
@@ -146,10 +147,12 @@ function EditServerForm({ server, onSaved, onCancel }: { server: LocalServerView
     </label>
     {server.hasKey && <label className="flex min-h-11 items-center gap-2 text-[12px]"><input type="checkbox" aria-label={`Remove the saved key for ${server.label}`} checked={clearKey} disabled={busy} onChange={event => setClearKey(event.target.checked)} className={`size-4 accent-accent ${focus}`} />Remove the saved key</label>}
     <p className="text-[11px] leading-relaxed text-ink-secondary">Changing the address or the key removes the engine entries Murage wrote for this server. The next turn writes fresh ones.</p>
-    {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
-    <div className="flex flex-wrap gap-2">
-      <button type="submit" disabled={busy} className={primary}>{busy ? "Saving…" : "Save changes"}</button>
-      <button type="button" disabled={busy} onClick={onCancel} className={button}>Cancel</button>
+    <div className={`${BOX_SAVE_ROW} -mx-1 bg-inset px-1`}>
+      {error && <p role="alert" className="mb-2 text-[12px] text-danger">{error}</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="submit" disabled={busy} className={primary}>{busy ? "Saving…" : "Save changes"}</button>
+        <button type="button" disabled={busy} onClick={onCancel} className={button}>Cancel</button>
+      </div>
     </div>
   </form>;
 }

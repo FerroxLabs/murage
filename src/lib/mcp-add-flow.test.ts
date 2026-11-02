@@ -76,7 +76,19 @@ describe("saveRemote: the sequencing contract", () => {
     expect(order).toEqual(["api POST /api/mcp/servers", "saveSecrets comfy"]);
     expect(JSON.parse(calls[0]!.body)).toMatchObject({ name: "comfy", url: "https://cloud.comfy.org/mcp", auth: "header", headers: { "X-API-Key": true }, enabled: false });
     expect(calls.map((call) => call.body).join("")).not.toContain(KEY);
-    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { "X-API-Key": KEY } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { "X-API-Key": KEY }, rev: "" });
+  });
+
+  it("names the revision the harness answered with, so main can refuse a moved entry", async () => {
+    const { api, bridge } = recorder({ "/api/mcp/servers": { servers: [{ name: "other", rev: "000000000000" }, { name: "comfy", rev: "abc123def456" }] } });
+    await saveRemote({ api, bridge }, { name: "comfy", draft, auth: "header", headers: { "X-API-Key": KEY } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { "X-API-Key": KEY }, rev: "abc123def456" });
+  });
+
+  it("sends a revision main will refuse when the answer does not list the entry", async () => {
+    const { api, bridge } = recorder();
+    await saveRemote({ api, bridge }, { name: "comfy", draft, auth: "header", headers: { "X-API-Key": KEY } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { "X-API-Key": KEY }, rev: "" });
   });
 
   it("never saves secrets when the entry itself was refused", async () => {
@@ -96,7 +108,7 @@ describe("saveRemote: the sequencing contract", () => {
     const body = JSON.parse(calls[0]!.body);
     expect(body).toMatchObject({ name: "hook", url: secretDraft.maskedUrl, urlSecret: true });
     expect(calls[0]!.body).not.toContain("AbCdEfGhIjKlMnOpQrStUvWxYz0123");
-    expect(bridge.saveSecrets).toHaveBeenCalledWith("hook", { url: secretLink });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("hook", { url: secretLink, rev: "" });
   });
 
   it("asks the shell for nothing when a plain link has no secret to keep", async () => {
@@ -111,7 +123,7 @@ describe("saveRemote: the sequencing contract", () => {
     expect(calls[0]).toMatchObject({ method: "PUT", path: "/api/mcp/servers/comfy" });
     expect(JSON.parse(calls[0]!.body)).not.toHaveProperty("name");
     expect(calls[0]!.body).not.toContain(KEY);
-    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { Authorization: `Bearer ${KEY}` } });
+    expect(bridge.saveSecrets).toHaveBeenCalledWith("comfy", { headers: { Authorization: `Bearer ${KEY}` }, rev: "" });
   });
 
   it("with no desktop shell the values ride the body, which is the only place they can go", async () => {

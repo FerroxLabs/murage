@@ -22,8 +22,9 @@ describe("Settings list reaches every section (G3)", () => {
   });
 
   it("never scrolls the dialog itself, so focusing a low section cannot push the header off", () => {
-    const dialog = /role="dialog"[^]*?className=\{cn\(\s*"([^"]+)"/.exec(source)?.[1] ?? "";
-    expect(dialog).toContain("overflow-clip");
+    // BOX_PANES carries overflow-clip (box-shell.test.ts).
+    const dialog = /role="dialog"[^]*?className=\{cn\(\s*BOX_PANES,\s*"([^"]+)"/.exec(source)?.[1];
+    expect(dialog).toBeDefined();
     expect(dialog).not.toContain("overflow-hidden");
   });
 
@@ -42,6 +43,6 @@ describe("Settings list reaches every section (G3)", () => {
   });
 
   it("scrolls each page on its own too, below its header", () => {
-    expect(source).toContain('"flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto');
+    expect(source).toContain('<BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4');
   });
 });

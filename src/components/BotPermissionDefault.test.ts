@@ -6,7 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { BotPermissionDefault, FULL_ACCESS_CHANNEL_OPTION, FULL_ACCESS_SETUP_OPTION } from "./BotPermissionDefault";
+import { BotPermissionDefault, FULL_ACCESS_CHANNEL_OPTION, FULL_ACCESS_SETUP_OPTION, NO_LIMITS_TERMS_NOTE } from "./BotPermissionDefault";
 import { defaultModeStep } from "@/lib/permission-mode";
 
 type Shown = Parameters<typeof BotPermissionDefault>[0]["bot"];
@@ -27,6 +27,24 @@ const option = (markup: string, label: string) => {
 };
 
 describe("Bot Settings approval default", () => {
+  it("a No limits bot on the desktop shows one line with Review until the new terms are accepted", () => {
+    const at = (bot: Shown, desktop: boolean | undefined, termsPending: boolean) =>
+      renderToStaticMarkup(createElement(BotPermissionDefault, { bot, onThisComputer: false, desktop, termsPending, onReviewTerms: () => {}, onChoose: () => {}, onOption: () => {} }));
+    const unlimited = { autoApprove: true, fullAccess: true, noLimits: true } as Shown;
+    expect(at(unlimited, true, true)).toContain(NO_LIMITS_TERMS_NOTE);
+    expect(at(unlimited, true, true)).toContain(">Review<");
+    expect(at(unlimited, true, false)).not.toContain(NO_LIMITS_TERMS_NOTE);
+    expect(at(unlimited, false, true)).not.toContain(NO_LIMITS_TERMS_NOTE);
+    expect(at({ autoApprove: true, fullAccess: true } as Shown, true, true)).not.toContain(NO_LIMITS_TERMS_NOTE);
+  });
+
+  it("the new terms bring the No limits warning back on a bot that confirmed the older one", () => {
+    const acknowledged = { autoApprove: true, fullAccess: true, noLimitsAcknowledgedAt: 1 };
+    expect(defaultModeStep(acknowledged, "unlimited", false)).toMatchObject({ kind: "patch" });
+    expect(defaultModeStep(acknowledged, "unlimited", false, true)).toEqual({ kind: "no-limits-warning", onThisComputer: false });
+    expect(defaultModeStep(acknowledged, "full", false, true).kind).not.toBe("no-limits-warning");
+  });
+
   it("offers Ask, Auto and Full access, with the current default pressed", () => {
     expect(pressed(render({ autoApprove: false }))).toEqual(["Ask"]);
     expect(pressed(render({ autoApprove: true, fullAccess: false }))).toEqual(["Auto"]);
@@ -38,7 +56,7 @@ describe("Bot Settings approval default", () => {
 
   it("shows the two extras under Full access in plain words: channel DMs on unless turned off, setup off unless set", () => {
     const markup = render({ autoApprove: true, fullAccess: true });
-    expect(FULL_ACCESS_CHANNEL_OPTION).toBe("Also skip approvals for my messages from Telegram, Slack and Discord");
+    expect(FULL_ACCESS_CHANNEL_OPTION).toBe("Also skip approvals for my messages from Telegram, Slack and Discord. Reading keys still asks.");
     expect(FULL_ACCESS_SETUP_OPTION).toBe("Also approve setup requests: installing skills, proposing routines and trusting folders");
     // 1.0.10 (NOLIMITS-CARDS r2): the owner's own channel DMs are covered unless the owner turned the option off
     expect(option(markup, FULL_ACCESS_CHANNEL_OPTION)).toContain('aria-checked="true"');

@@ -660,6 +660,28 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(ofType(turn.events, "turn.completed")).toHaveLength(1);
   });
 
+  // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
+  for (const stopFirst of [false, true]) {
+    it(`10c. CLOSE-STOP ${stopFirst ? "Stop then quit on a mounted turn: the owner's Stop, once, with no error" : "quit alone on a mounted turn: the engine closing, delivered before dispose resolves"}`, async () => {
+      const instance = await make(name);
+      const log = newLog();
+      const thread = threadId();
+      script = [({ signal }) => hanging(signal, frame({ choices: [{ delta: { content: "partial" } }] }))];
+      const turn = await start(instance, { threadId: thread, text: "go", integrations: { custom: { fake: mount(log) } } });
+      await turn.recorder.until((event) => event.type === "content.delta");
+      if (stopFirst) await instance.adapter.interruptTurn(thread, turn.turnId);
+      await instance.dispose();
+      const ends = ofType(turn.events, "turn.completed").filter((event) => event.turnId === turn.turnId);
+      if (stopFirst) {
+        expect(ends).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+        expect(errors(turn.events)).toEqual([]);
+      } else {
+        expect(ends).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+        expect(errors(turn.events)).toEqual([expect.stringContaining("closed before it finished its reply")]);
+      }
+    });
+  }
+
   it("10b. Stop with a card open resolves it as the system's deny and the tool never runs", async () => {
     const instance = await make(name);
     const log = newLog();
