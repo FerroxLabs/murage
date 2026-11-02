@@ -284,7 +284,7 @@ export async function buildDatabase({ srcDir = join(root, "shared", "capabilitie
     seenId(entry.id, entry._file);
     if (typeof entry.name !== "string" || !entry.name.trim()) fail("needs a name");
     if (!STATUSES.includes(entry.status)) fail(`status must be one of ${STATUSES.join(", ")}`);
-    if (!Array.isArray(entry.questions) || entry.questions.length < 3 || entry.questions.length > 6) fail("needs 3 to 6 questions");
+    if (!Array.isArray(entry.questions) || entry.questions.length < 3 || entry.questions.length > 8) fail("needs 3 to 8 questions");
     if (typeof entry.answer !== "string" || !entry.answer.trim()) fail("needs an answer");
     const limits = norm(entry.limits ?? "");
     const ask = norm(entry.ask_your_bot ?? "");
@@ -347,7 +347,7 @@ export async function buildDatabase({ srcDir = join(root, "shared", "capabilitie
       const previousTrain = `${major}.${minor}.${Math.max(patch - 1, 0)}`;
       if (compareVersions(removed, previousTrain) < 0) fail(`removed in ${removed}, more than one train ago: move it to retired`);
     }
-    // The facts block keeps these whole inside its 600-character line (shared/capability-facts.ts).
+    // The facts block keeps these whole inside its 950-character line (shared/capability-facts.ts).
     const essentials = `${entry.name ?? ""} ${limits} ${ask} ${path}`.length + 120;
     if (essentials > 450) fail(`name, limits, ask_your_bot and settings_path come to ${essentials} characters with the status and applicability; keep them under 450 so no qualification is clipped`);
     const doc = entry.doc ? help.get(entry.doc) : undefined;

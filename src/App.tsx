@@ -1,3 +1,4 @@
+import { EngineChatLinkHost } from "@/components/EngineChatLink";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
@@ -552,6 +553,7 @@ function Shell() {
           palette on top when one of them is open underneath */}
       <CommandPaletteHost onOpenChange={setPaletteOpen} />
       {desktop === true && <NoLimitsTermsPrompt />}
+      <EngineChatLinkHost />
       {/* Bot calls 1.0.9: the ring banner (call.ring hints re-read GET /api/calls/active) */}
       <BotCallRing />
       <CallOverlaySlot
