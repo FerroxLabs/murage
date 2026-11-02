@@ -16,38 +16,38 @@
 //   badge and the Needs you tab read. It is not an approval, a question or a
 //   connection, so no segment count changes.
 //
-// HEALTH (1.0.9 Sentinel). An owner's read may also carry its Health
-// summary (`health`). When Sentinel's backup issue (S01, detector "backup")
-// is open in it, the stopped-backup row is shown inside the Health card
-// (`backupFailed.inHealth`), with the same sentence and the same action, and
-// it is still counted once: the Health card itself never adds to `decisions`.
-// Without an owner Health summary the separate card stays exactly as it was,
-// and Health data is never attached to a read that did not prove the owner.
+// HEALTH (Sean 11-01). An owner's read may also carry `health`: the quiet
+// level, and the problems the owner must act on (`needs`). Each need is one
+// ordinary Needs you item, so it counts once in `decisions`. Everything else
+// lives on the Health screen and adds nothing here. A stopped backup and
+// Sentinel's "no recent verified backup" are one thing owed, so while
+// backupFailed is on the read that need is left out and the card stays.
+// Health data is never attached to a read that did not prove the owner.
 import type { BackupWaiting } from "../shared/backup-waiting.ts";
 import type { HealthInbox } from "../shared/sentinel-view.ts";
 
 export interface BackupNotices {
   backupWaiting?: BackupWaiting | null;
-  backupFailed?: { sentence: string; at: number; inHealth?: true } | null;
+  backupFailed?: { sentence: string; at: number } | null;
   /** The owner's Health summary: pass it only for a read that proved the owner (owner-api.ts sentinelOwner). */
   health?: HealthInbox | null;
 }
 
-/** Whether Sentinel's backup issue is open in this Health summary. */
-export function healthCoversBackup(health: HealthInbox | null | undefined): boolean {
-  return Boolean(health && health.status === "ready" && health.rows.some(row => row.detectorId === "backup" && row.state !== "resolved"));
-}
+/** The title a stopped backup already says: Sentinel's own row for the same condition. */
+const SAME_AS_STOPPED_BACKUP = "health.backup.not-protected";
 
 /** The Inbox read with the backup rows attached and the owed one counted.
  *  Returns the body unchanged when there is nothing to attach. */
 export function withBackupNotices<T extends { decisions?: number }>(body: T, notices: BackupNotices): T & BackupNotices {
   const { backupWaiting, backupFailed, health } = notices;
   if (!backupWaiting && !backupFailed && !health) return body;
-  const failed = backupFailed ? (healthCoversBackup(health) ? { ...backupFailed, inHealth: true as const } : backupFailed) : null;
+  const needs = (health?.needs ?? []).filter(need => !(backupFailed && need.titleKey === SAME_AS_STOPPED_BACKUP));
+  const owed = (backupFailed ? 1 : 0) + needs.length;
   return {
     ...body,
     ...(backupWaiting ? { backupWaiting } : {}),
-    ...(failed ? { backupFailed: failed, ...(typeof body.decisions === "number" ? { decisions: body.decisions + 1 } : {}) } : {}),
-    ...(health ? { health } : {}),
+    ...(backupFailed ? { backupFailed } : {}),
+    ...(owed > 0 && typeof body.decisions === "number" ? { decisions: body.decisions + owed } : {}),
+    ...(health ? { health: { ...health, needs } } : {}),
   };
 }

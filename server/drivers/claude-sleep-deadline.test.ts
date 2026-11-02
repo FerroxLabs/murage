@@ -20,13 +20,14 @@ const QUESTION = { questions: [{ question: "Which folder?", header: "Folder", op
 describe.skipIf(process.platform === "win32")("Claude cards across a sleep", () => {
   afterEach(() => { sleepClock.resume(); sleepClock.stop(); });
 
-  it("a question is not answered at the wake; it times out after its awake wait, and a permission card never does", async () => {
+  it("on a turn nobody is at, a question is not answered at the wake; its note waits awake time, and a permission card never takes it", async () => {
     sleepClock.start();
     const dir = mkdtempSync(join(tmpdir(), "murage-sleep-deadline-"));
     const resolved: Array<{ id: string; source: string; at: number }> = [];
     const broker = await createPermissionBroker({
       socketPaths: [join(dir, "sleep.sock")],
-      questionTimeoutMs: 1_000,
+      askNote: () => true,
+      noteMs: 1_000,
       onAsk: () => {},
       onResolve: ask => resolved.push({ id: ask.id, source: ask.source, at: Date.now() }),
     });

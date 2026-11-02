@@ -19,3 +19,4 @@ export type BackupUnavailableReason = "tool" | "closing";
 export const BACKUP_UNAVAILABLE_SENTENCES: Readonly<Record<BackupUnavailableReason, string>>;
 export const BACKUP_UNAVAILABLE_CODES: readonly string[];
 export function backupUnavailableCode(reason: unknown): string | null;
+export function reviewCaptureFailure(error: string | undefined): { stage: string; code: string };

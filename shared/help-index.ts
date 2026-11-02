@@ -783,7 +783,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "where": "Murage docs → Changelog → What changed in Murage 1.0.3",
     "url": "https://murage.ai/docs/changelog/v1-0-3#apps-and-engine-settings-in-1-0-3",
-    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. A bot cannot change them from inside a turn; you change them in Settings.\n- Murage's own approval hooks stay Murage's. Bots cannot change them, at any access level, including Full access and No limits."
+    "text": "- Each app gets only the grants you give it. A connected app asks before it reaches a new tool, and what you allow stays with that app and that bot.\n- A routine's remembered approvals stay with the bot that runs it. Another bot cannot borrow them.\n- The settings that decide what an engine may do are protected. Murage asks before a command or file tool names engine settings; you change them in Settings.\n- Murage's own approval hooks stay Murage's. Murage asks before a command or file tool names them, at every access level, including Full access and No limits."
   },
   {
     "id": "changelog/v1-0-3#approvals-on-your-phone-and-in-calls-in-1-0-3",
@@ -1595,7 +1595,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Approvals",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
-    "text": "Choose how a conversation is approved from the permission chip beside the message box. The menu asks \"How should this bot's actions be approved?\" and offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: runs everything without asking, except reading your keys and passwords and commands Murage recognizes as able to wipe your computer, which ask first.\n\nThe chip changes the level for this conversation.…"
+    "text": "Choose how a conversation is approved from the permission chip beside the message box. It offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: in conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread.…"
   },
   {
     "id": "features/approvals-and-inspector#full-access-and-the-stop-line",
@@ -1613,9 +1613,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "How approval levels work (Ask, Auto, Full access, No limits), the stop line, Allow once, Allow for this task, Always allow, and the Always allowed list.",
     "heading": "No limits",
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
-    "where": "Bot settings → Permissions → Images",
+    "where": "Bot settings → Permissions → Approvals",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#no-limits",
-    "text": "No limits lets deleting, paying and messaging go ahead without asking. It still asks before reading your keys and passwords, and before a command Murage recognizes as able to wipe your computer. Choose it when you want the behaviour Full access had before 0.1.59.\n\nFull access and No limits can be switched on only in the desktop app. The first time for each bot you confirm a one-time warning (\"Give @bot full access?\" or \"Give @bot no limits?\", with Turn on full access or Turn on no limits). Switch back to Auto or Ask at any time.\n\nSome things still ask under Full access and No limits. A turn started by a webhook asks as it would under Auto.…"
+    "text": "In conversations you start at the Murage app or your paired phone, No limits runs commands and tools without asking. That includes reading and sending your keys and passwords and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it.\n\nIt still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread. It also asks before an unknown program touches your home folder or a whole disk, before a command or file tool names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run.…"
   },
   {
     "id": "features/approvals-and-inspector#images",
@@ -2454,7 +2454,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Settings → Engines",
     "url": "https://murage.ai/docs/features/inbox#engines-to-sign-in-to",
-    "text": "When an engine is installed but nobody is signed in to it, the Inbox lists it under Engines to sign in to with the sign-in command to run in a terminal. The Copy button copies the command.\n\nIf you don't use that engine, press I don't use (engine) and confirm with Turn it off. Bots stop using it. You can turn it back on in Settings → Engines."
+    "text": "When an engine is installed but nobody is signed in to it, the Inbox lists it under Engines to sign in to with a Sign in button. Press it, check the engine and the account folder the box names, then press Open sign-in and finish in your browser. The box says so when you are signed in. You can also ask your bot, for example \"sign into Claude\": it replies with a button that opens the same box.\n\nSome engines sign in from a Terminal window instead. Murage opens it for you with the sign-in already running. On a phone or in a browser, finish sign-in on the computer running Murage.\n\nIf you don't use that engine, press I don't use (engine) and confirm with Turn it off. Bots stop using it.…"
   },
   {
     "id": "features/inbox#connections-to-restore-and-routines",
@@ -2474,7 +2474,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Inbox",
     "where": "Murage docs → Features → Inbox",
     "url": "https://murage.ai/docs/features/inbox#health-checks",
-    "text": "The Health card in the Inbox, and beside Diagnostics in Settings, shows what Murage's health checks found. Once a day at 09:00 your time, the Inbox gets one short health summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.\n\nA small checker runs on its own every two minutes, even while the app is closed.…"
+    "text": "Health has its own screen, one click from the small Health link at the top of the Inbox, from the You menu, and from Settings. It shows what Murage's health checks found. Identical issues fold into one line with a count and the time, and every issue says what happened, whether it matters, and what you can do: a button that takes you to the right place, a button that tries again, or a plain \"nothing to do\" when Murage is on it. Only a problem you must act on comes to Needs you, as one item with one action, and it goes by itself when the problem clears. A small dot beside Health stays quiet unless something is worth a look.…"
   },
   {
     "id": "features#overview",
@@ -3398,9 +3398,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Install Murage on macOS, Windows, or Ubuntu.",
     "heading": "Install an AI app",
     "breadcrumb": "Murage docs → Getting started → Installation",
-    "where": "Murage docs → Getting started → Installation",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/getting-started/installation#install-an-ai-app",
-    "text": "Murage needs at least one supported AI app installed on this computer and signed in. Claude and Codex are the most common starting points.\n\n1. Install the AI app from the company that makes it.\n2. Open it once in a terminal and finish signing in.\n3. Restart Murage.\n4. Open the model picker. Engines that are ready appear as usual; the others say what is missing.\n\nSee Agent engines for the full list and for choosing an engine's location yourself."
+    "text": "With a ChatGPT plan, or SuperGrok or X Premium, your bots can use that plan on Fuigo with nothing to install: open Settings → Models & engines, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. The Grok sign-in is marked Unofficial. The Codex and Grok apps are separate.\n\nFor Claude Code, Codex, Kimi Code and other AI apps, ask your bot, for example \"set up Claude Code\". It replies with a button that opens the right step. Or do it yourself:\n\n1. Open Settings → Models & engines → Engines and find the AI app.\n2. For Claude Code and Codex, press Install. Murage downloads the app from its maker and checks it before it runs, with no Node.js and no Terminal.…"
   },
   {
     "id": "getting-started/installation#build-from-source",
@@ -3606,9 +3606,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Fix an AI app Murage cannot find, a sign-in that failed, or a model that will not answer.",
     "heading": "Authentication failures",
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
-    "where": "Murage docs → Providers → Engine troubleshooting",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/providers/troubleshooting#authentication-failures",
-    "text": "Sign in again with the AI app itself, in a terminal or in the app. Murage uses the app's own sign-in; installing the app is not enough.\n\nIf Codex says it is not authorized (the details show 401 Unauthorized from OpenAI), run codex login status, sign in again if needed, then restart Murage. Never paste your ChatGPT password into Murage."
+    "text": "If you use a ChatGPT or Grok plan through Murage, open Settings → Models & engines, and under Use a plan you already have press Sign in again if it shows.\n\nOtherwise press Sign in on the engine in the Inbox, then Open sign-in, and finish in your browser. Murage uses the app's own sign-in; installing the app is not enough.\n\nFor Claude Code or another app's own account, open Settings → Models & engines → Engines, find the app, press Sign in, then Open sign-in, and finish in your browser. If the browser does not open, press Didn't open? Use Terminal. Terminal is a window on your computer for typed commands; Murage opens it with the sign-in already running, so follow what it shows.…"
   },
   {
     "id": "providers/troubleshooting#a-selected-model-fails",

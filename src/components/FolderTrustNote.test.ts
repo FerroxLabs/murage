@@ -12,9 +12,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { FolderTrustRow } from "./FolderTrustRow";
+import { folderTrustLabel, folderTrustNotice } from "@/lib/folder-trust";
+import { FOLDER_TRUST_STORED_NO_LINE, FOLDER_TRUST_STORED_NO_NAME, folderTrustDisplayName, folderTrustPassedName } from "../../shared/folder-trust";
 import { FolderTrustNoteView, folderTrustStatusKind, folderTrustStatusLabel, folderTrustVerdicts, type FolderTrustResult, type FolderTrustStatus } from "./FolderTrustNote";
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+
+describe("a stored no in Fuigo's own store", () => {
+  it("reads the approved sentence on every surface, and the row offers no Trust button", () => {
+    expect(FOLDER_TRUST_STORED_NO_LINE).toBe("This folder's instructions were left out because you said no to trusting it.");
+    expect(folderTrustLabel(FOLDER_TRUST_STORED_NO_NAME)).toBe(FOLDER_TRUST_STORED_NO_LINE);
+    expect(folderTrustDisplayName(FOLDER_TRUST_STORED_NO_NAME)).toBe(FOLDER_TRUST_STORED_NO_LINE);
+    const html = renderToStaticMarkup(createElement(FolderTrustRow, { kind: "storedNo", sources: "", botId: "b", threadId: "t", phone: false }));
+    expect(html).toContain("left out because you said no");
+    expect(html).not.toContain("folder-trust-row-trust");
+  });
+});
 
 const status = (over: Partial<FolderTrustStatus> = {}): FolderTrustStatus => ({
   gated: true,
@@ -97,7 +110,7 @@ describe("folderTrustVerdicts", () => {
 
   it("a room without Fuigo members, or nothing fetched yet, shows only the picker sentence", () => {
     for (const html of [render([]), render(null), renderAt(undefined, [result("Ada")])]) {
-      expect(html).toContain("A folder you choose here is trusted");
+      expect(html).toContain("Fuigo asks before it uses a folder");
       expect(html).not.toContain("data-folder-trust-status");
       expect(html).not.toContain("Forget");
     }
@@ -145,7 +158,7 @@ describe("undoing a Don't trust (1.0.4)", () => {
     expect(html).toContain(">Trust this folder<");
     expect(html).toContain(">Forget<");
     expect(html).toContain("The bot&#x27;s files and tools still work");
-    expect(html).not.toContain("A folder you choose here is trusted");
+    expect(html).not.toContain("Fuigo asks before it uses a folder");
   });
 
   it("offers no Trust on a trusted folder, one the user's own Fuigo already trusts, or nothing to trust", () => {
@@ -162,5 +175,27 @@ describe("undoing a Don't trust (1.0.4)", () => {
     expect(withButton).toContain(">Trust this folder<");
     expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "withheld", sources: "AGENTS.md" }))).not.toContain("Trust this folder");
     expect(renderToStaticMarkup(createElement(FolderTrustRow, { kind: "late", sources: "AGENTS.md", botId: "b1", threadId: "t1" }))).not.toContain("Trust this folder");
+  });
+
+  it("a phone keeps the notice and carries no Trust this folder button (S7)", () => {
+    const row = renderToStaticMarkup(createElement(FolderTrustRow, { kind: "withheld", sources: "AGENTS.md", botId: "b1", threadId: "t1", phone: true }));
+    expect(row).toContain("Folder not trusted: AGENTS.md left out");
+    expect(row).not.toContain("folder-trust-row-trust");
+    expect(row).not.toContain("Trust this folder");
+  });
+});
+
+describe("the chip for a decline passed to Fuigo (S5a, U2)", () => {
+  const key = "/work/main";
+  const U2 = "You chose not to trust /work/main, and Murage passed that answer to Fuigo for this folder. To change it, forget /work/main in this conversation's folder settings.";
+  it("reads U2's text byte for byte in the row and the sidebar, with no Trust button", () => {
+    const notice = folderTrustNotice(folderTrustPassedName(key))!;
+    const html = renderToStaticMarkup(createElement(FolderTrustRow, { kind: notice.kind, sources: notice.sources, forgetKey: notice.key, botId: "b1", threadId: "t1" }));
+    const text = html.replaceAll("&#x27;", "'");
+    expect(text.replace(/<[^>]*>/gu, "")).toBe(U2);
+    expect(text).toContain(`title="${U2}"`);
+    expect(html).not.toContain("Trust this folder");
+    expect(html).not.toContain("folder-trust-row-trust");
+    expect(folderTrustLabel(folderTrustPassedName(key))).toBe(U2);
   });
 });

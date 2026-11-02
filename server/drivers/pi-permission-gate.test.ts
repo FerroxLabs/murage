@@ -227,6 +227,38 @@ describe("Rules 13, 15, 73d: the editor ask", () => {
     expect(JSON.parse(gate.asked[0]!.prefill)).toMatchObject({ tool: "write", truncated: true });
   });
 
+  it.each([
+    ["over the cap", { command: "x".repeat(PI_GATE_MESSAGE_MAX + 1) }],
+    ["a missing required field", {}],
+  ])("S4: keep runs the held call unchanged on %s", async (_name, input) => {
+    const gate = rig();
+    const event: any = { toolName: "bash", input };
+    const before = JSON.stringify(input);
+    gate.answer.next = () => JSON.stringify({ allow: true, keep: true });
+    expect(await gate.call(event)).toBeUndefined();
+    expect(gate.asked).toHaveLength(1);
+    expect(JSON.stringify(event.input)).toBe(before);
+  });
+
+  it("S4: keep needs Allow, and a deny stays a deny whatever else it says", async () => {
+    const gate = rig();
+    gate.answer.next = () => JSON.stringify({ keep: true });
+    expect((await gate.call({ toolName: "bash", input: { command: "ls" } }))?.block).toBe(true);
+    gate.answer.next = () => JSON.stringify({ deny: true, keep: true, allow: true, reason: "no" });
+    expect(await gate.call({ toolName: "bash", input: { command: "ls" } })).toEqual({ block: true, reason: "no" });
+    gate.answer.next = () => JSON.stringify({ allow: "true", keep: true });
+    expect((await gate.call({ toolName: "bash", input: { command: "ls" } }))?.block).toBe(true);
+  });
+
+  it("S4: keep drops the read of the old call, so the next call is walked fresh", async () => {
+    const gate = rig();
+    gate.answer.next = () => JSON.stringify({ allow: true, keep: true });
+    expect(await gate.call({ toolName: "bash", input: { command: "rm a" } })).toBeUndefined();
+    gate.answer.next = () => JSON.stringify({ deny: true, reason: "no" });
+    expect((await gate.call({ toolName: "bash", input: { command: "rm a" } }))?.block).toBe(true);
+    expect(gate.asked).toHaveLength(2);
+  });
+
   it("allow mutates event.input in place with the row's keys only; any other answer blocks", async () => {
     const gate = rig();
     const event: any = { toolName: "bash", input: { command: "ls" } };

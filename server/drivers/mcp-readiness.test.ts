@@ -378,3 +378,44 @@ describe("a fresh engine's first status answer", () => {
     expect(silent.asked).toEqual([15_000]);
   });
 });
+
+describe("a failed optional server on a kept process (ENGINE-PERSIST design 10)", () => {
+  const io = (states: Record<string, McpServerState>, onReconnect?: (name: string, ms: number) => void) => ({
+    status: async () => new Map(Object.entries(states)),
+    reconnect: async (name: string, ms: number) => { onReconnect?.(name, ms); },
+    stopped: () => false,
+    sleep: async () => {},
+  });
+
+  it("a failed optional server is left alone unless the caller asks", async () => {
+    const asked: string[] = [];
+    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io({ venice: "failed" }, (name) => asked.push(name)));
+    expect(asked).toEqual([]);
+    expect(out.notConnected).toEqual([{ name: "venice", state: "failed" }]);
+    expect(out.readiness).toBe("ready");
+  });
+
+  it("with reconnectOptional it gets one reconnect, bounded by the optional wait, and the turn sees it back", async () => {
+    const asked: Array<[string, number]> = [];
+    const states: Record<string, McpServerState> = { venice: "failed" };
+    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io(states, (name, ms) => { asked.push([name, ms]); states.venice = "connected"; }), { optionalMs: 3_000, reconnectOptional: true });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]![0]).toBe("venice");
+    expect(asked[0]![1]).toBeLessThanOrEqual(3_000);
+    expect(out.reconnected).toEqual(["venice"]);
+    expect(out.notConnected).toEqual([]);
+  });
+
+  it("a reconnect that does not help leaves it failed, and never marks the turn degraded", async () => {
+    const out = await awaitRequiredMcp({ required: [], optional: ["venice"] }, io({ venice: "failed" }), { reconnectOptional: true });
+    expect(out.notConnected).toEqual([{ name: "venice", state: "failed" }]);
+    expect(out.missing).toEqual([]);
+    expect(out.readiness).toBe("ready");
+  });
+
+  it("only a failed optional server gets a reconnect", async () => {
+    const asked: string[] = [];
+    await awaitRequiredMcp({ required: [], optional: ["a", "b"] }, io({ a: "connected", b: "needs-auth" }, (name) => asked.push(name)), { reconnectOptional: true });
+    expect(asked).toEqual([]);
+  });
+});

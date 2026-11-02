@@ -34,7 +34,7 @@ interface Options {
 interface Offer {
   approval: TelegramApproval;
   nonce: string;
-  expires: number;
+  closedAt?: number;
   messageId?: string;
   consumed: boolean;
   outcome?: string;
@@ -45,7 +45,9 @@ interface Offer {
  * Read when sent, so it follows the owner's app language (reply-text.ts). */
 export const desktopOnlyLine = (): string => channelReply("channelReply.desktopOnly");
 const hint = (): string => `\n\n${channelReply("channelReply.approveOrDeny")}`;
-const TTL = 600_000;
+/** An offer lives while its card is pending: no clock ends it (Sean 10-26). After the card closes its message keeps answering
+ *  with the outcome this long, then the offer goes. */
+const CLOSED_OFFER_KEPT_MS = 600_000;
 
 /** Process-local offers: a restart/revoke cannot reuse a previously delivered button. */
 export class PermissionApprovals {
@@ -76,22 +78,24 @@ export class PermissionApprovals {
       for (const [id, offer] of this.offers) {
         if (!this.active()) return;
         const same = pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint);
-        if (!same || this.now() >= offer.expires) {
+        if (!same) {
           offer.consumed = true;
-          offer.outcome ??= this.now() >= offer.expires ? channelReply("channelReply.expiredAction") : channelReply("channelReply.noLongerPendingDecision");
+          offer.closedAt ??= this.now();
+          offer.outcome ??= channelReply("channelReply.noLongerPendingDecision");
           await this.settle(offer);
-          if (this.now() > offer.expires + TTL || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
+          if (this.now() > offer.closedAt + CLOSED_OFFER_KEPT_MS || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
         }
       }
       for (const approval of pending) {
         if (!this.active()) return;
         if (this.offers.has(approval.id) || !approval.summary || approval.summary.length + hint().length > this.options.maxText) continue;
         if (this.offers.size >= 32) {
-          const settled = [...this.offers].find(([, offer]) => offer.consumed && !pending.some(item => item.id === offer.approval.id));
+          const live = this.options.actions.pending();
+          const settled = [...this.offers].find(([, offer]) => offer.consumed && !live.some(item => item.id === offer.approval.id));
           if (!settled) continue;
           this.offers.delete(settled[0]);
         }
-        const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + TTL, consumed: false };
+        const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), consumed: false };
         this.offers.set(approval.id, offer); // Never repeat a send whose outcome is uncertain.
         const message = await this.options.messages.send({ dmId: this.options.dmId,
           text: approval.desktopOnly ? `${approval.summary}\n\n${desktopOnlyLine()}` : approval.summary + hint(),
@@ -111,7 +115,7 @@ export class PermissionApprovals {
     if (!offer || !offer.messageId || event.messageId !== offer.messageId || offer.consumed) return false;
     // computer control: no Approve button was sent, and a forged one is refused
     if (offer.approval.desktopOnly && match[2] !== "d") return false;
-    if (this.now() >= offer.expires || !this.pending(offer)) {
+    if (!this.pending(offer)) {
       offer.consumed = true; offer.outcome = channelReply("channelReply.noLongerPendingAction");
       await this.settle(offer); return false;
     }

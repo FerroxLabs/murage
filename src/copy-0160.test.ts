@@ -53,12 +53,15 @@ describe("0.1.60 copy flags", () => {
       expect(source(file), file).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still/i);
     }
     // the level texts live in the L-COPY-B fragment since 1.0.12
+    // UX-TRUST-MOMENTS-1012 section 8 row 10: routines keep their own level (T10)
     for (const [key, value] of Object.entries(en).filter(([key]) => key.startsWith("ux.lcopyb.level.") || key === "ux.lcopyb.fullAccess.stillAsks")) {
       expect(value, key).not.toMatch(/routines? turns still|webhooks? (and|or) routines? (turns )?still|trigger links? (and|or) routines? still/i);
     }
     for (const key of ["ux.lcopyb.level.unlimitedHere", "ux.lcopyb.level.unlimited", "ux.lcopyb.level.fullHere", "ux.lcopyb.level.full"] as const) {
       expect(source("./components/BotPermissionDefault.tsx")).toContain(`t("${key}")`);
-      expect(en[key]).toContain("Work started by another app's trigger link still asks. Routines use this level unless a routine has its own.");
+      expect(en[key]).toContain(key.includes("unlimited")
+        ? "other bots, trigger links from other apps and your channel messages keep the cards they have now. A routine runs at this level or its own, whichever is lower, and keeps its cards."
+        : "Work started by another app's trigger link still asks. Routines keep their own level and never run above this one.");
     }
     const hint = peerContactHint({ autoApprove: true, fullAccess: true, approvePeerComms: true });
     expect(hint).toContain("in routines at that level; work started by another app's trigger link still stops and asks");

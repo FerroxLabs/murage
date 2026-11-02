@@ -106,6 +106,15 @@ export function installStage(elapsedSeconds: number): "start" | "setup" | "still
   return elapsedSeconds < 8 ? "start" : elapsedSeconds < 60 ? "setup" : "still";
 }
 
+/** The words while a Test waits. The stages are a timer, so the first-time ones
+ * are only for a server being added; a saved one just says it is slow. */
+export function testWaitKey(elapsedSeconds: number, firstTime: boolean): LocaleKey {
+  const stage = installStage(elapsedSeconds);
+  if (stage === "start") return "mcp.card.install.start";
+  if (!firstTime) return "mcp.card.test.slow";
+  return stage === "setup" ? "mcp.card.install.setup" : "mcp.card.install.still";
+}
+
 // ── secrets and bodies ──────────────────────────────────────────────────
 
 export function hostOf(url: string): string {
@@ -156,6 +165,12 @@ export interface RemoteSave {
 
 export type FlowFailure = { ok: false; message: string };
 
+/** The revision the harness listed for `name`. Empty when it did not: main refuses that. */
+function savedRev(answer: unknown, name: string): string {
+  const servers = (answer as { servers?: Array<{ name?: string; rev?: string }> } | null)?.servers;
+  return servers?.find((row) => row.name === name)?.rev ?? "";
+}
+
 function failure(error: unknown): FlowFailure {
   return { ok: false, message: error instanceof Error ? error.message : String(error) };
 }
@@ -179,8 +194,9 @@ export async function saveRemote(deps: FlowDeps, save: RemoteSave): Promise<{ ok
     ...(save.confirmLocal ? { confirmLocal: save.confirmLocal } : {}),
     ...(save.existing ? {} : { enabled: false }),
   };
+  let answer: unknown;
   try {
-    await deps.api(save.existing ? `/api/mcp/servers/${encodeURIComponent(save.name)}` : "/api/mcp/servers", { method: save.existing ? "PUT" : "POST", body: JSON.stringify(body) });
+    answer = await deps.api(save.existing ? `/api/mcp/servers/${encodeURIComponent(save.name)}` : "/api/mcp/servers", { method: save.existing ? "PUT" : "POST", body: JSON.stringify(body) });
   } catch (error) {
     return failure(error);
   }
@@ -189,7 +205,8 @@ export async function saveRemote(deps: FlowDeps, save: RemoteSave): Promise<{ ok
     ...(holdsSecretUrl && bridge ? { url: save.draft.url } : {}),
   };
   if (bridge && (input.headers || input.url)) {
-    const saved = await bridge.saveSecrets(save.name, input);
+    // The revision this save made: an entry moved since then takes nothing.
+    const saved = await bridge.saveSecrets(save.name, { ...input, rev: savedRev(answer, save.name) });
     if (!saved.ok) return { ok: false, message: saved.message };
   }
   return { ok: true };

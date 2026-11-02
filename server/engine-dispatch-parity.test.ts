@@ -18,7 +18,8 @@
 // read). The 1.0.9 fake CLI began replaying it, and the golden was regenerated
 // then: only the four warm turns' systemPrompt moved, from null to their launch
 // turn's prompt; every other field is the base's. 1.0.10 (ROUTINE-DELIVER-1010): the routines line of the system prompt gained one
-// sentence on where a routine's results go; only that text moved.
+// sentence on where a routine's results go; only that text moved. 1.0.13 (ENGINE-SETUP-ANSWERS): the help line gained one sentence on
+// engine and plan setup; only that text moved.
 //
 // Regenerate on a base checkout with ENGINE_DISPATCH_WRITE=<file>.
 import { spawn, type ChildProcess } from "node:child_process";

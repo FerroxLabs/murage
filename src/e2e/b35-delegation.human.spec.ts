@@ -218,11 +218,11 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await expect(page.locator("[data-chat-header-name]").first()).toContainText(CHIEF);
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await expect(page.locator(`[data-mid="${item.link.messageId}"]`)).toHaveCount(0); // the child card is offscreen
-  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0); // the parent has no approval composer
+  await expect(page.getByRole("group", { name: "Approval" })).toHaveCount(0); // the parent has no approval composer
   await page.screenshot({ path: testInfo.outputPath(`${shot}-pending.png`), fullPage: true });
   await page.reload();
   sidebar = await chiefCount(page, "1");
-  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Approval" })).toHaveCount(0);
   await expectApprovalsOnlyOnChild("child request pending after reload");
   await openPendingApprovals(page);
   await expect(page.locator("[data-inbox-id]")).toHaveCount(1, { timeout: 15_000 });
@@ -234,7 +234,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await expect(page.locator("[data-chat-header-name]").first()).toContainText(CHILD);
   expect((await inbox()).total).toBe(1); // opening is not answering
   await page.screenshot({ path: testInfo.outputPath(`${shot}-opened.png`), fullPage: true });
-  const decide = page.getByRole("button", { name: behavior === "allow" ? "Allow once" : "Deny", exact: true });
+  const decide = page.getByRole("group", { name: "Approval" }).getByRole("button", { name: behavior === "allow" ? "Run" : "Don't run", exact: true });
   await expect(decide).toHaveCount(1);
   await decide.click();
 
@@ -252,7 +252,7 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await expect.poll(async () => { const settled = await cardIn(item.link.threadId, item.link.messageId); return settled && { answered: settled.answered, dismissed: settled.dismissed }; }, { timeout: 15_000 }).toEqual({ answered: behavior, dismissed: false });
   await expect.poll(async () => (await inbox()).total, { timeout: 15_000 }).toBe(0);
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("0", { timeout: 15_000 });
-  await expect(page.getByRole("button", { name: "Allow once", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Approval" })).toHaveCount(0);
 
   // Later answers never reach the engine. A repeat on a settled card now
   // reports the first decision instead of claiming the action failed

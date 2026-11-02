@@ -83,6 +83,7 @@ const BENT = [/\bNeeds your attention\b/, /\bNeeds You\b/, /\bFull Access\b/, /\
 const ALLOW: Record<string, string> = {
   "notificationSettings.attentionLabel": "names a kind of notification (the attention alert), not the Needs you door",
   "learningScreen.when.today": "the ordinary word in a 'when' column, not the Today door",
+  "ux.l2a.health.level.act": "a status word beside all good, being looked after and checking, not the Needs you door",
 };
 
 describe("frozen names (video-safety rule)", () => {

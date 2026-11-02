@@ -43,11 +43,12 @@ import { createClosedBackupController,closedControlDirectory } from "./backup-cl
 import { tightenOwnedDirectory } from "./private-directory.mjs";
 import { relaunchBlockedCode, relaunchDesktop } from "./desktop-relaunch.mjs";
 import { backupRefusal } from "./backup-waiting.mjs";
-import { announceBackupFailure, announceBackupResult } from "./backup-failure-notice.mjs";
+import { announceBackupFailure, announceBackupResult, backupStopCommitted, serialAnnouncer } from "./backup-failure-notice.mjs";
 import { windowsElevated } from "./windows-elevation.mjs";
 import { createNativeClosedBackupProvider } from "./backup-closed-native.mjs";
 import { createRemotePasswordStore } from "./backup-remote-password.mjs";
 import { MAX_BACKUP_BYTES } from "../shared/backup-max-bytes.mjs";
+import { MAX_BACKUP_DURATION_MS, withoutBackupBudgetArgument } from "../shared/backup-budget.mjs";
 import { downloadFolderShared, exportRemoteBackup } from "./backup-remote-export.mjs";
 import { backupFolderRefusal } from "./backup-folder-check.mjs";
 import { remoteWorkDirectory,remoteSshDirectory,prepareRemoteFolder,remoteControlDirectory,localAppDataDirectory,ensureRemoteControlDirectory,forgetRemoteWorkDirectory,remoteControlSharedFolder } from "./backup-remote-runtime.mjs";
@@ -79,6 +80,8 @@ import {
 } from "./skill-recorder.mjs";
 import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
+import { createLocalEngineLogin, registerLocalEngineLoginIpc } from "./engine-login-local.mjs";
+import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
 import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
@@ -113,6 +116,7 @@ import { createCompanionRestarter } from "./companion-restart.mjs";
 import { safeStorageSeal } from "./companion-stale.mjs";
 import { createServerChildLifecycle, awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { createSessionEndHandler } from "./session-end.mjs";
+import { createServerStopReason } from "./server-stop-reason.mjs";
 import { desktopViewerPermissionAllowed } from "./desktop-viewer-permissions.mjs";
 import {
   createMainWindowOpenHandler,
@@ -387,8 +391,8 @@ let backupProgress=null; // the "Backing up your workspace" window while the off
 // here because the host's relaunch and the run's own ending both use it.
 const returnToWorkspaceAfterBackup=createBackupReturn({
   app,
-  cleanup:()=>cleanupDesktopForExit(),
-  relaunch:()=>relaunchDesktop({app,args:process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
+  cleanup:()=>{serverStopReason.note("backup");return cleanupDesktopForExit();},
+  relaunch:()=>relaunchDesktop({app,args:withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
   takeProgress:()=>{const progress=backupProgress;backupProgress=null;return progress;},
   log:line=>slog(line),
 });
@@ -423,6 +427,7 @@ function finishClosedBackup(result){
   if(closedBackupFinish)return closedBackupFinish;
   closedBackupFinish=(async()=>{
     closedTrace("finishing");
+    serverStopReason.note("backup");
     try{await cleanupDesktopForExit();closedTrace("cleaned up");}
     catch{
       closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
@@ -445,7 +450,7 @@ function ensureDesktopUpdater(scheduleChecks=true){
         const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
           headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
         if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
-      },cleanup:cleanupDesktopForExit,
+      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();},
     }),
   })});
   return desktopUpdater;
@@ -483,6 +488,7 @@ function backupUnavailableReason() {
 /** The close before a backup's restart. When it can't finish, this window can
  * no longer back up: say so, instead of every later click just failing. */
 async function cleanupForBackupRestart() {
+  serverStopReason.note("backup");
   try { await cleanupDesktopForExit(); }
   catch (error) {
     desktopBackupCleanupFailed = true;
@@ -526,7 +532,7 @@ const backupMode = createBackupModeController({
   prepare:async()=>{await requireDesktopBackupTool();return prepareDesktopBackup();},
   restart: async () => {
     await cleanupForBackupRestart();
-    relaunchDesktop({ app, args:[...process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
+    relaunchDesktop({ app, args:[...withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT),BACKUP_MODE_ARGUMENT] });
     app.quit();
   },
 });
@@ -939,7 +945,7 @@ const launchCloudLink = doorLinkFromCommandLine(process.argv);
 async function takeLaunchCloudLink() {
   if (cloudHome && launchCloudLink && needsDoorHandoff({ link: launchCloudLink })) {
     const handedOver = await handOffDoorLink({ app, safeStorage, directory: cloudHomesDirectory(), url: launchCloudLink.url,
-      relaunch: (args) => relaunchDesktop({ app, args }), blocked: () => relaunchBlockedCode() });
+      relaunch: (args) => relaunchDesktop({ app, args: withoutBackupBudgetArgument(args) }), blocked: () => relaunchBlockedCode() });
     if (handedOver) return true;
     console.log("[cloud] door: handoff-skipped");
   }
@@ -969,11 +975,13 @@ app.on("second-instance", (_event, commandLine) => {
 // alternate ports until one binds AND identifies as ours (the probe checks
 // our API shape, not just a 200).
 let serverProc = null;
+/** Why this run's server is being stopped: one line in the log, so a start can be told from a crash. */
+const serverStopReason = createServerStopReason((line) => slog(line));
 /** The OS ending the session (session-end.mjs): the live harness writes its deferred saves first, then the app quits. */
 const sessionEnd = createSessionEndHandler({
   // every harness this app owns that has not exited, from the moment it is forked (not only once it answered health)
   children: () => [...ownedServerChildren].filter((child) => !child.exited),
-  beginQuit: () => backgroundLifecycle?.beginQuit(),
+  beginQuit: () => { serverStopReason.note("system-shutdown"); backgroundLifecycle?.beginQuit(); },
   quit: () => app.quit(),
   ackDir: os.tmpdir(),
   log: (line) => slog(line),
@@ -3227,7 +3235,7 @@ async function runDesktopRecovery(operation, parameters, separate = null) {
     : operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"] : null;
   if (!args || args.some(value => typeof value !== "string" || !value)) throw Object.assign(new Error("Invalid recovery request"), { code: "INVALID_RECOVERY_REQUEST" });
   if(operation==="backup-encrypted"&&parameters.maxBytes!==undefined){
-    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>30*60000)throw new Error("INVALID_BACKUP_BUDGET");
+    if(!Number.isSafeInteger(parameters.maxBytes)||parameters.maxBytes<1||parameters.maxBytes>MAX_BACKUP_BYTES||!Number.isSafeInteger(parameters.maxDurationMs)||parameters.maxDurationMs<1000||parameters.maxDurationMs>MAX_BACKUP_DURATION_MS)throw new Error("INVALID_BACKUP_BUDGET");
     args.push("--max-bytes",String(parameters.maxBytes),"--max-duration-ms",String(parameters.maxDurationMs));
   }
   await awaitOwnedWork(desktopStartup.catch(() => {}), "Desktop startup has not settled");
@@ -3693,6 +3701,8 @@ ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
     || Object.keys(input).some(key => !["instanceId", "action"].includes(key))
     || typeof input.instanceId !== "string" || input.instanceId.length > 180
     || !["install", "connect"].includes(input.action) || !desktopSurfaceSecret) return false;
+  // Sign-in runs the recipe in a real terminal (A7, G4). Install still copies its command and opens a blank window.
+  if (input.action === "connect") return localEngineLogin.openRecipeTerminal({ instanceId: input.instanceId });
   try {
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/engine-setup-command`, {
       method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
@@ -3704,6 +3714,25 @@ ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
     return openBlankTerminal();
   } catch { return false; }
 });
+
+// Engine sign-in on this computer (1.0.14). The recipe comes from the local server by instance id, never from a window.
+const localEngineApi = async (path, body, { timeoutMs = 20000 } = {}) => {
+  if (!desktopSurfaceSecret) throw new Error("not ready");
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${path}`, {
+    method: body === undefined ? "GET" : "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
+    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+const localEngineLogin = createLocalEngineLogin({
+  api: localEngineApi, spawn: spawn, launchTerminal: (recipe) => launchRecipeTerminal(recipe), log: slog,
+  killTree: (child, signal) => {
+    if (process.platform === "win32") { spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", shell: false }).once("error", () => {}); return; }
+    try { process.kill(-child.pid, signal); } catch { child.kill(signal); }
+  },
+});
+registerLocalEngineLoginIpc({ ipcMain, runner: localEngineLogin });
 
 // OAuth/connect links are returned asynchronously, after Chromium's direct
 // click gesture has ended. Opening them through window.open can therefore be
@@ -4213,6 +4242,7 @@ ipcMain.handle("flux-connection:mutate", (_event, input) => mutateFluxConnection
 ipcMain.handle("flux-connection:restart-app", (_event, ...args) => {
   if (args.length) throw new Error("Invalid restart request.");
   if (relaunchBlockedCode()) throw new Error("Murage can't restart itself on this computer. Quit and open it again.");
+  serverStopReason.note("restart");
   relaunchDesktop({ app, args: process.argv.slice(1).filter(arg => arg !== BACKUP_MODE_ARGUMENT) });
   app.quit();
 });
@@ -4454,7 +4484,7 @@ async function firstRunBackupChanged(){
   if(desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
   try{await harnessJson("/api/setup/backup",{});}catch{/* the harness re-derives on its next read */}
 }
-async function announceLastBackupFailure(){
+async function announceLastBackupFailureNow(){
   for(let tries=0;tries<120&&!(serverReady&&desktopSurfaceSecret)&&!desktopShutdownStarted;tries++)await new Promise(resolve=>setTimeout(resolve,1000));
   if(!backupScheduleHost||desktopShutdownStarted||desktopRecoveryMode||!serverReady||!desktopSurfaceSecret)return;
   let folderName;try{folderName=await backupScheduleHost.destinationLabel();}catch{/* the sentence says "your backup folder" */}
@@ -4467,6 +4497,7 @@ async function announceLastBackupFailure(){
       notice.show();
     }});
 }
+const announceLastBackupFailure=serialAnnouncer(announceLastBackupFailureNow);
 /** 1.0.7: a Back up now that worked says so once Murage reopens (one
  * notification per backup; daily backups stay quiet). */
 async function announceLastBackupResult(){
@@ -4632,7 +4663,9 @@ async function initializeBackupScheduleHost(){
   closedTrace("coordinator imported");
   const stateDirectory=closedControlDirectory(installation);
   // 1.0.9 Sentinel: the backup-status manifest follows each durable commit of this coordinator (never ahead of it).
-  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>sentinelHost?.backupCommitted(state)});
+  // Every path into review commits here. Told on the next turn, after any note
+  // the same step writes; Backup mode and closed runs are told after they reopen.
+  const coordinator=new BackupCoordinator({stateDirectory,onCommitted:state=>{sentinelHost?.backupCommitted(state);if(backupStopCommitted(state)&&!desktopRecoveryMode)setImmediate(()=>{void announceLastBackupFailure().catch(()=>{});});}});
   closedTrace("coordinator ready");
   const provider=createNativeClosedBackupProvider({home:app.getPath("home")});
   closedBackupController=createClosedBackupController({
@@ -4731,13 +4764,17 @@ async function initializeBackupScheduleHost(){
       try{fs.mkdirSync(LOG_DIR,{recursive:true});fs.appendFileSync(path.join(LOG_DIR,"server.log"),`[${new Date().toISOString()}] backup capture failed ${JSON.stringify({...failure,...handoff})}\n`,{mode:0o600});}catch{/* Logging never changes backup authority or result. */}
     },
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
-    relaunch:async mode=>{
+    argv:()=>process.argv,
+    noteBudget:budget=>sentinelHost?.backupBudget(budget),
+    relaunch:async(mode,budgetArgument)=>{
       // Back to the workspace after a backup-mode capture, whatever its
       // outcome: one relaunch, the progress window destroyed before the quit,
       // and a bounded exit if the quit is still held (backup-offline-return.mjs).
       if(mode==="normal")return returnToWorkspaceAfterBackup();
-      const args=process.argv.slice(1).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
-      if(mode==="backup")args.push(BACKUP_MODE_ARGUMENT);relaunchDesktop({app,args});app.quit();
+      const args=withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
+      serverStopReason.note(mode==="backup"?"backup":"restart");
+      if(mode==="backup"){args.push(BACKUP_MODE_ARGUMENT);if(budgetArgument)args.push(budgetArgument);}
+      relaunchDesktop({app,args});app.quit();
     },
   });
   // 1.0.9 Sentinel: publish the committed backup state once, now that the folder/key check exists, so a restart or an
@@ -4807,6 +4844,7 @@ const desktopStartup = app.whenReady().then(async () => {
     void runOfflineBackup({
       run:()=>desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>backupScheduleHost.resumeOffline()),
       abandon:()=>backupScheduleHost.abandonOffline(),
+      ceilingMs:backupScheduleHost.offlineCeilingMs(),
       returnToWorkspace:returnToWorkspaceAfterBackup,
       shutdownStarted:()=>desktopShutdownStarted,
       showBackupMode:()=>showDesktopRecovery("BACKUP_REQUESTED"),
@@ -4828,7 +4866,7 @@ const desktopStartup = app.whenReady().then(async () => {
     }else{
       desktopRecoveryMode=true;
       // Wait for this startup promise to settle before cleanup can await it.
-      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:cleanupDesktopForExit})).catch(()=>{
+      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();}})).catch(()=>{
         if(!desktopShutdownStarted){
           showDesktopRecovery("BACKUP_REQUESTED");
           dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
@@ -5180,12 +5218,14 @@ function startDeskPresenceReporting(){
 }
 
 function cleanupDesktopForExit() {
+  serverStopReason.logOnce();
   stopDeskPresence();stopDeskPresence=()=>{};
   // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
   void sentinelHost?.shutdown().catch(()=>{});
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
+  const localEngineLoginEnded = localEngineLogin.shutdown().catch(() => {});
   modelSignIn.dispose();
   mcpServers.dispose();
   notificationAuthorization.invalidate();showApprovalNotification.dispose();
@@ -5203,7 +5243,7 @@ function cleanupDesktopForExit() {
   // command and stays, holding its port. Stop the one this app started, and
   // start doing so now so it overlaps the rest of shutdown. It resolves
   // either way, so quitting never waits on a phone.
-  const androidStopped = androidDevice.stop().catch(() => {});
+  const androidStopped = Promise.all([androidDevice.stop().catch(() => {}), localEngineLoginEnded]);
   // A live dictation or recorder session runs its own helper app that holds
   // the mic or a global event tap. Signal both now so they exit in parallel
   // with the harness. The first stage below keeps cleanup, and installation

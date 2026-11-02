@@ -336,8 +336,7 @@ export const FIRST_RUN_COPY = {
     "signed-out": {
       /** §1.4 Variant B, the Chief's line, verbatim. The rows below name it. */
       chief: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
-      /** The sign-in block's own line. The engine's sign-in is a command it
-       *  ships, so the block says how long it takes and then shows it. */
+      /** The sign-in block's own line: how long it takes, then the button. */
       signInLead: "Sign in takes a minute.",
       /** The ghost that moves on without signing in. */
       leave: "Leave it for now",
@@ -363,11 +362,6 @@ export const FIRST_RUN_COPY = {
        */
       thirdBare: "There is nothing else running on this computer, so nothing carries on without it. Signing in is the one thing that puts me to work.",
       action: "Help me sign in",
-      /** Named, because two engines mean two commands and an unlabelled pair
-       *  of them is a puzzle. */
-      commandFor: (name: string) => `Run this once, in a terminal, to sign in to ${name}.`,
-      copy: "Copy",
-      copied: "Copied",
       /** The sign-in finishes in another window, on its own time. A button
        *  that admits that beats a spinner that cannot know. */
       recheck: "I have done it",
