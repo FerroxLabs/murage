@@ -529,6 +529,33 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       expect(dispatches()).toHaveLength(1);
     });
 
+    // CLOSE-STOP-1014 Rev 3: the before-launch slot reads the latch at its one terminal. A Stop then a quit stays the
+    // owner's Stop; when the end arrives against the listener clear is the accepted residual CODEX-PRELAUNCH-QUIT-ORDER.
+    it("6b. Stop while a settle probe holds the slot, then quit: any end delivered is the Stop, once", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const asked = new Map<number, number>();
+      probe.override = async (pid) => {
+        const n = (asked.get(pid) ?? 0) + 1;
+        asked.set(pid, n);
+        if (n >= 2) await gate;
+        return new Set([pid + 1]);
+      };
+      await create();
+      await run("t-slot-quit", "one", base);
+      const second = await instance.adapter.sendTurn({ threadId: "t-slot-quit", text: "two", resumeCursor: sessions.get("t-slot-quit"), ...base });
+      await instance.adapter.interruptTurn("t-slot-quit");
+      const disposing = instance.dispose();
+      release();
+      await disposing;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      const ends = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === second.turnId);
+      expect(ends.length).toBeLessThanOrEqual(1);
+      for (const end of ends) expect(end).toMatchObject({ ok: true, stopReason: "cancelled" });
+      expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === second.turnId)).toEqual([]);
+      expect(spawns()).toHaveLength(1);
+    });
+
     it("7. a process that will not stop stays owned: Stop and dispose report it until it is gone", async () => {
       await create();
       await run("t-stuck", "one", base);

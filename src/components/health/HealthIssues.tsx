@@ -5,8 +5,9 @@
 // what happened, does it matter, what can I do. Every sentence comes from fixed tables (health-guide.ts); nothing an
 // input wrote is shown, except the deletion lines, which are the server's own fixed sentences (ownerNoticeText).
 import { useId, useState } from "react";
-import { api, useStore } from "@/state/store";
+import { api, useStore, useStoreIfAny } from "@/state/store";
 import { t } from "@/lib/i18n";
+import type { LocaleKey } from "@/locales";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { owedSettingsLines, retryResultLine, type OwedLine } from "@/lib/deletion-notes";
 import { foldHealthRows, type HealthFold, type HealthIssueLevel } from "../../../shared/health-levels";
@@ -69,6 +70,15 @@ export function deletionCanRetry(note: { lines?: OwedLine[] } | null | undefined
   return desktop && (note?.lines ?? []).some((line) => line.tryAgain && !line.byItself && !line.waitsForUpdate);
 }
 
+/** "Does it matter" for deleted conversations, by what the lines are waiting for: a line that waits for Murage's next
+ * update is not finished by itself. */
+export function deletionMattersKey(note: { lines?: OwedLine[] } | null | undefined): LocaleKey {
+  const owed = (note?.lines ?? []).filter((line) => line.tryAgain);
+  const waiting = owed.filter((line) => line.waitsForUpdate).length;
+  if (!waiting) return "ux.l2b.health.issue.deletion.matters";
+  return waiting === owed.length ? "ux.l2b.health.issue.deletion.mattersUpdate" : "ux.l2b.health.issue.deletion.mattersSomeUpdate";
+}
+
 /** The engines holding things up, by name: the record clears once they have been closed for one attempt. */
 export function deletionHolders(note: { lines?: OwedLine[] } | null | undefined): string {
   const names = [...new Set((note?.lines ?? []).filter((line) => line.tryAgain && line.byItself && line.label).map((line) => line.label!))];
@@ -107,6 +117,9 @@ function DeletionState({ fold, onChanged }: { fold: HealthFold<HealthIssue>; onC
 export function HealthFoldRow({ fold, now, onGo, onChanged }: { fold: HealthFold<HealthIssue>; now: number; onGo?: (to: NextAction) => void; onChanged?: () => void }) {
   const guide = healthGuide(fold.titleKey);
   const desktop = useDesktopSurface();
+  // The Inbox renders these rows with no store around them too (its own page fixtures).
+  const owedNote = useStoreIfAny()?.state.owedNote;
+  const matters = guide.action.kind === "retry-deletions" ? deletionMattersKey(owedNote) : guide.matters;
   const [open, setOpen] = useState(false);
   const detail = useId();
   const improving = fold.rows.every((row) => row.state === "recovering");
@@ -115,7 +128,7 @@ export function HealthFoldRow({ fold, now, onGo, onChanged }: { fold: HealthFold
     <p className="mt-0.5 text-[12px] text-ink-secondary">{foldTimeLine(fold.issues, ageLabel(fold.lastSeenAt, now))}{improving ? `. ${t("ux.l2b.health.improving")}` : ""}</p>
     <dl className="mt-3 space-y-2">
       <div><dt className="text-[12px] text-ink-secondary">{t("ux.l2b.health.q.happened")}</dt><dd className="text-ink">{t(guide.happened)}</dd></div>
-      <div><dt className="text-[12px] text-ink-secondary">{t("ux.l2b.health.q.matters")}</dt><dd className="text-ink">{t(guide.matters)}</dd></div>
+      <div><dt className="text-[12px] text-ink-secondary">{t("ux.l2b.health.q.matters")}</dt><dd className="text-ink">{t(matters)}</dd></div>
       <div><dt className="text-[12px] text-ink-secondary">{t("ux.l2b.health.q.canDo")}</dt><dd className="text-ink">{t(guide.canDo)}</dd></div>
     </dl>
     {guide.action.kind === "retry-deletions" && <DeletionState fold={fold} onChanged={onChanged} />}
