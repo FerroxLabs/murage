@@ -131,7 +131,10 @@ it("Codex moved to Default on a ~200-message thread starts one fresh session, se
   await idle(b.id);
   expect(codexCalls("thread/start"), "exactly one fresh session").toBe(startsBefore + 1);
   const first = turnStarts().filter(call => call.includes("default-one")).at(-1)!;
-  const seen = (call: string, n: number) => call.split(`hist-${String(n).padStart(3, "0")}`).length - 1;
+  // Counted in the replay only. Memory may recall a working-notes checkpoint of this thread that quotes a few owner
+  // lines (any age, picked when the checkpoint was made): that is a remembered note, not the history sent again.
+  const replayOf = (call: string) => call.replace(/<remembered-context>[\s\S]*?<\/remembered-context>/g, "");
+  const seen = (call: string, n: number) => replayOf(call).split(`hist-${String(n).padStart(3, "0")}`).length - 1;
   // the replay is the newest 40 lines of the thread (a model with no stated window has no byte budget): sent once, in this one turn
   for (const n of [TURNS - 1, TURNS - 10]) expect(seen(first, n), `hist-${n} is in the one fresh turn's history, once`).toBe(1);
   expect(seen(first, 0), "older than the replay window: not sent").toBe(0);

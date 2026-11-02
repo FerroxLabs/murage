@@ -32,6 +32,9 @@ import type { MediaUnplayableReason } from "@/lib/media-resolve";
 import { isMediaCapabilityToken, MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_ROUTES, type MediaAsset, type MediaResolveResponse } from "../../shared/media-assets";
 import type { Artifact, ArtifactPreview } from "../../shared/artifacts";
 import { SandboxedFrame } from "./SandboxedFrame";
+import { fetchRemoteVoiceNote } from "@/lib/voice-note-audio";
+import { reportSaveFailure, saveBlob } from "@/lib/save-file";
+import { VOICE_NOTE_AUDIO_TYPES } from "../../shared/voice-note-audio";
 import { useSanitizerReady } from "@/lib/trusted-html";
 
 // ── Pure rules (tested without a DOM) ────────────────────────────────────
@@ -238,26 +241,23 @@ const clock = (seconds: number) => {
  * and length, with Download and Show in folder behind the menu. The owner,
  * on seeing the full file card: "that's way too much for a voice note".
  * The words are the message itself, so nothing else is said here.
+ *
+ * This draws the player for an audio URL some door already proved; where the
+ * URL comes from is the wrapper's job (VoiceNoteBubble on the desktop,
+ * RemoteVoiceNoteBubble everywhere else). Download is always the wrapper's
+ * `onDownload`: the player itself never points a link at its audio URL, so a
+ * harness path can never load here without the proof its door supplies.
  */
-export function VoiceNoteBubble({ artifact, busy, onDownload, onReveal }: {
-  artifact: Artifact; busy: boolean; onDownload: () => void; onReveal?: () => void;
+export function VoiceNotePlayer({ id, url, unavailable = false, busy, onDownload, onReveal }: {
+  id: string; url: string | null; unavailable?: boolean; busy: boolean; onDownload?: () => void; onReveal?: () => void;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
-  const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
   const [length, setLength] = useState(0);
-  useEffect(() => {
-    const controller = new AbortController();
-    setUrl(null); setFailed(false);
-    void resolveArtifactMedia(artifact.id, controller.signal).then(response => {
-      if (controller.signal.aborted) return;
-      const accepted = acceptedArtifactMedia(response);
-      if (accepted && accepted.asset.kind === "audio") setUrl(accepted.url); else setFailed(true);
-    }, () => { if (!controller.signal.aborted) setFailed(true); });
-    return () => controller.abort();
-  }, [artifact.id]);
+  useEffect(() => { setFailed(false); setPlaying(false); setAt(0); setLength(0); }, [url]);
+  const broken = failed || unavailable;
   const toggle = () => {
     const element = audio.current;
     if (!element) return;
@@ -270,12 +270,12 @@ export function VoiceNoteBubble({ artifact, busy, onDownload, onReveal }: {
     element.currentTime = Math.min(length, Math.max(0, ((event.clientX - box.left) / box.width) * length));
   };
   const menuItem = "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-ink hover:bg-raised disabled:opacity-50";
-  return <div className="mt-2 flex max-w-[360px] items-center gap-2.5 rounded-full border border-hairline/40 bg-inset py-1.5 pl-1.5 pr-2" data-voice-note={artifact.id}>
-    {url && <audio ref={audio} src={url} preload="metadata"
+  return <div className="mt-2 flex max-w-[360px] items-center gap-2.5 rounded-full border border-hairline/40 bg-inset py-1.5 pl-1.5 pr-2" data-voice-note={id}>
+    {url && !unavailable && <audio ref={audio} src={url} preload="metadata"
       onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setAt(0); }}
       onTimeUpdate={event => setAt(event.currentTarget.currentTime)}
       onLoadedMetadata={event => setLength(event.currentTarget.duration)} onError={() => setFailed(true)} />}
-    <button type="button" onClick={toggle} disabled={!url || failed} aria-label={playing ? t("voiceNote.pause") : t("voiceNote.play")}
+    <button type="button" onClick={toggle} disabled={!url || broken} aria-label={playing ? t("voiceNote.pause") : t("voiceNote.play")}
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white hover:brightness-110 disabled:opacity-40">
       {playing ? <Pause size={14} /> : <Play size={14} className="translate-x-px" />}
     </button>
@@ -283,35 +283,114 @@ export function VoiceNoteBubble({ artifact, busy, onDownload, onReveal }: {
       onClick={seek} className="relative h-1.5 min-w-[120px] flex-1 cursor-pointer rounded-full bg-control">
       <div className="absolute inset-y-0 left-0 rounded-full bg-accent" style={{ width: `${length ? Math.min(100, (at / length) * 100) : 0}%` }} />
     </div>
-    <span className="w-9 shrink-0 text-right text-[11.5px] tabular-nums text-ink-secondary">{failed ? "–" : clock(playing || at ? at : length)}</span>
-    <details className="relative">
+    <span className="w-9 shrink-0 text-right text-[11.5px] tabular-nums text-ink-secondary">{broken ? "–" : clock(playing || at ? at : length)}</span>
+    {(onDownload || onReveal) && <details className="relative">
       <summary aria-label={t("voiceNote.more")} className="list-none cursor-pointer rounded-full p-1 text-ink-secondary hover:bg-raised hover:text-ink"><MoreHorizontal size={15} /></summary>
       <div className="absolute right-0 top-full z-20 mt-1 w-[170px] rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl">
-        <button type="button" disabled={busy} onClick={onDownload} className={menuItem}><Download size={13} />{t("voiceNote.download")}</button>
+        {onDownload && <button type="button" disabled={busy} onClick={onDownload} className={menuItem}><Download size={13} />{t("voiceNote.download")}</button>}
         {onReveal && <button type="button" disabled={busy} onClick={onReveal} className={menuItem}><FolderOpen size={13} />{t("voiceNote.reveal")}</button>}
       </div>
-    </details>
+    </details>}
   </div>;
+}
+
+/** The desktop's voice note: the audio URL comes from the media resolver,
+ * a capability for this exact saved version (U-03). */
+export function VoiceNoteBubble({ artifact, busy, onDownload, onReveal }: {
+  artifact: Artifact; busy: boolean; onDownload: () => void; onReveal?: () => void;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    setUrl(null); setFailed(false);
+    void resolveArtifactMedia(artifact.id, controller.signal).then(response => {
+      if (controller.signal.aborted) return;
+      const accepted = acceptedArtifactMedia(response);
+      if (accepted && accepted.asset.kind === "audio") setUrl(accepted.url); else setFailed(true);
+    }, () => { if (!controller.signal.aborted) setFailed(true); });
+    return () => controller.abort();
+  }, [artifact.id]);
+  return <VoiceNotePlayer id={artifact.id} url={url} unavailable={failed} busy={busy} onDownload={onDownload} onReveal={onReveal} />;
+}
+
+/** The file extension a downloaded voice note is saved with, by its type. */
+export function voiceNoteDownloadName(type: string): string {
+  const extension = Object.entries(VOICE_NOTE_AUDIO_TYPES).find(([, mime]) => mime === type)?.[0] ?? "mp3";
+  return `voice-note.${extension}`;
+}
+
+/**
+ * A voice note on a door that is not the desktop (the phone, the browser door,
+ * the phone app). These doors never see Files, so the card cannot ask what a
+ * saved file is; it asks the conversation's own route for this message's
+ * voice note instead (src/lib/voice-note-audio.ts). Nothing is drawn until the
+ * harness says this message holds one, so another saved file never flashes a
+ * player. The audio is held as a blob made here and let go on unmount.
+ */
+export function RemoteVoiceNoteBubble({ threadId, messageId }: { threadId: string; messageId: string }) {
+  const [note, setNote] = useState<{ key: string; url: string | null; blob: Blob | null; unavailable: boolean } | null>(null);
+  const key = `${threadId}:${messageId}`;
+  useEffect(() => {
+    const controller = new AbortController();
+    let made: string | null = null;
+    setNote(null);
+    void fetchRemoteVoiceNote(threadId, messageId, controller.signal).then(answer => {
+      if (controller.signal.aborted) return;
+      if (answer.status === "audio") {
+        made = URL.createObjectURL(answer.blob);
+        setNote({ key, url: made, blob: answer.blob, unavailable: false });
+      } else if (answer.status === "unavailable") setNote({ key, url: null, blob: null, unavailable: true });
+    }, () => { /* offline or aborted: the words still show */ });
+    return () => { controller.abort(); if (made) URL.revokeObjectURL(made); };
+  }, [threadId, messageId, key]);
+  if (!note || note.key !== key) return null;
+  // Download saves the bytes already fetched, through the one save door
+  // (src/lib/save-file.ts): the phone app's native save where it exists, a
+  // download of a fresh blob: URL everywhere else. No harness URL is loaded.
+  const held = note.blob;
+  const onDownload = held ? () => { void saveBlob(held, voiceNoteDownloadName(held.type)).catch(reportSaveFailure); } : undefined;
+  return <VoiceNotePlayer id={messageId} url={note.url} unavailable={note.unavailable} busy={false} onDownload={onDownload} />;
+}
+
+/** Files said no to this door (403 on a saved file's metadata, the Cloud
+ * home's answer to a scope that may not open Files): the door is not one
+ * that opens Files, whatever its settings surface says. A 404 stays an error:
+ * on the desktop it means that one file is gone. */
+export function filesRefused(reason: unknown): boolean {
+  return (reason as { status?: unknown } | null)?.status === 403;
 }
 
 /** IDs are supplied only by the server after registration; never parse paths
  * or prose into cards. Metadata reads do not fetch or execute file content. */
-export function ArtifactCards({ ids }: { ids: string[] }) {
+export function ArtifactCards({ ids, voiceNote }: { ids: string[]; /** The message these ids came on, so a door that is not the desktop can still play its voice note. */ voiceNote?: { threadId: string; messageId: string } }) {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface(), [artifacts, setArtifacts] = useState<Artifact[]>([]), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState(false);
   const key = [...new Set(ids.filter(id => /^[a-f0-9-]{36}$/.test(id)))].slice(0, 20).join(",");
   useEffect(() => {
-    setArtifacts([]);
+    setArtifacts([]); setRefused(false);
     if (desktop !== true || !key) return;
     const controller = new AbortController(); setError(null);
     void Promise.all(key.split(",").map(id => api(`/api/artifacts/${id}`, { signal: controller.signal }))).then(values => {
       if (!controller.signal.aborted) setArtifacts(values.map(value => value.artifact as Artifact));
-    }).catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Saved files could not load."); });
+    }).catch(reason => {
+      if (controller.signal.aborted) return;
+      // A door answered "desktop" for its settings that still may not open
+      // Files (a Cloud remembered-owner or chat-only browser): play the voice
+      // note from the conversation instead of showing a refusal.
+      if (filesRefused(reason)) { setRefused(true); return; }
+      setError(reason instanceof Error ? reason.message : "Saved files could not load.");
+    });
     return () => controller.abort();
   }, [key, desktop]);
   const action = async (operation: () => Promise<void>) => {
     setBusy(true); setError(null); try { await operation(); } catch (reason) { setError(reason instanceof Error ? reason.message : "The file could not be opened."); } finally { setBusy(false); }
   };
+  // Not the desktop: Files is not reachable from this door, so saved-file
+  // cards stay off. A voice note still plays, from the conversation's own
+  // route. Undefined (not asked yet) draws nothing, the neutral thing.
+  if (desktop === false || refused) return voiceNote && key ? <div className="mt-3 space-y-2"><RemoteVoiceNoteBubble threadId={voiceNote.threadId} messageId={voiceNote.messageId} /></div> : null;
   if (desktop !== true) return null;
   const native = artifactNativeAction();
   return <div className="mt-3 space-y-2" aria-label="Saved files">

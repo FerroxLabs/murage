@@ -141,13 +141,19 @@ describe("appendNative", () => {
   });
 
   it("keeps lifecycle ids intact: a digit run inside a UUID is not a secret number", () => {
-    const ids = ["fb296783-4baa-4128-831c-b46042fa7ced", "40784341-8049-46ee-9f0b-fb6dcf07132f", "12345678-9012-4345-8678-901234567890"];
+    // The last one's tail reads as a Luhn-valid card number (4111 1111 1111 1111) to the financial-id rule.
+    const ids = ["fb296783-4baa-4128-831c-b46042fa7ced", "40784341-8049-46ee-9f0b-fb6dcf07132f", "12345678-9012-4345-8678-901234567890", "fb296783-4baa-4cde-4111-111111111111"];
     for (const id of ids) {
       appendNative("t-lifecycle-ids", { dir: "lifecycle", source: "murage.engine-lifecycle", msg: { event: "mcp_ready_own", turnId: id, processGeneration: id } });
     }
     const rows = readFileSync(join(NATIVE_DIR, "t-lifecycle-ids.ndjson"), "utf8").trimEnd().split("\n").map((line) => JSON.parse(line));
     expect(rows.map((row) => row.msg.turnId)).toEqual(ids);
     expect(rows.map((row) => row.msg.processGeneration)).toEqual(ids);
+    // Only the harness id fields are kept as written; the same digits anywhere else are still masked.
+    appendNative("t-lifecycle-ids-other", { dir: "lifecycle", source: "murage.engine-lifecycle", msg: { event: "mcp_ready_own", turnId: ids[3], detail: "card 4111 1111 1111 1111" } });
+    const other = JSON.parse(readFileSync(join(NATIVE_DIR, "t-lifecycle-ids-other.ndjson"), "utf8").trimEnd());
+    expect(other.msg.turnId).toBe(ids[3]);
+    expect(other.msg.detail).not.toContain("4111 1111 1111 1111");
   });
 
   it("never throws, whatever it is handed", () => {
