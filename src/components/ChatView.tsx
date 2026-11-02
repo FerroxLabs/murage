@@ -817,7 +817,7 @@ function Bubble({
                 />
               ) : null}
               {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
-              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} voiceNote={message.role === "bot" ? { threadId: bot.threadId, messageId: message.id } : undefined} /> : null}
               {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)

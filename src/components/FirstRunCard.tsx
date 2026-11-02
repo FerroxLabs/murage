@@ -47,8 +47,6 @@ import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { SandboxedFrame } from "./SandboxedFrame";
-import { copyText } from "@/lib/copy-text";
-import { t } from "@/lib/i18n";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   const desktop = useDesktopSurface();
@@ -189,7 +187,6 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
  */
 function FirstRunAgentsCard({ bot, settled }: { bot: Bot; settled: boolean }) {
   const { view } = useSetupView();
-  const [expanded, setExpanded] = useState(false);
   const detect = FIRST_RUN_COPY.agents.detect;
   const detection = firstRunDetection(view);
   if (!view) return null;
@@ -211,34 +208,14 @@ function FirstRunAgentsCard({ bot, settled }: { bot: Bot; settled: boolean }) {
       <FirstRunLine>{onLocal?.model.trim() ? detect.localChief(onLocal.model.trim()) : detect.foundChief}</FirstRunLine>
       <div className="mt-2 text-[15px] font-semibold text-ink">{detect.heading}</div>
 
-      {/* EVERYTHING RUNNABLE GETS A ROW, and then the rest collapses. On the
-          owner's own machine, which has eighteen engines on it, the detailed
-          list would otherwise be a wall in the first minute. */}
+      {/* EVERYTHING RUNNABLE GETS A ROW, and nothing else: first run never
+          names an engine nobody is signed in to (FUIGO-FIRST-SIGNIN-PLACEMENT,
+          1.0.14). */}
       <ul className="mt-3 grid gap-1.5">
         {detection.rows.map((row) => (
           <FirstRunEngineRowView key={row.id} row={row} />
         ))}
       </ul>
-
-      {detection.collapsed.length > 0 && (
-        <div className="mt-2">
-          <button
-            type="button"
-            aria-expanded={expanded}
-            className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}
-            onClick={() => setExpanded((open) => !open)}
-          >
-            {expanded ? detect.hide : detection.moreLabel}
-          </button>
-          {expanded && (
-            <ul className="mt-1.5 grid gap-1.5">
-              {detection.collapsed.map((row) => (
-                <FirstRunEngineRowView key={row.id} row={row} />
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
       <FirstRunLine quiet>{detect.closing}</FirstRunLine>
       {onAsk && <FirstRunLine quiet>{detect.askLevel}</FirstRunLine>}
@@ -304,7 +281,7 @@ function FirstRunDetectOnward({ settled, label, ghost = false }: { settled: bool
  * The glyph is decorative and is marked so: the row already says in words
  * everything the shape says, and a screen reader that announced "chip outline"
  * before every engine would be reading out the decoration and burying the
- * name. `FirstRunEngineIcon` is `local`, `cloud` or `off`, and the three are
+ * name. `FirstRunEngineIcon` is `local` or `cloud`, and the two are
  * drawn rather than lettered because a first glance down the list should
  * answer "how many of these are mine and on this machine" without reading.
  */
@@ -312,7 +289,7 @@ function FirstRunEngineRowView({ row }: { row: FirstRunEngineRow }) {
   return (
     <li className="flex items-start gap-2.5 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
       <span aria-hidden="true" className="mt-0.5 shrink-0 text-ink-secondary">
-        {row.icon === "local" ? "▢" : row.icon === "cloud" ? "☁" : "○"}
+        {row.icon === "local" ? "▢" : "☁"}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-[14px] font-medium text-ink">{row.title}</span>
@@ -473,110 +450,23 @@ function FirstRunBareAgentsCard({
 }
 
 /**
- * IT IS HERE, AND NOBODY IS SIGNED IN TO IT.
+ * DETECTION FOUND ONLY ENGINES NOBODY IS SIGNED IN TO: FUIGO AND FLUX ONLY.
  *
- * The card that used not to exist. A signed-out engine still answers
- * `--version` and still hands over its full model list, so it read as a
- * working agent: the "found" card claimed we had connected it, the checklist
- * ticked, and on a machine with no key it was the only candidate the selector
- * had, so the Chief was pointed at an engine that died on the first thing it
- * was ever asked to do.
+ * Flux Router and Fuigo are front and center (Sean 11-02,
+ * FUIGO-FIRST-SIGNIN-PLACEMENT). This card used to name each signed-out engine
+ * and put a sign-in button for it in the Chief's card. Another engine is
+ * reachable from Settings and engine setup and is never pushed here, so the
+ * card says what the engine in the box can do now, in the words the bare card
+ * already uses: running when it can answer, the key next when it cannot.
  *
- * Why a COMMAND and not a button that does it. The sign-in is a device auth
- * flow that opens a browser and waits on a code, and running it invisibly
- * from inside the app would hide the one moment where the person has to prove
- * who they are. This person installed Codex themselves, so the command is the
- * help they actually want. `signInCommand` comes from the driver, which is
- * the only thing that knows it, so nothing here is hardcoded per engine.
- *
- * "Check again" rather than polling: the sign-in happens in another window
- * and finishes when it finishes. One honest button beats a spinner that
- * cannot know.
+ * `agents` is already filtered by `runnable()` on the server, so an empty list
+ * IS "nothing can answer yet", the same reading as `canCarryOn` in
+ * FirstRunFluxCard.tsx. The view is read live, so a key saved in another
+ * window changes the line.
  */
 function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
-  const { view, refresh } = useSetupView();
-  const [copied, setCopied] = useState("");
-  const copy = FIRST_RUN_COPY.agents["signed-out"];
-
-  // The server decides WHICH card is owed; what it says is re-read live, so a
-  // sign-in finished in another window empties this list and the card stops
-  // asking for something that is already done.
-  const waiting = view?.signedOutAgents ?? [];
-  // WHAT THERE IS TO CARRY ON WITH, WHICH IS NOT THE SAME QUESTION AS WHAT IS
-  // INSTALLED. `copy.third` says "what is already running carries on either
-  // way", and on a machine whose only engine is the signed-out one there is
-  // nothing running to carry on: `agents` is already filtered by `runnable()`,
-  // so an empty list IS that machine. The same reading as `canCarryOn` in
-  // FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard`, for the same
-  // reason: a sentence of reassurance that is false is worse than no
-  // reassurance, because the next thing they ask for fails.
-  const canCarryOn = (view?.agents.length ?? 0) > 0;
+  const { view } = useSetupView();
   if (!view) return null;
-  if (waiting.length === 0) {
-    return (
-      <FirstRunBubble>
-        <FirstRunLine>{copy.done}</FirstRunLine>
-        {/* Signing in elsewhere empties this list, and it does not settle the
-            step: `detect` is settled by the report being read, and a person
-            looking at this sentence has read it. Without the control here,
-            doing the thing the card asked for is the one path that dead ends. */}
-        <FirstRunDetectOnward settled={settled} />
-      </FirstRunBubble>
-    );
-  }
-
-  const commands = waiting
-    .map((agent) => ({ name: agent.name, command: agent.signInCommand }))
-    .filter((row): row is { name: string; command: string } => Boolean(row.command));
-  const detection = firstRunDetection(view);
-
-  // §1.4 Variant B. The Chief's line, the row it is about, and the sign-in
-  // block right there in the card: no extra press to reveal it.
-  return (
-    <FirstRunBubble>
-      <FirstRunLine>{copy.chief}</FirstRunLine>
-      <ul className="mt-3 grid gap-1.5">
-        {detection.collapsed.map((row) => (
-          <FirstRunEngineRowView key={row.id} row={row} />
-        ))}
-      </ul>
-      {!settled && commands.length > 0 && (
-        <div className="mt-3 space-y-2">
-          <p className="text-[13px] text-ink-secondary">{copy.signInLead}</p>
-          {commands.map((row) => (
-            <div key={row.name} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-              <p className="text-[13px] text-ink-secondary">{copy.commandFor(row.name)}</p>
-              <div className="mt-1.5 flex items-center justify-between gap-2">
-                <code className="select-all text-[13.5px] text-ink">{row.command}</code>
-                <button
-                  type="button"
-                  className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
-                  onClick={() => {
-                    // "!name" marks a copy that did not work; the chip then says so.
-                    void copyText(row.command).then((ok) => setCopied(ok ? row.name : `!${row.name}`));
-                  }}
-                >
-                  {copied === row.name ? copy.copied : copied === `!${row.name}` ? t("copy.failed") : copy.copy}
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {/* "Leave it for now" is a real answer, and it needs somewhere to go.
-          What leaving it means is said under it, and on a machine with
-          nothing else running it says so rather than reassuring. */}
-      {!settled && (
-        <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
-          <FirstRunDetectOnward settled={settled} label={copy.leave} ghost />
-          {commands.length > 0 && (
-            <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`} onClick={() => refresh()}>
-              {copy.recheck}
-            </button>
-          )}
-        </div>
-      )}
-      <FirstRunLine quiet>{canCarryOn ? copy.third : copy.thirdBare}</FirstRunLine>
-    </FirstRunBubble>
-  );
+  // The engine in the box itself, never "any engine": `installed: false` is Fuigo.
+  return <FirstRunBareAgentsCard needsKey={!view.agents.some((agent) => !agent.installed)} onward settled={settled} />;
 }
