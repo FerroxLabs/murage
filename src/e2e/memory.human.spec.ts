@@ -296,7 +296,8 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
   expect(readFileSync(join(root,"MEMORY.md"),"utf8")).toBe(original);
   writeFileSync(join(root,"MEMORY.md"),"CHANGED_NOTEBOOK_CANARY");
   try{
-    await expect.poll(async()=> (await action({action:"list",botId:bot.id,state:"active",query:"CHANGED_NOTEBOOK_CANARY"})).records.length,{timeout:30000}).toBeGreaterThan(0);
+    // Imported notebook text is kind evidence: the screen's Imported filter (MEMORY-UI-BUILD-SPEC r3 4.4), not the default list.
+    await expect.poll(async()=> (await action({action:"list",botId:bot.id,state:"active",kinds:["evidence"],query:"CHANGED_NOTEBOOK_CANARY"})).records.length,{timeout:30000}).toBeGreaterThan(0);
   }catch(error){
     // Diagnostics only (1.0.7 CI 40281567347 stalled here once and left no server-side trace): what the tracked sync last recorded for
     // each notebook link (status, error, hash, last check) and the memory mode, read through the owner's inventory, which writes nothing.
@@ -308,6 +309,10 @@ test("owner imports full notebooks, tracks changes, and selects existing Flux ex
     }catch(diagnostic){console.log(`trackedNotebookDiagnostics unavailable: ${String(diagnostic)}`);}
     throw error;
   }
+  // The owner finds the changed notebook text on the Memory page's own search.
+  await appSettings.getByRole("textbox",{name:"Search memory",exact:true}).fill("CHANGED_NOTEBOOK_CANARY");
+  await clickAction(page,"Search","list",appSettings);
+  await expect(appSettings.getByText("CHANGED_NOTEBOOK_CANARY").first()).toBeVisible();
   await clickAction(page,"Find existing notebooks","import-inventory");
   const tracked=page.getByRole("group",{name:"Tracked notebook: Memory browser fixture · MEMORY.md",exact:true});
   await expect(tracked).toBeVisible();

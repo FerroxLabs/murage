@@ -428,8 +428,12 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   // At SLICE_CALL_GUARD calls the remaining candidates are left unjudged (never support) and the slice commits.
   if(result.status==="complete")for(const candidate of result.candidates){
     let prior:Record<string,unknown>[]=[];
-    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner")prior=db.prepare(`SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
-        WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity' ORDER BY r.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
+    // B2 (spec r3 2.4): a forgotten fact stays active with no words until its job; the owner saying it again is a new record, never a
+    // correction under the forgotten id (no reader would show it). The tombstone probe (an index prefix) runs only on the rows that already
+    // match the subject, so it adds nothing per record of the scope (a correlated probe in the scan cost +60% at 200,000 records).
+    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner")prior=db.prepare(`WITH matched AS MATERIALIZED (SELECT r.id,r.version,r.text,r.created_at FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
+        WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity')
+        SELECT m.id,m.version,m.text FROM matched m WHERE NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=m.id) ORDER BY m.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
     const correcting=prior.length===1&&prior[0]!.text!==candidate.text;
     const needsSupport=Boolean(candidate.claimType&&candidate.claimType!=="inference"&&candidate.text!==candidate.quote);
     if(!correcting&&!needsSupport)continue;
@@ -482,7 +486,9 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
           recordLearningEvent(db,{kind:"superseded",scopeId:String(source!.scope_id),recordId:candidateId,recordVersion:1,priorId:prior.id,priorVersion:prior.version,sourceId:String(source!.id),sourceRevision:Number(source!.revision),botId:learningSourceBot(String(source!.thread_id))?.id,connection:options.connection});
           enqueueProcedureCorrectionReview(db,candidateId,1);
         }else if(active&&candidate.subject&&candidate.predicate){
-          const conflict=db.prepare(`SELECT r.id FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.scope_id=? AND r.state='active' AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.id!=? AND r.text!=? AND d.entities=? LIMIT 1`).get(source!.scope_id,candidateId,candidate.text,JSON.stringify([candidate.subject,candidate.predicate]));
+          // a forgotten claim (active with no words until its job) is not a conflict (B2, spec r3 2.4); probed only on subject matches
+          const conflict=db.prepare(`WITH matched AS MATERIALIZED (SELECT r.id FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.scope_id=? AND r.state='active' AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.id!=? AND r.text!=? AND d.entities=?)
+            SELECT m.id FROM matched m WHERE NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=m.id) LIMIT 1`).get(source!.scope_id,candidateId,candidate.text,JSON.stringify([candidate.subject,candidate.predicate]));
           if(conflict)db.prepare("UPDATE memory_record_details SET claim_status='disputed' WHERE record_id=? AND record_version=1").run(candidateId);
         }
         if(!active&&support.has(candidate)&&!db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND confidence_basis IS NOT NULL").get(candidateId))db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1").run(support.get(candidate)!.reason,candidateId);

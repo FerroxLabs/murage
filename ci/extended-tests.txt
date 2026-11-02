@@ -781,6 +781,7 @@ server/testing/fake-acp-probes.test.ts	delete (pending review; runs here until t
 server/testing/fake-remote-mcp.test.ts	delete (pending review; runs here until then)
 server/testing/fixture-dump.test.ts	delete (pending review; runs here until then)
 server/testing/murage-env.test.ts	extended
+server/testing/progress-poll.test.ts	extended
 server/testing/route-discovery.test.ts	delete (pending review; runs here until then)
 server/testing/sse.test.ts	delete (pending review; runs here until then)
 server/testing/temp-cleanup-guard.test.ts	extended
@@ -972,7 +973,6 @@ src/components/DesktopStopControl.test.ts	extended
 src/components/DiagnosticDetails.test.ts	extended
 src/components/EngineFolderFailureCard.test.ts	extended
 src/components/EngineLoginTerminal.test.ts	extended
-src/components/EngineSetup.test.ts	extended
 src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended

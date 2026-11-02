@@ -388,13 +388,14 @@ test.describe("an engine nobody is signed in to", () => {
       "the signed-out engine must be reported rather than counted as working",
     ).toBeVisible();
     // THE FIX IS ON THE CARD, with no press to reveal it (section 1.4, Variant
-    // B). The command is what the driver told us, the Copy beside it works, and
-    // both ways on are live.
+    // B), and both ways on are live. On the desktop that is the one sign-in
+    // button; this harness is a browser window, which can only say where the
+    // sign-in happens (EngineSignInButton, engineSignInSurface).
     await expect(
-      app.getByText("claude auth login", { exact: true }),
+      app.getByText("Finish sign-in on the computer running Murage.", { exact: true }),
       "and the report must come with the one thing that fixes it",
     ).toBeVisible();
-    await expect(app.getByRole("button", { name: "Copy", exact: true }), "the command can be taken away").toBeEnabled();
+    await expect(app.getByText("claude auth login", { exact: true }), "no command to paste").toHaveCount(0);
     await expect(app.getByRole("button", { name: /I have done it/i }), "and rechecked afterwards").toBeEnabled();
     await expect(app.getByRole("button", { name: /Leave it for now/i }), "or left").toBeEnabled();
     await screenIsUsable(app, "a signed-out engine · the detection report");

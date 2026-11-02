@@ -1198,8 +1198,12 @@ export interface AcpSupport {
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
   /** snapshot(): can this harness actually run a turn? (env already carries the
-   *  merged config). May be async for harnesses that have to ask the CLI. */
-  isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
+   *  merged config). May be async for harnesses that have to ask the CLI.
+   *  Undefined: the CLI did not say, which is not signed out. */
+  isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | undefined | Promise<boolean | undefined>;
+  /** isAuthenticated asks a real sign-in check, so its undefined means the check did not answer: the snapshot says
+   *  unverified, never signed in. Left unset, undefined means the harness has no sign-in to report. */
+  authUnknownIsUnverified?: boolean;
   /** Refuse a first-party cloud turn before spawning when snapshot auth is
    * false. Local injected models deliberately bypass this subscription gate. */
   requireAuthenticationBeforeSpawn?: boolean;
@@ -2640,6 +2644,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           helpersAtAccept: null as Set<string> | null,
           grace: undefined as ReturnType<typeof setTimeout> | undefined,
           cap: undefined as ReturnType<typeof setTimeout> | undefined,
+          /** Set while holding: a stop brings the hold's end forward to its own bound. */
+          onStop: undefined as (() => void) | undefined,
         };
         const markAccepted = () => {
           if (!fallback.helpersAtAccept) fallback.helpersAtAccept = new Set(helpers.open);
@@ -2834,6 +2840,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // until its close event is too late to send the cancellation response.
           approvalDeliveryStop.abort();
           for (const finish of [...asks.values()]) finish("cancel", "system");
+          fallback.onStop?.();
           teardown?.markStopRequested();
           // A process a turn stops is never pooled again; its hooks stay so
           // this turn still observes the exit it asked for.
@@ -3687,6 +3694,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             fallback.holding = true;
             const fallbackCapFired = () => {
               if (state.settled) return;
+              // A stop outranks the cap: no cap line, and the turn ends as its stop does even if the engine's close never comes.
+              if (state.cancelRequested || state.stopRequested) { settleHalted(); return; }
               // An open card is never ended by a cap: wait the cap again.
               if (asks.size || humanWaitOpen(threadId)) { fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs()); fallback.cap.unref?.(); return; }
               noteFallback("fallback_cap", { capMs: fallbackCapMs(), running: fallback.running, queued: fallback.queued });
@@ -3699,6 +3708,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             };
             fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs());
             fallback.cap.unref?.();
+            // The cap can be minutes away and an engine may never close: a stop waits the cancel grace at most.
+            fallback.onStop = () => {
+              fallback.onStop = undefined;
+              clearTimeout(fallback.cap);
+              fallback.cap = setTimeout(fallbackCapFired, Math.min(fallbackCapMs(), ACP_CANCEL_GRACE_MS));
+              fallback.cap.unref?.();
+            };
+            if (state.cancelRequested || state.stopRequested) fallback.onStop();
           }
           fallbackChanged();
         };
@@ -5598,7 +5615,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lastCliVersion = probe.version;
         lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
-        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config), ...(versionNote ? { versionNote } : {}) };
+        const authenticated = await support.isAuthenticated(env, config);
+        return { state: "available", version: probe.version, ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}) };
       };
 
       return withCliMemoryLearning({
