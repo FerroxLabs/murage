@@ -7,6 +7,8 @@
 import { useStore } from "@/state/store";
 import { useEngineReading } from "@/components/today/use-engine-health";
 import { t } from "@/lib/i18n";
+import { firstRunOwnsMainView } from "@/lib/first-run";
+import { useSetupView } from "@/components/FirstRunChrome";
 import type { HealthIssueLevel } from "../../../shared/health-levels";
 import type { EngineHealthRow, FluxHealthState, HealthStatus } from "@/components/shell/shell-contract";
 
@@ -17,8 +19,16 @@ export function healthFromEngines(engine: EngineHealthRow | null, flux: FluxHeal
   if (engine?.state === "signed-out") return { level: "act", line: t("ux.l2a.tag.signedOut", { engine: engine.label }) };
   if (engine?.state === "missing") return { level: "act", line: t("ux.l2a.tag.missing", { engine: engine.label }) };
   if (engine?.state === "limit" || engine?.state === "off") return { level: "watch", line: t(engine.state === "limit" ? "ux.l2a.tag.limit" : "ux.l2a.tag.off", { engine: engine.label }) };
+  if (engine?.state === "checking") return { level: "unknown", line: t("ux.l2a.tag.checking", { engine: engine.label }) };
   if (!engine && !answered) return { level: "unknown", line: t("ux.l2a.health.unknown") };
   return { level: "ok", line: t("ux.l2a.health.ok") };
+}
+
+/** First run owns the screen and holds back the engine and Flux rows in Needs you (engine-need.ts), so the level holds
+ * back the red they would raise too: a red dot always has its row. */
+export function healthInFirstRun(engines: HealthStatus, firstRun: boolean, answered: boolean): HealthStatus {
+  if (!firstRun || engines.level !== "act") return engines;
+  return healthFromEngines(null, "none", answered);
 }
 
 /** The engines and the checks together. An engine's own words win at the same level; a note leaves the level alone. */
@@ -34,5 +44,8 @@ export function healthWithChecks(engines: HealthStatus, checks: HealthIssueLevel
 export function useHealthStatus(checks?: HealthIssueLevel | null): HealthStatus {
   const { state } = useStore();
   const reading = useEngineReading();
-  return healthWithChecks(healthFromEngines(reading.engine, reading.flux, reading.fromServer || state.instances.length > 0), checks);
+  const { view } = useSetupView();
+  const answered = reading.fromServer || state.instances.length > 0;
+  const engines = healthInFirstRun(healthFromEngines(reading.engine, reading.flux, answered), Boolean(view && firstRunOwnsMainView(view)), answered);
+  return healthWithChecks(engines, checks);
 }

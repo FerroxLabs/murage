@@ -228,3 +228,46 @@ describe("the quiet notes are never folded into a run", () => {
     expect(items.map((i) => i.kind)).toEqual(["run", "message", "run"]);
   });
 });
+
+// 1.0.14 (Sable, 11-02): a voice note the bot sent mid-turn sat inside the
+// collapsed "Worked for" row, so the owner never saw or heard it. A row that
+// carries a file is something the bot handed over: it stays in the reply, on
+// the desktop and in the phone's web view alike (one shared ChatView).
+describe("groupTranscript keeps what the bot handed over out of the fold", () => {
+  const row = (id: string, at: number, text: string, extra: Partial<Message> = {}): Message =>
+    ({ id, at, role: "bot", kind: "text", text, turnId: "turn-v", turnTerminal: false, ...extra });
+  const user: Message = { id: "u-v", at: 1_000, role: "user", kind: "text", text: "send me a voice note" };
+  const ARTIFACT = "0f1e2d3c-4b5a-4968-8776-655443322110";
+  const cases: Array<[string, Partial<Message>]> = [
+    ["a voice note", { text: "Morning, boss.", artifactIds: [ARTIFACT] }],
+    ["a register_file saved-file card", { text: "Saved file: report.pdf", artifactIds: [ARTIFACT] }],
+    ["an output card for files and images", { text: "Saved 2 files", artifactIds: [ARTIFACT, "1f1e2d3c-4b5a-4968-8776-655443322110"] }],
+  ];
+  for (const [name, extra] of cases) {
+    it(`${name} stays visible between the fold and the reply`, () => {
+      const before = row("n1", 2_000, "Writing it now.");
+      const delivered = row("d1", 3_000, String(extra.text), extra);
+      const after = row("n2", 4_000, "Sent.");
+      const reply = row("r1", 5_000, "Done, it is in the chat.", { turnTerminal: true });
+      const items = groupTranscript([user, before, delivered, after, reply]);
+      const fold = items.find((item) => item.kind === "turn");
+      expect(fold && fold.kind === "turn" && fold.messages.map((message) => message.id)).toEqual(["n1", "n2"]);
+      const shown = items.filter((item) => item.kind === "message").map((item) => item.kind === "message" ? item.message.id : "");
+      expect(shown).toEqual(["u-v", "d1", "r1"]);
+    });
+  }
+
+  it("a turn whose only earlier rows are deliverables makes no fold at all", () => {
+    const delivered = row("d2", 2_000, "Morning, boss.", { artifactIds: [ARTIFACT] });
+    const reply = row("r2", 3_000, "Sent you a voice note.", { turnTerminal: true });
+    const items = groupTranscript([user, delivered, reply]);
+    expect(items.map((item) => item.kind)).toEqual(["message", "message", "message"]);
+  });
+
+  it("an empty artifact list is still narration", () => {
+    const quiet = row("n3", 2_000, "Thinking.", { artifactIds: [] });
+    const reply = row("r3", 3_000, "Answer.", { turnTerminal: true });
+    const fold = groupTranscript([user, quiet, reply]).find((item) => item.kind === "turn");
+    expect(fold && fold.kind === "turn" && fold.messages.map((message) => message.id)).toEqual(["n3"]);
+  });
+});

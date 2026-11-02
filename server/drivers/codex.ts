@@ -49,7 +49,7 @@ import type { ExecEnv, McpMountRecord } from "../../shared/mount-identity.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { humanWaitOpen } from "../harness/human-wait.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
-import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
+import { awaitCliRootClose, awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -400,16 +400,18 @@ const CODEX_ACTING_ITEM_TYPES: ReadonlySet<unknown> = new Set(["commandExecution
 export const CODEX_TOOL_MAY_HAVE_RUN = "A tool action may have run. Check its effects before trying again.";
 const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
 
+/** What `codex login status` said. Signed out it prints "Not logged in" and exits 1 (measured, 0.151.0), so the words decide, not
+ *  the exit. Undefined when it did not say: a timeout or a crash is not signed out, so a login that is already there cannot pass for a new one. */
+export function readCodexLogin(failed: boolean, text: string): boolean | undefined {
+  if (/^not logged in\b/im.test(text)) return false;
+  return !failed && /^logged in\b/im.test(text) ? true : undefined;
+}
+
 export const CodexDriver: ProviderDriver<CodexConfig> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Codex", supportsMultipleInstances: true },
   install: {
-    command: {
-      darwin: "npm install -g @openai/codex",
-      linux: "npm install -g @openai/codex",
-      win32: "npm install -g @openai/codex",
-    },
-    needsNode: true,
+    native: true,
     docsUrl: "https://github.com/openai/codex",
     signInCommand: "codex login --device-auth",
   },
@@ -478,7 +480,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     await refreshModels();
     const listeners = new Set<RuntimeEventListener>();
     interface Turn {
-      stop: () => Promise<boolean>;
+      /** "asked": interruptTurn, stopAll, a takeover: the turn ends as Stop. "closing": dispose (quit, restart, reload): the
+       * turn ends as the engine closing, never as the owner's Stop (ACP's rule, CLOSE-STOP-1014). */
+      stop: (why: "asked" | "closing") => Promise<boolean>;
       turnId: string;
       asks: Map<string, AskFinish>;
     }
@@ -621,7 +625,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // cancel it, wait for its slot, end the process it owns if it will not go: all
           // within one hard bound, after which this send fails clearly (never "already running")
           const freed = await prewarming.takeOver(turn.threadId, {
-            stop: () => active.get(turn.threadId)?.stop(),
+            stop: () => active.get(turn.threadId)?.stop("asked"),
             child: () => prewarmChildren.get(turn.threadId)?.(),
             slotBusy: () => active.has(turn.threadId),
           });
@@ -640,6 +644,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // One driver instance serves many threads. Interrupt state belongs to
       // this turn so activity elsewhere cannot cancel or revive its retry.
       let stopRequested = false;
+      // Set by every stop someone asked for (interruptTurn, stopAll, a takeover), never by dispose, never cleared. A stop-caused
+      // end is the owner's Stop ("cancelled") only with it; without it the engine closed (CLOSE-STOP-1014).
+      let stopAsked = false;
       // Wakes a retry backoff the moment Stop arrives, so the logical turn
       // settles now rather than after the full wait (U06).
       const stopSignal = new AbortController();
@@ -657,7 +664,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // that waits before the launch (a settle probe) leaves the thread looking
       // idle. Its stop only records the request; the dispatch checks it.
       const slot: Turn = {
-        stop: async () => { stopRequested = true; stopSignal.abort(); return true; },
+        stop: async (why) => { stopAsked ||= why === "asked"; stopRequested = true; stopSignal.abort(); return true; },
         turnId,
         asks: new Map(),
       };
@@ -1077,7 +1084,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               void closeRetained(threadId, "stop");
               if (active.get(threadId) === slot) active.delete(threadId);
               emit({ ...base(threadId, turnId), type: "turn.started" });
-              emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+              if (stopAsked) emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+              else {
+                // only dispose stopped it: the engine closing, as ACP ends it (CLOSE-STOP-1014)
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(ENGINE, null) });
+                emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "exit_before_result", cost: null });
+              }
             }
             endPrewarm(); forgetPrewarm();
             return;
@@ -1322,7 +1334,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       })();
       let completeStoppedTurn: (() => void) | undefined;
       let lastProviderError: string | undefined;
-      const stop = async () => {
+      const stop = async (why: "asked" | "closing") => {
+        stopAsked ||= why === "asked";
         stopRequested = true;
         stopSignal.abort();
         // Astra r2 #1: the turn's authority is revoked before the kill is awaited, so a held or failed kill leaves no allow path. The hook
@@ -1331,6 +1344,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         hookGate?.disarm(hookToken);
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         const stopped = await terminate();
+        // CLOSE-STOP-1014: on Windows the empty job confirms the tree gone before the root's close lands, and the close handler is
+        // what settles this turn: wait for it (bounded), so dispose never clears its listeners ahead of the turn's end.
+        if (stopped && !state.settled) await awaitCliRootClose(child);
         if (stopped) completeStoppedTurn?.();
         return stopped;
       };
@@ -1340,9 +1356,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Kept as they are: a refusal or tripwire incident raised before the Stop (refuseUnproven raises none after it), and a
       // process that would not stop. An end that settled before the Stop is untouched (state.settled), so finished work stays finished.
       const stopWins = (stopReason: string | null) => stopRequested && !incidentRaised && !refusal.refused && stopReason !== "shutdown_timeout";
+      // CLOSE-STOP-1014: a stop-caused end is the owner's Stop only when someone asked (stopAsked); a stop only dispose made is the
+      // engine closing, ended as ACP ends it: one engine-closed error, then ok:false "exit_before_result".
+      const stopEnd = (): [boolean, string] => stopAsked ? [true, "cancelled"] : [false, "exit_before_result"];
       const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {
         if (state.settled) return;
-        if (stopWins(stopReason)) { ok = true; stopReason = "cancelled"; }
+        let closeCut = false;
+        if (stopWins(stopReason)) { [ok, stopReason] = stopEnd(); closeCut = !ok; }
         if (ok && refusal.refused) return settle(false, incidentRaised ? "gate_incident" : "scope_unavailable");
         // Rule 68c: a refused turn never ends clean. A clean end on a gated process whose hook is not yet proven waits for the proof;
         // unproven, the refusal settles it.
@@ -1351,10 +1371,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           const live = await proveLiveness();
           if (state.settled) return;
           // a Stop that came in while this clean end waited for the proof wins: the end is that Stop, not a refusal
-          if (stopWins(stopReason)) { ok = true; stopReason = "cancelled"; }
+          if (stopWins(stopReason)) { [ok, stopReason] = stopEnd(); closeCut = !ok; }
           else if (!live) return;
         }
         state.settled = true;
+        // the one engine-closed line of a turn only dispose stopped; its turn.completed follows in complete()
+        if (closeCut) emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(ENGINE, null) });
         if (accepted) reuseStats.settled({ threadId, background: turn.background === true });
         if (helpers.cap) clearTimeout(helpers.cap);
         if (helpers.grace) clearTimeout(helpers.grace);
@@ -1402,7 +1424,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         console.info(`codex close thread=${threadId} reason=${recycle}`);
         reuseStats.closed(recycle);
-        if (!(await stop())) {
+        if (!(await stop("asked"))) {
           emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} did not close after Stop. This conversation stays busy until it does; restart Murage if it stays stuck.` });
         }
       };
@@ -2172,7 +2194,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       });
       on(child, "close", (code: number | null, signal: NodeJS.Signals | null) => {
         if (abandoned) return;
-        if (state.settled) { void stop(); return; }
+        if (state.settled) { void stop("asked"); return; }
         if (!state.settled && !stopRequested && helpers.holding) { settle(true, null); return; }
         if (!state.settled && stopRequested) {
           // Murage killed the app-server to stop this turn: a cancellation,
@@ -2399,7 +2421,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // process is closed instead of parked.
           try { cred?.clear(); } catch {
             console.info(`codex close thread=${threadId} reason=credential clear failed`);
-            if (!(await stop())) {
+            if (!(await stop("asked"))) {
               // Not confirmed closed: the child stays owned, in the stuck-process registry,
               // which Stop, dispose and the next dispatch of this thread retry and wait on.
               stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {}, ...(hookGate ? { hookGate } : {}) }, threadId);
@@ -2674,14 +2696,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     const probe = snapshotVersionOf(probed.error, probed.stdout);
     if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
     const { version } = probe;
-    const authenticated = await new Promise<boolean>((resolve) => {
+    const authenticated = await new Promise<boolean | undefined>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
-        resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),
+        resolve(readCodexLogin(Boolean(err), `${stdout}\n${stderr ?? ""}`)),
       );
     });
     // childEnv drops OPENAI_API_KEY on purpose: off a home turns run on the ChatGPT login. On a home
     // the launcher knows whether an API key (C store) or a ChatGPT sign-in pays for the turns.
-    return { state: "available", version, authenticated, billing: await codexCloudBilling() };
+    return { state: "available", version, ...(authenticated === undefined ? { authUnverified: true as const } : { authenticated }), billing: await codexCloudBilling() };
   };
 
   return withCliMemoryLearning({
@@ -2734,7 +2756,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       interruptTurn: async (threadId) => {
         // a process that survived an earlier Stop is retried here, and Stop reports failure until it is gone
         if (!active.has(threadId) && (!(await closeRetained(threadId, "stop")) || !(await retryStuck(threadId)))) throw new Error("codex shutdown is still pending; the process remains owned");
-        if (await active.get(threadId)?.stop() === false) throw new Error("codex shutdown is still pending; the process remains owned");
+        if (await active.get(threadId)?.stop("asked") === false) throw new Error("codex shutdown is still pending; the process remains owned");
       },
       respondToRequest: async (threadId, requestId, decision) => {
         const turn = active.get(threadId);
@@ -2749,7 +2771,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       hasSession: (threadId) => active.has(threadId),
       stopAll: async () => {
         const stopped = await Promise.all([
-          ...[...active.values()].map(({ stop }) => stop()),
+          ...[...active.values()].map(({ stop }) => stop("asked")),
           ...[...retained.keys()].map((threadId) => closeRetained(threadId, "shutdown")),
         ]);
         if (!(await drainClosing())) stopped.push(false);
@@ -2761,8 +2783,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       },
     },
     dispose: async () => {
+      // "closing": a turn only this close stopped ends as the engine closing, never as the owner's Stop (CLOSE-STOP-1014)
       const stopped = await Promise.all([
-        ...[...active.values()].map(({ stop }) => stop()),
+        ...[...active.values()].map(({ stop }) => stop("closing")),
         ...[...retained.keys()].map((threadId) => closeRetained(threadId, "shutdown")),
       ]);
       if (!(await drainClosing())) stopped.push(false);
