@@ -5,14 +5,15 @@
 // and the actual command/path in monospace, and the choices carry their
 // own behavior instead of being matched by their label text.
 import { useState } from "react";
-import { Check, ShieldCheck, Undo2, X } from "lucide-react";
+import { Check, Undo2, X } from "lucide-react";
 import { api, type Bot, type Message } from "@/state/store";
 import { AUTOMATION_UNDO_WINDOW_MS, automationActionUndoable } from "../../shared/routine-request";
 import { cn } from "@/lib/cn";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
-import { knownToolAction } from "@/components/PendingApproval";
+import { approvalTitle, isAcpPermissionKind, isPendingApprovalMessage, knownToolAction, pendingOf, toolLabel, whyLine } from "@/components/PendingApproval";
+import { focusApprovalPanel } from "@/lib/approval-focus";
 import { plainApproval, usePlainApprovalReady } from "@/lib/plain-approval";
 import { delegationToolKind } from "../../shared/delegation-tool";
 import { t } from "@/lib/i18n";
@@ -205,10 +206,6 @@ function BrowserApprovalBody({ message, data, onAnswer }: { message: Message; da
   );
 }
 
-interface ToolLabels {
-  [tool: string]: string;
-}
-
 const ROUTINE_SETTLED_LABEL = {
   create: "Routine scheduled",
   update: "Routine updated",
@@ -274,54 +271,8 @@ const SKILL_SETTLED_LABEL = {
   update: "Skill updated",
 } as const;
 
-/** An ACP engine — Fuigo, the one the included Chief of Staff runs on —
- * does not send a tool NAME with `session/request_permission`. It sends the
- * permission KIND, and the driver forwards that kind in place of a tool name
- * (server/drivers/acp/core.ts, `kind === "execute" ? "shell" : …`). These are
- * the ACP kinds, spelled as the sentence they belong to; without them the
- * first approval a new person ever sees read "Business Planner wants to
- * other". The raw name the engine asked about is still in the card body. */
-const ACP_KIND_LABEL: ToolLabels = {
-  read: "read a file",
-  edit: "edit a file",
-  delete: "delete a file",
-  move: "move a file",
-  search: "search",
-  fetch: "fetch a web page",
-  execute: "run a command",
-  shell: "run a command",
-  think: "think it through",
-  switch_mode: "change its mode",
-  other: "use a tool",
-};
-
-/** True for a bare ACP permission kind. A kind is not a tool name, so it is
- * never shown in the monospace badge beside the sentence. */
-export function isAcpPermissionKind(tool?: string): boolean {
-  return Boolean(tool) && Object.hasOwn(ACP_KIND_LABEL, tool!);
-}
-
-/** The tool's own name is noise to a human: mcp__muragebox__computer_batch is
- * "computer batch", Bash is "run a command". */
-function toolLabel(tool?: string): string {
-  if (!tool) return "an action";
-  const bare = tool.replace(/^mcp__[^_]+__/, "").replace(/_/g, " ");
-  const nice: ToolLabels = {
-    Bash: "run a command",
-    Read: "read a file",
-    Write: "write a file",
-    Edit: "edit a file",
-    WebFetch: "fetch a web page",
-    WebSearch: "search the web",
-    schedule_routine: "schedule a routine",
-    manage_routine: "change a routine",
-    create_webhook: "create a webhook",
-    manage_webhook: "change a webhook",
-    stage_skill: "enable a learned skill",
-    update_skill: "update a learned skill",
-  };
-  return nice[tool] ?? ACP_KIND_LABEL[tool] ?? bare;
-}
+/** Kept here for the callers that import it from the card. */
+export { isAcpPermissionKind };
 
 export function ApprovalCard({
   bot,
@@ -341,6 +292,9 @@ export function ApprovalCard({
   if (!card) return null;
   const browser = browserCardData(card);
   if (browser) return <BrowserApprovalBody message={message} data={browser} onAnswer={onAnswer} />;
+  // APPROVAL-ONE-CARD: while the composer panel holds the card, the chat
+  // keeps one line. The panel is the one place to answer it.
+  if (isPendingApprovalMessage(message)) return <ApprovalWaitingRow bot={bot} message={message} />;
   const settled = card.answered;
   const isRoutineRequest = Boolean(card.routineRequest);
   const isSkillRequest = Boolean(card.skillRequest);
@@ -388,26 +342,32 @@ export function ApprovalCard({
         {displayTool && !plain && !isHostConsent && displayTool !== "browser_extension_action" && !isAcpPermissionKind(displayTool) && <span className="shrink-0 font-mono text-[11px] text-ink-secondary">{displayTool}</span>}
       </div>
 
-      {/* what, exactly */}
-      {isHostConsent ? (
-        <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{card.subtitle}</p>
-      ) : card.tool === "browser_extension_action" ? (
-        // A reviewed browser action can hold a long email body: collapsed with a real toggle, never refused.
-        <div className="mt-2 rounded-lg bg-inset px-3 py-2">
-          <CollapsibleText as="pre" ariaLabel="Approval details" text={card.subtitle} className="font-mono text-[12.5px] leading-relaxed text-ink" />
-        </div>
-      ) : (
-        <ApprovalDetailBody
-          tool={isRoutineRequest || isSkillRequest ? undefined : card.tool}
-          detail={card.subtitle}
-          label={isWebhookRequest ? t("automations.webhookDetails") : isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
-          preClassName="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
-        />
-      )}
+      {/* what, exactly: the settled record keeps what was asked one tap away, closed */}
+      <details data-settled-details className="mt-2 text-[12.5px] text-ink-secondary">
+        <summary className="cursor-pointer select-none">{t("approval.showDetails")}</summary>
+        {isHostConsent ? (
+          <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{card.subtitle}</p>
+        ) : card.tool === "browser_extension_action" ? (
+          // A reviewed browser action can hold a long email body: collapsed with a real toggle, never refused.
+          <div className="mt-2 rounded-lg bg-inset px-3 py-2">
+            <CollapsibleText as="pre" ariaLabel="Approval details" text={card.subtitle} className="font-mono text-[12.5px] leading-relaxed text-ink" />
+          </div>
+        ) : (
+          <>
+          <ApprovalDetailBody
+            tool={isRoutineRequest || isSkillRequest ? undefined : card.tool}
+            detail={card.subtitle}
+            label={isWebhookRequest ? t("automations.webhookDetails") : isRoutineRequest ? "Routine details" : isSkillRequest ? "Skill details" : "Approval details"}
+            preClassName="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset px-3 py-2 font-mono text-[12.5px] leading-relaxed text-ink"
+            bare
+          />
+          {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
+          </>
+        )}
+      </details>
 
-      {card.skillRequest && <SkillRequestPreview request={card.skillRequest} />}
-
-      {card.held && !settled && (
+      {/* one reason sentence: the held note only when there is no why-line */}
+      {card.held && !settled && !whyLine(card) && (
         <div className="mt-2 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[12.5px] text-warning">
           <CollapsibleText text={card.held} />
         </div>
@@ -445,13 +405,37 @@ export function ApprovalCard({
           <>
             <X size={14} /> {isRoutineRequest || isSkillRequest ? "Cancelled" : isHostConsent ? "Not allowed" : t("ux.l1.outcome.denied")}
           </>
-        ) : (
+        ) : card.dismissed ? (
+          // closed without an answer: the same words as a stopped wait
           <>
-            <ShieldCheck size={14} className="text-accent" />
-            {isRoutineRequest || isSkillRequest ? "Waiting for your confirmation below" : "Waiting for your answer below"}
+            <X size={14} /> {isRoutineRequest || isSkillRequest ? "Not answered" : t("ux.l1.outcome.stopped", { bot: bot?.name ?? t("ux.l1.outcome.botFallback") })}
           </>
-        )}
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+/** The chat's one line while a card waits: who is waiting, and Answer, which
+ * moves focus to the composer panel's region (never to a button, so Enter can
+ * never approve by accident). The button names the card's title. */
+function ApprovalWaitingRow({ bot, message }: { bot?: Bot; message: Message }) {
+  usePlainApprovalReady();
+  const who = bot?.name ?? message.from?.name ?? t("ux.l1.outcome.botFallback");
+  const title = approvalTitle(pendingOf(message), who);
+  return (
+    <div data-approval-waiting={message.card?.requestId} className="flex w-full max-w-[840px] items-center gap-2.5 rounded-xl border border-accent/40 bg-card py-1.5 pl-3.5 pr-1.5 text-[14px]">
+      <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
+      <span role="status" className="min-w-0 flex-1 text-ink">{t("ux.l1.card.waiting", { bot: who })}</span>
+      <button
+        type="button"
+        data-approval-answer
+        aria-label={t("ux.l1.card.answerLabel", { title })}
+        onClick={() => focusApprovalPanel(message.card?.requestId)}
+        className="inline-flex min-h-11 shrink-0 items-center rounded-lg border border-accent/40 px-3 text-[14px] text-accent hover:bg-accent/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+      >
+        {t("ux.l1.card.answer")}
+      </button>
     </div>
   );
 }
