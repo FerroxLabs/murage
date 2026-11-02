@@ -37,6 +37,7 @@ const REVIEWED: Record<string, Partial<Record<Category, Reviewed>>> = {
   "drivers/engine-input.ts": { engineSend: { count: 2, covered: "lineage (sendBuiltTurn / steerBuilt: BuiltPrompt in, the send fence before every write)" } },
   "drivers/acp/core.ts": { engineSend: { count: 1, covered: "driver-internal (a prewarm: nothing is sent)" } },
   "harness/instance-holds.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given)" } },
+  "harness/ask-note-adapter.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given, its prompt untouched, plus the nobody-at-it mark)" } },
   "harness/memory-adapter.ts": { engineSend: { count: 1, covered: "driver-internal (a wrapper passing the turn it was given)" } },
   "harness/draft-only-adapter.ts": { engineSend: { count: 3, covered: "driver-internal (a wrapper passing the turn it was given: as is, or a draft-only turn with its prompt unchanged and only its folders and integrations cut and the draft-only note added to its system text; a steer passes its text and write fence through)" } },
   "drivers/cli-memory-learning.ts": { engineSend: { count: 1, covered: "driver-internal (learning's hidden one-shot on a CLI or ACP login: the extraction prompt the memory helper built, a thread no window or bot sees, no tools, every ask denied, its events ignored by the server)" } },

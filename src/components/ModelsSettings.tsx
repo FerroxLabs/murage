@@ -160,7 +160,7 @@ export function ModelsSettings() {
   const fluxConnection = snapshot?.connections.find(connection => connection.id === "legacy-flux");
   const fluxModels = fluxConnection ? chatModels(fluxConnection).filter(model => !search || `${model.label} ${model.id} Flux Router`.toLowerCase().includes(search)) : [];
   return <div className="min-w-0 space-y-5">
-    <FluxRouterConnection configured={flux?.configured ?? null} conflict={flux?.conflict} choices={flux?.choices}
+    <FluxRouterConnection configured={flux?.configured ?? null} conflict={flux?.conflict} choices={flux?.choices} saveBlocked={flux?.saveBlocked}
       onSave={async key => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: flux.configured ? "replace" : "connect", revision: flux.revision, key }); }}
       onSignin={fluxDesktopSigninEnabled(state.config) && window.muragebox?.fluxSignin ? async () => {
         if (!flux) throw new Error("Flux status is unavailable");

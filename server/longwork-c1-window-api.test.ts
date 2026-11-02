@@ -61,6 +61,8 @@ describe.skipIf(process.platform === "win32")("C1: a refusal before the engine i
       const create=driver.create.bind(driver);
       // WINDOW_ARM: while this file exists, the read on the window's own line throws once (and the file is removed)
       const refusal=()=>Object.assign(new Error('MEMORY_CONTEXT_REVOKED'),{unproven:'lineage-warming'});
+      // The registry's decorators sit between the read and index.ts; a stack long enough to reach it, however many there are.
+      Error.stackTraceLimit=64;
       const atLine=(line)=>String(new Error().stack).includes('index.ts:'+line+':');
       const fire=(arm,line)=>{ if(!fs.existsSync(arm)||!atLine(line))return false; fs.rmSync(arm,{force:true}); return true; };
       driver.create=async input=>{

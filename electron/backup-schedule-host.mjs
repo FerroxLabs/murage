@@ -7,6 +7,8 @@ import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
 import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
 import { createBackupStepLog } from "../shared/backup-progress.mjs";
+import { backupBudgetArgument, decideBackupBudget, readBackupBudgetArgument, validStoredDuration } from "../shared/backup-budget.mjs";
+import { offlineCeilingFor } from "./backup-offline-return.mjs";
 import { readSetupBackupRecord } from "../shared/setup-backup-record.mjs";
 
 export const BACKUP_SCHEDULE_BINDINGS_KEY = "backupScheduleBindings";
@@ -183,6 +185,22 @@ export function createBackupScheduleHost(host) {
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
   const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
+  /** How long this run may take, decided before anything closes. `before` is
+   * the status from before a new job replaced the last one, the only place
+   * the last run's length still shows. Never written down (shared/backup-budget.mjs). */
+  function chooseBudget(s,before=s){
+    const storedMs=s.schedule.maxDurationMs;
+    if(!validStoredDuration(storedMs))throw Error("INVALID_BACKUP_BUDGET");
+    try{
+      const job=before.job,lastRunMs=job?.receipt&&job.attemptAt!==undefined?job.receipt.verifiedAt-job.attemptAt:undefined;
+      const database=path.join(host.installation(),"messages.db");
+      // An absent file has no size; any other failure is a wrong input, and the catch below answers.
+      const size=file=>{try{return lstatSync(file).size;}catch(error){if(error?.code==="ENOENT")return undefined;throw error;}};
+      const main=size(database),liveBytes=main===undefined?undefined:main+(size(database+"-wal")??0);
+      return decideBackupBudget({storedMs,lastBytes:s.lastVerified?.bytes,liveBytes,lastRunMs});
+    }catch{return storedMs;}
+  }
+  const carriedBudget=s=>readBackupBudgetArgument(host.argv?.()??[],s.job?.handoff?.id,s.schedule.maxDurationMs);
   const assertUpgradeAllowed=async candidate=>{if(!host.supported()||typeof host.assertUpgradeAllowed!=="function")throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");await host.assertUpgradeAllowed(candidate);};
   // Every in-app backup restarts Murage; refuse before closing anything where
   // that restart would crash instead of coming back.
@@ -220,9 +238,10 @@ export function createBackupScheduleHost(host) {
         await assertUpgradeAllowed(candidate);assertRelaunchPossible();const b=await checked();
         if(s.job&&!["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"].includes(s.phase))throw Error("BACKUP_REVIEW_REQUIRED");
         release=await host.prepare();
+        const budgetMs=chooseBudget(s);
         intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000,upgrade:candidate};
         coordinator.prepareUpgrade(candidate,intent);stopPolling();
-        await host.cleanupIdle();coordinator.armHandoff(intent.id);await host.relaunch("backup");lastError=null;
+        await host.cleanupIdle();coordinator.armHandoff(intent.id);await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
         return {status:"deferred",message:"Backup restart prepared before installing this update."};
       }catch(error){
         lastError="BACKUP_UPGRADE_DEFERRED";
@@ -246,7 +265,8 @@ export function createBackupScheduleHost(host) {
   }
   async function tick(upgradeId){
     if(running)return;
-    if(!coordinator.status().enabled)return;
+    const before=coordinator.status();
+    if(!before.enabled)return;
     running=true;let release,intent;
     try{
       const s=await coordinator.tick(upgradeId);
@@ -261,10 +281,11 @@ export function createBackupScheduleHost(host) {
       const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
       let b;try{b=await checked();}catch(error){const code=stopForReferences(s.job?.id,error);if(code){lastError=code;return;}throw error;}
       release=await host.prepare("daily");heldBy=null;
+      const budgetMs=chooseBudget(s,before);
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
       stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup");lastError=null;
+      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
     }catch(error){
       lastError=holdFor(error,"daily")?"BACKUP_WAITING_ON_YOU":"BACKUP_HANDOFF_DEFERRED";
       if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve unreadable state. */}
@@ -276,7 +297,16 @@ export function createBackupScheduleHost(host) {
   async function clearReview(expectedRevision){
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
     if(running)throw Error("BACKUP_BUSY");
-    coordinator.clearReview(expectedRevision);coordinator.clearCaptureFailure?.();lastError=null;
+    // Clearing lets the schedule run again; it doesn't make a backup. The reason
+    // stays in the failure note until one succeeds. The notice comes down on
+    // that success, not on this press, so a note that can't be saved keeps the
+    // job in review: the note is the only record once the job is gone.
+    const {phase,captureFailure}=coordinator.status();
+    if(phase==="needs-review"&&captureFailure)try{coordinator.recordCaptureFailure?.(captureFailure);}catch{
+      lastError="BACKUP_STATE_SAVE_FAILED";
+      throw Object.assign(new Error(lastError),{code:lastError});
+    }
+    coordinator.clearReview(expectedRevision);lastError=null;
     return publicStatus();
   }
   /** User-requested backup through the same handoff a due daily run takes.
@@ -303,10 +333,11 @@ export function createBackupScheduleHost(host) {
       try{release=await host.prepare("manual");}catch(error){holdFor(error,"manual");throw error;}
       if(heldBy?.occasion==="manual")heldBy=null;
       if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      const budgetMs=chooseBudget(s,current);
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
       stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup");lastError=null;
+      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
     }catch(error){
       if(intent){lastError="BACKUP_HANDOFF_DEFERRED";try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}}
       else if(manual)try{coordinator.cancelManual(manual);}catch{/* A changed job is left for review. */}
@@ -318,7 +349,7 @@ export function createBackupScheduleHost(host) {
   // The backup-mode capture under way, so a run past its ceiling can be
   // recorded as failed while the capture itself is still stuck (abandonOffline).
   let offline=null,offlineGivenUp=false;
-  async function captureArmed(closed=false){
+  async function captureArmed(closed=false,closedBudgetMs){
     const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
     const run={stage:"precondition",abandoned:false};if(!closed)offline=run;
     try{
@@ -326,15 +357,19 @@ export function createBackupScheduleHost(host) {
       const note=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes the backup. */}};
       const stage=name=>{run.stage=name;try{host.reportProgress?.(name);}catch{/* A progress screen never changes the backup. */}};
       note(`backup started ${JSON.stringify({job:String(s.job?.id??"").slice(0,8),closed})}`);
+      const budgetMs=closed?closedBudgetMs:carriedBudget(s);
+      note(`backup budget ${JSON.stringify({job:String(s.job?.id??"").slice(0,8),ms:budgetMs,stored:s.schedule.maxDurationMs})}`);
       stage("references");captureStage="references";const b=await checked();if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
       captureStage="claim";coordinator.claimHandoff(intent.id,hash(b),installationIdentity(host.installation()));
       claimed=true;
       const output=path.join(b.destination,s.job.id+".age");
       const readIdentity=async()=>{await checked();await verifyIdentityAccess();const key=readBackupIdentity(b.keyFile,host.installation());if(key.recipient!==b.recipient)throw Error("BACKUP_REFERENCE_CHANGED");return key.identity;};
+      // Before the commit that starts the capture, which is what publishes its deadline.
+      try{host.noteBudget?.({handoffId:intent.id,budgetMs});}catch{/* Health metadata never changes a backup. */}
       coordinator.beginHandoffCapture(intent.id);
       const stepLog=createBackupStepLog({job:String(s.job?.id??"").slice(0,8),log:note});
       const onProgress=progress=>{try{stepLog(progress);host.reportWorkerProgress?.(progress);}catch{/* A progress note never changes the backup. */}};
-      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:s.schedule.maxDurationMs,onProgress});
+      stage("capture");captureStage="capture";const result=await host.capture({output,recipient:b.recipient,readIdentity,maxBytes:s.schedule.maxBytes,maxDurationMs:budgetMs,onProgress});
       stage("artifact-readback");captureStage="artifact-readback";
       // The worker reports the archive in its canonical spelling, which on
       // Windows is lower case; the file checked below is always our own path.
@@ -439,6 +474,7 @@ export function createBackupScheduleHost(host) {
     if(running)return closedResult("busy");
     running=true;let intent,stage="state";
     try{
+      const before=coordinator.status();
       let eligibility=coordinator.closedEligibility();
       if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
       // This private main-owned hook must prove the existing installation lease,
@@ -453,9 +489,10 @@ export function createBackupScheduleHost(host) {
       stage="state";host.traceClosed?.(stage);const s=await coordinator.tick();
       if(!s.enabled||s.schedule.closedApp!==true)return closedResult("disabled");
       if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase))return closedResult("needs-review","pending-work");
+      const budgetMs=chooseBudget(s,before);
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);coordinator.armHandoff(intent.id);
-      stage="capture";host.traceClosed?.(stage);await captureArmed(true);
+      stage="capture";host.traceClosed?.(stage);await captureArmed(true,budgetMs);
       lastError=null;return closedResult("verified");
     }catch(error){
       if(intent){
@@ -478,6 +515,8 @@ export function createBackupScheduleHost(host) {
       return{archivePath,receipt};
   }
   return {
+    /** The whole-run ceiling for the armed backup-mode run. */
+    offlineCeilingMs(){try{return offlineCeilingFor(carriedBudget(coordinator.status()));}catch{return offlineCeilingFor();}},
     status:publicStatus,internalStatus,isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,prepareWorkspaceReturn,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},

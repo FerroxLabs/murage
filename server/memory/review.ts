@@ -287,11 +287,20 @@ function subjectOfRecord(db: DatabaseSync, roster: MemoryRoster, scopeId: string
   return scope ? subjectOfScope(scope, indexRoster(roster)) : null;
 }
 
+function waitingBasis(db: DatabaseSync, row: Record<string, any>): string | undefined {
+  const basis = db.prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=? AND record_version=?").get(row.id, row.version)?.confidence_basis;
+  return typeof basis === "string" ? basis : undefined;
+}
+
 /** Make a batch of waiting rows current. One data revision, one index nudge per row, ONE revocation call for the slice, and only for rows
- * something could have been derived from: a plain waiting row was never in a bundle, so there is nothing to end (AUDIT M3). */
-function activateSlice(db: DatabaseSync, rows: Array<Record<string, any>>): void {
+ * something could have been derived from: a plain waiting row was never in a bundle, so there is nothing to end (AUDIT M3).
+ * Returns why each row was waiting, by id: Keep writes over it, and Undo puts it back. */
+function activateSlice(db: DatabaseSync, rows: Array<Record<string, any>>): Map<string, string> {
   const touched: string[] = [];
+  const held = new Map<string, string>();
   for (const row of rows) {
+    const basis = waitingBasis(db, row);
+    if (basis !== undefined) held.set(String(row.id), basis);
     const changed = db.prepare("UPDATE memory_records SET state='active',owner_pinned=0 WHERE id=? AND version=? AND state='candidate'").run(row.id, row.version).changes;
     if (changed !== 1) throw fail("MEMORY_VERSION_CONFLICT");
     db.prepare("UPDATE memory_record_details SET confidence_basis='owner_confirmed' WHERE record_id=? AND record_version=? AND partition!='identity'").run(row.id, row.version);
@@ -300,6 +309,7 @@ function activateSlice(db: DatabaseSync, rows: Array<Record<string, any>>): void
   }
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
   if (touched.length) revokeRecordDisclosures(db, "review-keep", { recordIds: touched, viaSources: false });
+  return held;
 }
 
 function dropFromLater(db: DatabaseSync, ids: readonly string[]): void {
@@ -332,15 +342,16 @@ function keepOne(db: DatabaseSync, roster: MemoryRoster, ticket: object, input: 
   const prior = replayOf(db, input.id, input.actionId, payload);
   if (prior) return prior;
   const row = candidateRow(db, input.id, input.version);
+  let heldBasis: string | undefined;
   if (row.supersedes_id) {
     approveMemory(ticket, input.id, input.version, input.correctionPin ? { correctionPin: input.correctionPin } : {});
     db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(input.id, input.version);
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
   } else {
-    activateSlice(db, [row]);
+    heldBasis = activateSlice(db, [row]).get(input.id);
   }
   const result = { status: "kept" as const, id: input.id, version: input.version };
-  keepEvent(db, roster, row, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: input.version, payload, result });
+  keepEvent(db, roster, row, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: input.version, heldBasis, payload, result });
   dropFromLater(db, [input.id]);
   return result;
 }
@@ -374,10 +385,10 @@ export function reviewKeepAll(ticket: object, roster: MemoryRoster, input: { act
         ready.push(row);
       }
       if (!ready.length) return;
-      activateSlice(db, ready);
+      const held = activateSlice(db, ready);
       for (const row of ready) {
         const result: ItemResult = { status: "kept", id: String(row.id), version: Number(row.version) };
-        keepEvent(db, roster, row, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: Number(row.version), payload: hashOf({ a: "keep-all", id: row.id, version: row.version }), result });
+        keepEvent(db, roster, row, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: Number(row.version), heldBasis: held.get(String(row.id)), payload: hashOf({ a: "keep-all", id: row.id, version: row.version }), result });
         results.push(result);
       }
       dropFromLater(db, ready.map(row => String(row.id)));
@@ -438,18 +449,20 @@ export function reviewEdit(ticket: object, roster: MemoryRoster, input: { action
     if (!input.keep && latest && latest.version === input.version + 1 && latest.state === "candidate" && latest.assertion === "owner-statement" && latest.text === redactSecretsInText(text))
       return { status: "edited" as const, id: input.id, version: Number(latest.version) };
     const row = candidateRow(db, input.id, input.version);
+    const waitedFor = waitingBasis(db, row); // the edited version starts with none of its own
     const next = saveWaitingVersion(db, row, text);
     if (!input.keep) return { status: "edited" as const, id: input.id, version: next };
     const saved = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(input.id, next)!;
+    let heldBasis: string | undefined;
     if (saved.supersedes_id) {
       // A transferred pin moves to the NEW words: approveCorrection measures them against the share (assertOwnerPinsFit, 1.0.4) in
       // this transaction, so an edit that would not fit is refused with nothing kept.
       approveMemory(ticket, input.id, next, input.correctionPin ? { correctionPin: input.correctionPin } : {});
       db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL) ON CONFLICT(record_id,record_version,index_generation) DO UPDATE SET lexical_status='pending',embedding_status='pending',error=NULL").run(input.id, next);
       db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
-    } else activateSlice(db, [saved]);
+    } else { activateSlice(db, [saved]); heldBasis = waitedFor; }
     const kept = { status: "kept" as const, id: input.id, version: next };
-    keepEvent(db, roster, saved, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: input.version, editedTo: next, payload, result: kept });
+    keepEvent(db, roster, saved, { actionId: input.actionId, batchId: input.actionId, reviewedVersion: input.version, heldBasis, editedTo: next, payload, result: kept });
     dropFromLater(db, [input.id]);
     return kept;
   });
@@ -482,6 +495,8 @@ export function reviewUndo(ticket: object, roster: MemoryRoster, input: { action
     if (unchanged) {
       db.prepare("UPDATE memory_records SET state='candidate' WHERE id=? AND version=?").run(row.id, row.version);
       db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(row.id, row.version);
+      // Waiting again means waiting for the reason it was waiting before, in Needs you and for any later Keep
+      if (typeof kept.detail.heldBasis === "string") db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=? AND confidence_basis='owner_confirmed'").run(kept.detail.heldBasis, row.id, row.version);
       db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
       outcome = "waiting";
     } else {

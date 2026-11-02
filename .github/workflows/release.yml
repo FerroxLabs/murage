@@ -381,6 +381,12 @@ jobs:
         run: |
           for app in release/mac-arm64/Murage.app release/mac/Murage.app; do
             codesign --verify --deep --strict "$app"
+            # What macOS shows when a bot opens these folders: the built plist, not the config.
+            for folder in Documents Desktop Downloads; do
+              got=$(/usr/libexec/PlistBuddy -c "Print :NS${folder}FolderUsageDescription" "$app/Contents/Info.plist")
+              test "$got" = "Murage needs this so your bots can work with files in your $folder folder when you ask." \
+                || { echo "::error::wrong $folder purpose string in $app"; exit 1; }
+            done
             bin="$app/Contents/Resources/cloudflared/cloudflared"
             test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
             test -f "$app/Contents/Resources/licenses/cloudflared-LICENSE.txt" \

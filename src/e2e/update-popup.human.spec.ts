@@ -45,6 +45,8 @@ test('comes up by itself during typing, keeps focus and every key, and shows no 
  await page.keyboard.type('world');await expect(composer).toHaveValue('hello world');
  await expect(page.getByRole('dialog')).toHaveCount(0);await expect(page.getByTestId('update-card-layer')).toHaveCount(0);
  await expect(page.getByTestId('update-popup').getByRole('status')).toBeVisible();
+ // The pop-up slides in 28px; measure where it rests, not where the slide happens to be.
+ await page.getByTestId('update-popup').evaluate((el:Element)=>Promise.all(el.getAnimations().map(a=>a.finished)));
  const popup=await box(page.getByTestId('update-popup'));const footer=await box(page.getByTestId('footer'));
  expect(apart(popup,footer)).toBe(true);expect(apart(popup,await box(composer))).toBe(true);expect(popup.x+popup.width).toBeLessThanOrEqual(320);
 });

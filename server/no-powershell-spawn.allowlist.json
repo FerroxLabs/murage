@@ -16,7 +16,7 @@
         "44dbaba2e814a529": "if (!value) throw new Unreadable(\"pwsh\", `${text} without a value`);",
         "87f5b759d65e9bb4": "export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: \"command\" |",
         "856694841b5b0975": "function read(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: string[",
-        "69e7b0d4c190f105": "return (shell === \"pwsh\" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash }",
+        "b53874c568c298c8": "return (shell === \"pwsh\" ? walkPwsh(text, { ...newContext(cwd || undefined), windowsBash, p",
         "9928c0bbc7789cbc": "export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, shell?: \"p",
         "90d273ca2fc0b2b5": "function readWhole(text: string, cwd: string | undefined, shell?: \"pwsh\", windowsBash?: st",
         "53b17291b37d0e87": "function unseenShapeAdmits(text: string, paths: string[], cwd: string | undefined, shell?:",
@@ -27,7 +27,10 @@
     "server/auto-approve.ts": {
       "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing",
       "lines": {
-        "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", ",
+        "9ed9cfeb637eb026": "type KeyWhy = \"path\" | \"value\" | \"field\" | \"mcp\" | \"summary\" | \"unmodeled\" | \"pwsh\" | \"local-hold\";",
+        "8c31ac12b45b7d5f": "const commandData: CommandDataRead | \"plain\" | \"unmodeled\" | \"summary\" | undefined = covered && pinShell !== \"pwsh\"",
+        "09b9146350fd9b8f": ": pinShell === \"pwsh\" ? \"pwsh\"",
+        "3542a1ee4d026956": "const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === \"pwsh\").text, ...(dequoted ? [dequoted.text] : [])]);",
         "f66ec09b84cdfaf5": "const POWERSHELL_TOOLS = new Set([\"powershell\", \"pwsh\"]);",
         "476755901dcc1868": "function simpleProgram(summary: string, dialect: \"posix\" | \"pwsh\" = \"posix\"): string | und",
         "5945fbeb2c17e4c0": "if (dialect === \"pwsh\" && /[\\u2018-\\u201E\\u2013-\\u2015]/.test(summary)) return undefined;",
@@ -161,6 +164,12 @@
       "reason": "recognizer: the PowerShell program names in the argument vocabulary that classifies a proposed command; starts nothing",
       "lines": {
         "a02255b9b1a42dba": "powershell: [\"powershell\", \"pwsh\"],"
+      }
+    },
+    "shared/grant-tool-names.ts": {
+      "reason": "recognizer: the command-tool names ('powershell', 'pwsh'), moved here from server/auto-approve.ts (UX L1A); classifies a proposed command, starts nothing",
+      "lines": {
+        "a82a0188806e4666": "const COMMAND_TOOLS = new Set([\"bash\", \"shell\", \"execute\", \"exec_command\", \"run_command\", "
       }
     },
     "shared/prompt-capable.ts": {

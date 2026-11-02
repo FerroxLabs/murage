@@ -10,6 +10,7 @@ import { heldStep } from "../observe.ts";
 import { doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
 import { setSendFenceDeps } from "./send-fence.ts";
 import type { LineageReader, LineageVerdict } from "./lineage-types.ts";
+import { withSecondLook } from "./lineage-allowance.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
 import { drainBranchChanges } from "./branch-change.ts";
 
@@ -342,5 +343,5 @@ export function droppedPinLine(threadId: string, bundle: MemoryBundle & {dropped
 }
 
 // ---- the entry points of the lineage reads, each timed (see LineageAllowance.timed) ----
-/** retainedSessionInvalid, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time). */
-export function retainedSessionInvalid(...args: Parameters<typeof retainedSessionInvalidWork>): ReturnType<typeof retainedSessionInvalidWork> { return args[0].timed(() => retainedSessionInvalidWork(...args)); }
+/** retainedSessionInvalid, timed against the allowance's wall-clock budget (1.0.2 lineage-cold r3: nodes bound the count, this bounds the time), with one second look when the clock stopped it. */
+export function retainedSessionInvalid(allowance:LineageAllowance,threadId:string,instanceId:string,session:string,why:{reason?:string}={},reader?:LineageReader):boolean { return withSecondLook(allowance,why,turn=>retainedSessionInvalidWork(turn,threadId,instanceId,session,why,reader)); }

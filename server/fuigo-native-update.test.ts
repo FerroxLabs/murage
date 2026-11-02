@@ -108,12 +108,12 @@ it("caps managed updates at the bundled, qualified Fuigo pin", async () => {
   // One pin: bumping scripts/prepare-fuigo.mjs FUIGO_VERSION must move the cap with it.
   expect(QUALIFIED_FUIGO_VERSION).toBe(pinned);
   expect(qualifiedFuigoVersion(QUALIFIED_FUIGO_VERSION)).toBe(true); expect(qualifiedFuigoVersion("1.0.9")).toBe(true);
-  for (const version of ["1.0.35", "1.1.0", "2.0.0", "1.0.8"]) expect(qualifiedFuigoVersion(version)).toBe(false);
-  expect(offeredFuigoVersion("1.0.35")).toBe(QUALIFIED_FUIGO_VERSION); expect(offeredFuigoVersion("2.0.0")).toBe(QUALIFIED_FUIGO_VERSION);
+  for (const version of ["1.0.39", "1.1.0", "2.0.0", "1.0.8"]) expect(qualifiedFuigoVersion(version)).toBe(false);
+  expect(offeredFuigoVersion("1.0.39")).toBe(QUALIFIED_FUIGO_VERSION); expect(offeredFuigoVersion("2.0.0")).toBe(QUALIFIED_FUIGO_VERSION);
   expect(offeredFuigoVersion("1.0.10")).toBe("1.0.10"); expect(offeredFuigoVersion(QUALIFIED_FUIGO_VERSION)).toBe(QUALIFIED_FUIGO_VERSION);
   // An already-installed newer release stays recognised; only offering and staging are capped.
-  expect(supportedFuigoVersion("1.0.35")).toBe(true);
+  expect(supportedFuigoVersion("1.0.39")).toBe(true);
   const fetcher = vi.fn(async () => { throw new Error("never fetched"); });
-  await expect(stageNativeFuigo({ root: "/nonexistent", id: "fuigo", target: "darwin-arm64", version: "1.0.35", fetcher: fetcher as unknown as typeof fetch })).rejects.toThrow(/not supported/);
+  await expect(stageNativeFuigo({ root: "/nonexistent", id: "fuigo", target: "darwin-arm64", version: "1.0.39", fetcher: fetcher as unknown as typeof fetch })).rejects.toThrow(/not supported/);
   expect(fetcher).not.toHaveBeenCalled();
 });

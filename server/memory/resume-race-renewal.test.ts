@@ -105,8 +105,9 @@ const lines = [
 ];
 
 /** The first resumed turn after the restart, as index.ts runs it: one turn allowance, a slow recall on it, the after-recall check, and
- * on reset (the cursor dropped) the memory block and the replay rebuilt on the same allowance, renewed at the reset. */
-async function firstTurnAfterRestart() {
+ * on reset (the cursor dropped) the memory block and the replay rebuilt on the same allowance, renewed at the reset. `checkMs` is the
+ * time the after-recall check and its second look get (designs/RESUME-SECOND-LOOK-1013.md): 0 and neither can finish. */
+async function firstTurnAfterRestart(checkMs = 50) {
   setLineageTimeBudgetForTest(50);
   const allowance = LineageAllowance.turn();
   const turn = access();
@@ -114,7 +115,9 @@ async function firstTurnAfterRestart() {
   await buildMemoryBundle("what did we agree on", turn, empty, { allowance, excludeMessageIds: ["u2"] });
   const why: { reason?: string } = {};
   // the stamp moved since the dispatch check (the turn's own capture does), so the check runs whole
+  setLineageTimeBudgetForTest(checkMs);
   const reset = resumedSessionInvalidAfterRecall(allowance, "chat", "engine", "s1", turn, undefined, why);
+  setLineageTimeBudgetForTest(50);
   // index.ts: the reset is decided, the allowance is renewed once, then the rebuild
   const renewed = reset ? (allowance as { renew?: () => boolean }).renew?.() ?? false : false;
   const bundle = await buildMemoryBundleAfterReset("what did we agree on", turn, empty, async () => {}, { allowance, excludeMessageIds: ["u2"] });
@@ -125,9 +128,9 @@ async function firstTurnAfterRestart() {
 it("the reset turn after a restart has the full replay and the memory block, though recall spent the turn's lineage time", async () => {
   const { checkpoint } = await conversation();
   restart();
-  const turn = await firstTurnAfterRestart();
+  const turn = await firstTurnAfterRestart(0);
   expect(slow.held, "the recall's record read was held").toBe(1);
-  // the cursor is still dropped: a check that could not finish proves nothing (fail closed)
+  // the cursor is still dropped: a check that could not finish, on either look, proves nothing (fail closed)
   expect(turn.reset).toBe(true);
   expect(turn.reason).toBe("lineage-warming");
   // ...and the new session is given everything that is authorized
@@ -135,6 +138,16 @@ it("the reset turn after a restart has the full replay and the memory block, tho
   expect(turn.bundle.recordVersions, "the memory block (the thread's checkpoint)").toContainEqual(checkpoint);
   expect(turn.bundle.text).toContain("gate code");
   expect(turn.renewed, "the reset renewed the allowance").toBe(true);
+});
+
+it("a clean session keeps its cursor when recall spent the turn's lineage time: the second look finishes the check", async () => {
+  await conversation();
+  restart();
+  const turn = await firstTurnAfterRestart();
+  expect(slow.held, "the recall's record read was held").toBe(1);
+  expect(turn.reset).toBe(false);
+  expect(turn.reason).toBeUndefined();
+  expect(turn.renewed, "nothing to renew: no reset").toBe(false);
 });
 
 it("a real revoke stays out after the renewal: the renewed rebuild still withholds what rests on a retired source", async () => {

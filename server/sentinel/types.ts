@@ -21,7 +21,7 @@ export type Resolution = "observed-recovery" | "policy-ended" | "source-retired"
 export type Coverage = "complete" | "partial" | "unavailable" | "not-applicable";
 export type Subsystem = "backup" | "storage" | "memory" | "engine" | "deletion" | "dispatch" | "monitoring";
 /** The concrete next action a detail row offers (section 8.1). Fixed destinations, never an input-supplied URL or path. */
-export type NextAction = "backups" | "memory-settings" | "manage-storage" | "diagnostics" | "none";
+export type NextAction = "backups" | "memory-settings" | "manage-storage" | "engines" | "none";
 
 /** Coverage of one issue, with per-source status and the last time each source was complete. */
 export interface IssueCoverage {

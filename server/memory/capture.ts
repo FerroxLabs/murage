@@ -24,11 +24,11 @@ import { hasWritetime } from "./revoke-marker.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
+import { threadExcluded } from "./deny.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
 import { looksLikeExport } from "../../shared/learn-about-me/detect.ts";
 
 function enabled(db: DatabaseSync) { const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode as string | undefined; return memoryCaptures(mode, memoryGate(db, "capture") === "ok" ? null : "held"); }
-function excludedThread(db:DatabaseSync,threadId:string){return Boolean(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=? LIMIT 1").get(threadId));}
 /** The scope a thread's sources are captured into: its room's scope for a
  * room or project desk thread, else its own conversation (capture-scope.ts). */
 export function captureScopeId(db: DatabaseSync, threadId: string) {
@@ -39,7 +39,7 @@ export function captureScopeId(db: DatabaseSync, threadId: string) {
 }
 
 export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; origin?: {kind:string;channel?:string;connectionId?:string;webhookId?:string;routineId?:string}; engine?: {instanceId:string;model:string;capabilityHash:string}; actionCheck?: Message["actionCheck"]; excluded?: string; externalContent?: "email"; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}) {
-  if (!enabled(db)||excludedThread(db,source.threadId)) return;
+  if (!enabled(db)||threadExcluded(db,source.threadId)) return;
   // Keep failed outcomes as procedure-learning evidence, never recall work.
   const failedTool = (source.kind === "tool-outcome" || source.kind === "activity") && source.outcome === "failed";
   const text = redactSecretsInText(source.text);
@@ -159,7 +159,7 @@ export function isExportPaste(message: Message): boolean {
 /** Whether the chat marks this message as left out of memory: memory captures in the thread and the paste is an export (3.3). Memory
  * off or held writes no mark (B6). */
 export function exportPasteNoted(db: DatabaseSync, threadId: string, message: Message): boolean {
-  return isExportPaste(message) && enabled(db) && !excludedThread(db, threadId);
+  return isExportPaste(message) && enabled(db) && !threadExcluded(db, threadId);
 }
 /** The bot's answer to a paste left out of memory is left out too (3.2): its prompt is the parent of its turn's first row, read on the
  * turn's own parent links (turnPath). A turn that is not provable (null) is captured as usual. One primary-key read of the prompt's source. */
@@ -210,7 +210,7 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
  * sides are updated, not every source of the thread (memory/branch-change.ts:
  * the first rows in this transaction, a long change in slices after it). */
 export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: string | null, fromLeafId?: string | null) {
-  if (!enabled(db)||excludedThread(db,threadId)) return;
+  if (!enabled(db)||threadExcluded(db,threadId)) return;
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
   if (leafId) startBranchChange(db, threadId, fromLeafId ?? null, leafId);
   else {

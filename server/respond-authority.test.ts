@@ -21,6 +21,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -221,7 +222,7 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
         const created = await desktopApi("POST", "/api/bots", { name, modelSelection: { instanceId: "cleaner", model: "fake-model" } });
         expect(created.status).toBe(201);
         const bot = created.body.bot as { id: string; threadId: string };
-        expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false, fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+        expect((await raiseLevel(desktopApi, bot.id, { computer: "off", browser: false, composio: false, fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
         const other = (await desktopApi("POST", "/api/bots", { name: `${name} peer`, modelSelection: { instanceId: "cleaner", model: "fake-model" } })).body.bot;
         const group = await desktopApi("POST", "/api/groups", { name: `${name} room`, memberIds: [bot.id, other.id], setup: { bulletin: "Fixture only", defaultResponder: { kind: "member", botId: bot.id } } });
         expect(group.status, JSON.stringify(group.body)).toBe(201);

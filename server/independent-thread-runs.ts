@@ -128,7 +128,7 @@ export class IndependentThreadRuns<T> {
       return run;
     } catch (error) {
       // the takeover did not happen: the thread is free now, as after any release
-      if (takenOver !== undefined) this.freed(threadId, takenOver);
+      if (takenOver !== undefined) this.freed(threadId, takenOver, options.takeOver!);
       throw error;
     }
   }
@@ -331,14 +331,14 @@ export class IndependentThreadRuns<T> {
   }
 
   /** Told the conversation whose run was just released, and its bot (the shared queue wakes the teams waiting on that conversation, and on the bot's slot). */
-  onReleased?: (threadId: string, botId: string | undefined) => void;
+  onReleased?: (threadId: string, botId: string | undefined, generation: string) => void;
 
   /** Only after teardown/final capture is confirmed. Late cleanup is harmless. */
   release(owner: TurnOwner): boolean {
     if (!this.current(owner)) return false;
     const botId = this.runs.get(owner.threadId)?.botId;
     this.drop(owner);
-    this.freed(owner.threadId, botId);
+    this.freed(owner.threadId, botId, owner.generation);
     return true;
   }
 
@@ -353,8 +353,8 @@ export class IndependentThreadRuns<T> {
     this.ownerSends.delete(owner.generation);
   }
 
-  private freed(threadId: string, botId: string | undefined): void {
-    try { this.onReleased?.(threadId, botId); } catch { /* a listener never keeps a run from being released */ }
+  private freed(threadId: string, botId: string | undefined, generation: string): void {
+    try { this.onReleased?.(threadId, botId, generation); } catch { /* a listener never keeps a run from being released */ }
     this.pump();
   }
 

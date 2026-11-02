@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const PROMPT = "A red cube on a white table";
@@ -49,7 +50,8 @@ async function makeBot(name: string, patch: Record<string, unknown> = {}) {
   const made = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "imager", model: instance.models.options[0]?.id || instance.models.default || "fixture-model" } });
   expect(made.status, JSON.stringify(made.body)).toBe(201);
   const bot = made.body.bot;
-  const set = await api("PATCH", `/api/bots/${bot.id}`, { computer: "off", browser: false, composio: false, ...patch });
+  const flags = { computer: "off", browser: false, composio: false, ...patch };
+  const set = patch.fullAccess === true || patch.noLimits === true ? await raiseLevel(api, bot.id, flags) : await api("PATCH", `/api/bots/${bot.id}`, flags);
   expect(set.status, JSON.stringify(set.body)).toBe(200);
   return bot as { id: string; threadId: string };
 }

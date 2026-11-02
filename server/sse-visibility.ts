@@ -560,6 +560,7 @@ export function scopedConfig<T extends { profile?: unknown; vps?: unknown }>(con
   // Named, not subtracted: a field added to either object later stays home
   // until someone decides a phone should see it (Kimi round 3, L3).
   const out: Record<string, unknown> = { ...config };
+  delete out.noLimitsTerms; // the desktop's to read, and its alone to accept
   if (out.features && typeof out.features === "object") {
     const { botsSharedAcrossTeams: _sharing, ...features } = out.features as Record<string, unknown>;
     out.features = features;

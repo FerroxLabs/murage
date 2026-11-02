@@ -21,9 +21,10 @@ import {
 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { t } from "@/lib/i18n";
-import { displayArgs, envForBody, hostOf, installStage, probeToolCount, removeServer, signInTo, testServer, type ProbeView } from "@/lib/mcp-add-flow";
-import { probeSentence } from "@/lib/mcp-card-view";
+import { displayArgs, envForBody, hostOf, probeToolCount, removeServer, signInTo, testServer, testWaitKey, type ProbeView } from "@/lib/mcp-add-flow";
+import { savedProbeSentence } from "@/lib/mcp-card-view";
 import { useMcpBridge } from "@/lib/use-mcp-bridge";
 import { api } from "@/state/store";
 import { NETLIFY_TOKEN_ENTRY } from "../../shared/published-sites";
@@ -64,6 +65,11 @@ export interface McpRemoteServerListing {
 export function nameClashWith(server: { disabledReason?: string }): string | null {
   const reason = server.disabledReason ?? "";
   return reason.startsWith("name-collision:") && reason.length > "name-collision:".length ? reason.slice("name-collision:".length) : null;
+}
+
+/** What a Test on a saved server says while it waits. */
+export function SavedTestWait({ elapsed }: { elapsed: number }) {
+  return <div role="status" className="mt-3 text-[12px] text-ink-secondary">{t(testWaitKey(elapsed, false))}</div>;
 }
 
 type AnyListing = McpServerListing | McpRemoteServerListing;
@@ -337,7 +343,7 @@ export function McpServersPanel() {
   const buttonClass = "flex items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-40 min-h-[40px] sm:min-h-0";
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-7 pt-5 sm:px-8">
+    <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-7 pt-5 [--box-pad:1.75rem] sm:px-8">
       <div className="mx-auto max-w-[840px]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -367,7 +373,7 @@ export function McpServersPanel() {
 
         <div className="mt-4 rounded-xl border border-hairline/50 bg-raised/35 px-4 py-3 text-[12px] leading-relaxed text-ink-secondary">{t("mcp.panel.warning")}</div>
 
-        {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+        {error && !editing && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
         {notice && <div role="status" className="mt-3 rounded-lg bg-success/10 px-3 py-2 text-[12px] text-success">{notice}</div>}
 
         {adding && (
@@ -423,8 +429,10 @@ export function McpServersPanel() {
                 <span className="mt-1.5 block text-[11px] text-ink-secondary">{t("mcp.edit.envHint")}</span>
               </label>
             </div>
+            <div className={cn(BOX_SAVE_ROW, "mt-2 bg-card")}>
+            {error && <div role="alert" className="mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
             {askKeep && (
-              <div role="alert" className="mt-4 rounded-lg border border-warning/40 bg-warning/10 p-3" data-testid="mcp-keep-values">
+              <div role="alert" className="mb-2 rounded-lg border border-warning/40 bg-warning/10 p-3" data-testid="mcp-keep-values">
                 <p className="text-[12.5px] text-ink">{t("mcp.edit.keepAsk", { keys: askKeep.join(", ") })}</p>
                 <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                   <button type="button" disabled={busy !== null} onClick={() => void save("keep")} className="min-h-[44px] rounded-lg bg-accent px-3.5 py-2 text-[12.5px] font-medium text-white disabled:opacity-50 sm:min-h-0">{t("mcp.edit.keepYes")}</button>
@@ -432,7 +440,7 @@ export function McpServersPanel() {
                 </div>
               </div>
             )}
-            <div className="mt-4 flex justify-end gap-2">
+            <div className="flex justify-end gap-2">
               <button type="button" onClick={closeEditor} className="rounded-lg px-3 py-2 text-[12.5px] text-ink-secondary hover:bg-raised">{t("mcp.add.cancel")}</button>
               <button
                 type="button"
@@ -442,6 +450,7 @@ export function McpServersPanel() {
               >
                 {busy === "save" && <Loader2 size={13} className="animate-spin" />} {t("mcp.edit.save")}
               </button>
+            </div>
             </div>
           </div>
         )}
@@ -525,23 +534,19 @@ export function McpServersPanel() {
                     </form>
                   )}
                   {removing === server.name && (
-                    <div role="alertdialog" aria-label={t("mcp.remove.confirm", { name: server.name })} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2 text-[12.5px] text-ink">
+                    <div role="alertdialog" data-box-exempt="inline confirm under a server row" aria-label={t("mcp.remove.confirm", { name: server.name })} className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-danger/5 px-3 py-2 text-[12.5px] text-ink">
                       <span>{t("mcp.remove.confirm", { name: server.name })}</span>
                       <button type="button" disabled={!idle} onClick={() => void remove(server)} className="rounded-lg px-2.5 py-1.5 text-danger hover:bg-danger/10 disabled:opacity-40">{busy === `delete:${server.name}` && <Loader2 size={13} className="mr-1 inline animate-spin" />}{t("mcp.remove.yes")}</button>
                       <button type="button" onClick={() => setRemoving(null)} className="rounded-lg px-2.5 py-1.5 text-ink-secondary hover:bg-raised">{t("mcp.remove.keep")}</button>
                     </div>
                   )}
-                  {busy === `test:${server.name}` && !remote && elapsed >= 2 && (
-                    <div role="status" className="mt-3 text-[12px] text-ink-secondary">
-                      {installStage(elapsed) === "start" ? t("mcp.card.install.start") : installStage(elapsed) === "setup" ? t("mcp.card.install.setup") : t("mcp.card.install.still")}
-                    </div>
-                  )}
+                  {busy === `test:${server.name}` && !remote && elapsed >= 2 && <SavedTestWait elapsed={elapsed} />}
                   {result && (
                     <div role="status" className={cn("mt-3 rounded-lg px-3 py-2 text-[12px]", result.ok ? "bg-success/10 text-success" : "bg-danger/10 text-danger")}>
                       {result.ok ? (
                         <span className="flex items-start gap-2"><CheckCircle2 size={14} className="mt-px shrink-0" />{" "}
                           {result.tools.length ? t("mcp.row.connectedTools", { count: probeToolCount(result), names: result.tools.map((tool) => tool.name).join(", ") }) : t("mcp.row.connectedNoTools")}</span>
-                      ) : probeSentence(result, host)}
+                      ) : savedProbeSentence(result, host)}
                     </div>
                   )}
                 </div>

@@ -24,7 +24,6 @@ import {
   BellOff,
   BookOpen,
   Bot as BotIcon,
-  CalendarDays,
   Check,
   ClipboardCopy,
   Copy,
@@ -33,6 +32,7 @@ import {
   EyeOff,
   Compass,
   Folder,
+  HeartPulse,
   FolderMinus,
   FolderPlus,
   Info,
@@ -55,7 +55,6 @@ import {
   Smartphone,
   Puzzle,
   MessageSquarePlus,
-  MessagesSquare,
   Target,
   Trash2,
   UserRound,
@@ -84,6 +83,7 @@ import { botUnreadThreadIds, markBotRead } from "@/lib/bot-read";
 import { useUpdaterState } from "@/lib/updater";
 import { openUpdateCard, showUpdatePopup } from "@/lib/update-card";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import { skillRecorderAvailable } from "@/lib/feature-flags";
 import { isCloudOrigin } from "@/lib/cloud-workspace";
 import { nextRename } from "@/lib/rename";
@@ -149,14 +149,17 @@ import { conversationNoun } from "@/lib/conversation-noun";
 import { botListItemPointerIntent, inlineArchiveAvailable, insideRenameField } from "@/lib/sidebar-selection";
 import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { SidebarMovedNote, SidebarPlaces, shouldShowMovedNote, type SidebarPlaceItem } from "./SidebarPlaces";
+import { RailDoors } from "./shell/RailDoors";
+import { StatusDot, healthLevelWords } from "./shell/StatusDot";
+import { doorForView } from "./shell/shell-nav";
+import type { HealthStatus, NeedsSummary, ShellDoor } from "./shell/shell-contract";
+import { railWorkingTip, workingNow } from "@/lib/working-now";
 import { SidebarYouMenu, type YouMenuItem } from "./SidebarYouMenu";
 import { t } from "@/lib/i18n";
 import { existingTeams, projectSection } from "@/lib/project-team";
 import { modShortcut } from "@/lib/mod-shortcut";
 import { OPEN_SHORTCUTS_EVENT, OPEN_WHATS_NEW_EVENT, openCommandPalette } from "@/lib/app-events";
 import { openFirstRun } from "@/lib/first-run";
-import { SidebarNeedsYou } from "./SidebarNeedsYou";
 // The shortcut list loads when someone asks for it, not with the first paint.
 const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").then((module) => ({ default: module.KeyboardShortcutsDialog })));
 // Opened from a menu, never on the first paint: each loads on first use.
@@ -167,8 +170,6 @@ const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((
 import { WhatsNewHost } from "./WhatsNewHost";
 import { AnnouncementsHost } from "./Announcements";
 import { APP_VERSION, useWhatsNew } from "@/lib/whats-new";
-import { usePendingApprovals } from "./usePendingApprovals";
-import { InboxDialog } from "./InboxDialog";
 import { useTrayIntents } from "./useTrayIntents";
 import { FilesDialog } from "./FilesDialog";
 import type { FilesOpenDetail } from "./Files";
@@ -937,9 +938,10 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
       className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className="max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-hairline/50 bg-card p-4 shadow-2xl">
-        <div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div>
-        <p className="mb-3 mt-0.5 text-[12.5px] text-ink-secondary">
+      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}>
+        <BoxHead className="px-4 pt-4"><div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div></BoxHead>
+        <BoxBody className="px-4 pb-3 pt-0.5">
+        <p className="mb-3 text-[12.5px] text-ink-secondary">
           {project ? "A place for work, files and chat. A goal is optional." : "A chat with some bots."}
         </p>
         <input
@@ -1012,15 +1014,19 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
           picked={picked}
           onToggle={toggle}
           emptyHint="Create a bot first. Channels are made of bots."
+          bounded={false}
         />
+        </BoxBody>
+        <BoxFoot className="border-t border-hairline/40 px-4 py-3">
         <button
           onClick={create}
           disabled={!ready}
-          className="mt-3 w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          className="w-full rounded-lg bg-accent py-2 text-[14px] font-medium text-white hover:brightness-110 disabled:opacity-40"
         >
           {project ? "Create Project" : "Create Channel"}
           {picked.size ? ` · ${picked.size} ${picked.size === 1 ? "bot" : "bots"}` : ""}
         </button>
+        </BoxFoot>
       </div>
     </div>,
     document.body,
@@ -1526,6 +1532,9 @@ export const BotListItem = memo(function BotListItem({
     ? sidebarBotPreview(bot)
     : "";
   const mark = sidebarBotMark(weighed);
+  // UX 1.0.13 (L2A): a running bot carries a pulse dot, and its tooltip says what and for how long.
+  const workingItem = workingNow([bot])[0];
+  const workingTip = workingItem ? railWorkingTip(workingItem, now) : undefined;
   const markLabel = [sidebarMarkLabel(mark), questionBadgeLabel(row.questions),
     row.snoozedUntil !== undefined ? formatSnoozedUntil(row.snoozedUntil, now, {}, row.snoozedUntilActivity) : ""].filter(Boolean).join(", ");
   const rowClass = cn(
@@ -1558,6 +1567,7 @@ export const BotListItem = memo(function BotListItem({
         // decorative; busy/unread/motion are the real signals).
         animated={isMascotAnimated({ busy: bot.busy, unread: weighed.unread }, mascotMotion?.kind)}
       />
+      {workingItem && <span aria-hidden="true" data-working-pulse className="absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full bg-success ring-2 ring-panel animate-status-pulse" />}
       </span>
       <div className={cn("pointer-events-none relative z-10 min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
@@ -1642,7 +1652,7 @@ export const BotListItem = memo(function BotListItem({
   // still open the bot while the name is being edited.
   const showInlineArchive = inlineArchiveAvailable({ role: botRole(bot), archiveDisabled, renaming, iconOnly });
   return (
-    <div className="group relative" title={iconOnly ? bot.name : undefined}>
+    <div className="group relative" title={workingTip ?? (iconOnly ? bot.name : undefined)}>
       <div
         data-sidebar-bot-row={bot.id}
         draggable={Boolean(onBotDragStart) && !renaming}
@@ -1884,9 +1894,9 @@ function ArchivedBotsPanel({
         aria-modal="true"
         aria-labelledby="archived-bots-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[760px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className={cn(BOX_FRAME, "animate-pop-in max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[760px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none")}
       >
-        <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
+        <BoxHead className="items-start gap-4 px-6 pb-4 pt-6 sm:px-8 sm:pt-7">
           <div>
             <h2 id="archived-bots-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">Archived bots</h2>
             <p className="mt-1 text-[13px] text-ink-secondary">Conversations are kept until you choose to delete a bot.</p>
@@ -1921,8 +1931,8 @@ function ArchivedBotsPanel({
               <X size={21} />
             </button>
           </div>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-3 sm:px-8">
+        </BoxHead>
+        <BoxBody className="px-6 pb-7 pt-3 sm:px-8">
           <div className="mb-3 text-[12px] font-medium text-ink-secondary">{bots.length} archived</div>
           <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
             {bots.map((bot) => (
@@ -1953,7 +1963,7 @@ function ArchivedBotsPanel({
             ))}
           </div>
           {error && <div role="alert" className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
-        </div>
+        </BoxBody>
       </div>
       {pendingDelete && pendingDelete.length === 1 && (
         <ConfirmDelete
@@ -2069,9 +2079,9 @@ function ArchivedChannelsPanel({
         aria-modal="true"
         aria-labelledby="archived-channels-title"
         tabIndex={-1}
-        className="animate-pop-in flex max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[640px] flex-col overflow-hidden rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none"
+        className={cn(BOX_FRAME, "animate-pop-in max-h-[min(680px,calc(var(--vvh,100dvh)-2rem))] w-full max-w-[640px] rounded-[24px] border border-hairline/50 bg-panel shadow-2xl shadow-black/50 outline-none")}
       >
-        <header className="flex items-start justify-between gap-4 px-6 pb-4 pt-6">
+        <BoxHead className="items-start gap-4 px-6 pb-4 pt-6">
           <div>
             <h2 id="archived-channels-title" className="text-[22px] font-semibold tracking-[-0.01em] text-ink">
               Archived channels
@@ -2098,8 +2108,8 @@ function ArchivedChannelsPanel({
               <X size={21} />
             </button>
           </div>
-        </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
+        </BoxHead>
+        <BoxBody className="px-6 pb-6">
           {error && (
             <p role="alert" className="mb-3 text-[13px] text-danger">
               {error}
@@ -2142,7 +2152,7 @@ function ArchivedChannelsPanel({
               </div>
             ))}
           </div>
-        </div>
+        </BoxBody>
       </div>
       {pendingDelete && (
         <ConfirmDelete
@@ -2164,7 +2174,19 @@ function ArchivedChannelsPanel({
   );
 }
 
-export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClose: () => void; onReturnFocus?: () => void }) {
+/** A Sidebar mounted on its own (a spec harness, a future host) has no count and no level yet: say "not known", never a made-up zero. */
+const NO_NEEDS: Pick<NeedsSummary, "count" | "stale"> = { count: undefined, stale: false };
+const NO_HEALTH: HealthStatus = { level: "unknown", line: "" };
+
+export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health = NO_HEALTH }: {
+  open: boolean;
+  onClose: () => void;
+  onReturnFocus?: () => void;
+  /** UX 1.0.13: the one Needs you count (App reads it once, for the door and Today alike). */
+  needs?: Pick<NeedsSummary, "count" | "stale">;
+  /** UX 1.0.13: the Health level, for the dot on the You menu's Health item and on your name. */
+  health?: HealthStatus;
+}) {
   // Selection is an explicit navigation event even when its id is unchanged.
   // Row menus and inline rename do not call this callback.
   const onNavigate = () => { if (open) onClose(); };
@@ -2204,12 +2226,9 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
   const [showHidden, setShowHidden] = useState(false);
   const hiddenChange = useRef(false);
   const [exportTeamOpen, setExportTeamOpen] = useState(false);
-  const [inboxOpen, setInboxOpen] = useState(false);
-  const approvals = usePendingApprovals(desktop === true, state.connected);
   const threadAttention = useThreadAttention();
   const [snoozeTarget, setSnoozeTarget] = useState<({ threadId: string; name: string } & MenuAnchor) | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [movedNote, setMovedNote] = useState(() => shouldShowMovedNote());
   const youTriggerRef = useRef<HTMLButtonElement>(null);
   // What's new: opens by itself once after an update (desktop only), and
   // again from the You menu or Settings > About & updates whenever asked.
@@ -2244,9 +2263,9 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     window.addEventListener("murage:open-memory", memory);
     return () => { window.removeEventListener("murage:open-files", open); window.removeEventListener("murage:open-memory", memory); };
   }, [desktop, state.bots, state.selectedId, dispatch]);
-  useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>setInboxOpen(true)),[]);
-  // The held-items line in a chat opens the same inbox the sidebar does.
-  useEffect(()=>{const open=()=>setInboxOpen(true);window.addEventListener("murage:open-inbox",open);return()=>window.removeEventListener("murage:open-inbox",open);},[]);
+  // A notification, the tray and the held-items line in a chat open the Needs you door (UX 1.0.13: a page, no longer a dialog).
+  useEffect(()=>window.muragebox?.startup?.onOpenInbox(()=>dispatch({ type: "showNeedsYou" })),[dispatch]);
+  useEffect(()=>{const open=()=>dispatch({ type: "showNeedsYou" });window.addEventListener("murage:open-inbox",open);return()=>window.removeEventListener("murage:open-inbox",open);},[dispatch]);
   useTrayIntents();
   const [teamFeedback, setTeamFeedback] = useState<TeamFeedback | null>(null);
   const [query, setQuery] = useState("");
@@ -2724,45 +2743,13 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
   const archivedBots = state.bots.filter((bot) => bot.hidden);
   const sidebarHiddenCount = state.bots.filter((bot) => !bot.hidden && bot.sidebarHidden).length;
 
-  const places: SidebarPlaceItem[] = [
-    {
-      key: "routines",
-      label: t("nav.routines"),
-      name: t("nav.routines"),
-      tip: t("nav.tip.routines"),
-      icon: <CalendarDays size={18} />,
-      active: state.activeView === "routines",
-      attention: state.routineRuns.some(isUnseenRoutineProblem),
-      onSelect: () => { dispatch({ type: "showRoutines" }); onNavigate(); },
-    },
-    // Files reads the desktop's disk; a paired phone has no Files to open.
-    ...(desktop === true ? [{
-      key: "files" as const,
-      label: t("nav.files"),
-      name: t("nav.files"),
-      tip: t("nav.tip.files"),
-      icon: <Folder size={18} />,
-      // The Files dialog renders inside this drawer, so the drawer stays open.
-      onSelect: () => setFilesOpen({}),
-    }] : []),
-    {
-      key: "apps",
-      label: t("nav.apps"),
-      name: t("settings.section.connections"),
-      tip: t("nav.tip.apps"),
-      icon: <Puzzle size={18} />,
-      onSelect: () => dispatch({ type: "togglePlugins", open: true }),
-    },
-    {
-      key: "map",
-      label: t("nav.map"),
-      name: t("nav.mapName"),
-      tip: t("nav.tip.map"),
-      icon: <Network size={18} />,
-      active: state.activeView === "team-map",
-      onSelect: () => { dispatch({ type: "showTeamMap" }); onNavigate(); },
-    },
-  ];
+  // UX 1.0.13 (L2A): the doors. Chats opens All chats; a chat already open stays one click away in the list.
+  const openDoor = (door: ShellDoor) => {
+    if (door === "today") dispatch({ type: "showToday" });
+    else if (door === "chats") dispatch({ type: "showAllChats" });
+    else if (door === "needs-you") dispatch({ type: "showNeedsYou" });
+    else dispatch({ type: "showRoutines" });
+  };
 
   // Settings opens over the drawer and hands focus back to it on close
   // (lib/drawer-close.ts), as the gear always did.
@@ -2770,10 +2757,16 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
     dispatch(section ? { type: "toggleAppSettings", open: true, section } : { type: "toggleAppSettings", open: true });
   };
   const youItems: YouMenuItem[] = [
+    // Sean 10-30: Health has its own page off this menu, with a status dot.
+    { key: "health", label: health.level === "act" || health.level === "watch" ? t("ux.l2a.you.healthLevel", { level: healthLevelWords(health.level) }) : t("ux.l2a.you.health"), icon: <span className="relative inline-flex"><HeartPulse size={17} aria-hidden="true" /><StatusDot level={health.level} className="absolute -right-1 -top-1" /></span>, onSelect: () => { dispatch({ type: "showHealth" }); onNavigate(); } },
     ...(desktop === true ? [
       { key: "about-me", label: t("settings.section.aboutMe"), icon: <UserRound size={17} />, onSelect: () => openSettings("aboutMe") },
       { key: "phone", label: t("nav.phone"), icon: <Smartphone size={17} />, onSelect: () => dispatch(phoneSettingsAction()) },
     ] : []),
+    // The old Places row's Files, Connected apps and Team map (the doors took Routines).
+    ...(desktop === true ? [{ key: "files", label: t("nav.files"), icon: <Folder size={17} />, onSelect: () => setFilesOpen({}) }] : []),
+    { key: "apps", label: t("settings.section.connections"), icon: <Puzzle size={17} />, onSelect: () => dispatch({ type: "togglePlugins", open: true }) },
+    { key: "map", label: t("nav.mapName"), icon: <Network size={17} />, onSelect: () => { dispatch({ type: "showTeamMap" }); onNavigate(); } },
     ...(whatsNew.available ? [{ key: "whats-new", label: t("settings.about.whatsNewTitle"), icon: <Megaphone size={17} />, onSelect: whatsNew.reopen }] : []),
     { key: "version", label: t("nav.versionItem", { version: APP_VERSION }), icon: <Info size={17} />, onSelect: () => openSettings("about") },
     { key: "keyboard-shortcuts", label: t("settings.about.shortcutsTitle"), icon: <Keyboard size={17} />, onSelect: () => setShortcutsOpen(true) },
@@ -2944,30 +2937,6 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         </div>
       </div>
 
-      {/* All chats (CHATS-FINDABILITY-DESIGN 3.1): every chat with every bot and
-          channel, a view switch above the bot list, in every density. */}
-      <div className={cn("pt-1", density === "icons" ? "flex justify-center px-2" : "px-3")}>
-        <button
-          type="button"
-          data-testid="all-chats-entry"
-          onClick={() => {
-            dispatch(state.activeView === "all-chats" ? { type: "closeAllChats" } : { type: "showAllChats" });
-            onNavigate();
-          }}
-          aria-current={state.activeView === "all-chats" ? "page" : undefined}
-          aria-label={density === "icons" ? "All chats" : undefined}
-          title={`All chats (${modShortcut("K", { shift: true })})`}
-          className={cn(
-            "flex items-center gap-2.5 rounded-lg text-[14px] text-ink hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-            density === "icons" ? "size-10 justify-center" : "min-h-9 w-full px-3",
-            state.activeView === "all-chats" && "bg-raised",
-          )}
-        >
-          <MessagesSquare size={density === "icons" ? 20 : 17} aria-hidden="true" className="shrink-0 text-ink-secondary" />
-          {density !== "icons" && <span className="min-w-0 flex-1 truncate text-left">All chats</span>}
-        </button>
-      </div>
-
       {/* Search: names and messages, filtered in place. The key hint opens
           the command palette, which also finds settings. */}
       <div className={cn("pt-1 pb-1.5", density === "icons" ? "hidden" : "px-3")}>
@@ -2997,24 +2966,17 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         </div>
       </div>
 
-      {/* Anything waiting on you, at the top left and never folded into a
-          menu. One row, one destination — the Inbox opens on its own
-          "Needs you" view, whose count this row shows. */}
-      {desktop === true && (
-        <div className={cn("pt-1", density === "icons" ? "px-2" : "px-3")}>
-          <SidebarNeedsYou
-            density={density}
-            count={approvals.decisions}
-            stale={approvals.stale}
-            onOpen={() => setInboxOpen(true)}
-          />
-        </div>
-      )}
-
-      {/* The places: always on screen, never folded into a menu. */}
-      <div className={cn("pt-1.5 pb-2.5", density === "icons" ? "px-2" : "px-3")}>
-        <SidebarPlaces rail={density === "icons"} places={places} />
-        {movedNote && density !== "icons" && <SidebarMovedNote onDismiss={() => setMovedNote(false)} />}
+      {/* The four doors (UX 1.0.13, L2A): Today, Chats, Needs you with its count, Routines. They replace the
+          All chats button, the Needs you row and the Places row; Files, Connected apps and Team map moved to
+          the menu on your name. */}
+      <div className={cn("pt-1 pb-2", density === "icons" ? "flex justify-center px-2" : "px-3")}>
+        <RailDoors
+          lit={doorForView(state.activeView)}
+          needs={needs}
+          iconsOnly={density === "icons"}
+          routinesAttention={state.routineRuns.some(isUnseenRoutineProblem)}
+          onOpen={(door) => { openDoor(door); onNavigate(); }}
+        />
       </div>
 
       {/* Bot list */}
@@ -3201,13 +3163,17 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
             security one opens as a card, after What's new has closed. */}
         <AnnouncementsHost desktop={desktop} request={api} showBanner={density !== "icons"} suspended={whatsNew.open} onNavigate={onNavigate} />
         <div className={cn("flex items-center border-t border-hairline/30 pt-2", density === "icons" && "flex-col gap-1")}>
-          <SidebarYouMenu
-            rail={density === "icons"}
-            name={profileName}
-            initials={profileInitials(state.config?.profile)}
-            items={youItems}
-            triggerRef={youTriggerRef}
-          />
+          <span className={cn("relative flex min-w-0", density !== "icons" && "flex-1")} data-you-health={health.level}>
+            <SidebarYouMenu
+              rail={density === "icons"}
+              name={profileName}
+              initials={profileInitials(state.config?.profile)}
+              items={youItems}
+              triggerRef={youTriggerRef}
+            />
+            {/* Sean 10-30: the Health dot on your name, only when there is something for you to do. */}
+            {health.level === "act" && <StatusDot level="act" spoken={false} className="pointer-events-none absolute left-7 top-1" />}
+          </span>
           {/* The only thing this button does is open Settings → Phone, and that
               section does not exist on a phone — it is the setup screen for
               getting Murage ONTO one. A dot that opens an empty pane is worse
@@ -3259,7 +3225,6 @@ export function Sidebar({ open, onClose, onReturnFocus }: { open: boolean; onClo
         track("team_exported", { members: exported.members, scope: "selected" });
         setTeamFeedback({ error: false, text: `${exported.members} bots exported` });
       }} /></Suspense></LazyBoundary>}
-      {inboxOpen && <InboxDialog onClose={() => setInboxOpen(false)} />}
       {/* Portalled: Settings > About & updates opens these while a phone's
           drawer is shut, and a shut drawer is inert, dialogs and all. */}
       {shortcutsOpen && createPortal(<LazyBoundary onRetry={ShortcutsDialog.retry} onDismiss={() => setShortcutsOpen(false)}><Suspense fallback={null}><ShortcutsDialog.Component open onClose={() => setShortcutsOpen(false)} returnFocusRef={youTriggerRef} /></Suspense></LazyBoundary>, document.body)}

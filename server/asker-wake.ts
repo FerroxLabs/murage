@@ -79,6 +79,8 @@ export interface AskerWakeRecord {
   /** attempts spent: starts given back, held replays begun, claims lost to a crash. MAX_ASKER_WAKE_ATTEMPTS ends the wake. */
   attempts: number;
   claimedAt?: number;
+  /** a clean close found this record claimed: a restart resolves it without charging the lost claim (AskerWakes.closing) */
+  closedClaim?: true;
 }
 
 const sameAuthority = (a: AskerWakeIntent, b: AskerWakeIntent): boolean =>
@@ -155,7 +157,8 @@ function restoredRecord(value: unknown, threadId: string): AskerWakeRecord | und
   for (const item of v.results) { const r = restoredResult(item); if (!r) return undefined; results.push(r); }
   if (!Number.isInteger(v.attempts) || (v.attempts as number) < 0 || (v.attempts as number) > MAX_ASKER_WAKE_ATTEMPTS) return undefined;
   if (v.claimedAt !== undefined && typeof v.claimedAt !== "number") return undefined;
-  return { id: v.id, state: v.state, ...(v.held === true ? { held: true as const } : {}), intent, results, attempts: v.attempts as number, ...(typeof v.claimedAt === "number" ? { claimedAt: v.claimedAt } : {}) };
+  if (v.closedClaim !== undefined && v.closedClaim !== true) return undefined;
+  return { id: v.id, state: v.state, ...(v.held === true ? { held: true as const } : {}), intent, results, attempts: v.attempts as number, ...(typeof v.claimedAt === "number" ? { claimedAt: v.claimedAt } : {}), ...(v.closedClaim === true ? { closedClaim: true as const } : {}) };
 }
 
 const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -175,6 +178,7 @@ export class AskerWakes {
   private readonly owners = new Map<string, string>();
 
   private readonly persist?: AskerWakePersist;
+  private closed = false;
   constructor(persist?: AskerWakePersist) { this.persist = persist; }
 
   private records(threadId: string): AskerWakeRecord[] { return this.wakes.get(threadId) ?? []; }
@@ -238,17 +242,23 @@ export class AskerWakes {
     if (Array.isArray(snapshot.wakes)) for (const item of snapshot.wakes.slice(0, MAX_ASKER_WAKES)) {
       const record = restoredRecord(item, threadId);
       if (!record || records.some((r) => r.id === record.id)) continue;
+      // a clean close cut this claim, no crash did: it costs nothing, and a close never takes a wake's last attempt (closing)
+      const cutByClose = record.closedClaim === true;
+      delete record.closedClaim;
       // started: the prompt may have reached the engine (the fence is written before the call, the accounting after acceptance).
       // Never run again by itself, as a submitted hand-off is not; the reply stays owed to the asker's next turn as external context.
       if (record.state === "started") continue;
       if (record.state === "claimed") {
+        if (cutByClose) record.attempts = Math.min(record.attempts, MAX_ASKER_WAKE_ATTEMPTS - 1);
         if (record.held) {
           // the held item is the carrier; without it, the item went with Stop or with acceptance and nothing is owed
           if (!heldIds.has(heldWakeId(record.id)) || record.attempts >= MAX_ASKER_WAKE_ATTEMPTS) continue;
         } else {
           // the claim lived in memory and died with the process before the prompt went out: owed again, its attempt lost
-          record.attempts += 1;
-          if (record.attempts >= MAX_ASKER_WAKE_ATTEMPTS) continue;
+          if (!cutByClose) {
+            record.attempts += 1;
+            if (record.attempts >= MAX_ASKER_WAKE_ATTEMPTS) continue;
+          }
           record.state = "owed";
           delete record.claimedAt;
         }
@@ -375,9 +385,23 @@ export class AskerWakes {
     if (found.record.state === "owed") return false;
     if (!found.record.results.some(allowed)) { this.cancel(id); return false; }
     if (found.record.state === "started") return true;
+    if (this.closed) return false; // no claimed wake goes out on a fleet that is closing: restore resumes it
     found.record.state = "started";
     if (!this.flush(found.threadId, found.record.intent.botId)) { found.record.state = "claimed"; return false; }
     return true;
+  }
+
+  /** The server is closing. Every claimed record is marked on disk, so whatever its setup does next, the next server resumes it at no
+   * cost; the record keeps its one owner and every transition stays as it was. A crash sets no mark and is still charged, so a start
+   * that kills the server stays bounded. No new claim follows: admission and the held walk shut in the same statement. */
+  closing(): void {
+    this.closed = true;
+    for (const [threadId, records] of this.wakes) {
+      const claimed = records.filter((r) => r.state === "claimed");
+      if (!claimed.length) continue;
+      for (const record of claimed) record.closedClaim = true;
+      this.flush(threadId, claimed[0]!.intent.botId);
+    }
   }
 
   /** The engine had no tools: the held continuation `wake:<id>` carries the wake until an engine with tools accepts it. Only a
