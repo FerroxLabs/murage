@@ -88,7 +88,10 @@
 //                     the request a 1.0.34 engine sends). FAKE_ACP_TRUST_LOG gets
 //                     one JSON line per request and per raw reply.
 //                     FAKE_ACP_TRUST_DELAY_MS raises the V=2 request that long after
-//                     the session reply: a warm has parked by then.)
+//                     the session reply: a warm has parked by then.
+//                     FAKE_ACP_TRUST_ON_PROMPT=1 raises the V=2 request only when
+//                     session/prompt arrives, so the prompt is already written:
+//                     with FAKE_ACP_TRUST_PROMPT_FIRST the turn outruns the card.)
 //                   | elicitation-form | elicitation-url | elicitation-legacy
 //                     (ACP `elicitation/create` form / url, and the older
 //                     `session/elicitation` spelling); the client's reply is
@@ -421,6 +424,7 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_WORKFLOWS",
     "FUIGO_SCHEDULER_BACKGROUND_LOOPS",
     "FUIGO_GOAL",
+    "FUIGO_ENVRC_TIMEOUT_SECS",
     "FUIGO_AGENT",
     "FUIGO_WORKSPACE_REWIND_GIT",
     "HERMES_HOME",
@@ -475,6 +479,8 @@ if (argv.includes("--version")) {
 // it later spawns for ACP. Answer those without entering the JSON-RPC loop
 // so catalog/auth tests do not hang on stdin.
 if (argv[0] === "status" || argv[0] === "whoami") {
+  // FAKE_ACP_AUTH=crash: the status check dies with nothing said, so the login stays unverified.
+  if (process.env.FAKE_ACP_AUTH === "crash") { process.stderr.write("fake-acp: status crashed\n"); process.exit(2); }
   const authenticated = process.env.FAKE_ACP_AUTH !== "0";
   await printProbeAndExit(JSON.stringify({ isAuthenticated: authenticated }));
 }
@@ -656,6 +662,8 @@ const trustV2 = process.env.FAKE_ACP_TRUST_V === "2";
 let folderTrustClientV2 = false;
 /** Keys a reject silenced: Fuigo keeps these for the life of the process, nowhere else. */
 const trustRejected = new Set<string>();
+/** Keys a `duration: "process"` trust covers (Fuigo 1.0.38): this process only, never the store. */
+const trustProcessOnly = new Set<string>();
 /** The raw reply line, for byte-exact assertions. */
 let lastInboundLine = "";
 const trustLog = (entry: Record<string, unknown>) => { if (process.env.FAKE_ACP_TRUST_LOG) appendFileSync(process.env.FAKE_ACP_TRUST_LOG, `${JSON.stringify({ pid: process.pid, ...entry })}\n`); };
@@ -693,6 +701,7 @@ const trustCoverage = (key: string): { trusted: boolean; consent: number | null 
 /** What the 1.0.35 precedence says for this process's key. */
 const trustVerdict = (): "trusted" | "declined" | "new" | "upgrade" => {
   if (process.env.FAKE_ACP_TRUST_DISABLED === "1") return "trusted";
+  if (trustProcessOnly.has(trustWorkspace())) return "trusted";
   const entry = trustCoverage(trustWorkspace());
   if (!entry) return "new";
   if (!entry.trusted) return "declined";
@@ -1033,6 +1042,8 @@ process.stdin.on("data", (c) => {
 // thread — resumed through its cursor — neither asked nor recorded
 // `folderTrust` in the dump, and a test reading it after such a turn was
 // timing-dependent.)
+/** FAKE_ACP_TRUST_ON_PROMPT: the V=2 request waiting for session/prompt. */
+let trustRaiseOnPrompt: (() => void) | null = null;
 function afterSessionBuilt() {
   if (mode !== "folder-trust") return;
   if (trustV2) {
@@ -1054,7 +1065,8 @@ function afterSessionBuilt() {
       out({ jsonrpc: "2.0", id: pendingPermissionId, method: "_fuigo/folder_trust/request", params });
     };
     const delay = Number(process.env.FAKE_ACP_TRUST_DELAY_MS) || 0;
-    if (delay) setTimeout(raise, delay);
+    if (process.env.FAKE_ACP_TRUST_ON_PROMPT === "1") trustRaiseOnPrompt = raise;
+    else if (delay) setTimeout(raise, delay);
     else raise();
     return;
   }
@@ -1163,8 +1175,12 @@ function handle(msg: any) {
     }
     if (trustV2 && msg.id === 9006) {
       trustLog({ event: "reply", raw: lastInboundLine });
-      if (msg.result?.outcome === "trust" && msg.result?.scope === "configAndCommands") persistGrant(trustWorkspace());
-      else trustRejected.add(trustWorkspace());
+      // Fuigo 1.0.38 keeps a `duration: "process"` trust in memory and writes
+      // nothing; Murage sends that field only to an engine that reads it.
+      if (msg.result?.outcome === "trust" && msg.result?.scope === "configAndCommands") {
+        if (msg.result?.duration === "process") trustProcessOnly.add(trustWorkspace());
+        else persistGrant(trustWorkspace());
+      } else trustRejected.add(trustWorkspace());
     }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
@@ -1838,6 +1854,11 @@ function handle(msg: any) {
         return;
       }
       if (mode === "folder-trust") {
+        if (trustRaiseOnPrompt) {
+          const raise = trustRaiseOnPrompt;
+          trustRaiseOnPrompt = null;
+          raise();
+        }
         // the reply says what the session was built with, the way a real
         // turn's answer would (or would not) carry an AGENTS.md instruction
         const answer = () => {
