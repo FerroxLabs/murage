@@ -636,6 +636,13 @@ export const WAITING_REVIEW = registerOptionalIndex({ name: WAITING_REVIEW_INDEX
 export const BINDINGS_SCOPE_INDEX = "memory_bindings_scope";
 export const BINDINGS_SCOPE = registerOptionalIndex({ name: BINDINGS_SCOPE_INDEX, table: "memory_scope_bindings", minSchemaVersion: 9,
   sql: `CREATE INDEX IF NOT EXISTS ${BINDINGS_SCOPE_INDEX} ON memory_scope_bindings(scope_id)` });
+/** 1.0.16 memory screen B1 (MEMORY-UI-BUILD-SPEC r3 1.2): a bot's memories of one kind, newest first, as an equality prefix of the key table,
+ * so a group page of a sparse kind reads at most one page of keys per scope and kind. A registered optional index: never made at open, built
+ * off the main thread by the idle-gated sweep, accepted by validation only with its exact text, dropped by the downgrade like every index not
+ * in OPTIONAL_INDEXES_KEPT_FOR_102 (and with the key table itself). Until it exists the owner list walks the scope prefix with kind as a residual. */
+export const OWNER_SCOPE_KIND_INDEX = "memory_record_keys_scope_kind";
+export const OWNER_SCOPE_KIND = registerOptionalIndex({ name: OWNER_SCOPE_KIND_INDEX, table: "memory_record_keys", minSchemaVersion: 13,
+  sql: `CREATE INDEX IF NOT EXISTS ${OWNER_SCOPE_KIND_INDEX} ON memory_record_keys(scope_id,kind,state,age_key)` });
 const LATE_INDEXES = new Map([
   [EVIDENCE_SOURCE_INDEX, { tbl: "memory_evidence", sql: EVIDENCE_SOURCE_INDEX_SQL.replace(" IF NOT EXISTS", "") }],
   ...OPTIONAL_INDEXES.map(index => [index.name, { tbl: index.table, sql: optionalIndexText(index) }] as const),

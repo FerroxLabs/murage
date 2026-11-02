@@ -14,7 +14,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { database, transaction } from "../database.ts";
 import { partitionOfScopeKey } from "../execution-audience.ts";
 import { redactSecretsInText } from "../redact.ts";
-import { readCorrectionTarget, requireMemoryOwner, approveMemory, type CorrectionPinChoice } from "./authority.ts";
+import { readCorrectionTarget, recordForgotten, requireMemoryOwner, approveMemory, type CorrectionPinChoice } from "./authority.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
 import { PIP_ALL_KINDS_SQL, isPipKind } from "./pip-kinds.ts";
@@ -156,7 +156,8 @@ function collect(db: DatabaseSync, roster: MemoryRoster, options: { only?: { kin
       const reasons = eligibility.reasons;
       const rank = reasons.some(reason => reason === "replaces-pinned" || reason === "correction" || reason === "edited") ? 0 : eligibility.decision === "keep" ? 2 : 1;
       const entry: WaitingEntry = {
-        id: String(row.id), version: Number(row.version), text: String(row.text), group: eligibility.decision === "keep" ? "everyday" : "one-by-one",
+        // a forgotten candidate past the 64 versions its forget wiped keeps text until its job: shown with no words (B2, spec r3 2.4)
+        id: String(row.id), version: Number(row.version), text: recordForgotten(db, String(row.id)) ? "" : String(row.text), group: eligibility.decision === "keep" ? "everyday" : "one-by-one",
         rank, reasons, origin: originOf(db, row), at: Number(row.created_at), later: later[String(row.id)] !== undefined, scopeLabel: scopeLabel(scope, subject),
       };
       if (options.detail && row.supersedes_id) {
@@ -299,6 +300,8 @@ function activateSlice(db: DatabaseSync, rows: Array<Record<string, any>>): Map<
   const touched: string[] = [];
   const held = new Map<string, string>();
   for (const row of rows) {
+    // B2 (spec r3 2.5): a batch Keep never makes a forgotten record current
+    if (recordForgotten(db, String(row.id))) throw fail("MEMORY_NOT_FOUND", 404);
     const basis = waitingBasis(db, row);
     if (basis !== undefined) held.set(String(row.id), basis);
     const changed = db.prepare("UPDATE memory_records SET state='active',owner_pinned=0 WHERE id=? AND version=? AND state='candidate'").run(row.id, row.version).changes;
@@ -332,6 +335,8 @@ function receiptTop(db: DatabaseSync): number {
 function candidateRow(db: DatabaseSync, id: string, version: number): Record<string, any> {
   const row = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id, version);
   if (!row) throw fail("MEMORY_NOT_FOUND", 404);
+  // B2 (spec r3 2.5): a stale Needs you window never keeps, edits or saves words under a forgotten id
+  if (recordForgotten(db, id)) throw fail("MEMORY_NOT_FOUND", 404);
   if (row.state !== "candidate") throw fail("MEMORY_VERSION_CONFLICT");
   if (isPipKind(row.kind)) throw fail("MEMORY_IDENTITY_PIP_USE_CONTINUITY", 400);
   return row;

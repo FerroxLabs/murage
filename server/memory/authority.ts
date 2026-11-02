@@ -39,6 +39,16 @@ export function assertGenericMemoryTarget(db:DatabaseSync,id:string,version:numb
   if(db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND record_version=? AND partition='identity'").get(id,version))throw new Error("MEMORY_IDENTITY_WRITE_REQUIRED");
 }
 
+/** True when the owner forgot this record (a record tombstone on any of its revisions): one probe of UNIQUE(target_type,target_id,revision). */
+export function recordForgotten(db:DatabaseSync,id:string):boolean{
+  return Boolean(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? LIMIT 1").get(id));
+}
+/** Memory screen B2 (spec r3 2.5): no write lands on a forgotten record. A forget leaves the record active until its job's affect step, so
+ * a stale second window could otherwise re-pin it (and stop the next turn) or write new words under its id. */
+export function assertNotForgotten(db:DatabaseSync,id:string){
+  if(recordForgotten(db,id))throw new Error("MEMORY_NOT_FOUND");
+}
+
 
 export function saveMemoryCandidate(text: string, evidence: MemoryEvidenceHandle[], key: string, access: MemoryAccess, claimType?: MemoryClaimType) {
   return saveCandidate(text,evidence,key,access,claimType);
@@ -218,6 +228,8 @@ export function approveCorrection(db: DatabaseSync, record: Record<string, unkno
   if (review.status === "changed") throw new Error("MEMORY_CORRECTION_TARGET_CHANGED");
   const target = review.target;
   assertGenericMemoryTarget(db,target.id,target.version);
+  // B2 (spec r3 2.5): neither the correction nor the fact it replaces may be a forgotten record
+  assertNotForgotten(db,String(record.id)); assertNotForgotten(db,target.id);
   if (target.scopeId !== record.scope_id) throw new Error("MEMORY_CORRECTION_SCOPE_MISMATCH");
   assertEvidenceCurrent(db,String(record.id),Number(record.version));
   if (target.ownerPinned && options.correctionPin === undefined) throw new Error("MEMORY_CORRECTION_PIN_CHOICE_REQUIRED");
@@ -240,6 +252,7 @@ export function approveCorrection(db: DatabaseSync, record: Record<string, unkno
 export function approveMemory(ticket: object, id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice} = {}) {
   requireMemoryOwner(ticket);
   return transaction(db => {
+    assertNotForgotten(db,id);
     const record = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='candidate'").get(id,version);
     if (!record) throw new Error("MEMORY_VERSION_CONFLICT");
     const correction = readCorrectionTarget(db,id,version);
@@ -270,6 +283,7 @@ export function correctMemory(ticket: object, id: string, version: number, text:
   requireMemoryOwner(ticket);
   if (!text.trim() || text.length > 4096) throw new Error("INVALID_MEMORY_TEXT");
   return transaction(db => {
+    assertNotForgotten(db,id);
     const row = db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(id);
     if (!row || row.version !== version || row.state === "deleted") throw new Error("MEMORY_VERSION_CONFLICT");
     if(row.state==="archived")throw new Error("Restore this memory before editing it.");
@@ -311,6 +325,7 @@ export function pinMemory(ticket: object, id: string, version: number, pinned: b
     // pinned before it became a PIP kind keeps a repair path, and the bundle delivers it in the brief slot meanwhile.
     const target = db.prepare("SELECT kind,scope_id FROM memory_records WHERE id=? AND version=?").get(id,version);
     if (pinned && target && isPipKind(target.kind)) throw new Error("MEMORY_IDENTITY_NOT_PINNABLE");
+    if (pinned) assertNotForgotten(db,id);
     const result = db.prepare("UPDATE memory_records SET owner_pinned=? WHERE id=? AND version=? AND state='active'").run(pinned?1:0,id,version);
     if (!result.changes) throw new Error("MEMORY_VERSION_CONFLICT");
     // 1.0.4: a pin is taken only when the scope's pins, this one included, fit the share every default engine gives them. Unpin is never checked.

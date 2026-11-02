@@ -151,7 +151,12 @@ describe("PIP kind list", () => {
       // forgetting a record blanks the text of its newest versions in the commit; the subquery selects rowids by record id (a point
       // lookup, an administrative write); no row, kind or text is read out or handed to a model or the owner
       "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 3, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1,
+      // owner-list +1 (1.0.16 memory screen B1, MEMORY-UI-BUILD-SPEC r3 1.2/1.4/1.7): -1 the Mode P browse statement (dropped, 1.7); +1 the
+      // keyed browse's residual LEFT JOIN (assertion, created_at and chat of one key, a primary-key probe; returns ids, no text); +1
+      // ownerListExtras (the page's own rows by id and version, and inspect's bot name for the one record opened: kind, scope and chat
+      // thread, no text; a PIP row's chat is null). The list's rows still pass the forgotten-record probe
+      "memory/owner-list.ts": 12,"memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
       // the backfill reads record keys, kinds and times only, never text
@@ -168,7 +173,12 @@ describe("PIP kind list", () => {
       "memory/replay-lineage.ts": 12, "memory/restore.ts": 8, // revoke-bounded r2: the forget's record seeds moved to memory-revocation.ts, RECORD_TOMBSTONE_AFFECTED to revocation.ts; +1: the status scan counts records by state and adds up text lengths, never returning text
       "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
       // +1 write-time v10: the memory_flow_derivation trigger reads the parent's and the child's scope ids (no text)
-      "memory/schema.ts": 8, "memory/settings.ts": 3,
+      // settings +1 (1.0.16 memory screen B1, MEMORY-UI-BUILD-SPEC r3 1.6): inspect's `earlier`, the replaced wordings of the one record
+      // the owner opened (by id, versions below it, at most 64 read and 20 returned), masked; a forgotten record returns none and a
+      // version forgotten on its own is left out
+      // settings +1 (1.0.16 memory screen B2, MEMORY-UI-BUILD-SPEC r3 2.2): forget-pip reads the row's scope and kind by id (no text) and
+      // goes on only for a PIP kind, through deletePipRecord's version fence
+      "memory/schema.ts": 8, "memory/settings.ts": 5,
       // the background integrity pass checks that a learning event's record exists (a key lookup, no text), and the upgrade counts use max(rowid) (fast upgrade)
       "memory/integrity-pass.ts": 1, "memory/upgrade-counts.ts": 1, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.

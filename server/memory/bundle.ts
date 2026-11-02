@@ -275,7 +275,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const deliverable = pinRows.filter(row => {
     const id = String(row.id), version = Number(row.version);
     if (!pinRestsOnWithheldReply(allowance,id,version,options.withheldMessage)) return true;
-    withheldPins.push({id,version}); return false;
+    // B2 (spec r3 2.3): withheld because the owner forgot it (its own tombstone): left out with no notice. Probed only on this path.
+    if (!pinForgotten(db,id,version)) withheldPins.push({id,version});
+    return false;
   });
   // 1.0.4: pins past the handle limit or the budget are left out, trailing ones first, and the owner is told (droppedPins); the turn
   // still runs. An install already over the share after the upgrade, or a small local model, keeps answering.
@@ -290,6 +292,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         // A pin whose check ran out of allowance is not a broken pin: it is withheld for now (checking), as the filter above withholds
         // one, and the warmer finishes its lineage; the turn goes on. Only a pin that is really unreadable stops the turn.
         // 1.0.2: a pin the write-time lookup reads "checking" (a revoke still in its window) is the same: withheld for now
+        // Memory screen B2 (spec r3 2.3): a pin the owner forgot is left out and the turn goes on, with no notice (he chose it).
+        if (ownerForgotPin(db,error,String(row.id),Number(row.version))) continue;
         if (isLineageLimit(error) || (allowance.hit && error instanceof Error && /^MEMORY_(EVIDENCE|RECORD)_UNAVAILABLE$/.test(error.message))) { withheldPins.push({id:String(row.id),version:Number(row.version)}); continue; }
         throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
       }
@@ -596,14 +600,17 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (evidence.includes(record) && (isLineageLimit(error) || recallProof.hit)) recallPartial = true;
         if (briefRecords.has(record)) briefLeftOut(error,"proof");
         const withheldPin = record.pinned && pinRestsOnWithheldReply(allowance,record.id,record.version,options.withheldMessage);
-        if (record.pinned && !withheldPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
-        if (withheldPin) {
+        // B2 (spec r3 2.3): a pin forgotten while this turn was built is dropped like a withheld one, but not told as withheld
+        const forgottenPin = record.pinned && (withheldPin ? pinForgotten(db,record.id,record.version) : ownerForgotPin(db,error,record.id,record.version));
+        if (record.pinned && !withheldPin && !forgottenPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
+        if (forgottenPin && pinned.includes(record)) pinned.splice(pinned.indexOf(record),1);
+        if (withheldPin && !forgottenPin) {
           withheldPins.push({id:record.id,version:record.version});
           pinned.splice(pinned.indexOf(record),1);
         }
         selected.splice(selected.indexOf(record),1);
         for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
-        if (!withheldPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
+        if (!withheldPin && !forgottenPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
       }
     }
   });
@@ -649,6 +656,15 @@ function citesOnly(record: BundleRecord, sources: Set<string>): boolean {
 
 /** The owner's pinned records per reader, and the pin stamp they were read at. */
 const pinCache = new Map<string, { stamp: string; rows: Array<{ id: unknown; version: unknown }> }>();
+/** A pin whose read was refused because the owner forgot it (an owner tombstone on the record or this version). Runs only on that refusal,
+ * one probe of UNIQUE(target_type,target_id,revision): the normal turn reads nothing more. */
+function ownerForgotPin(db: ReturnType<typeof database>, error: unknown, id: string, version: number): boolean {
+  if (!(error instanceof Error) || error.message !== "MEMORY_RECORD_UNAVAILABLE") return false;
+  return pinForgotten(db, id, version);
+}
+function pinForgotten(db: ReturnType<typeof database>, id: string, version: number): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(id, version));
+}
 /** The authority stamp at which a bundle last passed the record loop below, per bundle. */
 const bundleCheckedAt = new WeakMap<object, string>();
 /** Must run immediately before the adapter call, after all other asynchronous setup.

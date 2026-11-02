@@ -12,7 +12,7 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { walFrameReader } from "../io-budget.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
-import { ownerMemoryList, type OwnerListInput } from "./owner-list.ts";
+import { OWNER_PREPARING_NOTICE, ownerMemoryList, type OwnerListInput } from "./owner-list.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import * as keys from "./record-keys.ts";
 import { fillRecordKeysNow, fillRecordKeysSlice, startRecordKeysBuild } from "./record-keys.ts";
@@ -188,12 +188,25 @@ it("condition 1: with keys partial, every browse, search and view answers exactl
   expect(await everyRead()).toEqual(partialLate);
   ensureRecordKeys(db);
   fillRecordKeysSlice(db, 500, { budgetMs: Number.POSITIVE_INFINITY });
-  // and once every key is there the same records come back, browse in the same order (distinct timestamps)
+  // and once every key is there the same records come back: a search the same set; a browse, which lists nothing while the keys are
+  // partial (MEMORY-UI-BUILD-SPEC r3 1.7: Mode P browse returns preparing with no rows and no statement, for every caller, the old `view`
+  // client included), lists exactly what the store holds for its view, newest first (distinct timestamps)
   fillRecordKeysNow(db);
   expect(recordKeysReady(db)).toBe(true);
   const ready = idsOnly(await everyRead()), before = idsOnly(partialLate);
+  const browseTruth: Record<number, [string, string]> = {
+    0: [a, "state IN ('candidate','active','superseded','archived')"], 1: [a, "state='active'"], 2: [a, "state='active' AND owner_pinned=1"],
+    3: [a, "state='candidate'"], 4: [a, "state='archived'"], 9: [b, "state IN ('candidate','active','superseded','archived')"],
+  };
   for (let i = 0; i < ready.length; i++) {
-    if (i < 5 || i === 9) expect(ready[i]).toEqual(before[i]);
-    else expect(new Set(ready[i])).toEqual(new Set(before[i]));
+    const truth = browseTruth[i];
+    if (truth) {
+      const read = (partialLate as Array<{ pages: Array<{ notice: string | null; mode: string }> }>)[i]!;
+      expect(before[i]).toEqual([]);
+      expect(read.pages.map(page => [page.mode, page.notice])).toEqual([["browse", OWNER_PREPARING_NOTICE]]);
+      const ids = (db.prepare(`SELECT id FROM memory_records WHERE scope_id=? AND ${truth[1]} ORDER BY created_at DESC, id`).all(truth[0]) as Array<{ id: string }>).map(row => row.id);
+      expect(ready[i]).toEqual(ids);
+      if (i === 0) expect(ids.length).toBeGreaterThan(1000);
+    } else expect(new Set(ready[i])).toEqual(new Set(before[i]));
   }
 });

@@ -16,6 +16,22 @@ function capture() {
 }
 const identity = { threadId: "thread-1", driver: "grokAgent", instanceId: "grok-main", turnId: "turn-1" };
 
+describe("a turn id the card-number rule misreads", () => {
+  it("keeps the turn's lifecycle events and its id as written", () => {
+    // The first 16 digits (4111111111111111 with the dashes) are Luhn valid: the financial rule would mask them.
+    const turnId = "41111111-1111-4115-831c-b46042fa7ced";
+    const { rows, sink } = capture();
+    const recorder = createLifecycleRecorder({ ...identity, turnId, sink });
+    recorder.record("spawn_requested");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].msg.turnId).toBe(turnId);
+    // an id-shaped credential is still refused: its events are dropped, never written
+    const refused = capture();
+    createLifecycleRecorder({ ...identity, turnId: "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789", sink: refused.sink }).record("spawn_requested"); // secret-scan: fixture
+    expect(JSON.stringify(refused.rows)).not.toContain("sk-ant-api03");
+  });
+});
+
 // U24 design R10 / T10: a Windows stop_requested record says how the tree was held.
 describe("lifecycle containment label (U24)", () => {
   it("records containment job or none on stop_requested and refuses any other value", () => {

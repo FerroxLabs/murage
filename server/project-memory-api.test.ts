@@ -71,7 +71,8 @@ posixOnly("project memory and a member's working context", () => {
     await expect.poll(async () => {
       const scope = (await api("GET", "/api/memory/status")).scopes?.find((item: any) => item.kind === "room" && item.ownerKey === project.id);
       if (!scope) return 0;
-      return ((await api("POST", "/api/memory/action", { action: "list", scopeId: scope.id, state: "active" })).records ?? []).length;
+      // every kind the memory screen can list (MEMORY-UI-BUILD-SPEC r3 1.1: `kinds` absent is the five default kinds; a session is a checkpoint)
+      return ((await api("POST", "/api/memory/action", { action: "list", scopeId: scope.id, state: "active", kinds: ["fact", "self-trait", "relation", "commitment", "concern", "checkpoint", "episode", "evidence"] })).records ?? []).length;
     }, { timeout: 20000 }).toBeGreaterThan(0);
 
     // The member's direct chat knows its project, once per session.

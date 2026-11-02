@@ -139,6 +139,15 @@ describe("a pasted token", () => {
     expect(commits.filter((call) => call.route.endsWith("/secrets"))).toEqual([]);
   });
 
+  it("a command entry moved since the PUT takes nothing", async () => {
+    const entry = { name: "notes", kind: "stdio", command: "npx", args: [], envKeys: ["NOTES_TOKEN"], rev: "bbbbbbbbbbbb" };
+    const { mcp, commits, document } = service(site({}), entry);
+    const result = await mcp.saveSecrets("notes", { env: { NOTES_TOKEN: "tok-1" }, rev: "aaaaaaaaaaaa" });
+    expect(result).toMatchObject({ ok: false, error: "stale" });
+    expect(document()).toEqual({});
+    expect(commits.filter((call) => call.route.endsWith("/secrets"))).toEqual([]);
+  });
+
   it("is refused when the save names no revision", async () => {
     const entry = { name: "hermes", kind: "remote", auth: "header", url: SERVER, headerNames: ["Authorization"], rev: "bbbbbbbbbbbb" };
     const { mcp, document } = service(site({}), entry);

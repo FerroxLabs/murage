@@ -1,10 +1,10 @@
-import { partitionOfScopeKey, executionStore, homeThread } from "../execution-audience.ts";
+import { partitionOfScopeKey, executionStore, homeThread, isHomePartition, threadPartition } from "../execution-audience.ts";
 import { teamLabel } from "../team-identities.ts";
 import { candidateReviewReason } from "./automatic-learning.ts";
 import { learningHistory,changeLearningEvent,undoOwnsItsTransactions } from "./learning-history.ts";
 import type { LearningConnection } from "./extractor-connections.ts";
 import { humanBindingStatus, linkHumanBinding, shareHumanScope } from "../human-principals.ts";
-import { continuityReadSchema, deleteBotIdentity, rejectGenericForgetOfPip, identityDeleteSchema, identityReadSchema, identityWriteSchema, readBotIdentity, readContinuity, writeBotIdentity } from "./identity.ts";
+import { continuityReadSchema, deleteBotIdentity, deletePipRecord, rejectGenericForgetOfPip, identityDeleteSchema, identityReadSchema, identityWriteSchema, readBotIdentity, readContinuity, writeBotIdentity } from "./identity.ts";
 import { isPipKind } from "./pip-kinds.ts";
 import { confirmPipProposal, dismissPipProposal, keepPipRecord, listProposals, pipDisputes } from "./pip-lived.ts";
 import { reflectionStatus, retryReflection, setReflectExcluded } from "./pip-reflect.ts";
@@ -23,16 +23,18 @@ import { DATA_DIR } from "../config.ts";
 import { SERVER_ROOT } from "../proxy-paths.ts";
 import { database, memoryHoldCode, transaction } from "../database.ts";
 import { holdMessage } from "./integrity-pass.ts";
-import { requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget, rememberMemory, REMEMBER_TEXT_MAX } from "./authority.ts";
+import { assertGenericMemoryTarget, assertNotForgotten, requireMemoryOwner, approveMemory, pinMemory, correctMemory, bindMemoryScope, readCorrectionTarget, rememberMemory, REMEMBER_TEXT_MAX } from "./authority.ts";
 import { LAM_PROVIDERS } from "../../shared/learn-about-me/parse.ts";
 import { forgetMemory, memoryDeletionStatus, MEMORY_COUNT_CAP } from "./forget.ts";
 import { backgroundMemoryScopes, ensureScope, type MemoryRoster } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { memoryCaptures, memoryRecalls } from "./capture-gate.ts";
 import { previewMemoryImport, commitMemoryImport, availableMemoryNotebooks, memoryNotebookLinks, stopTrackingMemoryNotebook, migrateDetectedMemoryNotebooks } from "./import.ts";
-import { ownerMemoryList } from "./owner-list.ts";
+import { OWNER_LIST_ASSERTIONS, OWNER_LIST_KINDS, ownerLearnedToday, ownerListExtras, ownerMemoryList } from "./owner-list.ts";
+import { CREATED_AT_MAX } from "./schema.ts";
+import { redactSecretsInText } from "../redact.ts";
 import { pastChatsCounters } from "./past-chats-build.ts";
-import type { MemoryRecord } from "../../shared/memory.ts";
+import type { MemoryEvidenceSpeaker, MemoryListRow, MemoryRecord } from "../../shared/memory.ts";
 import { prepareMemorySkillReview } from "../skills.ts";
 import { learningCeilingSchema, memoryLearningPatchSchema, readMemoryLearning, retrySkippedRequestSchema, updateMemoryLearning } from "./learning-policy.ts";
 import { ceilingReached, learningSpendLedgerId, learningSpendMonth, type LearningCeilingStatus } from "../../shared/memory-learning-contract.ts";
@@ -69,6 +71,8 @@ const id=z.string().min(1).max(180),version=z.number().int().positive();
 /** A client-made action id: the key that makes a retried call return the first result. */
 const actionId=z.string().regex(/^[\w-]{8,80}$/);
 const subject={subjectType:z.enum(["bot","room"]),subjectId:id};
+/** A list bound in epoch ms, inside the domain a record's created_at may hold (schema.ts CREATED_AT_MAX), so its age key is a safe integer. */
+const listTime=z.number().int().min(0).max(CREATED_AT_MAX);
 /** The most scope ids one `scope-labels` call resolves. */
 export const MEMORY_SCOPE_LABELS_MAX=50;
 const actions=z.discriminatedUnion("action",[
@@ -104,7 +108,11 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("humans")}).strict(),
   z.object({action:z.literal("human-share"),personId:id,scopeId:id,granted:z.boolean()}).strict(),
   z.object({action:z.literal("human-link"),bindingId:id,expectedRevision:z.number().int().positive(),as:z.enum(["owner","person","unlink"]),personId:id.optional()}).strict(),
-  z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional()}).strict(),
+  z.object({action:z.literal("list"),query:z.string().max(4096).optional(),scopeId:id.optional(),botId:id.optional(),state:z.enum(["candidate","active","archived","superseded","deleted"]).optional(),cursor:z.string().max(512).optional(),view:z.enum(["search","important","recent","review"]).optional(),
+    // the memory screen's filters (MEMORY-UI-BUILD-SPEC r3 1.1): a kind or an assertion outside these lists is refused, and so is any other field
+    kinds:z.array(z.enum(OWNER_LIST_KINDS)).min(1).max(8).refine(kinds=>new Set(kinds).size===kinds.length).optional(),assertion:z.enum(OWNER_LIST_ASSERTIONS).optional(),
+    threadId:id.optional(),since:listTime.optional(),until:listTime.optional(),pinned:z.boolean().optional(),pinnedFirst:z.boolean().optional()}).strict(),
+  z.object({action:z.literal("learned-today"),since:listTime}).strict(),
   z.object({action:z.literal("scope-labels"),scopeIds:z.array(id).min(1).max(MEMORY_SCOPE_LABELS_MAX)}).strict(),
   z.object({action:z.literal("inspect"),id,version}).strict(),
   z.object({action:z.literal("review-as-skill"),id,version,botId:id}).strict(),
@@ -119,6 +127,7 @@ const actions=z.discriminatedUnion("action",[
   z.object({action:z.literal("remember"),actionId,text:z.string().min(1).max(REMEMBER_TEXT_MAX),origin:z.object({provider:z.enum(LAM_PROVIDERS),date:z.string().regex(/^\d{4}(-\d{2}(-\d{2})?)?$/).optional()}).strict().optional()}).strict(),
   z.object({action:z.literal("promote"),id,version,scopeId:id}).strict(),
   z.object({action:z.literal("forget"),kind:z.enum(["source","record"]),id,revision:z.number().int().nonnegative().optional()}).strict(),
+  z.object({action:z.literal("forget-pip"),id,expectedVersion:z.number().int().positive()}).strict(),
   z.object({action:z.literal("bind"),scopeId:id,...subject}).strict(),
   z.object({action:z.literal("project"),path:z.string().min(1).max(4096),...subject}).strict(),
   z.object({action:z.literal("configure"),mode:z.enum(["off","capture","active","paused"]).optional(),excludedThreadIds:z.array(id).max(1000).optional(),extractorInstanceId:id.nullable().optional(),learning:memoryLearningPatchSchema.optional(),ceiling:learningCeilingSchema.optional(),learningRevision:z.number().int().nonnegative().optional()}).strict(),
@@ -142,7 +151,7 @@ function configuration():Configuration {
 }
 function record(row:Record<string,unknown>):MemoryRecord {
   const reviewReason=row.state==="candidate"?candidateReviewReason(database(),String(row.id),Number(row.version)):undefined;
-  return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:maskFinancialIdentifiers(String(row.text)),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to)};
+  return {...(reviewReason?{reviewReason}:{}),id:String(row.id),version:Number(row.version),scopeId:String(row.scope_id),kind:String(row.kind),text:maskFinancialIdentifiers(String(row.text)),assertion:row.assertion as MemoryRecord["assertion"],state:row.state as MemoryRecord["state"],ownerPinned:row.owner_pinned===1,validFrom:Number(row.valid_from),validTo:row.valid_to===null?null:Number(row.valid_to),...(row.created_at!==undefined&&row.created_at!==null?{createdAt:Number(row.created_at)}:{})};
 }
 function getRecord(id:string,version:number){
   const row=database().prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version);
@@ -153,6 +162,47 @@ function getRecord(id:string,version:number){
 }
 function forgottenRecord(id:string,version:number){
   return Boolean(database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(id,version));
+}
+/** Every thread of the roster: its bots' chats and tasks, its groups' chats and tasks. */
+function rosterThreads(roster:MemoryRoster):Set<string>{
+  const threads=new Set<string>();
+  for(const bot of roster.bots){threads.add(bot.threadId);for(const task of bot.tasks??[])threads.add(task.threadId);}
+  for(const group of roster.groups){threads.add(group.threadId);for(const task of group.tasks??[])threads.add(task.threadId);}
+  return threads;
+}
+/** The bot's home thread as the execution store sees it (Main chat), when the store is there. */
+function liveHomeThread(botId:string):string|undefined{
+  // read only: homeThread can make a chat when the bot has none, and opening the memory list never makes one (Astra B1 M3). Outside the
+  // home partition the label falls back to the roster's oldest task.
+  const bot=executionStore()?.bot(botId);
+  return bot&&(bot.partitionedAt===undefined||isHomePartition(threadPartition(bot,bot.threadId)))?bot.threadId:undefined;
+}
+/** Who said the words a memory rests on (r3 1.6): `you` for the owner; `person` for anyone else in the chat, with a name only when an active
+ * binding holds a display name; `bot` with the roster name. The raw speaker id never leaves the server. */
+function evidenceSpeakers(ticket:object,roster:MemoryRoster,db:ReturnType<typeof database>,id:string,version:number):(speaker:string)=>{who:MemoryEvidenceSpeaker;name?:string}{
+  let people:Map<string,string>|undefined;
+  let ownBot:string|null|undefined;
+  const nameOf=(display:unknown)=>{const value=display as {name?:unknown;username?:unknown}|undefined;return typeof value?.name==="string"&&value.name?value.name:typeof value?.username==="string"&&value.username?value.username:undefined;};
+  return speaker=>{
+    if(speaker==="owner")return {who:"you"};
+    if(speaker.startsWith("person:")){
+      if(!people){
+        people=new Map();
+        for(const binding of humanBindingStatus(ticket).bindings as Array<{id:string;personId:string|null;active:boolean;display?:unknown}>){
+          const name=binding.active?nameOf(binding.display):undefined;
+          if(!name)continue;
+          if(!people.has(binding.id))people.set(binding.id,name);
+          if(binding.personId&&!people.has(binding.personId))people.set(binding.personId,name);
+        }
+      }
+      const name=people.get(speaker.slice("person:".length));
+      return name?{who:"person",name}:{who:"person"};
+    }
+    const named=roster.bots.find(bot=>bot.id===speaker)?.name;
+    if(named)return {who:"bot",name:named};
+    if(ownBot===undefined)ownBot=ownerListExtras(db,[{id,version}],roster).get(`${id}:${version}`)?.bot?.name??null;
+    return ownBot?{who:"bot",name:ownBot}:{who:"bot"};
+  };
 }
 function isPipRecord(id:string):boolean{
   const row=database().prepare("SELECT kind FROM memory_records WHERE id=? LIMIT 1").get(id);
@@ -214,6 +264,11 @@ function validSubject(roster:MemoryRoster,type:"bot"|"room",id:string){
 function scopeOmission():number{
   const conversations=Number(database().prepare("SELECT count(*) AS n FROM (SELECT 1 FROM memory_scopes WHERE kind='conversation' LIMIT ?)").get(MEMORY_STATUS_SCOPE_LIMIT+1)?.n??0);
   return conversations>MEMORY_STATUS_SCOPE_LIMIT?Number(database().prepare("SELECT count(*) AS n FROM memory_scopes WHERE kind='conversation'").get()?.n??0):0;
+}
+/** The status's own scope predicate (scopeRows(scopeOmission()>0)): it lists per-conversation scopes only while they are within the limit.
+ * One LIMIT-bounded count, never the full one. */
+function statusListsConversations():boolean{
+  return Number(database().prepare("SELECT count(*) AS n FROM (SELECT 1 FROM memory_scopes WHERE kind='conversation' LIMIT ?)").get(MEMORY_STATUS_SCOPE_LIMIT+1)?.n??0)<=MEMORY_STATUS_SCOPE_LIMIT;
 }
 type ScopeRow=Record<string,unknown>;
 function scopeAudience(roster:MemoryRoster,row:ScopeRow){
@@ -481,17 +536,33 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="pip-reflect-status"){requireMemoryOwner(ticket);return reflectionStatus(input.botId);}
   if(input.action==="pip-reflect-retry"){requireMemoryOwner(ticket);retryReflection(input.botId);return {ok:true};}
   if(input.action==="list"){
-    const {rows,...result}=await ownerMemoryList(input,roster);
-    return {...result,records:rows.map(record)};
+    // a chat filter names a thread of the roster, never an arbitrary id
+    if(input.threadId&&!rosterThreads(roster).has(input.threadId))throw Object.assign(new Error("INVALID_MEMORY_ARGUMENTS"),{status:400});
+    const {rows,...result}=await ownerMemoryList({...input,screen:!input.view},roster);
+    const extras=ownerListExtras(db,rows,roster,liveHomeThread);
+    return {...result,records:rows.map(row=>{const extra=extras.get(`${row.id}:${row.version}`);return {...record(row),chat:extra?.chat??null,bot:extra?.bot??null,scopeKind:(extra?.scopeKind??null) as MemoryListRow["scopeKind"]};})};
   }
+  if(input.action==="learned-today")return ownerLearnedToday(input,roster);
   if(input.action==="inspect"){
     const current=getRecord(input.id,input.version);let remaining=32768;
     // Learn about me R5.1 C4: a forgotten record (RECORD tombstone) shows no words, even a version past the newest 64 that keeps its
     // text until the expand phase.
-    if(forgottenRecord(input.id,input.version))return {record:current,evidence:[],correction:null};
-    const evidence=db.prepare("SELECT e.*,s.speaker,v.payload,v.content_hash FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE e.record_id=? AND e.record_version=? LIMIT 21").all(input.id,input.version);
+    if(forgottenRecord(input.id,input.version))return {record:current,evidence:[],earlier:[],correction:null};
+    // tool rows are not shown as where a memory came from (r3 1.6); the speaker is judged on the record's first 64 evidence rows, so a record
+    // resting on many tool rows costs one bounded read, not its whole evidence (Astra B1 H2)
+    const evidence=db.prepare("SELECT e.*,s.speaker,v.payload,v.content_hash FROM (SELECT * FROM memory_evidence WHERE record_id=? AND record_version=? LIMIT 64) e JOIN memory_sources s ON s.id=e.source_id JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision WHERE s.speaker<>'tool' LIMIT 21").all(input.id,input.version);
     if(evidence.length>20)throw new Error("MEMORY_RESPONSE_LIMIT");
-    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:maskFinancialIdentifiers(bytes.toString("utf8")),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),speaker:String(row.speaker)};}),lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version),
+    const speakers=evidenceSpeakers(ticket,roster,db,input.id,input.version);
+    // earlier versions: the replaced wordings below this one, newest first; a version forgotten on its own is left out. The state is judged on
+    // the 64 versions below this one, so a record with a long run of archived versions (checkpoint rollovers) is one bounded read (Astra B1 H2)
+    const earlier=(db.prepare("SELECT version,text,valid_to FROM (SELECT version,text,valid_to,state FROM memory_records WHERE id=? AND version<? ORDER BY version DESC LIMIT 64) WHERE state='superseded' ORDER BY version DESC LIMIT 20").all(input.id,input.version) as Array<Record<string,unknown>>)
+      .filter(row=>!forgottenRecord(input.id,Number(row.version))).map(row=>({version:Number(row.version),text:maskFinancialIdentifiers(String(row.text)),replacedAt:row.valid_to===null?null:Number(row.valid_to)}));
+    return {record:current,evidence:evidence.map(row=>{const payload=JSON.parse(String(row.payload)),bytes=Buffer.from(payload.text??"").subarray(Number(row.start_byte),Number(row.end_byte));if(bytes.length>remaining)throw new Error("MEMORY_RESPONSE_LIMIT");remaining-=bytes.length;
+      const said=speakers(String(row.speaker));
+      return {sourceId:String(row.source_id),revision:Number(row.source_revision),startByte:Number(row.start_byte),endByte:Number(row.end_byte),text:redactSecretsInText(bytes.toString("utf8")),path:typeof payload.path==="string"?payload.path:undefined,hash:String(row.content_hash),
+        ...(typeof payload.occurredAt==="number"||typeof payload.occurredAt==="string"?{at:payload.occurredAt}:{}),who:said.who,...(said.name?{name:said.name}:{}),
+        // the 1.0.15 inspect view reads `speaker`: a role word only, never the raw id (removed with that view, MEM-UI-B4)
+        speaker:said.who==="you"?"owner":said.who==="person"?"person:":"bot"};}),earlier,lineage:db.prepare("SELECT parent_id AS id,parent_version AS version FROM memory_derivations WHERE child_id=? AND child_version=? LIMIT 100").all(input.id,input.version),
       correction:current.state==="candidate"?readCorrectionTarget(db,input.id,input.version):null};
   }
   if(input.action==="review-as-skill"){
@@ -518,12 +589,28 @@ export async function memoryOwnerRoute(path:string,body:unknown,ticket:object,ro
   if(input.action==="pin"){pinMemory(ticket,input.id,input.version,input.pinned,roster);return {record:getRecord(input.id,input.version)};}
   if(input.action==="correct"){const next=plainMemoryEditError(()=>correctMemory(ticket,input.id,input.version,input.text,{correctionPin:input.correctionPin}));reindex(input.id,next);return {record:getRecord(input.id,next)};}
   if(input.action==="promote"){
-    return transaction(()=>{const original=getRecord(input.id,input.version);if(original.state!=="active"&&original.state!=="candidate")throw new Error("MEMORY_VERSION_CONFLICT");
-      if(!db.prepare("SELECT 1 FROM memory_scopes WHERE id=?").get(input.scopeId))throw new Error("MEMORY_SCOPE_UNKNOWN");
+    // Copy to (spec r3 3): never a continuity or identity row, never a forgotten one, only an active original, and only to another
+    // audience the status itself lists (scopeRows: every scope, or no per-conversation scope once those pass the status limit).
+    return transaction(()=>{assertGenericMemoryTarget(db,input.id,input.version);assertNotForgotten(db,input.id);
+      const original=getRecord(input.id,input.version);if(original.state!=="active")throw new Error("MEMORY_VERSION_CONFLICT");
+      if(input.scopeId===original.scopeId||!db.prepare("SELECT 1 FROM memory_scopes WHERE id=? AND (kind<>'conversation' OR ?)").get(input.scopeId,statusListsConversations()?1:0))throw new Error("MEMORY_SCOPE_DENIED");
       const copy=randomUUID();insertMemoryRecord(db,{id:copy,version:1,scopeId:String(input.scopeId),kind:String(original.kind),text:String(original.text),assertion:"owner-statement",state:"active",validFrom:Date.now(),createdAt:Date.now()});db.prepare("INSERT INTO memory_derivations VALUES(?,?,?,1)").run(original.id,original.version,copy);inheritEdge(db,{kind:"record",id:copy,version:1},{kind:"record",id:original.id,version:original.version});
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1");reindex(copy,1);return {record:getRecord(copy,1)};});
   }
-  if(input.action==="forget")return forgetMemory(ticket,input);
+  if(input.action==="forget"){
+    // B2 (spec r3 2.1): a second tap on a record already forgotten whole makes no second forget (NULL revisions are distinct in the
+    // UNIQUE index, so the insert alone would not stop it).
+    if(input.kind==="record"&&input.revision===undefined&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND revision IS NULL LIMIT 1").get(input.id))return {status:"excluded" as const,already:true as const};
+    return forgetMemory(ticket,input);
+  }
+  if(input.action==="forget-pip"){
+    // B2 (spec r3 2.2): the screen's Forget for a continuity row, through the one version-fenced PIP delete. Read by id at any version, so a
+    // stale version reaches the fence and answers MEMORY_VERSION_CONFLICT.
+    requireMemoryOwner(ticket);
+    const row=db.prepare("SELECT scope_id,kind FROM memory_records WHERE id=? AND state='active' LIMIT 1").get(input.id);
+    if(!row||!isPipKind(row.kind))throw new Error("MEMORY_NOT_FOUND");
+    return deletePipRecord(input.id,String(row.scope_id),input.expectedVersion);
+  }
   if(input.action==="bind"){validSubject(roster,input.subjectType,input.subjectId);bindMemoryScope(ticket,input.scopeId,input.subjectType,input.subjectId);return {ok:true};}
   if(input.action==="project"){
     validSubject(roster,input.subjectType,input.subjectId);if(!isAbsolute(input.path))throw new Error("MEMORY_PROJECT_PATH_REQUIRED");

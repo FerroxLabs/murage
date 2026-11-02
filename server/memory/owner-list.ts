@@ -5,13 +5,49 @@ import { heldStep } from "../observe.ts";
 import { ageFillBelow, ageTablesPresent, lexicalGeneration, lexicalRowidsAged } from "./age-index.ts";
 import { ownerIndexHandle } from "./index-reader.ts";
 import { ensureScope, type MemoryRoster } from "./policy.ts";
-import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
+import { PIP_ALL_KINDS_SQL, isPipKind } from "./pip-kinds.ts";
 import { rolledCheckpointSql } from "./projection.ts";
-import { OWNER_TAIL_KIND_LIST, RECORD_KEYS_TABLE, recordKeysReady } from "./schema.ts";
+import { optionalIndexReady } from "./optional-index.ts";
+import { AGE_KEY_WINDOW, OWNER_SCOPE_KIND_INDEX, OWNER_TAIL_KIND_LIST, RECORD_KEYS_TABLE, recordKeysReady } from "./schema.ts";
+
+/** The kinds the owner's memory screen may list (MEMORY-UI-BUILD-SPEC r3 1.1). Every other kind (source, continuity-brief, reveal-state,
+ * pip-counter, pip-proposal, tool rows) is never listable: the route refuses a name outside this list. */
+export const OWNER_LIST_KINDS = ["fact","self-trait","relation","commitment","concern","checkpoint","episode","evidence"] as const;
+/** The kinds a list without `kinds` covers (a caller that sends the old `view` keeps the old, unfiltered list). */
+export const OWNER_DEFAULT_KINDS = ["fact","self-trait","relation","commitment","concern"] as const;
+/** The assertions the owner may filter by; tool-observation is refused. */
+export const OWNER_LIST_ASSERTIONS = ["owner-statement","assistant-inference","unverified-import"] as const;
 
 export interface OwnerListInput {
   query?:string; scopeId?:string; botId?:string; state?:string; cursor?:string;
   view?:"search"|"important"|"recent"|"review";
+  kinds?:string[]; assertion?:string; threadId?:string; since?:number; until?:number; pinned?:boolean; pinnedFirst?:boolean;
+  /** Set by the route for a caller without `view` (the memory screen): current memories of the default kinds unless it names others. A caller
+   * that sends `view` (the 1.0.15 screen) and the server's own callers keep the unfiltered list. */
+  screen?:boolean;
+}
+
+/** The filters of one list request, resolved: `kinds` null is the old unfiltered list (a `view` caller). */
+interface ListFilters { kinds:string[]|null; assertion?:string; threadId?:string; since?:number; until?:number; pinned?:boolean }
+function listFilters(input:OwnerListInput):ListFilters{
+  const kinds=input.kinds?.length?[...new Set(input.kinds)]:input.screen?[...OWNER_DEFAULT_KINDS]:null;
+  const pinned=input.pinned??(input.view==="important"?true:undefined);
+  return {kinds,...(input.assertion?{assertion:input.assertion}:{}),...(input.threadId?{threadId:input.threadId}:{}),
+    ...(input.since!==undefined?{since:input.since}:{}),...(input.until!==undefined?{until:input.until}:{}),...(pinned!==undefined?{pinned}:{})};
+}
+/** The chat a record came from: the thread of the source of its newest evidence row. A backwards walk of the evidence primary key stops at its
+ * first row, so it is one evidence probe and one source probe whatever the record rests on. The payload's `chat` is the same expression. */
+export const recordChatSql=(alias:string,schema="")=>`(SELECT s.thread_id FROM ${schema}memory_evidence e JOIN ${schema}memory_sources s ON s.id=e.source_id WHERE e.record_id=${alias}.id AND e.record_version=${alias}.version ORDER BY e.source_id DESC LIMIT 1)`;
+/** The residuals that need the record (assertion, chat, created_at) and, with `keyed` false, the kind and pin too, on alias `r`. */
+function recordResiduals(f:ListFilters,schema:string,keyed:boolean):{sql:string[];args:Array<string|number|null>}{
+  const sql:string[]=[],args:Array<string|number|null>=[];
+  if(!keyed&&f.kinds){sql.push("r.kind IN (SELECT value FROM json_each(?))");args.push(JSON.stringify(f.kinds));}
+  if(!keyed&&f.pinned!==undefined){sql.push("r.owner_pinned=?");args.push(f.pinned?1:0);}
+  if(f.assertion){sql.push("r.assertion=?");args.push(f.assertion);}
+  if(f.since!==undefined){sql.push("r.created_at>=?");args.push(f.since);}
+  if(f.until!==undefined){sql.push("r.created_at<?");args.push(f.until);}
+  if(f.threadId){sql.push(`${recordChatSql("r",schema)}=?`);args.push(f.threadId);}
+  return {sql,args};
 }
 
 /** Owner inspection may span the workspace; the bot panel remains restricted
@@ -63,18 +99,20 @@ export const OWNER_CATCHING_UP_NOTICE = "The search index is catching up. Showin
  * slowest statement (the 50 ms gate, r2.8). */
 export const ownerSearchWork = { indexedQueries: 0, tailQueries: 0, statements: 0, visited: 0, slowestMs: 0 };
 /** When on, every statement a search runs is recorded (tests prove the set does not change with the size of the memory, and read its plans). */
-export const ownerSearchTrace: { on: boolean; statements: Array<{ db: "main" | "index"; sql: string }>; times: number[] } = { on: false, statements: [], times: [] };
+export const ownerSearchTrace: { on: boolean; statements: Array<{ db: "main" | "index"; sql: string; rows?: number }>; times: number[] } = { on: false, statements: [], times: [] };
 const yieldTurn = () => new Promise<void>(resolve => setImmediate(resolve));
 /** One bounded statement of an owner search: named for the stall line and the I/O budget, counted, timed, and followed by a turn of the loop. */
 async function slice(handle:DatabaseSync,which:"main"|"index",sql:string,params:Array<string|number|null>):Promise<Array<Record<string,unknown>>>{
   const traced=ownerSearchTrace.on;
-  if(traced)ownerSearchTrace.statements.push({db:which,sql});
+  const entry:{db:"main"|"index";sql:string;rows?:number}={db:which,sql};
+  if(traced)ownerSearchTrace.statements.push(entry);
   ownerSearchWork.statements++;
   const started=performance.now();
   const rows=heldStep("memory.owner-search",()=>ioBudget.withSource("memory.owner-search",()=>handle.prepare(sql).all(...params))) as Array<Record<string,unknown>>;
   const ms=performance.now()-started;
   ownerSearchWork.slowestMs=Math.max(ownerSearchWork.slowestMs,ms);
-  if(traced)ownerSearchTrace.times.push(ms);
+  // the rows a statement stepped (a keyed walk returns one row per key it examined, kept or not): the per-statement bound the gates read
+  if(traced){ownerSearchTrace.times.push(ms);entry.rows=rows.length;}
   ownerSearchWork.visited+=rows.length;
   await yieldTurn();
   return rows;
@@ -99,8 +137,20 @@ function readKeyCursor(cursor:string|undefined,generation:string):number{
   }catch{throw new Error("INVALID_MEMORY_CURSOR");}
 }
 const makeKeyCursor=(k:number,g:string)=>Buffer.from(JSON.stringify({k,g})).toString("base64url");
+/** The browse cursor adds `p`, the pinned-first phase ("pin" or "rest"; none is "rest"). A page with no cursor starts in phase "pin". */
+function readBrowseCursor(cursor:string|undefined,generation:string):{k:number;p:"pin"|"rest"}{
+  if(!cursor)return {k:TOP_KEY+1,p:"pin"};
+  const k=readKeyCursor(cursor,generation);
+  let p:unknown;
+  try{p=JSON.parse(Buffer.from(cursor,"base64url").toString()).p;}catch{throw new Error("INVALID_MEMORY_CURSOR");}
+  if(p!==undefined&&p!=="pin"&&p!=="rest")throw new Error("INVALID_MEMORY_CURSOR");
+  return {k,p:p==="pin"?"pin":"rest"};
+}
+const makeBrowseCursor=(k:number,g:string,p?:"pin"|"rest")=>Buffer.from(JSON.stringify(p?{k,g,p}:{k,g})).toString("base64url");
 
-export interface OwnerListResult { rows:Array<Record<string,unknown>>; searchMode:string; scopeIds:string[]|null; nextCursor?:string; coverageComplete?:boolean; searchNotice?:string; matchCount?:number; matchCountLabel?:string }
+export interface OwnerListResult { rows:Array<Record<string,unknown>>; searchMode:string; scopeIds:string[]|null; nextCursor?:string; coverageComplete?:boolean; searchNotice?:string; matchCount?:number; matchCountLabel?:string; preparing?:boolean }
+/** Said instead of a list while the key table is being filled after an update (mode P): browse has no page-sized query then (r3 1.7). */
+export const OWNER_PREPARING_NOTICE = "Your memories are being put in order after the update. Search works in the meantime.";
 
 /** Owner search and browse (1.0.3 lane 2, LANE2-MEMORY-DESIGN r3). One order everywhere: the record's age key, newest first.
  *
@@ -149,44 +199,38 @@ function withoutForgotten(db:DatabaseSync,result:OwnerListResult):OwnerListResul
 
 async function ownerMemoryListRead(input:OwnerListInput,roster:MemoryRoster):Promise<OwnerListResult>{
   const db=database(),scopes=ownerListScopes(input,roster),view=input.view??"search";
-  if(!recordKeysReady(db))return preparingList(db,input,scopes,view);
+  const filters=listFilters(input);
+  // Mode P browse (r3 1.7): no index orders a scope's records by age before the key table is filled, so there is no page-sized statement to
+  // answer it with. No rows and one line, for every caller; search keeps its constant-window walk.
+  if(!recordKeysReady(db)&&!input.query?.trim())return {rows:[],searchMode:"browse",scopeIds:scopes,preparing:true,searchNotice:OWNER_PREPARING_NOTICE};
   const base:string[]=["(? IS NULL OR r.scope_id IN (SELECT value FROM json_each(?)))"];
   const baseArgs:Array<string|number|null>=[scopes===null?null:JSON.stringify(scopes),scopes===null?null:JSON.stringify(scopes)];
-  if(input.state){base.push("r.state=?");baseArgs.push(input.state);}else base.push("r.state!='deleted'");
+  // a caller without `view` (the memory screen) sees current memories unless it names a state
+  if(input.state){base.push("r.state=?");baseArgs.push(input.state);}else if(input.screen)base.push("r.state='active'");else base.push("r.state!='deleted'");
   if(view==="important")base.push("r.owner_pinned=1 AND r.state='active'");
   if(view==="recent")base.push("r.state='active'");
   if(view==="review")base.push("r.state='candidate'");
+  if(!recordKeysReady(db)){const extra=recordResiduals(filters,"",false);return preparingList(db,input,scopes,[...base,...extra.sql],[...baseArgs,...extra.args]);}
   // the states the view covers: a closed set, one scan per value (r3.3)
-  const viewStates=view==="important"||view==="recent"?["active"]:view==="review"?["candidate"]:["candidate","active","superseded","archived"];
+  const viewStates=input.screen?["active"]:view==="important"||view==="recent"?["active"]:view==="review"?["candidate"]:["candidate","active","superseded","archived"];
   // an explicit state filter is that state alone (the owner's "deleted" filter included), within what the view allows
   const states=input.state?(view==="search"||viewStates.includes(input.state)?[input.state]:[]):viewStates;
-  if(!input.query?.trim())return keyedBrowse(db,input,scopes,states);
-  return keyedSearch(db,input,scopes,states,base,baseArgs);
+  if(!input.query?.trim())return keyedBrowse(db,input,scopes,states,filters,{count:filters.since!==undefined&&!input.cursor});
+  return keyedSearch(db,input,scopes,states,base,baseArgs,filters);
 }
 
-/** Mode P: the key backfill has not finished. Browse reads the records table as before; search is the source-text match over the newest
- * records by rowid, with the keyset cursor both had before the key table existed. No new code runs here. */
-async function preparingList(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,view:string):Promise<OwnerListResult>{
+/** Mode P search: the key backfill has not finished. The source-text match over the newest records by rowid (a constant window), with the
+ * keyset cursor it had before the key table existed; the list filters are residuals of the same statement. */
+async function preparingList(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,base:string[],baseArgs:Array<string|number|null>):Promise<OwnerListResult>{
   let after={at:Number.MAX_SAFE_INTEGER,id:"",version:Number.MAX_SAFE_INTEGER};
   if(input.cursor){try{
     const value=JSON.parse(Buffer.from(input.cursor,"base64url").toString());
     if(!Number.isSafeInteger(value.at)||typeof value.id!=="string"||!Number.isSafeInteger(value.version)||value.version<1)throw new Error();
     after={at:value.at,id:value.id,version:value.version};
   }catch{throw new Error("INVALID_MEMORY_CURSOR");}}
-  const base:string[]=["(? IS NULL OR r.scope_id IN (SELECT value FROM json_each(?)))"];
-  const baseArgs:Array<string|number|null>=[scopes===null?null:JSON.stringify(scopes),scopes===null?null:JSON.stringify(scopes)];
-  if(input.state){base.push("r.state=?");baseArgs.push(input.state);}else base.push("r.state!='deleted'");
-  if(view==="important")base.push("r.owner_pinned=1 AND r.state='active'");
-  if(view==="recent")base.push("r.state='active'");
-  if(view==="review")base.push("r.state='candidate'");
   const filters=[...base,"(r.created_at<? OR (r.created_at=? AND (r.id>? OR (r.id=? AND r.version<?))))"];
   const args=[...baseArgs,after.at,after.at,after.id,after.id,after.version];
-  const ORDER="ORDER BY r.created_at DESC,r.id,r.version DESC LIMIT 51";
-  if(!input.query?.trim()){
-    const rows=db.prepare(`SELECT r.* FROM memory_records r WHERE ${filters.join(" AND ")} ${ORDER}`).all(...args) as Array<Record<string,unknown>>;
-    const tail=rows[49];
-    return {rows:rows.slice(0,50),searchMode:"browse",scopeIds:scopes,...rows.length>50?{nextCursor:Buffer.from(JSON.stringify({at:Number(tail.created_at),id:String(tail.id),version:Number(tail.version)})).toString("base64url")}:{}};
-  }
+  if(!input.query?.trim())throw new Error("MEMORY_LIST_PREPARING");
   const terms=[...new Set(input.query.match(/[\p{L}\p{N}_-]+/gu)??[])].slice(0,32);
   const textAll=terms.length?terms.map(()=>"instr(lower(r.text),lower(?))>0").join(" AND "):"instr(lower(r.text),lower(?))>0";
   const textArgs=terms.length?terms:[input.query.trim()];
@@ -236,48 +280,150 @@ function nextKey(emitted:Keyed[],frontier:number|null,remaining:boolean,trimmed:
 }
 
 /** Browse in the keyed modes (r3.3): a union of range scans of the key table with an equality prefix, each on its own index, merged. */
-async function keyedBrowse(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,states:string[]):Promise<OwnerListResult>{
+async function keyedBrowse(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,states:string[],f:ListFilters,options:{count?:boolean;noRows?:boolean}={}):Promise<OwnerListResult>{
   const G="B";
-  const below=readKeyCursor(input.cursor,G)-1;
+  const cursor=readBrowseCursor(input.cursor,G);
+  const below=cursor.k-1;
+  // Pinned first (r3 1.2): phase `pin` keeps the pinned rows, then phase `rest` the others, each paged by the age key. An explicit `pinned`
+  // filter is one phase of its own.
+  const phased=f.pinned===undefined&&input.pinnedFirst===true;
+  const phase=phased?cursor.p:undefined;
+  const pin:0|1|null=f.pinned!==undefined?(f.pinned?1:0):phase==="pin"?1:phase==="rest"?0:null;
+  // `since` is a key bound: no record has a key below created_at*2048 (schema.ts RECORD_KEYS_SCHEMA, every rule starts at base), so the
+  // bound drops nothing that qualifies; `until` never narrows the range and is judged by the exact residual alone (r3 1.2, A8).
+  const lo=f.since!==undefined?f.since*AGE_KEY_WINDOW:0;
   const K=RECORD_KEYS_TABLE;
-  const found:Keyed[]=[];
-  let more=false,frontier:number|null=null,complete=true;
-  const add=(rows:Array<Record<string,unknown>>)=>{for(const row of rows)found.push({ak:Number(row.ak),row:{id:String(row.rid),version:Number(row.rv)}});};
-  if(input.view==="important"&&scopes!==null){
-    // the pinned rows of a scope: the scope prefix, the pin as a residual, sliced by examined keys up to the window (r3.3)
-    for(const scope of scopes){
-      let at=below,examined=0,pinned=0;
-      for(;;){
-        const rows=await slice(db,"main",`SELECT record_id AS rid,record_version AS rv,age_key AS ak,owner_pinned AS pin FROM ${K} WHERE scope_id=? AND state='active' AND age_key<=? ORDER BY age_key DESC LIMIT ${OWNER_SLICE_ROWS}`,[scope,at]);
-        examined+=rows.length;
-        const hits=rows.filter(row=>Number(row.pin)===1);
-        add(hits);pinned+=hits.length;
-        if(rows.length<OWNER_SLICE_ROWS)break;
-        at=Number(rows.at(-1)!.ak)-1;
-        if(pinned>=51){more=true;break;}
-        if(examined>=OWNER_TAIL_WINDOW){complete=false;frontier=Math.max(frontier??0,at+1);break;}
-      }
-    }
-  }else{
-    const scans:Array<{sql:string;args:Array<string|number|null>}>=[];
-    if(scopes!==null)for(const scope of scopes)for(const state of states)scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE scope_id=? AND state=? AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[scope,state,below]});
-    else if(input.view==="important")scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE owner_pinned=1 AND state='active' AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[below]});
-    else for(const state of states)scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE state=? AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[state,below]});
-    for(const scan of scans){const rows=await slice(db,"main",scan.sql,scan.args);add(rows);if(rows.length>=51)more=true;}
+  const withIndex=scopes!==null&&f.kinds!==null&&optionalIndexReady(db,OWNER_SCOPE_KIND_INDEX);
+  // Each scan: an equality prefix of one key-table index, walked newest first; what the prefix does not fix is a residual of the same statement.
+  const prefixes:Array<{where:string;args:Array<string|number>}>=[];
+  const keyResiduals:string[]=[],keyArgs:Array<string|number>=[];
+  const kindResidual=()=>{if(f.kinds){keyResiduals.push("c.kd IN (SELECT value FROM json_each(?))");keyArgs.push(JSON.stringify(f.kinds));}};
+  const pinResidual=()=>{if(pin!==null){keyResiduals.push("c.pin=?");keyArgs.push(pin);}};
+  if(pin===1){
+    // the pinned rows: the pinned prefix of the key table (pins are few however long the history), scope and kind as residuals. A scope's
+    // own prefix with the pin as a residual would step every unpinned key of a large scope to find none.
+    for(const state of states)prefixes.push({where:"owner_pinned=1 AND state=?",args:[state]});
+    if(scopes!==null){keyResiduals.push("c.sc IN (SELECT value FROM json_each(?))");keyArgs.push(JSON.stringify(scopes));}
+    kindResidual();
+  }else if(scopes!==null){
+    if(withIndex){for(const scope of scopes)for(const kind of f.kinds!)for(const state of states)prefixes.push({where:"scope_id=? AND kind=? AND state=?",args:[scope,kind,state]});}
+    else{for(const scope of scopes)for(const state of states)prefixes.push({where:"scope_id=? AND state=?",args:[scope,state]});kindResidual();}
+    pinResidual();
+  }else if(f.kinds){for(const kind of f.kinds)for(const state of states)prefixes.push({where:"kind=? AND state=?",args:[kind,state]});pinResidual();}
+  else{for(const state of states)prefixes.push({where:"state=?",args:[state]});pinResidual();}
+  const rec=recordResiduals(f,"",true);
+  const exact=!keyResiduals.length&&!rec.sql.length;
+  // a statement steps at most 51 keys on an exact prefix (the scope-kind index, the kind index), OWNER_SLICE_ROWS on the scope-only fallback
+  const size=scopes!==null&&!withIndex&&pin!==1&&(!exact||options.count)?OWNER_SLICE_ROWS:51;
+  const keyCond=keyResiduals.length?keyResiduals.join(" AND "):"1";
+  // the slice size is bound, not written in: a step near the end of the window asks only for what the window has left (Astra B1 H1)
+  // the scope-kind prefix names its index: without statistics the planner can take the scope index and walk a kind the scope does not hold
+  // through the scope's whole history (B1 scale proof: 63 ms at 200k records, 0.5 ms at 2k, the same keys returned)
+  const SCOPE_KIND_WHERE="scope_id=? AND kind=? AND state=?";
+  const inner=(where:string)=>`(SELECT record_id AS rid,record_version AS rv,age_key AS ak,kind AS kd,owner_pinned AS pin,scope_id AS sc FROM ${K}${where===SCOPE_KIND_WHERE?` INDEXED BY ${OWNER_SCOPE_KIND_INDEX}`:""} WHERE ${where} AND age_key BETWEEN ? AND ? ORDER BY age_key DESC LIMIT ?) c`;
+  const sqlOf=(where:string)=>rec.sql.length
+    ?`SELECT c.rid AS rid,c.rv AS rv,c.ak AS ak,r.id IS NOT NULL AS hit FROM ${inner(where)} LEFT JOIN memory_records r ON r.id=c.rid AND r.version=c.rv AND ${keyCond} AND ${rec.sql.join(" AND ")} ORDER BY c.ak DESC`
+    :`SELECT c.rid AS rid,c.rv AS rv,c.ak AS ak,(${keyCond}) AS hit FROM ${inner(where)} ORDER BY c.ak DESC`;
+  const scans=prefixes.map(p=>({sql:sqlOf(p.where),args:p.args,at:below,last:below+1,done:below<lo}));
+  const kept:Keyed[]=[];
+  let examined=0,complete=true,frontier:number|null=null;
+  const step=async(scan:typeof scans[number],limit=size)=>{
+    // placeholders bind by position: without the record join the key residuals sit in the select list, ahead of the inner scan
+    const rows=await slice(db,"main",scan.sql,rec.sql.length?[...scan.args,lo,scan.at,limit,...keyArgs,...rec.args]:[...keyArgs,...scan.args,lo,scan.at,limit]);
+    examined+=rows.length;
+    for(const row of rows)if(Number(row.hit))kept.push({ak:Number(row.ak),row:{id:String(row.rid),version:Number(row.rv)}});
+    if(rows.length<limit)scan.done=true;else{scan.last=Number(rows.at(-1)!.ak);scan.at=scan.last-1;if(scan.at<lo)scan.done=true;}
+  };
+  for(const scan of scans)if(!scan.done)await step(scan);
+  // k-way: the scan with the newest unexamined keys goes next, until the page (or the count) is full, every scan is done, or the window is spent
+  for(;;){
+    const open=scans.filter(scan=>!scan.done);
+    if(!open.length){frontier=null;break;}
+    const highest=open.reduce((a,b)=>a.last>=b.last?a:b);
+    frontier=highest.last;
+    if(options.count?kept.length>OWNER_COUNT_CAP:kept.filter(c=>c.ak>=highest.last).length>=51)break;
+    if(examined>=OWNER_TAIL_WINDOW){complete=false;break;}
+    await step(highest,Math.min(size,OWNER_TAIL_WINDOW-examined));
   }
-  found.sort(byKey);
-  const eligible=frontier===null?found:found.filter(c=>c.ak>=frontier!);
+  kept.sort(byKey);
+  const eligible=frontier===null?kept:kept.filter(c=>c.ak>=frontier!);
   const shown=eligible.slice(0,50);
-  const rows=await recordsOf(db,shown);
-  const next=nextKey(shown,frontier,eligible.length>50,more);
+  const rows=options.noRows?[]:await recordsOf(db,shown);
+  const next=nextKey(shown,frontier,eligible.length>50,false);
   const result:OwnerListResult={rows:rows.map(strip),searchMode:"browse",scopeIds:scopes,coverageComplete:complete};
   if(!complete)result.searchNotice=OWNER_NEWEST_NOTICE;
-  if(next!==null)result.nextCursor=makeKeyCursor(next,G);
+  if(next!==null)result.nextCursor=makeBrowseCursor(next,G,phase);
+  else if(phase==="pin")result.nextCursor=makeBrowseCursor(TOP_KEY,G,"rest");
+  if(options.count){
+    const n=Math.min(kept.length,OWNER_COUNT_CAP);
+    result.matchCount=n;
+    result.matchCountLabel=kept.length>OWNER_COUNT_CAP?`${OWNER_COUNT_CAP.toLocaleString("en-US")}+`:complete?String(n):`${n.toLocaleString("en-US")}+`;
+  }
   return result;
 }
 
+/** Learned today (r3 1.8): for each bot of the roster, its current memories of the default kinds made since `since`, counted to the cap. */
+export async function ownerLearnedToday(input:{since:number},roster:MemoryRoster):Promise<{bots:Array<{botId:string;count:number;label:string}>;preparing?:true}>{
+  const db=database();
+  if(!recordKeysReady(db))return {bots:[],preparing:true};
+  const bots:Array<{botId:string;count:number;label:string}>=[];
+  for(const bot of roster.bots){
+    const scopes=ownerListScopes({botId:bot.id},roster);
+    const result=await keyedBrowse(db,{botId:bot.id},scopes,["active"],{kinds:[...OWNER_DEFAULT_KINDS],since:input.since},{count:true,noRows:true});
+    if(result.matchCount)bots.push({botId:bot.id,count:result.matchCount,label:result.matchCountLabel!});
+  }
+  return {bots};
+}
+
+/** What the memory screen shows beside each row (r3 1.4): the chat it came from, the bot whose memory it is, and the audience kind. One
+ * statement for the page, over json_each of its (id, version) pairs. */
+export function ownerListExtras(db:DatabaseSync,rows:Array<Record<string,unknown>>,roster:MemoryRoster,homeOf?:(botId:string)=>string|undefined):Map<string,{chat:{threadId:string;name:string|null}|null;bot:{id:string;name:string|null}|null;scopeKind:string|null}>{
+  const out=new Map<string,{chat:{threadId:string;name:string|null}|null;bot:{id:string;name:string|null}|null;scopeKind:string|null}>();
+  if(!rows.length)return out;
+  const found=db.prepare(`SELECT r.id AS id,r.version AS version,r.kind AS kind,s.kind AS sk,s.owner_key AS ok,${recordChatSql("r")} AS thread
+    FROM json_each(?) p JOIN memory_records r ON r.id=json_extract(p.value,'$[0]') AND r.version=json_extract(p.value,'$[1]') LEFT JOIN memory_scopes s ON s.id=r.scope_id`)
+    .all(JSON.stringify(rows.map(row=>[String(row.id),Number(row.version)]))) as Array<Record<string,unknown>>;
+  const names=rosterThreadNames(roster,homeOf);
+  const bots=new Map(roster.bots.map(bot=>[bot.id,bot]));
+  for(const row of found){
+    const thread=row.thread===null||row.thread===undefined?null:String(row.thread);
+    const chat=thread===null||isPipKind(row.kind)?null:{threadId:thread,name:names.name.get(thread)??null};
+    const botId=row.sk==="bot"?String(row.ok).split("#")[0]:row.sk==="conversation"?names.bot.get(String(row.ok)):undefined;
+    const known=botId?bots.get(botId):undefined;
+    out.set(`${row.id}:${row.version}`,{chat,bot:known?{id:known.id,name:known.name??null}:null,scopeKind:row.sk===null||row.sk===undefined?null:String(row.sk)});
+  }
+  return out;
+}
+
+/** The roster's names for its threads: a bot's home thread is `Main chat`, a task thread its title, a group thread the group's name. */
+export function rosterThreadNames(roster:MemoryRoster,homeOf?:(botId:string)=>string|undefined):{name:Map<string,string>;bot:Map<string,string>}{
+  const name=new Map<string,string>(),bot=new Map<string,string>();
+  const titled=(task:unknown)=>{const title=(task as {title?:unknown}).title;return typeof title==="string"&&title.trim()?title.trim():undefined;};
+  for(const group of roster.groups){
+    for(const task of group.tasks??[]){const title=titled(task);if(title&&!name.has(task.threadId))name.set(task.threadId,title);}
+    if(group.name?.trim())name.set(group.threadId,group.name.trim());
+  }
+  for(const b of roster.bots){
+    const tasks=b.tasks??[];
+    for(const task of tasks){bot.set(task.threadId,b.id);const title=titled(task);if(title)name.set(task.threadId,title);}
+    bot.set(b.threadId,b.id);
+    // the home thread: the execution store's when it knows the bot, else the oldest task, else the bot's own thread
+    let home:string|undefined;
+    try{home=homeOf?.(b.id);}catch{home=undefined;}
+    if(!home){const oldest=[...tasks].sort((x,y)=>Number((x as {createdAt?:number}).createdAt??0)-Number((y as {createdAt?:number}).createdAt??0))[0];home=oldest?.threadId??b.threadId;}
+    name.set(home,"Main chat");
+    if(!name.has(b.threadId))name.set(b.threadId,"Main chat");
+  }
+  return {name,bot};
+}
+
 /** Search in the keyed modes: the three streams, one frontier, one cursor (the header of this file). */
-async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,states:string[],base:string[],baseArgs:Array<string|number|null>):Promise<OwnerListResult>{
+async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,states:string[],plainBase:string[],plainArgs:Array<string|number|null>,f:ListFilters):Promise<OwnerListResult>{
+  // the list filters (r3 1.3) are residuals of every stream's record join; the index walk reads the records through the attached main database
+  const mainExtra=recordResiduals(f,"",false),indexExtra=recordResiduals(f,"authority.",false);
+  const base=[...plainBase,...mainExtra.sql],baseArgs=[...plainArgs,...mainExtra.args];
+  const indexBase=[...plainBase,...indexExtra.sql],indexArgs=[...plainArgs,...indexExtra.args];
+  const keyLo=f.since!==undefined?f.since*AGE_KEY_WINDOW:0;
   const terms=[...new Set(input.query!.match(/[\p{L}\p{N}_-]+/gu)??[])].slice(0,32);
   // "All words": every word must be in the text, as a part of a word on the text path and as a whole word in the index.
   const textAll=terms.length?terms.map(()=>"instr(lower(r.text),lower(?))>0").join(" AND "):"instr(lower(r.text),lower(?))>0";
@@ -313,8 +459,8 @@ async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
       // No readable index: the text match alone, over the newest keys, a slice at a time (the key walk has a frontier too).
       let at=hi,examined=0;
       for(;;){
-        const rows=await slice(db,"main",`SELECT c.ak AS ak,r.* FROM (SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE age_key<=? ORDER BY age_key DESC LIMIT ${OWNER_SLICE_ROWS}) c
-          LEFT JOIN memory_records r ON r.id=c.rid AND r.version=c.rv AND ${base.join(" AND ")} AND ${textAll} ORDER BY c.ak DESC`,[at,...baseArgs,...textArgs]);
+        const rows=await slice(db,"main",`SELECT c.ak AS ak,r.* FROM (SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE age_key BETWEEN ? AND ? ORDER BY age_key DESC LIMIT ${OWNER_SLICE_ROWS}) c
+          LEFT JOIN memory_records r ON r.id=c.rid AND r.version=c.rv AND ${base.join(" AND ")} AND ${textAll} ORDER BY c.ak DESC`,[keyLo,at,...baseArgs,...textArgs]);
         examined+=rows.length;keep(rows);
         if(rows.length<OWNER_SLICE_ROWS)break;
         at=Number(rows.at(-1)!.ak)-1;
@@ -371,19 +517,21 @@ async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
       const table=mode==="R"?"lexical":"lexical_age";
       const expression=terms.map(term=>`"${term.replaceAll('"','""')}"`).join(" AND ");
       const stepSql=`SELECT m.ix AS ix,m.ix AS ak,r.* FROM (SELECT rowid AS ix,id,version FROM ${table} WHERE ${table} MATCH ? AND rowid>=? AND rowid<=? ORDER BY rowid DESC LIMIT ${OWNER_SLICE_ROWS}) m
-    LEFT JOIN authority.memory_records r ON r.id=m.id AND r.version=CAST(m.version AS INTEGER) AND ${base.join(" AND ")} ORDER BY m.ix DESC`;
+    LEFT JOIN authority.memory_records r ON r.id=m.id AND r.version=CAST(m.version AS INTEGER) AND ${indexBase.join(" AND ")} ORDER BY m.ix DESC`;
       const rangeSql=`SELECT age_key AS ak FROM authority.${K} WHERE age_key<=? ORDER BY age_key DESC LIMIT 1 OFFSET ${OWNER_INDEX_RANGE_KEYS-1}`;
-      let top=hi,steppedRows=0,ranges=0,exhausted=hi<floor,lost=false,stopped=false;
+      // the walk's lower bound: the fill's frontier in mode F, and `since` as a key bound (r3 1.3)
+      const low=Math.max(floor,keyLo);
+      let top=hi,steppedRows=0,ranges=0,exhausted=hi<low,lost=false,stopped=false;
       let examinedBelow=hi+1;
       walk: while(!exhausted&&!stopped){
         const handle=ownerIndexHandle();
         if(!handle){lost=true;break;}
         if(ranges++>=OWNER_INDEX_RANGES){stopped=true;break;}
         const bound=await slice(handle,"index",rangeSql,[top]);
-        const lo=Math.max(floor,bound.length?Number(bound[0]!.ak):0);
+        const lo=Math.max(low,bound.length?Number(bound[0]!.ak):0);
         let cur=top;
         for(;;){
-          const rows=await slice(handle,"index",stepSql,[expression,lo,cur,...baseArgs]);
+          const rows=await slice(handle,"index",stepSql,[expression,lo,cur,...indexArgs]);
           steppedRows+=rows.length;
           for(const row of rows){
             if(row.id===null||row.id===undefined)continue;
@@ -397,10 +545,10 @@ async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
           if(steppedRows>=OWNER_INDEX_MATCHES){stopped=true;break walk;}
           if(cur<lo){examinedBelow=lo;break;}
         }
-        if(lo<=floor)exhausted=true;else top=lo-1;
+        if(lo<=low)exhausted=true;else top=lo-1;
       }
       if(lost)say(OWNER_CATCHING_UP_NOTICE);
-      if(!exhausted)indexFrontier=Math.max(examinedBelow,floor);
+      if(!exhausted)indexFrontier=Math.max(examinedBelow,low);
       // a page that stopped at the step limit before it filled may have left matches further down: said, and the next page carries on
       indexStopped=!exhausted&&!lost&&indexed.length<51;
       if(indexStopped)cut();
@@ -409,11 +557,11 @@ async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
       //    (the scan with the newest unexamined rows goes next), newest first from the page's place.
       const scans=[...OWNER_TAIL_KIND_LIST.flatMap(kind=>states.map(state=>({kind,state}))),...states.filter(state=>state!=="active").map(state=>({kind:"checkpoint",state}))]
         .map(scan=>({...scan,at:hi,last:hi+1,done:false}));
-      const tailSql=`SELECT c.ak AS ak,r.* FROM (SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE kind=? AND state=? AND age_key<=? ORDER BY age_key DESC LIMIT ${OWNER_SLICE_ROWS}) c
+      const tailSql=`SELECT c.ak AS ak,r.* FROM (SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE kind=? AND state=? AND age_key BETWEEN ? AND ? ORDER BY age_key DESC LIMIT ${OWNER_SLICE_ROWS}) c
         LEFT JOIN memory_records r ON r.id=c.rid AND r.version=c.rv AND ${base.join(" AND ")} AND ${neverIndexed} AND ${textAll} ORDER BY c.ak DESC`;
       let examined=0,tailFound=0;
       const step=async(scan:typeof scans[number])=>{
-        const rows=await slice(db,"main",tailSql,[scan.kind,scan.state,scan.at,...baseArgs,...textArgs]);
+        const rows=await slice(db,"main",tailSql,[scan.kind,scan.state,keyLo,scan.at,...baseArgs,...textArgs]);
         examined+=rows.length;
         const before=keptCount;keep(rows);tailFound+=keptCount-before;
         if(rows.length<OWNER_SLICE_ROWS)scan.done=true;else{scan.last=Number(rows.at(-1)!.ak);scan.at=scan.last-1;}
