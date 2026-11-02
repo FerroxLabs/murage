@@ -126,6 +126,26 @@ describe("downloadSavedArtifact stays on the desktop-proof fetch", () => {
       { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } },
     );
   });
+
+  // 1.0.14: the desktop voice note's Download (VoiceNoteBubble in
+  // ArtifactCards.tsx) is this same call. The proof rides in the header of one
+  // fetch and the browser only ever clicks the blob: URL made from its answer,
+  // so no harness URL is loaded without the desktop proof.
+  it("a voice note on the desktop downloads with the desktop proof and clicks only a blob: URL", async () => {
+    const link = { href: "", download: "", rel: "", referrerPolicy: "", click: vi.fn(), remove: vi.fn() };
+    vi.stubGlobal("document", { createElement: vi.fn(() => link), body: { appendChild: vi.fn() } });
+    const note: Artifact = { ...artifact, id: "voice-1", name: "Voice note", filename: "voice-note.mp3", kind: "other", mime: "audio/mpeg", producer: "voice-note" };
+    await downloadSavedArtifact(note);
+    expect(auth.ensure).toHaveBeenCalledOnce();
+    expect(globalThis.fetch).toHaveBeenCalledOnce();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/artifacts/voice-1/download",
+      { redirect: "error", headers: { "x-murage-surface": "desktop", "x-murage-surface-secret": "synthetic-proof" } },
+    );
+    expect(link.click).toHaveBeenCalledOnce();
+    expect(link.href).toBe("blob:synthetic");
+    expect(link.download).toBe("voice-note.mp3");
+  });
 });
 
 // A saved file opened by id (the Inbox's "Open file") belongs to its own bot

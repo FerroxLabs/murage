@@ -31,6 +31,13 @@ function usableFluxKeys(workspaceKey: string, bank: string | undefined): Set<str
   return keys;
 }
 
+/** LINUX-NOKEYRING-ENV-KEY: the desktop found no unlocked keyring at launch, so no key can be saved and the Flux panel says why.
+ * Only the desktop shell's own child reads it (a real utility parent port, and MURAGE_DESKTOP_PARENT), never a server-only start or a Cloud home, and only the one
+ * known reason counts. A reason code, never a key. */
+export function fluxSaveBlocked(env: NodeJS.ProcessEnv, cloudHome: boolean, desktopParentPort: boolean): { saveBlocked?: "keyring" } {
+  return !cloudHome && desktopParentPort && env.MURAGE_DESKTOP_PARENT === "1" && env.MURAGE_SECRET_SAVE_REFUSED === "keyring" ? { saveBlocked: "keyring" } : {};
+}
+
 export function createFluxConnectionApply(deps: FluxConnectionApplyDeps) {
   let keyChangedSinceBoot = false;
   // The flag as it was before the last non-restore apply, so a restore of
