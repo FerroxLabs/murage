@@ -72,6 +72,8 @@ export interface NeedsYouPageProps {
 
 export interface HealthPageProps {
   onOpenNeedsYou: () => void;
+  /** Back, the close button and Esc: to the view the person came from, or Today. */
+  onLeave: () => void;
 }
 
 export interface FirstRunTodayCardProps {
@@ -101,7 +103,7 @@ export interface PhoneTabsProps {
 }
 
 /** GET /api/engine-health (server/engine-health-routes.ts). */
-export type EngineHealthState = "ready" | "signed-out" | "limit" | "off" | "missing";
+export type EngineHealthState = "ready" | "checking" | "signed-out" | "limit" | "off" | "missing";
 export type FluxHealthState = "ok" | "allowance-used-up" | "key-problem" | "none";
 export interface EngineHealthRow {
   id: string;

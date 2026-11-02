@@ -154,7 +154,13 @@ export const FUIGO_AGENT_SPAWNS_OFF = { FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BA
  *  managed config. Without it the tool returns unanswered at 30 minutes and the card sits open under a moved-on turn. */
 export const FUIGO_ASK_CLOCK_OFF = { FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false" } as const;
 
-export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF } as const;
+/** Fuigo 1.0.38 runs `<cwd>/.envrc` at session start in a trusted folder, before any tool call reaches Murage's
+ *  approvals, and takes its exports into the session env (fuigo-workspace src/envrc.rs). A timeout of 0 means
+ *  ".envrc is not evaluated" (envrc.rs:17, :171-172), so a bot's write to that file never runs as engine code. Pinned
+ *  over any value the owner's shell sets: a non-zero one left in place would turn evaluation back on. */
+export const FUIGO_ENVRC_OFF = { FUIGO_ENVRC_TIMEOUT_SECS: "0" } as const;
+
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF, ...FUIGO_ENVRC_OFF } as const;
 
 /**
  * Names a Fuigo bot turn never inherits, in any casing. `FUIGO_AGENT` starts
@@ -586,10 +592,20 @@ export function fuigoFolderTrustGeneration(version: string | undefined): 1 | 2 {
   return /\d+\.\d+\.\d+/.test(version ?? "") && !versionAtLeast(version, [1, 0, 35]) ? 1 : 2;
 }
 
-/** Fuigo 1.0.38 takes `duration: "process"`; 1.0.37 denies unknown fields, so
- * an older or unread version gets rule 3b's plain reject. */
+/** Whether Murage sends the process-only trust reply and holds the first prompt for
+ * it (rule 3b primary route). Off in 1.0.14 (FUIGO-PROCESS-REPLY-OFF-1014): every
+ * version, 1.0.38 included, takes rule 3b's plain reject, exactly as on 1.0.37.
+ * Turning it on is FIX-LEDGER row FUIGO-PROCESS-REPLY-ON. */
+export const FUIGO_PROCESS_TRUST_REPLY = false;
+
+/** The version rule behind the switch: Fuigo 1.0.38 takes `duration: "process"`;
+ * 1.0.37 denies unknown fields, so an older or unread version never gets it. */
+export function fuigoFolderTrustProcessReplyAt(version: string | undefined, on: boolean): boolean {
+  return on && /\d+\.\d+\.\d+/.test(version ?? "") && versionAtLeast(version, [1, 0, 38]);
+}
+
 export function fuigoFolderTrustProcessReply(version: string | undefined): boolean {
-  return /\d+\.\d+\.\d+/.test(version ?? "") && versionAtLeast(version, [1, 0, 38]);
+  return fuigoFolderTrustProcessReplyAt(version, FUIGO_PROCESS_TRUST_REPLY);
 }
 
 const support: AcpSupport = {

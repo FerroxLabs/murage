@@ -221,8 +221,9 @@ export interface CommandSave {
 
 export async function saveCommand(deps: FlowDeps, save: CommandSave): Promise<{ ok: true } | FlowFailure> {
   const { body: envBody, secrets } = splitValues(save.env, deps.bridge);
+  let answer: unknown;
   try {
-    await deps.api("/api/mcp/servers", {
+    answer = await deps.api("/api/mcp/servers", {
       method: "POST",
       body: JSON.stringify({ name: save.name, command: save.draft.command, args: save.draft.args, env: envBody, enabled: false }),
     });
@@ -230,7 +231,8 @@ export async function saveCommand(deps: FlowDeps, save: CommandSave): Promise<{ 
     return failure(error);
   }
   if (deps.bridge && Object.keys(secrets).length) {
-    const saved = await deps.bridge.saveSecrets(save.name, { env: secrets });
+    // The revision this save made: an entry moved since then takes nothing.
+    const saved = await deps.bridge.saveSecrets(save.name, { env: secrets, rev: savedRev(answer, save.name) });
     if (!saved.ok) return { ok: false, message: saved.message };
   }
   return { ok: true };

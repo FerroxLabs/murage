@@ -86,6 +86,7 @@ describe("what the app may do", () => {
     ["DELETE", "/api/groups/room-1/tasks/th_1"],
     ["GET", "/api/threads/th_1/messages"],
     ["GET", "/api/threads/th_1/messages/msg_2/image"],
+    ["GET", "/api/threads/th_1/messages/msg_2/voice-note"],
     ["POST", "/api/threads/th_1/messages/msg_2/reactions"],
     ["GET", "/api/threads/th_1/export"],
     ["POST", "/api/threads/th_1/respond"],
@@ -822,5 +823,30 @@ describe("one bot's whole record reaches the harness from both doors", () => {
     const token = "f".repeat(64);
     expect(deviceProofHeaders("GET", "/api/bots/bot_123", token)).toEqual({});
     expect(launchProofHeaders("GET", "/api/bots/bot_123", token)).toEqual({});
+  });
+});
+
+// 1.0.14: a voice note plays on the phone and the browser door. Only the
+// conversation's own audio route crosses, read-only, at both doors; the
+// harness still decides who may read the conversation.
+describe("voice note audio", () => {
+  const path = "/api/threads/th_1/messages/msg_2/voice-note";
+  it("lets a signed-in phone and browser read a voice note's audio", () => {
+    expect(ask("GET", path)).toBeNull();
+    expect(askBrowser("GET", path)).toBeNull();
+  });
+  it("is read-only, anchored, and closed without a credential", () => {
+    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+      expect(allowed(method, path), method).toBe(false);
+      expect(askBrowser(method, path), `browser ${method}`).not.toBeNull();
+    }
+    expect(ask("GET", path, false)).not.toBeNull();
+    expect(askBrowser("GET", path, false)).not.toBeNull();
+    expect(allowed("GET", `${path}/../../../config`)).toBe(false);
+    expect(allowed("GET", "/api/threads/th_1/messages/msg_2/voice-note.mp3")).toBe(false);
+    expect(allowed("GET", "/api/threads/th_1/voice-note")).toBe(false);
+  });
+  it("needs no launch proof, like the transcript image beside it", () => {
+    expect(needsLaunchProof("GET", path)).toBe(false);
   });
 });
