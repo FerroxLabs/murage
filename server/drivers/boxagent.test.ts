@@ -400,6 +400,18 @@ describe("BoxAgentDriver turns (fake API)", () => {
     expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
     expect(JSON.stringify(recorder.events)).not.toContain("fresh after stop");
   });
+  // CLOSE-STOP-1014 pin: the box agent is unchanged. Its dispose clears listeners at once, so a quit alone never hands the
+  // harness a "cancelled" (which would read as the owner's Stop). Red if dispose ever starts delivering that ending.
+  it("CLOSE-STOP pin: quit alone on a running turn delivers no Stop ending", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "running" } } }]);
+    await create();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-box-close", text: "go", integrations: { computer } });
+    await recorder.until((e) => e.type === "turn.started" && e.turnId === turnId);
+    await instance.dispose();
+    await _cloudComputerIdle();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId && (e as any).ok === true && (e as any).stopReason === "cancelled")).toEqual([]);
+  });
   it("a Stop that lands after the events call resolves emits none of that call's text", async () => {
     restoreFetch = installFakeBox([{ events: [{ id: "e1", type: "response", text: "late events text" }], status: { promptRun: { status: "running" } } }]);
     const inner = globalThis.fetch;

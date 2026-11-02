@@ -52,6 +52,25 @@ export const parseArgs = (argv) => {
 /** The hunks of a unified diff, each with the sha1 of its text from the @@ line on (the index line never counts). */
 export const hunksOf = (diff) => diff.split(/^(?=@@ )/m).slice(1).map((text) => ({ text, sha1: sha("sha1", text) }));
 
+/** The reviewed-hunks file as sha1 -> the ruling named in its third field ("" when the line names none). */
+export const parseReviewed = (text) => {
+  const reviewed = new Map();
+  for (const cols of text.split("\n").map((line) => line.trim().split(/\s+/)).filter((cols) => cols[0])) {
+    if (!reviewed.has(cols[0])) reviewed.set(cols[0], []);
+    reviewed.get(cols[0]).push({ path: cols[1] ?? "", ruling: cols[2] ?? "" });
+  }
+  return reviewed;
+};
+/** A protocol hunk is ruled only by a line naming this same file and a ruling. */
+const ruledFor = (reviewed, sha1, path) => (reviewed.get(sha1) ?? []).some((line) => Boolean(line.ruling) && line.path === path);
+
+/** A MUST_BE_EMPTY file changes the trust protocol. It passes only when every hunk is reviewed against a named design
+ * ruling (third field of its reviewed-hunks line: a FIX-LEDGER row id that cites the GrokBuild security ruling, e.g.
+ * FUIGO-1038-TRUST-ADDITIVE); any other change still stops. Returns the paths that stop. */
+export const protocolChanges = (diffs, reviewed) => Object.entries(diffs).filter(([, diff]) => diff.trim())
+  .filter(([path, diff]) => { const hunks = hunksOf(diff); return !hunks.length || hunks.some((hunk) => !ruledFor(reviewed, hunk.sha1, path)); })
+  .map(([path]) => path);
+
 /** Each full `name(...)` call expression in `source`, paren-balanced, in order. */
 export const callExpressions = (source, opener) => {
   const calls = [];
@@ -778,14 +797,17 @@ async function main() {
   // Step 2 first: it needs no network. The reviewed source is the peeled tag commit.
   const head = git(checkout, "rev-parse", `v${version}^{commit}`).trim();
   const baseHead = git(checkout, "rev-parse", `${TRUST_BASE_TAG}^{commit}`).trim();
-  const changed = [];
-  for (const path of MUST_BE_EMPTY) if (git(checkout, "diff", baseHead, head, "--", path).trim()) changed.push(path);
-  if (changed.length) throw new Error(`trust protocol changed: re-review FUIGO-TRUST-V2 (${changed.join(", ")})`);
+  const reviewed = parseReviewed(readFileSync(args["reviewed-hunks"], "utf8"));
+  const protocolDiffs = Object.fromEntries(MUST_BE_EMPTY.map((path) => [path, git(checkout, "diff", "-U3", baseHead, head, "--", path)]));
+  const changed = protocolChanges(protocolDiffs, reviewed);
+  if (changed.length) {
+    for (const path of changed) for (const hunk of hunksOf(protocolDiffs[path])) if (!ruledFor(reviewed, hunk.sha1, path)) process.stdout.write(`PROTOCOL ${hunk.sha1} ${path}\n${hunk.text}\n`);
+    throw new Error(`trust protocol changed: re-review FUIGO-TRUST-V2 (${changed.join(", ")})`);
+  }
   for (const path of EVERY_HUNK_REVIEWED.filter((item) => item.endsWith("session_setup.rs"))) {
     const at = (rev) => callExpressions(git(checkout, "show", `${rev}:${path}`), TRUST_PROMPT_CALL).join("\n");
     if (at(baseHead) !== at(head)) throw new Error(`trust protocol changed: re-review FUIGO-TRUST-V2 (${path})`);
   }
-  const reviewed = new Set(readFileSync(args["reviewed-hunks"], "utf8").split("\n").map((line) => line.trim().split(/\s+/)[0]).filter(Boolean));
   const unreviewed = EVERY_HUNK_REVIEWED.flatMap((path) => hunksOf(git(checkout, "diff", "-U3", baseHead, head, "--", path)).map((hunk) => ({ path, ...hunk }))).filter((hunk) => !reviewed.has(hunk.sha1));
   if (unreviewed.length) {
     for (const hunk of unreviewed) process.stdout.write(`UNREVIEWED ${hunk.sha1} ${hunk.path}\n${hunk.text}\n`);

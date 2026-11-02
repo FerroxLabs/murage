@@ -7,9 +7,11 @@
 // the conversation has recorded. At the transcript tail it scrolled away
 // from the control that cancels it.
 import { Clock, TriangleAlert, X } from "lucide-react";
+import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { t } from "@/lib/i18n";
 import { sendNoticeText } from "@/lib/send-notice";
 import type { SendNoticeCode } from "../../shared/send-notice";
+import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 
 export interface QueuedComposerItem {
   queueId: string;
@@ -31,11 +33,21 @@ export function QueuedComposerMessages({
   if (!items.length) return null;
   return (
     <div className="mb-2 flex flex-col items-end gap-1.5 px-1" aria-label="Queued messages">
-      {items.map((item) => (
+      {items.map((item) => {
+        // item.text is the composed prompt (attachment tags, pasted-text
+        // wrappers). Show it the way the transcript bubble does: words as
+        // words, images and files as chips, never a composed tag or its path.
+        // The stored text itself is untouched; Send again and Inject use it.
+        const { display, images, files } = splitTranscriptAttachments(item.text, { hidePasteWrappers: true });
+        return (
         <div key={item.queueId} className="flex max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] flex-col items-end">
-          <div className="rounded-2xl rounded-br-md border border-dashed border-hairline/70 bg-panel/80 px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap text-ink-secondary shadow-sm">
-            {item.text}
-          </div>
+          {images.length > 0 && <AttachedImageGallery paths={images} className="mb-1" />}
+          {files.length > 0 && <AttachedFileChips files={files} className="mb-1" />}
+          {display && (
+            <div className="rounded-2xl rounded-br-md border border-dashed border-hairline/70 bg-panel/80 px-4 py-2.5 text-[14px] leading-relaxed whitespace-pre-wrap text-ink-secondary shadow-sm">
+              {display}
+            </div>
+          )}
           {item.refused ? (
             <div className="mt-1 flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px] text-ink-secondary/75" data-testid="refused-send">
               <TriangleAlert size={11} aria-hidden="true" />
@@ -72,7 +84,8 @@ export function QueuedComposerMessages({
           </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
