@@ -1069,6 +1069,26 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
   });
 
+  // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
+  it("CLOSE-STOP quit alone: a held turn ends as the engine closing, delivered before dispose resolves", async () => {
+    await create("permission");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-quit", text: "go" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.dispose();
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+    expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId).map((e: any) => e.message)).toEqual([expect.stringContaining("closed before it finished its reply")]);
+  });
+
+  it("CLOSE-STOP Stop then quit: the owner's Stop, once, with no error", async () => {
+    await create("permission");
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-close-stop", text: "go" });
+    await recorder.until((e) => e.type === "request.opened");
+    await instance.adapter.interruptTurn("t-close-stop");
+    await instance.dispose();
+    expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+    expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId)).toEqual([]);
+  });
+
   it("a Stop that lands while the turn is still starting (no pi child yet) ends it as cancelled before its prompt", async () => {
     await create();
     // sendTurn awaits its setup (version probe, engine environment) before it spawns and registers the child: the Stop lands there

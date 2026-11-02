@@ -30,7 +30,9 @@ export interface EngineReading {
   instanceId: string;
   displayName: string;
   enabled?: boolean;
-  snapshot: { state: "available" | "unavailable"; authenticated?: boolean };
+  /** Fuigo signs in through Flux, so its own signed-out flag is not a problem (the server's engineRow rule). */
+  driverKind?: string;
+  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; authUnverified?: true };
 }
 
 export interface TodayRow {
@@ -90,6 +92,7 @@ export function engineTag(input: Pick<TodayInput, "engine" | "flux" | "connectiv
   const name = engine.label;
   switch (engine.state) {
     case "ready": return { key: "engine", tone: "ok", text: t("ux.l2a.tag.signedIn", { engine: name }), action: "engines" };
+    case "checking": return { key: "engine", tone: "info", text: t("ux.l2a.tag.checking", { engine: name }), action: "engines" };
     case "signed-out": return { key: "engine", tone: "bad", text: t("ux.l2a.tag.signedOut", { engine: name }), action: "engines" };
     case "limit": return { key: "engine", tone: "warn", text: t("ux.l2a.tag.limit", { engine: name }), action: "engines" };
     case "off": return { key: "engine", tone: "warn", text: t("ux.l2a.tag.off", { engine: name }), action: "engines" };
@@ -121,7 +124,8 @@ export function primaryEngine(engines: readonly EngineReading[], botEngineIds: r
 export function engineState(engine: EngineReading): EngineHealthRow["state"] {
   if (engine.enabled === false) return "off";
   if (engine.snapshot.state !== "available") return "missing";
-  if (engine.snapshot.authenticated === false) return "signed-out";
+  if (engine.snapshot.authenticated === false && engine.driverKind !== "fuigoAgent") return "signed-out";
+  if (engine.snapshot.authUnverified === true) return "checking";
   return "ready";
 }
 

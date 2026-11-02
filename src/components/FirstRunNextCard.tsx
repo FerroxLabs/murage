@@ -35,7 +35,7 @@ import {
   FirstRunBubble,
   FirstRunLine,
 } from "./FirstRunChrome";
-import { FirstRunBackupsRow } from "./FirstRunBackupsRow";
+import { LazyFirstRunBackupsRow } from "./FirstRunBackupsRowLazy";
 import { companionBridge } from "@/lib/companion-bridge";
 
 const copy = FIRST_RUN_COPY.routines.done;
@@ -136,7 +136,7 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
 
       {/* Backups are a smart default, and one press. The row reads the real
           schedule before it says anything. */}
-      <FirstRunBackupsRow />
+      <LazyFirstRunBackupsRow />
     </FirstRunBubble>
   );
 }
