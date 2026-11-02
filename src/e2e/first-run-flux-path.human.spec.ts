@@ -78,11 +78,11 @@ const FAKE_FLUX_KEY = "sk-flux-E2E-FAKE-KEY";
  *  is allowed to say something is running. */
 const CONNECTED_STATUS = "Connected. Smart routing on, and your apps are a click away when a job needs them.";
 
-/** The two sentences that exist ONLY on the connect screen, so "is this job
- *  asking for a connection" can be answered without scoping past the jobs card
- *  that is still sitting above it in the transcript. */
+/** The heading that exists ONLY on the connect screen, so "is this job asking
+ *  for a connection" can be answered without scoping past the jobs card that is
+ *  still sitting above it in the transcript. Never the lead above the rows:
+ *  section 1.7 gives that line to every job, whatever it needs. */
 const CONNECT_HEADING_TAIL = /and then I can do it\./;
-const CONNECT_LEAD = "On it. Everything this job needs is on one screen, and you can stop after any of it.";
 const CONNECT_SKIP = "Skip that and let me type it in instead";
 const ELSEWHERE = "Something else";
 const AGAIN = "Take something else off my plate";
@@ -263,19 +263,18 @@ async function assertConnectedWorldTags(app: Page): Promise<void> {
 /**
  * THIS SCREEN IS NOT ASKING FOR A CONNECTION.
  *
- * Both sentences are unique to `FirstRunConnectView`, so this is indifferent
- * to the jobs card still sitting above it in the transcript with "needs your
- * calendar" written on one of its rows.
+ * The heading and the reason on each row are unique to `FirstRunConnectView`,
+ * so this is indifferent to the jobs card still sitting above it in the
+ * transcript with "needs your calendar" written on one of its rows.
  */
 async function assertNoConnectAsk(app: Page, where: string): Promise<void> {
   await expect(
     app.getByText(CONNECT_HEADING_TAIL),
     `${where}: a job with nothing missing must not open the connect screen`,
   ).toHaveCount(0);
-  await expect(
-    app.getByText(CONNECT_LEAD),
-    `${where}: a job with nothing missing must not lead with the connect screen's lead`,
-  ).toHaveCount(0);
+  for (const reason of [FLUX_REASON, GMAIL_REASON, CALENDAR_REASON]) {
+    await expect(connectRow(app, reason), `${where}: a job with nothing missing must not list a connection`).toHaveCount(0);
+  }
 }
 
 /** Choosing a job, and waiting for the server to have heard it. */
@@ -373,7 +372,6 @@ test.describe("the first run with Flux Router connected", () => {
     // saved, so the row that would have asked for one is gone, which is the
     // whole difference this file exists to cover.
     await expect(app.getByText("2 things, and then I can do it."), "the heading must count what is really left").toBeVisible();
-    await expect(app.getByText(CONNECT_LEAD)).toBeVisible();
     await expect(
       connectRow(app, GMAIL_REASON).getByText("Gmail", { exact: true }),
       "the row must name Gmail, and say why it wants the mailbox",

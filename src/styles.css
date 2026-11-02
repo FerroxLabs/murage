@@ -383,6 +383,8 @@ body {
   --inset-top: env(safe-area-inset-top, 0px);
   --inset-bottom: env(safe-area-inset-bottom, 0px);
   --vvh-inset: calc(var(--vvh, 100dvh) - var(--inset-top) - var(--inset-bottom));
+  /* A scroller with bottom padding states it here, for BOX_SAVE_ROW (BoxShell.tsx). */
+  --box-pad: 0px;
 }
 :root[data-keyboard="open"] {
   --inset-bottom: 0px;
@@ -400,6 +402,19 @@ body {
   --vvh: var(--vvh-inset);
   top: calc(var(--inset-top) + var(--vvt, 0px));
   bottom: var(--inset-bottom);
+}
+/* A native <dialog> box (BOX_DIALOG, components/ui/BoxShell.tsx). `m-auto` centres
+   in the layout viewport, which iOS never shrinks for the keyboard, so a field
+   near the bottom would pull the head off the top. This centres in the visual
+   viewport instead and caps the height to it. Unlayered, so it outranks the
+   utilities' margins and max-height; a box may still set its own height. */
+.box-dialog {
+  position: fixed;
+  top: calc(var(--vvt, 0px) + var(--inset-top) + var(--vvh-inset) / 2);
+  bottom: auto;
+  margin-block: 0;
+  translate: 0 -50%;
+  max-height: calc(var(--vvh-inset) - 1.5rem);
 }
 .overlay-inset::before,
 .overlay-inset::after {

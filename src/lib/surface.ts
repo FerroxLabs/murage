@@ -21,6 +21,15 @@ export type SurfaceAnswer = "desktop" | "remote";
 
 let pending: Promise<SurfaceAnswer> | null = null;
 let known: SurfaceAnswer | undefined;
+let knownComputerAnswer: boolean | undefined;
+
+/** Whether the harness says this renderer is the computer running Murage itself (`computer` on `/api/config`,
+ * the server's `isDesktopApp`). A Cloud home's paired phone reads as the "desktop" surface for ordinary owner
+ * access but is not the computer, and bot-level "Always" is the computer's alone. `undefined` until answered,
+ * or from a harness that does not send the field. */
+export function knownComputer(): boolean | undefined {
+  return knownComputerAnswer;
+}
 
 /** The answer if it has already arrived, else `undefined`. Synchronous, for
  * the non-React callers and for a first render that must not block. */
@@ -50,6 +59,7 @@ export function surface(): Promise<SurfaceAnswer> {
     .then((body: unknown) => {
       if (body && typeof body === "object" && !Array.isArray(body) && "surface" in body) {
         const answer = body.surface;
+        if ("computer" in body && typeof body.computer === "boolean") knownComputerAnswer = body.computer;
         if (answer === "desktop" || answer === "remote") {
           if (answer === "desktop" || !desktopSurfaceSecretNeedsRetry()) known = answer;
           return answer;

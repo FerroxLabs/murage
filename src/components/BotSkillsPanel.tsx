@@ -486,7 +486,7 @@ export function SkillsBody(props: SkillsBodyProps) {
           </div>
         )}
         {skill && props.confirming?.name === skill.name && (
-          <div role="alertdialog" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
+          <div role="alertdialog" data-box-exempt="inline confirm inside a section" aria-label="Use this skill anyway?" className="mt-2 rounded-lg border border-warning/40 bg-card p-3 text-[12.5px] text-ink">
             <div className="font-medium">Use {skill.name} anyway?</div>
             <p className="mt-1 text-ink-secondary">The skill check found:</p>
             <ul className="mt-1 list-disc pl-4 text-ink-secondary">{props.confirming.lines.map((line) => <li key={line}>{line}</li>)}</ul>

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { healthCoversBackup, withBackupNotices } from "./inbox-backup-notices.ts";
+import { withBackupNotices } from "./inbox-backup-notices.ts";
 
 const page = { items: [], total: 3, decisions: 3, approvals: 0, questions: 0, connections: 3 };
 const failed = { sentence: "The last backup stopped.", at: 1 };
@@ -32,23 +32,26 @@ describe("the backup rows on the Inbox read (rt4 L2)", () => {
   });
 });
 
-// 1.0.9 Sentinel: a stopped backup that Sentinel's backup issue covers is shown inside the owner's Health card, once.
-describe("the stopped backup inside Health (1.0.9 Sentinel)", () => {
-  const row = (detectorId: string, state = "open") => ({ fingerprint: "f".repeat(64), detectorId, titleKey: "health.backup.not-protected", severity: "high", state, delivery: "page",
-    firstSeenAt: 1, lastSeenAt: 2, count: 1, coverage: "complete", nextAction: "backups" }) as never;
-  const health = (rows: never[], status: "ready" | "waiting" = "ready") => ({ status, summary: null, rows, digest: null });
-  it("moves the notice into Health when S01 is open there, keeping its sentence and counting it once", () => {
-    const body = withBackupNotices(page, { backupFailed: failed, health: health([row("backup")]) });
-    expect(body.backupFailed).toEqual({ ...failed, inHealth: true });
-    expect(body.decisions).toBe(4);
-    expect(body.health?.rows).toHaveLength(1);
-    expect(healthCoversBackup(body.health)).toBe(true);
+// Sean 11-01: only what the owner must act on reaches the Inbox, as an item counted once.
+describe("Health on the Inbox read", () => {
+  const need = (titleKey = "health.backup.not-protected") => ({ titleKey, issues: 1, lastSeenAt: 2 });
+  const health = (needs: ReturnType<typeof need>[], level: "act" | "watch" | "note" | null = needs.length ? "act" : null) => ({ status: "ready" as const, level, needs });
+  it("counts each need once, and a need brings no card of its own for the same stopped backup", () => {
+    expect(withBackupNotices(page, { health: health([need()]) }).decisions).toBe(4);
+    const both = withBackupNotices(page, { backupFailed: failed, health: health([need()]) });
+    expect(both.decisions).toBe(4);
+    expect(both.backupFailed).toEqual(failed);
+    expect(both.health?.needs).toEqual([]);
   });
-  it("keeps the separate card when Health has no open backup issue, or is not ready", () => {
-    for (const h of [health([]), health([row("io-pressure")]), health([row("backup", "resolved")]), health([row("backup")], "waiting")]) {
-      const body = withBackupNotices(page, { backupFailed: failed, health: h });
-      expect(body.backupFailed).toEqual(failed);
-      expect(body.decisions).toBe(4);
+  it("a need that is not the same condition still counts beside a stopped backup", () => {
+    const body = withBackupNotices(page, { backupFailed: failed, health: health([need("health.backup.other")]) });
+    expect(body.decisions).toBe(5);
+  });
+  it("a watch or a note adds nothing to the count", () => {
+    for (const level of ["watch", "note", null] as const) {
+      const body = withBackupNotices(page, { health: health([], level) });
+      expect(body.decisions).toBe(3);
+      expect(body.health?.level).toBe(level);
     }
   });
   it("never attaches Health to a read that did not pass it (less privileged reads)", () => {
@@ -56,10 +59,5 @@ describe("the stopped backup inside Health (1.0.9 Sentinel)", () => {
     expect("health" in body).toBe(false);
     expect(body.backupFailed).toEqual(failed);
     expect(withBackupNotices(page, { health: null })).toBe(page);
-  });
-  it("adds no attention of its own: Health alone leaves the counts untouched", () => {
-    const body = withBackupNotices(page, { health: health([row("backup")]) });
-    expect(body.decisions).toBe(3);
-    expect(body.backupFailed).toBeUndefined();
   });
 });

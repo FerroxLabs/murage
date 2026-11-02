@@ -1,15 +1,25 @@
 // Provider brand marks, keyed by driver kind. Official logos only.
+import { lazy, Suspense } from "react";
 import { Monitor } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { HermesMark } from "./HermesMark";
 import { CursorMark } from "./CursorMark";
 
-export { HermesMark, CursorMark };
+export { CursorMark };
 
 export interface IconProps {
   size?: number;
   className?: string;
 }
+
+/** The space a mark takes while it loads, or if its chunk never comes. */
+function MarkSpace({ size = 16, className }: IconProps) {
+  return <span aria-hidden style={{ width: size, height: size }} className={cn("inline-block shrink-0", className)} />;
+}
+
+// The Hermes mark is 20 KB of path data most homes never draw, so it stays off
+// the first paint. A row with a missing mark is still a row: a failed chunk
+// leaves the space, it never reaches an error boundary.
+const LazyHermesMark = lazy(() => import("./HermesMark").then((module) => ({ default: module.HermesMark })).catch(() => ({ default: MarkSpace })));
 
 export function GrokMark({ size = 16, className }: IconProps) {
   return (
@@ -191,7 +201,7 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
     case "qwenAgent":
       return <QwenMark size={size} className={className} />;
     case "hermesAgent":
-      return <HermesMark size={size} className={className} />;
+      return <Suspense fallback={<MarkSpace size={size} className={className} />}><LazyHermesMark size={size} className={className} /></Suspense>;
     case "boxAgent":
       return <ComputerMark size={size} className={className} />;
     case "piAgent":

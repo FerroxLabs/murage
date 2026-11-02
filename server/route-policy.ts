@@ -123,6 +123,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["DELETE"], path: re(`/api/mcp-grants/${ID}`), class: "companion", cloudWrite: "step-up", why: "the owner switches one script access off" },
   { methods: ["POST"], path: "/api/feedback", class: "companion", cloudWrite: "ordinary", why: "the owner sends tester feedback (the screen's name and one of three fixed sentences) from the help panel on the desktop, the phone or the Cloud window" },
   { methods: ["GET"], path: /^\/api\/help\/search$/, class: "conversation", why: "help search over the shipped docs; no owner data" },
+  { methods: ["GET"], path: "/api/engine-health", class: "conversation", why: "Today's engine tag and the Health dot; the route itself 404s anyone but the owner's surfaces" },
   { methods: ["POST"], path: "/api/sidebar-sections", class: "companion", cloudWrite: "ordinary", why: "filing bots into a team decides who they can reach and which team brief they read" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/work-threads`), class: "companion", cloudWrite: "ordinary", why: "open (creating on first use) the owner's work thread for a covered team, from the desktop or the paired phone (SPEC-X 12.1)" },
   { methods: ["POST"], path: re(`/api/routines/${ID}/run`), class: "companion", cloudWrite: "browser-step-up", why: "run an existing routine now, with the permissions it was given at the keyboard" },
@@ -182,9 +183,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/avatar/generate`), class: "conversation", cloudWrite: "ordinary", why: "draw a new avatar for a bot" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/skills`), class: "conversation", why: "the list of a bot's skills the new-bot intake counts; installing stays on the desktop" },
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
-  { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop" },
+  { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop (ifRev: an Undo restores only the record it changed, UX-TRUST-L1B-1013)" },
   // 1.0.4 SL-K / SL-I: conversation class so a paired device gets the plain 404 from the route's own desktop check (as the task settings PATCH)
-  { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "raise owner open conversations after a preview" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "preview a level (targetLevel) with its conversations and routines, then raise owner open conversations (rosterId, targetLevel, afterRev; designs UX-TRUST-L1B-1013)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "copy the bot's permissions onto one chat after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/threads/follow-model`), class: "desktop", cloudWrite: "ordinary", why: "chats with a model of their own go back to the bot's model" },
   { methods: ["PUT", "DELETE"], path: re(`/api/bots/${ID}/limit-backup`), class: "desktop", cloudWrite: "step-up", why: "the engine that takes over when the bot's engine hits its limit" },
@@ -263,6 +264,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/artifacts(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "verified private workspace deliverables" },
   { methods: "*", path: /^\/api\/claude-accounts(?:\/|$)/, class: "desktop", cloudWrite: "credential", why: "named native Claude account configuration" },
   { methods: "*", path: "/api/automation-admission", class: "desktop", cloudWrite: "ordinary", why: "pause or resume automatic work" },
+  { methods: ["POST"], path: "/api/no-limits/terms", class: "desktop", cloudWrite: "step-up", why: "accept the No limits terms" },
   { methods: ["POST"], path: "/api/backup-failure-notice", class: "desktop", cloudWrite: "ordinary", why: "the desktop reports a stopped backup to the Inbox" },
   { methods: ["GET"], path: "/api/backup-waiting", class: "desktop", why: "who a held-up backup is waiting for" },
   { methods: ["POST"], path: "/api/backup-restart", class: "desktop", cloudWrite: "ordinary", why: "admit or cancel a backup restart" },
@@ -307,6 +309,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: "/api/cli-candidates", class: "desktop", why: "engine binaries found on this computer" },
   { methods: ["POST"], path: "/api/cli-test", class: "desktop", cloudWrite: "step-up", why: "execute a supplied engine binary" },
   { methods: ["POST"], path: "/api/engine-setup-command", class: "desktop", cloudWrite: "ordinary", why: "resolve a trusted engine setup recipe" },
+  { methods: ["POST"], path: "/api/engine-setup-check", class: "desktop", cloudWrite: "step-up", why: "one short real reply through an engine, on the owner's press" },
+  { methods: ["POST"], path: "/api/engine-signin-recipe", class: "desktop", cloudWrite: "step-up", why: "the fixed sign-in recipe a desktop runs for an engine" },
+  { methods: ["POST"], path: "/api/engine-signin-probe", class: "desktop", cloudWrite: "step-up", why: "whether one engine reads signed in, while its sign-in runs" },
   { methods: ["GET", "POST"], path: re(String.raw`/api/engine-management/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "inspect and install managed engines" },
   { methods: ["PATCH"], path: re(String.raw`/api/instances/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "change engine launch configuration" },
   { methods: ["POST"], path: re(String.raw`/api/instances/[\w.-]+/claude-update`), class: "desktop", cloudWrite: "step-up", why: "run Claude Code's own updater for a Claude engine" },
@@ -337,9 +342,10 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,64}/stop`), class: "desktop", cloudWrite: "ordinary", why: "stop a delegated task" },
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,160}/(?:send-again|dismiss)`), class: "desktop", cloudWrite: "ordinary", why: "send a held hand-off again, or let it go" },
   // one bot's administration
-  { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", cloudWrite: "body", why: "bot authority, engine, working folder and deletion" },
+  { methods: ["PATCH", "DELETE"], path: re(`/api/bots/${ID}`), class: "desktop", cloudWrite: "body", why: "bot authority, engine, working folder and deletion (previewId, ifRev: a level change writes only what the owner reviewed, UX-TRUST-L1B-1013)" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/access`), class: "desktop", cloudWrite: "step-up", why: "review scoped connected-app authority" },
-  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/always-allow(?:/remove|/undo)?`), class: "desktop", cloudWrite: "step-up", why: "persistent permission grants, and the card's Undo of one save by holder (UX-TRUST-MOMENTS-1012 1.3)" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/task-allow/(?:remove|clear)`), class: "companion", cloudWrite: "step-up", why: "take back a 12-hour task allowance (the card's Undo) or clear them all (Settings), from the desktop or the paired phone, as the owner (UX-TRUST-MOMENTS-1012 2.3.8, 2.5)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/(?:assistant-profile|skills|skills/library)`), class: "desktop", cloudWrite: "step-up", why: "install executable instructions" },
   { methods: "*", path: re(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), class: "desktop", cloudWrite: "step-up", why: "read, enable, change, roll back or delete an installed skill" },
   { methods: ["GET", "PUT"], path: re(`/api/bots/${ID}/memory`), class: "desktop", cloudWrite: "ordinary", why: "the bot's notebook" },
@@ -380,7 +386,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?)$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };
@@ -498,7 +504,8 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
     if (write && entry?.cloudWrite === "browser-step-up") return elevated ? "deny" : steppedUp ? "allow" : "step-up required";
     return !sensitive && (settingsRead || (entry && ["conversation","companion","health","media"].includes(entry.class))) ? "allow" : "deny";
   }
-  if (scope === "owner-phone" && (credential || elevated)) return "deny";
+  // Folder decisions name paths from every conversation (FUIGO-TRUST-V2 S7): requestSurface counts a Cloud phone as `desktop`, so this route refuses it here, on every method and whatever it signs.
+  if (scope === "owner-phone" && (credential || elevated || targetRoute === "/api/folder-trust")) return "deny";
   if (sensitive && !steppedUp) return "step-up required";
   // Unknown targetRoutes keep the desktop default; concrete handler still decides 404.
   return "allow";
