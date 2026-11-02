@@ -26,16 +26,14 @@ describe("what is already here: the split", () => {
     const detection = firstRunDetection(view({ agents: many }));
     expect(detection.rows).toHaveLength(6);
     expect(detection.rows.map((row) => row.title)).toEqual(many.map((one) => one.name));
-    expect(detection.collapsed).toHaveLength(0);
-    expect(detection.moreLabel).toBe("");
   });
 
   // `view.agents` is already filtered by `runnable()` on the server, whose
   // third term is a non-empty default model. Everything here is therefore
   // something that can answer, and everything in `signedOutAgents` is
-  // something that is here and cannot, which is exactly the line the collapse
-  // is drawn on.
-  it("collapses the engines nobody is signed in to, and counts them", () => {
+  // something that is here and cannot. Since 1.0.14 first run never names
+  // those (FUIGO-FIRST-SIGNIN-PLACEMENT): no row and no "and N more" list.
+  it("lists nothing for the engines nobody is signed in to", () => {
     const detection = firstRunDetection(view({
       agents: [agent({ id: "claude", name: "Claude Code" })],
       signedOutAgents: [
@@ -44,8 +42,7 @@ describe("what is already here: the split", () => {
       ],
     }));
     expect(detection.rows.map((row) => row.title)).toEqual(["Claude Code"]);
-    expect(detection.collapsed.map((row) => row.title)).toEqual(["Codex", "Gemini CLI"]);
-    expect(detection.moreLabel).toBe("and 2 more on this computer");
+    expect(JSON.stringify(detection)).not.toMatch(/Codex|Gemini/);
   });
 
   it("says nothing at all before the view has arrived", () => {
@@ -54,8 +51,6 @@ describe("what is already here: the split", () => {
     for (const nothing of [null, undefined]) {
       const detection = firstRunDetection(nothing);
       expect(detection.rows).toHaveLength(0);
-      expect(detection.collapsed).toHaveLength(0);
-      expect(detection.moreLabel).toBe("");
     }
   });
 });
@@ -107,17 +102,6 @@ describe("what is already here: one row", () => {
     expect(rows[1].detail).not.toBe(copy.cloudDetail);
   });
 
-  it("says a signed-out engine is here without saying anything is broken", () => {
-    const [row] = firstRunDetection(view({
-      agents: [agent({ id: "claude" })],
-      signedOutAgents: [agent({ id: "codex", name: "Codex", signInCommand: "codex login" })],
-    })).collapsed;
-    expect(row.icon).toBe("off");
-    expect(row.detail).toBe(copy.offDetail);
-    expect(row.tag).toBe(copy.offTag);
-    expect(`${row.detail} ${row.tag}`).not.toMatch(/broken|error|fail|wrong|cannot/i);
-  });
-
   // ONE ROW SAYS "using this now", AND ONLY THE ONE THE VIEW PROVES.
   //
   // 1.0.12 carries `chiefInstanceId` on the view. With two local models on
@@ -151,7 +135,5 @@ describe("what is already here: the words around the rows", () => {
     expect(copy.closing).toBe("They answer to you in here now, and they still work exactly as they did on their own.");
     expect(copy.action).toBe("Next");
     expect(copy.heading).toBe("What is already here.");
-    expect(copy.more(15)).toBe("and 15 more on this computer");
-    expect(copy.hide).toBe("Hide them");
   });
 });

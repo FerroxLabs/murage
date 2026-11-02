@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
-import { signedOutEngineRows } from "@/lib/signed-out-engines";
+import { signedOutEngineIds, signedOutEngineRows } from "@/lib/signed-out-engines";
 import { engineNeed } from "@/lib/engine-need";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { useEngineReading } from "@/components/today/use-engine-health";
@@ -62,7 +62,7 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
   const { view } = useSetupView();
   const signedOutRows = signedOutEngineRows(view);
   const reading = useEngineReading();
-  const owed = signedOutRows.length + (engineNeed(reading, signedOutRows, Boolean(view && firstRunOwnsMainView(view))) ? 1 : 0);
+  const owed = signedOutRows.length + (engineNeed(reading, signedOutEngineIds(view), Boolean(view && firstRunOwnsMainView(view))) ? 1 : 0);
   return {
     count,
     decisions: decisions === undefined ? decisions : decisions + owed,
