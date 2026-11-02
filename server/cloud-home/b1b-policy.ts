@@ -10,8 +10,10 @@ export function homeRememberedGrantWrite(method: string, path: string, body: unk
   return visit(body) || /\/always-allow$/.test(path) || (/\/(?:respond|approvals?)(?:\/|$)/.test(path) && !!body && typeof body === "object" && Object.values(body).includes("always"));
 }
 /** The app's own page policy. Trusted Types: the app's "murage" policy sanitizes every markup sink (src/lib/trusted-html.ts),
- *  and "dompurify" is the sanitizer's own parsing policy, claimed by the app at startup. No 'default' policy, no duplicates. */
-export const HOME_PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types murage dompurify";
+ *  and "dompurify" is the sanitizer's own parsing policy, claimed by the app at startup. No 'default' policy, no duplicates.
+ *  `media-src blob:`: a voice note on a door that is not the desktop plays from audio the app fetched itself from the
+ *  conversation's own route (src/lib/voice-note-audio.ts); a blob is made by this page's own script and runs no code. */
+export const HOME_PAGE_CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; require-trusted-types-for 'script'; trusted-types murage dompurify";
 /** The chat's diagram frame (src/mermaid-frame, served with `sandbox allow-scripts; script-src '<its hash>'`): an opaque-origin
  *  document with no network that the app frames. Only its one hashed inline script runs, and only the app may frame it.
  *  Trusted Types are not required in it: it is not the app's document, it holds nothing of the app's (no DOM, cookies,

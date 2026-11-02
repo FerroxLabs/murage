@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { initializeMessageTables } from "./message-tables.ts";
 import { PushStore, initializeMobilePush } from "./mobile-push-store.ts";
 import { PushOutbox, type OutboxWorld, type SendResult } from "./mobile-push-outbox.ts";
-import { LEGACY_SESSION_PRINCIPAL, migrateSessionPrincipals, callsOffUntil, initializeBotCalls, insertCallRule, setBotCallsEnabled, setCallsOffUntil, type CallRuleInput } from "./bot-calls-schema.ts";
+import { LEGACY_SESSION_PRINCIPAL, migrateSessionPrincipals, botCallsEnabled, callsOffUntil, initializeBotCalls, insertCallRule, setBotCallsEnabled, setCallsOffUntil, type CallRuleInput } from "./bot-calls-schema.ts";
 import { admitIntent, getIntent, type CallIntent } from "./bot-calls-machine.ts";
 import { createBotCallsRuntime, matchTurnOwed } from "./bot-calls-runtime.ts";
 import { createCallChannel, createCallTickets, handleCallsRoute, liveFrame, nextLocalMidnight, type CallsRouteDeps } from "./bot-calls-routes.ts";
@@ -302,7 +302,7 @@ describe("Calls off for today (calls-109.yaml v2, off-today)", () => {
 });
 
 describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
-  it("marks the running turn once, needs the bot's switch and a running turn, and the owed row settles on turn.completed", async () => {
+  it("marks the running turn once with the bot's switch off (BOT-CALLS-UNREACHABLE), needs a running turn, and the owed row settles on turn.completed", async () => {
     const t = setup();
     let running: { turnId: string; botId: string } | null = { turnId: "turn-9", botId: "scout" };
     const deps: CallsRouteDeps = {
@@ -311,9 +311,8 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
       setRingsForCalls: () => true, readBody: async () => ({}), now: () => t.now(), runningTurn: () => running,
     };
     const call = (body: unknown) => handleCallsRoute("POST", "/api/calls/turn-end", new URL("http://x/api/calls/turn-end"), { ...deps, readBody: async () => body });
+    // the owner's one call never needs, reads or writes the bot's calls switch (MurageMain 11-02, GrokBuild r1 #2)
     setBotCallsEnabled(t.db, "scout", false);
-    expect(await call({ threadId: "t1" })).toEqual({ status: 409, body: { error: "calls_off" } });
-    setBotCallsEnabled(t.db, "scout", true);
     expect((await call({ threadId: "t2" }))!.status).toBe(404);
     expect((await call({ threadId: "t1", how: "text_first", waitMin: 7 }))!.status).toBe(400);
     const first = await call({ threadId: "t1" });
@@ -326,6 +325,7 @@ describe("Call me when this finishes (calls-109.yaml, turn-end)", () => {
     expect(settled === undefined || settled.at !== null).toBe(true); // settled, or already drained by the wake
     running = null;
     expect(await call({ threadId: "t1" })).toEqual({ status: 409, body: { error: "not_running" } });
+    expect(botCallsEnabled(t.db, "scout")).toBe(false);
   });
   it("while Calls off for today holds it answers 409 calls_off_today and queues nothing; turned back on, the retry marks the turn", async () => {
     const t = setup();

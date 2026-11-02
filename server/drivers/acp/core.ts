@@ -46,6 +46,7 @@ import {
   folderTrustDecision,
   folderTrustQuestion,
   folderTrustQuestionV2,
+  folderTrustSummaryV2,
   folderTrustLateName,
   folderTrustWithheldName,
   type FolderTrustDecision,
@@ -56,7 +57,8 @@ import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { approvalSummary } from "../../../shared/approval-summary.ts";
 import { boundedToolInput, commandText } from "../../approval-text.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
-import { canonicalFolder, folderHasGit, folderTrustDeclinesFor, folderTrustKindNames, folderTrustRejectFor, isUnrecordableTrustRoot } from "../../folder-trust.ts";
+import { managedDeskQualifies } from "../../managed-workspace-trust.ts";
+import { canonicalFolder, folderHasGit, folderTrustAncestorDeclinesFor, folderTrustDeclinesFor, folderTrustKindNames, folderTrustRejectFor, isUnrecordableTrustRoot, pathStartsWith, scanFolderTrustSources } from "../../folder-trust.ts";
 import { cloudRenderFuigoSeed, cloudUnroutedFuigoHome, seedFuigoHome } from "../../folder-trust-seed.ts";
 import { fillFolderLineForEngine } from "../../capabilities-primer.ts";
 import { createHash } from "node:crypto";
@@ -1198,8 +1200,12 @@ export interface AcpSupport {
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
   /** snapshot(): can this harness actually run a turn? (env already carries the
-   *  merged config). May be async for harnesses that have to ask the CLI. */
-  isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | Promise<boolean>;
+   *  merged config). May be async for harnesses that have to ask the CLI.
+   *  Undefined: the CLI did not say, which is not signed out. */
+  isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | undefined | Promise<boolean | undefined>;
+  /** isAuthenticated asks a real sign-in check, so its undefined means the check did not answer: the snapshot says
+   *  unverified, never signed in. Left unset, undefined means the harness has no sign-in to report. */
+  authUnknownIsUnverified?: boolean;
   /** Refuse a first-party cloud turn before spawning when snapshot auth is
    * false. Local injected models deliberately bypass this subscription gate. */
   requireAuthenticationBeforeSpawn?: boolean;
@@ -1449,10 +1455,13 @@ export function questionMethodFor(method: unknown): AcpQuestionMethod | undefine
 const FUIGO_ELICIT_METHOD = "_fuigo/mcp/elicit";
 /** Fuigo's interactive folder-trust round-trip (fuigo-shell
  * mvp_agent/folder_trust_prompt.rs): sent after session/new or session/load
- * when the client advertised `fuigo/folderTrust.interactive`, the workspace
- * has repo-local sources and the trust store has no grant. Params carry
- * `sessionId`, `cwd`, `workspace` and `configKinds`; the answer is
- * `{outcome: "trust" | "reject"}`, and anything else decodes to reject. */
+ * when the client advertised `fuigo/folderTrust.interactive` and the trust
+ * store has no grant. Generation 2 (1.0.35 and later, v2 advert) asks even
+ * for a folder with no repo-local sources, a bare thread desk included.
+ * Params carry `sessionId`, `cwd`, `workspace` and `configKinds`; the answer
+ * carries `outcome` and, on generation 2, `scope`, plus `duration` only when
+ * the version's process-reply helper says the engine reads it. Anything else
+ * decodes to reject. */
 const FUIGO_FOLDER_TRUST_METHODS = new Set(["_fuigo/folder_trust/request", "fuigo/folder_trust/request"]);
 /** The longest the first prompt waits for rule 3b's reply. Measured: the request
  * reaches Murage about 0.1 to 0.3 s after session/new. */
@@ -2640,6 +2649,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           helpersAtAccept: null as Set<string> | null,
           grace: undefined as ReturnType<typeof setTimeout> | undefined,
           cap: undefined as ReturnType<typeof setTimeout> | undefined,
+          /** Set while holding: a stop brings the hold's end forward to its own bound. */
+          onStop: undefined as (() => void) | undefined,
         };
         const markAccepted = () => {
           if (!fallback.helpersAtAccept) fallback.helpersAtAccept = new Set(helpers.open);
@@ -2656,6 +2667,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let trustHold: Promise<void> | null = null;
         let releaseTrustHold: (() => void) | null = null;
         let trustHoldBound: ReturnType<typeof setTimeout> | null = null;
+        // A generation 2 card the owner has open before the first prompt holds
+        // that prompt until it is answered, skipped, stopped or settled, so an
+        // attended card never closes just because the turn ran on and finished.
+        // No timer: the owner's answer, or the turn ending, releases it.
+        const cardHolds = new Map<string, { held: Promise<void>; release: () => void }>();
+        const releaseCardHold = (requestId: string) => { const hold = cardHolds.get(requestId); if (!hold) return; cardHolds.delete(requestId); hold.release(); };
+        const releaseCardHolds = () => { for (const requestId of [...cardHolds.keys()]) releaseCardHold(requestId); };
         /** configureSession's wait for `modelsUpdateNotification` (awaitModelsUpdate): woken by the notification, the turn's end or a stop. */
         let releaseModelsWait: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
@@ -2694,11 +2712,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // R4, R5: seeds go in before the spawn, and only into a home made for this turn.
         // A decision that is not a stored record is a policy grant (a managed desk, Full access).
         const seedGate = support.folderTrust ? turn.folderTrust : undefined;
-        const folderPolicyGrant = seedGate?.decision === "trust" && seedGate.fromRecord !== true;
+        const folderPolicyGrant = seedGate?.decision === "trust" && seedGate.fromRecord !== true && !(trustGeneration === 2 && seedGate.managedDesk);
         const freshFuigoHome = providerBinding?.freshFuigoHome ?? cloudUnroutedFuigoHome(support.driverKind, Boolean(providerBinding));
         // A Cloud seed lands when the launcher starts the engine, so its lines wait for the engine's first answer.
         let cloudSeedPending = false;
         let cloudPolicySeeded = false;
+        // a home made for this turn alone: a grant written there dies with the process
+        const freshHomeThisTurn = Boolean(freshFuigoHome && (freshFuigoHome.cloud || env.FUIGO_HOME === freshFuigoHome.path));
         if (trustGeneration === 1) {
           if (folderPolicyGrant) turn.onFolderPolicyApplied?.();
         } else if (seedGate && freshFuigoHome && (freshFuigoHome.cloud || env.FUIGO_HOME === freshFuigoHome.path)) {
@@ -2834,6 +2854,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // until its close event is too late to send the cancellation response.
           approvalDeliveryStop.abort();
           for (const finish of [...asks.values()]) finish("cancel", "system");
+          fallback.onStop?.();
           teardown?.markStopRequested();
           // A process a turn stops is never pooled again; its hooks stay so
           // this turn still observes the exit it asked for.
@@ -2959,6 +2980,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (state.settled) return;
           state.settled = true;
           releaseTrustHold?.();
+          releaseCardHolds();
           approvalDeliveryStop.abort();
           endTurnTrace(threadId, ok ? (stopReason ?? "ok") : "failed");
           state.finished = ok && stopReason === null;
@@ -3128,9 +3150,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // answers is the caller's rule (`onDecided("unanswered")`).
         const askFolderTrust = (
           sources: string[],
-          onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered") => void,
+          onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered", released: () => void) => void,
           late = false,
-          v2?: { key: string; folder: string; question: ReturnType<typeof folderTrustQuestionV2>; declines: string[] },
+          v2?: { key: string; folder: string; question: ReturnType<typeof folderTrustQuestionV2>; summary: string; declines: string[] },
         ) => {
           const folder = v2?.folder ?? turn.folderTrust?.folder ?? cwd;
           const key = v2?.key ?? turn.folderTrust?.key ?? cwd;
@@ -3142,6 +3164,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             traceClose("permission.wait", requestId, behavior);
             timer?.clear();
             const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
+            // the hold lets the first prompt go only once the reply to this card
+            // has been written to the engine: the v2 caller releases it from the
+            // reply's write callback (a stop or settle releases every hold too)
+            const released = () => releaseCardHold(requestId);
             // FUIGOTRUST2 (6): a late card (the engine had already started)
             // closed by nobody: the turn finished, was stopped, or the ask
             // timed out while the turn ran on — untrusted in every case.
@@ -3158,20 +3184,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               source,
               ...(folderTrustLate ? { folderTrustLate } : {}),
             });
-            if (decision) onDecided(decision);
-            else onDecided(source === "user" ? "skipped" : "unanswered");
+            if (!v2) released();
+            if (decision) onDecided(decision, released);
+            else onDecided(source === "user" ? "skipped" : "unanswered", released);
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
           const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
           traceOpen("permission.wait", requestId);
           asks.set(requestId, finish);
+          if (v2 && !state.promptSent && !state.settled) {
+            let release!: () => void;
+            const held = new Promise<void>((resolve) => { release = resolve; });
+            cardHolds.set(requestId, { held, release });
+            // the wait for the request is over: the card's own hold takes it from here
+            releaseTrustHold?.();
+          }
           emit({
             ...base(threadId, turnId),
             type: "request.opened",
             requestId,
             requestType: "question",
             tool: FOLDER_TRUST_TOOL,
-            summary: question.question.slice(0, 300),
+            // generation 2 fits its own summary with sentences whole (never a mid-path cut)
+            summary: v2?.summary ?? question.question.slice(0, 300),
             choices: question.options.map((option) => option.label),
             questions: [question],
             folderTrust: { key, folder, sources, ...(v2 ? { v2: true as const } : {}), ...(v2?.declines.length ? { declines: v2.declines } : {}) },
@@ -3215,8 +3250,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // records and computes none of its own. Rules run in order; a trust reply
         // is the only grant, and it grants exactly K.
         const handleFolderTrustV2 = (id: unknown, params: any, sources: string[]) => {
-          const reply = (decision: FolderTrustDecision) => {
-            send({ jsonrpc: "2.0", id, result: decision === "trust" ? { outcome: "trust", scope: "configAndCommands" } : { outcome: "reject" } });
+          const reply = (decision: FolderTrustDecision, written?: () => void) => {
+            send({ jsonrpc: "2.0", id, result: decision === "trust" ? { outcome: "trust", scope: "configAndCommands" } : { outcome: "reject" } }, written ? (error) => {
+              if (error) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
+              written();
+            } : undefined);
             releaseTrustHold?.();
           };
           const key: unknown = params.workspace;
@@ -3241,11 +3279,36 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!state.settled) noteFolderTrust(folderTrustChosenName(sources));
             return;
           }
+          // Desk rule (FUIGO-DESK-AUTOTRUST-1014): the thread desk Murage made for
+          // this bot and thread, which nobody picked, holding nothing for Fuigo to
+          // load, checked again on the live tree now. Trust lasts only as long as
+          // the process: 1.0.38 and later are told so, and on 1.0.37 only a home
+          // made for this turn takes it (the grant dies with that home). The
+          // owner's own Fuigo store is never given a lasting grant here, so on
+          // 1.0.37 with the owner's home the rules below stand as before.
+          const desk = turn.folderTrust?.managedDesk;
+          let deskRefused = false;
+          if (desk && !turn.prewarm) {
+            const processReply = support.folderTrustProcessReply?.(lastCliVersion) === true;
+            if (processReply || freshHomeThisTurn) {
+              const kinds: unknown[] = Array.isArray(params.configKinds) ? params.configKinds : [];
+              const live = key === desk.desk ? managedDeskQualifies(cwd, scanFolderTrustSources(cwd), desk) : null;
+              const kindsOk = live === "bare" ? kinds.length === 0 : live === "linked" ? kinds.every((kind) => kind === "skills") : false;
+              const insideNo = rejects.some((reject) => [reject.key, reject.folder].some((path) => path !== desk.desk && pathStartsWith(path, desk.desk)));
+              if (live && kindsOk && !(insideNo && !declinesSeeded)) {
+                markFolderTrustUnfit("folder-trust-card");
+                send({ jsonrpc: "2.0", id, result: processReply ? { outcome: "trust", scope: "configAndCommands", duration: "process" } : { outcome: "trust", scope: "configAndCommands" } });
+                releaseTrustHold?.();
+                return;
+              }
+              deskRefused = true;
+            }
+          }
           // Rule 3b: the owner's own No limits turn in a folder he picked. No card,
           // and no lasting trust offered: a reject stays in this process only, so
           // the process is unfit, nothing is stored, and the next launch decides
           // again. The server sets the list only for such a turn (never fullAuto).
-          if (!storedTrust && !turn.prewarm && turn.folderTrust?.noCardPickKeys?.includes(key) === true && (rejects.length === 0 || declinesSeeded)) {
+          if (!deskRefused && !storedTrust && !turn.prewarm && turn.folderTrust?.noCardPickKeys?.includes(key) === true && (rejects.length === 0 || declinesSeeded)) {
             // Primary route, Fuigo 1.0.38 and later: trust for this process only.
             // Written whole here, so this path has no durable form. Nothing is
             // stored and the process never returns to the pool, because the
@@ -3264,7 +3327,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           // Rule 4: Full access or No limits with nothing of its own to bring in.
           const fullAccess = turnConfig.fullAuto || turn.stopLine === true;
-          if (!storedTrust && fullAccess && !sources.length) {
+          // A desk whose live check failed goes to the card, never a silent reject.
+          if (!deskRefused && !storedTrust && fullAccess && !sources.length) {
             markFolderTrustUnfit("folder-trust-undecided");
             return reply("reject");
           }
@@ -3275,19 +3339,26 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           // Rule 5: the owner decides, for exactly this key.
           flushAssistantText();
+          // Only rejects strictly inside K are ones a Trust of K can cover; a
+          // parent's no gets its own sentence even when written, and a sibling
+          // is never named. The guards above stay on the whole reject list.
           const declines = declinesSeeded ? [] : folderTrustDeclinesFor(rejects, key);
+          const ancestorDeclines = folderTrustAncestorDeclinesFor(rejects, key);
           const asked = typeof params.cwd === "string" && params.cwd ? params.cwd : realCwd;
-          const question = folderTrustQuestionV2({ key, cwd: asked, sources, repository: folderHasGit(key), fullAccess, declines });
-          askFolderTrust(sources, (decision) => {
+          const card = { key, cwd: asked, sources, repository: folderHasGit(key), fullAccess, declines, ancestorDeclines };
+          const question = folderTrustQuestionV2(card);
+          askFolderTrust(sources, (decision, released) => {
             const answered = decision === "trust" || decision === "reject";
             markFolderTrustUnfit(answered ? "folder-trust-card" : "folder-trust-undecided");
-            reply(decision === "trust" ? "trust" : "reject");
+            // the held first prompt goes once this reply is written, so the
+            // engine always reads the answer before the prompt
+            reply(decision === "trust" ? "trust" : "reject", released);
             if (decision === "unanswered") return noteFolderTrust(folderTrustWithheldName(sources));
             if (state.settled) return;
             noteFolderTrust(decision === "trust" ? folderTrustChosenName(sources)
               : decision === "reject" ? folderTrustDeclinedName(sources, key)
               : folderTrustWithheldName(sources));
-          }, true, { key, folder: turn.folderTrust?.folder ?? realCwd, question, declines });
+          }, true, { key, folder: turn.folderTrust?.folder ?? realCwd, question, summary: folderTrustSummaryV2(card), declines });
         };
 
         // The engine's own trust request (Fuigo's `_fuigo/folder_trust/request`),
@@ -3687,6 +3758,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             fallback.holding = true;
             const fallbackCapFired = () => {
               if (state.settled) return;
+              // A stop outranks the cap: no cap line, and the turn ends as its stop does even if the engine's close never comes.
+              if (state.cancelRequested || state.stopRequested) { settleHalted(); return; }
               // An open card is never ended by a cap: wait the cap again.
               if (asks.size || humanWaitOpen(threadId)) { fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs()); fallback.cap.unref?.(); return; }
               noteFallback("fallback_cap", { capMs: fallbackCapMs(), running: fallback.running, queued: fallback.queued });
@@ -3699,6 +3772,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             };
             fallback.cap = setTimeout(fallbackCapFired, fallbackCapMs());
             fallback.cap.unref?.();
+            // The cap can be minutes away and an engine may never close: a stop waits the cancel grace at most.
+            fallback.onStop = () => {
+              fallback.onStop = undefined;
+              clearTimeout(fallback.cap);
+              fallback.cap = setTimeout(fallbackCapFired, Math.min(fallbackCapMs(), ACP_CANCEL_GRACE_MS));
+              fallback.cap.unref?.();
+            };
+            if (state.cancelRequested || state.stopRequested) fallback.onStop();
           }
           fallbackChanged();
         };
@@ -4236,6 +4317,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // waiter wakes and settles it as cancelled at once.
           releaseMcpWait?.();
           releaseTrustHold?.();
+          releaseCardHolds();
           releaseModelsWait?.();
           if (!child) {
             // Nothing spawned yet: the turn is waiting on its folder-trust
@@ -4678,12 +4760,52 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // Fuigo does not ask at all for a folder its own store already answers.
         const armTrustHold = () => {
           const holdKey = turn.folderTrust?.key;
-          if (trustHold || reused || turn.prewarm || !holdKey || turn.folderTrust?.noCardPickKeys?.includes(holdKey) !== true) return;
-          if (turn.folderTrust.storedNoPick || turn.folderTrust.upstreamTrusted || turn.folderTrust.trustKeys?.includes(holdKey)) return;
-          if ((turn.folderTrust.rejects?.length && !declinesSeeded) || support.folderTrustProcessReply?.(lastCliVersion) !== true) return;
-          trustHold = new Promise<void>((resolve) => {
-            releaseTrustHold = () => { if (trustHoldBound) clearTimeout(trustHoldBound); releaseTrustHold = null; resolve(); };
-          });
+          const gate = turn.folderTrust;
+          if (trustHold || reused || turn.prewarm || !holdKey || !gate) return;
+          const arm = () => {
+            trustHold = new Promise<void>((resolve) => {
+              releaseTrustHold = () => { if (trustHoldBound) clearTimeout(trustHoldBound); releaseTrustHold = null; resolve(); };
+            });
+          };
+          // Fuigo does not ask for a folder its own store answers, and a stored
+          // no-pick is answered without a card.
+          if (gate.upstreamTrusted || gate.storedNoPick) return;
+          const unseededRejects = Boolean(gate.rejects?.length) && !declinesSeeded;
+          // Rule 3 replies trust with no card only when every decline is known to be written.
+          if (gate.trustKeys?.includes(holdKey) === true && !unseededRejects) return;
+          const processReply = support.folderTrustProcessReply?.(lastCliVersion) === true;
+          const deskGate = gate.managedDesk;
+          // The desk rule's reply lands before the first prompt, as rule 3b's does.
+          // Armed only when the desk rule will answer with no card; every other
+          // desk turn falls through to the attended card hold below.
+          if (trustGeneration === 2 && deskGate && deskGate.desk === holdKey && (processReply || freshHomeThisTurn)
+            && !(!declinesSeeded && (gate.rejects ?? []).some((reject) => [reject.key, reject.folder].some((path) => path !== holdKey && pathStartsWith(path, holdKey))))) {
+            arm();
+            return;
+          }
+          // Rule 3b, when no desk rule can come first.
+          const deskMayRefuse = Boolean(deskGate) && (processReply || freshHomeThisTurn);
+          if (!deskMayRefuse && gate.noCardPickKeys?.includes(holdKey) === true && !unseededRejects) {
+            // the primary route replies before the first prompt; 1.0.37 replies reject with no card
+            if (processReply) arm();
+            return;
+          }
+          {
+            // Rule 5's card hold (decl ruling C). Fuigo asks about 0.1 to 0.3 s
+            // after session/new, which is usually after the first prompt has
+            // gone, so an attended card would open on a running turn and close
+            // when it finished. When nothing Murage knows answers this folder,
+            // the first prompt waits up to FOLDER_TRUST_HOLD_MS for the request;
+            // a card opened in that wait then holds it until it is answered,
+            // skipped or stopped. No request in that time: the prompt goes, and
+            // a later request takes the late path as before. Generation 2,
+            // attended turns only. A recorded decision does not skip it: rule 5
+            // can still card on it, and a reply with no card ends the wait at once.
+            if (trustGeneration !== 2 || turn.unattendedAskNote) return;
+            // Rule 2 answers a stored "no" with no card.
+            if (folderTrustRejectFor(gate.rejects ?? [], holdKey, canonicalFolder(cwd))) return;
+            arm();
+          }
         };
         if (!proc) { spawnFresh(); armTrustHold(); }
         if (turn.prewarm) prewarmChildren.set(threadId, () => child);
@@ -5266,6 +5388,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
             }
+            // An open generation 2 card holds the first prompt until it closes.
+            if (cardHolds.size) {
+              while (cardHolds.size) await cardHolds.values().next().value!.held;
+              if (state.settled) return;
+              if (state.cancelRequested) { settle(true, "cancelled"); return; }
+            }
             // A command turn is the command alone. Fuigo and Grok Build
             // recognise "/name" only when it opens the FIRST text block
             // (fuigo-shell slash_authority::parse_slash_prefix), so the
@@ -5598,7 +5726,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lastCliVersion = probe.version;
         lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
-        return { state: "available", version: probe.version, authenticated: await support.isAuthenticated(env, config), ...(versionNote ? { versionNote } : {}) };
+        const authenticated = await support.isAuthenticated(env, config);
+        return { state: "available", version: probe.version, ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}) };
       };
 
       return withCliMemoryLearning({
@@ -5616,6 +5745,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           mcpToolSurface: support.driverKind === "fuigoAgent" || support.driverKind === "grokAgent" ? FUIGO_TOOL_SURFACE : NEUTRAL_TOOL_SURFACE,
           capabilities: {
             sessionModelSwitch: "unsupported",
+            // DELETE-REVOKE-SCOPE (a): the turn's prompt bytes go out only in session/prompt, behind turn.beforeSubmit with no await
+            // between them (sendTurn); a steer writes only after that prompt was sent (promptSent). Launch, session setup and MCP
+            // connects run before and carry no memory frame.
+            fencedWrites: true,
             agentsMcp: !support.ownTools,
             memoryMcp: !support.ownTools,
             customMcp: !support.ownTools,

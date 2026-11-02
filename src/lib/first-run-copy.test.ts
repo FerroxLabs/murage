@@ -628,7 +628,7 @@ describe("first run copy: the 1.0.12 lines (UX-FIRSTRUN-SCALE-1012 §1)", () => 
     expect(probeLine(null)).toBeNull();
     expect(probeLine(reading({}))).toBeNull();
     expect(probeLine(reading({ agents: [{ name: "Claude Code", installed: true }] }))).toBe("Found Claude Code, signed in.");
-    expect(probeLine(reading({ signedOutAgents: [{ name: "Codex" }] }))).toBe("Found Codex, not signed in yet.");
+    expect(probeLine(reading({ signedOutAgents: [{ name: "Codex" }] }))).toBeNull();
     expect(probeLine(reading({ agents: [{ name: "Local", installed: true, localModel: { model: "Qwen3 27B" } }] })))
       .toBe("Found Qwen3 27B running on this computer.");
     expect(probeLine(reading({ agents: [{ name: "Fuigo", installed: false }] }))).toBe("Found the engine that came in the box.");
