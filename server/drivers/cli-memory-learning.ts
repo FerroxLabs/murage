@@ -30,17 +30,26 @@ export const isCliLearningInstance = (instance: unknown): boolean => Boolean(ins
 export const MEMORY_LEARNING_THREAD_PREFIX = "memory-learning-";
 export const isMemoryLearningThread = (threadId: string): boolean => threadId.startsWith(MEMORY_LEARNING_THREAD_PREFIX);
 
+/** The whole of a set-up check's prompt. Fixed text: no owner data. */
+export const ENGINE_REPLY_PROMPT = "Reply with the one word: ready";
 const MAX_SOURCE_BYTES = 65_536;
 const MAX_ANSWER_BYTES = 65_536;
-const LIMIT = /(?:usage|rate|quota|plan|message|credit)s?[ _-]?(?:limit|cap|exceeded|exhausted|reached)|\b429\b|too many requests|out of (?:credits|usage)|limit (?:reached|resets)|at (?:its|your) limit/i;
+const LIMIT = /(?:usage|rate|quota|plan|message|credit)s?[ _-]?(?:limit|cap|exceeded|exhausted|reached)|\b429\b|too many requests|out of (?:credits|usage)|limit (?:reached|resets)|at (?:its|your) limit|hit (?:your|the)(?: \w+)? limit/i;
 const SIGNED_OUT = /not (?:logged|signed) in|log ?in required|sign ?in required|unauthori[sz]ed|invalid.{0,20}(?:credential|api key)|authentication|\b40[13]\b/i;
 
 /** The error a limit or a refused sign-in becomes. `status` 429 + `limit` is a pause for a while; 401 is the existing refusal. */
 export function engineFailure(message: string, detail = ""): Error {
   const words = `${message} ${detail}`;
-  if (LIMIT.test(words)) return Object.assign(new Error("MEMORY_ENGINE_LIMIT"), { status: 429, limit: true });
-  if (SIGNED_OUT.test(words)) return Object.assign(new Error("MEMORY_ENGINE_REFUSED"), { status: 401 });
-  return new Error("MEMORY_EXTRACTION_REQUEST_FAILED");
+  // `engineLine` keeps the engine's own words for the set-up check; the memory paths read only status and message.
+  if (LIMIT.test(words)) return Object.assign(new Error("MEMORY_ENGINE_LIMIT"), { status: 429, limit: true, engineLine: message });
+  if (SIGNED_OUT.test(words)) return Object.assign(new Error("MEMORY_ENGINE_REFUSED"), { status: 401, engineLine: message });
+  return Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { engineLine: message });
+}
+/** A runtime error: what the engine reported as data outranks reading its words. */
+function runtimeFailure(event: Extract<RuntimeEvent, { type: "runtime.error" }>): Error {
+  if (event.limitResetsAt !== undefined) return Object.assign(new Error("MEMORY_ENGINE_LIMIT"), { status: 429, limit: true, engineLine: event.message });
+  if (event.authRequired) return Object.assign(new Error("MEMORY_ENGINE_REFUSED"), { status: 401, engineLine: event.message, signedOut: true });
+  return engineFailure(event.message, event.details ?? "");
 }
 
 /** One background session: the whole prompt in, the engine's answer text out. */
@@ -113,6 +122,11 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
   };
   live.groundMemory = (input: MemoryGroundingInput, maximumOutputTokens, signal) =>
     session(JSON.stringify(input), maximumOutputTokens, signal, memoryGroundingMessages(input), 2000);
+  // A press, not a pace: it does not wait for a running turn, and a caller that gave up before its place in line spends nothing.
+  live.checkReply = (signal) => exclusive(async () => {
+    if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
+    return runner(ENGINE_REPLY_PROMPT, signal, { maxBytes: 4_096 });
+  });
   Object.defineProperty(live, CLI_LEARNING, { value: true, enumerable: false });
 
   const dispose = live.dispose.bind(live);
@@ -139,8 +153,8 @@ export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner =>
     if (event.type === "request.opened" && event.requestId) void adapter.respondToRequest(threadId, event.requestId, { behavior: "deny" }).catch(() => undefined);
     else if (event.type === "content.delta" && event.streamKind === "assistant_text") { if (size + pending.length <= ANSWER_TEXT_LIMIT) pending += event.delta; }
     else if (event.type === "item.completed" && event.itemType === "assistant_text") { pending = ""; if (size <= ANSWER_TEXT_LIMIT) { items.push(event.text); size += event.text.length; } }
-    else if (event.type === "runtime.error") state.failure ??= engineFailure(event.message, event.details ?? "");
-    else if (event.type === "turn.completed") { if (!event.ok) state.failure ??= new Error("MEMORY_EXTRACTION_REQUEST_FAILED"); finish(); }
+    else if (event.type === "runtime.error") state.failure ??= runtimeFailure(event);
+    else if (event.type === "turn.completed") { if (event.stopReason === "auth_required" && !event.ok) state.failure = Object.assign(new Error("MEMORY_ENGINE_REFUSED"), { status: 401, signedOut: true }); else if (!event.ok) state.failure ??= new Error("MEMORY_EXTRACTION_REQUEST_FAILED"); finish(); }
     // The engine's session ended under the attempt with nothing said: its outcome is unknown (health counts it interrupted).
     else if (event.type === "session.exited") { if (!items.length && !pending) state.failure ??= Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }); finish(); }
   });
