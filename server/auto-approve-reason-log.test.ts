@@ -27,14 +27,14 @@ describe("approval ask reason logging", () => {
     ];
     for (const [id, command, patch] of rows) expect(autoVerdict({ ...full, id }, "shell", sentinel, context(command, patch)).approve).toBeNull();
     expect(log.mock.calls.map(([line]) => line)).toEqual([
-      "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=full suppressed=0",
-      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full held=unread suppressed=0",
-      "approvals: asked bot=env tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full held=unread suppressed=0",
-      "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell level=full held=unread suppressed=0",
-      "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell level=full suppressed=0",
-      "approvals: asked bot=cut tool=shell reason=unread-call:truncated origin=owner unattended=0 cmd=shell level=full held=unread suppressed=0",
-      "approvals: asked bot=stamp tool=shell reason=unread-call:stamp-spelling origin=owner unattended=0 cmd=shell level=full held=unread suppressed=0",
-      "approvals: asked bot=identity tool=shell reason=unread-call:identity origin=owner unattended=0 cmd=shell level=full held=unread suppressed=0",
+      "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",
+      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=env tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",
+      "approvals: asked bot=cut tool=shell reason=unread-call:truncated origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=stamp tool=shell reason=unread-call:stamp-spelling origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
+      "approvals: asked bot=identity tool=shell reason=unread-call:identity origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
     ]);
     autoVerdict({ id: "no-grant" }, "shell", sentinel, context(`echo ${sentinel}`));
     expect(log.mock.calls.at(-1)?.[0]).toContain("reason=no-grant");
@@ -68,7 +68,7 @@ describe("approval ask reason logging", () => {
       expect(autoVerdict({ ...noLimits, id: `held-${held}` }, "shell", command, context(command, patch)).approve).toBeNull();
       const line = String(log.mock.calls.at(-1)?.[0]);
       expect(line).toContain(`bot=held-${held} `);
-      expect(line).toContain(` level=no-limits held=${held} suppressed=0`);
+      expect(line).toMatch(new RegExp(` level=no-limits owner=0 held=${held} suppressed=0( row=[a-z-]+)?( why=[a-z-]+)?$`));
     }
     // the card's words are the same as before the classes had names
     const rule = (patch: Partial<AutoContext>) => autoVerdict(noLimits, "shell", "ls", context("ls", patch)).rule;
@@ -100,7 +100,7 @@ describe("approval ask reason logging", () => {
     expect(log).toHaveBeenCalledTimes(4);
     vi.setSystemTime(1_060_000); ask();
     expect(log).toHaveBeenCalledTimes(5);
-    expect(log.mock.calls.at(-1)?.[0]).toBe("approvals: asked bot=rate-fixture tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full held=unread suppressed=3");
+    expect(log.mock.calls.at(-1)?.[0]).toBe("approvals: asked bot=rate-fixture tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=3");
     ask(); vi.setSystemTime(1_120_000); ask();
     expect(log.mock.calls.at(-1)?.[0]).toContain("suppressed=1");
     expect(JSON.stringify(log.mock.calls)).not.toContain("private");
@@ -108,6 +108,6 @@ describe("approval ask reason logging", () => {
   it("does not let malformed tool labels inject command text or log lines", () => {
     const log = vi.spyOn(console, "info").mockImplementation(() => {});
     autoVerdict({ id: "bad\nid" }, "echo /secret/path\nforged", "TOP_SECRET", { question: true });
-    expect(log.mock.calls).toEqual([["approvals: asked bot=unknown tool=unknown reason=question-tool origin=owner unattended=0 cmd=none level=ask suppressed=0"]]);
+    expect(log.mock.calls).toEqual([["approvals: asked bot=unknown tool=unknown reason=question-tool origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0"]]);
   });
 });

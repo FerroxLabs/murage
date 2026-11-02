@@ -642,7 +642,9 @@ export function listAllMcpServers(
         command: server.command,
         args: server.args,
         envKeys: [...Object.keys(server.env), ...held, ...pending].sort(),
-        ...(server.rev || pending.length > 0 ? { rev: mcpEntryRev(name, server) } : {}),
+        // Every command entry, stored stamp or not: a key save names the revision it
+        // was made for, so a moved entry cannot take it (see saveCommand).
+        rev: mcpEntryRev(name, server),
         enabled: server.enabled,
         ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
         ...(pending.length > 0 ? { pendingKeys: [...pending].sort() } : {}),
@@ -658,7 +660,9 @@ export function listAllMcpServers(
       auth: server.auth,
       headerNames: [...Object.keys(server.headers), ...(server.pendingHeaders ?? [])].sort(),
       ...(server.local ? { local: server.local } : {}),
-      ...(server.rev || (server.pendingHeaders?.length ?? 0) > 0 ? { rev: mcpEntryRev(name, server) } : {}),
+      // Every link entry, stored stamp or not: a key save names the revision it
+      // was made for, so a moved entry cannot take it (see saveRemote).
+      rev: mcpEntryRev(name, server),
       enabled: server.enabled,
       ...(server.disabledReason ? { disabledReason: server.disabledReason } : {}),
       ...((server.pendingHeaders?.length ?? 0) > 0 ? { pendingKeys: [...server.pendingHeaders!].sort() } : {}),

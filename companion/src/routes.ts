@@ -151,6 +151,8 @@ export const OWNER_DECISION_ROUTES = [
   { method: "POST", path: /^\/api\/routines\/[\w-]+\/run$/ },
   // AMEND-13 Rule 81d: "Always allow for this routine" from the paired phone; the harness rereads the pending card
   { method: "POST", path: /^\/api\/routines\/[\w-]+\/always-allow(?:\/remove)?$/ },
+  // UX-TRUST-MOMENTS-1012 2.3.8, 2.5: Undo of a 12-hour task allowance and Settings "Clear", as the owner (the harness checks mayApprove and the thread's owner)
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/task-allow\/(?:remove|clear)$/ },
   { method: "POST", path: /^\/api\/bots$/ },
   { method: "PATCH", path: /^\/api\/bots\/[\w-]+\/profile$/ },
   { method: "DELETE", path: /^\/api\/(?:bots|groups)\/[\w-]+\/tasks\/[\w-]+$/ },
@@ -315,6 +317,8 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // commands themselves travel as ordinary POST /api/bots/:id/messages.
   { method: "GET", path: /^\/api\/bots\/[\w-]+\/engine-commands$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/always-allow$/ },
+  // the card's Undo of a 12-hour task allowance, and Settings "Clear" (UX-TRUST-MOMENTS-1012 2.3.8, 2.5); never on a browser pairing
+  { method: "POST", path: /^\/api\/bots\/[\w-]+\/task-allow\/(?:remove|clear)$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/messages\/[\w-]+\/edit$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/active-branch$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/tasks$/ },
@@ -352,6 +356,10 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
+  // a voice note's audio: the harness serves it only to a caller that may
+  // read the conversation, and only for a note that message lists
+  // (`server/voice/voice-note-audio.ts`). Never a path.
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/voice-note$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
@@ -598,6 +606,10 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // a transcript, its images, and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
+  // a voice note's audio: the harness serves it only to a caller that may
+  // read the conversation, and only for a note that message lists
+  // (`server/voice/voice-note-audio.ts`). Never a path.
+  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/voice-note$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },

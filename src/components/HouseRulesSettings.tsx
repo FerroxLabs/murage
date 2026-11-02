@@ -11,6 +11,7 @@ import { t } from "@/lib/i18n";
 
 import { RichMarkdownEditor } from "./editor/RichMarkdownEditor";
 import { richEditable } from "./skills/SkillEditor";
+import { BOX_SAVE_ROW } from "./ui/BoxShell";
 import { api } from "@/state/store";
 import { settingsDrafts } from "@/lib/settings-drafts";
 
@@ -185,10 +186,9 @@ export function HouseRulesSettings() {
             <p data-testid="house-rules-length" className={`mt-1.5 text-[11.5px] ${hint.long ? "text-danger" : "text-ink-secondary"}`}>{hint.text}</p>
           </div>
 
-          {error && <div role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
-          {notice && !error && <p role="status" className="text-[12.5px] text-ink-secondary">{notice}</p>}
-
-          <div className="flex flex-wrap items-center gap-2">
+          <div className={`${BOX_SAVE_ROW} flex flex-wrap items-center gap-2 bg-panel`}>
+            {error && <div role="alert" className="w-full rounded-lg bg-danger/10 px-3 py-2 text-[12.5px] text-danger">{error}</div>}
+            {notice && !error && <p role="status" className="w-full text-[12.5px] text-ink-secondary">{notice}</p>}
             <button type="button" disabled={busy || !dirty} onClick={() => void save()} className={`${BUTTON} bg-accent text-white`}>{busy ? "Saving…" : "Save"}</button>
             {dirty && <button type="button" disabled={busy} onClick={() => { setDraft(saved); setVersion((current) => current + 1); }} className={`${BUTTON} bg-control text-ink`}>Undo changes</button>}
             {!loaded.isDefault && !confirmReset && (

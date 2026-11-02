@@ -108,6 +108,8 @@ import { routineRunMarker } from "../../shared/routine-run-marker";
 import { RoutineRunDivider } from "./RoutineRunDivider";
 import { RoutineRunAgainRow } from "./RoutineRunAgainRow";
 import { DelegationWaitRow } from "./DelegationWaitRow";
+import { FolderPromptRow } from "./FolderPromptRow";
+import { folderPromptShowing } from "../../shared/mac-folder-prompt";
 import { DelegationHeldRow, heldAction } from "./DelegationHeldRow";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -365,6 +367,7 @@ export function MessageActionSheet({
         role="dialog"
         aria-modal="true"
         aria-label="Message actions"
+        data-box-exempt="action sheet, its rows are the actions"
         tabIndex={-1}
         className={SHEET_PANEL}
       >
@@ -814,7 +817,7 @@ function Bubble({
                 />
               ) : null}
               {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
-              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} voiceNote={message.role === "bot" ? { threadId: bot.threadId, messageId: message.id } : undefined} /> : null}
               {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)
@@ -1276,6 +1279,8 @@ const MessagesList = memo(function MessagesList({
               // why, visible whether or not Tool calls is on (STOP2).
               // bot⇄bot comm chips stay because they link to another conversation.
               // plain tool runs stay out unless Settings → Tool calls is on.
+              // macOS's folder prompt is holding the turn: said until the wait ends, then nothing
+              if (m.folderPrompt) return folderPromptShowing(m, Date.now()) && m.tool ? <FolderPromptRow text={m.tool.name} /> : null;
               // Full access approvals, folded into one quiet line per run
               if (isApprovedStepsLine(m)) return <ApprovedStepsRow message={m} />;
               // an image made without an approval card: what and the whole prompt
@@ -1316,7 +1321,7 @@ const MessagesList = memo(function MessagesList({
               const pinnedProfile = hermesPinNoteProfile(m.tool?.name);
               if (pinnedProfile) return <div className="flex justify-start"><div role="status" data-testid="hermes-pin-note" className="min-w-0 max-w-full rounded-2xl border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary [overflow-wrap:anywhere]">{hermesPinNoteText(pinnedProfile)}</div></div>;
               const trustNotice = folderTrustNotice(m.tool?.name);
-              if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} botId={bot.id} threadId={bot.threadId} />;
+              if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} forgetKey={trustNotice.key} botId={bot.id} threadId={bot.threadId} />;
               // a turn that ran without its browser: a quiet note, not a card
               const browserReason = browserUnavailableReason(m.tool?.name);
               if (browserReason) return <BrowserUnavailableRow reason={browserReason} />;

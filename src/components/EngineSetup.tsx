@@ -14,6 +14,7 @@ import { LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-
 import { localEngineSupport } from "../../shared/local-models";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { copyTextOrThrow } from "@/lib/copy-text";
+import { EngineSignInButton } from "./EngineSignInButton";
 
 type Platform = "darwin" | "win32" | "linux";
 
@@ -41,6 +42,53 @@ export function needsSignIn(instance: InstanceInfo | undefined): boolean {
  * does not need its cloud account to be signed in. */
 export function needsCli(instance: InstanceInfo | undefined): boolean {
   return instance?.snapshot.state !== "available";
+}
+
+/** Where a set-up press stands: the card shows one step at a time. */
+export type SetupStep = "install" | "signin" | "check";
+export function setupStep(instance: InstanceInfo, options: { authRequired?: boolean } = {}): SetupStep {
+  if (needsCli(instance)) return "install";
+  return needsSignIn(instance) || options.authRequired ? "signin" : "check";
+}
+
+type ReplyCheck = { result: "ready" | "signin" | "limit" | "refused"; line?: string };
+
+/** Signed in, so one short real reply decides: `authenticated` can be true while a turn fails. Runs on this press alone. */
+function SetUpCheck({ instance, className, onReady }: { instance: InstanceInfo; className?: string; onReady?: () => void }) {
+  const [phase, setPhase] = useState<"idle" | "checking">("idle");
+  const [answer, setAnswer] = useState<ReplyCheck | null>(null);
+  const [failed, setFailed] = useState(false);
+  const name = instance.displayName;
+  const press = async () => {
+    if (phase === "checking") return;
+    setPhase("checking"); setAnswer(null); setFailed(false);
+    try {
+      const reply: ReplyCheck = await api("/api/engine-setup-check", { method: "POST", body: JSON.stringify({ instanceId: instance.instanceId }) });
+      setAnswer(reply);
+      if (reply.result === "ready") onReady?.();
+    } catch { setFailed(true); }
+    finally { setPhase("idle"); }
+  };
+  return (
+    <div className={cn("rounded-xl border border-hairline/40 bg-control/30 p-3", className)}>
+      <div className="text-[13px] font-semibold text-ink">{t("engineCheck.title", { name })}</div>
+      {answer?.result === "ready" ? (
+        <p role="status" className="mt-1 flex items-center gap-1.5 text-[12.5px] text-ink"><Check size={13} className="text-success" />{t("engineCheck.ready", { name })}</p>
+      ) : answer?.result === "signin" ? (
+        <EngineSignInButton className="mt-3" instanceId={instance.instanceId} name={name} command={instance.install?.signInCommand} onDone={() => setAnswer(null)} />
+      ) : (
+        <>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("engineCheck.line")}</p>
+          <button type="button" disabled={phase === "checking"} onClick={() => void press()}
+            className="mt-3 w-full rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50">
+            {phase === "checking" ? t("engineCheck.checking") : t("engineCheck.press")}
+          </button>
+        </>
+      )}
+      {answer?.line && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{answer.line}</p>}
+      {failed && <p role="alert" className="mt-2 text-[12px] text-danger">{t("engineCheck.failed", { name })}</p>}
+    </div>
+  );
 }
 
 function CommandRow({ command, actionLabel, instanceId, action, onTerminalOpened }: { command: string; actionLabel: string; instanceId: string; action: "install" | "connect"; onTerminalOpened?: () => void }) {
@@ -137,6 +185,7 @@ export function EngineSetup({
   className,
   intent = "cloud",
   authRequired = false,
+  setUp = false,
   onReady,
 }: {
   instance: InstanceInfo;
@@ -145,6 +194,8 @@ export function EngineSetup({
   intent?: "cloud" | "inject";
   /** A flagged native auth failure overrides an older ready snapshot until rechecked. */
   authRequired?: boolean;
+  /** A set-up link opened this card: it picks install, sign-in or the one real reply by state. */
+  setUp?: boolean;
   onReady?: () => void;
 }) {
   const { dispatch } = useStore();
@@ -185,10 +236,13 @@ export function EngineSetup({
   const installCommand = installCommandFor(install);
   const signInCommand = install?.signInCommand;
   const signInOnly = intent === "cloud" && (needsSignIn(instance) || (authRequired && instance.snapshot.state === "available"));
-  const command = signInOnly ? signInCommand : installCommand;
-  const title = signInOnly ? `Sign in to ${instance.displayName}` : `Install ${instance.displayName}`;
-  const description = signInOnly
-    ? "Finish the account sign-in in Terminal, then check again below."
+  // Pi below the version Murage can run: it is installed, and the install command updates it.
+  const outdated = instance.driverKind === "piAgent" && !signInOnly && Boolean(instance.snapshot.version) && instance.snapshot.state === "unavailable";
+  const title = signInOnly ? `Sign in to ${instance.displayName}` : outdated ? `Update ${instance.displayName}` : `Install ${instance.displayName}`;
+  const description = outdated
+    ? `${instance.snapshot.reason} Run this once, then check again.`
+    : signInOnly
+    ? t("engineSignIn.setupLine")
     : intent === "inject"
       ? "Install the engine once, then you can run it with local models; no cloud sign-in required."
       : `Install the command-line app once. Models will appear here as soon as it’s ready${signInCommand ? "; sign-in may follow" : ""}.`;
@@ -219,6 +273,9 @@ export function EngineSetup({
       {checkError && <p role="alert" className="mt-2 text-[12px] text-danger">{checkError}</p>}
     </div>;
   }
+
+  const desktop = canOpenSetupTerminal(window.muragebox, typeof document === "undefined" ? undefined : document);
+  if (setUp && desktop && intent === "cloud" && setupStep(instance, { authRequired }) === "check") return <SetUpCheck instance={instance} className={className} onReady={onReady} />;
 
   // Some engines are configured elsewhere (for example, a cloud computer
   // token) and intentionally have no install descriptor.
@@ -255,9 +312,12 @@ export function EngineSetup({
         </div>
       </div>
 
-      {instance.driverKind === "codex" && !signInOnly && <EngineManagement instance={instance} />}
-      {command ? (
-        <CommandRow key={command} command={command} instanceId={instance.instanceId} action={signInOnly ? "connect" : "install"} onTerminalOpened={() => { if (!signInOnly) installStarted.current = true; }} actionLabel={signInOnly ? t("setup.openSignIn") : t("setup.openInstall")} />
+      {signInOnly ? (
+        <EngineSignInButton className="mt-3" instanceId={instance.instanceId} name={instance.displayName} command={signInCommand} onDone={() => void checkAgain()} />
+      ) : install.native ? (
+        desktop ? <EngineManagement instance={instance} /> : <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">{t("projects.work.needsApp")}</p>
+      ) : installCommand ? (
+        <CommandRow key={installCommand} command={installCommand} instanceId={instance.instanceId} action="install" onTerminalOpened={() => { installStarted.current = true; }} actionLabel={t("setup.openInstall")} />
       ) : (
         <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
           There isn’t a one-line installer for this platform. Use the setup guide below.

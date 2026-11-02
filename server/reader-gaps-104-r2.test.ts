@@ -193,6 +193,12 @@ describe("PowerShell: any `$…` assignment target reads its right side as a com
 // that asked, or was a stop line, on the lane's base (d12c102b6) or its first
 // round (d1f894b00), dumped by running both trees over the corpus. None may
 // be auto-allowed now: this lane only adds asks.
+/** 1.0.13 NOLIMITS-PWSH-READONLY: the rows that now read through on PowerShell,
+ * each reviewed: it only reads. */
+const READ_THROUGH: readonly string[] = [
+  "dir C:\\",
+];
+
 describe("the sweep: nothing that asked before is allowed now", () => {
   const before = JSON.parse(readFileSync(new URL("./testing/reader-gaps-104-asked-before.json", import.meta.url), "utf8")) as Record<"bash" | "pwsh" | "psStop" | "bashStop", string[]>;
   it("the corpus is not empty", () => {
@@ -201,7 +207,8 @@ describe("the sweep: nothing that asked before is allowed now", () => {
   });
   it("every command that asked still asks (Bash and PowerShell readers)", () => {
     expect(before.bash.filter((cmd) => alwaysAskCommand(cmd, CWD) === null)).toEqual([]);
-    expect(before.pwsh.filter((cmd) => alwaysAskCommand(cmd, WIN_CWD, "command", "pwsh") === null)).toEqual([]);
+    const through = before.pwsh.filter((cmd) => alwaysAskCommand(cmd, WIN_CWD, "command", "pwsh") === null);
+    expect(through.sort()).toEqual([...READ_THROUGH].sort());
   });
   it("every stop line is still a stop line", () => {
     expect(before.psStop.filter((cmd) => stop(cmd) === null)).toEqual([]);

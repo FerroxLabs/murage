@@ -51,6 +51,8 @@ export const MCP_WAIT_CHIP_AFTER_MS = 1_500;
 /** A reconnect is only started with at least this much of the deadline left. */
 const MIN_RECONNECT_WINDOW_MS = 1_000;
 const POLL_MS = 250;
+/** The status check after a reconnect only optional servers needed. */
+const OPTIONAL_RECHECK_MS = 500;
 export const MCP_STATUS_ANSWER_MS = 3_000;
 /** How long a fresh engine's FIRST status answer is waited for. A Claude CLI on
  * Windows takes longer to start reading its control requests: on the 1.0.3 gate
@@ -225,12 +227,15 @@ export interface McpGateResult {
 /** Wait (bounded) for the turn's required servers, reconnect the failed ones
  * (all at once), and report which are still missing. One deadline covers the
  * whole recovery; optional servers are waited for only within the optional
- * budget and never reconnected. A server still connecting is not reconnected
- * (that would restart its connect): it is reported missing at the deadline. */
+ * budget. A kept process never meets a failed server again by itself, so its
+ * caller asks for `reconnectOptional`: a failed optional server then gets one
+ * reconnect, inside the optional budget. On a new process they are left alone.
+ * A server still connecting is not reconnected (that would restart its
+ * connect): it is reported missing at the deadline. */
 export async function awaitRequiredMcp(
   servers: { required: string[]; optional: string[] },
   io: McpGateIo,
-  budgets: { requiredMs?: number; optionalMs?: number; recoveryMs?: number; firstAnswerMs?: number } = {},
+  budgets: { requiredMs?: number; optionalMs?: number; recoveryMs?: number; firstAnswerMs?: number; reconnectOptional?: boolean } = {},
 ): Promise<McpGateResult> {
   const now = io.now ?? Date.now;
   const sleep = io.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.(); }));
@@ -283,6 +288,14 @@ export async function awaitRequiredMcp(
       if (left < MIN_RECONNECT_WINDOW_MS) continue;
       reconnecting.set(name, io.reconnect(name, left).catch(() => {}));
     }
+    if (budgets.reconnectOptional) {
+      for (const name of servers.optional) {
+        if (states.get(name) !== "failed" || reconnecting.has(name)) continue;
+        const left = started + optionalMs - at;
+        if (left < MIN_RECONNECT_WINDOW_MS) continue;
+        reconnecting.set(name, io.reconnect(name, left).catch(() => {}));
+      }
+    }
     const requiredPending = live.filter((name) => states!.get(name) === "pending" && !reconnecting.has(name));
     const optionalPending = servers.optional.filter((name) => states!.get(name) === "pending");
     const waitRequired = requiredPending.length > 0 && at - started < requiredMs;
@@ -308,7 +321,9 @@ export async function awaitRequiredMcp(
     }
     if (!settled) await Promise.race([all, sleep(Math.max(0, deadline - now()))]);
     if (io.stopped()) return result({ missing: notConnected(states!), reconnected: [...reconnecting.keys()], stopped: true });
-    const after = deadline - now() > 0 ? await statusNow() : null;
+    // Only optional reconnects: a quick look, they never hold the turn past their own budget.
+    const onlyOptional = ![...reconnecting.keys()].some((name) => live.includes(name));
+    const after = deadline - now() > 0 ? await (onlyOptional ? io.status(OPTIONAL_RECHECK_MS) : statusNow()) : null;
     // No answer after a reconnect: the engine is still busy with it, so
     // nothing it reconnected can be counted on for this turn.
     if (after instanceof Map) states = after;

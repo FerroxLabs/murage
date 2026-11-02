@@ -47,8 +47,7 @@ import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
 import { SandboxedFrame } from "./SandboxedFrame";
-import { copyText } from "@/lib/copy-text";
-import { t } from "@/lib/i18n";
+import { EngineSignInButton } from "./EngineSignInButton";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   const desktop = useDesktopSurface();
@@ -482,12 +481,12 @@ function FirstRunBareAgentsCard({
  * had, so the Chief was pointed at an engine that died on the first thing it
  * was ever asked to do.
  *
- * Why a COMMAND and not a button that does it. The sign-in is a device auth
- * flow that opens a browser and waits on a code, and running it invisibly
- * from inside the app would hide the one moment where the person has to prove
- * who they are. This person installed Codex themselves, so the command is the
- * help they actually want. `signInCommand` comes from the driver, which is
- * the only thing that knows it, so nothing here is hardcoded per engine.
+ * One button per engine, the same one every other surface has. The sign-in is
+ * a device auth flow that opens a browser and waits on a code, so the dialog
+ * keeps the one moment where the person proves who they are in plain sight:
+ * nothing leaves for the browser until they press Open sign-in page there.
+ * `signInCommand` comes from the driver and only shows where Murage cannot
+ * start the sign-in itself.
  *
  * "Check again" rather than polling: the sign-in happens in another window
  * and finishes when it finishes. One honest button beats a spinner that
@@ -495,7 +494,6 @@ function FirstRunBareAgentsCard({
  */
 function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
   const { view, refresh } = useSetupView();
-  const [copied, setCopied] = useState("");
   const copy = FIRST_RUN_COPY.agents["signed-out"];
 
   // The server decides WHICH card is owed; what it says is re-read live, so a
@@ -525,9 +523,6 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
     );
   }
 
-  const commands = waiting
-    .map((agent) => ({ name: agent.name, command: agent.signInCommand }))
-    .filter((row): row is { name: string; command: string } => Boolean(row.command));
   const detection = firstRunDetection(view);
 
   // §1.4 Variant B. The Chief's line, the row it is about, and the sign-in
@@ -540,26 +535,11 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
           <FirstRunEngineRowView key={row.id} row={row} />
         ))}
       </ul>
-      {!settled && commands.length > 0 && (
+      {!settled && (
         <div className="mt-3 space-y-2">
           <p className="text-[13px] text-ink-secondary">{copy.signInLead}</p>
-          {commands.map((row) => (
-            <div key={row.name} className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
-              <p className="text-[13px] text-ink-secondary">{copy.commandFor(row.name)}</p>
-              <div className="mt-1.5 flex items-center justify-between gap-2">
-                <code className="select-all text-[13.5px] text-ink">{row.command}</code>
-                <button
-                  type="button"
-                  className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}
-                  onClick={() => {
-                    // "!name" marks a copy that did not work; the chip then says so.
-                    void copyText(row.command).then((ok) => setCopied(ok ? row.name : `!${row.name}`));
-                  }}
-                >
-                  {copied === row.name ? copy.copied : copied === `!${row.name}` ? t("copy.failed") : copy.copy}
-                </button>
-              </div>
-            </div>
+          {waiting.map((agent) => (
+            <EngineSignInButton key={agent.id} instanceId={agent.id} name={agent.name} command={agent.signInCommand} onDone={() => refresh()} />
           ))}
         </div>
       )}
@@ -569,11 +549,9 @@ function FirstRunSignedOutAgentsCard({ settled }: { settled: boolean }) {
       {!settled && (
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
           <FirstRunDetectOnward settled={settled} label={copy.leave} ghost />
-          {commands.length > 0 && (
-            <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`} onClick={() => refresh()}>
-              {copy.recheck}
-            </button>
-          )}
+          <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS}`} onClick={() => refresh()}>
+            {copy.recheck}
+          </button>
         </div>
       )}
       <FirstRunLine quiet>{canCarryOn ? copy.third : copy.thirdBare}</FirstRunLine>

@@ -181,7 +181,7 @@ export function HelpPanel(props: HelpPanelProps) {
       data-help-panel
       tabIndex={-1}
       ref={asideRef}
-      className="help-panel-in fixed inset-x-0 bottom-0 z-[80] flex h-[85vh] flex-col rounded-t-2xl border-t border-hairline/50 bg-panel text-ink shadow-2xl min-[600px]:inset-x-auto min-[600px]:right-0 min-[600px]:top-0 min-[600px]:h-[var(--vvh,100%)] min-[600px]:w-[var(--help-w)] min-[600px]:rounded-none min-[600px]:border-l min-[600px]:border-t-0"
+      className="help-panel-in fixed inset-x-0 top-[calc(var(--vvt,0px)+0.15*var(--vvh,100dvh))] z-[80] flex h-[calc(0.85*var(--vvh,100dvh))] flex-col rounded-t-2xl border-t border-hairline/50 bg-panel text-ink shadow-2xl min-[600px]:inset-x-auto min-[600px]:right-0 min-[600px]:top-0 min-[600px]:h-[var(--vvh,100%)] min-[600px]:w-[var(--help-w)] min-[600px]:rounded-none min-[600px]:border-l min-[600px]:border-t-0"
     >
       <div
         role="separator"

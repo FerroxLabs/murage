@@ -302,6 +302,23 @@ export function normalizeCaptureFailure(input) {
   return path ? { stage, code, path } : { stage, code };
 }
 
+/** BACKUP-SILENT-STOP (1.0.13): a job can stop for review with no failure note,
+ * because a crash writes nothing and a note can be lost between two commits.
+ * Its finite job error still says enough to name the reason and the next step,
+ * so every stopped job has words. Read only: nothing here is stored. */
+const REVIEW_FAILURES = new Map([
+  ["interrupted", { stage: "unknown", code: "RECOVERY_OPERATION_FAILED" }],
+  ["capture-unconfirmed", { stage: "unknown", code: "RECOVERY_OPERATION_FAILED" }],
+  ["idle-release-unconfirmed", { stage: "unknown", code: "RECOVERY_OPERATION_FAILED" }],
+  ["cancelled", { stage: "unknown", code: "RECOVERY_OPERATION_FAILED" }],
+  ["duration-exceeded", { stage: "capture", code: "RECOVERY_WORKER_TIMEOUT" }],
+  ["receipt-mismatch", { stage: "artifact-readback", code: "BACKUP_RECEIPT_MISMATCH" }],
+  ["references-unavailable", { stage: "references", code: "BACKUP_REFERENCE_CHANGED" }],
+]);
+export function reviewCaptureFailure(error) {
+  return { ...(REVIEW_FAILURES.get(error) ?? { stage: "unknown", code: "UNKNOWN_CAPTURE_FAILURE" }) };
+}
+
 /** One or two sentences naming the step and the reason, and the item in the
  * data folder when there is one. */
 export function captureFailureSentence(input, { folderName } = {}) {

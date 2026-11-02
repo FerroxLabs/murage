@@ -124,13 +124,19 @@ above it.
 ## CI must have passed on the commit
 
 The `ci-gate` job refuses to cut a draft from a commit the `CI` workflow
-(`ci.yml`) did not pass. `scripts/release-ci-gate.mjs` lists CI's runs for the
-pinned SHA and exits only when the newest attempt concluded `success`. A push
-to main starts CI and Release together, so a run still in progress is waited
-for (up to 4 hours; the builds run beside it and only the draft job waits on
-the verdict); no run at all is refused after a ten minute grace; a
-failed, cancelled or skipped one is refused straight away. Re-run CI on the
-commit (Actions, Re-run all jobs) and re-run the release to continue.
+(`ci.yml`) did not pass in full. `scripts/release-ci-gate.mjs` lists CI's runs
+for the pinned SHA and passes only when the newest run's latest attempt
+concluded `success` and the newest full run shows `required CI completion` and
+every job it needs green. A scoped dispatch (`windows_only`, `vitest_file`,
+`human_files`) skips that job, so it can confirm a fix but never proves a
+commit: a scoped run alone is refused, and a red full run stays red until that
+run is re-run or a new full run passes. A run re-run with `gh run rerun <id>
+--failed` counts once it goes green. A push to main starts CI and Release
+together, so a run still in progress is waited for (up to 4 hours; the builds
+run beside it and only the draft job waits on the verdict); no run at all is
+refused after a ten minute grace; a failed, cancelled or skipped one is refused
+straight away. Re-run the failed CI jobs on the commit and re-run the release to
+continue.
 
 The same gate needs the latest nightly green. CI's Vitest shards leave out
 two tags (`vite.config.ts`): `nightly` (tests over 60 s on a hosted runner) and
@@ -150,7 +156,7 @@ cannot name the commit that holds it), then run **Release** by hand from that
 branch with `ref` set to the commit being released and `ci_waiver` set to that
 path. The gate passes a red CI only when the run was started by hand (a
 push-started release can never waive), the file is in the dispatch commit, that
-commit descends from the pinned one, the file names the pinned commit and the exact failing CI run for it (the
+commit descends from the pinned one, the file names the pinned commit and the exact failing full CI run for it (the
 gate checks the run against GitHub), states `Critical: 0`, lists the reviewed
 failure classes, and carries `Approved-by: Sean Donahoe on YYYY-MM-DD`. The
 waiver is printed in the ci-gate job summary and recorded in the draft release

@@ -184,7 +184,7 @@ export function scrubSecrets(words: string): string {
 /** The parts of app state the help panel reads to name the screen. Narrow on
  *  purpose: no transcript, no draft and no settings values can be passed in. */
 export interface HelpScreenInput {
-  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats";
+  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats" | "today" | "needs-you" | "health";
   bot?: { id: string; name: string } | null;
   group?: { id: string; name: string } | null;
   /** The Settings page on screen (an alias already resolved to its page), or null when Settings is closed. */
@@ -243,6 +243,8 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
     case "team-map": return make("map", "map");
     case "routines": return make("routines", "routines");
     case "skill-recorder": return make("skill-recorder", "skill-recorder");
+    // No index entry yet, so no screen name the feedback tables would refuse: the general help page, never the chat behind them.
+    case "today": case "needs-you": case "health": return make("help", "help");
     default: break;
   }
   if (input.noEngines && !input.enginesOff) return make("no-engines", "no-engines");

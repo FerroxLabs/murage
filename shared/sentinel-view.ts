@@ -10,8 +10,9 @@
 export type {
   Coverage, DetectorId, IssueState, NextAction, Resolution, ScannerStatus, SentinelView, Severity, ViewRow, ViewSummary,
 } from "../server/sentinel/types.ts";
-import type { NextAction, Severity, SentinelView, ViewRow, ViewSummary } from "../server/sentinel/types.ts";
+import type { NextAction, Severity, SentinelView, ViewSummary } from "../server/sentinel/types.ts";
 import type { IssueDetail } from "../server/sentinel/publication.ts";
+import type { HealthIssueLevel } from "./health-levels.ts";
 
 /** One issue as the owner API returns it: no evidence references, source tokens or related fingerprints. */
 export type HealthIssue = Omit<IssueDetail, "evidence" | "sourceKey" | "relatedFingerprints">;
@@ -20,6 +21,8 @@ export type HealthIssue = Omit<IssueDetail, "evidence" | "sourceKey" | "relatedF
 export interface HealthSummaryResponse {
   status: "ready" | "waiting" | "unavailable";
   view: SentinelView | null;
+  /** The latest daily summary, shown on the Health screen. */
+  digest?: HealthDigest | null;
 }
 
 /** GET /api/sentinel/issues. */
@@ -53,13 +56,20 @@ export interface HealthDigest {
   recoveredCount: number;
 }
 
-/** What an owner's Inbox read carries about Health. Never attached to a less privileged read. */
+/** One Health problem the owner must act on: an ordinary Needs you item, counted once however many issues it folds. */
+export interface HealthNeed {
+  titleKey: string;
+  issues: number;
+  lastSeenAt: number;
+}
+
+/** What an owner's Inbox read carries about Health. Never attached to a less privileged read. The Inbox shows `needs`
+ * and nothing else from here; every other issue lives on the Health screen. */
 export interface HealthInbox {
   status: HealthSummaryResponse["status"];
-  summary: ViewSummary | null;
-  /** Unresolved rows to show in the card (at most DIGEST_ROWS). */
-  rows: ViewRow[];
-  digest: HealthDigest | null;
+  /** The strongest open level, for the quiet Health dot; null when nothing is open. */
+  level: HealthIssueLevel | null;
+  needs: HealthNeed[];
 }
 
 export const DIGEST_ROWS = 5;
@@ -97,7 +107,7 @@ export const NEXT_ACTION_LABELS: Readonly<Record<NextAction, string | null>> = O
   backups: "Open Backups",
   "memory-settings": "Open Memory settings",
   "manage-storage": "Manage storage",
-  diagnostics: "Open Diagnostics",
+  engines: "Open Engines",
   none: null,
 });
 
