@@ -586,10 +586,20 @@ export function fuigoFolderTrustGeneration(version: string | undefined): 1 | 2 {
   return /\d+\.\d+\.\d+/.test(version ?? "") && !versionAtLeast(version, [1, 0, 35]) ? 1 : 2;
 }
 
-/** Fuigo 1.0.38 takes `duration: "process"`; 1.0.37 denies unknown fields, so
- * an older or unread version gets rule 3b's plain reject. */
+/** Whether Murage sends the process-only trust reply and holds the first prompt for
+ * it (rule 3b primary route). Off in 1.0.14 (FUIGO-PROCESS-REPLY-OFF-1014): every
+ * version, 1.0.38 included, takes rule 3b's plain reject, exactly as on 1.0.37.
+ * Turning it on is FIX-LEDGER row FUIGO-PROCESS-REPLY-ON. */
+export const FUIGO_PROCESS_TRUST_REPLY = false;
+
+/** The version rule behind the switch: Fuigo 1.0.38 takes `duration: "process"`;
+ * 1.0.37 denies unknown fields, so an older or unread version never gets it. */
+export function fuigoFolderTrustProcessReplyAt(version: string | undefined, on: boolean): boolean {
+  return on && /\d+\.\d+\.\d+/.test(version ?? "") && versionAtLeast(version, [1, 0, 38]);
+}
+
 export function fuigoFolderTrustProcessReply(version: string | undefined): boolean {
-  return /\d+\.\d+\.\d+/.test(version ?? "") && versionAtLeast(version, [1, 0, 38]);
+  return fuigoFolderTrustProcessReplyAt(version, FUIGO_PROCESS_TRUST_REPLY);
 }
 
 const support: AcpSupport = {

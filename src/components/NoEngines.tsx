@@ -29,8 +29,8 @@ export function NoEngines() {
     // right now; the rest (GUI downloads, POSIX-only installers on Windows)
     // sort below so the actionable path is the obvious one.
     .sort((a, b) => {
-      const aCmd = installCommandFor(a.install) ? 0 : 1;
-      const bCmd = installCommandFor(b.install) ? 0 : 1;
+      const aCmd = a.install?.native || installCommandFor(a.install) ? 0 : 1;
+      const bCmd = b.install?.native || installCommandFor(b.install) ? 0 : 1;
       return aCmd - bCmd;
     });
 

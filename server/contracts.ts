@@ -790,6 +790,8 @@ export interface ProviderSnapshot {
   setupAction?: "repair";
   reason?: string;
   authenticated?: boolean;
+  /** The sign-in check ran and did not answer (a timeout or a crash), so the engine is neither signed in nor signed out yet. */
+  authUnverified?: true;
   version?: string | null;
   /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
   versionNote?: string;
@@ -823,6 +825,8 @@ export interface EngineInstall {
   signInCommand?: string;
   /** `command` needs npm on PATH, so the UI can say so when Node is absent. */
   needsNode?: boolean;
+  /** Murage installs this engine itself from the vendor's native build (engine-native-install.ts). */
+  native?: boolean;
 }
 
 // ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
@@ -898,6 +902,8 @@ export interface ProviderInstance {
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string, botId?: string): Promise<string>;
+  /** One short real reply on a hidden session, tool-free and with no owner data, on request only (engine-reply-check.ts). */
+  checkReply?(signal: AbortSignal): Promise<string>;
   /** One non-persisted owner proposal with tools and hooks disabled. */
   /** `botId` is the bot the call is made for: on a Cloud home the launcher refuses an engine run that names none. */
   proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;

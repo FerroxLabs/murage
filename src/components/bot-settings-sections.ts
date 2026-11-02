@@ -13,7 +13,7 @@ export const BOT_SETTINGS_SECTIONS = [
   { id: "email", label: "Email", keywords: "email address inbox mail trusted contacts never email activity pause sending" },
   { id: "model", label: "Model", keywords: "provider engine effort selection default" },
   { id: "permissions", label: "Permissions", keywords: "auto approval review safety contacting peers full access ask telegram slack discord setup images image generation" },
-  { id: "voice", label: "Voice & alerts", keywords: "speech notifications sound speak replies" },
+  { id: "voice", label: "Voice & alerts", keywords: "speech notifications sound speak replies calls call phone ring" },
   { id: "history", label: "History", keywords: "tasks conversations threads" },
   { id: "usage", label: "Usage", keywords: "cost tokens turns billing spend" },
 ] as const;
