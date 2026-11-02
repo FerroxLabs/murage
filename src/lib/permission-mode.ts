@@ -17,12 +17,27 @@ export function isDesktopOnlyMode(mode: PermissionMode): boolean {
   return mode === "full" || mode === "unlimited";
 }
 
+const LEVEL_ORDER: readonly PermissionMode[] = ["ask", "auto", "full", "unlimited"];
+
+/** Ask, Auto, Full access, No limits, in that order. */
+export function levelRank(mode: PermissionMode): number {
+  return LEVEL_ORDER.indexOf(mode);
+}
+
+/** UX-TRUST-MOMENTS-1012 3.3: a pick of Full access or No limits above the
+ * current level shows the confirm card; every other pick goes direct. */
+export function needsLevelConfirm(current: PermissionMode, picked: PermissionMode): boolean {
+  return isDesktopOnlyMode(picked) && levelRank(picked) > levelRank(current);
+}
+
 /** What choosing an approval level as a bot's default does next: save it, or
  * first show the one-time Full access or No limits warning (which also covers
  * this computer when the bot drives it) or the Auto-on-this-computer warning.
  * The same order as the composer's switch; the server refuses a save that
  * skipped a warning either way. `needsLocalWarning` is
- * `autoNeedsLocalComputerWarning` for the bot as it stands. */
+ * `autoNeedsLocalComputerWarning` for the bot as it stands. `termsPending`:
+ * the owner has not accepted No limits as it now stands, so its warning shows
+ * again even on a bot that confirmed the older one. */
 export type DefaultModeStep =
   | { kind: "patch"; patch: { autoApprove: boolean; fullAccess: boolean; noLimits?: boolean } }
   | { kind: "full-warning"; onThisComputer: boolean }
@@ -33,10 +48,11 @@ export function defaultModeStep(
   bot: Pick<Bot, "autoApprove" | "fullAccess" | "fullAccessAcknowledgedAt"> & { noLimitsAcknowledgedAt?: number },
   mode: PermissionMode,
   needsLocalWarning: boolean,
+  termsPending = false,
 ): DefaultModeStep {
   const needsLocal = mode !== "ask" && needsLocalWarning;
   if (mode === "unlimited") {
-    if (bot.noLimitsAcknowledgedAt === undefined) return { kind: "no-limits-warning", onThisComputer: needsLocal };
+    if (bot.noLimitsAcknowledgedAt === undefined || termsPending) return { kind: "no-limits-warning", onThisComputer: needsLocal };
     if (needsLocal) return { kind: "local-warning", mode: "unlimited" };
     return { kind: "patch", patch: { autoApprove: true, fullAccess: true, noLimits: true } };
   }
@@ -108,11 +124,15 @@ export function routineOfConversation<T extends { botId: string; threadId?: stri
   return routines.find((routine) => routine.botId === botId && routine.threadId === threadId && (routine.target ?? "bot") === "bot");
 }
 
-/** The level a routine's runs are judged at: its own, or its bot's level
- * (the bot's own setting, not any one conversation's). */
+/** The level a routine's runs are judged at: the lower of its own ceiling and
+ * its bot's level (the bot's own setting, not any one conversation's), as
+ * effectiveRoutinePermissionMode does on the server. With no ceiling of its
+ * own, the bot's level. The chip never shows more than a run can do. */
 export function routineEffectiveMode(
   routine: { permissionMode?: PermissionMode },
   profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean },
 ): PermissionMode {
-  return routine.permissionMode ?? permissionModeOf(profile);
+  const current = permissionModeOf(profile);
+  const ceiling = routine.permissionMode ?? current;
+  return levelRank(ceiling) < levelRank(current) ? ceiling : current;
 }

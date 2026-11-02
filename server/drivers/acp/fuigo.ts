@@ -47,6 +47,7 @@ import {
   type LocalHost,
 } from "../local-inject.ts";
 import { quoteToml, readTomlConfigForEdit, removeTomlTables, tomlTables } from "./kimi.ts";
+import { versionAtLeast } from "../codex-hook.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
@@ -148,7 +149,12 @@ export const FUIGO_SUBAGENTS_OFF = { FUIGO_SUBAGENTS: "0" } as const;
 export const FUIGO_AGENT_SPAWNS_OFF = { FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" } as const;
 
 /** Every name Murage pins on a Fuigo bot turn's env, last, over any inherited value. */
-export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF } as const;
+/** Fuigo's own 30 minute limit on ask_user_question off: the owner's answer or Stop ends a question card, and Murage's
+ *  note ends one on a turn nobody is at. Read in fuigo-shell toolset.rs at 1.0.32 and 1.0.37: env outranks user and
+ *  managed config. Without it the tool returns unanswered at 30 minutes and the card sits open under a moved-on turn. */
+export const FUIGO_ASK_CLOCK_OFF = { FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false" } as const;
+
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF } as const;
 
 /**
  * Names a Fuigo bot turn never inherits, in any casing. `FUIGO_AGENT` starts
@@ -573,6 +579,29 @@ export function isolateFuigoFromExternalMcp(env: Record<string, string | undefin
   forceHookGatesOff(env, "FUIGO");
 }
 
+/** Folder trust generation (FUIGO-TRUST-V2): 1 only for a parsed version below
+ *  1.0.35, where Murage decides before the spawn and passes `--trust`. Unknown
+ *  or unparseable is 2: the engine is the judge, and Murage grants nothing ahead of it. */
+export function fuigoFolderTrustGeneration(version: string | undefined): 1 | 2 {
+  return /\d+\.\d+\.\d+/.test(version ?? "") && !versionAtLeast(version, [1, 0, 35]) ? 1 : 2;
+}
+
+/** Whether Murage sends the process-only trust reply and holds the first prompt for
+ * it (rule 3b primary route). Off in 1.0.14 (FUIGO-PROCESS-REPLY-OFF-1014): every
+ * version, 1.0.38 included, takes rule 3b's plain reject, exactly as on 1.0.37.
+ * Turning it on is FIX-LEDGER row FUIGO-PROCESS-REPLY-ON. */
+export const FUIGO_PROCESS_TRUST_REPLY = false;
+
+/** The version rule behind the switch: Fuigo 1.0.38 takes `duration: "process"`;
+ * 1.0.37 denies unknown fields, so an older or unread version never gets it. */
+export function fuigoFolderTrustProcessReplyAt(version: string | undefined, on: boolean): boolean {
+  return on && /\d+\.\d+\.\d+/.test(version ?? "") && versionAtLeast(version, [1, 0, 38]);
+}
+
+export function fuigoFolderTrustProcessReply(version: string | undefined): boolean {
+  return fuigoFolderTrustProcessReplyAt(version, FUIGO_PROCESS_TRUST_REPLY);
+}
+
 const support: AcpSupport = {
   driverKind: DRIVER_KIND,
   displayName: "Fuigo",
@@ -745,6 +774,11 @@ const support: AcpSupport = {
    *  trust before the spawn from Murage's record or a card (see `spawnArgs`
    *  and core.ts FUIGOTRUST1). */
   folderTrust: true,
+  /** From 1.0.35 the engine itself asks and names the key (FUIGO-TRUST-V2). */
+  folderTrustGeneration: fuigoFolderTrustGeneration,
+  folderTrustProcessReply: fuigoFolderTrustProcessReply,
+  /** The generation decides the spawn, the advert and the primer's folder line. */
+  spawnNeedsCliVersion: true,
 
   /** 1.0.19/1.0.20 answer session/new before the `mcpServers` are connected
    *  and emit `_fuigo/mcp_initialized {sessionId, mcpToolCount, elapsedMs}`

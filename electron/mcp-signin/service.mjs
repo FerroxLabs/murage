@@ -56,7 +56,7 @@ const MESSAGES = {
     port: () => "Murage could not open a sign-in window on this computer. Try again.",
     browser: () => "Murage could not open your browser. Try again.",
     refused: (host) => `${host} gave sign-in details Murage cannot use. Use a key instead.`,
-    "no-registration": (host) => `${host} does not let apps sign in this way. Use a key instead.`,
+    "no-registration": (host) => `${host} does not let new apps sign in on their own. If it gave you a key or token, use that instead.`,
     network: (host) => `Murage could not reach ${host}. Check your connection and try again.`,
     token: (host) => `${host} did not finish the sign-in. Try again.`,
   },
@@ -169,6 +169,15 @@ export function createMcpServers(deps) {
     return out;
   }
 
+  const holdsTokens = (oauth) => Boolean(oauth?.accessToken || oauth?.refreshToken);
+
+  /** A grant Murage stopped using is cancelled at the server that issued it. The
+   * tokens are already gone from here, so a server that cannot be reached is only logged. */
+  async function revokeRetired(name, oauth) {
+    const result = await revokeTokens(oauth, { request }).catch(() => ({ revoked: false, reason: "failed" }));
+    if (!result.revoked && result.reason === "failed") log(`mcp server ${name}: an old sign-in could not be revoked`);
+  }
+
   async function saveSecrets(name, input) {
     if (typeof name !== "string" || !SERVER_NAME.test(name)) return fail("invalid", MESSAGES.invalid);
     const found = await listing(name);
@@ -181,6 +190,16 @@ export function createMcpServers(deps) {
     if (!values) return fail("invalid", MESSAGES.invalid);
     const origin = entry.kind === "stdio" ? undefined : originOf(entry.url);
     if (entry.kind !== "stdio" && !origin) return fail("invalid", MESSAGES.invalid);
+    // A key on an entry that no longer signs in replaces the sign-in: left in place
+    // its token would go ahead of the key and the refresher would keep renewing it.
+    const replacesSignIn = entry.kind !== "stdio" && entry.auth !== "oauth";
+    let retired;
+    if (replacesSignIn) {
+      cancelSignIn(name);
+      await refresher.settle(name);
+      const oauth = refresher.heldDoc(name)?.oauth ?? read(name)?.oauth;
+      if (holdsTokens(oauth)) retired = oauth;
+    }
     try {
       await update(name, (current) => {
         // A doc issued for another address, or for the other kind of server, starts over.
@@ -190,10 +209,15 @@ export function createMcpServers(deps) {
         if (values.headers) next.headers = { ...(isRecord(base.headers) ? base.headers : {}), ...values.headers };
         if (values.url) next.url = values.url;
         if (values.env) next.env = { ...(isRecord(base.env) ? base.env : {}), ...values.env };
+        if (replacesSignIn && isRecord(next.oauth)) next.oauth = clientOnly(next.oauth);
         return next;
       });
     } catch {
       return fail("storage", MESSAGES.storage);
+    }
+    if (retired) {
+      refresher.forget(name);
+      await revokeRetired(name, retired);
     }
     const pushed = await push(name);
     if (pushed === "stale") return fail("stale", MESSAGES.stale);
@@ -224,7 +248,10 @@ export function createMcpServers(deps) {
         ...(typeof target.resourceMetadataUrl === "string" ? { resourceMetadataUrl: target.resourceMetadataUrl } : {}),
         ...(target.local === "this-computer" || target.local === "local-network" ? { local: target.local } : {}),
       }, { request });
-      if (!discovery.ok) return fail(discovery.error, discovery.message);
+      if (!discovery.ok) {
+        log(`mcp server ${name}: sign-in stopped at ${discovery.step ?? discovery.error}`);
+        return fail(discovery.error, discovery.message);
+      }
       if (flow.cancelled) return fail("cancelled", MESSAGES.flow.cancelled(host));
       const origin = originOf(target.url);
       const saved = read(name);
@@ -238,6 +265,7 @@ export function createMcpServers(deps) {
         onSettled: () => { flow.finish = null; },
       });
       if (!result.ok) {
+        log(`mcp server ${name}: sign-in stopped at ${result.error}`);
         const message = MESSAGES.flow[result.error]?.(host) ?? MESSAGES.unknown;
         return fail(MESSAGES.flow[result.error] ? result.error : "unknown", message);
       }
@@ -289,6 +317,21 @@ export function createMcpServers(deps) {
     flows.delete(name);
     flow.finish?.({ error: "cancelled" });
     return true;
+  }
+
+  /** `murage:mcp-secrets-stale`: the harness says an entry changed or went. Its doc
+   * is dropped, and a sign-in dropped with it is revoked as a sign-out would. */
+  async function secretsStale(message) {
+    const name = typeof message?.name === "string" && SERVER_NAME.test(message.name) ? message.name : undefined;
+    if (name) await refresher.settle(name);
+    const held = name ? refresher.heldDoc(name)?.oauth ?? read(name)?.oauth : undefined;
+    const handled = await handleSecretsStale(message, { updateDocument: deps.updateDocument, log });
+    if (!handled || !holdsTokens(held)) return handled;
+    const kept = read(name)?.oauth;
+    if (kept?.accessToken === held.accessToken && kept?.refreshToken === held.refreshToken) return handled;
+    refresher.forget(name);
+    await revokeRetired(name, held);
+    return handled;
   }
 
   async function forgetTokens(name) {
@@ -379,7 +422,7 @@ export function createMcpServers(deps) {
     resume,
     refresh: (name, options) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, options) : Promise.resolve(false)),
     handleTokenRejected: (name) => (typeof name === "string" && SERVER_NAME.test(name) ? refresher.refresh(name, { reactive: true }) : Promise.resolve(false)),
-    handleSecretsStale: (message) => handleSecretsStale(message, { updateDocument: deps.updateDocument, log }),
+    handleSecretsStale: secretsStale,
     handleSecretsRenamed,
     dispose() {
       for (const name of [...flows.keys()]) cancelSignIn(name);

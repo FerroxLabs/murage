@@ -6,3 +6,5 @@ export declare function backupFailureNotice(status: unknown, announcedKey: strin
 export declare function announceBackupFailure(input: { status: unknown; folderName?: string | null; userData: string; post: (body: unknown) => Promise<unknown>; showNotice?: (sentence: string) => void }): Promise<Record<string, unknown> | null>;
 export declare function readAnnouncedFailure(userData: string): string | null;
 export declare function writeAnnouncedFailure(userData: string, key: string): void;
+export declare function backupStopCommitted(state: unknown): boolean;
+export declare function serialAnnouncer<T>(announce: () => Promise<T>): () => Promise<T>;

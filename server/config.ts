@@ -41,7 +41,9 @@ const BROWSER_PROFILE_ID = /^[a-z0-9_-]{1,40}$/;
 // file is refused on a schema error) and is raised to it on read; a new save
 // must be at least the minimum. The minimum and default stay at 20 minutes;
 // the direct turns' no-activity limit (TURN_STALL_MS in index.ts) is one hour
-// since 1.0.12, and a room keeps its own, shorter setting.
+// since 1.0.12. A room keeps its own, shorter setting, because a room runs one
+// turn at a time; only while an engine tool is open is its limit at least an
+// hour (ROOM_OPEN_TOOL_MINUTES, room-turn-timeout.ts).
 export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
@@ -295,6 +297,8 @@ const instanceConfigSchema = z.object({
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
 const appConfigSchema = z.object({
   automationsPaused: z.boolean().optional(),
+  /** The No limits terms this install accepted (full-access.ts). One door, on the desktop proof: no generic config route. */
+  noLimitsTermsVersion: z.number().int().nonnegative().optional(),
   modelProviders: z.object({ bank: z.string().max(200000).optional() }).strict().optional(),
   telegram: z.object({ botToken: z.string().max(256).optional(), targetBotId: z.string().max(160).optional() }).strict().optional(),
   slack: z.object({ appToken: z.string().max(512).optional(), botToken: z.string().max(512).optional(),
@@ -397,12 +401,13 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   memories: notificationPreferencesSchema.shape.memories.removeDefault().optional(),
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
   /** Pause scheduled/webhook admission; manual owner work remains available. */
   automationsPaused?: boolean;
+  noLimitsTermsVersion?: number;
   telegram?: { botToken?: string; targetBotId?: string };
   slack?: { appToken?: string; botToken?: string; teamId?: string; appId?: string; ownerUserId?: string; targetBotId?: string };
   discord?: { botToken?: string; applicationId?: string; ownerUserId?: string; targetBotId?: string };
@@ -563,6 +568,10 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
       new Error("mcpServers is managed from the MCP servers panel on the desktop, not this route"),
       { status: 400 },
     );
+  }
+  // The terms decide whether a turn runs with no cards, and this route is reachable from a paired phone: same refusal.
+  if (value && typeof value === "object" && !Array.isArray(value) && Object.hasOwn(value, "noLimitsTermsVersion")) {
+    throw Object.assign(new Error("No limits terms are accepted in the Murage app on the desktop."), { status: 400 });
   }
   // The owner's time zone is applied to the running server as it is saved, so
   // it has one door: PUT /api/owner/timezone (owner-time-zone.ts).
@@ -980,6 +989,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   if (checkedPatch.hermesProfilesPinned !== undefined) disk.hermesProfilesPinned = checkedPatch.hermesProfilesPinned;
+  if (checkedPatch.noLimitsTermsVersion !== undefined) disk.noLimitsTermsVersion = checkedPatch.noLimitsTermsVersion;
   if (checkedPatch.newBots !== undefined) disk.newBots = checkedPatch.newBots.effort ? { effort: checkedPatch.newBots.effort } : {};
   // the whole list is the unit of change: an add or a delete arrives as the
   // new list, never as a per-item merge

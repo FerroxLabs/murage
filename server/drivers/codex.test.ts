@@ -9,15 +9,15 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
-import { HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
+import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -1210,6 +1210,8 @@ describe("CodexDriver turns (fake app-server)", () => {
       await recorder.until((e) => e.type === "turn.completed");
       const resumed = JSON.parse(readFileSync(dump, "utf8")).calls.find((c: { method: string }) => c.method === "thread/resume");
       expect(resumed.params).toEqual({ threadId: "codex-thread-9", sandbox: "workspace-write", approvalPolicy: "on-request" });
+      // CARDS-WAIT-CODEX-1013: not on a Cloud home yet, row CARDS-WAIT-CODEX-CLOUD
+      expect(JSON.parse(readFileSync(dump, "utf8")).argv.join(" ")).not.toContain("code_mode");
       const first = spawned.at(-1)!;
       expect(first[TURN_BOT]).toBe("bot-atlas");
       expect(JSON.parse(first[TURN_RENDER]!)).toMatchObject({ resume: "codex-thread-9", codexPolicy: { approval: "on-request", sandbox: "workspace-write" } });
@@ -1348,7 +1350,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     await create({ mode: "approval" });
     await instance.adapter.sendTurn({ threadId: "t-approve-patch", text: "patch" });
     const opened = await recorder.until((e) => e.type === "request.opened");
-    expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug" });
+    expect(opened).toMatchObject({ tool: "edit", summary: "src/a.ts, src/b.ts", reason: "Fixing the bug", toolCall: { name: "edit", input: { paths: ["src/a.ts", "src/b.ts"] } } });
+    expect((opened as { toolInputMissing?: string }).toolInputMissing).toBeUndefined();
     await instance.adapter.respondToRequest("t-approve-patch", opened.requestId!, { behavior: "deny" });
     await recorder.until((e) => e.type === "turn.completed");
   });
@@ -1375,13 +1378,13 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ action: "accept", content: {} });
   });
 
-  it("a project question stays open past its normal deadline", async () => {
+  it("a question stays open past 31 minutes", async () => {
     await create({ mode: "form-elicitation" });
     const original = globalThis.setTimeout;
     const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((callback, delay, ...args) =>
       original(callback, delay === 30 * 60_000 ? 50 : delay, ...args)) as typeof setTimeout);
     try {
-      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose", holdProjectAsks: true });
+      await instance.adapter.sendTurn({ threadId: "project-question", text: "choose" });
       const opened = await recorder.until(event => event.type === "request.opened");
       expect(opened).toMatchObject({ requestType: "question" });
       await new Promise(resolve => original(resolve, 200));
@@ -1901,6 +1904,22 @@ describe("CodexDriver turns (fake app-server)", () => {
       state: "available",
       authenticated: false,
     });
+  });
+
+  it("leaves the login unknown when login status fails, so a stale login cannot pass for a new one", async () => {
+    await create({ mode: "status-fails" });
+    const snapshot = await instance.snapshot();
+    expect(snapshot.state).toBe("available");
+    expect(snapshot).not.toHaveProperty("authenticated");
+    expect(snapshot.authUnverified).toBe(true);
+  });
+
+  it("reads login status by its words: signed out exits 1, a crash says nothing", () => {
+    expect(readCodexLogin(true, "WARNING: proceeding\nNot logged in\n")).toBe(false);
+    expect(readCodexLogin(false, "Logged in using ChatGPT\n")).toBe(true);
+    expect(readCodexLogin(true, "Logged in using ChatGPT\n")).toBeUndefined();
+    expect(readCodexLogin(true, "")).toBeUndefined();
+    expect(readCodexLogin(false, "\n")).toBeUndefined();
   });
 
   it("also accepts login status from older Codex versions that used stdout", async () => {
@@ -2648,6 +2667,66 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     }
   });
 
+  // CARDS-WAIT-CODEX-1013: every current model runs tools in code cells, and a yielding cell lets the model end the turn under an open card
+  it("keeps the code cell in flight from the version that has the setting, with a bound equal to the hook's", async () => {
+    const override = `features.code_mode.default_exec_yield_time_ms=${HOOK_ASK_BOUND_MS}`;
+    for (const [version, sent] of [["codex-cli 0.129.0", false], ["codex-cli 0.147.0", false], ["codex-cli 0.148.0", true], ["codex-cli 0.166.0", true]] as const) {
+      await recreate(version);
+      const r = await run(`t-yield-${version}`, [], () => null);
+      expect(r.done).toMatchObject({ ok: true });
+      const argv = r.dump().argv as string[];
+      // below 0.148.0 the nested key stops Codex before it starts ("invalid type: map, expected a boolean")
+      expect(argv.includes(override)).toBe(sent);
+      expect(argv.filter((a) => a.includes("code_mode"))).toHaveLength(sent ? 1 : 0);
+    }
+  });
+
+  it("holds a turn the model ended under an open card, and goes on with the answer", async () => {
+    process.env.FAKE_CODEX_STOP_GATE = join(scratch, "stop-gate");
+    onTestFinished(() => { delete process.env.FAKE_CODEX_STOP_GATE; });
+    await recreate("codex-cli 0.166.0");
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "c1", command: "cat /etc/hostname", cwd: scratch, concurrent: true }]);
+    const dumpPath = join(scratch, "dump-t-barrier.json");
+    process.env.FAKE_CODEX_DUMP = dumpPath;
+    const sent = await instance.adapter.sendTurn({ threadId: "t-barrier", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const card: any = await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened");
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "done from fake codex");
+    writeFileSync(process.env.FAKE_CODEX_STOP_GATE!, "go");
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    // the model is done and the card is still open: nothing closed it, nothing ended the turn
+    expect(recorder.events.some((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toBe(false);
+    expect(recorder.events.some((e: any) => e.type === "request.resolved" && e.requestId === card.requestId)).toBe(false);
+    await instance.adapter.respondToRequest("t-barrier", card.requestId, { behavior: "allow" } as never);
+    expect(await recorder.until((e: any) => e.type === "request.resolved" && e.requestId === card.requestId)).toMatchObject({ behavior: "allow", source: "user" });
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "went on 2");
+    expect(await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+    const stops = JSON.parse(readFileSync(dumpPath, "utf8")).hookLog.filter((h: any) => h.name === "Stop");
+    expect(stops).toHaveLength(1);
+    expect(stops[0].reason).toContain("what really happened");
+  });
+
+  it("ends at once when no card is open at the end of the turn", async () => {
+    await recreate("codex-cli 0.166.0");
+    const r = await run("t-barrier-none", [], () => null);
+    expect(r.done).toMatchObject({ ok: true });
+    expect(r.dump().hookLog.filter((h: any) => h.name === "Stop")).toEqual([]);
+  });
+
+  it("the owner's Stop wakes the barrier and the turn ends as that Stop", async () => {
+    process.env.FAKE_CODEX_STOP_GATE = join(scratch, "stop-gate-2");
+    onTestFinished(() => { delete process.env.FAKE_CODEX_STOP_GATE; });
+    await recreate("codex-cli 0.166.0");
+    process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "c1", command: "cat /etc/hostname", cwd: scratch, concurrent: true }]);
+    process.env.FAKE_CODEX_DUMP = join(scratch, "dump-t-barrier-stop.json");
+    const sent = await instance.adapter.sendTurn({ threadId: "t-barrier-stop", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened");
+    await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "item.completed" && e.text === "done from fake codex");
+    writeFileSync(process.env.FAKE_CODEX_STOP_GATE!, "go");
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await instance.adapter.interruptTurn("t-barrier-stop");
+    expect(await recorder.until((e: any) => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true, stopReason: "cancelled" });
+  });
+
   // T91
   it("keeps the retired policy below the version that refuses it and gates from there", async () => {
     for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.148.0", false], ["codex-cli 0.149.0", true], ["codex-cli 0.163.0", true]] as const) {
@@ -3044,6 +3123,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     }
     expect(shell.execEnv.env.PYTHONINSPECT).toBeUndefined();
     expect(edit).toMatchObject({ tool: "edit", toolCall: { name: "edit", input: { paths: ["../outside.txt"] } } });
+    // where it lands, placed from the delivery's own folder, which the partition and the writer roots read
+    expect(edit.filePaths).toEqual([resolve(realpathSync(scratch), "../outside.txt")]);
     expect(own).toMatchObject({ tool: "publish_site", toolCall: { name: "mcp__agents__publish_site", input: { site: "x" } } });
     // F5: a command that never arrived is stated missing and never replaced
     expect(missing).toMatchObject({ tool: "shell", toolInputMissing: "command", toolCall: { name: "shell" } });
@@ -3077,6 +3158,30 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     const log = JSON.parse(readFileSync(join(scratch, "dump-narrow.json"), "utf8")).hookLog;
     expect(log.map((h: any) => [h.id, h.verdict])).toEqual([["n1", "deny"], ["n2", "deny"], ["n3", "allow"]]);
     expect(log[0].reason).toBe("search a folder (1)");
+  });
+
+  it("NOLIMITS-CODEX-EDIT: a native file-change approval (no hook on this build) files the edit it announced", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const outside = join(scratch, "..", "sibling", "notes.md");
+    const r = await run("t-native-edit", [{ kind: "apply_patch", id: "n1", patch: `*** Begin Patch\n*** Add File: ${outside}\n+x\n*** End Patch`, escalate: true }]);
+    expect(r.opened).toHaveLength(1);
+    expect(r.opened[0]).toMatchObject({ tool: "edit", summary: outside, filePaths: [resolve(realpathSync(scratch), "..", "sibling", "notes.md")], toolCall: { name: "edit", input: { paths: [outside] } } });
+    expect(r.opened[0].toolInputMissing).toBeUndefined();
+  });
+
+  it("NOLIMITS-CODEX-EDIT: a native file-change approval nothing announced stays a card that says what it lacks", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    process.env.FAKE_CODEX_MODE = "approval";
+    process.env.FAKE_CODEX_APPROVAL = JSON.stringify({ method: "item/fileChange/requestApproval", params: { itemId: "ghost", reason: "needs to write" } });
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-native-unread", text: "go", cwd: scratch } as never);
+    const opened = await recorder.until((e) => e.type === "request.opened");
+    expect(opened).toMatchObject({ tool: "edit", toolInputMissing: "changes" });
+    expect((opened as { toolCall?: unknown }).toolCall).toBeUndefined();
+    await instance.adapter.respondToRequest("t-native-unread", opened.requestId!, { behavior: "deny" });
+    await recorder.until((e) => e.type === "turn.completed");
+    delete process.env.FAKE_CODEX_APPROVAL;
   });
 
   it("answers a call that reaches the approval path after the hook with the hook's decision, one card", async () => {

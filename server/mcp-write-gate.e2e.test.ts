@@ -157,6 +157,7 @@ describe("custom MCP routes are desktop-only", () => {
       command: "notes-mcp",
       args: ["--stdio"],
       envKeys: ["NOTES_TOKEN"],
+      rev: expect.stringMatching(/^[0-9a-f]{12}$/),
       enabled: false,
       status: "needs-key",
     }]);
@@ -382,7 +383,7 @@ describe("link servers through the routes", () => {
     expect(created.status).toBe(201);
     expect(created.body.servers).toEqual([{
       kind: "remote", name: "keyed", url: DEAD_LINK, host: "127.0.0.1", auth: "header",
-      headerNames: ["X-API-Key"], local: "this-computer", enabled: false, status: "needs-key",
+      headerNames: ["X-API-Key"], local: "this-computer", rev: expect.stringMatching(/^[0-9a-f]{12}$/), enabled: false, status: "needs-key",
     }]);
     // the stored entry has the name and a true placeholder, never a value
     expect(storedServers().keyed).toMatchObject({ url: DEAD_LINK, headers: { "X-API-Key": true }, local: "this-computer", enabled: false });

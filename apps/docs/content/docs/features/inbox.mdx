@@ -29,9 +29,13 @@ These take effect straight away, and the list holds still while it refreshes.
 
 Snooze 1 hour hides an item until later; it then shows "Snoozed until (time)". Tick Show snoozed items to see them, and use Return to Inbox to bring one back early. Snooze is not offered on the Needs you view, because those items are owed to you. Reading or snoozing an approval does not answer it.
 
-## Engines to sign in to
+## Bots that can't answer
 
-When an engine is installed but nobody is signed in to it, the Inbox lists it under Engines to sign in to with the sign-in command to run in a terminal. The Copy button copies the command.
+When a bot runs on an engine nobody is signed in to, its turns fail, and the Inbox lists it under Bots that can't answer. Press **Use Fuigo instead** and the bot, and every chat that picked that engine, moves to Fuigo. Without a Flux key yet, the main button is **Open Models**, where the key goes. An engine no bot runs on is not listed here; sign in to it from **Settings → Models & engines → Engines**.
+
+To keep the engine, press **Sign in**, check the engine and the account folder the box names, then press **Open sign-in** and finish in your browser. The box says so when you are signed in. You can also ask your bot, for example "sign into Claude": it replies with a button that opens the same box.
+
+Some engines sign in from a Terminal window instead. Murage opens it for you with the sign-in already running. On a phone or in a browser, finish sign-in on the computer running Murage.
 
 If you don't use that engine, press **I don't use (engine)** and confirm with Turn it off. Bots stop using it. You can turn it back on in **Settings → Engines**.
 
@@ -41,8 +45,8 @@ Connections to restore lists connected apps that need signing in again. Routines
 
 ## Health checks
 
-The **Health** card in the Inbox, and beside Diagnostics in Settings, shows what Murage's health checks found. Once a day at 09:00 your time, the Inbox gets one short health summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.
+**Health** has its own screen, one click from the small Health link at the top of the Inbox, from the You menu, and from Settings. It shows what Murage's health checks found. Identical issues fold into one line with a count and the time, and every issue says what happened, whether it matters, and what you can do: a button that takes you to the right place, a button that tries again, or a plain "nothing to do" when Murage is on it. Only a problem you must act on comes to Needs you, as one item with one action, and it goes by itself when the problem clears. A small dot beside Health stays quiet unless something is worth a look. Once a day at 09:00 your time, Health gets one short summary when something is open, changed or recovered. Only two things send a notification on their own: backups that are switched on but have no checked backup, and heavy disk writes that keep going for five minutes while Murage is idle. Your notification settings and quiet hours apply, and the notification only ever says that a health check needs your attention.
 
 A small checker runs on its own every two minutes, even while the app is closed. It reads only health figures that Murage writes for it: backup results, disk write totals, memory learning counts and similar numbers. It never reads your conversations or memories.
 
-The card shows how many issues are open, the most important one in plain words, and when the checks last ran. "No issues found in the checked sources." means every check had fresh information and found nothing. "Some health checks are waiting for fresh information." means a check has not had new figures yet, so the card does not claim more than it saw. Open an issue to see when it started, what was measured, whether it is recovering, and a button that takes you to the place to act on it, such as Backups or Memory settings.
+The screen shows when the checks last ran and how far they got. "No issues found in the checked sources." means every check had fresh information and found nothing. "Some health checks are waiting for fresh information." means a check has not had new figures yet, so the screen does not claim more than it saw. Each issue says when it was last seen, and More shows how often and since when.

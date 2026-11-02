@@ -193,9 +193,9 @@ export interface InboxPage {
    *  Desktop only, counted in `decisions` (backups stay paused until it is
    *  cleared, so it is owed) and in no segment, gone once the review is
    *  cleared. See server/inbox-backup-notices.ts. */
-  backupFailed?: { sentence: string; at: number; inHealth?: true };
-  /** The owner's Health summary (1.0.9 Sentinel): only on a read that proved the owner. When `backupFailed.inHealth`
-   *  is set, the stopped backup is shown inside the Health card instead of as its own card, and counted once. */
+  backupFailed?: { sentence: string; at: number };
+  /** Health on the owner's read only: the quiet level, and `needs`, each one an ordinary Needs you item counted in
+   *  `decisions` and in no segment, gone by itself once the problem clears. Everything else is on the Health screen. */
   health?: HealthInbox;
   /** Lessons a bot suggested that wait for the owner's yes (Apply / Edit / Not now in the bot's
    *  Learning section). The only learning the Inbox shows. Desktop only; counted in `decisions`

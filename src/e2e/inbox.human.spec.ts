@@ -13,7 +13,7 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let vite: ViteDevServer, origin: string, root: string, db: DatabaseSync;
 /** Engines here and signed out of (GET /api/setup), and what was turned off. */
-let signedOut: Array<{ id: string; name: string; signInCommand?: string }> = [];
+let signedOut: Array<{ id: string; name: string; signInCommand?: string; usedBy: Array<{ id: string; name: string }> }> = [];
 const turnedOff: string[] = [];
 /** How long each Inbox read takes, so a test can click while one is in flight. */
 let inboxDelay = 0;
@@ -134,7 +134,7 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   for (const [id, slug] of [["connect-1", "trustpilot"], ["connect-2", "gmail"], ["connect-3", "slack"]]) {
     source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
   }
-  signedOut = [{ id: "opencode", name: "OpenCode", signInCommand: "opencode auth login" }];
+  signedOut = [{ id: "opencode", name: "OpenCode", signInCommand: "opencode auth login", usedBy: [{ id: "scout", name: "Scout" }] }];
   await page.goto(origin + "/__inbox");
   await page.getByRole("button", { name: /^Connections/ }).click();
   const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
@@ -151,13 +151,13 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   await expect.poll(dismissed).toEqual([true, true, true]);
 
   // an engine: asked first, then turned off, and its row goes
-  const engine = page.getByRole("listitem").filter({ hasText: "OpenCode is here, and nobody is signed in to it." });
+  const engine = page.getByRole("listitem").filter({ hasText: "Scout runs on OpenCode, so its turns fail" });
   await engine.getByRole("button", { name: "I don't use OpenCode" }).click();
   await expect(engine.getByText(/Turn off OpenCode\? Bots stop using it/)).toBeVisible();
   expect(turnedOff).toEqual([]);
   await engine.getByRole("button", { name: "Turn it off" }).click();
   await expect.poll(() => turnedOff).toEqual(["opencode"]);
-  await expect(page.getByText("OpenCode is here, and nobody is signed in to it.")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText("Scout runs on OpenCode, so its turns fail")).toHaveCount(0, { timeout: 15_000 });
   signedOut = [];
 
   // a failed sign-in owes nothing: cleared, and gone until it fails again
@@ -183,14 +183,14 @@ test("Needs you answers clicks while it re-reads itself, and holds still", async
   for (const [id, slug] of [["connect-a", "trustpilot"], ["connect-b", "gmail"]]) {
     source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
   }
-  signedOut = [{ id: "qwen", name: "Qwen" }, { id: "droid", name: "Droid", signInCommand: "droid" }];
+  signedOut = [{ id: "qwen", name: "Qwen", usedBy: [{ id: "scout", name: "Scout" }] }, { id: "droid", name: "Droid", signInCommand: "droid", usedBy: [{ id: "scout", name: "Scout" }] }];
   await page.goto(origin + "/__inbox");
   const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
   await expect(requests).toHaveCount(2);
   await page.setViewportSize({ width: 900, height: 1100 });
   await page.screenshot({ path: testInfo.outputPath("inbox-needs-you.png"), fullPage: true });
   inboxDelay = 2_500;
-  const top = async () => (await page.getByRole("list", { name: "Engines to sign in to" }).boundingBox())!.y;
+  const top = async () => (await page.getByRole("list", { name: "Bots that can't answer" }).boundingBox())!.y;
   const before = await top();
   // Wait for the five-second re-read to start, then act inside it.
   await page.waitForRequest(request => request.url().includes("/api/inbox?"), { timeout: 8_000 });

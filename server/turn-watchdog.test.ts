@@ -543,3 +543,37 @@ describe("TurnWatchdog from admission", () => {
     });
   });
 });
+
+describe("TurnWatchdog.setRunningLimit (LONGWORK-STALL-60-ROOMS)", () => {
+  it("moves the limit and no clock", () => {
+    const { dog, stalls, tick } = rig();
+    dog.dispatched("room", "bot1", "g1", { stallMs: 20 * 60_000 });
+    tick(19 * 60_000);
+    dog.setRunningLimit("room", "g1", 60 * 60_000);
+    expect(dog.silenceLimitMs("room")).toBe(60 * 60_000);
+    tick(40 * 60_000);
+    dog.sweep();
+    expect(stalls).toHaveLength(0);
+    // 60 minutes from the last event, not from the change: the change bought no extra time
+    tick(60_000);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
+  it("lowers the limit on a turn already past it, and the next sweep stops it", () => {
+    const { dog, stalls, tick } = rig();
+    dog.dispatched("room", "bot1", "g1", { stallMs: 60 * 60_000 });
+    tick(30 * 60_000);
+    dog.setRunningLimit("room", "g1", 20 * 60_000);
+    dog.sweep();
+    expect(stalls).toHaveLength(1);
+  });
+
+  it("leaves another generation's watch alone", () => {
+    const { dog, tick } = rig();
+    dog.dispatched("room", "bot1", "g2", { stallMs: 20 * 60_000 });
+    tick(1);
+    dog.setRunningLimit("room", "g1", 60 * 60_000);
+    expect(dog.silenceLimitMs("room")).toBe(20 * 60_000);
+  });
+});

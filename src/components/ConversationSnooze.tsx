@@ -155,7 +155,7 @@ export function SnoozePopover({ x, y, anchorTop, onClose, ...choices }: Paramete
   }, [onClose]);
   const width = Math.min(272, window.innerWidth - 16);
   return createPortal(
-    <div ref={ref} role="dialog" aria-label={`Snooze ${choices.name}`} data-snooze-popover=""
+    <div ref={ref} role="dialog" aria-label={`Snooze ${choices.name}`} data-box-exempt="popover, its rows are the actions" data-snooze-popover=""
       style={{ ...style, width }}
       className="fixed z-50 overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-card p-1.5 shadow-2xl shadow-black/60">
       <SnoozeChoices {...choices} onDone={() => { choices.onDone(); onClose(); }} />

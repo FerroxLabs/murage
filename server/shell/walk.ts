@@ -124,6 +124,11 @@ export interface WalkContext {
   /** Set while PowerShell or cmd hands a command to `env`, `sudo`-style wrappers or a POSIX shell (walkForeignExecutor): an
    *  interpreter reached from there asks, as bare `python -c` does on PowerShell (1.0.8 fallback, Grok r3). */
   windowsForeign?: boolean;
+  /** The engine's own PowerShell text, read at its top level. Never forked: a nested shell, a block or a subexpression
+   *  is not it, and text that only starts like a cmdlet is not it (a POSIX shell would run it, server/shell/pwsh.ts). */
+  pwshStamped?: boolean;
+  /** A block `pwshTextShape` proved is one value read: its allowed method calls stand. Never forked. */
+  pureMembers?: boolean;
   /** the folder the next command runs from, when the text says */
   cwd?: string;
   /** branches moved to different folders: a relative delete from here asks */
@@ -194,6 +199,11 @@ export interface SimpleCommand {
   /** the program word as written, when it is literal, and the reader that
    * found it: POSIX names are exact case and all, Windows names any case */
   program?: { text: string; dialect: "posix" | "windows" };
+  /** PowerShell: what this command prints goes on to a file, a variable or
+   * a later command the reader cannot call read-only */
+  outputFlows?: true;
+  /** PowerShell: the engine's whole text is one pipeline of reads */
+  wholeRead?: true;
 }
 
 export interface Visitor<H> {
@@ -204,6 +214,8 @@ export interface Visitor<H> {
   redirect(redirect: Redirect, target: Word, candidates: Candidate[], ctx: WalkContext): H | null;
   /** A redirect in PowerShell or cmd text, with its candidates. */
   pwshRedirect?(target: Word, candidates: Candidate[], ctx: WalkContext): H | null;
+  /** Is this PowerShell pipeline stage a command that only reads? */
+  readOnly?(stage: Pick<SimpleCommand, "program" | "args" | "wholeRead">): boolean;
   /** Does this string, quoted inside code the reader does not model
    * (`python -c`, `node -e`), name a catastrophe on its own? */
   catastrophic?(text: string): boolean;
@@ -1058,11 +1070,13 @@ function candidateOf(word: Word, ctx: WalkContext): Candidate {
 }
 
 /** The simple command the rules see, its operands read through `candidatesOf`. */
-export function simpleCommand(name: string, args: Word[], ctx: WalkContext, extra: { redirects?: Redirect[]; elevated?: boolean; derived?: boolean; operands?: Candidate[][]; stdin?: Provenance; program?: SimpleCommand["program"] } = {}): SimpleCommand {
+export function simpleCommand(name: string, args: Word[], ctx: WalkContext, extra: { redirects?: Redirect[]; elevated?: boolean; derived?: boolean; operands?: Candidate[][]; stdin?: Provenance; program?: SimpleCommand["program"]; outputFlows?: boolean; wholeRead?: boolean } = {}): SimpleCommand {
   const operands = extra.operands ?? args.map((arg) => candidatesOf(arg, ctx));
   return {
     name, args, operands, redirects: extra.redirects ?? [], elevated: !!(extra.elevated || ctx.elevated), ...(extra.derived ? { derived: true as const } : {}), ...(extra.stdin ? { stdin: extra.stdin } : {}),
     ...(extra.program ? { program: extra.program } : {}),
+    ...(extra.outputFlows ? { outputFlows: true as const } : {}),
+    ...(extra.wholeRead ? { wholeRead: true as const } : {}),
   };
 }
 

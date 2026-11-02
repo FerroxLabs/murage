@@ -1,19 +1,22 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { api } from "@/state/store";
+import { api, useStoreIfAny } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
-import { HealthCard } from "./HealthCard";
-import type { NextAction } from "../../shared/sentinel-view";
+import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
+import { EngineNeedCard, HealthNeedCard } from "./health/HealthNeedCard";
+import { engineNeed } from "@/lib/engine-need";
+import { firstRunOwnsMainView } from "@/lib/first-run";
+import { useEngineReading } from "@/components/today/use-engine-health";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
 import { useSetupView } from "./FirstRunChrome";
-import { inboxTabCounts, signedOutEngineRows } from "@/lib/signed-out-engines";
+import { inboxTabCounts, signedOutEngineIds, signedOutEngineRows, type SignedOutEngineRow } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
 import { t } from "@/lib/i18n";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
-import { copyTextOrThrow } from "@/lib/copy-text";
+import { InboxEngineSignInRow } from "./InboxEngineSignInRow";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
@@ -221,7 +224,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenHealthAction, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenHealthAction?: (action: NextAction) => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models") => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -336,11 +339,6 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     setTurningOff(null);
     refreshSetup();
   }, "That engine could not be turned off.");
-  const [copied, setCopied] = useState<string | null>(null);
-  const copy = async (engineId: string, command: string) => {
-    try { await copyTextOrThrow(command); setCopied(engineId); window.setTimeout(() => setCopied(current => (current === engineId ? null : current)), 2000); }
-    catch { setActionError("Copying did not work. Select the command and copy it yourself."); }
-  };
   const projectRows=result?.projects??[];
   const groupedMessages=new Set(projectRows.flatMap(row=>row.approvals.map(item=>item.messageId)));
   const list = inboxCardItems(view, result?.items ?? []).filter(item => !gone.has(item.id) && !groupedMessages.has(item.link.messageId));
@@ -351,13 +349,38 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // component ever read it, so a login that expires on day two was reported
   // nowhere at all.
   const { view: setupView, refresh: refreshSetup } = useSetupView();
+  // FUIGO FRONT AND CENTER (FUIGO-FIRST-SIGNIN-PLACEMENT, 1.0.14). A row here
+  // means a bot runs on an engine nobody is signed in to, so the main button
+  // moves those bots to Fuigo when Fuigo can answer now. It is the owner's own
+  // pick, through the same write as the model picker.
+  // Read without requiring the provider: the Inbox draws without one, as it
+  // did before this row needed the instance list (InboxRequest.test.ts).
+  const store = useStoreIfAny();
+  const instances = store?.state.instances ?? [];
+  // Ready means the setup view counts it as an engine that can answer now
+  // (a key or a login, and a catalogue), checked per candidate.
+  const fuigo = instances.find(instance => instance.driverKind === "fuigoAgent" && instance.enabled !== false && instance.models.default.trim()
+    && Boolean(setupView?.agents.some(agent => agent.id === instance.instanceId)));
+  const fuigoReady = Boolean(fuigo);
+  // Every write is awaited, so a refused one (a busy chat, say) reaches act's
+  // catch and the row comes back; the setup view is re-read after all land.
+  const moveToFuigo = (engine: SignedOutEngineRow) => act([`engine:${engine.id}`], async () => {
+    if (!fuigo) return;
+    const selection = { instanceId: fuigo.instanceId, model: fuigo.models.default };
+    await Promise.all(engine.usedBy.map(user => user.threadId
+      ? api(`/api/bots/${encodeURIComponent(user.id)}/tasks/${encodeURIComponent(user.threadId)}`, { method: "PATCH", body: JSON.stringify({ modelSelection: selection }) })
+      : api(`/api/bots/${encodeURIComponent(user.id)}`, { method: "PATCH", body: JSON.stringify({ modelSelection: selection, settingsScope: "defaults" }) })));
+    refreshSetup();
+  }, "Those bots could not be moved to Fuigo.");
   const signedOut = (view === "connections" || view === "decisions" ? signedOutEngineRows(setupView) : [])
     .filter(engine => !gone.has(`engine:${engine.id}`));
   // The counts the tabs read, with the live rows folded in. Both numbers or
   // neither: the three segments sum to the umbrella.
   // Every tab counts every signed-out engine, not only the tabs that list
   // them (inboxTabCounts), so the numbers stay put when the tab changes.
-  const shown = inboxTabCounts(result, setupView, gone);
+  const reading = useEngineReading();
+  const engineRow = engineNeed(reading, signedOutEngineIds(setupView), Boolean(setupView && firstRunOwnsMainView(setupView)));
+  const shown = inboxTabCounts(result, setupView, gone, engineRow ? [{ id: engineRow.key }] : []);
   // A daily backup held up by a waiting card (0.1.60 Linux D6). Shown where
   // decisions are, beside the card it waits for; never counted.
   const backupWaiting = view === "decisions" || view === "approvals" || view === "questions" ? result?.backupWaiting ?? null : null;
@@ -365,18 +388,18 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // shown with the decisions and the things to read. Backups stay paused
   // until it is cleared, so the server counts it in `decisions`.
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
-  // The owner's Health card (1.0.9 Sentinel). The server attaches `health` to owner reads only. When Sentinel's backup
-  // issue covers the stopped backup, that notice is shown inside the card (same sentence, same action) and not again
-  // as its own card; the server counts it once either way.
-  const health = view === "decisions" || view === "to-read" || view === "all" ? result?.health ?? null : null;
-  const backupInHealth = Boolean(health && backupFailed?.inHealth);
+  // WHAT NEEDS THE OWNER, FIRST (Sean 11-01). Health used to sit here as a whole card, and he scrolled past it every time
+  // to reach what was waiting. Only a Health problem the owner must act on comes here, as an ordinary item with one
+  // action, already counted by the server. Everything else is on the Health screen, one quiet link away above this page (needs-page.tsx).
+  const healthNeeds = view === "decisions" || view === "all" ? result?.health?.needs ?? [] : [];
+  const engineProblem = view === "decisions" || view === "connections" || view === "all" ? engineRow : null;
   // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
   // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
   const memoryRows = view === "decisions" || view === "all" ? result?.memoryWaiting ?? [] : [];
   // Learning stopped at this month's limit: derived by the server on every read, counted once in `decisions` (server/inbox-learning-paused.ts).
   const learningPaused = view === "decisions" || view === "all" ? result?.learningPaused ?? null : null;
-  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...(learningPaused ? [learningPaused] : []), ...suggestionRows, ...memoryRows];
+  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...healthNeeds, ...(engineProblem ? [engineProblem] : []), ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...(learningPaused ? [learningPaused] : []), ...suggestionRows, ...memoryRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -404,17 +427,18 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + (health ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
-  return <section aria-labelledby="inbox-title" aria-busy={loading} className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto bg-panel p-4 text-ink sm:p-6">
-    <header className="flex items-center justify-between gap-3"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
+  const sections = signedOut.length + restoreRows.length + healthNeeds.length + (engineProblem ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  return <section aria-labelledby="inbox-title" aria-busy={loading} className={`${BOX_FRAME} mx-auto h-full w-full max-w-4xl bg-panel text-ink`}>
+    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
       <div className="flex gap-2">
         <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
           <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
         </button>
         {onClose && <button className={button} onClick={onClose}>Close Inbox</button>}
       </div>
-    </header>
-    <p className="mt-2 text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
+    </BoxHead>
+    <BoxBody className="flex flex-col p-4 sm:p-6">
+    <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot
@@ -446,12 +470,15 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         owner cannot survive that, so the backup waits. Ask cards wait
         indefinitely, so this says so here instead of backups quietly
         stopping. It clears itself the moment the card is answered. */}
-    {health && (
-      <InboxSection label="Health">
-        <HealthCard health={health} backupNotice={backupInHealth ? backupFailed : null} onOpenBackups={onOpenBackups} onNavigate={onOpenHealthAction} />
+    {(healthNeeds.length > 0 || engineProblem) && (
+      <InboxSection label={t("ux.l2a.health.title")}>
+        <div className="space-y-2">
+          {engineProblem && <EngineNeedCard title={engineProblem.title} detail={engineProblem.detail} label={engineProblem.label} onOpen={onOpenSettingsPage ? () => onOpenSettingsPage(engineProblem.section) : undefined} />}
+          {healthNeeds.map(need => <HealthNeedCard key={need.titleKey} need={need} now={Date.now()} onOpen={onOpenSettingsPage} />)}
+        </div>
       </InboxSection>
     )}
-    {backupFailed && !backupInHealth && (
+    {backupFailed && (
       <InboxSection label="Backups">
         <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
           <p className="font-medium text-ink">The last backup didn't finish</p>
@@ -493,27 +520,25 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         in, which is why it is allowed to count when the failed-turn log row
         underneath it is not. */}
     {signedOut.length > 0 && (
-      <InboxSection label="Engines to sign in to">
-        <ul className="space-y-2" aria-label="Engines to sign in to">
+      <InboxSection label="Bots that can't answer">
+        <ul className="space-y-2" aria-label="Bots that can't answer">
           {signedOut.map(engine => (
-            <li key={engine.id} className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-ink">{engine.name} is here, and nobody is signed in to it.</p>
-                  <p className="mt-1 text-ink-secondary">Anything you ask it to do will fail until you sign in.{engine.signInCommand ? " Run this in a terminal:" : ""}</p>
-                </div>
-                {turningOff !== engine.id && <button className={button} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
-              </div>
-              {engine.signInCommand && <div className="mt-2 flex items-center gap-2 rounded-lg bg-control py-1 pl-3 pr-1">
-                <code className="min-w-0 flex-1 break-all text-[12px] text-ink">{engine.signInCommand}</code>
-                <button type="button" className="min-h-8 rounded-md px-2 text-[12px] text-ink-secondary hover:bg-raised-hover hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" aria-label={`Copy the ${engine.name} sign-in command`} onClick={() => void copy(engine.id, engine.signInCommand!)}>{copied === engine.id ? "Copied" : "Copy"}</button>
-              </div>}
+            <InboxEngineSignInRow
+              key={engine.id}
+              engine={engine}
+              fuigoReady={fuigoReady}
+              busy={saving}
+              onUseFuigo={() => void moveToFuigo(engine)}
+              onOpenModels={() => onOpenSettingsPage ? onOpenSettingsPage("models") : store?.dispatch({ type: "toggleAppSettings", open: true, section: "models" })}
+              onDone={refreshSetup}
+            >
+              {turningOff !== engine.id && <button className={`${button} mt-2`} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
               {turningOff === engine.id && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
                 <span className="mr-auto text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
                 <button className={button} disabled={saving} onClick={() => setTurningOff(null)}>Keep it</button>
                 <button className={`${button} border-warning/50`} disabled={saving} onClick={() => void turnOff(engine.id)}>Turn it off</button>
               </div>}
-            </li>
+            </InboxEngineSignInRow>
           ))}
         </ul>
       </InboxSection>
@@ -630,5 +655,6 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       <span className="text-[12px] text-ink-secondary">Page {page + 1} of {Math.ceil(result.total / result.pageSize)}</span>
       <button className={button} disabled={(page + 1) * result.pageSize >= result.total} onClick={() => { const next = result.next; setCursors(current => { const kept = [...current]; kept[page + 1] = next; return kept; }); setPage(current => current + 1); }}>Next</button>
     </footer>}
+    </BoxBody>
   </section>;
 }

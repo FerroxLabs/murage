@@ -187,6 +187,7 @@ function projectComponent(name: string, value: unknown, omit: (path: string, rea
         if (!object(task)) fail("INVALID_ROSTER_COMPONENT");
         const copy = { ...task };
         if (Object.hasOwn(copy, "resumeCursors")) { delete copy.resumeCursors; omit(`${name}/${index}/tasks/${taskIndex}/resumeCursors`, "Native provider cursors require fresh sessions"); }
+        if (Object.hasOwn(copy, "resumeSeals")) { delete copy.resumeSeals; omit(`${name}/${index}/tasks/${taskIndex}/resumeSeals`, "Native provider cursors require fresh sessions"); }
         return copy;
       });
       return bot;
