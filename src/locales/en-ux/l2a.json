@@ -23,6 +23,7 @@
   "ux.l2a.today.greet.eveningName": "Good evening, {name}.",
   "ux.l2a.today.statusLabel": "How things stand",
   "ux.l2a.tag.signedIn": "{engine} signed in",
+  "ux.l2a.tag.checking": "Checking {engine} sign-in",
   "ux.l2a.tag.signedOut": "{engine} is signed out",
   "ux.l2a.tag.limit": "{engine} reached its limit for now",
   "ux.l2a.tag.off": "{engine} is switched off",

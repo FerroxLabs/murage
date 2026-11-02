@@ -757,6 +757,11 @@ export function Composer({
     if (group) dispatch({ type: "interruptGroup", groupId: group.id, queueIds: queuedMessages.map((entry) => entry.queueId) });
     else interruptTurn();
   };
+  // Remove: the same cancel for a 1:1 chat and a room.
+  const cancelQueued = (queueId: string) => {
+    if (group) dispatch({ type: "cancelGroupQueued", groupId: group.id, threadId, queueId });
+    else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
+  };
   const fileInput = useRef<HTMLInputElement>(null);
   // which level the Auto-on-this-computer warning is confirming, if open
   const [autoWarn, setAutoWarn] = useState(false);
@@ -1390,7 +1395,7 @@ export function Composer({
             them removes the dead space at every height and gives both clusters
             one baseline. */}
         <div className={phoneComposer ? "flex items-end gap-2" : "contents"}>
-        {phoneComposer && !locked && (
+        {phoneComposer && !locked && !approval && (
           <ComposerPlusMenu
             onAttach={() => fileInput.current?.click()}
             attachDisabled={sendPending}
@@ -1398,7 +1403,7 @@ export function Composer({
             approval={phoneApproval}
           />
         )}
-        <div className={cn("relative z-[1] flex gap-1.5 bg-raised py-1.5", phoneComposer ? "min-w-0 flex-1 flex-row flex-wrap items-end gap-x-1 rounded-[26px] px-3" : "flex-col rounded-3xl px-2")}>
+        <div data-composer-pill className={cn("relative z-[1] flex gap-1.5 bg-raised py-1.5", phoneComposer ? "min-w-0 flex-1 flex-row flex-wrap items-end gap-x-1 rounded-[26px] px-3" : "flex-col rounded-3xl px-2", approval && !shownQueued.length && "hidden")}>
           {/* First child of the column, so a queued line sits directly above
               the textarea it came out of and above the controls row — not
               inside that row, and not at the far end of a transcript the
@@ -1406,10 +1411,8 @@ export function Composer({
           <div className={phoneComposer ? "w-full" : "contents"}>
           <QueuedComposerMessages
             items={shownQueued}
-            onCancel={(queueId) => {
-              if (group) dispatch({ type: "cancelGroupQueued", groupId: group.id, threadId, queueId });
-              else if (bot) dispatch({ type: "cancelQueued", botId: bot.id, queueId });
-            }}
+            phone={phoneComposer}
+            onCancel={cancelQueued}
             onResend={(item) => {
               // The same send id, words, reply, mode and responder: the server treats it as the new attempt.
               const again = state.pendingQueued[threadId]?.find((entry) => entry.queueId === item.queueId);
@@ -1553,6 +1556,7 @@ export function Composer({
             if (e.key === "Escape" && recording) stopDictation();
           }}
           disabled={Boolean(approval) || locked}
+          hidden={Boolean(approval)}
           readOnly={sendPending}
           aria-busy={bot?.awaitingThreadSnapshot || sendPending || undefined}
           placeholder={((placeholder: { lead: string; hint?: string }) => compactPlaceholder(placeholder.lead, placeholder.hint, narrowPlaceholder))(
@@ -1562,8 +1566,6 @@ export function Composer({
               ? { lead: "Loading replacement conversation…" }
               : setupLocked
               ? { lead: "Finish channel setup to start chatting" }
-              : approval
-              ? { lead: approvals.length > 1 ? "Answer the requests above to continue" : "Answer the approval above to continue" }
               : recording
               ? { lead: "Listening…" }
               : canInject
@@ -1583,11 +1585,11 @@ export function Composer({
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className={cn("max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]")}
+            className={cn("max-h-[9rem] min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
-          <div className={cn("flex items-center gap-1", phoneComposer && "contents")}>
+          <div data-composer-controls className={cn("flex items-center gap-1", phoneComposer && "contents", approval && "hidden")}>
           {!locked && !phoneComposer && (
             <div className="flex items-center gap-1">
               <button
