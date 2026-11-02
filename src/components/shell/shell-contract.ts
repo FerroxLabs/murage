@@ -101,7 +101,7 @@ export interface PhoneTabsProps {
 }
 
 /** GET /api/engine-health (server/engine-health-routes.ts). */
-export type EngineHealthState = "ready" | "signed-out" | "limit" | "off" | "missing";
+export type EngineHealthState = "ready" | "checking" | "signed-out" | "limit" | "off" | "missing";
 export type FluxHealthState = "ok" | "allowance-used-up" | "key-problem" | "none";
 export interface EngineHealthRow {
   id: string;
