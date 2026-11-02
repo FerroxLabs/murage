@@ -2735,6 +2735,20 @@ export function browserBindHost(
   );
 }
 
+/** Where the door should be bound right now. An owned HTTPS front in place
+ * means loopback, because the front is what a browser reaches; otherwise the
+ * bind mode decides, given Tailscale as it is now. Throws only in the
+ * explicit `tailnet` mode. */
+export function desiredBrowserDoorHost(
+  front: BrowserFront | null,
+  mode: BrowserBindMode,
+  tailnet: string | null,
+  self: string | null,
+  onDecline?: (reason: string) => void,
+): string {
+  return front ? "127.0.0.1" : browserBindHost(mode, tailnet, self, onDecline);
+}
+
 /** Move the door to a different address without restarting the sidecar.
  *
  * Tailscale is routinely installed, signed into or switched on minutes after
