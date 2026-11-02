@@ -52,6 +52,7 @@ import {
 } from "@/state/store";
 import { newDeleteAttempt } from "@/state/page-intent";
 import { EngineSetup } from "./EngineSetup";
+import { signInWall, type FuigoWall } from "./engine/SignInWall";
 import { WidgetMessage } from "./widget/WidgetMessage";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { claudeUpdateTarget } from "@/lib/claude-update";
@@ -116,7 +117,7 @@ import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ScreenFrameMedia } from "./ImageMedia";
 import { ArtifactCards } from "./ArtifactCards";
-import { WorkspacePane } from "./WorkspacePane";
+import { LazyWorkspacePane } from "./WorkspacePaneLazy";
 import { RenameTitle } from "./RenameTitle";
 
 import { SpeakButton } from "./SpeakButton";
@@ -410,7 +411,9 @@ const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).C
 // Find in this conversation loads when someone asks for it (Cmd+F).
 const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings, fuigoWall }: {
+  /** 1.0.14 F0: the bot and the engine list, so a sign-in wall leads with "Use Fuigo instead" when Fuigo can answer. */
+  fuigoWall?: FuigoWall;
   message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; retryLabel?: string; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
@@ -423,7 +426,8 @@ export function ErrorRow({ message, details, errorKind, localFailure, localFailu
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
   }
   return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings}
-    setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
+    setup={needsSetup ? signInWall(setupInstance, forceSignIn, fuigoWall,
+      (secondary) => <EngineSetup instance={setupInstance} authRequired={forceSignIn} signInSecondary={secondary} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" />) : undefined} />;
 }
 
 /** One bad markdown node must not white-screen the app - the transcript
@@ -817,7 +821,7 @@ function Bubble({
                 />
               ) : null}
               {text ? <ChatMarkdown text={text} questionCards={questionCards} scope={{ botId: bot.id, threadId: bot.threadId }} /> : null}
-              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} /> : null}
+              {message.artifactIds?.length ? <ArtifactCards ids={message.artifactIds} voiceNote={message.role === "bot" ? { threadId: bot.threadId, messageId: message.id } : undefined} /> : null}
               {message.kind === "text" && <ServedModelNote served={message.servedModel} />}
               {message.withheldFromBots && (
                 // the owner reads the words; this says what bots read of them (the same words as GroupView)
@@ -1348,6 +1352,7 @@ const MessagesList = memo(function MessagesList({
                     diagnostic={m.tool.diagnostic}
                     turnId={m.turnId}
                     incident={{threadId:bot.threadId,messageId:m.id}}
+                    fuigoWall={{ bot, instances: state.instances }}
                     onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: bot.modelSelection.connectionId ? "models" : "engines" })}
                   />
                 );
@@ -2144,7 +2149,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       </div>
       </div>
     </div>
-      <WorkspacePane bot={bot} />
+      <LazyWorkspacePane bot={bot} />
     </main>
     </ThreadLinkProvider>
     </AccessLinkProvider></ChipsProvider>

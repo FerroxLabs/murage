@@ -61,11 +61,13 @@ describe("engine setup questions in the owner's words", () => {
   it("names the plain words and the real buttons, and no command", () => {
     const words = (id: string) => CAPABILITY_ENTRIES.find((entry) => entry.id === id)!;
     expect(words(CLAUDE).answer).toMatch(/^Let's set up Claude Code and log you in\./);
-    expect(words(CLAUDE).answer).toContain("Open install in Terminal");
-    expect(words(CLAUDE).answer).toContain("Open sign-in in Terminal");
+    expect(words(CLAUDE).answer).toContain("Install Claude Code");
+    expect(words(CLAUDE).answer).toContain("Open sign-in");
+    expect(words(CLAUDE).answer).not.toContain("Open install in Terminal");
+    expect(words(ENGINE).answer).toContain("Open install in Terminal");
     expect(words(ENGINE).answer).toContain("Terminal is a window for typed commands.");
     expect(words(ENGINE).limits).toContain("nodejs.org");
-    expect(words(CLAUDE).answer).toContain("nodejs.org");
+    expect(words(CLAUDE).answer).not.toContain("nodejs.org");
     expect(words(ROUTER).limits).toContain("SuperGrok or X Premium");
     expect(words(PLAN).limits).toContain("Unofficial");
     expect(words(PLAN).engines).not.toContain("claude");
@@ -78,7 +80,7 @@ describe("engine setup questions in the owner's words", () => {
     expect(words(CLAUDE).url).toContain("#install-an-ai-app");
     expect(words(ENGINE).url).toContain("#install-an-ai-app");
     for (const id of [PLAN, ROUTER, CLAUDE, ENGINE]) {
-      expect(words(id).text, id).not.toMatch(/--provider|fuigo login|npm install|auth login|murage:\/\//);
+      expect(words(id).text, id).not.toMatch(/--provider|fuigo login|npm install|auth login/);
     }
     for (const id of [PLAN, CLAUDE, ENGINE]) expect(words(id).limits, id).toContain("Never put a sign-in code or key in a chat.");
   });

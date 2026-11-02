@@ -28,20 +28,23 @@ export interface GrantFoldProps {
   onClose: () => void;
   /** extra content under a row (the routine's stop checkboxes) */
   below?: (row: FoldScope) => ReactNode;
+  /** false inside the phone's Details sheet: that sheet focuses its own Close,
+   * so a stray Enter never chooses a row (APPROVAL-ONE-CARD) */
+  autoFocus?: boolean;
 }
 
 export function rowChoosable(row: FoldScope, desktop: boolean): boolean {
   return row.surface === "any" || desktop;
 }
 
-export function GrantFold({ id, rows, bot, level, verb, desktop, variant, busy, onChoose, onClose, below }: GrantFoldProps) {
+export function GrantFold({ id, rows, bot, level, verb, desktop, variant, busy, onChoose, onClose, below, autoFocus = true }: GrantFoldProps) {
   const first = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    first.current?.focus();
+    if (autoFocus) first.current?.focus();
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, autoFocus]);
   const heading = <p className="px-2 pb-1 text-[11px] uppercase tracking-[0.12em] text-ink-secondary">{t("ux.l1.fold.heading", { verb })}</p>;
   const body = (
     <div id={id} role="group" aria-label={t("ux.l1.fold.heading", { verb })} data-grant-fold={variant} className="w-full rounded-xl border border-hairline/50 bg-raised p-2 text-left">
