@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { TelegramUpdate } from "./telegram-update.ts";
 import type { TelegramButton, TelegramTransport } from "./telegram-transport.ts";
-import { QUESTION_LIMITS, QUESTION_TIMEOUT_MS, type QuestionAnswer, type QuestionSpec } from "../shared/questions.ts";
+import { QUESTION_LIMITS, type QuestionAnswer, type QuestionSpec } from "../shared/questions.ts";
 import { channelReply, channelReplyNumber } from "./channels/reply-text.ts";
 import { approvalButtonLabel, approvalResultLabel } from "./channels/approval-labels.ts";
 
@@ -44,16 +44,16 @@ type QuestionDraft = {
   /** "Reply with text" was tapped: the next private message is the answer */
   awaitingText: boolean;
 };
-type Offer = { approval: TelegramApproval; nonce: string; expires: number; messageId?: number; consumed: boolean; outcome?: string; editAttempted?: boolean; draft?: QuestionDraft };
+type Offer = { approval: TelegramApproval; nonce: string; closedAt?: number; messageId?: number; consumed: boolean; outcome?: string; editAttempted?: boolean; draft?: QuestionDraft };
 type ApprovalTransport = Pick<TelegramTransport, "sendMessage" | "answerCallbackQuery"> & Partial<Pick<TelegramTransport, "settleApprovalMessage" | "editQuestionMessage">>;
 
 /** A computer-control card in a chat: approved on the desktop only, while a
  * Deny tap is fine from anywhere (denying never widens what a bot can do).
  * Read when sent, so it follows the owner's app language (channels/reply-text.ts). */
 export const desktopOnlyLine = (): string => channelReply("channelReply.desktopOnly");
-const PERMISSION_TTL = 600000;
-/** A question offer lives as long as the engine waits for the card. */
-const QUESTION_TTL = QUESTION_TIMEOUT_MS;
+/** An offer lives while its card is pending: no clock ends it (Sean 10-26). After the card closes its message keeps answering
+ *  with the outcome this long, then the offer goes. */
+const CLOSED_OFFER_KEPT_MS = 600000;
 /** Telegram messages cap at 4096 characters; a question that cannot be shown whole stays in-app. */
 const QUESTION_TEXT_MAX = 3500;
 const label = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
@@ -92,20 +92,21 @@ export class TelegramApprovals {
     const pending = this.actions.pending().slice(0, 32);
     for (const [id, offer] of this.offers) {
       if (!active()) return;
-      if (!pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint) || this.now() >= offer.expires) {
+      if (!pending.some(item => item.id === id && item.fingerprint === offer.approval.fingerprint)) {
         offer.consumed = true;
-        offer.outcome ??= this.now() >= offer.expires
-          ? (offer.draft ? channelReply("channelReply.expiredQuestion") : channelReply("channelReply.expiredAction"))
-          : (offer.draft ? channelReply("channelReply.noLongerWaiting") : channelReply("channelReply.noLongerPendingDecision"));
+        offer.closedAt ??= this.now();
+        offer.outcome ??= offer.draft ? channelReply("channelReply.noLongerWaiting") : channelReply("channelReply.noLongerPendingDecision");
         await this.settle(offer, owner, signal);
-        if (this.now() > offer.expires + 600000 || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
+        if (this.now() > offer.closedAt + CLOSED_OFFER_KEPT_MS || pending.some(item => item.id === id && item.fingerprint !== offer.approval.fingerprint)) this.offers.delete(id);
       }
     }
     for (const approval of pending) {
       if (!active()) return;
       if (this.offers.has(approval.id)) continue;
       if (this.offers.size >= 32) {
-        const oldestSettled = [...this.offers].find(([, offer]) => offer.consumed);
+        // Never one whose card still waits: a consumed offer with an unknown outcome must not come back with fresh buttons.
+        const live = this.actions.pending();
+        const oldestSettled = [...this.offers].find(([, offer]) => offer.consumed && !live.some(item => item.id === offer.approval.id));
         if (oldestSettled) this.offers.delete(oldestSettled[0]);
         else continue;
       }
@@ -115,7 +116,7 @@ export class TelegramApprovals {
       }
       // Never ask an owner to approve details hidden by truncation.
       if (!approval.summary || approval.summary.length > 3000) continue;
-      const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), expires: this.now() + PERMISSION_TTL, consumed: false };
+      const offer: Offer = { approval: { ...approval }, nonce: randomBytes(24).toString("hex"), consumed: false };
       this.offers.set(approval.id, offer); // uncertain send must not auto-repeat
       if (approval.desktopOnly) {
         // Deny only: no Approve or Allow-for-task button exists for this offer
@@ -162,7 +163,7 @@ export class TelegramApprovals {
         ? channelReply("channelReply.questionPickOne")
         : "";
     const text = question.allowOther ? `${how ? `${how} ` : ""}${channelReply("channelReply.questionOwnWords", { button: TEXT_ANSWER() })}` : how;
-    return `${text}\n${channelReply("channelReply.questionExpires", { minutes: channelReplyNumber(Math.round(QUESTION_TTL / 60000)) })}`;
+    return text;
   }
   private questionKeyboard(offer: Offer): TelegramButton[][] {
     const draft = offer.draft!;
@@ -190,7 +191,7 @@ export class TelegramApprovals {
     if (!this.actions.answer || !approval.summary) return;
     const offer: Offer = {
       approval: { ...approval, questions: approval.questions!.map(question => ({ ...question })) },
-      nonce: randomBytes(24).toString("hex"), expires: this.now() + QUESTION_TTL, consumed: false,
+      nonce: randomBytes(24).toString("hex"), consumed: false,
       draft: { cursor: 0, answers: [], picks: [], awaitingText: false },
     };
     if (approval.questions!.some((_, index) => this.questionText(offer, index).length > QUESTION_TEXT_MAX)) return;
@@ -240,7 +241,7 @@ export class TelegramApprovals {
    * true when the message was consumed. */
   async captureText(update: Extract<TelegramUpdate, { kind: "message" }>, owner: Owner, active: () => boolean, signal: AbortSignal): Promise<boolean> {
     if (!active() || update.senderId !== owner.senderId || update.chatId !== owner.chatId) return false;
-    const offer = [...this.offers.values()].find(item => item.draft?.awaitingText && !item.consumed && this.now() < item.expires);
+    const offer = [...this.offers.values()].find(item => item.draft?.awaitingText && !item.consumed);
     if (!offer || !this.stillPending(offer)) return false;
     const draft = offer.draft!;
     const question = offer.approval.questions![draft.cursor]!;
@@ -311,7 +312,7 @@ export class TelegramApprovals {
     const offer = nonce ? [...this.offers.values()].find(item => item.nonce === nonce) : undefined;
     let text = offer?.consumed && offer.messageId === update.messageId && offer.outcome
       ? offer.outcome : channelReply("channelReply.approvalStale");
-    if (offer && !offer.consumed && offer.messageId === update.messageId && this.now() < offer.expires && this.stillPending(offer)) {
+    if (offer && !offer.consumed && offer.messageId === update.messageId && this.stillPending(offer)) {
       if (question && offer.draft) {
         text = await this.answerQuestion(offer, Number(question[2]), question[3]!, owner, active, signal);
       } else if (permission && !offer.draft && (!offer.approval.desktopOnly || permission[2] === "d") && (permission[2] !== "t" || offer.approval.taskAllow === true)) {

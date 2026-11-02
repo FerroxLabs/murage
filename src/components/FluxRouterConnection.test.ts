@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { FLUX_ACCOUNT_URL, FLUX_SIGNUP_URL, FluxRouterConnection, fluxActionError, serverSentence, type FluxRouterConnectionProps } from "./FluxRouterConnection";
+import { FLUX_ACCOUNT_URL, FLUX_KEYRING_ENVIRONMENT_LINE, FLUX_KEYRING_NOTICE, FLUX_SIGNUP_URL, FluxRouterConnection, fluxActionError, serverSentence, type FluxRouterConnectionProps } from "./FluxRouterConnection";
 
 const render = (props: Partial<FluxRouterConnectionProps> = {}) => renderToStaticMarkup(createElement(FluxRouterConnection, {
   configured: false,
@@ -151,5 +151,50 @@ describe("the outbound Flux Router link", () => {
     const html = render({ onSignin: async () => {} });
     expect(html).toContain("Sign in with Flux Router");
     expect(html).toContain('name="flux-router-key"');
+  });
+});
+
+describe("a computer with no unlocked keyring (LINUX-NOKEYRING-ENV-KEY)", () => {
+  const ENV = { id: "legacy-flux-environment", label: "Existing environment key", enabled: true };
+  const MAIN_REFUSAL = "Murage will not save this key yet. This computer has no unlocked keyring, so a saved key would only be hidden, not protected. "
+    + "Install and unlock a keyring such as gnome-keyring or KWallet, then restart Murage and try again. "
+    + "If you want keys kept as plain text on this computer anyway, start Murage with MURAGE_ALLOW_PLAINTEXT_SECRETS=1.";
+  const text = (html: string) => html.replace(/&#x27;|&#39;/g, "'");
+  it("says up front why no key can be saved, before anyone clicks, connected or not", () => {
+    for (const configured of [false, true]) {
+      const html = text(render({ configured, saveBlocked: "keyring" }));
+      expect(html).toContain(FLUX_KEYRING_NOTICE);
+      expect(html).not.toContain(FLUX_KEYRING_ENVIRONMENT_LINE);
+    }
+    // a key saved earlier still reads as connected, with Test
+    expect(render({ configured: true, saveBlocked: "keyring" })).toContain(">Test connection</button>");
+  });
+  it("adds the environment line only when the place Murage started from holds a key", () => {
+    const html = text(render({ configured: false, saveBlocked: "keyring", choices: [ENV] }));
+    expect(html).toContain(FLUX_KEYRING_NOTICE);
+    expect(html).toContain(FLUX_KEYRING_ENVIRONMENT_LINE);
+    expect(html.indexOf(FLUX_KEYRING_NOTICE)).toBeLessThan(html.indexOf("Use Existing environment key"));
+  });
+  it("says nothing of a keyring when the desktop did not report one missing", () => {
+    for (const saveBlocked of [undefined, "other" as never]) {
+      const html = text(render({ configured: false, choices: [ENV], saveBlocked }));
+      expect(html).not.toContain(FLUX_KEYRING_NOTICE);
+      expect(html).not.toContain(FLUX_KEYRING_ENVIRONMENT_LINE);
+    }
+  });
+  it("answers main's keyring refusal with the same plain sentence, bare or wrapped by Electron", () => {
+    for (const kind of ["save", "disconnect", "select"] as const) {
+      expect(fluxActionError(kind, new Error(MAIN_REFUSAL))).toBe(FLUX_KEYRING_NOTICE);
+      expect(fluxActionError(kind, new Error(`Error invoking remote method 'flux-connection:mutate': Error: ${MAIN_REFUSAL}`))).toBe(FLUX_KEYRING_NOTICE);
+    }
+    // the plumbing filter is not loosened for anything else
+    expect(serverSentence(new Error("Set MURAGE_SOMETHING_ELSE=1 to continue."))).toBe("");
+  });
+  it("is passed on by Models settings from the status it reads", () => {
+    const source = readFileSync(fileURLToPath(new URL("./ModelsSettings.tsx", import.meta.url)), "utf8");
+    expect(source).toMatch(/<FluxRouterConnection [^>]*saveBlocked=\{flux\?\.saveBlocked\}/);
+  });
+  it("uses plain words: no em dash, never safe", () => {
+    for (const line of [FLUX_KEYRING_NOTICE, FLUX_KEYRING_ENVIRONMENT_LINE]) expect(line).not.toMatch(/\u2014|\bsafe\b/i);
   });
 });

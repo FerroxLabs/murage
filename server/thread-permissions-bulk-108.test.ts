@@ -7,6 +7,7 @@ import { DATA_DIR } from "./config.ts";
 import * as atomic from "./atomic.ts";
 import { Store } from "./store.ts";
 import { api, desktopApi, STATE_ONLY_SELECTION } from "./testing/index-harness.ts";
+import { raiseLevel } from "./testing/raise-level.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -56,7 +57,7 @@ describe("108 raise-only preview", () => {
     expect(JSON.stringify(bot)).toBe(before); expect(store.revision).toBe(revision); expect(changes).toEqual([]); expect(save).toHaveBeenCalledTimes(1);
     disk.mockRestore(); expect(readFileSync(join(DATA_DIR, "bots.json"), "utf8")).toBe(diskBefore);
     save.mockRestore(); const successful = vi.spyOn(store as any, "saveBots");
-    expect(store.raiseTaskPermissions(bot.id, [bot.threadId, second.threadId], permissionLevelPatch("full"))).toBe(2);
+    expect(store.raiseTaskPermissions(bot.id, [bot.threadId, second.threadId], permissionLevelPatch("full"))).toHaveLength(2);
     expect(successful).toHaveBeenCalledTimes(1); successful.mockRestore(); unsubscribe();
     expect(store.taskByThread(bot.id, bot.threadId)?.alwaysAllow).toEqual(["task-only"]);
     const reopened = new Store(() => STATE_ONLY_SELECTION);
@@ -73,28 +74,29 @@ describe("108 isolated desktop API", () => {
     expect((await api("POST", path, { scope: "open" })).status).toBe(404);
     // On macOS a bot with no computer chosen runs on this one, so Auto there also
     // needs the local warning's confirmation, which the desktop dialog sends too.
-    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true })).status).toBe(200);
+    expect((await raiseLevel(desktopApi, bot.id, { autoApprove: true, fullAccess: true, acknowledgeFullAccess: true, acknowledgeLocalAuto: true })).status).toBe(200);
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: false, fullAccess: false, noLimits: false })).status).toBe(200);
     let preview = await desktopApi("POST", path, { scope: "open" });
-    expect(preview.status).toBe(200); expect(preview.body.eligible).toContainEqual({ threadId: bot.threadId, from: "ask", to: "full" });
-    expect((await desktopApi("POST", path, { scope: "open", previewId: "stale" })).status).toBe(409);
+    expect(preview.status).toBe(200); expect(preview.body.eligible).toContainEqual({ threadId: bot.threadId, from: "ask", to: "full", rev: expect.any(Number) });
+    const applyOf = (seen: typeof preview, rosterId = seen.body.rosterId) => desktopApi("POST", path, { scope: "open", rosterId, targetLevel: seen.body.targetLevel, afterRev: seen.body.botRev });
+    expect((await applyOf(preview, "stale")).status).toBe(409);
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true })).status).toBe(200);
-    expect((await desktopApi("POST", path, { scope: "open", previewId: preview.body.previewId })).status).toBe(409);
+    expect((await applyOf(preview)).status).toBe(409);
     preview = await desktopApi("POST", path, { scope: "open" });
-    expect(preview.body.eligible).toContainEqual({ threadId: bot.threadId, from: "auto", to: "full" });
-    const applied = await desktopApi("POST", path, { scope: "open", previewId: preview.body.previewId });
-    expect(applied.status).toBe(200); expect(applied.body.changed).toBeGreaterThan(0);
-    expect((await desktopApi("POST", path, { scope: "open", previewId: preview.body.previewId })).status).toBe(409);
+    expect(preview.body.eligible).toContainEqual({ threadId: bot.threadId, from: "auto", to: "full", rev: expect.any(Number) });
+    const applied = await applyOf(preview);
+    expect(applied.status).toBe(200); expect(applied.body.changed.length).toBeGreaterThan(0);
+    expect((await applyOf(preview)).status).toBe(409);
   });
   it("offers the explicit action independently of default changes and confirms count, level and skipped rooms", () => {
     const source = readFileSync(new URL("../src/components/BotPermissionDefault.tsx", import.meta.url), "utf8");
     expect(source).toContain('desktop === true && botId && <OpenConversationPermissions');
     expect(source).toContain('!!preview?.eligible.length && !confirm');
     expect(source).toContain("Apply to my open conversations");
-    expect(source).toContain('role="dialog" aria-label="Apply approval level"');
+    expect(source).toMatch(/role="dialog"[^>]*aria-label="Apply approval level"/);
     expect(source).toContain("Raise {preview.eligible.length} conversations to {label}");
     expect(source).toContain("Follows the bot default");
-    expect(source).toContain("previewId: preview.previewId");
+    expect(source).toContain("rosterId: preview.rosterId");
     expect(source).toContain("if (!acknowledged) { onConfirmLevel(); return; }");
     expect(source).toContain("onConfirmLevel={() => onChoose(current)}");
   });

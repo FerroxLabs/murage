@@ -213,6 +213,56 @@ test("the sign-in waits for the browser and Cancel goes back (stub shell)", asyn
   expect(await noOverflow(page)).toBe(true);
 });
 
+test("a failed sign-in leaves a key link that saves under the entry's revision, and a failed save leaves none (stub shell)", async ({ page }) => {
+  // No key word in the 401, so before this the card had no way to give a token.
+  const plain = await startFakeRemoteMcp({ auth: "bearer", unauthorized: "bearer-resource-metadata" });
+  try {
+    await page.addInitScript(() => {
+      const saves: unknown[] = [];
+      (window as any).savedSecrets = saves;
+      (window as any).muragebox = {
+        mcpServers: {
+          mode: async () => "desktop",
+          saveSecrets: async (name: string, input: unknown) => { saves.push({ name, input }); return { ok: true }; },
+          signIn: async () => ({ ok: false, error: "no-sign-in-details", message: "This server did not share the details Murage needs to sign in." }),
+          cancelSignIn: async () => true,
+          signOut: async () => ({ ok: true, revoked: false, message: "" }),
+          remove: async (name: string) => { await fetch(`/api/mcp/servers/${name}`, { method: "DELETE" }); return { ok: true, revoked: null, message: "Removed." }; },
+        },
+      };
+    });
+    await page.goto(origin + "/__mcp");
+    await page.getByRole("button", { name: "Add server" }).click();
+    await paste(page, plain.mcpUrl);
+    await page.getByRole("button", { name: "Continue", exact: true }).nth(1).click();
+    const signIn = page.getByRole("button", { name: `Sign in to 127.0.0.1:${plain.port}` });
+    const link = page.getByRole("button", { name: "Use a key instead" });
+    await expect(signIn).toBeVisible();
+    await expect(link).toHaveCount(0);
+
+    await page.route("**/api/mcp/servers", (route) => route.request().method() === "POST"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "The save did not land." }) })
+      : route.fallback());
+    await signIn.click();
+    await expect(page.getByText("The save did not land.")).toBeVisible();
+    await expect(link).toHaveCount(0);
+    await page.unroute("**/api/mcp/servers");
+
+    await signIn.click();
+    await expect(page.getByText("This server did not share the details Murage needs to sign in.")).toBeVisible();
+    await link.click();
+    await page.getByLabel("Key", { exact: true }).fill(KEY);
+    await page.getByRole("button", { name: "Save and test" }).click();
+
+    await expect.poll(async () => (await page.evaluate(() => (window as any).savedSecrets)).length).toBe(1);
+    const entry = (await list()).servers.find((row) => row.kind === "remote") as unknown as { name: string; auth: string; rev: string };
+    expect(entry.auth).toBe("header");
+    expect(await page.evaluate(() => (window as any).savedSecrets)).toEqual([{ name: entry.name, input: { headers: { Authorization: `Bearer ${KEY}` }, rev: entry.rev } }]);
+  } finally {
+    await plain.close();
+  }
+});
+
 test("the browser sign-in runs end to end through main's sign-in code, against the fake authorization server", async ({ page }, info) => {
   // The harness as the desktop app runs it (server/testing/desktop-shell.ts):
   // Electron's private port, values never in a body, and main's own MCP service

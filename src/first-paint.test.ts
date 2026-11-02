@@ -91,8 +91,8 @@ describe("the first paint", () => {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
-    // the sidebar's new places and menu are the first paint, and small
-    for (const file of ["src/components/SidebarPlaces.tsx", "src/components/SidebarYouMenu.tsx", "src/lib/settings-sections.ts", "src/lib/mod-shortcut.ts"]) {
+    // the rail's doors (UX 1.0.13) and menu are the first paint, and small
+    for (const file of ["src/components/shell/RailDoors.tsx", "src/components/SidebarYouMenu.tsx", "src/lib/settings-sections.ts", "src/lib/mod-shortcut.ts"]) {
       expect(reached, file).toContain(file);
     }
   });
@@ -100,6 +100,20 @@ describe("the first paint", () => {
   it("loads the speech detector with the microphone, not with the call screen", () => {
     const silero = importsOf("src/lib/call-mic.ts").filter((edge) => edge.path === "src/lib/silero-vad.ts");
     expect(silero.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
+  it("leaves the level table and the card fold to the first time they open (1.0.13)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/approval/LevelExamples.tsx", "shared/level-examples.ts", "src/components/approval/GrantFold.tsx"]) {
+      expect(reached, file).not.toContain(file);
+    }
+    // The Undo host mounts with the shell since 1.0.12, and Today and the update banner read it: the budget test holds its size.
+    expect(reached).toContain("src/lib/undo-window.ts");
+  });
+
+  it("leaves the Hermes mark's path data to the rows that draw it (1.0.13)", () => {
+    expect(staticallyReached(graph)).not.toContain("src/components/HermesMark.tsx");
+    expect(importsOf("src/components/ProviderIcons.tsx").filter((edge) => edge.path === "src/components/HermesMark.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
   });
 
   it("opens Settings, a bot's settings and the computer panel on first use", () => {
@@ -201,6 +215,18 @@ describe("the first paint", () => {
     }
     // what the first paint does carry: the meta read that decides, and the workspace switch itself
     for (const file of ["src/lib/cloud-home-meta.ts", "src/components/cloud/WorkspaceSwitch.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
+  it("loads an engine sign-in's dialog and session on the press (1.0.14)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/EngineSignInDialog.tsx", "src/components/EngineChatLinkDialog.tsx", "src/lib/local-engine-login.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the buttons stay: a chat and a failed turn show them before anyone presses
+    for (const file of ["src/components/EngineSignInButton.tsx", "src/components/EngineChatLink.tsx", "src/lib/engine-signin-surface.ts"]) {
       expect(reached, file).toContain(file);
     }
   });

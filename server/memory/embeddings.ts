@@ -88,6 +88,9 @@ export class MemoryEmbeddings {
     const parts=texts.map(text=>chunksFor(text,0,120).map(c=>c.text));
     const flat=parts.flat(),vectors:number[][]=[];
     for(let i=0;i<flat.length;i+=this.windowBatch){
+      // A model call's promises settle without a turn of the event loop, so a long record would hold back every message until its
+      // last window. One turn per call: a stop or a cancel is heard after one model call, not the record.
+      if(i>0)await new Promise<void>(resolve=>setImmediate(resolve));
       const output=await this.extractor(flat.slice(i,i+this.windowBatch),{pooling:"mean",normalize:true,truncation:false});
       vectors.push(...output.tolist());
     }

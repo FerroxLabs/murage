@@ -40,7 +40,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.32";
+export const QUALIFIED_FUIGO_VERSION = "1.0.37";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {
@@ -62,7 +62,10 @@ export function nativeFuigoTarget(bytes: Buffer): string | null {
     if (bytes.readUInt32LE(4) === 0x0100000c) return "darwin-arm64";
     if (bytes.readUInt32LE(4) === 0x01000007) return "darwin-x64";
   }
-  if (bytes.length >= 20 && bytes.subarray(0, 4).equals(Buffer.from([0x7f, 69, 76, 70])) && bytes[4] === 2 && bytes[5] === 1 && bytes.readUInt16LE(18) === 0x3e) return "linux-x64";
+  if (bytes.length >= 20 && bytes.subarray(0, 4).equals(Buffer.from([0x7f, 69, 76, 70])) && bytes[4] === 2 && bytes[5] === 1) {
+    if (bytes.readUInt16LE(18) === 0x3e) return "linux-x64";
+    if (bytes.readUInt16LE(18) === 0xb7) return "linux-arm64";
+  }
   if (bytes.length >= 64 && bytes[0] === 77 && bytes[1] === 90) {
     const offset = bytes.readUInt32LE(60);
     if (offset <= bytes.length - 6 && bytes.subarray(offset, offset + 4).equals(Buffer.from("PE\0\0")) && bytes.readUInt16LE(offset + 4) === 0x8664) return "win32-x64";
@@ -89,6 +92,18 @@ export async function latestFuigoVersion(fetcher: typeof fetch = fetch): Promise
   if (value.name !== "fuigo" || typeof value.version !== "string" || !/^\d+\.\d+\.\d+$/.test(value.version)) throw new Error("Fuigo update metadata did not identify a supported release version.");
   return value.version;
 }
+/** One tar header, checked: a path that leaves its folder or a bad checksum refuses the archive. */
+export function readTarHeader(header: Buffer, label: string): { name: string; size: number; type: number; regular: boolean } {
+  const field = (start: number, length: number) => header.subarray(start, start + length).toString("utf8").replace(/\0.*$/s, "");
+  const name = [field(345, 155), field(0, 100)].filter(Boolean).join("/");
+  if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) throw new Error(`The ${label} archive has a file path outside its own folder.`);
+  const rawSize = field(124, 12).trim(); const size = /^[0-7]+$/.test(rawSize) ? parseInt(rawSize, 8) : NaN;
+  const checksum = parseInt(field(148, 8), 8);
+  const actual = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0);
+  if (!Number.isSafeInteger(size) || size < 0 || checksum !== actual) throw new Error(`${label} archive is malformed.`);
+  const type = header[156]!;
+  return { name, size, type, regular: type === 0 || type === 48 };
+}
 /** Extract only two exact regular entries; never unpack paths onto disk. */
 export function nativeFuigoPackage(tgz: Buffer, target: string, version: string): Buffer {
   const tar = gunzipSync(tgz, { maxOutputLength: MAX_TAR });
@@ -96,15 +111,10 @@ export function nativeFuigoPackage(tgz: Buffer, target: string, version: string)
   let compressed: Buffer | undefined, manifest: any;
   for (let offset = 0; offset + 512 <= tar.length;) {
     const header = tar.subarray(offset, offset + 512); if (header.every(byte => byte === 0)) break;
-    const field = (start: number, length: number) => header.subarray(start, start + length).toString("utf8").replace(/\0.*$/s, "");
-    const name = [field(345, 155), field(0, 100)].filter(Boolean).join("/");
-    if (!name || name.startsWith("/") || name.includes("\\") || name.split("/").includes("..")) throw new Error("The Fuigo archive has a file path outside its own folder.");
-    const rawSize = field(124, 12).trim(); const size = /^[0-7]+$/.test(rawSize) ? parseInt(rawSize, 8) : NaN;
-    const checksum = parseInt(field(148, 8), 8);
-    const actual = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0);
-    if (!Number.isSafeInteger(size) || size < 0 || offset + 512 + size > tar.length || checksum !== actual) throw new Error("Fuigo archive is malformed.");
+    const { name, size, regular } = readTarHeader(header, "Fuigo");
+    if (offset + 512 + size > tar.length) throw new Error("Fuigo archive is malformed.");
     if (name === wanted || name === "package/package.json") {
-      if (header[156] !== 0 && header[156] !== 48) throw new Error("Fuigo archive entry must be a regular file.");
+      if (!regular) throw new Error("Fuigo archive entry must be a regular file.");
       const data = tar.subarray(offset + 512, offset + 512 + size);
       if (name === wanted) { if (compressed) throw new Error("Duplicate Fuigo binary."); compressed = data; }
       else { if (manifest !== undefined || size > 65536) throw new Error("Invalid Fuigo package identity."); manifest = JSON.parse(data.toString("utf8")); }

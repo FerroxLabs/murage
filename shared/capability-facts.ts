@@ -8,7 +8,7 @@
 // most three short lines, so every engine answers from the same records.
 //
 // Bounded: at most the last 400 characters of the turn are searched (the
-// newest words, not a replayed history), at most 3 lines of at most 600
+// newest words, not a replayed history), at most 3 lines of at most 950
 // characters each. Each line keeps its status, applicability, limits and the
 // ask-your-bot step whole; only the answer prose is shortened to fit, so a
 // "desktop only" or a workaround is never clipped off the end (Astra r2 H1).
@@ -17,7 +17,7 @@ import { searchHelp, stem, tokenize } from "./help-search.ts";
 
 export const CAPABILITY_FACTS_HEADER = "Murage facts for this question (checked product facts; if they do not cover it, say you are not sure instead of guessing):";
 export const CAPABILITY_FACTS_QUESTION_CHARS = 400;
-export const CAPABILITY_FACTS_LINE_CHARS = 600;
+export const CAPABILITY_FACTS_LINE_CHARS = 950;
 export const CAPABILITY_FACTS_MAX_LINES = 3;
 
 const byId = new Map<string, CapabilityEntry>(CAPABILITY_ENTRIES.map((entry) => [entry.id, entry]));

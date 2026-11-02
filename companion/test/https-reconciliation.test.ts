@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
-import { browserBindHost, rebindBrowserDoor } from "../src/browser.ts";
+import { browserBindHost, browserFront, desiredBrowserDoorHost, rebindBrowserDoor } from "../src/browser.ts";
 import { inspectBrowserServe, refreshBrowserServe } from "../src/listener.ts";
 const { readServeStatus } = createRequire(import.meta.url)("../../electron/companion-remote-access.mjs") as {
   readServeStatus(raw: string, options: {proxyTarget: string}): {owner: "none" | "ours" | "other" | "unknown"};
@@ -51,14 +51,13 @@ describe("read-only Serve reconciliation", () => {
 
 describe("the sidecar's actual bind decision", () => {
   it("converges a tailnet listener to loopback when an owned HTTPS front is observed", async () => {
+    // index.ts calls this same function with its live front and Tailscale reads.
     const source = readFileSync(new URL("../src/index.ts",import.meta.url),"utf8");
-    const start = source.indexOf("const desiredBrowserBindHost =");
-    const end = source.indexOf("/** A sentence naming",start);
-    expect(start).toBeGreaterThan(0);
-    const declaration = source.slice(start,end).replace("(): string =>","() =>");
-    const desired = new Function("browserBindHost","BROWSER_BIND","BROWSER_FRONT","tailscaleAddress","tailnetSelfAddress","console",
-      `${declaration}; return desiredBrowserBindHost;`)(browserBindHost,"auto",{scheme:"https",host:"box.tail1234.ts.net",port:443},
-      ()=>"100.64.0.10",()=>"100.64.0.10",{log:()=>{}});
+    expect(source).toContain("desiredBrowserDoorHost(BROWSER_FRONT, BROWSER_BIND,");
+    const front = browserFront("https://box.tail1234.ts.net");
+    expect(front).not.toBeNull();
+    const desired = () => desiredBrowserDoorHost(front,"auto","100.64.0.10","100.64.0.10");
+    expect(desiredBrowserDoorHost(null,"auto","100.64.0.10","100.64.0.10")).toBe(browserBindHost("auto","100.64.0.10","100.64.0.10"));
     const listened: string[] = [];
     const fakeServer = {closeAllConnections:()=>{},close:(done:()=>void)=>done()};
     const result = await rebindBrowserDoor({

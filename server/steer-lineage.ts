@@ -30,6 +30,10 @@ export interface RunningTurnLineage { roots: OutputRoots; instanceId: string; se
   /** The dispatch claim (internal generation) this running turn belongs to, and the very TurnLineage object `openTurnLineage` returned for
    * that dispatch (thread tools bind to both: a replacing dispatch of the same bot never lends its turn to them). */
   generation: string; turn: TurnLineage;
+  /** Thread recall (THREAD-SEAL 3.2): the seal generation this turn's session started under, captured at dispatch before the prompt goes
+   * (a resumed session inherits the generation bound to its cursor), and the two records the fold and the acceptance step share: the
+   * provider turn this dispatch was handed back, and a session.started that folded before that hand-back. */
+  startGeneration: number; acceptedTurnId?: string; pendingSeal?: { turnId: string; cursor: string };
   /** A resumed turn's raw cursor and the incarnation it was started under (S6 rule 27): `session` is the memory key formed from both. */
   cursor?: string; incarnation?: number;
   /** Whole stretches of conversations the turn carries (server/turn-source-holds.ts): its own conversation up to the newest line when it began,
@@ -181,7 +185,7 @@ function rangesUsable(): boolean {
  * `withheldNow` leaves out a line withheld when the turn began (it was carried as its withheld line, not its words). Without the range (a
  * conversation with no lines, or the copy index not filled yet), every line of `ownLines` is named instead. */
 export function beginTurnLineage(input: {
-  threadId: string; botId: string; roots: OutputRoots; instanceId: string; session?: string; generation: string; turn: TurnLineage; cursor?: string; incarnation?: number;
+  threadId: string; botId: string; roots: OutputRoots; instanceId: string; session?: string; generation: string; turn: TurnLineage; startGeneration: number; cursor?: string; incarnation?: number;
   shown: Iterable<ShownLine>; ownLines?: Iterable<ShownLine>; kept?: { sources?: ShownLine[] | "over"; ranges?: HeldRange[] };
   /** `ownLines` are not every line the turn can carry (a resumed session over a conversation longer than its window): without the range, the
    * turn's sources are then not established. */
@@ -189,7 +193,7 @@ export function beginTurnLineage(input: {
   withheldNow: (line: ShownLine) => boolean;
 }): RunningTurnLineage {
   const { threadId, botId } = input;
-  const base = { roots: input.roots, instanceId: input.instanceId, botId, generation: input.generation, turn: input.turn, ...(input.session ? { session: input.session } : {}),
+  const base = { roots: input.roots, instanceId: input.instanceId, botId, generation: input.generation, turn: input.turn, startGeneration: input.startGeneration, ...(input.session ? { session: input.session } : {}),
     ...(input.cursor ? { cursor: input.cursor } : {}), ...(input.incarnation !== undefined ? { incarnation: input.incarnation } : {}) };
   const pending = promptShown.get(promptKey(threadId, botId));
   promptShown.delete(promptKey(threadId, botId));

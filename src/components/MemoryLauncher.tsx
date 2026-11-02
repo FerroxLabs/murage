@@ -3,6 +3,7 @@ import { Brain, X } from "lucide-react";
 import { MemorySettings } from "./MemorySettingsLazy";
 import { t } from "@/lib/i18n";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { BOX_DIALOG, BoxBody, BoxHead } from "./ui/BoxShell";
 
 /** One bot-scoped memory surface, opened from either the toolbar or profile.
  *
@@ -63,12 +64,12 @@ export function MemoryLauncher({
       <span className={compact ? "chip-trim:hidden" : undefined}>{compact ? t("chatHeader.memory") : t("chatHeader.openMemory")}</span>
     </button>}
     <dialog ref={dialog} aria-labelledby={titleId} onCancel={closed} onClose={closed}
-      className="m-auto max-h-[90dvh] w-[min(760px,calc(100vw-24px))] overflow-y-auto rounded-2xl border border-hairline bg-card p-0 text-ink shadow-2xl backdrop:bg-black/60">
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-hairline bg-card p-4">
+      className={`${BOX_DIALOG} m-auto w-[min(760px,calc(100vw-24px))] rounded-2xl border border-hairline bg-card p-0 text-ink shadow-2xl backdrop:bg-black/60`}>
+      <BoxHead className="border-b border-hairline bg-card p-4">
         <h2 id={titleId} className="min-w-0 truncate text-[17px] font-semibold">{botName} · {t("chatHeader.memory")}</h2>
         <button type="button" autoFocus onClick={() => setOpen(false)} aria-label={t("chatHeader.closeMemory")} className="rounded-lg p-2 hover:bg-raised focus-visible:outline-2 focus-visible:outline-focus"><X size={18} /></button>
-      </div>
-      {open && <div className="p-4"><MemorySettings key={botId} botId={botId} onNavigate={() => setOpen(false)} /></div>}
+      </BoxHead>
+      {open && <BoxBody className="p-4"><MemorySettings key={botId} botId={botId} onNavigate={() => setOpen(false)} /></BoxBody>}
     </dialog>
   </>;
 }

@@ -7,7 +7,7 @@ vi.mock("react",async original=>({...await original<typeof import("react")>(),us
 vi.mock("@/state/store",()=>({api:harness.api,useStore:()=>({state:{config:{features:{}}},dispatch:harness.dispatch})}));
 vi.mock("@/lib/use-project",()=>({projectClient:{project:harness.project}}));
 import NewProjectDialog from "./NewProjectDialog";
-function nodes(n:unknown):ReactElement<Record<string,any>>[]{if(!n||typeof n!=="object")return[];if(Array.isArray(n))return n.flatMap(nodes);const e=n as ReactElement<Record<string,any>>;return[e,...nodes(e.props?.children)];}
+function nodes(n:unknown):ReactElement<Record<string,any>>[]{if(!n||typeof n!=="object")return[];if(Array.isArray(n))return n.flatMap(nodes);const e=n as ReactElement<Record<string,any>>;return[e,...nodes(e.props?.children),...nodes(e.props?.actions)];}
 function render(){harness.cursor=0;return nodes(NewProjectDialog({onClose:vi.fn()}));}
 const form={purpose:"Owner purpose",mode:"goal",members:[],leadBotId:"",goalTitle:"Report",goalDescription:"",criteria:["Published"],deadline:"",folder:""};
 beforeEach(()=>{vi.clearAllMocks();harness.values=["creation-id",{...form},{members:[{id:"chief",name:"Chief"},{id:"worker",name:"Worker"}],chief:{id:"chief",name:"Chief"}},null,false,false,"","",null];});

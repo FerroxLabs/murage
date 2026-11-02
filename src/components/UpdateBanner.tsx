@@ -14,6 +14,7 @@ import { t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
 import { wrapTabTarget } from "@/lib/focus-wrap";
 import { cn } from "@/lib/cn";
+import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
 // The one action button in the card. Disabled drops the accent fill for the
 // flat raised grey — the "I heard you" the click needs while the main process
@@ -81,7 +82,7 @@ export function UpdateBanner() {
     return (
       <div className="overlay-inset fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="update-card-layer">
         <div className="absolute inset-0 bg-black/40" onMouseDown={() => { if (!busy) dismiss(); }} />
-        <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={updateTitle(s)} onKeyDown={onCardKeyDown} data-testid="update-card" className="animate-panel-in relative w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel p-4 shadow-2xl shadow-black/50 focus:outline-none">
+        <div ref={cardRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={updateTitle(s)} onKeyDown={onCardKeyDown} data-testid="update-card" className={cn(BOX_FRAME, "animate-panel-in relative max-h-[calc(var(--vvh,100dvh)-2rem)] w-[340px] max-w-full rounded-xl border border-hairline/40 bg-panel pb-4 shadow-2xl shadow-black/50 focus:outline-none")}>
           <UpdateCardBody s={s} onDismiss={dismiss} />
         </div>
       </div>
@@ -130,7 +131,7 @@ function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void 
       }}
       data-testid="update-popup"
       style={place}
-      className="animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] overflow-y-auto rounded-xl border border-hairline/40 bg-panel p-3.5 shadow-2xl shadow-black/50"
+      className={cn(BOX_FRAME, "animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel pb-3.5 shadow-2xl shadow-black/50")}
     >
       <UpdateCardBody s={s} popup onDismiss={close} />
     </section>
@@ -207,10 +208,11 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
   // The pop-up is a status region, except for an error, which stays the alert it is on the card.
   const liveRegion = popup && s.status !== "error";
   const counting = popup && s.status === "downloading" && s.percent != null;
+  const side = popup ? "px-3.5" : "px-4";
 
   return (
     <>
-      <div className="flex items-start gap-2.5">
+      <BoxHead className={cn("items-start justify-start gap-2.5", side, popup ? "pt-3.5" : "pt-4")}>
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent">
           <Sparkles size={14} />
         </span>
@@ -231,8 +233,9 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
             <X size={14} />
           </button>
         )}
-      </div>
+      </BoxHead>
 
+      <BoxBody className={side}>
       {!popup && highlights.length > 0 && !verificationRefused && s.status !== "error" && (
         <div className="mt-3" data-testid="update-highlights">
           <div className="text-[12px] font-medium text-ink-secondary">{t("updates.whatsNew")}</div>
@@ -261,20 +264,21 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
           />
         </div>
       )}
+      </BoxBody>
 
       {installing && (
-        <div className="mt-2.5 flex gap-2">
+        <BoxFoot className={cn("justify-start pt-2.5", side)}>
           <button
             disabled
             className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-control py-1.5 text-[13px] font-medium text-ink-secondary"
           >
             <Loader2 size={13} className="animate-spin" /> {handoff ? "Opening…" : "Restarting…"}
           </button>
-        </div>
+        </BoxFoot>
       )}
 
       {!busy && !deferred && (
-        <div className="mt-2.5 flex gap-2">
+        <BoxFoot className={cn("justify-start pt-2.5", side)}>
           {s.status === "available" && (
             <button
               onClick={() => {
@@ -349,7 +353,7 @@ function UpdateCardBody({ s, popup = false, onDismiss }: { s: UpdaterState; popu
             {/* after a hand-off there is nothing left to postpone */}
             {s.status === "handed-off" ? "Done" : t("updates.later")}
           </button>
-        </div>
+        </BoxFoot>
       )}
     </>
   );

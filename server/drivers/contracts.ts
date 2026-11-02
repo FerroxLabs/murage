@@ -97,15 +97,13 @@ const CLAUDE: Record<string, Row> = {
 
 const CODEX: Record<string, Row> = {
   shell: fields({ need: { command: "argv-or-string" } }),
+  // Both Codex edit routes file `paths` (the apply_patch hook and the native file-change approval, codex-hook.ts), the
+  // field the real-path key guard and the startup-file reader follow.
   edit: (input) => {
-    const changes = input.changes;
-    if (!Array.isArray(changes) || changes.length === 0) return bad("changes");
-    const paths: string[] = [];
-    for (const change of changes) {
-      if (!isObject(change) || typeof change.path !== "string" || !change.path) return bad("changes[].path");
-      paths.push(change.path);
-    }
-    return { ok: true, paths };
+    const paths = input.paths;
+    if (!Array.isArray(paths) || paths.length === 0) return bad("paths");
+    if (!paths.every((path) => typeof path === "string" && path)) return bad("paths[]");
+    return { ok: true, paths: paths as string[] };
   },
   view_image: fields({ need: { path: "string" } }),
   read_file: fields({ need: { path: "string" } }),
