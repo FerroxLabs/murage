@@ -169,6 +169,12 @@ export interface OptionCardData {
   /** Stop-line cards (server/stop-line.ts): the grant "Allow for this task"
    * records, scoped to the folder, payee or recipient the action touches. */
   taskAllowKey?: string;
+  /** UX-TRUST-MOMENTS-1012 1.2: the card's class, written once when the
+   * permission card opened (server). Absent on questions and older cards:
+   * the fold then reads the keys alone (shared/fold-scopes.ts). */
+  cardClass?: import("../../shared/fold-scopes").CardClass;
+  /** 1.4: the why-line, a ux.l1.why.* key and its words (server). */
+  why?: { key: string; params: Record<string, string | number> };
   approvalScope?: "local-computer";
   /** Advisory only, for the page: the engine path rated this permission card low when it raised it. A browser
    * pairing shows Allow only on these. The harness never reads it back (SEC-006, Decision 1). */
@@ -192,7 +198,7 @@ export interface OptionCardData {
   unattended?: boolean;
   /** A folder-trust question (shared/folder-trust.ts): the answer is a
    * decision about the folder, remembered by the server. */
-  folderTrust?: { key: string; folder: string; sources: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
+  folderTrust?: { key: string; folder: string; sources: string[]; v2?: true; declines?: string[]; late?: "finished" | "stopped" | "failed" | "timeout" };
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: AutomationRequestCardData;
   /** SL-J J2: Undo put back what this applied routine or webhook change replaced. */
@@ -350,6 +356,8 @@ export interface Message {
   routineRunAgain?: { routineId: string };
   /** activity: a delegation waiting on a busy teammate; offers Stop. */
   delegationWait?: { id: string };
+  /** activity: macOS's folder prompt is holding this turn; drawn until `done`. */
+  folderPrompt?: { folder: string; done?: boolean };
   /** activity: a hand-off a restart cut off after the provider may have taken it; offers Send again and Dismiss. */
   delegationHeld?: { id: string };
   /** rooms: bots no longer see this reply; it used something the owner
@@ -629,7 +637,7 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
-  /** No limits, above Full access: no stop line; the key guard still asks */
+  /** No limits, above Full access: no stop line; on a turn the owner started only the gate files of the key guard ask */
   noLimits?: boolean;
   /** set by the server once the owner confirmed the one-time No limits warning */
   noLimitsAcknowledgedAt?: number;
@@ -647,6 +655,9 @@ export interface Bot {
   autoReview?: "off" | "shadow" | "enforce";
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
+  /** UX-TRUST-MOMENTS-1012 2.3.12: how many 12-hour task allowances the bot
+   * holds across its open conversations (a count, never the keys) */
+  taskAllowanceCount?: number;
   /** speak this bot's replies aloud as they settle */
   speakReplies?: boolean;
   /** this bot's own voice id (falls back to the app-wide one) */
@@ -901,6 +912,8 @@ export interface ConfigStatus {
    * the browser UA, which is the browser's machine, not the harness's.
    * Absent until `/api/config` has answered, or from an older harness. */
   harness?: { platform: string };
+  /** Whether the owner has accepted No limits as it now stands. Desktop only: the phone's copy has no such field. */
+  noLimitsTerms?: { accepted: boolean };
 }
 
 export interface BrowserProfile {
@@ -956,6 +969,7 @@ export interface EngineInstall {
   docsUrl?: string;
   signInCommand?: string;
   needsNode?: boolean;
+  native?: boolean;
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -1043,7 +1057,13 @@ export interface AppState {
    * move on their own (hydration, another surface); the phone drawer closes
    * on this instead (drawer-close.ts). */
   conversationPicks?: number;
-  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats";
+  /** UX 1.0.13 shell (handoffs/HANDOFF-1013-UX-L2A.md): Today, Needs you and Health are views too. */
+  activeView: "chat" | "team-map" | "routines" | "skill-recorder" | "all-chats" | "today" | "needs-you" | "health";
+  /** The Needs you page's tab; "decisions" (the Needs you umbrella) unless a door or a link asked for another. */
+  needsYouTab?: import("../../shared/inbox").InboxView;
+  /** Today was chosen by the launch, not by the person. It holds only until the setup view answers: while first run
+   *  owns the main view the launch landing gives way to the Chief's chat (cancelTodayLanding). */
+  todayLanding?: boolean;
   /** All chats opened from a bot's or a channel's chat list: the Bot or Project/channel filter it starts with. */
   allChatsScope?: { botId?: string; groupId?: string };
   teamMapMemoryOpen?: boolean;
@@ -1363,6 +1383,11 @@ export type { HttpOrigin };
 /** How a Delete the person asked for ended (the archived list waits for it). */
 export type DeleteOutcome = { outcome: "deleted" | "refused" | "gaveUp"; error?: string };
 
+/** UX-TRUST-MOMENTS-1012 1.3: a bot "Always" save's `added` receipt, by holder. */
+export interface GrantHolders { bot: string[]; task: string[]; taskThreadId?: string }
+/** The strings of a reply's list field (anything else reads as none). */
+const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((key: unknown): key is string => typeof key === "string") : [];
+
 export type Action =
   | ({
       type: "hydrate";
@@ -1390,6 +1415,13 @@ export type Action =
     } & HttpOrigin)
   | { type: "serverSends"; threadId: string; pending: ServerPendingSend[] }
   | { type: "showRoutines" }
+  /** UX 1.0.13 shell doors (HANDOFF-1013-UX-L2A.md, shell contract). */
+  | { type: "showToday" }
+  | { type: "showNeedsYou"; tab?: import("../../shared/inbox").InboxView }
+  | { type: "setNeedsYouTab"; tab: import("../../shared/inbox").InboxView }
+  | { type: "showHealth" }
+  /** The launch landed on Today, but first run owns the main view: back to the chat (the Chief's), once. */
+  | { type: "cancelTodayLanding" }
   | { type: "showTeamMap"; memory?: boolean }
   | { type: "showTeamLibrary"; botId?: string; view?: TeamLibraryView; tab?: "import" }
   | { type: "hideTeamLibrary" }
@@ -1486,6 +1518,7 @@ export type Action =
   | { type: "interruptGroup"; groupId: string; queueIds?: string[] }
   | { type: "instances"; instances: InstanceInfo[]; shellEnvironment?: ShellEnvironment | null; engineNote?: string }
   | { type: "configStatus"; config: ConfigStatus }
+  | { type: "noLimitsTermsAccepted" }
   | { type: "select"; id: string; threadId?: string }
   | {
       type: "send";
@@ -1556,15 +1589,20 @@ export type Action =
       reviewedSha256?: string;
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
-      alwaysAllow?: { botId: string; key?: string; keys?: string[] };
+      /** `onSaved` gets the save's `added` receipt BY HOLDER (the bot's
+       * defaults, this task), so the card's Undo takes back only that. */
+      alwaysAllow?: { botId: string; key?: string; keys?: string[]; onSaved?: (added: GrantHolders) => void };
       /** "Always allow for this routine" (AMEND-13 Rules 81, 82): the server
        * rereads the card's own offer and saves its whole action set, plus each
        * offered stop the owner also ticked (`stopKeys`); an older card names
        * its one routineAllowKey (`key`). `onSaved` gets what the server saved. */
-      alwaysAllowRoutine?: { routineId: string; key?: string; stopKeys?: string[]; onSaved?: (keys: string[]) => void };
+      alwaysAllowRoutine?: { routineId: string; key?: string; stopKeys?: string[]; onSaved?: (keys: string[], added: string[]) => void };
       /** a stop-line card's "Allow for this task": the server records the
        * card's own scoped grant (taskAllowKey) for this task */
       allowForTask?: boolean;
+      /** Local UI hook: the allowance the server reported as ADDED by this
+       * answer (`taskAdded`; empty when it was already held). Never sent. */
+      onTaskAdded?: (keys: string[]) => void;
       /** The card the owner is looking at: the phone checks it against the
        * server's challenge before it asks for Face ID. */
       card?: import("../../shared/approval-digest").DigestCard;
@@ -2167,6 +2205,15 @@ export function withTaskDelta(bot: BotAnnouncement, held: Pick<Bot, "tasks" | "t
     return next.threadId === d.read && next.unread ? { ...next, unread: false } : next;
   });
   return { ...rest, tasks: merged, ...(d.read ? { unread: merged.some((task) => task.unread) } : {}) };
+}
+
+/** Whether a bot frame says the chat on screen is unread, which is what sends the read mark. A delta carries only the rows that changed, so
+ * no row for the open chat means its mark did not move: `bot.unread` there speaks for ANY of the bot's chats, and answering from it posted a read
+ * for each frame while another chat stayed unread, and each post made another frame (LOG-CPU-LINEAGE). A frame with no rows at all, from an older
+ * server, still answers from the bot. */
+export function frameShowsViewedUnread(bot: Pick<BotAnnouncement, "threadId" | "unread" | "tasks" | "tasksDelta">, viewedThread: string | undefined): boolean {
+  if (bot.tasksDelta) return bot.tasksDelta.upsert.find((task) => task.threadId === viewedThread)?.unread === true;
+  return bot.tasks?.find((task) => task.threadId === viewedThread)?.unread ?? (bot.threadId === viewedThread && bot.unread === true);
 }
 
 // ── Bot admission (BOTADDED-DESIGN-V3 r6 §2.3-2.8) ─────────────────────
@@ -2870,6 +2917,14 @@ function applyBotFrame(state: AppState, incoming: BotAnnouncement): AppState {
   return patched;
 }
 
+/** What every shell door closes on its way in, the same set the Routines view closes. */
+const SHELL_OVERLAYS_CLOSED = { settingsOpen: false, computerOpen: false, inspectorOpen: false, appSettingsOpen: false, pluginsOpen: false } as const;
+
+/** The first roster of a launch, for an owner whose setup is finished, with nothing chosen yet: Today. */
+export function landsOnToday(state: Pick<AppState, "hydrated" | "activeView" | "conversationPicks">, resumeId: string | undefined): boolean {
+  return !state.hydrated && Boolean(resumeId) && state.activeView === "chat" && (state.conversationPicks ?? 0) === 0;
+}
+
 export function reducer(state: AppState, action: Action): AppState {
   const next = reduceState(state, action);
   return next === state ? next : withSidebarLines(state, next);
@@ -3124,6 +3179,9 @@ function reduceState(state: AppState, action: Action): AppState {
           sidebarSectionOrder: action.sidebarSectionOrder,
           selectedId: settledSelection,
           hydrated: true,
+          // A returning owner (a saved conversation exists only once setup finished) opens on Today, once per launch;
+          // a fresh install stays on the Chief's chat, and a link or a pick that came first wins (HANDOFF-1013-UX-L2A.md).
+          ...(landsOnToday(state, action.resumeId) ? { activeView: "today" as const, todayLanding: true } : {}),
         },
         [...bots, ...groups].map((owner) => ({ messages: owner.messages.length ? owner.messages : owner.sidebarLine?.queueId ? [{ queueId: owner.sidebarLine.queueId, at: owner.sidebarLine.at }] : [] })),
       );
@@ -3251,6 +3309,16 @@ function reduceState(state: AppState, action: Action): AppState {
       if (!loading?.firstPageEvents) return state;
       return replayFirstPageEvents(updateOwnerByThread(state, action.threadId, (owner) => ({ ...owner, firstPageEvents: undefined })), loading.firstPageEvents);
     }
+    case "showToday":
+      return { ...state, activeView: "today", todayLanding: false, ...SHELL_OVERLAYS_CLOSED };
+    case "cancelTodayLanding":
+      return state.activeView === "today" && state.todayLanding ? { ...state, activeView: "chat", todayLanding: false } : state;
+    case "showNeedsYou":
+      return { ...state, activeView: "needs-you", needsYouTab: action.tab ?? "decisions", ...SHELL_OVERLAYS_CLOSED };
+    case "setNeedsYouTab":
+      return state.needsYouTab === action.tab ? state : { ...state, needsYouTab: action.tab };
+    case "showHealth":
+      return { ...state, activeView: "health", ...SHELL_OVERLAYS_CLOSED };
     case "showRoutines":
       return {
         ...state,
@@ -3418,6 +3486,8 @@ function reduceState(state: AppState, action: Action): AppState {
             ? "chat"
             : state.activeView,
       };
+    case "noLimitsTermsAccepted":
+      return state.config?.noLimitsTerms ? { ...state, config: { ...state.config, noLimitsTerms: { accepted: true } } } : state;
     case "select": {
       // An id this client has neither a bot nor a group for (E1, 2026-09-28:
       // a companion selecting a bot⇄bot group the server never sent it) used
@@ -5116,9 +5186,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // SEC-006: an Allow from the phone may be met by a challenge; the
           // helper asks for Face ID and re-posts once. A deny or an answer is
           // never signed.
+          const { allowForTask, onTaskAdded } = action;
           const respond = () =>
             decideWithFreshAuth(
-              (extra) => api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) }),
+              async (extra) => {
+                const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+                // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
+                if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
+                return body;
+              },
               {
                 threadId: action.threadId,
                 requestId: action.requestId,
@@ -5153,7 +5229,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     ...extra,
                   }),
                 });
-                if (Array.isArray(body?.saved)) grant.onSaved?.(body.saved.filter((key: unknown): key is string => typeof key === "string"));
+                // `saved`: the set it answered with; `added`: what it added (the card's Undo removes only that)
+                if (Array.isArray(body?.saved)) grant.onSaved?.(stringList(body.saved), stringList(body.added));
                 return body;
               },
               { threadId: action.threadId, requestId: action.requestId, decision: "allow", card: action.card, botName: action.botName, onDevicePrompt: action.onDevicePrompt },
@@ -5167,10 +5244,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // and leave the grant behind. Desktop only (the route's policy).
             const grant = action.alwaysAllow;
             void decideWithFreshAuth(
-              (extra) => api(`/api/bots/${grant.botId}/always-allow`, {
-                method: "POST",
-                body: JSON.stringify({ ...(grant.keys ? { allowKeys: grant.keys } : { allowKey: grant.key }), threadId: action.threadId, requestId: action.requestId, answer: true, ...extra }),
-              }),
+              async (extra) => {
+                const body = await api(`/api/bots/${grant.botId}/always-allow`, {
+                  method: "POST",
+                  body: JSON.stringify({ ...(grant.keys ? { allowKeys: grant.keys } : { allowKey: grant.key }), threadId: action.threadId, requestId: action.requestId, answer: true, ...extra }),
+                });
+                // UX-TRUST-MOMENTS-1012 1.3: what this save added to each holder, for the card's Undo
+                if (body?.added && typeof body.added === "object") grant.onSaved?.({ bot: stringList(body.added.bot), task: stringList(body.added.task), ...(typeof body.taskThreadId === "string" ? { taskThreadId: body.taskThreadId } : {}) });
+                return body;
+              },
               { threadId: action.threadId, requestId: action.requestId, decision: "allow", card: action.card, botName: action.botName, onDevicePrompt: action.onDevicePrompt },
               { onError: action.onError, onSuccess: action.onSuccess, showError },
             );
@@ -6154,12 +6236,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // reading the selected chat clears its badge immediately
           const viewed=stateRef.current.bots.find(current=>current.id===bot.id);
           const viewedThread=viewed?.threadId;
-          // A frame that flips busy or unread carries only the task rows that
-          // changed. The reducer lays them over the rows it holds then; this
-          // reads the changed rows only, to decide about the badge.
-          const rows=bot.tasks??bot.tasksDelta?.upsert;
-          const selectedUnread=rows?.find(task=>task.threadId===viewedThread)?.unread??(bot.threadId===viewedThread&&bot.unread);
-          if (selectedUnread && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
+          if (frameShowsViewedUnread(bot, viewedThread) && viewedThread && bot.id === stateRef.current.selectedId && stateRef.current.activeView==="chat") {
             if (bot.tasksDelta) bot={...bot,tasksDelta:{...bot.tasksDelta,read:viewedThread}};
             else {
               const tasks=bot.tasks?.map(task=>task.threadId===viewedThread?{...task,unread:false}:task);
@@ -6197,7 +6274,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (frame.notification?.kind === "approval" && replayed) break;
           // A Health page (1.0.9 Sentinel): generic text only, opens Health; never shown again from a replay.
           if (isHealthPage(frame.notification)) {
-            if (!replayed) showHealthPage(frame.notification, () => dispatch({ type: "toggleAppSettings", open: true, section: "about", anchor: "health-heading" }));
+            if (!replayed) showHealthPage(frame.notification, () => dispatch({ type: "showHealth" }));
             break;
           }
           // the wrapped dispatch, not rawDispatch: `select` clears the badge

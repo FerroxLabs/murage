@@ -50,12 +50,12 @@ export function BrowserApprovedSitesView({ botName, sites, phone, pending, error
       <p>{t("browserExt.endOfTask.title", { bot: botName, site: origin })}</p>
       <div className="flex flex-wrap gap-2"><button className={control} data-offer="allow" data-origin={origin} disabled={pending} onClick={() => onSet(origin, "allow")}>{t("browserExt.endOfTask.allow")}</button><button className={control} data-offer="no" data-origin={origin} onClick={() => onDismissOffer?.(origin)}>{t("browserExt.endOfTask.no")}</button></div>
     </div>)}
-    {liftTarget && !phone && <div role="dialog" aria-label={t("browserExt.never.title", { bot: botName, site: liftTarget.origin })} className="flex flex-col gap-3 rounded-lg bg-card p-3">
+    {liftTarget && !phone && <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label={t("browserExt.never.title", { bot: botName, site: liftTarget.origin })} className="flex flex-col gap-3 rounded-lg bg-card p-3">
       <h4 className="font-medium">{t("browserExt.never.title", { bot: botName, site: liftTarget.origin })}</h4>
       <p className="text-ink-secondary">{t("browserExt.never.body", { bot: botName, site: liftTarget.origin })}</p>
       <div className="flex flex-wrap gap-2"><button className={control} data-confirm="lift" disabled={pending} onClick={() => onSet(liftTarget.origin, liftTarget.rule)}>{t("browserExt.never.lift")}</button><button className={control} data-confirm="keepNever" disabled={pending} onClick={() => onLiftKeep?.()}>{t("browserExt.never.keep")}</button></div>
     </div>}
-    {lowering && !phone && <div role="dialog" aria-label={t("browserExt.lower.title", { bot: botName, site: lowering })} className="flex flex-col gap-3 rounded-lg bg-card p-3">
+    {lowering && !phone && <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label={t("browserExt.lower.title", { bot: botName, site: lowering })} className="flex flex-col gap-3 rounded-lg bg-card p-3">
       <h4 className="font-medium">{t("browserExt.lower.title", { bot: botName, site: lowering })}</h4>
       <p className="text-ink-secondary">{t("browserExt.lower.body", { site: lowering })}</p>
       <div className="flex flex-wrap gap-2"><button className={control} data-confirm="work" disabled={pending} onClick={() => onSet(lowering, "ask", true)}>{t("browserExt.lower.work")}</button><button className={control} data-confirm="keep" disabled={pending} onClick={onLowerKeep}>{t("browserExt.lower.keep")}</button></div>

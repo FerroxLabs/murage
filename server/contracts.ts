@@ -131,6 +131,8 @@ export type RuntimeEvent = RuntimeEventBase &
         delayMs: number;
         /** Why this failure was judged retry-worthy (classifyError's reason). */
         reason: string;
+        /** All attempts, the first try included, when the engine counts them itself. */
+        maxAttempts?: number;
       }
     | {
         type: "turn.completed";
@@ -224,7 +226,7 @@ export type RuntimeEvent = RuntimeEventBase &
         /** 0.1.52 FUIGOTRUST1 (additive): this question decides trust for a
          * folder. The server persists it on the card and, once the owner
          * answers, records the decision for the folder's trust key. */
-        folderTrust?: { key: string; folder: string; sources: string[] };
+        folderTrust?: { key: string; folder: string; sources: string[]; v2?: true; declines?: string[] };
         /** Additive: the file paths this permission acts on, read
          * from the ENGINE's structured tool input — never from `summary`,
          * which is display text composed from model output. Policy uses them
@@ -440,6 +442,8 @@ export interface SendTurnInput {
    * in `text`/`transcript`, and replaying it on top of the old context would
    * hand the engine both branches (upstream #1562). */
   sessionReset?: boolean;
+  /** The thread is sealed (thread recall): this turn is cold by design. Read by the reuse gauge only. */
+  sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
   transcript?: Array<{ role: "user" | "assistant"; text: string;
@@ -525,6 +529,11 @@ export interface SendTurnInput {
    * and the driver raises a question card before the engine starts when
    * `sources` names anything the folder would contribute. */
   folderTrust?: FolderTrustTurnInput;
+  /** A Full access approve-setup grant took effect for this turn (R5). The core
+   * calls it where the grant lands: at the turn's start on generation 1, and on
+   * generation 2 only once the seed holding the policy folder is written. Keeps
+   * the activity line and decision log honest about what happened. */
+  onFolderPolicyApplied?: () => void;
   /** The bot is on Murage's Full access, which still stops before deleting
    * outside its folder, paying and messaging someone new (server/stop-line.ts).
    * The engine must send its permission asks to Murage for that to hold, so a
@@ -532,7 +541,8 @@ export interface SendTurnInput {
    * Codex `approvalPolicy: never`, an ACP engine's `fullAuto`, Antigravity's
    * `--dangerously-skip-permissions`) asks for this turn instead, and Murage
    * answers everything else at once. Also set on No limits, which drops the
-   * stop line but keeps the key guard: that guard holds only if Murage sees
+   * stop line but keeps the wipe list and the gate files, and the whole key
+   * guard on any turn the owner did not start: those hold only if Murage sees
    * the asks. When both stopLine and routeAsks are absent, the instance's
    * own setting stands. */
   stopLine?: true;
@@ -546,10 +556,12 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
-  /* Permission cards carry no deadline on any turn (Sean 10-29, LONGWORK H4): a card waits until the owner answers
-   * it or the turn stops, on every engine, direct chat and routine alike. A routine run still ends as "waiting on
-   * you" at its run limit (RoutineManager.enforceRunLimits). */
-  holdProjectAsks?: true;
+  /* Cards carry no deadline (Sean 10-26, 10-29, LONGWORK H4): a card waits until the owner answers it or the turn stops,
+   * on every engine. The one exception is this flag, set only by the registry decorator (harness/ask-note-adapter.ts)
+   * on a turn nobody is at, a routine run or an unattended turn. There a question still ends with the 30 minute note:
+   * an open run holds back its routine's next occurrences, so one unanswered question would stop the routine (House
+   * Rule 8), and a question, unlike an approval, can be gone past. Permission cards never take the note. */
+  unattendedAskNote?: true;
   /** The Chief's hidden New project proposal turn (lane N/N2): it answers
    * with a proposal block in its reply; where the turn mounts the agents
    * server, project_propose is the one Murage tool it may use. A driver that
@@ -570,7 +582,21 @@ export interface FolderTrustTurnInput {
   key: string;
   folder: string;
   decision?: "trust" | "reject";
+  /** `decision` was copied from Murage's own stored record, so the pool digest
+   * already carries it. A managed desk or Full access auto-trust never sets it. */
+  fromRecord?: true;
   sources: string[];
+  /** Generation 2 (Fuigo 1.0.35 and later): every consent-2 trust key and every
+   * stored reject. Stored records only; the engine's question is answered from
+   * these, and both ride the pool digest, so changing a record starts a new process. */
+  trustKeys?: string[];
+  rejects?: Array<{ key: string; folder: string }>;
+  /** Rule 3b: plain picker trusts that raise no card this turn. Set only for an
+   * owner-started turn at No limits, and absent otherwise, so rule 5 stands. */
+  noCardPickKeys?: string[];
+  /** Rule 3b: Fuigo's own store holds a no for this turn's key, which is in
+   * `noCardPickKeys`. Fuigo will not ask; the turn shows a chip that says so. */
+  storedNoPick?: true;
   /** 0.1.52 FUIGOTRUST2 (additive): the user's own Fuigo install already
    * trusts this workspace (`<FUIGO_HOME>/trusted_folders.toml`), so the
    * engine will run the turn trusted whatever `decision` says and never
@@ -658,6 +684,8 @@ export interface ProviderAdapter {
      * driver takes from `SendTurnInput.folderTrust` (Fuigo 1.0.13). The
      * server scans the folder and hands the record only to such drivers. */
     folderTrust?: boolean;
+    /** The trust protocol this engine speaks, from the version last seen. Read only. */
+    readonly folderTrustGeneration?: 1 | 2;
     /** True when the adapter implements textOnlyTurn (PIP reflection): one
      * tool-free structured call, no tools or MCP servers mounted. */
     textOnlyTurn?: true;
@@ -704,7 +732,7 @@ export interface ProviderAdapter {
   /** Retire retained native state for exactly this thread, including idle
    * sessions. Resolves after retirement; callers must omit stale resume cursors.
    * Unlike interruptTurn, this must prevent implicit reuse on the next turn. */
-  resetSession?(threadId: ThreadId): Promise<void>;
+  resetSession?(threadId: ThreadId, why?: { route: string }): Promise<void>;
   /** Close every pooled or retained IDLE engine process this adapter holds and keep it from starting a warm one (a prewarm, a
    * process parked after a turn) until the returned release is called. Running turns are never touched. Used while Murage removes
    * a deleted conversation from the engine's own files (conversation-deletion.ts), so no process of ours writes to them then.
@@ -795,6 +823,8 @@ export interface EngineInstall {
   signInCommand?: string;
   /** `command` needs npm on PATH, so the UI can say so when Node is absent. */
   needsNode?: boolean;
+  /** Murage installs this engine itself from the vendor's native build (engine-native-install.ts). */
+  native?: boolean;
 }
 
 // ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
@@ -855,6 +885,13 @@ export interface ProviderInstance {
    * with none, is never resumed: the harness starts a fresh session and replays the thread.
    * Absent for an engine with no such contract. */
   readonly sessionContract?: number;
+  /** True when this engine keeps no session between turns (pi runs with --no-session): each turn is a new session, so the
+   * harness replays the thread, and that replay says the session was restarted, not that the bot was switched over. */
+  readonly keepsNoSession?: boolean;
+  /** Plan usage (GAP-PLAN-LIMITS): "native-rpc" when this engine reports plan windows over its own
+   * running process (server/plan-usage.ts). Absent means observation-only: Murage shows the limits
+   * the engine reports on refusal, and plan usage reads as not available. Never a credential reader. */
+  readonly planUsageReporter?: "native-rpc";
   /** True when this engine tracks a refused key itself (keyed by the key, so a new key starts clean); the harness then does not also mark it signed out from its failed turns. */
   readonly tracksKeyRejection?: boolean;
   /** Refresh a live catalog without recreating the provider instance. */
@@ -863,6 +900,8 @@ export interface ProviderInstance {
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string, botId?: string): Promise<string>;
+  /** One short real reply on a hidden session, tool-free and with no owner data, on request only (engine-reply-check.ts). */
+  checkReply?(signal: AbortSignal): Promise<string>;
   /** One non-persisted owner proposal with tools and hooks disabled. */
   /** `botId` is the bot the call is made for: on a Cloud home the launcher refuses an engine run that names none. */
   proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;

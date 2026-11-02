@@ -158,7 +158,7 @@ const plainObject = (value: unknown): value is Record<string, unknown> =>
 
 export type HermesAskNormal =
   | { ok: true; tool: string; rawInput: Record<string, unknown>; summary: string }
-  | { ok: false; why: "hermes-hook"; summary: string };
+  | { ok: false; why: "hermes-hook"; summary: string; cut?: true };
 
 /**
  * One reading of a Hermes ask that Murage's own hook escalated, for every reader after it (the command reader,
@@ -182,7 +182,10 @@ export function normalizeHermesAsk(rawInput: unknown): HermesAskNormal | undefin
   if (typeof rawInput.description !== "string") return bad;
   let message: unknown;
   try { message = JSON.parse(rawInput.description); } catch { return bad; }
-  if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool || message.truncated !== false) return bad;
+  if (!plainObject(message) || message.murage !== 1 || message.v !== 1 || message.tool !== tool) return bad;
+  // the hook cut a message past its cap: the call did not arrive whole
+  if (message.truncated === true) return { ...bad, cut: true };
+  if (message.truncated !== false) return bad;
   const input = message.input;
   if (!plainObject(input)) return bad;
   if (tool === "terminal" && (typeof input.command !== "string" || !input.command.trim())) return bad;
@@ -986,7 +989,7 @@ const support: AcpSupport = {
   // An ask the ask hook escalated is read from the hook's message: the real command, whole (normalizeHermesAsk).
   normalizeAsk: (rawInput) => {
     const normal = normalizeHermesAsk(rawInput);
-    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary };
+    return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
   },
   spawnArgs: (config, turn, ctx) => {
     if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });

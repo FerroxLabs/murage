@@ -11,6 +11,7 @@ import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
 import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
+import { decorateAskNoteInstance } from "./ask-note-adapter.ts";
 import { decorateDraftOnlyInstance } from "./draft-only-adapter.ts";
 import type {
   AnyProviderDriver,
@@ -190,7 +191,7 @@ export class ProviderRegistry {
         config,
       });
       // Outermost: every engine call for a draft-only bot is judged here before any other wrapper runs (draft-only-adapter.ts).
-      const decorated = decorateDraftOnlyInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds));
+      const decorated = decorateDraftOnlyInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds)));
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
       return [instanceId, { instanceId, live: decorated }];
     } catch (e) {
@@ -277,6 +278,19 @@ export class ProviderRegistry {
     const snapshot = (await this.snapshots([instanceId])).get(instanceId);
     if (!snapshot) return undefined;
     return { instanceId, driverKind: entry.shadow?.driverKind ?? entry.live!.driverKind, snapshot };
+  }
+
+  /** What the engine's own probe says about its login: true, false, or null when it does not answer. The rejection mark is left
+   *  out on purpose: it says a turn was refused, not whether a login exists, so a sign-in reads the engine itself. Undefined when the
+   *  registry lacks the id. */
+  async engineLogin(instanceId: InstanceId): Promise<boolean | null | undefined> {
+    const entry = this.byId.get(instanceId);
+    if (!entry) return undefined;
+    if (entry.shadow) return null;
+    try {
+      const snapshot = await entry.live.snapshot();
+      return snapshot.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
+    } catch { return null; }
   }
 
   /** instance snapshots for the model picker: id, driver, models, health.

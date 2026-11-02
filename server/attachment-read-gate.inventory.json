@@ -106,7 +106,7 @@
  },
  {
   "file": "server/backup-coordinator.ts",
-  "function": "captureFailure",
+  "function": "failureNote",
   "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
@@ -796,27 +796,6 @@
   "callee": "readFileSync",
   "root": "cloud-home",
   "count": 1
- },
- {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "FileHandle.read",
-  "root": "data-dir",
-  "count": 2
- },
- {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "open",
-  "root": "data-dir",
-  "count": 1
- },
- {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "readFile",
-  "root": "data-dir",
-  "count": 2
  },
  {
   "file": "server/config.ts",
@@ -1561,6 +1540,48 @@
   "count": 1
  },
  {
+  "file": "server/engine-native-install.ts",
+  "function": "extractTarEntry",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "extractTarEntry",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "saveVerified",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "stageCodexNative",
+  "callee": "FileHandle.read",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "stageCodexNative",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "windowsEntrypoint",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/env-path.ts",
   "function": "hasNodeShebang",
   "callee": "openSync",
@@ -1584,6 +1605,13 @@
  {
   "file": "server/env-path.ts",
   "function": "readKept",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/feedback-relay.ts",
+  "function": "feedbackInstallId",
   "callee": "readFileSync",
   "root": "data-dir",
   "count": 1
@@ -1617,6 +1645,20 @@
   "count": 1
  },
  {
+  "file": "server/folder-trust-seed.ts",
+  "function": "gitBelow",
+  "callee": "opendir",
+  "root": "workspace",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust-seed.ts",
+  "function": "writeFuigoSeed",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/folder-trust.ts",
   "function": "gitCoreConfig",
   "callee": "readFileSync",
@@ -1633,6 +1675,13 @@
  {
   "file": "server/folder-trust.ts",
   "function": "readUpstreamTrustedFolders",
+  "callee": "readFileSync",
+  "root": "config",
+  "count": 1
+ },
+ {
+  "file": "server/folder-trust.ts",
+  "function": "readUpstreamTrustFile",
   "callee": "readFileSync",
   "root": "config",
   "count": 1

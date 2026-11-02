@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "854fd480c72aca4baca1eecfacaad173f6cbc0763a9d376e3703fa29323995eb";
+export const CAPABILITY_DB_REV = "36e18d1736cd4ce840d6731bd67776091a8ba1223f9c5dc8aceabc0396e7645d";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -49,6 +49,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
     "rev": "83b400798a5b8f4b749b659e483bfa6a53a14cd83d1d6b8a3507b1e12c4e21c7"
+  },
+  {
+    "id": "cap:apps.bot-email",
+    "title": "A bot's own email address",
+    "description": "Murage can do this.",
+    "heading": "Can my bot have its own email address? / Give a bot an email address / Can a bot send email for me? / Does a bot need my approval to send email?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Connected apps → Bot email",
+    "url": "https://murage.ai/docs/features/bot-tools#bot-email",
+    "text": "Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person. Needs a Flux Router account with email on. Anything long, with attachments or with many addresses still waits for you, and there is a daily limit.",
+    "capability": "apps.bot-email",
+    "status": "can",
+    "answer": "Yes. Under Settings, Connected apps, Bot email, a bot can have its own address through Flux Router. You choose who it can email without asking: nobody, or people who have emailed it, after you approve its first reply to each new person.",
+    "limits": "Needs a Flux Router account with email on. Anything long, with attachments or with many addresses still waits for you, and there is a daily limit.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "33d830fc42532391c4ef4a8217b890f5b4378e3f27f7dfdd05c0c57c82c6c4c7"
   },
   {
     "id": "cap:apps.own-browser",
@@ -138,15 +163,45 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "id": "cap:engines.continue-with-chatgpt-grok",
     "title": "Sign in with a ChatGPT or Grok plan",
     "description": "Murage can do this.",
-    "heading": "Can I use my ChatGPT plan in Murage? / Continue with ChatGPT / Use my SuperGrok plan for my bots / Sign in with Grok instead of an API key",
+    "heading": "Set up Codex / Set up Grok / I want to set up Codex with my ChatGPT plan / I want to set up Grok with my plan / Can I use my ChatGPT subscription in Murage? / Continue with ChatGPT / Use my SuperGrok plan for my bots / Sign in with Grok instead of an API key",
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Use a plan you already have",
     "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
-    "text": "Yes. Open Settings, then Models & engines, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. Your bots can then use the models that come with that plan, and the plan's limits apply. Desktop app only: on a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial and needs a SuperGrok or X Premium plan.",
+    "text": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say Grok is Unofficial. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first. Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
     "capability": "engines.continue-with-chatgpt-grok",
     "status": "can",
-    "answer": "Yes. Open Settings, then Models & engines, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. Your bots can then use the models that come with that plan, and the plan's limits apply.",
-    "limits": "Desktop app only: on a phone or in a browser, finish sign-in on the computer running Murage. The Grok sign-in is marked Unofficial and needs a SuperGrok or X Premium plan.",
+    "answer": "One sign-in, nothing to install: your bots use the plan on Fuigo. Press Continue with ChatGPT or Continue with Grok, then pick the plan's model. Not there? Say what shows. The Codex and Grok apps are separate. To set up Codex or Grok on a plan, reply with [Continue with ChatGPT](murage://plan/chatgpt) or [Continue with Grok](murage://plan/supergrok), and say Grok is Unofficial. Nothing switches a bot by itself, and a bot on Claude Code moves to Fuigo first.",
+    "limits": "Desktop app only: finish on the computer running Murage. Grok is marked Unofficial and needs SuperGrok or X Premium. Never put a sign-in code or key in a chat.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "fuigo",
+      "codex",
+      "grok",
+      "qwen",
+      "hermes",
+      "openai-compatible"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Fuigo, Codex, Grok, Qwen, Hermes, OpenAI-compatible engines.",
+    "rev": "fd2ef241d92a819e0750597f887af87ae4c0abc6993c872d532c31a528d81557"
+  },
+  {
+    "id": "cap:engines.use-my-subscription",
+    "title": "Use a subscription you already pay for",
+    "description": "Murage can do this.",
+    "heading": "I want to use my subscription / Use a subscription I already pay for / Can I use my plan instead of an API key? / Which subscriptions work with Murage?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Use a plan you already have",
+    "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
+    "text": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
+    "capability": "engines.use-my-subscription",
+    "status": "can",
+    "answer": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first.",
+    "limits": "Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
     "askYourBot": "",
     "platforms": [
       "mac",
@@ -157,7 +212,57 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "3fd5665225a9745728824aeb0631489b8dca6a6fd37d0062137ed365852822c3"
+    "rev": "bd206325f49ea95d276d697accd076c6acc292054bcb3ea87e8a5af09d6e99d0"
+  },
+  {
+    "id": "cap:engines.set-up-claude-code",
+    "title": "Claude subscription through Claude Code",
+    "description": "Murage can do this.",
+    "heading": "I want to set up Claude / Set up Claude Code / Use my Claude subscription / Use my Claude plan in Murage / Log in to Claude Code / Install Claude Code / Sign into Claude / How do I sign in to Claude in Murage?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/getting-started/installation#install-an-ai-app",
+    "text": "Let's set up Claude Code and log you in. Reply with that and [Set up Claude Code](murage://engine/set-up?engine=claude), or [Sign in to Claude](murage://engine/sign-in?engine=claude) for sign-in alone. Never run the login. Without a button: Find Claude Code and tell me what it shows. Install Claude Code: press it, no Node.js needed, and Murage checks the download. Sign in to Claude Code: press it, then Open sign-in, and finish in the browser. Browser did not open? Press Use Terminal. Signed in means the login worked. A Claude plan cannot be used through Fuigo. Never put a sign-in code or key in a chat. On Telegram, Slack and other channels say: open Murage on your computer, Inbox, Engines to sign in to.",
+    "capability": "engines.set-up-claude-code",
+    "status": "can",
+    "answer": "Let's set up Claude Code and log you in. Reply with that and [Set up Claude Code](murage://engine/set-up?engine=claude), or [Sign in to Claude](murage://engine/sign-in?engine=claude) for sign-in alone. Never run the login. Without a button: Find Claude Code and tell me what it shows. Install Claude Code: press it, no Node.js needed, and Murage checks the download. Sign in to Claude Code: press it, then Open sign-in, and finish in the browser. Browser did not open? Press Use Terminal. Signed in means the login worked.",
+    "limits": "A Claude plan cannot be used through Fuigo. Never put a sign-in code or key in a chat. On Telegram, Slack and other channels say: open Murage on your computer, Inbox, Engines to sign in to.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "c7743e5cb320050a62a4edc1dde025cacbc2c09c0de2dbf6849a20da21c4cdf6"
+  },
+  {
+    "id": "cap:engines.set-up-from-the-app",
+    "title": "Install an engine from Settings",
+    "description": "Murage can do this.",
+    "heading": "Set up Kimi Code / I want to install an engine / What is Terminal? / Install the Codex app / Terminal says npm is not found / I do not have Node.js / Sign into Grok / Do I need a terminal to sign in to an engine?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/getting-started/installation#install-an-ai-app",
+    "text": "Reply with [Sign in to Grok](murage://engine/sign-in?engine=grok) or [Set up Kimi Code](murage://engine/set-up?engine=kimi). Engine words: claude, codex, grok, kimi, cursor. Never run the login. Without a button: press Install if it shows; it needs no Terminal. Terminal is a window for typed commands. Open install in Terminal copies the command and opens a blank one; nothing has started yet. Paste (Cmd V on a Mac, right click elsewhere), press Enter, wait, then press Check again. To sign in, press Sign in, then Open sign-in. No button? Tell your bot what shows. A card that says Requires Node.js needs the LTS version from nodejs.org first. Never put a sign-in code or key in a chat. On Telegram, Slack and other channels say: open Murage on your computer, Inbox, Engines to sign in to.",
+    "capability": "engines.set-up-from-the-app",
+    "status": "can",
+    "answer": "Reply with [Sign in to Grok](murage://engine/sign-in?engine=grok) or [Set up Kimi Code](murage://engine/set-up?engine=kimi). Engine words: claude, codex, grok, kimi, cursor. Never run the login. Without a button: press Install if it shows; it needs no Terminal. Terminal is a window for typed commands. Open install in Terminal copies the command and opens a blank one; nothing has started yet. Paste (Cmd V on a Mac, right click elsewhere), press Enter, wait, then press Check again. To sign in, press Sign in, then Open sign-in. No button? Tell your bot what shows.",
+    "limits": "A card that says Requires Node.js needs the LTS version from nodejs.org first. Never put a sign-in code or key in a chat. On Telegram, Slack and other channels say: open Murage on your computer, Inbox, Engines to sign in to.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "dd54a684e5ab59505b49e7fdaab447a5ba9cb51406d4e766547f257faa27e199"
   },
   {
     "id": "cap:engines.grok-images",

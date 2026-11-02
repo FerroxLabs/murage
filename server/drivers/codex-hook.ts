@@ -119,6 +119,11 @@ export const HOOK_ENV_FILE = "murage-hook.env";
 export const HOOK_ENV_DIR = "hook-env";
 export const HOOK_ENV_VAR = "MURAGE_CODEX_HOOK_ENV";
 
+/** CARDS-WAIT-CODEX-1013: every current Codex model runs its tools in code cells (`tool_mode: code_mode_only`), and a cell that yields
+ *  hands the turn back to the model, which can end it while a card waits. The setting keeps `exec` in flight instead. Below this version
+ *  the nested key stops Codex before it starts (0.147.0: "data did not match any variant of untagged enum FeatureToml"). */
+export const CODEX_EXEC_YIELD_MIN = [0, 148, 0] as const;
+
 /** The longest a hook waits for the owner's answer to its card (codex.ts, antigravity.ts). Cards wait for the owner on
  *  every engine (Sean 10-29), so this is only the hook's own ceiling, never a 15-minute deny: 20 days keeps the
  *  script's deadline (below) under Node's longest timer (2^31-1 ms, about 24.8 days). Codex applies no ceiling of its
@@ -153,6 +158,8 @@ const print = (value) => {
 const block = (why) => {
   const reason = "Murage blocked this call: " + String(why).slice(0, 300);
   try { writeSync(2, reason + "\\n"); } catch {}
+  // A Stop fails open: the turn ends as it would without this hook, and it never answers a tool call.
+  if (hookEvent === "Stop" || hookEvent === "SubagentStop") process.exit(0);
   if (hookEvent === "SessionStart") hardBlock();
   // Any other call: the documented deny on stdout with a clean exit, which Codex blocks on whatever the shell does to an exit code
   // (Windows: Codex's PowerShell -Command wrapper turns exit 2 into 1, a non-blocking failure). Written synchronously.
@@ -199,7 +206,9 @@ try {
     ? { kind: "session", token: env.TOKEN, session_id: input.session_id }
     : event === "PreToolUse"
       ? { kind: "pretool", token: env.TOKEN, tool_name: input.tool_name, tool_input: input.tool_input, tool_use_id: input.tool_use_id, turn_id: input.turn_id, cwd: input.cwd }
-      : null;
+      : event === "Stop" || event === "SubagentStop"
+        ? { kind: "stop", token: env.TOKEN }
+        : null;
   if (!message) block("unknown event");
   const answer = await new Promise((resolve, reject) => {
     const socket = net.connect(env.SOCKET);
@@ -212,6 +221,11 @@ try {
   });
   clearTimeout(timer);
   if (event === "SessionStart") process.exit(0);
+  if (event === "Stop" || event === "SubagentStop") {
+    // A printed block keeps the turn going with the reason as the model's next input; silence ends it.
+    if (answer && answer.decision === "block" && typeof answer.reason === "string") print({ decision: "block", reason: answer.reason.slice(0, 2000) });
+    process.exit(0);
+  }
   if (answer && answer.decision === "allow") {
     // A plain allow prints nothing and exits 0: rig, Codex 0.163.0 lists a printed permissionDecision allow as "unsupported" and marks
     // the run failed, while a silent clean exit is a completed run and the call proceeds. Only a rewrite (Rule 73) prints.
@@ -294,7 +308,7 @@ export const hookWindowsLaunchValue = (launcherPath: string): string => `@"${lau
 export function codexHooksJson(execPath: string, scriptPath: string): string {
   const command = hookLaunchLine(execPath, scriptPath);
   const handler = { type: "command", command, command_windows: codexHookWindowsCommand(), timeout: HOOK_TIMEOUT_SEC };
-  return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }] } }, null, 2) + "\n";
+  return JSON.stringify({ hooks: { PreToolUse: [{ hooks: [handler] }], SessionStart: [{ hooks: [handler] }], Stop: [{ hooks: [handler] }], SubagentStop: [{ hooks: [handler] }] } }, null, 2) + "\n";
 }
 
 export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string }
@@ -487,8 +501,11 @@ export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string, o
   if ("failed" in first) return first.failed;
   let hooks = first.hooks;
   const ours = (list: ListedHook[], event: string) => list.filter((h) => samePath(h.sourcePath, hooksJsonPath) && h.eventName === event);
-  const needed = (list: ListedHook[]) => [...ours(list, "preToolUse"), ...ours(list, "sessionStart")];
-  if (ours(hooks, "preToolUse").length !== 1 || ours(hooks, "sessionStart").length !== 1) return { ok: false, kind: "refused", why: "Murage's two handlers are not listed" };
+  // CARDS-WAIT-CODEX-1013: the Stop handlers are the card barrier, not the gate: trusted when a Codex lists them, never required.
+  const needed = (list: ListedHook[]) => [...ours(list, "preToolUse"), ...ours(list, "sessionStart"), ...ours(list, "stop"), ...ours(list, "subagentStop")];
+  // Exactly the handlers Murage wrote: one of each gate event, at most one of each barrier event, on the listing that decides.
+  const asWritten = (list: ListedHook[]) => ours(list, "preToolUse").length === 1 && ours(list, "sessionStart").length === 1 && ours(list, "stop").length <= 1 && ours(list, "subagentStop").length <= 1;
+  if (!asWritten(hooks)) return { ok: false, kind: "refused", why: "Murage's two handlers are not listed" };
   const stale = needed(hooks).filter((h) => h.trustStatus === "untrusted" || h.trustStatus === "modified");
   if (stale.length) {
     const state: Record<string, { trusted_hash: string }> = {};
@@ -505,7 +522,7 @@ export async function trustHooks(rpc: Rpc, hooksJsonPath: string, cwd: string, o
     hooks = again.hooks;
   }
   const mine = needed(hooks);
-  if (mine.length !== 2 || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, kind: "refused", why: "Murage's handlers are not trusted and enabled" };
+  if (!asWritten(hooks) || mine.some((h) => h.trustStatus !== "trusted" || !h.enabled)) return { ok: false, kind: "refused", why: "Murage's handlers are not trusted and enabled" };
   const other = hooks.filter((h) => !mine.includes(h) && !h.isManaged && h.mayRun && h.trustStatus === "trusted");
   if (other.length) return { ok: false, kind: "refused", why: "another hook would run in this scope" };
   return { ok: true, managed: hooks.filter((h) => h.isManaged && h.enabled).length };
@@ -526,10 +543,14 @@ export type HookAnswer =
   | { decision: "allow"; updatedInput?: Record<string, unknown>; additionalContext?: string }
   | { decision: "deny"; reason: string };
 
+export type HookStopAnswer = { decision: "end" } | { decision: "block"; reason: string };
+
 export interface HookTurn {
   token: string;
   onSession(sessionId: string): void;
   onPreTool(delivery: HookDelivery): Promise<HookAnswer>;
+  /** CARDS-WAIT-CODEX-1013: the model wants to end the turn. Resolves when it may: `end`, or `block` to keep the turn going. */
+  onStop?(): Promise<HookStopAnswer>;
 }
 
 export const hookSocketPath = (id = randomBytes(6).toString("hex")): string =>
@@ -642,6 +663,14 @@ export class CodexHookGate {
       if (message.kind === "session") {
         turn.onSession(typeof message.session_id === "string" ? message.session_id : "");
         return reply({ ok: true });
+      }
+      if (message.kind === "stop") {
+        // Fails open, as the script does: any turn but the armed one, and any failure, ends as it would without the hook.
+        const generation = this.generation;
+        const end = { decision: "end" };
+        if (!turn.onStop) return reply(end);
+        turn.onStop().then((answer) => reply(this.turn === turn && this.generation === generation ? answer : end), () => reply(end));
+        return;
       }
       if (message.kind !== "pretool") return reply({ error: "kind" });
       // The decision is delivered only while this turn is still the armed one: a Stop, a settle or a newer turn in between turns it into a deny.
@@ -770,10 +799,69 @@ export function parseApplyPatch(patch: unknown): { destinations: string[]; added
   return { destinations, added: new Map([...added].map(([k, v]) => [k, v.join("\n")])), removed };
 }
 
+/** What a native file-change names: every path it touches, a move's new name included, and what it takes away (a delete,
+ *  and a move's old name). `changes` is the `changes` of a `fileChange` item (`{path, kind}`) or the map of an older
+ *  `applyPatchApproval` (path to change). Anything unread, an unknown kind or a move that names no path included, is null. */
+export function readFileChanges(changes: unknown): { paths: string[]; removed: string[] } | null {
+  const map = record(changes);
+  const rows: Array<[unknown, unknown]> = Array.isArray(changes)
+    ? changes.map((change) => [record(change)?.path, record(change)?.kind])
+    : map ? Object.entries(map) : [];
+  if (!rows.length) return null;
+  const paths: string[] = [];
+  const removed: string[] = [];
+  for (const [path, kind] of rows) {
+    if (typeof path !== "string" || !path) return null;
+    paths.push(path);
+    const change = record(kind);
+    const type = typeof kind === "string" ? kind : str(change?.type);
+    if (type === "delete") removed.push(path);
+    else if (type === "update") {
+      const moved = change?.move_path ?? change?.movePath ?? undefined;
+      if (moved === undefined) continue;
+      if (typeof moved !== "string" || !moved) return null;
+      paths.push(moved);
+      removed.push(path);
+    } else if (type !== "add") return null;
+  }
+  return { paths, removed };
+}
+
+/** Each path of an edit placed part by part from the call's own folder (Rules 63.2, 75d), never lexically: `real` is where
+ *  every path lands, `hold` the first key rule or placing failure, which the key guard answers at every level (`localHold`),
+ *  and `inside` whether all of them stay in the project. Both Codex edit routes read their paths through this. */
+export function placeEditPaths(paths: readonly string[], project: string, cwd: string, home: string, added?: ReadonlyMap<string, string>): { real: string[]; inside: boolean; hold?: string } {
+  const real: string[] = [];
+  let inside = true;
+  let hold: string | undefined;
+  for (const path of paths) {
+    const checked = inProjectCheck(path, project, added?.get(path), { home, base: cwd });
+    if (checked.ok) { real.push(checked.real); continue; }
+    inside = false;
+    if (checked.reason === "outside") { real.push(checked.real); continue; }
+    real.push(path);
+    hold ??= (checked.reason === "sensitive" ? checked.rule : checked.why).slice(0, 80);
+  }
+  return { real, inside, ...(hold ? { hold } : {}) };
+}
+
+/** The native file-change approval's call, in the shape the hook's apply_patch ask files (the Codex edit contract), or
+ *  the field that could not be read. A `grantRoot` is a place the engine asks to write under, so the guards read it too. */
+export function codexNativeEditCall(params: { grantRoot?: unknown }, changes: unknown, ctx: { project: string; cwd: string; home?: string }):
+  | { toolCall: { name: "edit"; input: { paths: string[]; cwd: string; removed?: string[] } }; filePaths: string[]; localHold?: string; inputMissing?: undefined }
+  | { toolCall?: undefined; filePaths?: undefined; localHold?: undefined; inputMissing: string } {
+  const read = readFileChanges(changes);
+  if (!read) return { inputMissing: "changes" };
+  const root = str(params.grantRoot);
+  const paths = root ? [...read.paths, root] : read.paths;
+  const placed = placeEditPaths(paths, ctx.project, ctx.cwd, ctx.home ?? homedir());
+  return { toolCall: { name: "edit", input: { paths, cwd: ctx.cwd, ...(read.removed.length ? { removed: read.removed } : {}) } }, filePaths: placed.real, ...(placed.hold ? { localHold: placed.hold } : {}) };
+}
+
 export type HookRoute =
   | { route: "allow"; final: boolean; why: string; destinations?: string[]; cwd?: string }
   | { route: "deny"; reason: string }
-  | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string };
+  | { route: "ask"; tool: string; summary: string; toolCall: { name: string; input?: unknown }; toolInputMissing?: string; cwd?: string; destinations?: string[]; command?: string; filePaths?: string[]; localHold?: string };
 
 export interface RouteContext {
   /** F4: the mounts this app-server loads; undefined = unstated, so no MCP call is proven. */
@@ -819,15 +907,10 @@ export function routeDelivery(delivery: HookDelivery, ctx: RouteContext): HookRo
     const parsed = parseApplyPatch(patch);
     if (!parsed) return { route: "ask", tool: "edit", summary: "edit", toolCall: { name: "edit" }, toolInputMissing: "patch", cwd };
     // Rules 63.2, 75d: each destination is placed in order from the delivery's folder (shared/in-project.ts), never lexically
-    const reals: string[] = [];
-    for (const destination of parsed.destinations) {
-      const checked = inProjectCheck(destination, ctx.project, parsed.added.get(destination), { home: ctx.home ?? homedir(), base: cwd });
-      if (!checked.ok) break;
-      reals.push(checked.real);
-    }
+    const placed = placeEditPaths(parsed.destinations, ctx.project, cwd, ctx.home ?? homedir(), parsed.added);
     // the destinations travel with the allow, stored real, so the tripwire matches the started change on where it lands (Rule 67)
-    if (reals.length === parsed.destinations.length) return { route: "allow", final: true, why: "own-workspace", destinations: reals, cwd };
-    return { route: "ask", tool: "edit", summary: parsed.destinations.join(", "), destinations: parsed.destinations, cwd,
+    if (placed.inside) return { route: "allow", final: true, why: "own-workspace", destinations: placed.real, cwd };
+    return { route: "ask", tool: "edit", summary: parsed.destinations.join(", "), destinations: parsed.destinations, cwd, filePaths: placed.real, ...(placed.hold ? { localHold: placed.hold } : {}),
       // ISSUE-PERMS-1010 Rev 3 G2: what the patch takes away travels with the ask, so the stop line judges it as a delete
       toolCall: { name: "edit", input: { paths: parsed.destinations, cwd, ...(parsed.removed.length ? { removed: parsed.removed } : {}) } } };
   }

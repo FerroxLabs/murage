@@ -19,20 +19,22 @@ Choose your computer below. Each link always downloads the latest published buil
   The Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing **More info → Run anyway**.
 </Callout>
 
-## Install an agent CLI
+## Install an AI app
 
-Murage needs at least one supported agent engine installed and signed in. Claude and Codex are the most common starting points.
+With a ChatGPT plan, or SuperGrok or X Premium, your bots can use that plan on Fuigo with nothing to install: open **Settings → Models & engines**, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. The Grok sign-in is marked Unofficial. The Codex and Grok apps are separate.
 
-1. Install the CLI from its official provider.
-2. Run it once in a terminal and complete sign-in.
-3. Restart Murage.
-4. Open the model picker. Available engines appear normally; unavailable engines explain what is missing.
+For Claude Code, Codex, Kimi Code and other AI apps, ask your bot, for example "set up Claude Code". It replies with a button that opens the right step. Or do it yourself:
 
-See [Agent engines](../providers/index.mdx) for the complete list and explicit path overrides.
+1. Open **Settings → Models & engines → Engines** and find the AI app.
+2. For Claude Code and Codex, press Install. Murage downloads the app from its maker and checks it before it runs, with no Node.js and no Terminal. For other apps, press Open install in Terminal. Terminal is a window on your computer for typed commands. Murage copies the command and opens a blank window; nothing has started yet. Paste the command there (Cmd V on a Mac, right click elsewhere), press Enter, wait for it to finish, then press Check again. If the card says Requires Node.js, install the LTS version from nodejs.org first. If you see neither press, tell your bot what you see.
+3. Press Sign in, then Open sign-in, and finish in your browser. If the browser does not open, press Didn't open? Use Terminal. A few apps sign in from Terminal alone: press Open sign-in in Terminal and follow what it shows.
+4. Open the model picker. Engines that are ready appear as usual; the others say what is missing.
+
+See [Agent engines](../providers/index.mdx) for the full list and for choosing an engine's location yourself.
 
 ## Build from source
 
-Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one authenticated agent CLI.
+For developers. Requirements: Node.js 24 or newer, pnpm 10.33.0, and at least one supported AI app you are signed in to (a CLI, or command-line app).
 
 ```bash
 git clone https://github.com/FerroxLabs/murage.git
@@ -41,7 +43,7 @@ corepack enable
 pnpm install --frozen-lockfile
 ```
 
-Run the harness, web UI, and Electron shell in separate terminals:
+Run the background service, the web screens and the desktop window in separate terminals:
 
 ```bash
 pnpm dev:server

@@ -299,19 +299,34 @@ function execText(
   });
 }
 
+/** One read of `status`. A failed command is only believed when it says signed out. */
+function readCursorStatus(
+  run: typeof execCli,
+  cli: string,
+  args: string[],
+  env: Record<string, string | undefined>,
+): Promise<boolean | null> {
+  return new Promise((resolve) => {
+    run(cli, args, { timeout: EXEC_TIMEOUT_MS, env: env as NodeJS.ProcessEnv }, (err, stdout, stderr) => {
+      const out = String(stdout ?? "");
+      const decoded = decodeCursorAuthStatus(firstJsonValue(out)) ?? decodeCursorAuthText(`${out}\n${stderr ?? ""}`);
+      resolve(err && decoded === true ? null : decoded);
+    });
+  });
+}
+
+/** Undefined when no status answered: a timeout or a crash is not signed out, so a login that is already there cannot pass for a new one. */
 export async function probeCursorAuth(
   cli: string,
   env: Record<string, string | undefined>,
   run: typeof execCli = execCli,
-): Promise<boolean> {
+): Promise<boolean | undefined> {
   if (nonBlank(env.CURSOR_API_KEY) || nonBlank(env.CURSOR_AUTH_TOKEN)) return true;
   for (const args of [["status", "--format", "json"], ["status"]] as const) {
-    const stdout = await execText(run, cli, [...args], env);
-    if (stdout == null) continue;
-    const decoded = decodeCursorAuthStatus(firstJsonValue(stdout)) ?? decodeCursorAuthText(stdout);
+    const decoded = await readCursorStatus(run, cli, [...args], env);
     if (decoded !== null) return decoded;
   }
-  return false;
+  return undefined;
 }
 
 export async function fetchCursorModels(
