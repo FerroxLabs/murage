@@ -219,6 +219,18 @@ describe("the first paint", () => {
     }
   });
 
+  it("loads an engine sign-in's dialog and session on the press (1.0.14)", () => {
+    const reached = staticallyReached(graph);
+    for (const file of ["src/components/EngineSignInDialog.tsx", "src/components/EngineChatLinkDialog.tsx", "src/lib/local-engine-login.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // the buttons stay: a chat and a failed turn show them before anyone presses
+    for (const file of ["src/components/EngineSignInButton.tsx", "src/components/EngineChatLink.tsx", "src/lib/engine-signin-surface.ts"]) {
+      expect(reached, file).toContain(file);
+    }
+  });
+
   it("loads the analytics client when analytics start, never with the first paint (1.0.3)", () => {
     const reached = staticallyReached(graph);
     expect(reached).toContain("src/lib/analytics.ts");

@@ -43,6 +43,14 @@ export const BOT_CALL_WORDS = {
   historyEmpty: "No calls yet.",
   failed: "That didn't go through. Try again.",
   couldNotConnect: "The call couldn't connect, so it ended. Try again in a moment.",
+  // Bot settings > Voice & alerts > Calls (design 3 and 8; MurageMain 11-02, BOT-CALLS-UNREACHABLE)
+  canCallMe: (bot: string) => `${bot} can call me`,
+  canCallMeHelp: (bot: string) => `${bot} rings you for the things you choose below. Everything else stays a message.`,
+  neededNow: (bot: string) => `When ${bot} thinks you're needed now`,
+  tierBHelp: "Starts as a message. Rings once if you haven't seen it in 10 minutes, never during quiet hours, busy time or another call.",
+  botCaps: "Up to 2 calls an hour and 6 a day from this bot.",
+  needsVoice: "Calls need a voice. Connect Flux or add a voice provider in Settings > Models.",
+  pausedAfterRestore: "Calls are paused after a restore",
   ...CALL_COPY,
 } as const;
 
@@ -134,4 +142,30 @@ export const callsOffNow = (offUntil: number | null | undefined, now: number): b
 /** The device's IANA zone, so "today" ends at this computer's midnight. */
 export function deviceZone(): string | undefined {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; }
+}
+
+// Bot settings > Voice & alerts > Calls (BotCallsSettings.tsx): GET /api/bots/:id/calls/rules and the PUT bodies it sends.
+export interface CallRuleView { id: string; kind: string; enabled: boolean; demoted?: boolean }
+export interface BotCallRulesView {
+  enabled: boolean;
+  rules: CallRuleView[];
+  held: boolean;
+  restoreGen: string | null;
+  quietHours: { enabled?: boolean; start?: string; end?: string } | null;
+  voice: boolean;
+}
+
+/** The urgent rule is on: an enabled needs_owner_now rule that can still ring. One the owner set to "Don't call me about
+ * this again" (demoted to message only) shows off, and turning it on lifts that. */
+export const neededNowOn = (rules: readonly CallRuleView[] | undefined): boolean => (rules ?? []).some((r) => r.kind === "needs_owner_now" && r.enabled && r.demoted !== true);
+
+/** The PUT body for the bot switch: turning it on makes the urgent rule only when the bot has none yet; an urgent rule
+ * the owner switched off stays off (Astra r1 #3). */
+export function switchBody(on: boolean, rules: readonly CallRuleView[] | undefined): { enabled: boolean; neededNow?: true } {
+  return on && !(rules ?? []).some((r) => r.kind === "needs_owner_now") ? { enabled: true, neededNow: true } : { enabled: on };
+}
+
+/** "Quiet hours: 22:00 to 07:00" or "Quiet hours: off" (design 8, Calls page). */
+export function quietLine(q: BotCallRulesView["quietHours"]): string {
+  return q && q.enabled !== false && q.start && q.end ? `Quiet hours: ${q.start} to ${q.end}` : "Quiet hours: off";
 }

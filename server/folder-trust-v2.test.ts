@@ -399,6 +399,43 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true });
   });
 
+  // Fuigo 1.0.38 runs a trusted folder's .envrc at session start, before any tool call; FUIGO_ENVRC_TIMEOUT_SECS=0
+  // keeps it from being evaluated (fuigo.ts FUIGO_ENVRC_OFF). Every way a folder reaches the engine trusted carries it.
+  describe("FUIGO_ENVRC_TIMEOUT_SECS=0 on every trusted-folder spawn, over the instance's non-zero value", () => {
+    const envrcIn = (folder: string) => writeFileSync(join(folder, ".envrc"), "touch envrc-ran\n");
+    it("generation 1, a remembered or picker trust: --trust on the spawn, .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34", FUIGO_ENVRC_TIMEOUT_SECS: "5" }, { cli: ownCli() });
+      await done(await send("t-envrc-g1", { folderTrust: gate({ decision: "trust", fromRecord: true, sources: [".envrc"] }) }));
+      const wire = readDump();
+      expect(wire.argv).toContain("--trust");
+      expect(wire.env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("generation 2, a consent-2 record: the engine's question answered trust, .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" });
+      await done(await send("t-envrc-g2", { folderTrust: gate({ trustKeys: [cwd], sources: [".envrc"] }) }));
+      expect(replies()).toEqual([TRUST_REPLY]);
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("generation 2, the owner answers the card Trust: .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" });
+      const turnId = await send("t-envrc-card", { folderTrust: gate({ sources: [".envrc"] }) });
+      const card = await opened(turnId);
+      await answer("t-envrc-card", card.requestId, "Trust this folder");
+      await done(turnId);
+      expect(replies()).toEqual([TRUST_REPLY]);
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("Full access with a one-turn setup trust: .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" }, { fullAuto: true });
+      await done(await send("t-envrc-full", { folderTrust: gate({ decision: "trust", sources: [".envrc"], trustKeys: [cwd] }) }));
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+  });
+
   it("an unknown version is generation 2", async () => {
     await create({ FAKE_ACP_VERSION_FAIL: "1" }, { cli: ownCli() });
     await done(await send("t-unknown", { folderTrust: gate({ decision: "trust", fromRecord: true, sources: ["AGENTS.md"], trustKeys: [cwd] }) }));
