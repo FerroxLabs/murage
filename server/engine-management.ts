@@ -1,9 +1,10 @@
-import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { promisify } from "node:util";
-import { ManagedNpmUnavailable, verifiedWindowsCodexPath, windowsNpmCommand } from "./codex-managed-windows.ts";
+import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
+import { claudeNativeTarget, clearDownloads, codexNativeTarget, installClaudeNative, stageCodexNative, versionFrom, type NativeInstallProgress, type NativeRun } from "./engine-native-install.ts";
 import { FUIGO_TARGETS, fuigoVersionNewer, latestFuigoVersion, managedFuigoReceipt, nativeFuigoTarget, offeredFuigoVersion, probeNativeFuigo, qualifiedFuigoVersion, stageNativeFuigo, supportedFuigoVersion, verifyManagedFuigo, type FuigoProbe } from "./fuigo-native-update.ts";
+import { execCli } from "./procs.ts";
+
+export { versionFrom };
 
 export interface ManagedEngineInstance {
   instanceId: string; driverKind: string; cli?: string;
@@ -16,6 +17,8 @@ export interface EngineManagementStatus {
   updateAvailable: boolean; message: string; busy: boolean;
   source?: "managed" | "bundled" | "path" | "custom" | "unknown";
   releaseSupported?: boolean; rollbackAvailable?: boolean; bundledAvailable?: boolean;
+  /** Set while a native install is running on this engine. */
+  progress?: NativeInstallProgress;
 }
 interface Dependencies {
   root: string;
@@ -27,29 +30,47 @@ interface Dependencies {
   arch?: string;
   envPath?: string;
   fetch?: typeof fetch;
-  run?: (command: string, args: string[], cwd: string) => Promise<string>;
+  run?: NativeRun;
+  /** The engine path every other instance is configured with. A managed package one of them uses is never removed. */
+  otherClis?: (id: string) => readonly string[];
+  /** Forget what was found on PATH, so the next probe sees an engine that just arrived. */
+  resetProbes?: () => void;
   fuigoProbe?: FuigoProbe;
   /** Clock for the release cache (tests). */
   now?: () => number;
 }
 /** How long a looked-up latest release is served before it is refreshed. */
 export const LATEST_VERSION_TTL_MS = 6 * 60 * 60 * 1000;
-const exec = promisify(execFile);
+/** A vendor binary's own install: longer than a version print, and bounded. */
+const NATIVE_RUN_TIMEOUT_MS = 300_000;
 const versionPattern = /^\d+\.\d+\.\d+$/;
-export function versionFrom(value: string | null | undefined): string | null {
-  return value?.match(/\b(\d+\.\d+\.\d+)\b/)?.[1] ?? null;
+/** The shared launcher with the env it was handed and nothing else: no terminal, no shell, and its output is never forwarded. */
+const runNative: NativeRun = (command, args, cwd, env) => new Promise((resolve, reject) => {
+  execCli(command, args, { cwd, env: env ?? {}, timeout: NATIVE_RUN_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 256 * 1024, windowsHide: true, absoluteExecutable: true },
+    (error, stdout) => { if (error) reject(error); else resolve(stdout); });
+});
+/** The folder of a managed Codex under `root`, or null for any other path. A custom or PATH engine is never touched. */
+function managedCodexFolder(root: string, cli: string | undefined): string | null {
+  if (!cli) return null;
+  const inside = relative(root, cli), folder = inside.split(sep)[0]!;
+  return !inside.startsWith("..") && inside.includes(sep) && /^codex-\d+\.\d+\.\d+-/.test(folder) ? join(root, folder) : null;
 }
 function newer(a: string, b: string): boolean {
   const aa = a.split(".").map(Number), bb = b.split(".").map(Number);
   for (let i = 0; i < 3; i++) { if (aa[i] !== bb[i]) return aa[i]! > bb[i]!; }
   return false;
 }
-/** Fixed registry/package identity; renderer supplies only instance ID and action.
- * Each candidate has its own prefix/cache/home. Existing CLI and user config are
- * untouched until --version succeeds and the caller's idle gate permits activation.
+/** Present in any state, even one too old to run: a version was read from it. */
+const present = (instance: ManagedEngineInstance) => instance.snapshot.state === "available" || versionFrom(instance.snapshot.version) !== null;
+/** Fixed vendor identity; renderer supplies only instance ID and action.
+ * Existing CLI and user config are untouched until --version succeeds and the
+ * caller's idle gate permits activation. Claude Code installs to its own place
+ * (~/.local/bin, already on the search path), so nothing is activated for it.
  */
 export class EngineManager {
   private running = false;
+  /** The native install under way. Status reads it without probing the engine, so a progress poll costs nothing. */
+  private installing: { id: string; progress: NativeInstallProgress } | null = null;
   private versions = new Map<string, string>();
   /** When each driver's latest release was last looked up, and the lookup in flight. */
   private checkedAt = new Map<string, number>();
@@ -63,11 +84,12 @@ export class EngineManager {
   }
   private supported(instance: ManagedEngineInstance) {
     const platform=this.deps.platform??process.platform;
+    if (instance.driverKind === "claudeAgent") return !present(instance) && process.env.MURAGE_CLOUD_ROLE !== "home" && claudeNativeTarget(platform, this.deps.arch ?? process.arch) !== null;
     if (instance.driverKind === "fuigo") return (platform === "darwin" || (["linux", "win32"].includes(platform) && (this.deps.arch ?? process.arch) === "x64")) && (FUIGO_TARGETS as readonly string[]).includes(`${platform}-${this.deps.arch ?? process.arch}`);
-    return instance.driverKind === "codex" && (["darwin", "linux"].includes(platform)
-      ||platform==="win32"&&(this.deps.arch??process.arch)==="x64");
+    return instance.driverKind === "codex" && codexNativeTarget(platform, this.deps.arch ?? process.arch) !== null;
   }
   async status(id: string): Promise<EngineManagementStatus> {
+    if (this.installing?.id === id) return { supported: true, installedVersion: null, updateAvailable: false, message: "", busy: true, progress: this.installing.progress };
     const instance = await this.instance(id);
     const installedVersion = versionFrom(instance.snapshot.version);
     const latestVersion = this.versions.get(instance.driverKind);
@@ -86,10 +108,13 @@ export class EngineManager {
           : source === "custom" || source === "path" || source === "unknown" ? "Your existing Fuigo selection is preserved. Choose Use managed Fuigo to opt in to verified native updates; no Node.js or npm is required."
           : "Fuigo updates independently of Murage. Native downloads are checksum, architecture and ACP-compatibility checked before use; no Node.js or npm is required." };
     }
+    if (instance.driverKind === "claudeAgent") return { supported: this.supported(instance), installedVersion, updateAvailable: false, busy: this.running,
+      message: this.supported(instance) ? "Murage downloads Claude Code from Anthropic and checks it before it runs. No Node.js needed."
+        : "Use the engine’s setup guide to install or update on this platform." };
     return { supported: this.supported(instance), installedVersion, latestVersion,
       updateAvailable: !!(latestVersion && installedVersion && newer(latestVersion, installedVersion)),
       busy: this.running,
-      message: this.supported(instance) ? "Murage keeps your current engine until the new version is verified. Requires Node.js and npm."
+      message: this.supported(instance) ? "Murage keeps your current engine until the new version is verified. No Node.js needed."
         : "Use the engine’s setup guide to install or update on this platform." };
   }
   /** The latest release, as last seen. Settings asks on every visit: the
@@ -98,7 +123,8 @@ export class EngineManager {
    *  or an install (`fresh`), waits on the registry. */
   async check(id: string, options: { fresh?: boolean } = {}): Promise<EngineManagementStatus> {
     const instance = await this.instance(id);
-    if (instance.driverKind !== "fuigo" && !this.supported(instance)) return this.status(id);
+    // Claude Code updates itself: there is no release of ours to look up.
+    if (instance.driverKind === "claudeAgent" || (instance.driverKind !== "fuigo" && !this.supported(instance))) return this.status(id);
     const kind = instance.driverKind, now = (this.deps.now ?? Date.now)();
     if (!options.fresh && this.versions.has(kind)) {
       if (now - (this.checkedAt.get(kind) ?? 0) >= LATEST_VERSION_TTL_MS) this.refreshInBackground(kind);
@@ -163,45 +189,57 @@ export class EngineManager {
         this.running = false;
         return this.status(id);
       }
+      if (instance.driverKind === "claudeAgent") {
+        // An engine already here is never installed over. Its updates are Claude Code's own.
+        if (present(instance)) { this.running = false; return this.status(id); }
+        if (!this.supported(instance)) throw new Error("Managed installation is not supported for this engine on this platform. Use its setup guide.");
+        await this.installClaude(id);
+        this.installing = null; this.running = false;
+        this.deps.resetProbes?.();
+        const found = await this.status(id);
+        if (!found.installedVersion) throw new Error("Claude Code is installed, and Murage can't see it yet. Choose Check again, or restart Murage.");
+        return found;
+      }
       if (!this.supported(instance)) throw new Error("Managed installation is not supported for this engine on this platform. Use its setup guide.");
       await this.check(id, { fresh: true });
       const version = this.versions.get(instance.driverKind)!;
-      await mkdir(this.deps.root, { recursive: true });
-      const candidate = await mkdtemp(join(this.deps.root, "codex-" + version + "-"));
-      await mkdir(join(candidate, "home"));
-      for(const directory of ["appdata","localappdata","codex-home"])await mkdir(join(candidate,"home",directory));
-      await writeFile(join(candidate, "package.json"), JSON.stringify({ private: true }));
-      const run = this.deps.run ?? (async (command: string, args: string[], cwd: string) => {
-        const env: NodeJS.ProcessEnv = { PATH: this.deps.envPath ?? process.env.PATH, HOME: join(candidate, "home"),
-          USERPROFILE:join(candidate,"home"),APPDATA:join(candidate,"home","appdata"),LOCALAPPDATA:join(candidate,"home","localappdata"),CODEX_HOME:join(candidate,"home","codex-home"),
-          TMPDIR: candidate,TMP:candidate,TEMP:candidate, npm_config_cache: join(candidate, "cache"), npm_config_userconfig: join(candidate, "empty-npmrc"),
-          npm_config_globalconfig: join(candidate, "empty-global-npmrc"), CI: "1" };
-        if((this.deps.platform??process.platform)==="win32" && process.env.SystemRoot)env.SystemRoot=process.env.SystemRoot;
-        const invocation=(this.deps.platform??process.platform)==="win32"&&command==="npm"?await windowsNpmCommand(args):{command,args};
-        const result = await exec(invocation.command, invocation.args, { cwd, env, timeout: 180_000, killSignal: "SIGKILL", maxBuffer: 256 * 1024,windowsHide:true });
-        return result.stdout;
-      });
-      let activationAttempted = false;
+      // An owner already on a newer Codex keeps it: never a downgrade, as with Fuigo.
+      const current = versionFrom(instance.snapshot.version);
+      if (current && newer(current, version)) { this.running = false; return this.status(id); }
+      await clearDownloads(this.deps.root);
+      this.installing = { id, progress: { phase: "download", received: 0, total: 0 } };
+      let activationAttempted = false, staged: { cli: string; candidate: string } | undefined;
+      const replaced = managedCodexFolder(this.deps.root, instance.cli);
       try {
-        await run("npm", ["install", "--prefix", candidate, "--registry=https://registry.npmjs.org", "--ignore-scripts", "--include=optional", "--no-audit", "--no-fund", "--save-exact", "@openai/codex@" + version], candidate);
-        const cli = (this.deps.platform??process.platform)==="win32"
-          ?await verifiedWindowsCodexPath(candidate,version)
-          :join(candidate, "node_modules", ".bin", "codex");
-        const reported = await run(cli, ["--version"], candidate);
-        if (versionFrom(reported) !== version) throw new Error("version mismatch");
+        staged = await stageCodexNative({ ...this.nativeOptions(id), version });
         if (this.deps.isBusy()) throw new Error("active tasks");
         activationAttempted = true;
-        await this.deps.activate(id, cli);
+        await this.deps.activate(id, staged.cli);
       } catch (error) {
-        if(error instanceof ManagedNpmUnavailable)throw error;
-        // Never forward npm output, environment paths or credential-bearing config.
+        if (staged && !activationAttempted) await rm(staged.candidate, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 }).catch(() => {});
+        // Never forward vendor output or environment paths.
         throw new Error(activationAttempted
           ? "Engine activation did not complete. Check the selected engine in Settings before retrying."
-          : "Engine installation could not be verified or activated. Your previous engine is unchanged. Finish running tasks, check Node.js/npm and your connection, then retry.");
+          : "Engine installation could not be verified or activated. Your previous engine is unchanged. Finish running tasks, check your connection, then retry.", { cause: error });
       }
-      this.running = false;
+      // A package is about 500 MB: the one it replaced leaves once the new one is live.
+      const shared = this.deps.otherClis?.(id).some(cli => managedCodexFolder(this.deps.root, cli) === replaced) ?? true;
+      if (replaced && replaced !== staged.candidate && !shared) await rm(replaced, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 }).catch(() => {});
+      this.installing = null; this.running = false;
       return this.status(id);
-    } finally { this.running = false; }
+    } finally { this.installing = null; this.running = false; }
+  }
+  private nativeOptions(id: string) {
+    return { root: this.deps.root, platform: this.deps.platform ?? process.platform, arch: this.deps.arch ?? process.arch, fetcher: this.deps.fetch ?? fetch,
+      run: this.deps.run ?? runNative, envPath: this.deps.envPath ?? process.env.PATH,
+      onProgress: (progress: NativeInstallProgress) => { this.installing = { id, progress }; } };
+  }
+  private async installClaude(id: string): Promise<void> {
+    await clearDownloads(this.deps.root);
+    this.installing = { id, progress: { phase: "download", received: 0, total: 0 } };
+    try { await installClaudeNative(this.nativeOptions(id)); }
+    // Never forward vendor output or environment paths.
+    catch (error) { throw new Error("Claude Code could not be installed. Check your connection and try again.", { cause: error }); }
   }
 
   private async activateFuigo(id: string, cli: string, expectedCli: string | null): Promise<void> {

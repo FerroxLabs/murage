@@ -23,7 +23,7 @@
 // says so in its own words: "a sign-in finished in another window empties
 // this list".
 import { firstRunOwnsMainView } from "@/lib/first-run";
-import type { SetupView } from "../../shared/setup";
+import type { SetupEngineUser, SetupView } from "../../shared/setup";
 
 export interface SignedOutEngineRow {
   id: string;
@@ -32,25 +32,45 @@ export interface SignedOutEngineRow {
    *  The driver is the only thing that knows it, which is why the row
    *  carries it rather than the card hardcoding per-engine copy. */
   signInCommand?: string;
+  /** The bots that run on it now. Never empty on a row: see below. */
+  usedBy: readonly SetupEngineUser[];
 }
 
 /**
  * The engines to report, or none.
  *
- * SILENT WHILE THE FIRST RUN OWNS THE SCREEN, because the signed-out card is
- * already in the Chief's thread asking for exactly this, and two surfaces
- * asking for one sign-in is the noise this Inbox was rebuilt to stop. The
+ * SILENT WHILE THE FIRST RUN OWNS THE SCREEN, which shows Fuigo and Flux only
+ * and asks for no other engine's sign-in (1.0.14). The
  * predicate is `firstRunOwnsMainView`, the same one App.tsx uses to decide
  * whose screen it is, so the two cannot disagree about whether the flow is
  * still running.
  */
 export function signedOutEngineRows(view: SetupView | null | undefined): SignedOutEngineRow[] {
   if (!view || firstRunOwnsMainView(view)) return [];
-  return view.signedOutAgents.map((agent) => ({
+  // ONLY AN ENGINE A BOT RUNS ON (FUIGO-FIRST-SIGNIN-PLACEMENT, Sean 11-02).
+  // Flux Router and Fuigo are front and center; another engine is offered in
+  // Settings and never pushed. A bot on a signed-out engine fails its turns,
+  // so the owner is told and pointed at fixing that bot. One nobody uses
+  // never reaches Needs you, its count or the tray.
+  return view.signedOutAgents.flatMap((agent) => (agent.usedBy?.length ? [{
     id: agent.id,
     name: agent.name,
     ...(agent.signInCommand ? { signInCommand: agent.signInCommand } : {}),
-  }));
+    usedBy: agent.usedBy,
+  }] : []));
+}
+
+/**
+ * EVERY ENGINE THE SETUP VIEW READ AS SIGNED OUT, USED OR NOT.
+ *
+ * Only for `engineNeed`'s fallback (engine-need.ts), which adds a row for a
+ * signed-out engine the setup view did not report. An engine the view did
+ * report and no bot uses is left out on purpose, so that fallback must not
+ * bring it back: it reads this list, never the filtered rows.
+ */
+export function signedOutEngineIds(view: SetupView | null | undefined): Array<{ id: string }> {
+  if (!view || firstRunOwnsMainView(view)) return [];
+  return view.signedOutAgents.map((agent) => ({ id: agent.id }));
 }
 
 /**

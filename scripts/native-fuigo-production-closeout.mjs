@@ -29,9 +29,9 @@ const pins = {
   "1.0.10": { tarballSha256: "6957a109e9ebf2a6d51a49e10202318870e87536aac805c4efda9c744aed7753", binarySha256: "c0fad0e8b1b0cd93d278e66acfebc4235f6fc19a4bfcb53af4080c9e7892e8a8" },
 };
 const productionHashes = {
-  "server/fuigo-native-update.ts": "192cdff0a8c1b4d3d1dfb73a04e33d9fd56d5f4dc0887bf15f4dc18dd8d4c4bf",
-  "server/engine-management.ts": "cf4fd35fe308797b2b065fb6bd3ba4bc1394068fb7cf4f48df8a31135b4ebdb8",
-  "server/codex-managed-windows.ts": "aa340dddb20ae6356bc4182a75c540eb8b03ce6a257ce2775110c99349ac2d35",
+  "server/fuigo-native-update.ts": "1a49b059387f5cae87e459b47156d16533f433fdfe6f063199c327eb1e6eed71",
+  "server/engine-management.ts": "bacb8147f0838679dba43e4bc86fec798f430cc56abd569bc924cb352170efda",
+  "server/engine-native-install.ts": "82cc997ebf7e5b53fa148bc11cf2f810e756974f0e1700042564d6b9cb674aa7",
 };
 const fixedFetch = async (input, init) => {
   const url = String(input);
