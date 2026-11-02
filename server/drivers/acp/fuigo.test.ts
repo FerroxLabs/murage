@@ -1980,6 +1980,24 @@ describe("steer (fuigo/interject)", () => {
     expect(done).toMatchObject({ stopReason: "cancelled" });
   }, 20_000);
 
+  it("Stop All closing a card in the fallback hold stays stopped when the cap comes before the engine's close", async () => {
+    withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "1000" });
+    // The engine stays 3 s, longer than one whole cap, so the cap always comes after Stop All closed the card.
+    const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_ASK: "1", FUIGO_FAKE_FALLBACK_MS: "100", FUIGO_FAKE_HARD_KILL: "1", FUIGO_FAKE_EXIT_DELAY_MS: "3000" });
+    expect(await adapter.steer!("t-fuigo", "one more thing")).toBe("delivered");
+    await recorder!.until((e) => e.type === "request.opened", 15_000);
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(recorder!.events.some((e) => e.type === "turn.completed")).toBe(false);
+    const stoppedAt = Date.now();
+    const stopping = adapter.stopAll!();
+    const done = await recorder!.until((e) => e.type === "turn.completed", 10_000);
+    // Ended by the stop's own bound, not left waiting on a close that may never come.
+    expect(Date.now() - stoppedAt).toBeLessThan(2_500);
+    await stopping.catch(() => undefined);
+    expect(done).toMatchObject({ stopReason: "cancelled" });
+    expect(recorder!.events.some((e) => e.type === "runtime.error" && (e as { message?: string }).message === FALLBACK_CAP_LINE)).toBe(false);
+  }, 20_000);
+
   it("a fallback still running at the cap settles failed with a visible reason", async () => {
     withEnv({ MURAGE_FUIGO_FALLBACK_GRACE_MS: "300", MURAGE_FUIGO_FALLBACK_CAP_MS: "900" });
     const adapter = await startHeld({ FUIGO_FAKE_INTERJECT: "fallback", FUIGO_FAKE_FALLBACK_MS: "8000" });

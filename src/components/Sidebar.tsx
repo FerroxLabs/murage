@@ -2350,7 +2350,8 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      // The Escape is used up here, so a page under the drawer (Health, All chats) does not also act on it.
+      if (event.key === "Escape") { event.preventDefault(); onClose(); }
     };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
