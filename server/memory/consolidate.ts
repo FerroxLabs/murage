@@ -6,6 +6,7 @@ import { readMemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { extractCandidates, groundMemoryClaim, type ReservationRecord, type TextOnlyExtractor } from "./extract.ts";
+import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from "./learning-send.ts";
 import { SLICE_ATTEMPT_LIMIT, SLICE_CALL_GUARD, SLICE_CALL_LIMIT_REASON, type SkippedSlice } from "../../shared/memory-learning-contract.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { activateGroundedMemory } from "./automatic-learning.ts";
@@ -359,6 +360,8 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   const live=existing?JSON.parse(String(existing.intent)):null;
   const skipBudget=live?.status==="complete"||live?.status==="running"&&live.expiresAt>Date.now();
   const budgetAllowed=skipBudget||!isLearnableSource(db,String(budgetSource.id),Number(budgetSource.revision)).learnable||(options.budgetGate?.(String(budgetSource.scope_id))??true);
+  // the learning fence counter, sampled before the slice's words are read (memory/learning-send.ts); the claim's own writes are quiet
+  const fenceAt=sampleLearningFence();
   const claim=transaction(()=>{
     const source=completedSource(completedJobId),prior=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
     const saved=prior?JSON.parse(String(prior.intent)):null;
@@ -407,6 +410,16 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   });
   if(claim.done)return claim.done;
   const {source,state,generation,meta,text,length,at,learningRevision}=claim;
+  // The slice's words were read after `fenceAt`: every call below has its own gate over it and the held source (by digest), checked and
+  // released under the write lock at its send (memory/learning-send.ts), so a Forget, delete or edit that commits while a call waits (an
+  // engine queue, an earlier call of this slice) drops it unsent.
+  const held={id:String(source!.id),revision:Number(source!.revision),digest:sourceDigest(database(),String(source!.id),Number(source!.revision))};
+  const fence=learningGate("extraction",fenceAt,{sources:[held]});
+  // A call the fence dropped after its reservation sent nothing: its slice charge is given back before the commit (which a moved
+  // generation refuses), so a Forget never costs the slice one of its attempts.
+  const unsent={extraction:0,calls:0};
+  const tracked=(extraction:boolean)=>{const call={charged:false};const record:ReservationRecord=(chargeDb,spent)=>{call.charged=true;charge(extraction)(chargeDb,spent);};return {call,record};};
+  const dropped=(call:{charged:boolean},extraction:boolean)=>{if(!call.charged)return;unsent.calls++;if(extraction)unsent.extraction++;};
   // Every admitted call of this slice is counted on the intent inside its reserve transaction (charged before dispatch, kept across a crash).
   let sliceCalls=state!.sliceCalls??0;
   const charge=(extraction:boolean):ReservationRecord=>chargeDb=>{
@@ -421,7 +434,9 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
   const ownerRetry=!!state!.retries?.length&&(state!.extractionAttempts??0)===0;
   // bot email (5.4): a slice of a source captured from a marked row reaches the extractor fenced, kind email-derived
   const shown=text!.trim()&&evidenceEmailDerived(db,[{sourceId:source.id,revision:source.revision}])?fenceEmailDerived(text!,`source-${String(source.id)}`):text!;
-  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),charge(true),{ownerRetry,shown}):{status:"complete" as const,candidates:[]};
+  const extraction=tracked(true);
+  const result=text!.trim()?await extractCandidates(text!,extractor,signal,readMemoryEvolutionPolicy(state!.evolutionPolicyRevision),extraction.record,{ownerRetry,shown,fence}):{status:"complete" as const,candidates:[]};
+  if(result.status==="deferred"&&result.reason==="extraction-fenced")dropped(extraction.call,true);
   const corrections=new Map<object,{id:string;version:number}>();
   const support=new Map<object,{supported:boolean;reason:string}>();
   // One grounding call per candidate: with a correction target the same call answers the correction and the support check.
@@ -434,12 +449,25 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const needsSupport=Boolean(candidate.claimType&&candidate.claimType!=="inference"&&candidate.text!==candidate.quote);
     if(!correcting&&!needsSupport)continue;
     if(sliceCalls>=SLICE_CALL_GUARD){support.set(candidate,{supported:false,reason:SLICE_CALL_LIMIT_REASON});continue;}
+    const call=tracked(false);
     if(correcting){
-      const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType??"owner-statement",speaker:String(source!.speaker),outcome:String(source!.outcome),previousClaim:String(prior[0]!.text)},extractor,signal,charge(false));
+      const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType??"owner-statement",speaker:String(source!.speaker),outcome:String(source!.outcome),previousClaim:String(prior[0]!.text)},extractor,signal,call.record,learningGate("grounding",fenceAt,{sources:[held],records:[{id:String(prior[0]!.id),version:Number(prior[0]!.version),digest:recordDigest(database(),String(prior[0]!.id),Number(prior[0]!.version))}]}));
+      if(checked.reason==="grounding-fenced")dropped(call.call,false);
       if(checked.supported){corrections.set(candidate,{id:String(prior[0]!.id),version:Number(prior[0]!.version)});support.set(candidate,{supported:true,reason:checked.reason});}
       else if(needsSupport)support.set(candidate,checked.entailed?{supported:true,reason:"source-entailment"}:{supported:false,reason:checked.entailed===false?"unsupported-claim":checked.reason});
-    }else support.set(candidate,await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType!,speaker:String(source!.speaker),outcome:String(source!.outcome)},extractor,signal,charge(false)));
+    }else{
+      const checked=await groundMemoryClaim({text:candidate.text,quote:candidate.quote,claimType:candidate.claimType!,speaker:String(source!.speaker),outcome:String(source!.outcome)},extractor,signal,call.record,fence);
+      if(checked.reason==="grounding-fenced")dropped(call.call,false);
+      support.set(candidate,checked);
+    }
   }
+  if(unsent.calls)transaction(chargeDb=>{
+    const row=chargeDb.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);if(!row)return;
+    const intent=JSON.parse(String(row.intent)) as ConsolidationIntent;if(intent.generation!==generation)return;
+    intent.extractionAttempts=Math.max(0,(Number(intent.extractionAttempts)||0)-unsent.extraction);
+    intent.sliceCalls=sliceCalls=Math.max(0,(Number(intent.sliceCalls)||0)-unsent.calls);
+    chargeDb.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(intent),id);
+  });
   return transaction(()=>{
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);

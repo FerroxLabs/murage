@@ -36,6 +36,13 @@ export function selectedStorageBackend(safeStorage, platform) {
   }
 }
 
+/** LINUX-NOKEYRING-ENV-KEY: the reason code the desktop hands its server child: "keyring" when no key can be saved
+ * because Linux has no unlocked keyring, else "". An unreadable store is its own case and gives "". Never a key. */
+export async function secretSaveRefusedReason({ safeStorage, storeUnavailable, platform = process.platform, env = process.env }) {
+  if (storeUnavailable) return "";
+  return (await secretWriteRefusal({ safeStorage, platform, env })) === LINUX_KEYRING_REQUIRED ? "keyring" : "";
+}
+
 /** Why a secret write must not go ahead, as a sentence for the person, or null
  * when it may. */
 export async function secretWriteRefusal({ safeStorage, platform = process.platform, env = process.env }) {

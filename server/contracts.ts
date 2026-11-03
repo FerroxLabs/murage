@@ -594,6 +594,11 @@ export interface FolderTrustTurnInput {
   /** Rule 3b: plain picker trusts that raise no card this turn. Set only for an
    * owner-started turn at No limits, and absent otherwise, so rule 5 stands. */
   noCardPickKeys?: string[];
+  /** The desk rule (FUIGO-DESK-AUTOTRUST-1014): this turn runs in the thread
+   * desk Murage made for this bot and thread, nobody picked it, and it held
+   * nothing for Fuigo to load at dispatch. The core checks the live tree again
+   * when Fuigo asks. Absent whenever any check fails, so the card stands. */
+  managedDesk?: { botId: string; threadId: string; desk: string; bundleIds: readonly string[]; dataDir: string; ownerPicked: false };
   /** Rule 3b: Fuigo's own store holds a no for this turn's key, which is in
    * `noCardPickKeys`. Fuigo will not ask; the turn shows a chip that says so. */
   storedNoPick?: true;
@@ -790,6 +795,8 @@ export interface ProviderSnapshot {
   setupAction?: "repair";
   reason?: string;
   authenticated?: boolean;
+  /** The sign-in check ran and did not answer (a timeout or a crash), so the engine is neither signed in nor signed out yet. */
+  authUnverified?: true;
   version?: string | null;
   /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
   versionNote?: string;
@@ -823,6 +830,8 @@ export interface EngineInstall {
   signInCommand?: string;
   /** `command` needs npm on PATH, so the UI can say so when Node is absent. */
   needsNode?: boolean;
+  /** Murage installs this engine itself from the vendor's native build (engine-native-install.ts). */
+  native?: boolean;
 }
 
 // ── driver SPI (upstream ProviderDriver — a plain record, not a service) ─
@@ -898,12 +907,14 @@ export interface ProviderInstance {
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string, botId?: string): Promise<string>;
+  /** One short real reply on a hidden session, tool-free and with no owner data, on request only (engine-reply-check.ts). */
+  checkReply?(signal: AbortSignal): Promise<string>;
   /** One non-persisted owner proposal with tools and hooks disabled. */
   /** `botId` is the bot the call is made for: on a Cloud home the launcher refuses an engine run that names none. */
   proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
-  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
+  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal, fence?: import("./memory/learning-send.ts").LearningGate): Promise<string>;
   extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal, dispatch?: import("./memory/extract.ts").MemoryExtractionDispatch): Promise<string>;
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability
