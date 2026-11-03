@@ -335,6 +335,32 @@ export function rebuildWatchThreads(db: DatabaseSync): void {
     ORDER BY bot_id, position, id`).run();
 }
 
+/** The urgent rule the Bot settings Calls switch shows (MurageMain 11-02, BOT-CALLS-UNREACHABLE): this bot's one
+ * needs_owner_now rule, Tier B, so always message first with 10 minutes (design 3). On: the rule is switched on, or made
+ * through insertCallRule (born held during a restore, 5.9). Off: it is switched off; it is never deleted, so its
+ * history keeps its rule. Touches no other rule, so a turn mark made meanwhile is never lost. Returns the rule ids
+ * switched off. */
+export function setNeedsOwnerNowRule(db: DatabaseSync, botId: string, on: boolean, now: number): string[] {
+  if (typeof botId !== "string" || !botId) refuse("bad_bot", "a rule belongs to a bot");
+  return inTransaction(db, () => {
+    const rows = db.prepare("SELECT id, enabled, demoted FROM bot_call_rules WHERE bot_id=? AND kind='needs_owner_now' ORDER BY position, created_at").all(botId) as Array<{ id: string; enabled: number; demoted: number }>;
+    if (on) {
+      if (rows.length === 0) insertCallRule(db, { botId, kind: "needs_owner_now", params: {}, how: "text_first", waitMin: 10, enabled: true }, now);
+      else if (!rows.some(r => Number(r.enabled) === 1 && Number(r.demoted) === 0)) {
+        // the owner turning it on also lifts an earlier "Don't call me about this again" (demoted to message only), so the
+        // switch never shows on while the rule only messages (GrokBuild r1 Medium). Only enabled and demoted change.
+        const row = rows.find(r => Number(r.enabled) === 1) ?? rows[0];
+        db.prepare("UPDATE bot_call_rules SET enabled=1, demoted=0, updated_at=? WHERE id=?").run(now, row.id);
+      }
+      return [];
+    }
+    const off = rows.filter(r => Number(r.enabled) === 1).map(r => r.id);
+    const update = db.prepare("UPDATE bot_call_rules SET enabled=0, updated_at=? WHERE id=?");
+    for (const id of off) update.run(now, id);
+    return off;
+  });
+}
+
 /** PUT /api/bots/:id/calls/rules: an upsert by id in ONE transaction; a rule left out is deleted. The hold columns of an
  * existing row are never written; a new row goes through insertCallRule. Everything is validated before anything is written. */
 export function putCallRules(db: DatabaseSync, botId: string, list: readonly CallRuleInput[], now: number): CallRuleRow[] {

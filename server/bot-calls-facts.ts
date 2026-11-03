@@ -9,7 +9,7 @@
 // fenced and only ever reaches a Tier B rule.
 import type { DatabaseSync } from "node:sqlite";
 import { admitIntent, type Admission, type FactKind } from "./bot-calls-machine.ts";
-import { inTransaction, type CallRuleKind } from "./bot-calls-schema.ts";
+import { botCallsEnabled, inTransaction, type CallRuleKind } from "./bot-calls-schema.ts";
 
 /** One server fact. `at` is when it happened (fact_at); keys follow the table of 4.1. A watch rule's `watchId` is the
  * run's `watch.watchId` (shared/routine-watch.ts); a webhook rule's `routineId` is the webhook's id. */
@@ -57,6 +57,12 @@ function paramsMatch(f: ServerFact, params: Record<string, unknown>): boolean {
 /** The bot has at least one enabled rule of this kind (cheap: lets a producer skip work when no rule could match). */
 export function botWantsFact(db: DatabaseSync, botId: string, kind: ServerFact["kind"]): boolean {
   return db.prepare("SELECT 1 FROM bot_call_rules WHERE bot_id=? AND kind=? AND enabled=1 LIMIT 1").get(botId, ruleKind[kind]) !== undefined;
+}
+
+/** needs_owner_now is listed on a turn (design 5.10) only while this bot can call (its switch, Bot settings > Voice &
+ * alerts > Calls) and has an enabled needs_owner_now rule. Read when the engine's tool server launches. */
+export function needsOwnerNowOffered(db: DatabaseSync, botId: string): boolean {
+  return botCallsEnabled(db, botId) && botWantsFact(db, botId, "needs_owner_now");
 }
 
 /** The admissions this fact makes now: every enabled, un-held rule of the bot, made before the fact, whose params match. */

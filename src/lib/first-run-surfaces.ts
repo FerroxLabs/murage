@@ -147,7 +147,6 @@ export function firstRunAssembledStrings(): ReadableString[] {
     { path: "localModelLine", text: localModelLine("Qwen3.8-27B", "llama.cpp") },
     { path: "localModelLine(no host)", text: localModelLine("qwen3:8b", "") },
     { path: "localModelLine(none)", text: localModelLine("", "") },
-    { path: "agents.signed-out.commandFor", text: FIRST_RUN_COPY.agents["signed-out"].commandFor("Codex") },
     { path: "botsEyebrowLine(0)", text: botsEyebrowLine(0) },
     { path: "botsEyebrowLine(1)", text: botsEyebrowLine(1) },
     { path: "botsEyebrowLine(2)", text: botsEyebrowLine(2) },

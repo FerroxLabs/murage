@@ -10,8 +10,10 @@ import { describe, expect, it } from "vitest";
 import { inboxTabCounts, signedOutEngineRows, withSignedOutEngines } from "./signed-out-engines";
 import type { SetupView } from "../../shared/setup";
 
+/** A signed-out engine a bot runs on: the only kind Needs you reports (FUIGO-FIRST-SIGNIN-PLACEMENT). */
+const SCOUT = [{ id: "scout", name: "Scout" }];
 const agent = (id: string, name: string, signInCommand?: string) =>
-  ({ id, name, installed: true, ...(signInCommand ? { signInCommand } : {}) }) as never;
+  ({ id, name, installed: true, ...(signInCommand ? { signInCommand } : {}), usedBy: SCOUT }) as never;
 
 /** `conversationLive` and `next` are what firstRunOwnsMainView reads. */
 function view(over: Partial<SetupView> = {}): SetupView {
@@ -26,7 +28,7 @@ function view(over: Partial<SetupView> = {}): SetupView {
 describe("which signed-out engines get reported", () => {
   it("reports one that is here and signed out of, with the command that fixes it", () => {
     expect(signedOutEngineRows(view())).toEqual([
-      { id: "claude", name: "Claude Code", signInCommand: "claude login" },
+      { id: "claude", name: "Claude Code", signInCommand: "claude login", usedBy: SCOUT },
     ]);
   });
 
@@ -34,7 +36,7 @@ describe("which signed-out engines get reported", () => {
     // The driver is the only thing that knows it, so an absent command is a
     // row without one rather than invented copy.
     const rows = signedOutEngineRows(view({ signedOutAgents: [agent("codex", "Codex")] }));
-    expect(rows).toEqual([{ id: "codex", name: "Codex" }]);
+    expect(rows).toEqual([{ id: "codex", name: "Codex", usedBy: SCOUT }]);
   });
 
   it("says nothing before the server has answered", () => {

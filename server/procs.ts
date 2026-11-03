@@ -999,6 +999,25 @@ export function awaitCliTreeStopped(child: ChildProcess, termGraceMs = CLI_TERM_
   return stopOwnedCli(child, ownership, undefined, termGraceMs, false, deadlineMs);
 }
 
+/** CLOSE-STOP-1014: the root's own `close`, once the tree is confirmed stopped. On the Windows job route an empty job confirms the
+ *  tree gone before the root's `close` lands (stopOwnedCli waits for nothing after it), and the drivers end a stopped turn on that
+ *  close. A caller about to clear its listeners (dispose: quit, restart, reload) waits for it here first, so the turn's end reaches
+ *  them. Bounded by WINDOWS_ROOT_CLOSE_MS (every job member is gone, so nothing holds the pipes); true when the close landed.
+ *  POSIX confirmation already includes the root close, so it answers at once there. */
+export function awaitCliRootClose(child: ChildProcess, closeMs = WINDOWS_ROOT_CLOSE_MS): Promise<boolean> {
+  const owned = cliOwnership.get(child);
+  if (!owned) return Promise.resolve(false);
+  if (owned.closed) return Promise.resolve(true);
+  return new Promise<boolean>((resolve) => {
+    // registered after the driver's own close handler, so that handler has run (and settled the turn) when this resolves
+    const finish = (landed: boolean) => { clearTimeout(timer); child.off("close", onClose); resolve(landed); };
+    const onClose = () => finish(true);
+    const timer = setTimeout(() => finish(owned.closed), closeMs);
+    timer.unref?.();
+    child.once("close", onClose);
+  });
+}
+
 /** Like awaitCliTreeStopped, but with no SIGTERM grace: a stop already in
  * flight (the child's own close started one) is escalated at once, so the
  * whole tree is killed now instead of when that stop's grace runs out. */
