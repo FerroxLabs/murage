@@ -178,7 +178,9 @@ it("removes the simulation's assistant-inference failed activity from checkpoint
  reconcileMemoryRoster(roster); setMemoryMode("capture");
  captureSource(database(),{id:"sim-legacy",threadId:"closing-chat",kind:"activity",speaker:"assistant",outcome:"completed",text:simulationFailure});
  const work=claimMemoryJob("sim-replay")!;
- publishMemoryWork(work,"sim-replay",captureWork(work));
+ // From 1.0.15 a legacy activity is a tool's outcome and its capture writes no source record (MEMORY-TOOL-NAME-JUNK); a record an older
+ // build wrote is still on the owner's file, so it is made here the way those builds made it (the same work published as a reply line).
+ publishMemoryWork({...work,kind:"text"},"sim-replay",captureWork(work));
  expect(database().prepare("SELECT kind,assertion,text FROM memory_records WHERE kind='source'").get()).toMatchObject({kind:"source",assertion:"assistant-inference",text:simulationFailure});
  database().prepare("UPDATE memory_sources SET outcome='failed' WHERE id='sim-legacy'").run();
  expect(refreshMemoryCheckpoint(work.id)).toMatchObject({status:"deferred",reason:"no-current-completed-evidence"});
@@ -189,7 +191,8 @@ it.each(["recall", "extraction"])("withholds legacy failed activity from %s whil
   reconcileMemoryRoster(roster); setMemoryMode("capture");
   captureSource(database(), { id: "legacy-recall", threadId: "closing-chat", kind: "activity", speaker: "assistant", outcome: "completed", text: simulationFailure });
   const work = claimMemoryJob("legacy-recall")!;
-  publishMemoryWork(work, "legacy-recall", captureWork(work));
+  // a record an older build wrote for a legacy activity (from 1.0.15 its capture writes none): made the way those builds made it
+  publishMemoryWork({ ...work, kind: "text" }, "legacy-recall", captureWork(work));
   const record = database().prepare("SELECT id FROM memory_records WHERE kind='source'").get()!;
   database().prepare("UPDATE memory_sources SET outcome='failed' WHERE id='legacy-recall'").run();
   if (path === "recall") expect(() => hydrateMemoryRecord(String(record.id), 1, access("finch", "closing-chat"), {allowance: LineageAllowance.tool(1_000_000_000)})).toThrow("MEMORY_EVIDENCE_UNAVAILABLE");

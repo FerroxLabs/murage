@@ -3,6 +3,8 @@ export interface FluxConnectionStatus {
   choices: { id: string; label: string; enabled: boolean }[];
   /** A key usable before a save was replaced or removed since this launch: running engines still hold it until Murage restarts. */
   restartRequired?: boolean;
+  /** The desktop found no unlocked keyring at launch (LINUX-NOKEYRING-ENV-KEY): no key can be saved, the panel says why. A reason, never a key. */
+  saveBlocked?: "keyring";
 }
 export type FluxConnectionMutation =
   | { action: "connect" | "replace"; revision: string; key: string }
