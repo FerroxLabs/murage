@@ -27,6 +27,7 @@ export const CLOUD_REFUSED_PATTERNS = Object.freeze([
   "cua:*",
   "engine:open-terminal",
   "engine:open-setup-terminal",
+  "local-engine-login:*",
   "desktop:pick-folder",
   "desktop:surface-secret", // sync: the refused sender gets ""
   "credential:set",
@@ -185,6 +186,11 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
   // engine
   "engine:open-setup-terminal",
   "engine:open-terminal",
+  // Engine sign-in on this computer (1.0.14): main window only. :data and :closed are main -> renderer sends, classed by the prefix.
+  "local-engine-login:open-terminal",
+  "local-engine-login:preview",
+  "local-engine-login:start",
+  "local-engine-login:stop",
   // flux-connection, and the desktop Flux sign-in (opens the browser, saves the key in main)
   "flux-connection:mutate",
   "flux-connection:restart-app",
@@ -239,7 +245,7 @@ export const LOCAL_ONLY_CHANNELS = Object.freeze([
  * Channels main registers in a loop from a template string (backup-closed:${action}, backup-remote:${action}); the
  * preload calls them by their expanded names. All local-only.
  */
-export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:"]);
+export const LOCAL_ONLY_PREFIXES = Object.freeze(["backup-closed:", "backup-remote:", "local-engine-login:"]);
 
 const mainOnlyCloud = new Set(MAIN_ONLY_CLOUD_CHANNELS);
 

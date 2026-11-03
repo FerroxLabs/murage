@@ -37,7 +37,7 @@ import { ReadAlong } from "./ReadAlong";
 import { botVoice } from "@/lib/audio-level";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
-import { isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "./PendingApproval";
+import { isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "@/lib/pending-approval";
 import { followingRequest, nextSelection, queueCommand, reachesPastOneRequest, requestsWaiting, selectRequest, type QueueSelection } from "@/lib/approval-queue";
 import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 
