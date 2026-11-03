@@ -17,6 +17,7 @@ import { learningCeilingStatus, memoryOwnerRoute } from "./settings.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
 import { learningDefaultOnFor } from "./extractor-connections.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { memoryHealth } from "./health.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -127,8 +128,8 @@ it("missing-usage: a reply with no usage block keeps the whole reservation; an u
 it.each([true, false])("settles a real transport only when it reports usage (%s)", async reported => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "[]" } }], ...(reported ? { usage: { prompt_tokens: 10, completion_tokens: 3 } } : {}) }))));
   const config = { url: "https://fixture.invalid/v1", apiKey: "fake", model: "fake" };
-  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages);
-  await extractCandidates("tea", extractor, new AbortController().signal);
+  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence);
+  await extractCandidates("tea", extractor, new AbortController().signal, undefined, undefined, { fence: openLearningGate() });
   // no usage block: the whole reservation stays (never a body-size surcharge, Astra r3 Medium) and the reply counts as unmetered
   expect(spend().output).toBe(reported ? 3 : 2000);
   expect(spend().unmetered).toBe(reported ? undefined : 1);
@@ -147,20 +148,20 @@ it.each(rejectedReplies)("rejected-reply-settles: a %s reply settles its reporte
   configure({ callsPerMinute: 60 });
   vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...body, usage: { prompt_tokens: 9000, completion_tokens: 2600 } }))));
   const config = { url: "https://fixture.invalid/v1", apiKey: "fake", model: "fake" };
-  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages);
-  extractor.ground = (input, max, signal) => requestMemoryGrounding(config, input, max, signal);
+  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence);
+  extractor.ground = (input, max, signal, fence) => requestMemoryGrounding(config, input, max, signal, fence);
   const day = () => row(`extract-budget:${new Date().toISOString().slice(0, 10)}`);
-  expect(await extractCandidates("tea", extractor, new AbortController().signal)).toMatchObject({ status: "deferred", reason: "extraction-incomplete" });
+  expect(await extractCandidates("tea", extractor, new AbortController().signal, undefined, undefined, { fence: openLearningGate() })).toMatchObject({ status: "deferred", reason: "extraction-incomplete" });
   expect(spend()).toEqual({ input: 9000, output: 2600 });
   expect(day()).toMatchObject({ input: 9000, output: 2600 });
-  expect(await groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, new AbortController().signal)).toMatchObject({ supported: false });
+  expect(await groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, new AbortController().signal, undefined, openLearningGate("grounding"))).toMatchObject({ supported: false });
   expect(spend()).toEqual({ input: 18000, output: 5200 });
   for (const purpose of ["evaluation", "reflection"] as const) {
-    await withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, new AbortController().signal, MESSAGES, purpose).catch(() => null));
+    await withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, new AbortController().signal, MESSAGES, purpose, undefined, openLearningGate(purpose)).catch(() => null));
   }
   expect(spend()).toEqual({ input: 36000, output: 10400 });
   expect(day()).toMatchObject({ input: 36000, output: 10400 });
-  await withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, new AbortController().signal, MESSAGES, "continuity", lived()).catch(() => null));
+  await withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, new AbortController().signal, MESSAGES, "continuity", lived(), openLearningGate("continuity")).catch(() => null));
   expect(spend()).toEqual({ input: 45000, output: 13000 });
   expect(row(`continuity-budget:bot:${continuityDay()}`)).toMatchObject({ input: 9000, output: 2600 });
 });
@@ -181,14 +182,14 @@ it.each(unreadableReplies.flatMap(([kind, reply]) => purposes.map(purpose => [ki
   const fetchMock = vi.fn(async () => reply());
   vi.stubGlobal("fetch", fetchMock);
   const config = { url: "https://fixture.invalid/v1", apiKey: "fake", model: "fake" };
-  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages);
-  extractor.ground = (input, max, signal) => requestMemoryGrounding(config, input, max, signal);
+  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence);
+  extractor.ground = (input, max, signal, fence) => requestMemoryGrounding(config, input, max, signal, fence);
   const signal = new AbortController().signal;
   const call = async () => {
-    if (purpose === "extraction") return extractCandidates("tea", extractor, signal);
-    if (purpose === "grounding") return groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, signal);
-    if (purpose === "continuity") return withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, "continuity", lived()).catch(() => null));
-    return withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, purpose).catch(() => null));
+    if (purpose === "extraction") return extractCandidates("tea", extractor, signal, undefined, undefined, { fence: openLearningGate() });
+    if (purpose === "grounding") return groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, signal, undefined, openLearningGate("grounding"));
+    if (purpose === "continuity") return withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, "continuity", lived(), openLearningGate("continuity")).catch(() => null));
+    return withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, purpose, undefined, openLearningGate(purpose)).catch(() => null));
   };
   for (let n = 0; n < 3; n++) await call();
   const paid = fetchMock.mock.calls.length;
@@ -213,14 +214,14 @@ it.each(purposes)("unseen-billing-bound (%s): malformed paid replies never spend
   const fetchMock = vi.fn(async () => { real += billed; return new Response(malformed); });
   vi.stubGlobal("fetch", fetchMock);
   const config = { url: "https://fixture.invalid/v1", apiKey: "fake", model: "fake" };
-  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages);
-  extractor.ground = (input, max, signal) => requestMemoryGrounding(config, input, max, signal);
+  const extractor: TextOnlyExtractor = (text, max, signal, dispatch) => dispatch?.purpose ? requestMemoryInference(config, text, max, signal, dispatch) : requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence);
+  extractor.ground = (input, max, signal, fence) => requestMemoryGrounding(config, input, max, signal, fence);
   const signal = new AbortController().signal;
   for (let n = 0; n < 8; n++) {
-    if (purpose === "extraction") await extractCandidates("tea", extractor, signal);
-    else if (purpose === "grounding") await groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, signal);
-    else if (purpose === "continuity") await withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, "continuity", lived()).catch(() => null));
-    else await withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, purpose).catch(() => null));
+    if (purpose === "extraction") await extractCandidates("tea", extractor, signal, undefined, undefined, { fence: openLearningGate() });
+    else if (purpose === "grounding") await groundMemoryClaim({ text: "tea", quote: "tea", claimType: "owner-statement", speaker: "owner", outcome: "recorded" }, extractor, signal, undefined, openLearningGate("grounding"));
+    else if (purpose === "continuity") await withContinuityInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, "continuity", lived(), openLearningGate("continuity")).catch(() => null));
+    else await withMemoryInferenceLease(lease => lease.request(extractor, "tea", 2000, signal, MESSAGES, purpose, undefined, openLearningGate(purpose)).catch(() => null));
   }
   expect(real).toBeLessThanOrEqual(ceiling + 2 * (billed - reserved));
   expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(true);
@@ -234,7 +235,7 @@ it("unmetered recovery: a raise clears unmetered replies and learning resumes; m
   ended(reserveExtraction(MESSAGES, 2000));
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("offline"); }));
   const config = { url: "https://fixture.invalid/v1", apiKey: "fake", model: "fake" };
-  for (let n = 0; n < 4; n++) await extractCandidates("tea", (text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages), new AbortController().signal);
+  for (let n = 0; n < 4; n++) await extractCandidates("tea", (text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence), new AbortController().signal, undefined, undefined, { fence: openLearningGate() });
   expect(spend().unmetered).toBeUndefined();
   expect(spend().open).toBeUndefined();
   expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(false);

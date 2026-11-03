@@ -44,6 +44,8 @@ async function rig() {
   const completion = (v: unknown) => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(v) } }], usage: { prompt_tokens: 100, completion_tokens: 50 } }), { status: 200, headers: { "content-type": "application/json" } });
   const fetchImpl = vi.fn(async () => {
     // the deny lands after the fence's last sample and before the answer: inside the in-flight window
+    // the request leaves inside the gate's write lock and COMMIT follows at once (r8 section 1): the other connection writes on the next turn of the loop, still before the answer
+    await new Promise(resolve => setImmediate(resolve));
     other.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('thread','private',1,?)").run(T0);
     return completion(lived);
   }) as unknown as typeof fetch;
