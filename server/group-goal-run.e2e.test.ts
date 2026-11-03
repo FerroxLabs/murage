@@ -8,7 +8,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { pollWhileProgressing } from "./testing/progress-poll.ts";
 import { redactSecrets } from "./redact.ts";
+
+/** A goal run is finished once it leaves "working". Each turn taken buys another
+ * idle window; `maxMs` stays inside the test's own timeout. */
+type GoalRunReading = { status?: string; turnCount?: number } | undefined;
+const GOAL_RUN_WAIT = (maxMs: number) => ({
+  done: (run: GoalRunReading) => run !== undefined && run.status !== "working",
+  progress: (run: GoalRunReading) => run?.turnCount,
+  idleMs: 15_000,
+  maxMs,
+});
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -266,16 +277,18 @@ describe("goal-driven channel runs", () => {
     expect(sent.status).toBe(202);
     expect(sent.body.message).toMatchObject({ channelMode: "goal" });
 
-    await expect.poll(async () => {
+    // The wait grows while the team keeps taking turns (a loaded runner was at
+    // turn 3 of 13 when a fixed 10 s wait ran out) and ends at 15 s without one.
+    await pollWhileProgressing(async () => {
       const state = (await api("GET", "/api/bots?messages=30")).body;
       const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
       return current?.messages.find((message: { kind: string }) => message.kind === "goal.run")?.goalRun;
-    }, { timeout: 10_000 }).toMatchObject({
+    }, GOAL_RUN_WAIT(40_000)).then((goalRun) => expect(goalRun).toMatchObject({
       status: "completed",
       coordinatorBotId: lead.id,
       turnCount: 3,
       detail: "Draft produced and independently verified.",
-    }).catch(async (error: unknown) => {
+    })).catch(async (error: unknown) => {
       // Keep the exact turn budget. If a claimed turn retried before producing
       // a scripted reply, retain the isolated fixture evidence before cleanup.
       const snapshot = (await api("GET", "/api/bots?messages=60")).body;
@@ -1079,13 +1092,14 @@ describe("goal-driven channel runs", () => {
       mode: "goal",
     })).status).toBe(202);
 
-    await expect.poll(async () => {
+    // thirteen engine turns, each a fresh CLI process: Windows starts a process
+    // several times slower than Linux, so the wait grows with every turn taken
+    const goalRun = await pollWhileProgressing(async () => {
       const state = (await api("GET", "/api/bots?messages=40")).body;
       const current = state.groups.find((candidate: { id: string }) => candidate.id === room.id);
       return current?.messages.find((message: { kind: string }) => message.kind === "goal.run")?.goalRun;
-    // thirteen engine turns, each a fresh CLI process: Windows starts a process
-    // several times slower than Linux, so the wait is sized for it
-    }, { timeout: 60_000 }).toMatchObject({ status: "limit-reached", turnCount: 13, maxTurns: 13 });
+    }, GOAL_RUN_WAIT(85_000));
+    expect(goalRun).toMatchObject({ status: "limit-reached", turnCount: 13, maxTurns: 13 });
   }, 90_000);
 
   it("never treats a failed provider turn as a completed goal", async () => {

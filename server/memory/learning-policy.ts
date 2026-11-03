@@ -141,7 +141,9 @@ export function seedRowInMonth(id: string, month: string): boolean {
 /** Sum of the day ledgers that belong to `month`. Bounded by the number of day rows (one per UTC day plus one per bot per local day). */
 export function learningSpendSeed(db: DatabaseSync, month: string): { input: number; output: number } {
   let input = 0, output = 0;
-  for (const row of db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_id IN ('extract-budget','continuity-budget')").all()) {
+  // subject_type='system' (the type extract.ts writes every day ledger with) lets memory_bindings_subject(subject_type, subject_id) seek the
+  // ledgers; without it the upgrade step scanned every binding (94k rows on the owner's data, 0.6 to 0.9 s from cold pages).
+  for (const row of db.prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id IN ('extract-budget','continuity-budget')").all()) {
     if (!seedRowInMonth(String(row.id), month)) continue;
     const budget = JSON.parse(String(row.intent)) as { input?: unknown; output?: unknown };
     if (typeof budget.input === "number" && Number.isFinite(budget.input)) input += Math.max(0, budget.input);
