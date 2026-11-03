@@ -273,7 +273,7 @@ describe("card one: hello", () => {
 describe("card two: what is already here", () => {
   const copy = FIRST_RUN_COPY.agents.detect;
 
-  it("draws a row for every runnable engine and collapses the rest", async () => {
+  it("draws a row for every runnable engine and names nothing else", async () => {
     await machine({
       ownerName: "Sean",
       agents: [
@@ -292,9 +292,10 @@ describe("card two: what is already here", () => {
     expect(markup).toContain("qwen3:8b on Ollama");
     expect(markup).toContain("Claude Code");
     expect(markup).toContain(copy.localDetail);
-    // The signed-out pair is BEHIND the button, not on the page.
-    expect(markup).toContain("and 2 more on this computer");
+    // The signed-out pair is not named at all, not even behind a button (1.0.14).
+    expect(markup).not.toContain("more on this computer");
     expect(markup).not.toContain("Codex");
+    expect(markup).not.toContain("Gemini");
     expect(markup).toContain(copy.closing);
   });
 
@@ -373,7 +374,7 @@ describe("card two: what is already here", () => {
       agents: [],
       signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
     });
-    expect(render("detect", "signed-out"), "signed-out").toContain(FIRST_RUN_COPY.agents["signed-out"].leave);
+    expect(render("detect", "signed-out"), "signed-out").toContain(copy.action);
 
     // ...including the one where they went and signed in, which empties the
     // list and settles nothing on its own.
@@ -382,25 +383,15 @@ describe("card two: what is already here", () => {
   });
 
   /**
-   * THE DEFECT: "WHAT IS ALREADY RUNNING CARRIES ON" SAID TO A MACHINE WHERE
-   * NOTHING IS RUNNING.
+   * NEVER A FALSE "SOMETHING IS RUNNING", AND NO OTHER ENGINE PUSHED.
    *
-   * `agents["signed-out"].third` was rendered unconditionally. It is written
-   * for somebody whose signed-out Codex sits BESIDE a working engine, where
-   * leaving it really does cost them nothing. On a machine whose only engine
-   * is the signed-out one, `view.agents` is empty, nothing can answer, and
-   * the card told that person their assistant was working while the next
-   * thing they asked it for was going to fail. Same shape as the claim this
-   * card was built to end.
-   *
-   * `agents` is already filtered by `runnable()` on the server, so an empty
-   * list IS "nothing is running" and no second reading is needed. The guard
-   * is `view.agents.length > 0`, which is what `canCarryOn` in
-   * FirstRunFluxCard.tsx and `bare` in `FirstRunNoKeyCard` already read.
+   * The signed-out card used to name the engine and offer its sign-in. Since
+   * 1.0.14 it shows Fuigo and Flux only (FUIGO-FIRST-SIGNIN-PLACEMENT). What
+   * stays true from the old defect: on a machine where nothing can answer
+   * (`view.agents` empty), the card must not say the engine in the box is
+   * running. It says the key is next instead.
    */
-  const signedOut = FIRST_RUN_COPY.agents["signed-out"];
-
-  it("never tells a machine with nothing running that something carries on", async () => {
+  it("never tells a machine with nothing running that something is running", async () => {
     await machine({
       ownerName: "Sean",
       nothingToThinkWith: false,
@@ -409,27 +400,21 @@ describe("card two: what is already here", () => {
     });
     const markup = render("detect", "signed-out");
     expect(markup, "nothing is running here and the card said something was")
-      .not.toContain(asHtml(signedOut.third));
-    // AND IT STILL SAYS SOMETHING. Deleting the line would pass the assertion
-    // above and leave the card two sentences long with no answer to "what
-    // happens if I leave it", so the replacement is required, not optional.
-    expect(markup, "the false line was removed and nothing took its place")
-      .toContain(asHtml(signedOut.thirdBare));
-    // The rest of the card is untouched: this is one sentence, not a variant.
-    expect(markup).toContain(asHtml(signedOut.chief));
-    expect(markup).toContain(signedOut.leave);
+      .not.toContain(asHtml(FIRST_RUN_COPY.agents.bare.second));
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.agents["bare-needs-key"].second));
+    expect(markup).not.toContain("Codex");
   });
 
-  it("still tells a machine that has an engine that it carries on", async () => {
+  it("still tells a machine whose engine in the box can answer that it is running", async () => {
     await machine({
       ownerName: "Sean",
       nothingToThinkWith: false,
-      agents: [{ id: "claude", name: "Claude Code", installed: true }],
+      agents: [{ id: "fuigo", name: "Fuigo", installed: false }],
       signedOutAgents: [{ id: "codex", name: "Codex", installed: true, signInCommand: "codex login" }],
     });
     const markup = render("detect", "signed-out");
-    expect(markup, "a machine that really does carry on lost the line").toContain(asHtml(signedOut.third));
-    expect(markup).not.toContain(asHtml(signedOut.thirdBare));
+    expect(markup).toContain(asHtml(FIRST_RUN_COPY.agents.bare.second));
+    expect(markup).not.toContain(asHtml(FIRST_RUN_COPY.agents["bare-needs-key"].second));
   });
 
   // THE CARD THAT USED TO BE THE FLUX STEP'S OPENING ON A BLANK MACHINE.
@@ -908,6 +893,19 @@ describe("card six: done", () => {
     expect(lazy).toMatch(/<Chunk\.Component \{\.\.\.props\} \/>/);
     const phone = readFileSync(fileURLToPath(new URL("./FirstRunPhoneCard.tsx", import.meta.url)), "utf8");
     expect(phone).toMatch(/if \(onClose\) \{\s*onClose\(\);\s*return;\s*\}\s*try \{\s*await skipSetupStep/);
+  });
+
+  // The backups row and its schedule code load on first use, so first paint
+  // stays small; the row says nothing until its read answers, and so does the wait.
+  it("loads the backups row on first use and shows nothing while it loads", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./FirstRunNextCard.tsx", import.meta.url)), "utf8");
+    expect(src).toMatch(/const backup = useFirstRunBackupRun\(\);/);
+    expect(src).toMatch(/<LazyFirstRunBackupsRow backup=\{backup\} \/>/);
+    expect(src).not.toMatch(/from "\.\/FirstRunBackupsRow"/);
+    const lazy = readFileSync(fileURLToPath(new URL("./FirstRunBackupsRowLazy.tsx", import.meta.url)), "utf8");
+    expect(lazy).toMatch(/<Suspense fallback=\{null\}>\s*<Chunk\.Component backup=\{backup\} \/>/);
   });
 
   // The card used to assert that backups were "already running quietly in the

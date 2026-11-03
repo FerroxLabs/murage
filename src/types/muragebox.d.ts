@@ -282,6 +282,8 @@ type SkillRecordingPayload = {
         onChange(callback:(state:StartupBackgroundState)=>void):()=>void;
         onOpenInbox(callback:()=>void):()=>void;
       };
+      /** Engine sign-in on this computer (main runs it; see src/lib/local-engine-login.ts). Main window only. */
+      localEngineLogin?: import("@/lib/local-engine-login").LocalEngineLoginBridge;
       /** Cloud home engine sign-in terminal relay (main holds the token and step-up). Present only on a desktop with the Cloud flag. */
       cloudEngineLogin?: {
         start(request: { homeId: string; engine: "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo"; action?: "login" | "logout" | "enroll-key"; bot?: string; provider?: string; secret?: string }): Promise<{ ok: true; id: string } | { ok: false; code: string; message: string }>;

@@ -20,6 +20,7 @@ import { cn } from "@/lib/cn";
 import { landOnSearchHit } from "@/lib/focus-message";
 import type { SearchHit } from "@/lib/search-hit";
 import { useRelativeNow } from "@/lib/relative-now";
+import { escapeIsFree } from "@/lib/escape-layer";
 import { formatListTime } from "@/lib/task-list";
 import {
   CHAT_SEARCH_MIN,
@@ -202,8 +203,8 @@ export function AllChatsView(props: AllChatsViewProps) {
   // Escape goes back to the chat that was open (a search is cleared first).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+      // Only when nothing is open on top: a dialog, menu or picker closes first (src/lib/escape-layer.ts).
+      if (!escapeIsFree(event, document)) return;
       event.preventDefault();
       if (query) onQuery(""); else onClose();
     };

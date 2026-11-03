@@ -1,6 +1,7 @@
 // Draws one View. textContent only: nothing a scanned code or a computer's
 // name contains can become markup.
 import type { Act, Draft } from "./launcher";
+import { CODE_LENGTH, createCodeEntry, shortName } from "./code-entry";
 import type { Action, View } from "./screens";
 
 export interface FormValues {
@@ -166,29 +167,96 @@ export function render(root: HTMLElement, view: View, act: Act, draft?: Draft, k
     address.input.enterKeyHint = "next";
     if (draft) address.input.value = draft.address;
     else if (view.form.origin) address.input.value = view.form.origin.replace(/^https:\/\//, "");
-    const code = field("code", "Six-digit code", "text", "123456");
-    code.input.inputMode = "numeric";
-    code.input.autocomplete = "one-time-code";
-    code.input.enterKeyHint = "go";
-    code.input.maxLength = 7;
-    values = () => ({ address: address.input.value, code: code.input.value });
-    form.append(address.wrap, code.wrap);
+
+    // Code: one real input, visually hidden, over six display-only boxes.
+    const codeId = `field-code-${++fields}`;
+    const helpId = `${codeId}-help`;
+    const codeWrap = el("div", "field");
+    const codeLabel = el("label", "field-label", "Six-digit code");
+    codeLabel.htmlFor = codeId;
+    const boxes = el("div", "code-boxes");
+    const cells: HTMLElement[] = [];
+    for (let i = 0; i < CODE_LENGTH; i++) {
+      const cell = el("span", "code-box");
+      cell.setAttribute("aria-hidden", "true");
+      cells.push(cell);
+      boxes.append(cell);
+    }
+    const codeInput = el("input", "code-input");
+    codeInput.id = codeId;
+    codeInput.name = "code";
+    codeInput.type = "text";
+    codeInput.inputMode = "numeric";
+    codeInput.autocomplete = "one-time-code";
+    codeInput.enterKeyHint = "go";
+    codeInput.autocapitalize = "none";
+    codeInput.spellcheck = false;
+    codeInput.setAttribute("aria-describedby", helpId);
+    boxes.append(codeInput);
+    const help = el("p", "code-help", "Connects as soon as the sixth digit is in. Paste works too.");
+    help.id = helpId;
+    codeWrap.append(codeLabel, boxes, help);
+
+    const paint = () => {
+      const typed = codeInput.value;
+      const focused = document.activeElement === codeInput;
+      cells.forEach((cell, i) => {
+        cell.textContent = typed[i] ?? "";
+        cell.classList.toggle("filled", i < typed.length);
+        cell.classList.toggle("active", focused && i === Math.min(typed.length, CODE_LENGTH - 1));
+      });
+      boxes.classList.toggle("focused", focused);
+    };
+
+    values = () => ({ address: address.input.value, code: codeInput.value });
     const connect = view.actions.find((a) => a.id === "connect");
+    const entry = createCodeEntry(
+      () => address.input.value.trim() !== "",
+      () => {
+        if (connect) act(connect, values());
+      },
+    );
+    codeInput.addEventListener("input", () => {
+      codeInput.value = entry.input(codeInput.value);
+      paint();
+    });
+    codeInput.addEventListener("focus", paint);
+    codeInput.addEventListener("blur", paint);
+    boxes.addEventListener("click", () => codeInput.focus());
+
+    // Computer row when the address is known; the input itself otherwise.
+    const known = address.input.value.trim() !== "";
+    if (known) {
+      address.wrap.hidden = true;
+      const row = el("div", "computer-row");
+      const rowText = el("div", "computer-text");
+      rowText.append(el("span", "computer-label", "Computer"), el("span", "computer-name", shortName(address.input.value)));
+      const change = el("button", "button small", "Change");
+      change.type = "button";
+      change.setAttribute("aria-label", `Change computer, now ${shortName(address.input.value)}`);
+      change.addEventListener("click", () => {
+        row.hidden = true;
+        address.wrap.hidden = false;
+        address.input.focus();
+      });
+      row.append(rowText, change);
+      form.append(row);
+    }
+    form.append(address.wrap, codeWrap);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
     });
-    // Two fields and no submit button inside the form: Return never submits
-    // by itself. On the address it moves to the code (the keyboard says Next);
-    // on the code it connects (the keyboard says Go).
+    // Return never submits by itself. On the address it moves to the code (the
+    // keyboard says Next); on the code it connects (the keyboard says Go).
     address.input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
-      code.input.focus();
+      codeInput.focus();
     });
-    code.input.addEventListener("keydown", (event) => {
+    codeInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
-      if (connect) act(connect, values());
+      entry.enter();
     });
     screen.append(form);
   }

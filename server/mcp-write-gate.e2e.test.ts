@@ -157,6 +157,7 @@ describe("custom MCP routes are desktop-only", () => {
       command: "notes-mcp",
       args: ["--stdio"],
       envKeys: ["NOTES_TOKEN"],
+      rev: expect.stringMatching(/^[0-9a-f]{12}$/),
       enabled: false,
       status: "needs-key",
     }]);

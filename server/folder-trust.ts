@@ -600,6 +600,13 @@ export function upstreamTrustsFolder(records: ReadonlyMap<string, boolean>, fold
   return upstreamFolderVerdict(records, folder, options) === true;
 }
 
+/** A stored or engine path with any trailing separator removed, as Rust Path
+ * components ignore it: `/a/b/` names the same folder as `/a/b`. Lexical
+ * only, no realpath and no case folding, the same as upstream's comparison. */
+export function trustPath(raw: string): string {
+  return raw.length > 1 ? raw.replace(/[\\/]+$/, "") || raw : raw;
+}
+
 /** The same lookup, telling a stored no (false) from no record at all (null). */
 export function upstreamFolderVerdict(records: ReadonlyMap<string, boolean>, folder: string, options: FolderTrustKeyOptions = {}): boolean | null {
   if (!records.size) return null;
@@ -610,7 +617,7 @@ export function upstreamFolderVerdict(records: ReadonlyMap<string, boolean>, fol
   for (const [raw, decision] of records) {
     // a hand-edited `/a/b/` names the same folder as `/a/b` (Rust Path
     // components ignore a trailing separator); the tie rule then applies
-    const recorded = raw.length > 1 ? raw.replace(/[\\/]+$/, "") || raw : raw;
+    const recorded = trustPath(raw);
     if (isUnrecordableTrustRoot(recorded) || !pathStartsWith(query, recorded)) continue;
     if (folderTrustKey(recorded, options) !== queryKey) continue;
     const depth = recorded.split(/[\\/]+/).filter(Boolean).length;
@@ -698,17 +705,47 @@ export interface FolderTrustTurnRecords {
  * and root never answer. */
 export function folderTrustRejectFor(rejects: readonly FolderTrustReject[], key: string, realCwd: string): FolderTrustReject | null {
   const usable = (path: string) => !isUnrecordableTrustRoot(path);
-  const exact = rejects.find((reject) => (reject.key === key && usable(reject.key)) || (reject.folder === key && usable(reject.folder)));
+  const k = trustPath(key);
+  // a stored `/K/` names the folder `/K`, so it is usable once stripped too
+  const exact = rejects.find((reject) => (trustPath(reject.key) === k && usable(trustPath(reject.key))) || (trustPath(reject.folder) === k && usable(trustPath(reject.folder))));
   if (exact) return exact;
   const onCwdPath = (path: string) => usable(path) && pathStartsWith(realCwd, path) && (path === key || !pathStartsWith(key, path));
   return rejects.find((reject) => onCwdPath(reject.key) || onCwdPath(reject.folder)) ?? null;
 }
 
-/** The rejects a generation 2 card names when a Trust of K may not keep them:
- * every stored reject but K itself, those strictly inside K first. */
+/** The stored "no" paths that `relation` places against K, one per folder: for
+ * each reject in stored order its key when that qualifies, else its folder.
+ * Compared lexically on `trustPath`, never K itself, never a home or root. */
+function declinesWhere(rejects: readonly FolderTrustReject[], key: string, relation: (candidate: string, k: string) => boolean): string[] {
+  const k = trustPath(key);
+  const qualifies = (path: string) => {
+    const candidate = trustPath(path);
+    return candidate !== k && !isUnrecordableTrustRoot(candidate) && relation(candidate, k);
+  };
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const reject of rejects) {
+    const named = qualifies(reject.key) ? reject.key : qualifies(reject.folder) ? reject.folder : null;
+    if (named === null || seen.has(trustPath(named))) continue;
+    seen.add(trustPath(named));
+    out.push(named);
+  }
+  return out;
+}
+
+/** The rejects a generation 2 card names because a Trust of K can cover them:
+ * only those strictly inside K. A sibling or an unrelated folder is never
+ * named, because trusting K does not reach it. */
 export function folderTrustDeclinesFor(rejects: readonly FolderTrustReject[], key: string): string[] {
-  const others = [...new Set(rejects.map((reject) => reject.key))].filter((reject) => reject !== key);
-  return [...others.filter((reject) => pathStartsWith(reject, key)), ...others.filter((reject) => !pathStartsWith(reject, key))];
+  return declinesWhere(rejects, key, (candidate, k) => pathStartsWith(candidate, k));
+}
+
+/** The rejects strictly above K, deepest first. Rule 2 does not answer them,
+ * and a Trust of K, being deeper, wins for K while their no still holds
+ * outside it, so the card says that in its own sentence. */
+export function folderTrustAncestorDeclinesFor(rejects: readonly FolderTrustReject[], key: string): string[] {
+  const depth = (path: string) => trustPath(path).split(/[\\/]+/).filter(Boolean).length;
+  return declinesWhere(rejects, key, (candidate, k) => pathStartsWith(k, candidate)).sort((a, b) => depth(b) - depth(a));
 }
 
 export interface FolderTrustRecordRow {

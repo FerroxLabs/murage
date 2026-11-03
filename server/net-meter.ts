@@ -23,7 +23,7 @@ const ROUTE_WORDS = new Set(`
   challenge chats check check-delegation checkpoints claude-update cleanup cli-candidates cli-test clients cloud columns computer computer-activity
   computer-control config confirm connected connector-cards connectors control copy create-bot decisions delegate-bot delegations delete
   deletion-preview deletions desktop desktop-secret device devices diagnostics directory discord dismiss door-state drain edit email enable
-  engine-commands engine-management engine-setup-command enter events export files flux-connection flux-memory folder-trust follow-model foreground
+  engine-commands engine-management engine-setup-check engine-setup-command engine-signin-probe engine-signin-recipe enter events export files flux-connection flux-memory folder-trust follow-model foreground
   forget general-notes generate generate-image get github goals grok groups headless-browser health held-continuations hermes history hold host-computer
   house-rules image image-models image-prompt-block image-prompt-blocks image-reference-pack image-reference-packs images import inbox incident inspect
   instances instructions intake internal interrupt issues jobs join learning-paused leave library limit-backup link linux-sandbox list local-computer
