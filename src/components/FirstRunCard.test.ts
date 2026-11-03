@@ -895,6 +895,19 @@ describe("card six: done", () => {
     expect(phone).toMatch(/if \(onClose\) \{\s*onClose\(\);\s*return;\s*\}\s*try \{\s*await skipSetupStep/);
   });
 
+  // The backups row and its schedule code load on first use, so first paint
+  // stays small; the row says nothing until its read answers, and so does the wait.
+  it("loads the backups row on first use and shows nothing while it loads", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { fileURLToPath } = await import("node:url");
+    const src = readFileSync(fileURLToPath(new URL("./FirstRunNextCard.tsx", import.meta.url)), "utf8");
+    expect(src).toMatch(/const backup = useFirstRunBackupRun\(\);/);
+    expect(src).toMatch(/<LazyFirstRunBackupsRow backup=\{backup\} \/>/);
+    expect(src).not.toMatch(/from "\.\/FirstRunBackupsRow"/);
+    const lazy = readFileSync(fileURLToPath(new URL("./FirstRunBackupsRowLazy.tsx", import.meta.url)), "utf8");
+    expect(lazy).toMatch(/<Suspense fallback=\{null\}>\s*<Chunk\.Component backup=\{backup\} \/>/);
+  });
+
   // The card used to assert that backups were "already running quietly in the
   // background". Nothing in the first run had turned them on, and nothing
   // could have: choosing a folder and writing a recovery key are things

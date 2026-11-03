@@ -79,6 +79,7 @@ function windowsKnownDirs(): string[] {
     join(home, ".fuigo", "bin"), // fuigo installer (npm postinstall target)
     join(home, ".kimi-code", "bin"), // kimi-code installer
     join(localAppData, "agy", "bin"), // Antigravity installer
+    join(localAppData, "Programs", "muse"), // Meta's Muse Code installer
     join(home, ".local", "bin"), // claude native installer
     join(home, ".claude", "local"),
     join(home, "bin"), // Factory droid installer (%USERPROFILE%\bin)

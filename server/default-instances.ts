@@ -16,5 +16,6 @@ export const DEFAULT_INSTANCES: InstanceConfigMap = {
   qwen: { driver: "qwenAgent" },
   hermes: { driver: "hermesAgent" },
   cline: { driver: "clineAgent" },
+  muse: { driver: "museCode" },
   pi: { driver: "piAgent" },
 };

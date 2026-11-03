@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "8386de4593a3d5c731048273bb11278d8bc8cd2763633314e8ecc4b4a905c3cd";
+export const CAPABILITY_DB_REV = "77fc51059635e3931f69b5724900d30c96f22c9a96db7cc017eb846233fac150";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -110,6 +110,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; Fuigo, Claude, Codex, Grok, Cursor, Kimi, Droid, OpenCode, Qwen, Hermes, Gemini, Cline.",
     "rev": "574d08b9bd4744695e9611cca24ddf2bd4b17b2f1f7d17739a395630e7d5fbc8"
+  },
+  {
+    "id": "cap:apps.webhook-routines",
+    "title": "Start a routine from a webhook",
+    "description": "Murage can do part of this.",
+    "heading": "Can a webhook start my bot? / Run a routine when another tool sends a request / Can Stripe start a routine? / Does Murage have webhooks? / Give my bot a link other apps can call",
+    "breadcrumb": "Murage capabilities",
+    "where": "Bot settings → Routines",
+    "url": "https://murage.ai/docs/features/automation#routines",
+    "text": "Yes. A webhook routine gives a bot a link, and each request to it starts a new task in the bot's chat. Your bot can propose one in your chat, or you can make one on the Routines page. On the desktop app the link listens on this computer only, so outside services such as Stripe cannot reach it yet. A script or tool on the same computer can call it. Ask your bot: Ask your bot to set up a webhook routine that a script on this computer can call.",
+    "capability": "apps.webhook-routines",
+    "status": "partial",
+    "answer": "Yes. A webhook routine gives a bot a link, and each request to it starts a new task in the bot's chat. Your bot can propose one in your chat, or you can make one on the Routines page.",
+    "limits": "On the desktop app the link listens on this computer only, so outside services such as Stripe cannot reach it yet. A script or tool on the same computer can call it.",
+    "askYourBot": "Ask your bot to set up a webhook routine that a script on this computer can call.",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "b85b19c63403cebe1933be97af11e1426d3b6958d412fb0c1719a9ab649c3f19"
   },
   {
     "id": "cap:bots.rename-chief",
@@ -313,6 +338,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; OpenAI-compatible engines.",
     "rev": "1541a17b07978e99607de92d84a5cbf102ef80aa605f047c5bdd8dd7cba97c3e"
+  },
+  {
+    "id": "cap:engines.muse-code",
+    "title": "Muse Code from Meta",
+    "description": "Murage can do this.",
+    "heading": "Set up Muse Code / Who pays for Muse Code? / Is Muse Code on Murage Cloud?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/providers#muse-code",
+    "text": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take one, Murage doesn't send your message. Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "capability": "engines.muse-code",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take one, Murage doesn't send your message.",
+    "limits": "Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "muse"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Muse Code.",
+    "rev": "81cac8d0f632ea582c1add42b5bc2b7d5ece44c89b0ea07873aa911d4a7c1950"
   },
   {
     "id": "cap:install-account.ubuntu-computer-control",

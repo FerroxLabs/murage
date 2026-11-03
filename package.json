@@ -114,6 +114,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
+    "@muse-code/sdk": "1.4.14",
     "@slack/socket-mode": "3.0.1",
     "@slack/web-api": "8.1.1",
     "@tiptap/core": "3.31.3",

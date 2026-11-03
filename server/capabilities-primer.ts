@@ -412,6 +412,7 @@ const ENGINE_LABELS: Readonly<Record<string, string>> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  museCode: "Muse Code",
   opencodeGo: "OpenCode",
   customAcp: "a custom ACP engine",
   boxAgent: "the cloud computer agent",

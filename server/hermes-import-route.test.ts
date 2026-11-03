@@ -72,6 +72,10 @@ describe("Import from Hermes", () => {
     const { body: listed } = await call("GET", "/api/bots");
     const bot = listed.bots.find((candidate: { id: string }) => candidate.id === first.body.created[0].botId);
     expect(bot.modelSelection.instanceId).toBe(instanceId);
+    // 1.0.15 BIRTH-FUIGO K2: the picked Hermes instance is kept, unmarked, on disk (an owner pick, never the birth rule).
+    const saved = (JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")) as Array<{ id: string; engineAutoPicked?: true; modelSelection: { instanceId: string } }>).find(record => record.id === bot.id)!;
+    expect(saved.modelSelection.instanceId).toBe(instanceId);
+    expect(saved.engineAutoPicked).toBeUndefined();
     // Settings can turn the imported engine off and on like any other.
     expect((await call("PATCH", `/api/instances/${encodeURIComponent(instanceId)}`, { enabled: false })).status).toBe(200);
     expect((await call("PATCH", `/api/instances/${encodeURIComponent(instanceId)}`, { enabled: true })).status).toBe(200);

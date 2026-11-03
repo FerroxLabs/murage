@@ -3611,6 +3611,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Open Settings → Models & engines in the Murage desktop app and press Sign in with Flux Router on the Flux Router card. Your browser opens, you sign in there, and Murage saves the connection. It is on by default, and pasting a Flux Router key on the same card works too. Flux models use your Flux Router balance."
   },
   {
+    "id": "providers#muse-code",
+    "title": "Agent engines",
+    "description": "Use the AI apps and subscriptions you already have.",
+    "heading": "Muse Code",
+    "breadcrumb": "Murage docs → Agent engines",
+    "where": "Murage docs → Agent engines",
+    "url": "https://murage.ai/docs/providers#muse-code",
+    "text": "Muse Code is Meta's coding app. Install it from Meta, then sign in once in a terminal with muse login, or add your own Meta API key to the Muse Code engine. Meta bills your own Meta account or key, and Meta's terms apply. Muse Code talks only to Meta: it never goes through Flux Router.\n\nMurage always runs Muse Code on a regular model, Muse Spark 1.3 unless you pick another, and never on one of Meta's Contributor models. Contributor models are left out of the list, and if Muse won't take a regular model, Murage doesn't send your message. At Ask and Auto, Muse Code can read your files but can't write them; it writes files only at Full access.…"
+  },
+  {
     "id": "providers#grok-and-the-model-you-picked",
     "title": "Agent engines",
     "description": "Use the AI apps and subscriptions you already have.",
