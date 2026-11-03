@@ -319,7 +319,7 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // A pre-upgrade copy still being written (memory/schema.ts renames it to its
   // final name only when whole; a killed start leaves this behind and the next
   // start deletes it), and the status note's own temp file.
-  { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
+  { pattern: /^messages\.pre-memory-v[234]\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "messages.pre-memory-v3.db.partial-journal" },
   { pattern: /^memory-upgrade-(?:overall|counts)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-overall.json.4242.tmp" },
   { pattern: /^memory-upgrade-status\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "memory-upgrade-status.json.4242.tmp" },
   // A skill index build stopped before its rename (skill-search.ts).
@@ -343,8 +343,10 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   { pattern: /^coordination-roots\.json\.invalid-\d+$/, entry: excluded("Unreadable handoff-budget file set aside; not restored"), example: "coordination-roots.json.invalid-1790000000000" },
   // A consistent copy of messages.db taken before the boot-time project-row
   // prune (project-migration.ts). Kept for a manual rollback only; the live
-  // messages.db is the backed-up authority.
-  { pattern: /^project-rows-before-prune-\w+\.db$/, entry: excluded("Copy of messages.db taken before the start-up project-row prune; kept for manual rollback only, not restored"), example: "project-rows-before-prune-1790000000000.db" },
+  // messages.db is the backed-up authority. Its side files are the same copy's.
+  { pattern: /^project-rows-before-prune-\w+\.db(?:-journal|-wal|-shm)?$/, entry: excluded("Copy of messages.db taken before the start-up project-row prune; kept for manual rollback only, not restored"), example: "project-rows-before-prune-1790000000000.db" },
+  // That copy still being settled (settle-copy.ts) before its rename; a killed start leaves it and the next start deletes it.
+  { pattern: /^project-rows-before-prune-\w+\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/, entry: excluded(LEFTOVER), example: "project-rows-before-prune-1790000000000.db.partial-journal" },
 ]);
 
 /** What a backup does with this top-level data-folder name; undefined when unknown. */

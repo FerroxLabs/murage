@@ -369,7 +369,16 @@ const OWNER = "E2E Owner, e2e@example.invalid";
 test.describe("an engine nobody is signed in to", () => {
   test.skip(process.platform === "win32", "the sign-out wrapper is a /bin/sh script");
 
-  test("is offered back, on a screen that can be acted on", async ({ app }) => {
+  // FIRST RUN SHOWS FUIGO AND FLUX ONLY (Sean 11-02: "First engine is always
+  // Fuigo"; Fuigo and Flux front and center, other engines never pushed;
+  // FUIGO-FIRST-SIGNIN-PLACEMENT, 1.0.14). This test used to expect the
+  // Chief's card to name the signed-out engine and carry its sign-in button
+  // (section 1.4, Variant B). That offer moved out of first run: the engine is
+  // reached from Settings, and from Needs you once a bot runs on it. What
+  // still holds, and is checked here, is the reason this file exists: the
+  // signed-out engine is not counted as working, the card says nothing can
+  // answer yet and that the key is next, and the screen has a way on.
+  test("is told the key is next, on a screen that can be acted on", async ({ app }) => {
     await chiefHasSpoken(app);
     await signOutTheOnlyEngine();
 
@@ -378,25 +387,22 @@ test.describe("an engine nobody is signed in to", () => {
     expect(reading.runnable.length, "and nothing on this machine can answer").toBe(0);
     expect(
       reading.nothingToThinkWith,
-      "a machine with a signed-out engine is NOT blank — it has something worth telling the person about",
+      "a machine with a signed-out engine is NOT blank: it goes through detection",
     ).toBe(false);
 
     await harness("POST", "/api/setup/answer", { step: "hello", answer: OWNER });
     await reloadSettled(app);
     await expect(
-      app.getByText(/nobody is signed in to/i),
-      "the signed-out engine must be reported rather than counted as working",
+      app.getByText(/not yet with anything to think with/i),
+      "the signed-out engine must not be counted as working: the card says nothing can answer yet",
     ).toBeVisible();
-    // THE FIX IS ON THE CARD, with no press to reveal it (section 1.4, Variant
-    // B). The command is what the driver told us, the Copy beside it works, and
-    // both ways on are live.
-    await expect(
-      app.getByText("claude auth login", { exact: true }),
-      "and the report must come with the one thing that fixes it",
-    ).toBeVisible();
-    await expect(app.getByRole("button", { name: "Copy", exact: true }), "the command can be taken away").toBeEnabled();
-    await expect(app.getByRole("button", { name: /I have done it/i }), "and rechecked afterwards").toBeEnabled();
-    await expect(app.getByRole("button", { name: /Leave it for now/i }), "or left").toBeEnabled();
+    await expect(app.getByText(/the next thing I will ask you for/i), "and that the key is next").toBeVisible();
+    // No engine nobody is signed in to is offered here: no name, no sign-in.
+    expect(await screenSays(app, /nobody is signed in|not signed in yet|nobody signed in/i), "no signed-out engine named").toBe(false);
+    await expect(app.getByText("Finish sign-in on the computer running Murage.", { exact: true }), "no sign-in offer").toHaveCount(0);
+    await expect(app.getByText("claude auth login", { exact: true }), "no command to paste").toHaveCount(0);
+    await expect(app.getByRole("button", { name: /I have done it/i }), "no sign-in recheck").toHaveCount(0);
+    await expect(app.getByRole("button", { name: /^Next$/ }), "and the way on is live").toBeEnabled();
     await screenIsUsable(app, "a signed-out engine · the detection report");
   });
 
@@ -430,12 +436,22 @@ test.describe("an engine nobody is signed in to", () => {
     await signOutTheOnlyEngine();
     await harness("POST", "/api/setup/answer", { step: "hello", answer: OWNER });
     await reloadSettled(app);
-    await expect(app.getByText(/nobody is signed in to/i)).toBeVisible();
+    // Since 1.0.14 this machine gets the card for "nothing can answer yet"
+    // (FUIGO-FIRST-SIGNIN-PLACEMENT); the claim checks below are unchanged and
+    // now also cover the bare card's "already running" line. `last()`: the
+    // test above left its own detection cards in this shared thread (one per
+    // step and variant, server/setup-conversation.ts), and this test's card
+    // is the newest.
+    await expect(app.getByText(/not yet with anything to think with/i).last()).toBeVisible();
 
     expect((await machine()).runnable.length, "nothing on this machine is running").toBe(0);
     expect(
       await screenSays(app, /What is already running carries on either way/i),
       "nothing is running on this machine, so the screen must not say something is",
+    ).toBe(false);
+    expect(
+      await screenSays(app, /is already running/i),
+      "nor that the engine in the box is already running",
     ).toBe(false);
   });
 });

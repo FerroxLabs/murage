@@ -1,8 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { describe, expect, it, vi } from "vitest";
-import { CLI_CALLER_DEADLINE_MS, CLI_LIFECYCLE_CAP_MS, CLI_TERM_GRACE_MS, awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, spawnCli } from "./procs.ts";
+import { CLI_CALLER_DEADLINE_MS, CLI_LIFECYCLE_CAP_MS, CLI_TERM_GRACE_MS, awaitCliRootClose, awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, forceCliTreeStopped, spawnCli } from "./procs.ts";
 import { setPlatformProcessHooks } from "./platform-process-hooks.ts";
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
@@ -122,6 +123,46 @@ describe.skipIf(process.platform === "win32")("a confirmation that never resolve
     } finally {
       setPlatformProcessHooks({});
       vi.useRealTimers();
+    }
+  }, 15_000);
+});
+
+// CLOSE-STOP-1014: on the Windows job route an empty job confirms the tree gone before the root's close lands; dispose waits for
+// that close here, so a driver's close handler (which ends the stopped turn) has run before its listeners are cleared.
+describe("the root's close after a confirmed stop", () => {
+  const holder = () => spawnCli(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["pipe", "pipe", "pipe"] });
+
+  it("resolves only once the root's close landed, after a close handler registered before it", async () => {
+    const root = holder();
+    const order: string[] = [];
+    root.on("close", () => order.push("driver close"));
+    const landed = awaitCliRootClose(root).then((value) => { order.push("root close awaited"); return value; });
+    root.kill();
+    expect(await landed).toBe(true);
+    expect(order).toEqual(["driver close", "root close awaited"]);
+    // already closed: it answers at once
+    expect(await awaitCliRootClose(root)).toBe(true);
+  }, 15_000);
+
+  it("is bounded: a root that has not closed reads false when the bound runs out", async () => {
+    const root = holder();
+    try {
+      const started = Date.now();
+      expect(await awaitCliRootClose(root, 100)).toBe(false);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      root.kill();
+      await once(root, "close");
+    }
+  }, 15_000);
+
+  it("a handle Murage does not own reads false at once", async () => {
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    try {
+      expect(await awaitCliRootClose(child)).toBe(false);
+    } finally {
+      child.kill();
+      await once(child, "close");
     }
   }, 15_000);
 });

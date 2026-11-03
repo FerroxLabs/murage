@@ -40,6 +40,7 @@ import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-close
 import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
 import { scrubWalAfterDelete, walScrubPending } from "./wal-maintenance.ts";
+import { searchMergeOwing } from "./search-merge-runner.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
 import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
@@ -717,7 +718,8 @@ export class ConversationDeletions {
     // cleanup retries across restarts. They must never keep a removed chat in
     // the deletion journal or hold up another deletion. The WAL wait above is
     // bounded; a missing memory-worker acknowledgement is not awaited here.
-    if (walScrubPending() || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    // ...and the search index's merge and the WAL scrub after it (search-merge-runner.ts): shown until `scrub-done`, never waited on
+    if (walScrubPending() || this.memoryCleanupPending() || searchMergeOwing()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
     // the homes left for Murage's next update are still owed, for the same reason
     const engines = ran && deferred.length ? {
       ...ran,

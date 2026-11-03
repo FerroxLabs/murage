@@ -13,7 +13,7 @@
 // companion tries before PATH: the fake must be the only CLI it can reach.
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { removeTempDirSync } from "../../server/testing/cleanup.ts";
 import { tailscaleCandidates } from "../src/listener.ts";
 
 const NAME = "late-mac.tailtest.ts.net";
@@ -76,8 +77,8 @@ const rigs: Rig[] = [];
 afterEach(() => {
   for (const rig of rigs.splice(0)) {
     rig.child.kill("SIGKILL");
-    // Windows holds files open briefly after a kill.
-    rmSync(rig.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    // Windows holds files open briefly after a kill; the helper retries with backoff.
+    removeTempDirSync(rig.dir);
   }
 });
 
