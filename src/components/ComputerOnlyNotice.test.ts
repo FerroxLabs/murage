@@ -21,12 +21,21 @@ describe("the two places a phone allows a card use it", () => {
     const source = read("./PendingApproval.tsx");
     expect(source).toContain("allowNeedsComputer(");
     expect(source).toContain("<ComputerOnlyNotice");
+    // APPROVAL-ONE-CARD: Deny and Run are built once and placed on the panel
+    // and in the phone's Details sheet; every place Run goes sits behind the guard.
+    expect(source).toContain('onClick={() => { decide("deny", "deny"); after?.(); }}');
+    expect(source).toContain('onClick={() => { decide("allow", "allow"); after?.(); }}');
     const guard = source.indexOf("{!computerOnly && (");
     expect(guard).toBeGreaterThan(-1);
-    const deny = source.indexOf('onClick={() => decide("deny", "deny")}');
+    const deny = source.indexOf("{denyButton()}");
     expect(deny).toBeGreaterThan(-1);
     expect(deny).toBeLessThan(guard);
-    expect(source.indexOf('onClick={() => decide("allow", "allow")}')).toBeGreaterThan(guard);
+    // the two places Run is put (its definition reads "runButton = (")
+    const used = [...source.matchAll(/runButton\(/g)].map((match) => match.index!);
+    expect(used).toHaveLength(2);
+    expect(source.slice(guard, used[0])).not.toContain("</span>");
+    expect(source).toContain("{!computerOnly && runButton(closeSheet)}");
+    expect(source.indexOf("{!computerOnly && runButton(closeSheet)}") + "{!computerOnly && ".length).toBe(used[1]);
   });
   it("InboxRequestAnswer does the same for an approval and still allows a question to be answered", () => {
     const source = read("./InboxRequest.tsx");

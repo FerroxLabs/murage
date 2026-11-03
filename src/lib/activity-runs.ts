@@ -115,6 +115,9 @@ function assistantTurnFolds(messages: Message[]): {
       message.kind === "text" &&
       // a widget (QW Q4) is a card the owner answers, never narration folded away
       !message.widget &&
+      // a row carrying a file (a voice note, a saved file, an output card) is
+      // something the bot handed over, never narration folded away
+      !message.artifactIds?.length &&
       message.turnId === terminal.turnId &&
       !message.turnTerminal
     );

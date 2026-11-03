@@ -379,6 +379,10 @@ export function parseJobError(error: unknown): { redriven: boolean; transient: n
 }
 function transientBackoffMs(count: number) { return Math.min(160_000, 5_000 * 2 ** Math.min(count, 5)); }
 
+/** A capture of what a tool returned (any engine: the activity row's tool outcome), never of what someone said. */
+export function isToolOutcomeWork(work: Pick<MemoryWork, "speaker" | "kind">): boolean {
+  return work.speaker === "tool" || work.kind === "tool-outcome" || work.kind === "activity";
+}
 export interface PublishOptions { /** Lock wait before BUSY. Omitted: the handle's usual wait. */ busyMs?: number }
 export function publishMemoryWork(work: MemoryWork, worker: string, input: MemoryWorkResult, now=Date.now(), options: PublishOptions = {}) {
   const result=resultSchema.parse(input);
@@ -402,9 +406,15 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
     const expectedEnd=work.cursor+Buffer.byteLength(work.text);
     if(result.nextCursor!==expectedEnd || (result.status==="complete")!==(expectedEnd===work.totalBytes)) throw new Error("INCOMPLETE_MEMORY_SOURCE");
     let cursor=work.cursor;
+    // What a tool returned is evidence, not a memory: its chunks are checked and covered, but no `source` record is written for them (no
+    // row in the owner's list, no tool excerpt for recall to quote). The source itself stays: the thread checkpoint still quotes its first
+    // bytes as working notes (consolidate.ts), procedure review still reads it, and line revoke, conversation delete and Forget still reach
+    // it. Learning already refused tool sources (learnable.ts). Every engine's tool events come here the same way.
+    const toolOutcome=isToolOutcomeWork(work);
     for (const chunk of result.chunks) {
       if (chunk.startByte!==cursor || chunk.endByte!==cursor+Buffer.byteLength(chunk.text) || chunk.text!==Buffer.from(work.text).subarray(cursor-work.cursor,chunk.endByte-work.cursor).toString("utf8")) throw new Error("INVALID_MEMORY_CHUNK");
       cursor=chunk.endByte;
+      if(toolOutcome)continue;
       const id=createHash("sha256").update(`${work.sourceId}:${work.revision}:${chunk.startByte}:${chunk.endByte}`).digest("hex");
       const assertion=work.speaker==="owner"?"owner-statement":work.speaker==="tool"?"tool-observation":"assistant-inference";
       insertMemoryRecord(db,{id,version:1,scopeId:work.scopeId,kind:"source",text:chunk.text,assertion,state:"active",validFrom:now,createdAt:now},{orIgnore:true});
@@ -413,7 +423,7 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
       db.prepare("INSERT OR IGNORE INTO memory_projection_receipts VALUES(?,1,1,'pending','pending',NULL)").run(id);
     }
     if (work.kind!=="turn" && cursor!==expectedEnd) throw new Error("INCOMPLETE_MEMORY_COVERAGE");
-    if(result.chunks.length)db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
+    if(result.chunks.length&&!toolOutcome)db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
     db.prepare("UPDATE memory_jobs SET status=?,cursor=?,coverage=?,lease_owner=NULL,lease_until=0,error=NULL WHERE id=?")
       .run(result.status,result.nextCursor,JSON.stringify({throughByte:result.nextCursor,totalBytes:work.totalBytes}),work.id);
     if(result.status==="complete")recordMemoryProcessing(now);

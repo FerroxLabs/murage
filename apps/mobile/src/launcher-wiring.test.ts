@@ -94,18 +94,21 @@ describe("launcher wiring", () => {
   it("labels the typed-pairing fields the way the E2E finds them", () => {
     const render = source("./render.ts");
     expect(render).toContain('field("address", "Address"');
-    expect(render).toContain('field("code", "Six-digit code"');
+    expect(render).toContain('"Six-digit code"');
+    expect(render).toContain("codeLabel.htmlFor = codeId");
+    expect(render).toContain('aria-describedby", helpId');
+    expect(render).toContain("Connects as soon as the sixth digit is in. If you type the address yourself, press Connect. Paste works too.");
     expect(render).toContain('inputMode = "numeric"');
     expect(render).toContain('autocomplete = "one-time-code"');
   });
 
   it("connects on Return in the code field (two fields and no submit button never submit on their own)", () => {
     const render = code("./render.ts");
-    expect(render).toMatch(/code\.input\.addEventListener\("keydown"[\s\S]{0,200}act\(connect, values\(\)\)/);
+    expect(render).toMatch(/codeInput\.addEventListener\("keydown"[\s\S]{0,200}entry\.enter\(\)/);
     expect(render).toContain('enterKeyHint = "go"');
     // Neither field acts on an Enter that finishes an IME composition (fix round 1).
     expect(render).toMatch(/address\.input\.addEventListener\("keydown", \(event\) => \{\s*if \(event\.key !== "Enter" \|\| event\.isComposing\) return;/);
-    expect(render).toMatch(/code\.input\.addEventListener\("keydown", \(event\) => \{\s*if \(event\.key !== "Enter" \|\| event\.isComposing\) return;/);
+    expect(render).toMatch(/codeInput\.addEventListener\("keydown", \(event\) => \{\s*if \(event\.key !== "Enter" \|\| event\.isComposing\) return;/);
   });
 
   it("moves focus to each new screen's title", () => {

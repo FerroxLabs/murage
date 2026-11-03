@@ -80,6 +80,8 @@ import {
 } from "./skill-recorder.mjs";
 import { harnessResourceEnvironment, packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
+import { createLocalEngineLogin, registerLocalEngineLoginIpc } from "./engine-login-local.mjs";
+import { launchRecipeTerminal } from "./engine-login-terminal.mjs";
 import { attachUpdaterWindow, checkForUpdatesNow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
 import { hasCustomUpdaterProfile, prepareUpdaterRestart } from "./updater-restart.mjs";
 import { prepareBackedUpInstall, resumeBackedUpInstall } from "./preupgrade-continuation.mjs";
@@ -1248,6 +1250,9 @@ async function assertSecretStorageWritable() {
   if (refusal) throw new Error(refusal);
 }
 
+/** LINUX-NOKEYRING-ENV-KEY: the reason code for the Flux panel (secret-storage-policy.mjs), never a key. */
+const secretSaveRefusedReason = () => saveRefusedReasonFor({ safeStorage, storeUnavailable: credentialStoreUnavailable });
+
 async function saveSecureCredentials(credentials) {
   if (app.isPackaged) ownedDesktopDataDir();
   // A failed read means we do not know what the existing encrypted document
@@ -1408,7 +1413,7 @@ import {
 } from "./companion-remote-access.mjs";
 import { companionShouldStayAwake } from "./companion-keep-awake.mjs";
 import { lanPairingView } from "./companion-lan-pairing.mjs";
-import { LINUX_KEYRING_REQUIRED, secretWriteRefusal } from "./secret-storage-policy.mjs";
+import { LINUX_KEYRING_REQUIRED, secretSaveRefusedReason as saveRefusedReasonFor, secretWriteRefusal } from "./secret-storage-policy.mjs";
 import { DESK_POST_TIMEOUT_MS, startDeskPresence } from "./desk-presence.mjs";
 import { openLogStream, rotateLogAtLaunch } from "./log-rotate.mjs";
 
@@ -2142,6 +2147,8 @@ async function startServerOn(port) {
   assertDesktopStartupActive();
   const entry = path.join(process.resourcesPath, "server", "index.js");
   const bootNonce = Array.from(globalThis.crypto.getRandomValues(new Uint8Array(24)), byte => byte.toString(16).padStart(2, "0")).join("");
+  const saveRefused = await secretSaveRefusedReason();
+  assertDesktopStartupActive();
   // The companion token reaches the harness over the private utility parent
   // port, never the environment, an argument or a file: an environment copy
   // stays readable at /proc/<pid>/environ on Linux and a file can be raced
@@ -2155,6 +2162,8 @@ async function startServerOn(port) {
     // from the launching shell. It starts fail-closed until this exact main
     // process sends the private in-memory connection after spawn.
     MURAGE_DESKTOP_PARENT: "1",
+    // Set by this launch only (an inherited value is overwritten): the Flux panel says why no key can be saved.
+    MURAGE_SECRET_SAVE_REFUSED: saveRefused,
     ...launchSecretVia("MURAGE_COMPANION_TOKEN", "parent"),
     MURAGE_DATA_DIR: desktopDataDir,
     // Where the backup host keeps its schedule, receipt and first-run record,
@@ -3699,6 +3708,8 @@ ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
     || Object.keys(input).some(key => !["instanceId", "action"].includes(key))
     || typeof input.instanceId !== "string" || input.instanceId.length > 180
     || !["install", "connect"].includes(input.action) || !desktopSurfaceSecret) return false;
+  // Sign-in runs the recipe in a real terminal (A7, G4). Install still copies its command and opens a blank window.
+  if (input.action === "connect") return localEngineLogin.openRecipeTerminal({ instanceId: input.instanceId });
   try {
     const response = await fetch(`http://127.0.0.1:${SERVER_PORT}/api/engine-setup-command`, {
       method: "POST", headers: { "content-type": "application/json", "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
@@ -3710,6 +3721,25 @@ ipcMain.handle("engine:open-setup-terminal", async (event, input) => {
     return openBlankTerminal();
   } catch { return false; }
 });
+
+// Engine sign-in on this computer (1.0.14). The recipe comes from the local server by instance id, never from a window.
+const localEngineApi = async (path, body, { timeoutMs = 20000 } = {}) => {
+  if (!desktopSurfaceSecret) throw new Error("not ready");
+  const response = await fetch(`http://127.0.0.1:${SERVER_PORT}${path}`, {
+    method: body === undefined ? "GET" : "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
+    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), "x-murage-surface": "desktop", "x-murage-surface-secret": desktopSurfaceSecret },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return { status: response.status, body: await response.json().catch(() => null) };
+};
+const localEngineLogin = createLocalEngineLogin({
+  api: localEngineApi, spawn: spawn, launchTerminal: (recipe) => launchRecipeTerminal(recipe), log: slog,
+  killTree: (child, signal) => {
+    if (process.platform === "win32") { spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore", shell: false }).once("error", () => {}); return; }
+    try { process.kill(-child.pid, signal); } catch { child.kill(signal); }
+  },
+});
+registerLocalEngineLoginIpc({ ipcMain, runner: localEngineLogin });
 
 // OAuth/connect links are returned asynchronously, after Chromium's direct
 // click gesture has ended. Opening them through window.open can therefore be
@@ -5202,6 +5232,7 @@ function cleanupDesktopForExit() {
   stopAutomaticRemoteBackups();
   backupScheduleHost?.stopPolling();
   desktopShutdownStarted = true;
+  const localEngineLoginEnded = localEngineLogin.shutdown().catch(() => {});
   modelSignIn.dispose();
   mcpServers.dispose();
   notificationAuthorization.invalidate();showApprovalNotification.dispose();
@@ -5219,7 +5250,7 @@ function cleanupDesktopForExit() {
   // command and stays, holding its port. Stop the one this app started, and
   // start doing so now so it overlaps the rest of shutdown. It resolves
   // either way, so quitting never waits on a phone.
-  const androidStopped = androidDevice.stop().catch(() => {});
+  const androidStopped = Promise.all([androidDevice.stop().catch(() => {}), localEngineLoginEnded]);
   // A live dictation or recorder session runs its own helper app that holds
   // the mic or a global event tap. Signal both now so they exit in parallel
   // with the harness. The first stage below keeps cleanup, and installation
