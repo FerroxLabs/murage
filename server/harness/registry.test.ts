@@ -322,3 +322,36 @@ describe("loading the fleet", () => {
     expect(registry.entries().map(entry => entry.instanceId)).toEqual(["first", "second", "third"]);
   });
 });
+
+describe("1.0.14 FIRST-ENGINE-M3: a scan ticket", () => {
+  it("describe startedAfter never joins an older scan", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ fuigo: { driver: "fake" } });
+    const releases: Array<() => void> = [];
+    let scans = 0;
+    (registry as any).scan = () => { scans++; return new Promise(resolve => { releases.push(() => resolve([])); }); };
+    const older = registry.describe({ catalogs: "fresh" });
+    // a caller with no ticket joins the scan in flight
+    void registry.describe({ catalogs: "fresh" });
+    expect(scans).toBe(1);
+    // a key lands: the ticket taken now names the scan already running, so it is not joined
+    const ticket = registry.scanTicket();
+    const fresh = registry.describe({ catalogs: "fresh", startedAfter: ticket });
+    expect(scans).toBe(2);
+    // a caller holding the same ticket joins the newer scan, never the older one
+    void registry.describe({ catalogs: "due", startedAfter: ticket });
+    expect(scans).toBe(2);
+    for (const release of releases) release();
+    await Promise.all([older, fresh]);
+    expect(registry.scanTicket()).toBe(2);
+  });
+
+  it("generation moves when the fleet changes", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    const before = registry.generation;
+    await registry.load({ fuigo: { driver: "fake" } });
+    expect(registry.generation).toBeGreaterThan(before);
+  });
+});

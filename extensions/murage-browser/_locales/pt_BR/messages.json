@@ -301,7 +301,7 @@
     "message": "Conectar ao Murage"
   },
   "spSetupBody": {
-    "message": "Abra o Murage neste computador e ative o companheiro de navegador nas configurações do navegador."
+    "message": "O Murage precisa configurar este navegador antes de se conectar. No app do Murage, abra o painel de navegador de um bot, escolha \"Use my Chrome\" e toque em \"Set up my browser\". Depois toque em Verificar conexão aqui."
   },
   "spCheckConnection": {
     "message": "Verificar conexão"

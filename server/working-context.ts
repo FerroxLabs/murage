@@ -53,6 +53,7 @@ import type { MemoryRoster } from "./memory/policy.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { titleFromMessage, UNTITLED_TASK, type Message } from "./store.ts";
 import { threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import { ioBudget } from "./io-budget.ts";
 import type { LineageReader, LineageRef, LineageVerdict, PromptPart } from "./memory/lineage-types.ts";
 import { fileRef, lineRefs, memoryRefs, murageObjectRef, noneRef, promptPart } from "./memory/prompt-parts.ts";
@@ -215,7 +216,7 @@ type MessageRow = { id: string; text: string | null; json: string };
  *  or a copy. Null when it is someone else's or has no words. */
 function ownReply(row: MessageRow, botId: string): { text: string; withheld: boolean; copy: boolean } | null {
   let message: { from?: { botId?: string }; withheldFromBots?: unknown; copyOf?: unknown } = {};
-  try { message = JSON.parse(row.json); } catch { return null; }
+  try { message = rowToMessage({ json: row.json }); } catch { return null; }
   if (isMurageVoice(message)) return null;
   if (message.from?.botId && message.from.botId !== botId) return null;
   const text = typeof row.text === "string" ? row.text : "";
@@ -400,7 +401,7 @@ function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, 
   if (reply.withheld) return null;
   if (judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded) !== "shown") return null;
   let stored: unknown;
-  try { stored = JSON.parse(row!.json); } catch { return null; }
+  try { stored = rowToMessage({ json: row!.json }); } catch { return null; }
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
   const saidIn = input.groups.some(group => group.channelProject && (group.threadId === threadId || taskIndex(group.tasks).has(threadId)))
     || input.bots.some(bot => taskIndex(bot.tasks).get(threadId)?.channelProjectDesk);

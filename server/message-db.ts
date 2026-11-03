@@ -25,6 +25,7 @@ import { isOpenCardJson } from "./message-tables.ts";
 import { prioritizeThread, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
 
 import { SEQ_INDEX, newestSeqOf, nextSeq, rowToMessage, seqOfRow, storedJson, threadNumbered } from "./transcript-seq.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
 import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy } from "./database.ts";
 import { browserCheckIndexExists, isPendingBrowserCheck } from "./message-tables.ts";
 import type { Message } from "./store.ts";
@@ -742,6 +743,8 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   // Re-sequenced: a legacy file is appended to in the order things happened, but a hand-edited or merged one may not be. Every imported line
   // takes its lsn (and its rowid) in time order, so a positional range written later (a forget of an early line) reads the thread as it was.
   // A stable sort: lines with the same time, or none, keep their place in the file.
+  // U4 S3: every line of the file passes the stored-row check before it is inserted, recorded or returned (a hand-edited or old file included)
+  messages = messages.map((message) => checkStoredRow(message));
   messages = messages.map((message, place) => ({ message, place })).sort((a, b) => (Number.isFinite(a.message.at) && Number.isFinite(b.message.at) ? a.message.at - b.message.at : 0) || a.place - b.place).map(item => item.message);
   const insert = db().prepare(
     "INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

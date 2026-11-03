@@ -3758,6 +3758,11 @@
   "engineSignIn.tryAgain": "Intentar de nuevo",
   "engineChatLink.signedIn": "{name} ya tiene la sesión iniciada.",
   "engineChatLink.setUpTitle": "Configurar {name}",
+  "engineWall.needsOwnAccount": "{name} necesita tu propia cuenta de {name} para iniciar sesión.",
+  "engineWall.useFuigo": "Usar Fuigo en su lugar",
+  "allChats.back": "Atrás",
+  "allChats.backHint": "Atrás (Esc)",
+  "allChats.close": "Cerrar",
   "calls.botSettings.canCallMe": "{bot} puede llamarme",
   "calls.botSettings.canCallMeHelp": "{bot} te llama por lo que elijas abajo. Todo lo demás llega como mensaje.",
   "calls.botSettings.neededNow": "Cuando {bot} crea que te necesita ahora",
@@ -3769,5 +3774,6 @@
   "calls.botSettings.quietLine": "{quiet}. Cámbialo en Notificaciones.",
   "calls.botSettings.pausedAfterRestore": "Las llamadas están en pausa tras una restauración",
   "calls.turnBackOn": "Volver a activar las llamadas",
-  "calls.failed": "No se pudo completar. Inténtalo de nuevo."
+  "calls.failed": "No se pudo completar. Inténtalo de nuevo.",
+  "handoff.doneWhen": "Terminado cuando: {text}"
 }

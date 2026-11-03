@@ -1,7 +1,8 @@
 import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
 import { endAllLivePairedRequests } from "./handoff-pair.ts";
 import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
-import type { BotRecord, GroupRecord } from "./store.ts";
+import type { BotRecord, GroupRecord, Message } from "./store.ts";
+import { rowToMessage, storedJson } from "./transcript-seq.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { markIntegrityPassProven } from "./memory/integrity-state.ts";
 import { prepareProjectTablesForRestore } from "./project-tables.ts";
@@ -373,10 +374,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         const update = db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
         for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
           if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) fail("INVALID_RESTORE_MESSAGE");
-          const before = JSON.parse(row.json);
+          const before = rowToMessage({ json: row.json }); // U4 S3: the one decoder, and storedJson below the one encoder
           const after = expireMessage(before);
           if (after.id !== row.id) fail("INVALID_RESTORE_MESSAGE");
-          const encoded = JSON.stringify(after);
+          const encoded = storedJson(after as unknown as Message);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
         // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.

@@ -3758,6 +3758,11 @@
   "engineSignIn.tryAgain": "もう一度試す",
   "engineChatLink.signedIn": "{name} はすでにサインインしています。",
   "engineChatLink.setUpTitle": "{name} をセットアップ",
+  "engineWall.needsOwnAccount": "{name} にサインインするには、ご自身の {name} アカウントが必要です。",
+  "engineWall.useFuigo": "代わりに Fuigo を使う",
+  "allChats.back": "戻る",
+  "allChats.backHint": "戻る (Esc)",
+  "allChats.close": "閉じる",
   "calls.botSettings.canCallMe": "{bot} からの着信を許可",
   "calls.botSettings.canCallMeHelp": "{bot} は下で選んだ用件のときだけ電話をかけます。それ以外はメッセージのままです。",
   "calls.botSettings.neededNow": "{bot} が今あなたの対応が必要だと判断したとき",
@@ -3769,5 +3774,6 @@
   "calls.botSettings.quietLine": "{quiet}。「通知」で変更できます。",
   "calls.botSettings.pausedAfterRestore": "復元後のため通話は一時停止中です",
   "calls.turnBackOn": "通話をもう一度オンにする",
-  "calls.failed": "うまくいきませんでした。もう一度お試しください。"
+  "calls.failed": "うまくいきませんでした。もう一度お試しください。",
+  "handoff.doneWhen": "完了の条件: {text}"
 }

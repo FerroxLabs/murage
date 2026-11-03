@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { memoryCaptures } from "./capture-gate.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { turnFirstRowid } from "../transcript-backfill.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 import type { Message } from "../store.ts";
 import { isMurageVoice } from "../murage-voice.ts";
 import { redactSecretsInText } from "../redact.ts";
@@ -43,6 +44,8 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   // Keep failed outcomes as procedure-learning evidence, never recall work.
   const failedTool = (source.kind === "tool-outcome" || source.kind === "activity") && source.outcome === "failed";
   const text = redactSecretsInText(source.text);
+  // A tool outcome with no text (captureMessage: a row that was only the tool's name) has nothing to capture: its job is born complete.
+  const emptyTool = (source.kind === "tool-outcome" || source.kind === "activity") && !text.trim();
   const content = {text,kind:source.kind,speaker:source.speaker,outcome:source.outcome,
     ...(source.occurredAt !== undefined && Number.isSafeInteger(source.occurredAt) && source.occurredAt >= 0 ? {occurredAt:source.occurredAt} : {}),
     ...(source.actorId ? {actorId:source.actorId} : {}),
@@ -86,9 +89,9 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   // A turn still running (`working`) can never be claimed at this revision: its settlement is a new revision that cancels this
   // job. The job is born closed (claim-settle.ts), so it never sits in the open statuses, and it is not noted as the thread's
   // newest capture job: that is still the prompt's, which a starting turn claims first (worker-controller claimTurnCritical).
-  const jobId = randomUUID(), working = source.outcome === "working", jobDone = Boolean(source.excluded || failedTool || working);
+  const jobId = randomUUID(), working = source.outcome === "working", bornComplete = Boolean(source.excluded || failedTool || (emptyTool && !working)), jobDone = bornComplete || working;
   db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,error,policy_revision,deletion_epoch) VALUES(?,?,?,'capture','1',?,?,?,?)")
-    .run(jobId,source.id,revision,source.excluded || failedTool ? "complete" : working ? "cancelled" : "pending",working && !source.excluded && !failedTool ? "settled:working" : null,meta.policy_revision,meta.deletion_epoch);
+    .run(jobId,source.id,revision,bornComplete ? "complete" : working ? "cancelled" : "pending",working && !bornComplete ? "settled:working" : null,meta.policy_revision,meta.deletion_epoch);
   if (!jobDone) noteTurnCaptureJob(source.threadId, jobId); // a starting turn claims its own capture by this id (worker-controller claimTurnCritical)
   enqueueProcedureSourceReview(db,source.id,revision);
   if(previous){
@@ -128,7 +131,7 @@ function turnPath(db: DatabaseSync, threadId: string, message: Message): Message
     const row = read.get(threadId, at);
     if (!row) return null;
     if (first !== null && Number(row.position) < first) break;
-    const parsed = JSON.parse(String(row.json)) as Message;
+    const parsed = rowToMessage({ json: String(row.json) });
     if (parsed.turnId && parsed.turnId !== message.turnId) break;
     seen.add(at); rows.push(parsed);
     at = parsed.parentId;
@@ -146,7 +149,7 @@ function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message)
     SELECT id,json_extract(json,'$.parentId'),json,0 FROM messages WHERE thread_id=? AND id=(SELECT active_leaf_id FROM thread_state WHERE thread_id=?)
     UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=? AND m.rowid>=? AND p.depth<10000
   ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId,first.first ?? 0);
-  const path = rows.map(row => JSON.parse(String(row.json)) as Message);
+  const path = rows.map(row => rowToMessage({ json: String(row.json) }));
   return path;
 }
 
@@ -191,11 +194,16 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // empty payload, never a source text and never a tool-observation.
   const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply"
     : tool && isEmailReadToolName(message.tool!.name) ? "external-mail" : undefined;
+  // A completed tool row that carries nothing but the tool's name (read_file with no text) has nothing to learn from (MEMORY-TOOL-NAME-JUNK):
+  // its payload text is empty and its job is born complete (captureSource), so no source text is ever just a tool name. It keeps its
+  // metadata and its `action` label and stays active, so what the bot did is still admitted as an action (pip-admission.ts actionRow).
+  // A failed one stays as it was (procedure evidence, its job already born complete).
+  const nameOnly = !leftOut && tool && message.tool!.ok && !message.text?.trim() && !message.tool!.errorDetails?.trim();
   captureSource(db,{id:`message:${threadId}:${message.id}`,threadId,messageId:message.id,turnId:message.turnId,parentId:message.parentId,
     kind:tool?"tool-outcome":message.kind,speaker:message.role === "user"?(isWorkspaceOwner(threadHumanPrincipal(threadId,db))?"owner":"person:"+threadHumanPrincipal(threadId,db).personId):tool?"tool":message.from?.botId??"assistant",
     outcome:tool?(message.tool!.ok?"completed":"failed"):"recorded",
     // images a turn left out never come back through recall (turn-images.ts)
-    text:leftOut?"":userText?withoutImageTags(message.text??"",message.imagesNotSent??[]):finalText?(message.turnTerminal?wholeTurnText(db,threadId,message):message.text??""):tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
+    text:leftOut||nameOnly?"":userText?withoutImageTags(message.text??"",message.imagesNotSent??[]):finalText?(message.turnTerminal?wholeTurnText(db,threadId,message):message.text??""):tool?[message.tool!.name,message.text,message.tool!.errorDetails].filter(Boolean).join("\n"):"",
     ...(userText?{origin:message.automation??{kind:message.origin==="desktop"||message.origin==="companion"?"attended":message.origin==="unproven"?"unproven":"unknown"}}:{}),
     ...(message.role==="bot"&&message.engine?{engine:{instanceId:message.engine.instanceId,model:message.engine.model,capabilityHash:message.engine.capabilityHash}}:{}),
     actionCheck:message.actionCheck,occurredAt:message.at,actorId:message.role==="user"?threadHumanPrincipal(threadId,db).personId:message.from?.botId,artifactIds:message.artifactIds,

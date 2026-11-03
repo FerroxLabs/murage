@@ -948,6 +948,7 @@ import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { normalizeEngineCommands } from "../../engine-commands.ts";
 import { engineCommandText } from "../../../shared/engine-commands.ts";
 import { engineClosedLine, plainDuration } from "../stop-copy.ts";
+import { classifyFuigoFrame, FuigoSilenceWatch, fuigoWatchLimits, fuigoWatchTickMs, type FuigoWatchLimits, type FuigoWatchRule } from "./fuigo-silence.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "../warm-pool.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../../subtasks.ts";
 import { awaitScopeStart, withScopeRetry } from "../scoped-cli-home.ts";
@@ -1137,6 +1138,9 @@ export interface AcpSupport {
    *  (Rule 74a), which can hold names this process never had. Mutates `map`
    *  in place; `child` is the env `transformEnv` produced, read only. */
   scrubHandedEnv?(map: Record<string, string | undefined>, child: Readonly<Record<string, string | undefined>>): void;
+  /** Last word on a turn's child env, after the provider route, the turn env and the Flux overlay are applied and
+   *  before the handed map is built, so a pin that follows the turn's final credential (Fuigo's park) is set once. */
+  finishTurnEnv?(env: Record<string, string | undefined>): void;
   /** Mutate the child env after the turn model is known. Catalog refresh and
    *  snapshot share `transformEnv` and must not see a per-turn overlay. */
   applyTurnEnv?(
@@ -1453,6 +1457,13 @@ export function questionMethodFor(method: unknown): AcpQuestionMethod | undefine
  * `serverName`, answered `{outcome: "accept", content}` / `decline` /
  * `cancel`. */
 const FUIGO_ELICIT_METHOD = "_fuigo/mcp/elicit";
+/** Grok Build forwards an MCP server's elicitation the same way, under its own
+ * name: `x.ai/mcp/elicit` in grok 1.0.70 (the ACP crate puts the `_` in front
+ * on the wire). Same params, same `{outcome}` answer as Fuigo's. */
+const GROK_ELICIT_METHODS = new Set(["_x.ai/mcp/elicit", "x.ai/mcp/elicit"]);
+/** An engine-chosen method name, made fit for one log line: printable ASCII only, short. */
+const logMethodName = (method: unknown): string =>
+  typeof method === "string" ? method.replace(/[^\x21-\x7e]/g, "?").slice(0, 80) || "(empty)" : `(${typeof method})`;
 /** Fuigo's interactive folder-trust round-trip (fuigo-shell
  * mvp_agent/folder_trust_prompt.rs): sent after session/new or session/load
  * when the client advertised `fuigo/folderTrust.interactive` and the trust
@@ -2620,6 +2631,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // tool such as `sleep` or a quiet build sends nothing while it runs,
         // so the prompt's silence guard waits for these as it does for asks.
         const runningTools = new Set<string>();
+        // FUIGO-NO-SILENT-HANG (fuigo-silence.ts): a Fuigo turn's silence watch, from the prompt write to settle, and the
+        // engine requests Murage has not answered yet (Murage-side work: the watch waits for the answer).
+        let fuigoWatch: FuigoSilenceWatch | null = null;
+        let fuigoWatchTimer: ReturnType<typeof setInterval> | null = null;
+        const engineRequestsOpen = new Set<string>();
+        const stopFuigoWatch = () => {
+          if (fuigoWatchTimer) clearInterval(fuigoWatchTimer);
+          fuigoWatchTimer = null;
+          fuigoWatch = null;
+        };
         // A tool_call_update need not repeat the call's title, and whether an
         // image in its output is a deliverable or one of Murage's own screen
         // frames turns on the tool's name. Kept from the opening tool_call and
@@ -2745,6 +2766,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const message = obj as { id?: unknown; result?: unknown; error?: unknown };
           if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
             for (const pending of rpcPending.values()) pending.armIdle();
+            // the same for the Fuigo watch: an answer is progress, and Murage's own work on the request is over
+            engineRequestsOpen.delete(String(message.id));
+            fuigoWatch?.progress();
           }
           if (proc) return writeTo(threadId, proc, obj, done);
           writeAcpResponse(child?.stdin, obj, (error, accepted) => {
@@ -2979,6 +3003,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ) => {
           if (state.settled) return;
           state.settled = true;
+          stopFuigoWatch();
           releaseTrustHold?.();
           releaseCardHolds();
           approvalDeliveryStop.abort();
@@ -3427,10 +3452,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (FUIGO_FOLDER_TRUST_METHODS.has(msg.method)) return handleFolderTrustRequest(msg);
           const vendorAsk = questionMethodFor(msg.method);
           if (vendorAsk) return handleQuestionRequest(msg, vendorAsk);
-          if (msg.method === FUIGO_ELICIT_METHOD) return handleQuestionRequest(msg, "fuigo-elicit");
+          if (msg.method === FUIGO_ELICIT_METHOD || GROK_ELICIT_METHODS.has(msg.method)) return handleQuestionRequest(msg, "fuigo-elicit");
           if (ELICITATION_METHODS.has(msg.method)) return handleQuestionRequest(msg, "elicitation");
           if (msg.method !== "session/request_permission") {
-            // never leave an unknown server request hanging — the agent blocks
+            // never leave an unknown server request hanging — the agent blocks.
+            // The method name alone is logged (never params): the next vendor rename shows up in the log.
+            console.warn(`acp unknown server request thread=${threadId} engine=${DRIVER_KIND} method=${logMethodName(msg.method)}`);
             return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
           }
           const params = msg.params ?? {};
@@ -4183,6 +4210,45 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
+        /** FUIGO-NO-SILENT-HANG: a rule fired. The turn ends here with Fuigo's line, settle stops the engine, and the
+         *  prompt's own rejection ("turn settled") is skipped by its catch. A stop already asked for wins. */
+        const fireFuigoWatch = (rule: FuigoWatchRule, limits: FuigoWatchLimits) => {
+          stopFuigoWatch();
+          if (state.settled || turnHalted()) return;
+          const answered = state.text.length > 0 || state.producedItem;
+          const message = rule === "compact"
+            ? `${ENGINE} was compacting the conversation for ${plainDuration(limits.compactMs)} without finishing. Try again in a moment.`
+            : rule === "tool"
+              ? `${ENGINE} had a tool running for ${plainDuration(limits.toolMs)} without a word, so the turn was stopped.`
+              : answered
+                ? `${ENGINE} went silent for ${plainDuration(limits.silentMs)}, so the turn was stopped. Try again in a moment.`
+                : `${ENGINE} did not start answering within ${plainDuration(limits.silentMs)}. Flux Router may be out of reach. Try again in a moment.`;
+          appendNative(threadId, { dir: "in", source: SOURCE, msg: { fuigoSilenceWatch: rule } });
+          flushAssistantText();
+          const eventBase = base(threadId, turnId);
+          emit({ ...eventBase, type: "runtime.error", message, diagnostic: acpErrorDiagnostic(eventBase, lifecycle.generation) });
+          settle(false, "no_first_response");
+        };
+        /** Armed once, at the prompt write; runs in every phase until settle, a fallback turn held after the prompt
+         *  result included. A stop pauses it (the stop ends the turn); settle clears it. */
+        const startFuigoWatch = () => {
+          stopFuigoWatch();
+          const limits = fuigoWatchLimits();
+          const watch = new FuigoSilenceWatch(limits);
+          fuigoWatch = watch;
+          const timer = setInterval(() => {
+            if (state.settled || fuigoWatch !== watch) { clearInterval(timer); return; }
+            if (turnHalted()) return;
+            const rule = watch.check({
+              paused: asks.size > 0 || humanWaitOpen(threadId) || engineRequestsOpen.size > 0,
+              toolsRunning: runningTools.size > 0,
+            });
+            if (rule) fireFuigoWatch(rule, limits);
+          }, fuigoWatchTickMs(limits));
+          timer.unref?.();
+          fuigoWatchTimer = timer;
+        };
+
         // A frame over ENGINE_FRAME_MAX_BYTES (A4); the byte-bounded splitter
         // that detects it belongs to the process (`openProcess`).
         const handleOverflow = (overflow: FrameOverflow) => {
@@ -4205,6 +4271,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // Any inbound line proves the child is alive and making progress, so
           // every idle deadline restarts. Only total silence trips one.
           for (const pending of rpcPending.values()) pending.armIdle();
+          if (fuigoWatch) {
+            if (msg.id !== undefined && msg.method) engineRequestsOpen.add(String(msg.id));
+            else if (msg.id === undefined && typeof msg.method === "string") {
+              if (support.interjection?.queueChanged.includes(msg.method)) fuigoWatch.queueChanged(msg.params, sessionId);
+              else fuigoWatch.frame(classifyFuigoFrame(msg, sessionId));
+            }
+          }
           if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
             const pend = rpcPending.get(msg.id);
             if (!pend && msg.error) {
@@ -4537,6 +4610,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // fluxHeaderGate and applyMountEnv, describes the process that runs. The handed map's PATH (the owner's captured
         // shell PATH) stays the child's own and could find another, older build first (1.0.3 gate; isolation-cache.ts
         // engineLaunchFile).
+        support.finishTurnEnv?.(env);
         const launchPath = { PATH: env.PATH };
         // The file the version probe above ran (support.launchExecutable on this same driver env), fixed before the handed map
         // replaces env.
@@ -5464,6 +5538,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (turnHalted()) { turn.notWritten?.(); settleHalted(); return; }
             state.promptSent = true; turnTrace(threadId).once("prompt.sent");
             promptStartedAt = Date.now();
+            if (DRIVER_KIND === "fuigoAgent") startFuigoWatch();
             const promptIdleMs = acpPromptIdleTimeoutMs();
             const prompted = request(
               "session/prompt",
@@ -5756,6 +5831,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           mcpToolSurface: support.driverKind === "fuigoAgent" || support.driverKind === "grokAgent" ? FUIGO_TOOL_SURFACE : NEUTRAL_TOOL_SURFACE,
           capabilities: {
             sessionModelSwitch: "unsupported",
+            // DELETE-REVOKE-SCOPE (a): the turn's prompt bytes go out only in session/prompt, behind turn.beforeSubmit with no await
+            // between them (sendTurn); a steer writes only after that prompt was sent (promptSent). Launch, session setup and MCP
+            // connects run before and carry no memory frame.
+            fencedWrites: true,
             agentsMcp: !support.ownTools,
             memoryMcp: !support.ownTools,
             customMcp: !support.ownTools,

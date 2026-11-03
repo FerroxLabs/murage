@@ -3761,6 +3761,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -3772,7 +3777,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "es": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -7534,6 +7540,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -7545,7 +7556,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "fr": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -11307,6 +11319,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -11318,7 +11335,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "hi": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -15080,6 +15098,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -15091,7 +15114,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "ja": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -18853,6 +18877,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -18864,7 +18893,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "pt-br": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -22626,6 +22656,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -22637,7 +22672,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     },
     "zh": {
       "room.sendAgainTo": "09448d6ba249453b457ba8c88e2c1c92c3e64b222106cd533ea445ca07c56d95",
@@ -26399,6 +26435,11 @@
       "engineSignIn.tryAgain": "d8b8392e2c542950ca64867168e4ef87d4ad606882d5898f826b51c6d553988f",
       "engineChatLink.signedIn": "2e920ae4225412ba00426f824335cfa70e68ae5dc24b78f2fc3d26275a6cf44e",
       "engineChatLink.setUpTitle": "6365b18a3c0845d444af08373e7bb13bdb6d5926f4b6a1979440a03634f879b3",
+      "engineWall.needsOwnAccount": "d90ecadb93ee36af355f24fa295ae95bf77fbefc764196b7205bce258b53c67f",
+      "engineWall.useFuigo": "31941c342f545248e41510796bcbfaf122b7b89563f55d8ad1cd8b790e07cc6c",
+      "allChats.back": "76900f1bfd16c8d4dd3d25e6f46638d7165aee23883ccea6bfe071c514421769",
+      "allChats.backHint": "8c6c9cf3855db6b508d9a78571594e4fc25eecddc5c00a824c3d5af308eb2aca",
+      "allChats.close": "7d9eb7acb13e24625c404401d8e88b2350e32162455885f18276cf802f7701ed",
       "calls.botSettings.canCallMe": "875504373c2e17ea2bc9f2c1aff4fdbface54b6d8c04099efc42cab01f0035ee",
       "calls.botSettings.canCallMeHelp": "fc55acf56633aa3660923f7c9fafde518defb518a6fc85904264ad4e7df24f19",
       "calls.botSettings.neededNow": "7e8567c96c5c5a6b06cfa4e08b17a1a7d06dd24ca99bfdc03569e1d30707ddc6",
@@ -26410,7 +26451,8 @@
       "calls.botSettings.quietLine": "1d8397aa29d8f779c490fdd244e41090c73bd59a116c4e688586def70ec430fb",
       "calls.botSettings.pausedAfterRestore": "921e4450811f7997bb4d75254a9f97625d510da99fa84426b22b261d1500223c",
       "calls.turnBackOn": "1ec44ecf348473c69e190f1fec20b6636c6eb5050e85366eee6425579fa798ad",
-      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526"
+      "calls.failed": "00aa1e1b50115c66cce8c98d5acaf657bc1ec9224ee0ece916817b36d6d15526",
+      "handoff.doneWhen": "b9638056db562fed51e02f452f5c7e8f6a6128292eb1bdfda7f145a68102b917"
     }
   }
 }

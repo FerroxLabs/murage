@@ -37,6 +37,7 @@ import { initializePhoneReceipts } from "./phones/receipts.ts";
 import { initializePhones } from "./phones/registry.ts";
 import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
 import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
 function regularFile(path: string, missing = false) {
@@ -327,7 +328,7 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
       graph = new InstallationTranscriptGraph(fail);
       thread = row.thread_id as string;
     }
-    graph.add(JSON.parse(row.json as string));
+    graph.add(rowToMessage({ json: row.json as string }));
   }
   graph.validate();
   return {
