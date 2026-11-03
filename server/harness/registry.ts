@@ -280,6 +280,19 @@ export class ProviderRegistry {
     return { instanceId, driverKind: entry.shadow?.driverKind ?? entry.live!.driverKind, snapshot };
   }
 
+  /** What the engine's own probe says about its login: true, false, or null when it does not answer. The rejection mark is left
+   *  out on purpose: it says a turn was refused, not whether a login exists, so a sign-in reads the engine itself. Undefined when the
+   *  registry lacks the id. */
+  async engineLogin(instanceId: InstanceId): Promise<boolean | null | undefined> {
+    const entry = this.byId.get(instanceId);
+    if (!entry) return undefined;
+    if (entry.shadow) return null;
+    try {
+      const snapshot = await entry.live.snapshot();
+      return snapshot.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
+    } catch { return null; }
+  }
+
   /** instance snapshots for the model picker: id, driver, models, health.
    *
    * `catalogs: "fresh"` (the default) refreshes every catalog first, for a
@@ -287,17 +300,28 @@ export class ProviderRegistry {
    * (the tray's minute-by-minute setup view, the setup poll) pass `"due"`:
    * their forced refresh spawned `fuigo models` every minute, which is a
    * GET /v1/models at Flux every 60 to 65 s, refused or not (2026-10-01). */
-  private describing: Record<"due" | "fresh", { epoch: number; run: Promise<Awaited<ReturnType<ProviderRegistry["scan"]>>> } | null> = { due: null, fresh: null };
+  private describing: Record<"due" | "fresh", { epoch: number; seq: number; run: Promise<Awaited<ReturnType<ProviderRegistry["scan"]>>> } | null> = { due: null, fresh: null };
+  /** Counts scans started; a flight carries the count it started at. */
+  private scanSeq = 0;
+
+  /** 1.0.14 FIRST-ENGINE-REPICK: the fleet's revision, bumped whenever an entry is added, replaced or removed. A read taken before an await
+   * and compared after it says whether any instance changed in between. Read only. */
+  get generation(): number { return this.epoch; }
+
+  /** The number of scans started so far. `describe({ startedAfter: ticket })` never answers from a scan that started at or before it, so
+   * a caller that takes a ticket after a key is saved always reads a scan that began after the save. */
+  scanTicket(): number { return this.scanSeq; }
 
   /** One scan at a time per mode: boot asks for the engine list and the setup view together, and every
    * engine card used to start its own. A caller that arrives mid-scan waits for it. A "fresh" scan also
    * answers a "due" caller (it refreshed at least as much); a "due" scan never answers a "fresh" one. */
-  describe(options: { catalogs?: "fresh" | "due" } = {}) {
+  describe(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
     const mode = options.catalogs === "due" ? "due" : "fresh";
-    const usable = (flight: { epoch: number } | null) => flight !== null && flight.epoch === this.epoch;
+    const after = options.startedAfter;
+    const usable = (flight: { epoch: number; seq: number } | null) => flight !== null && flight.epoch === this.epoch && (after === undefined || flight.seq > after);
     const shared = usable(this.describing.fresh) ? this.describing.fresh : mode === "due" && usable(this.describing.due) ? this.describing.due : null;
     if (shared) return shared.run;
-    const flight = { epoch: this.epoch, run: this.scan(mode === "due") };
+    const flight = { epoch: this.epoch, seq: ++this.scanSeq, run: this.scan(mode === "due") };
     this.describing[mode] = flight;
     const clear = () => { if (this.describing[mode] === flight) this.describing[mode] = null; };
     flight.run.then(clear, clear);

@@ -95,6 +95,10 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["PATCH"], path: rx(String.raw`/api/instances/[\w.-]+`), label: "Change how an engine starts", summary: "settings" },
   { methods: ["POST"], path: rx(String.raw`/api/instances/[\w.-]+/claude-update`), label: "Update Claude Code" },
   { methods: ["POST"], path: rx("/api/hermes/profiles/import"), label: "Add Hermes profiles as engines" },
+  // 1.0.14 engine sign-in and set-up check (desktop only; route-policy marks them step-up).
+  { methods: ["POST"], path: rx("/api/engine-setup-check"), label: "Check that an engine can answer" },
+  { methods: ["POST"], path: rx("/api/engine-signin-recipe"), label: "Start signing in to an engine" },
+  { methods: ["POST"], path: rx("/api/engine-signin-probe"), label: "Check whether an engine is signed in" },
   // 1.0.9 bot email owner routes (server/email/owner-routes.ts); route-policy marks all of /api/email/ step-up.
   { methods: ["POST"], path: rx("/api/email/account"), label: "Turn bot email on or off for this account", summary: "none" },
   { methods: ["POST"], path: rx(`/api/email/other-setups/${ID}/remove`), label: "Remove an email address from another setup", summary: "none" },
@@ -110,6 +114,8 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx("/api/calls/off-today"), label: "Turn bot calls off for today" },
   { methods: ["POST"], path: rx("/api/no-limits/terms"), label: "Accept the No limits terms" },
   { methods: ["POST"], path: rx("/api/calls/rearm"), label: "Turn bot calls back on" },
+  // 1.0.14: Call me when this finishes.
+  { methods: ["POST"], path: rx("/api/calls/turn-end"), label: "Call you when this task finishes" },
 
   // Routines, webhooks, connectors.
   { methods: ["POST"], path: rx("/api/routines"), label: "Create a routine", summary: "settings" },

@@ -58,7 +58,6 @@ const ALLOWLIST: Record<string, string> = {
   "checkpoints.ts": "Murage's own checkpoint git repository",
   "engine-fs.ts": "Windows registry read of cloud sync roots",
   "protected-folders.ts": "Windows registry and xdg folder lookups",
-  "engine-management.ts": "package manager install and update of an engine package, not an engine run",
   "fuigo-probe-isolation.ts": "sandbox helper setup and cleanup for the Fuigo update check",
   "gepa-worker.ts": "the GEPA Python worker, not an engine",
   "installation-backup-encryption.ts": "backup encryption tool with an empty PATH",

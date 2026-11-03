@@ -120,7 +120,16 @@ describe("the engine Today names", () => {
     expect(engineState({ instanceId: "a", displayName: "A", enabled: false, snapshot: { state: "unavailable" } })).toBe("off");
     expect(engineState({ instanceId: "a", displayName: "A", snapshot: { state: "unavailable" } })).toBe("missing");
     expect(engineState({ instanceId: "a", displayName: "A", snapshot: { state: "available", authenticated: false } })).toBe("signed-out");
+    // Fuigo's own signed-out flag is not a problem while /api/engine-health is loading or failed, as on the server.
+    expect(engineState({ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent", snapshot: { state: "available", authenticated: false } })).toBe("ready");
+    expect(primaryEngine([{ instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent", snapshot: { state: "available", authenticated: false } }], ["fuigo"])).toMatchObject({ id: "fuigo", state: "ready" });
     expect(engineState({ instanceId: "a", displayName: "A", snapshot: { state: "available" } })).toBe("ready");
+  });
+  it("reads a sign-in check that did not answer as checking, and Today never says signed in for it", () => {
+    expect(engineState({ instanceId: "a", displayName: "A", snapshot: { state: "available", authUnverified: true } })).toBe("checking");
+    const tags = texts(base({ engine: { id: "codex", label: "Codex", state: "checking", line: "" } }));
+    expect(tags[0]).toBe("Checking Codex sign-in");
+    expect(tags.some((tag) => /signed in/i.test(tag))).toBe(false);
   });
 });
 
