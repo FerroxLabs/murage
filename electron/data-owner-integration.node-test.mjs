@@ -214,7 +214,7 @@ function serverLauncher({ proc, poll, track, environment = {}, portAvailable = a
     mcpCommitToken:"private-mcp-commit",
     secureCredentials:{},credentialStoreUnavailable:false,desktopSurfaceSecret:"",browserHost:null,
     launchSecretVia,sendLaunchSecretParent,managedComposioChildEnvironment:(_url,_keys,env)=>env, composioBrokerUrl:()=>null, fluxComposioBrokerUrlValue:()=>"", composioLegacyUntilValue:()=>"",
-    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),desktopFluxEnvironment,slog:()=>{},
+    watchMemoryUpgrade:()=>({stop(){}}),showMemoryUpgradeProgress:()=>{},closeMemoryUpgradeWindow:()=>{},clearMemoryUpgradeStatus:()=>{},memoryUpgradeBlockedSentence:()=>"",readMemoryUpgradeStatus:()=>null,harnessResourceEnvironment:()=>({}),packagedGepaManifestEnvironment:()=>({MURAGE_GEPA_MANIFEST_SHA256:""}),workspaceCredentialEnv:()=>({}),desktopFluxEnvironment,secretSaveRefusedReason:async()=>"",slog:()=>{},
     utilityProcess:{fork:(_entry,_args,options)=>{proc.environment=options.env;return proc;}},
     receiveDesktopSurfaceSecret:()=>false,receiveBrowserControlHold:()=>false,receiveBrowserLifecycleCleanup:()=>false,syncBrowserConnection:()=>{},
     pollServerIdentity:poll,SERVER_BOOT_TIMEOUT_MS:25,SERVER_BOOT_SLOW_LIMIT_MS:25,portAvailable,compileCacheEnvironment:()=>({}),desktopMark:()=>{},
@@ -304,7 +304,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
     // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
     sentinelHost:{shutdown:async()=>{}},
-    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},mcpServers:{dispose(){}},
+    notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},
     desktopBackupTool:{invalidate(){},settled:()=>Promise.resolve()},backupToolCheck:Promise.resolve(),desktopResticTool:null,remoteBackupAttestation:{abort(){}},
     // The bundled adb daemon is not an owned child: it forks itself off the
     // first adb command and stays, so quitting has to stop it by name.

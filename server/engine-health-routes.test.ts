@@ -25,6 +25,16 @@ describe("the bundled Fuigo", () => {
   });
 });
 
+describe("a sign-in check that did not answer", () => {
+  it("reads Checking sign-in, never Signed in and ready", () => {
+    const row = engineRow({ instanceId: "codex", displayName: "Codex", driverKind: "codex", snapshot: { state: "available", authUnverified: true } });
+    expect(row).toMatchObject({ state: "checking", line: "Checking sign-in." });
+  });
+  it("leaves an engine with no sign-in to report as ready", () => {
+    expect(engineRow({ instanceId: "pi", displayName: "Pi", driverKind: "pi", snapshot: { state: "available" } }).state).toBe("ready");
+  });
+});
+
 describe("engineHealthRoute", () => {
   it("is not this route's business for any other path", async () => {
     expect(await engineHealthRoute({ method: "GET", url: url("/api/health") }, deps())).toBeNull();
