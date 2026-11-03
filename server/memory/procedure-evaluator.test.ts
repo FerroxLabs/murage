@@ -20,6 +20,7 @@ import { gepaCallNotStarted } from "../gepa-worker.ts";
 import { verifyGepaBundle } from "../gepa-resource.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { bumpLearningFence } from "./authority-epoch.ts";
 
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
 const hash=(value:unknown)=>procedureCandidateHash(JSON.stringify(value));
@@ -40,8 +41,10 @@ function fixture(kind:"skill"|"routine"="skill",native?:{directory:string;manife
     current:(id,name,a)=>skillEvolutionDescriptor(id,name,{audienceKey:a.audienceKey,allowedScopeIds:a.scopeIds}),publish:(snapshot,receipt,a)=>publishEvaluatedScopedSkill(snapshot,receipt,{audienceKey:a.audienceKey,allowedScopeIds:a.scopeIds}),wasPublished:(snapshot,receipt,a)=>wasEvaluatedScopedSkillPublished(snapshot,receipt,{audienceKey:a.audienceKey,allowedScopeIds:a.scopeIds}),
   }};
   host=createProcedureReviewHost(hostOptions);
-  const seen:string[]=[],seenWindows:number[]=[];let model="fixture-model",refused=false,reflections=0,workerStarts=0;
+  const seen:string[]=[],seenWindows:number[]=[];let model="fixture-model",refused=false,lateFence=false,reflections=0,workerStarts=0;
   const extractor:TextOnlyExtractor=async(text,_maximum,_signal,dispatch)=>{
+    // S1: a counter move between the cheap check and the send; the call's own gate refuses under its lock with nothing let out
+    if(lateFence){lateFence=false;bumpLearningFence(database());return dispatch!.fence!.send(()=>"unreachable");}
     seen.push(JSON.stringify(dispatch?.messages));expect(JSON.stringify(dispatch?.messages)).not.toContain("PRIVATE_EVENT_CANARY");
     if(native)seenWindows.push(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id='extract-budget'").get()!.intent)).minute);
     if(native?.cancelOnEvaluation&&dispatch?.purpose!=="reflection")return await new Promise<string>((_resolve,reject)=>{
@@ -80,7 +83,7 @@ function fixture(kind:"skill"|"routine"="skill",native?:{directory:string;manife
     recoveredEvaluator=createProcedureEvaluator({...evaluatorOptions,host:recoveredHost.host,readInstruction:recoveredHost.readInstruction});
     return {store:recoveredStore,host:recoveredHost,evaluator:recoveredEvaluator};
   };
-  return {store,bot,threadId,context,manager,routine,pin,host,evaluator,settle,seen,seenWindows,restart,nativeCounts:()=>({reflections,workerStarts}),changeModel:()=>{model="changed-model";},refuse:(value:boolean)=>{refused=value;}};
+  return {store,bot,threadId,context,manager,routine,pin,host,evaluator,settle,seen,seenWindows,restart,nativeCounts:()=>({reflections,workerStarts}),changeModel:()=>{model="changed-model";},refuse:(value:boolean)=>{refused=value;},lateFence:()=>{lateFence=true;}};
 }
 it("waits without consuming attempts, admits exact owner preview, publishes scoped bytes and reuses grant on the next task",async()=>{
   const f=fixture(),id=await f.settle();await processProcedureReview(id,f.host.host,new AbortController().signal);
@@ -125,6 +128,13 @@ it("resumes a quota-refused started review using its existing grant and snapshot
   f.refuse(false);f.evaluator.retry(ownerMemoryTicket(),id);await processProcedureReview(id,f.host.host,new AbortController().signal);
   const last=JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));expect(last.status).toBe("complete");expect(last.snapshot).toEqual(first.snapshot);expect(f.seen).toHaveLength(3);
   expect(database().prepare("SELECT count(*) AS n FROM memory_scope_bindings WHERE subject_id='procedure-evaluation-grant' AND state='granted'").get()?.n).toBe(1);
+});
+it("S1: a call the fence drops inside its gate is not started: the review defers unsent and the owner's Retry completes it",async()=>{
+  const f=fixture(),id=await f.settle(),preview=f.evaluator.preview(ownerMemoryTicket(),id);f.evaluator.authorize(ownerMemoryTicket(),preview.previewId);f.lateFence();
+  await processProcedureReview(id,f.host.host,new AbortController().signal);const first=JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
+  expect(first).toMatchObject({status:"deferred",retryAfter:null,attempts:0});expect(first.snapshot).toBeTruthy();expect(f.seen).toEqual([]);
+  f.evaluator.retry(ownerMemoryTicket(),id);await processProcedureReview(id,f.host.host,new AbortController().signal);
+  const last=JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));expect(last.status).toBe("complete");expect(last.snapshot).toEqual(first.snapshot);expect(f.seen).toHaveLength(3);
 });
 it("recovers already-published bytes and advances a missed grant acknowledgement without evaluation",async()=>{
   const f=fixture(),id=await f.settle(),preview=f.evaluator.preview(ownerMemoryTicket(),id);f.evaluator.authorize(ownerMemoryTicket(),preview.previewId);await processProcedureReview(id,f.host.host,new AbortController().signal);

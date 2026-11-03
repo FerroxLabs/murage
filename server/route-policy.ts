@@ -188,6 +188,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "preview a level (targetLevel) with its conversations and routines, then raise owner open conversations (rosterId, targetLevel, afterRev; designs UX-TRUST-L1B-1013)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "copy the bot's permissions onto one chat after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/threads/follow-model`), class: "desktop", cloudWrite: "ordinary", why: "chats with a model of their own go back to the bot's model" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/use-fuigo`), class: "desktop", cloudWrite: "ordinary", why: "the owner's tap on a sign-in wall puts this bot on Fuigo" },
   { methods: ["PUT", "DELETE"], path: re(`/api/bots/${ID}/limit-backup`), class: "desktop", cloudWrite: "step-up", why: "the engine that takes over when the bot's engine hits its limit" },
   { methods: ["GET"], path: re(`/api/groups/${ID}/project`), class: "companion", why: "owner project material and decisions" },
   { methods: ["POST"], path: re(`/api/groups/${ID}/project/viewed`), class: "companion", cloudWrite: "ordinary", why: "owner project material and decisions" },

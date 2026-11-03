@@ -1,0 +1,4279 @@
+{
+ "sinks": [
+  {
+   "file": "server/atomic.ts",
+   "fn": "writeFileAtomicInner",
+   "anchor": "writeFileSync(fd,data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/win-acl.ts",
+   "fn": "defaultRunner",
+   "anchor": "execFileSync(file,[...args],{encoding:\"utf8\",windowsHide:true,timeout:2_000,stdio:[\"ignore\",\"pipe\",\"ignore\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/health/publisher.ts",
+   "fn": "loadTokenKey",
+   "anchor": "writeSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/health/publisher.ts",
+   "fn": "replaceManifest",
+   "anchor": "writeSync(fd,bytes)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/health/publisher.ts",
+   "fn": "append",
+   "anchor": "handle.write(line)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/env-path.ts",
+   "fn": "persist",
+   "anchor": "writeFileSync(file,body,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/env-path.ts",
+   "fn": "runCapture",
+   "anchor": "execFile(shell,[\"-l\",\"-i\",\"-c\",script],{timeout:CAPTURE_MS,maxBuffer:CAPTURE_BYTES,encoding:\"utf8\",env},(error,stdout)=>{if(error)returnresolve({cause:error.kil",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/env-path.ts",
+   "fn": "runCapture",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/env-path.ts",
+   "fn": "runCapture",
+   "anchor": "spawn(shell,[\"-l\",\"-i\",\"-c\",script],{detached:true,stdio:[\"ignore\",\"pipe\",\"pipe\"],env})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/env-path.ts",
+   "fn": "fuigoVersion",
+   "anchor": "spawnSync(absolute,[\"--version\"],{env,encoding:\"utf8\",timeout:3000,windowsHide:true,maxBuffer:16*1024,input:\"\",stdio:[\"pipe\",\"pipe\",\"pipe\"],...(process.platform",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/cloud-process-hooks.ts",
+   "fn": "systemctlShow",
+   "anchor": "execFile(SYSTEMCTL,[\"show\",\"--no-pager\",\"-p\",\"ActiveState\",\"-p\",\"LoadState\",unit],{timeout:3_000,env:{PATH:\"/usr/bin:/bin\"},maxBuffer:4096},(error,stdout)=>erro",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-turn-logs.ts",
+   "fn": "copyRegular",
+   "anchor": "copyFileSync(from,to)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.yaml\"),config,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.toml\"),fuigoConfig,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/provider-routing.ts",
+   "fn": "applyProviderRoute",
+   "anchor": "writeFileSync(join(home,\"config.toml\"),permission,{flag:\"a\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalHost",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalHosts",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "probeLocalInjects",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/local-inject.ts",
+   "fn": "mergeLocalInject",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-cache.ts",
+   "fn": "writeCacheEntry",
+   "anchor": "writeSync(fd,body)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-cache.ts",
+   "fn": "bumpGeneration",
+   "anchor": "writeSync(fd,next)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/turn-credentials.ts",
+   "fn": "put",
+   "anchor": "writeFileSync(tmp,body,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/turn-credentials.ts",
+   "fn": "put",
+   "anchor": "writeFileSync(path,body,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/approval-delivery.ts",
+   "fn": "writeAcpResponse",
+   "anchor": "stream.write(JSON.stringify(obj)+\"\\n\",error=>report(error,true))",
+   "kind": "stream-write",
+   "reason": "adapter-write",
+   "admittedBy": "server/drivers/acp/core.ts turn.beforeSubmit?.()"
+  },
+  {
+   "file": "server/folder-trust-seed.ts",
+   "fn": "writeFuigoSeed",
+   "anchor": "writeSync(fd,bytes,at)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "markMcpListedAfterFlush",
+   "anchor": "process.stdout.write(\"\",()=>{try{writeFileSync(path,String(Date.now()),{mode:0o600});}catch{/*thedriverfallsbacktoitsbound*/}})",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-listed.ts",
+   "fn": "markMcpListedAfterFlush",
+   "anchor": "writeFileSync(path,String(Date.now()),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/gepa-worker.ts",
+   "fn": "runGepaWorker",
+   "anchor": "spawn(command.executable,[...command.args],{cwd:command.cwd,env,shell:false,windowsHide:true,stdio:[\"pipe\",\"pipe\",\"pipe\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/gepa-worker.ts",
+   "fn": "finishFailure",
+   "anchor": "child.stdin.write(encodeGepaFrame({v:1,type:\"cancel\",jobId:job.jobId}),()=>{})",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/gepa-worker.ts",
+   "fn": "write",
+   "anchor": "child.stdin.write(text,error=>error?fail(Error(\"GEPA_STDIN_FAILED\")):done())",
+   "kind": "stdin",
+   "reason": "learning-local",
+   "admittedBy": "child:spawn(command.executable,"
+  },
+  {
+   "file": "server/sentinel/paths.ts",
+   "fn": "writeDescriptor",
+   "anchor": "writeFileSync(temp,`${JSON.stringify(valid.value)}\\n`,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/publication.ts",
+   "fn": "publishView",
+   "anchor": "writeFileSync(temp,text,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/cli-memory-learning.ts",
+   "fn": "hiddenTurnRunner",
+   "anchor": "adapter.sendTurn({threadId,text:prompt,sessionReset:true,cwd,stopLine:true,proposalOnly:true,background:true,usageFeature:\"memory\",...(beforeSubmit?{beforeSubmi",
+   "kind": "sendTurn",
+   "reason": "learning-path",
+   "admittedBy": "fence:beforeSubmit"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "capExisting",
+   "anchor": "writeFileSync(file,encoded,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "appendNative",
+   "anchor": "writeFileSync(current,marker(\"native_trace_retention\",{reason:\"rotated;onlycurrentandprevioussegmentsareretained\",segmentLimitBytes:SEGMENT_BYTES}),{mode:0o600}",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/native.ts",
+   "fn": "appendNative",
+   "anchor": "appendFileSync(current,encoded,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/lifecycle-diagnostic.ts",
+   "fn": "createLifecycleRecorder",
+   "anchor": "appendNative(threadId,entry)",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/artifacts.ts",
+   "fn": "registerArtifact",
+   "anchor": "writeFileSync(fd,bytes)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/workspace.ts",
+   "fn": "writeSyncedFile",
+   "anchor": "writeFileSync(fd,text)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-hook.ts",
+   "fn": "writeHookFiles",
+   "anchor": "writeFileSync(envFile,`SOCKET=${socketPath}\\nTOKEN=${token}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-hook.ts",
+   "fn": "writeIfChanged",
+   "anchor": "writeFileSync(path,content,{mode})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-computer.ts",
+   "fn": "<module>",
+   "anchor": "promisify(execFile)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-computer.ts",
+   "fn": "prepareManagedImage",
+   "anchor": "writeFile(join(context,\"Dockerfile\"),managedImageDockerfile(),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/win-process-table.ts",
+   "fn": "tasklistMemory",
+   "anchor": "execFile(join(root,\"System32\",\"tasklist.exe\"),[\"/FO\",\"CSV\",\"/NH\"],{timeout:TASKLIST_TIMEOUT_MS,killSignal:\"SIGKILL\",maxBuffer:16*1024*1024,windowsHide:true,enco",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "descendantBaseline",
+   "anchor": "execFile(\"ps\",PS_ETIME_ARGS,{timeout:5_000,killSignal:\"SIGKILL\",maxBuffer:4*1024*1024,env:PS_LOOKUP_ENV},(error,stdout)=>{if(error)returnresolve(null);//Thelist",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "hookStartedBefore",
+   "anchor": "execFile(\"ps\",[\"-o\",\"pid=,etime=,lstart=\",\"-p\",pids.join(\",\")],{timeout:5_000,killSignal:\"SIGKILL\",maxBuffer:4*1024*1024,env:PS_ENV},(error,stdout)=>{if(psOutco",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "identityListing",
+   "anchor": "execFile(\"ps\",PS_ID_ARGS,{timeout:5_000,killSignal:\"SIGKILL\",maxBuffer:4*1024*1024,env:PS_ENV},(error,stdout)=>{if(error)returnresolve(null);resolve(parseIdenti",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "processTreeWalk",
+   "anchor": "execFile(\"ps\",stopAt?PS_SETTLE_ARGS:PS_ARGS,{timeout:5_000,maxBuffer:4*1024*1024,env:PS_LOOKUP_ENV},(error,stdout)=>{if(error)returnresolve(null);if(!stopAt)ret",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "processParentsAndArgs",
+   "anchor": "execFile(\"ps\",[\"-ww\",\"-o\",\"pid=,ppid=,lstart=,args=\",\"-p\",list.join(\",\")],{timeout:5_000,killSignal:\"SIGKILL\",maxBuffer:4*1024*1024,env:PS_ENV},(error,stdout)=>",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-tree.ts",
+   "fn": "processNames",
+   "anchor": "execFile(\"ps\",[\"-o\",\"comm=\",\"-p\",list.join(\",\")],{timeout:2_000,killSignal:\"SIGKILL\",env:PS_LOOKUP_ENV},(error,stdout)=>{if(error&&!stdout)returnresolve([]);res",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/warm-pool.ts",
+   "fn": "psMeasure",
+   "anchor": "execFile(\"ps\",[\"-A\",\"-o\",\"pid=,ppid=,rss=\"],{timeout:3_000,killSignal:\"SIGKILL\",maxBuffer:16*MB},(error,stdout)=>{if(error&&!stdout)returnresolve(null);resolve(",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/warm-pool.ts",
+   "fn": "sampleDarwinAvailable",
+   "anchor": "execFile(\"vm_stat\",[],{timeout:3_000,killSignal:\"SIGKILL\"},(error,stdout)=>{if(!error){consttext=String(stdout);constpage=Number(/pagesizeof(\\d+)bytes/.exec(tex",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/shared-login-link.ts",
+   "fn": "writeFileSync",
+   "anchor": "writeFileSync(path,data,options)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/process-identity.ts",
+   "fn": "processIdentity",
+   "anchor": "execFileSync(\"ps\",[\"-o\",\"lstart=\",\"-p\",String(pid)],{encoding:\"utf8\",timeout:3_000,stdio:[\"ignore\",\"pipe\",\"ignore\"],env:{...process.env,LC_ALL:\"C\",LANG:\"C\"},})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "writeMarkerFile",
+   "anchor": "writeFileSync(temporary,JSON.stringify(marker),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "acquireLease",
+   "anchor": "writeFileSync(file,JSON.stringify(ownProcessRecord()),{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "carryEntry",
+   "anchor": "copyFileSync(target,dest)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "carryGeneration",
+   "anchor": "copyFileSync(join(currentHome,name),join(dest,name))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "replaceGenerated",
+   "anchor": "writeFileSync(temporary,text,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "writeMarker",
+   "anchor": "writeFileSync(temporary,JSON.stringify(marker),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "adoptOneLogin",
+   "anchor": "writeFileSync(real,bytes,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/scoped-cli-home.ts",
+   "fn": "setAsideLogin",
+   "anchor": "writeFileSync(join(dir,[from,name,hash,String(Math.round(mtimeMs))].join(LOGIN_SEP)),bytes,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "writeTo",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fenceFrame",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{acpForeignFrame:{method:msg.method,request:msg.id!==undefined}}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "closeProcess",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:why}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "onOverflow",
+   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "openProcess",
+   "anchor": "appendNative(proc.owner.threadId,{dir:\"in\",source:SOURCE,msg:{acpPool:\"exited\",code,signal}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "idleLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:nativeLogMessage(msg)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "parkProcess",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"park\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "noteAskStopTool",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{askStop:\"ran\",kind}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fireFuigoWatch",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoSilenceWatch:rule}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "persistEngineStderr",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{engineStderr:{stopReason,lines:kept,truncated:stderrDiagnosticTruncated||kept.length<lines.length}},})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "settle",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"close\",reason:proc.unfit}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "markFolderTrustUnfit",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"unfit\",reason}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{askStop:\"refused\",kind:kind||null}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "noteFallback",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoInterjection:event,...extra}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleStdoutLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:nativeLogMessage(msg)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "close",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr\",turnId,processGeneration:lifecycle.generation,text:diagnostic.slice(offset,o",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "close",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:`${SOURCE}.stderr`,msg:{type:\"engine_stderr_truncated\",turnId,limitChars:STDERR_DIAGNOSTIC_CHARS}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "spawnFresh",
+   "anchor": "spawnCli(launchCli,argv,{cwd,//175-3:theonemergesiteofadriver'sspawn-onlysecrets.The//objectisbuilthereandhandedtothechild;nothingkeepsit.env:support.secretEnv?",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reuse\",...(crossThread?{crossThread:true}:{})}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:\"reestablish_failed\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{acpPool:tree.leftover===\"mcp-ready-timeout\"?\"mcp_ready_timeout\":\"pre_prompt_leftover\"}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "logGate",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:{mcpGate:line}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/kimi.ts",
+   "fn": "removeKimiLocalHost",
+   "anchor": "writeFileSync(path,next)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/kimi.ts",
+   "fn": "ensureKimiInjectAlias",
+   "anchor": "writeFileSync(path,contents)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/kimi.ts",
+   "fn": "ensureKimiInjectAlias",
+   "anchor": "writeFileSync(path,text)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-reaper.ts",
+   "fn": "run",
+   "anchor": "execFile(cmd,args,{timeout:10_000,encoding:\"utf8\",windowsHide:true,...(abort?{signal:abort}:{})},(e,out)=>done(abort?.aborted?{ok:false,code:\"ABORT_ERR\",out:\"\"}",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-text-only.ts",
+   "fn": "spawnIt",
+   "anchor": "spawnCli(o.cli,o.args,{cwd:o.cwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"]},job)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-text-only.ts",
+   "fn": "runHeadlessCliNow",
+   "anchor": "child.stdin.end(o.stdinText??\"\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-text-only.ts",
+   "fn": "securityLookup",
+   "anchor": "execFile(\"security\",args,{timeout:KEYCHAIN_PROBE_MS,encoding:\"utf8\",windowsHide:true},(error)=>{if(!error)returndone(0);constcode=(errorasNodeJS.ErrnoException&",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-text-only.ts",
+   "fn": "claudeTextOnlyTurn",
+   "anchor": "writeFileSync(settings,'{\"disableAllHooks\":true}',{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-text-only.ts",
+   "fn": "claudeTextOnlyTurn",
+   "anchor": "writeFileSync(join(temp.home,CLAUDE_GLOBAL_CONFIG),CREDMAN_SEED,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/grok.ts",
+   "fn": "ensureGrokInjectSlug",
+   "anchor": "writeFileSync(path,next)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/grok.ts",
+   "fn": "removeGrokLocalHost",
+   "anchor": "writeFileSync(path,next)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/grok.ts",
+   "fn": "grokPluginStub",
+   "anchor": "writeFileSync(manifest,JSON.stringify({name,version:\"0.0.0\",description:\"Murage:theowner'spersonalpluginofthisnameisoffforbotturns.\"}))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "readMdmPreference",
+   "anchor": "spawnSync(\"/usr/bin/defaults\",[\"read\",MDM_DOMAIN,MDM_KEY],{encoding:\"utf8\",timeout:10_000,windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "createTempRoot",
+   "anchor": "writeFileSync(promptFile,prompt,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "markReflectionGitRoot",
+   "anchor": "writeFileSync(join(git,\"HEAD\"),REFLECTION_GIT_HEAD,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "markReflectionGitRoot",
+   "anchor": "writeFileSync(join(git,\"config\"),\"[core]\\n\\trepositoryformatversion=0\\n\\tbare=false\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "pinReflectionFuigoConfig",
+   "anchor": "writeFileSync(path,`${sep}${REFLECTION_FUIGO_PLUGIN_PIN}${REFLECTION_FUIGO_SKILLS_PIN}`,{flag:\"a\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/pip-transport.ts",
+   "fn": "bindReflectionRoute",
+   "anchor": "copyFileSync(source,target)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-fs.ts",
+   "fn": "pwriteRaw",
+   "anchor": "writeSync(fd,bytes,0,bytes.length,position)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-fs.ts",
+   "fn": "append",
+   "anchor": "writeSync(fd,bytes,done,bytes.length-done)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-fs.ts",
+   "fn": "writeDurable",
+   "anchor": "writeSync(fd,bytes,done,bytes.length-done)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-fs.ts",
+   "fn": "lsofFiles",
+   "anchor": "execFileSync(\"/usr/sbin/lsof\",[\"-n\",\"-P\",\"-w\",\"-F\",\"pfn\",\"-p\",pids.join(\",\")],{encoding:\"utf8\",timeout:10_000,maxBuffer:64*1024*1024,stdio:[\"ignore\",\"pipe\",\"ign",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-fs.ts",
+   "fn": "windowsRegistryRoots",
+   "anchor": "execFileSync(\"reg\",[\"query\",\"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\SyncRootManager\",\"/s\"],{encoding:\"utf8\",timeout:5_000,windowsHide:tru",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "<module>",
+   "anchor": "appendFileSync",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "markSessionsPending",
+   "anchor": "writeFileSync(sessionsPendingMark(dir,threadId),\"\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "mergeSessions",
+   "anchor": "appendFileSync(path,add.join(\"\\n\")+\"\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "write",
+   "anchor": "out!.write(lines.slice(start,i).join(\"\\n\")+\"\\n\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "rewriteStreamed",
+   "anchor": "writeSync(t,tail.join(\"\\n\")+\"\\n\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/event-log.ts",
+   "fn": "pruneEventLogs",
+   "anchor": "writeFileSync(join(dir,DONE),`${newDate(now()).toISOString()}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/host-power.ts",
+   "fn": "markHostPowerGapNoticeShown",
+   "anchor": "writeFileSync(marker,JSON.stringify({shownAt:newDate().toISOString(),cause:gapState.gap?.cause??null})+\"\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "start",
+   "anchor": "spawn(command,launchArgs,{...rest,stdio,//Cloudhome:thelauncheritselfgetsafixedPATHandcwdandfourpipes;//theturn'senv(handedpinsincluded)ridestherequestonfd3,and",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "startLauncher",
+   "anchor": "spawn(process.execPath,[launcher!,\"--\",command,...launchArgs],{cwd:opts.cwd,env:launcherEnvironment(),stdio:[...(stdioasArray<unknown>).slice(0,3),\"pipe\"]asStdi",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "startWrapped",
+   "anchor": "spawn(posixPower.command,posixPower.args,{...rest,stdio,detached:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "startWrapped",
+   "anchor": "spawn(plan.command,plan.args,{env:plan.env,cwd:\"/\",stdio:wrappedStdio,detached:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "spawnCli",
+   "anchor": "child.stdin?.write(launcherFrame(opts.env,typeofopts.cwd===\"string\"?opts.cwd:opts.cwd?.toString()))",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "spawnCli",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execCli",
+   "anchor": "spawnCli(cli,args,{env:opts.env,cwd:opts.cwd,stdio:[\"pipe\",\"pipe\",\"pipe\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execCli",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execCli",
+   "anchor": "spawn(resolved.command,resolved.args,{cwd:opts.cwd,env:opts.env,stdio:[\"pipe\",\"pipe\",\"pipe\"],windowsHide:true,...(win32?{}:{detached:true}),})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execCli",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "stop",
+   "anchor": "spawn(windowsPath.join(root,\"System32\",\"taskkill.exe\"),[\"/PID\",String(pid),\"/T\",\"/F\"],{windowsHide:true,shell:false,stdio:\"ignore\"})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execCliSync",
+   "anchor": "spawnSync(command,args,{cwd:opts.cwd,env:{...opts.env},timeout:opts.timeout,maxBuffer:opts.maxBuffer,input:\"\",stdio:[\"pipe\",\"pipe\",\"pipe\"],windowsHide:true,...(",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procs.ts",
+   "fn": "execFile",
+   "anchor": "execFile(command,args,options,(error)=>callback(error))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skills.ts",
+   "fn": "commitNewSkillFiles",
+   "anchor": "writeFileSync(join(staged,file.path),file.content,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skills.ts",
+   "fn": "commitNewSkillFiles",
+   "anchor": "writeFileSync(destination,asset.content,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procedure-bundles.ts",
+   "fn": "createProcedurePin",
+   "anchor": "writeFileSync(temp,bytes,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procedure-bundles.ts",
+   "fn": "preparePinnedProcedures",
+   "anchor": "writeFileSync(path,bytes,{flag:\"wx\",mode:file.executable?0o500:0o400})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/procedure-bundles.ts",
+   "fn": "preparePinnedProcedures",
+   "anchor": "writeFileSync(published,pin.bundleId,{flag:\"wx\",mode:0o400})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/flux-key-health.ts",
+   "fn": "checkFluxKey",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/upgrade-status.ts",
+   "fn": "writeNote",
+   "anchor": "writeFileSync(temp,JSON.stringify(status),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/upgrade-overall.ts",
+   "fn": "overallWriter",
+   "anchor": "writeFileSync(temp,JSON.stringify({v:1,schema,overall,at}),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/engine-input.ts",
+   "fn": "sendBuiltTurn",
+   "anchor": "adapter.sendTurn(fencedTurnInput(input,fence))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/box-relay.ts",
+   "fn": "relayBoxCall",
+   "anchor": "doFetch(target,{method:route.method,//Onlythis:thecaller'sheaders(Authorization,cookies,hop-by-hop)areneverforwarded.headers:{...(sameOrigin?{authorization:`Bea",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/announcements.ts",
+   "fn": "fetchCapped",
+   "anchor": "fetchImpl(url,{method:\"GET\",redirect:\"error\",credentials:\"omit\",cache:\"no-store\",referrerPolicy:\"no-referrer\",headers:{accept:\"*/*\",\"user-agent\":\"Murage\"},signa",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/stop-line-state.ts",
+   "fn": "rememberRecipients",
+   "anchor": "writeFileSync(temp,JSON.stringify({recipients:next}),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/attachments.ts",
+   "fn": "removeAttachment",
+   "anchor": "writeFileSync(markerPath,\"\",{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/attachments.ts",
+   "fn": "saveFile",
+   "anchor": "file.write(chunk,offset,chunk.byteLength-offset,null)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/attachments.ts",
+   "fn": "writeImage",
+   "anchor": "writeFileSync(partialPath,bytes,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/avatar-image.ts",
+   "fn": "generateAvatarImage",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-database-snapshot.ts",
+   "fn": "snapshotSqliteWhileOwned",
+   "anchor": "writeSync(output,buffer,written,size-written)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-sftp.ts",
+   "fn": "writeSshMaterial",
+   "anchor": "writeFileSync(identityFile,secret.privateKey,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-sftp.ts",
+   "fn": "writeSshMaterial",
+   "anchor": "writeFileSync(knownHostsFile,knownHostsLine(parsed.hostKey),{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-sftp.ts",
+   "fn": "runTool",
+   "anchor": "spawn(executable,args,{cwd,env:sshChildEnvironment(cwd),stdio:[\"ignore\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-sftp.ts",
+   "fn": "send",
+   "anchor": "this.child.stdin!.write(Buffer.concat([uint32(body.length),body]))",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-sftp.ts",
+   "fn": "probeSftpFolder",
+   "anchor": "spawn(input.ssh,input.args,{cwd:input.cwd,env:sshChildEnvironment(input.cwd),stdio:[\"pipe\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-restic-loopback-s3.fixture.ts",
+   "fn": "startLoopbackS3",
+   "anchor": "execFileSync(\"openssl\",[\"req\",\"-x509\",\"-newkey\",\"ec\",\"-pkeyopt\",\"ec_paramgen_curve:prime256v1\",\"-nodes\",\"-keyout\",key,\"-out\",caFile,\"-days\",\"1\",\"-subj\",\"/CN=127",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-restic.ts",
+   "fn": "resticRunner",
+   "anchor": "spawn(executable,input.args,{cwd:input.cwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-restic.ts",
+   "fn": "resticRunner",
+   "anchor": "child.stdin.end(Buffer.concat([input.password,Buffer.from(\"\\n\")]))",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-restic.ts",
+   "fn": "store",
+   "anchor": "writeSync(out,buffer,offset,length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/backup-restic.ts",
+   "fn": "store",
+   "anchor": "writeFileSync(receiptPath,receiptText,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-state-snapshot.ts",
+   "fn": "copy",
+   "anchor": "writeSync(output,buffer,offset,buffer.length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-state-snapshot.ts",
+   "fn": "stageInstallationStateWhileOwned",
+   "anchor": "writeFileSync(join(stage,\"manifest.json\"),JSON.stringify(manifest,null,2)+\"\\n\",{mode:0o600,flag:\"wx\",flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/highlevel/client.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/bot-calls-routes.ts",
+   "fn": "handleUpgrade",
+   "anchor": "socket.write(\"HTTP/1.1403Forbidden\\r\\nConnection:close\\r\\nContent-Length:0\\r\\n\\r\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/bot-directory.ts",
+   "fn": "fetchBotDirectory",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/routine-runs-journal.ts",
+   "fn": "sync",
+   "anchor": "writeSync(fd,body)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/routine-runs-journal.ts",
+   "fn": "append",
+   "anchor": "writeSync(fd,body)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/decision-log.ts",
+   "fn": "writeDecision",
+   "anchor": "appendFile(file,encoded,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/lessons-local.ts",
+   "fn": "createLearningLocalLessonSink",
+   "anchor": "writeFileSync(temporary,JSON.stringify({...lesson,state:\"suggested\",prospectDerived:true}),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/bot-package-archive.ts",
+   "fn": "writeBotPackageArchive",
+   "anchor": "createWriteStream(file,{flags:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/bot-package-import.ts",
+   "fn": "importIntake",
+   "anchor": "writeFileSync(path,file.content,{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/box.ts",
+   "fn": "boxFetch",
+   "anchor": "fetch(`${BOX_API}${path}`,{...opts,headers:{authorization:`Bearer${cfg.box?.token}`,\"content-type\":\"application/json\",...opts.headers,},})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/box.ts",
+   "fn": "verifyToken",
+   "anchor": "fetch(`${BOX_API}/boxes`,{headers:{authorization:`Bearer${token}`},signal:AbortSignal.timeout(20_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-action-checker-connection.ts",
+   "fn": "fluxCall",
+   "anchor": "fetch(url,{method:\"POST\",redirect:\"error\",signal:AbortSignal.any([req.signal,AbortSignal.timeout(60000)]),headers:{\"content-type\":\"application/json\",authorizati",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-connection.ts",
+   "fn": "registerBrowserCapability",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-connection.ts",
+   "fn": "revokeBrowserCapability",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-connection.ts",
+   "fn": "clearBrowserCapabilities",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-connection.ts",
+   "fn": "browserScreenshot",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-macos-identity.ts",
+   "fn": "toolSignature",
+   "anchor": "execFile(\"/usr/bin/codesign\",[\"--verify\",\"--strict\",\"-R\",requirement,file],{encoding:\"utf8\",timeout:CODESIGN_TIMEOUT_MS,maxBuffer:65536},error=>{//Arefusalbycod",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/server-instance.ts",
+   "fn": "<module>",
+   "anchor": "writeSync",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/browser-process.ts",
+   "fn": "spawnLauncher",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],{env:{PATH:\"/usr/bin:/bin\"},shell:false,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/browser-process.ts",
+   "fn": "runCleanup",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],{env:{PATH:\"/usr/bin:/bin\"},stdio:[\"ignore\",\"ignore\",\"ignore\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-engine.ts",
+   "fn": "installAgentBrowserBinary",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-engine.ts",
+   "fn": "installAgentBrowserBinary",
+   "anchor": "writeFileSync(staging,body,{flag:\"wx\",mode:0o700})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-engine.ts",
+   "fn": "browserEngineEncryptionKey",
+   "anchor": "writeFileSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-engine.ts",
+   "fn": "agentBrowserIntegration",
+   "anchor": "writeFileSync(guard,BEFOREUNLOAD_GUARD_SCRIPT,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-engine.ts",
+   "fn": "runEngine",
+   "anchor": "spawn(binary,args,{env,shell:false,stdio:[\"ignore\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/browser-relay.ts",
+   "fn": "_write",
+   "anchor": "this.child.stdin.write(chunk,error=>callback(error??null))",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/browser-relay.ts",
+   "fn": "_final",
+   "anchor": "this.child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-sandbox-linux-engine.ts",
+   "fn": "runPkexec",
+   "anchor": "spawn(file,args,{stdio:[\"pipe\",\"ignore\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-sandbox-linux-engine.ts",
+   "fn": "runPkexec",
+   "anchor": "spawn(TAR,[\"-C\",tarDirectory,\"-cf\",\"-\",\".\"],{stdio:[\"ignore\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-sandbox.ts",
+   "fn": "runTool",
+   "anchor": "execFile(file,args,{windowsHide:true,timeout:20_000,maxBuffer:64*1024},error=>done(!error))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-sandbox.ts",
+   "fn": "runChromeProbe",
+   "anchor": "execFile(chrome,[\"--headless\",`--user-data-dir=${profile}`,\"--no-first-run\",\"--disable-gpu\",\"--dump-dom\",\"about:blank\"],{env:{PATH:process.env.PATH??\"/usr/bin:/",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/control-client.ts",
+   "fn": "read",
+   "anchor": "fetchImpl(url,{headers:headers(),signal:AbortSignal.timeout(timeoutMs)})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/control-client.ts",
+   "fn": "requestHelp",
+   "anchor": "fetchImpl(url,{method:\"POST\",headers:headers(),body:JSON.stringify({reason}),signal:AbortSignal.timeout(2_000),})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/control-client.ts",
+   "fn": "expireHelp",
+   "anchor": "fetchImpl(url,{method:\"DELETE\",headers:headers(),body:JSON.stringify({requestId}),signal:AbortSignal.timeout(2_000),})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "runLivenessProbe",
+   "anchor": "spawn(probe.command,probe.args,{shell:false,env:{...process.env,PATH:augmentedPath()},stdio:[\"ignore\",\"ignore\",\"ignore\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "writeMcpLine",
+   "anchor": "destination.write(line+\"\\n\",(error)=>error?reject(error):resolve())",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "runMcpBridge",
+   "anchor": "spawn(resolved.command,resolved.args,{shell:false,env:{...process.env,PATH:augmentedPath()},stdio:[\"pipe\",\"pipe\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "transportFailed",
+   "anchor": "process.stderr.write(`${options.label}bridgestreamfailed:${error.message}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "runMcpBridge",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "onDead",
+   "anchor": "process.stderr.write(`${options.label}transportwentsilentandstoppedansweringlivenessprobes;endingthebridge\\n`,)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "runMcpBridge",
+   "anchor": "process.stderr.write(`couldnotconnectto${options.label}:${error.message}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-bridge.ts",
+   "fn": "runMcpBridge",
+   "anchor": "process.stderr.write(`${options.label}connectionendedwith${signal}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-target-guard.ts",
+   "fn": "cdpUrlFromCli",
+   "anchor": "spawnCli(spec.command,[\"--session\",spec.env.AGENT_BROWSER_SESSION??\"\",\"get\",\"cdp-url\"],{env:spec.env,shell:false,stdio:[\"ignore\",\"pipe\",\"ignore\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-browser-proxy.ts",
+   "fn": "createHeadlessAuthorityReader",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-browser-proxy.ts",
+   "fn": "closeHeadlessAuthority",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-browser-proxy.ts",
+   "fn": "startHeadlessEngine",
+   "anchor": "spawn(spec.command,spec.args,{env:spec.env,shell:false,stdio:[\"pipe\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-browser-proxy.ts",
+   "fn": "close",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/headless-browser-proxy.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"Headlessbrowserproxyendedwithoutverifiedcleanup.\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-native-relay.ts",
+   "fn": "recordDaemonStart",
+   "anchor": "writeFileSync(startFile,`${pid}${ms}`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-native-relay.ts",
+   "fn": "run",
+   "anchor": "spawn(spec.command,[...(options.cliPrefix??[]),\"--json\",...args],{env:spec.env,cwd:spec.env.HOME,windowsHide:true,stdio:[\"ignore\",\"pipe\",\"pipe\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-native-relay.ts",
+   "fn": "close",
+   "anchor": "transport.write(JSON.stringify({id:\"murage-close\",action:\"close\"})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-activity.ts",
+   "fn": "record",
+   "anchor": "appendFileSync(this.file(line.bindingId),JSON.stringify(line)+\"\\n\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-approvals.ts",
+   "fn": "save",
+   "anchor": "fs.writeFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-broker.ts",
+   "fn": "onConnection",
+   "anchor": "socket.write(encodeFrame({type:'host.authenticated',version:1,proof:authProof(token,'broker',nonce,auth.nonce)}))",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-broker.ts",
+   "fn": "onConnection",
+   "anchor": "socket.write(encodeFrame({type:'host.challenge',version:1,nonce}))",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-broker.ts",
+   "fn": "startBrowserExtensionBroker",
+   "anchor": "fs.writeFile(instanceConfigPath,JSON.stringify({version:1,instance,socketPath,token}),{mode:0o600,flag:'wx'})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-broker.ts",
+   "fn": "request",
+   "anchor": "connection.socket.write(frame,error=>{if(error)connection.socket.destroy();})",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-engine-read.ts",
+   "fn": "fetchResource",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-service.ts",
+   "fn": "persist",
+   "anchor": "fs.writeFile(temp,content,{mode:0o600,flag:'wx'})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-service.ts",
+   "fn": "markUnconfirmed",
+   "anchor": "fs.writeFile(unconfirmedFile,'1',{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-extension-sites.ts",
+   "fn": "save",
+   "anchor": "fs.writeFileSync(temp,JSON.stringify(content),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-restore-cli.ts",
+   "fn": "<module>",
+   "anchor": "process.stdout.write(`${runBrowserRestoreStep(process.argv.slice(2),process.env)}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/browser-restore-cli.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(`${REFUSED}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/protected-folders.ts",
+   "fn": "windowsUserShellFolders",
+   "anchor": "execFileSync(\"reg\",[\"query\",\"HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer\\\\UserShellFolders\"],{encoding:\"utf8\",timeout:4000,windowsHide:true,std",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "gitAvailable",
+   "anchor": "execFile(\"git\",[\"--version\"],{windowsHide:true},(err)=>resolveProbe(!err))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "runGit",
+   "anchor": "execFile(\"git\",args,{cwd,env,windowsHide:true,encoding:\"utf8\",timeout:120_000,maxBuffer:16*1024*1024},(err,stdout,stderr)=>{if(err)rejectPromise(newError(`git${",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "hasStagedChanges",
+   "anchor": "execFile(\"git\",[\"diff\",\"--cached\",\"--quiet\",\"--ignore-submodules=dirty\"],{cwd,env,windowsHide:true,encoding:\"utf8\",timeout:120_000,maxBuffer:16*1024*1024},(err,",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "ensureShadow",
+   "anchor": "writeFileSync(join(shadow,\"gitconfig\"),GITCONFIG,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "ensureShadow",
+   "anchor": "writeFileSync(join(shadow,\"gitconfig_empty\"),\"\",{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/checkpoints.ts",
+   "fn": "ensureShadow",
+   "anchor": "writeFileSync(join(shadow,\".git\",\"info\",\"exclude\"),EXCLUDES)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/memory-adapter.ts",
+   "fn": "sendTurn",
+   "anchor": "original.sendTurn(turn)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/instance-holds.ts",
+   "fn": "sendTurn",
+   "anchor": "original.sendTurn(input)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/ask-note-adapter.ts",
+   "fn": "sendTurn",
+   "anchor": "original.sendTurn(askNoteTurnInput(input))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/draft-only-adapter.ts",
+   "fn": "sendTurn",
+   "anchor": "original.sendTurn(input)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/draft-only-adapter.ts",
+   "fn": "sendTurn",
+   "anchor": "original.sendTurn(draftOnlyTurnInput(input,judged.surface))",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-computer-turns.ts",
+   "fn": "startUnknown",
+   "anchor": "copyFileSync(path,aside)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-computer-turns.ts",
+   "fn": "boxCall",
+   "anchor": "fetch(`${BOX_AGENT_API}${path}`,{method,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\"},signal:AbortSignal.timeout(30_000)})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/workspace-revision.ts",
+   "fn": "probeVolumeClock",
+   "anchor": "writeSync(fd,\"muragevolumeclockprobe\\n\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/composio.ts",
+   "fn": "probeFluxReadiness",
+   "anchor": "fetch(`${url}/health`,{redirect:\"error\",signal:AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS)})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/composio.ts",
+   "fn": "brokerRequest",
+   "anchor": "fetch(`${broker.url}${path}`,{...init,headers,signal:init?.signal??AbortSignal.timeout(30_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/composio.ts",
+   "fn": "relayMcpUpstream",
+   "anchor": "fetch(url,{method:\"POST\",headers,body,//fixround(AstraHigh6):aredirectisneverfollowed,soafailureataredirect'sdestinationcan//neverreadas\"neversent\"forarequestth",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "post",
+   "anchor": "fetch(url,{method:\"POST\",headers:{authorization:`Bearer${controlToken()}`,\"content-type\":\"application/json\"},body:\"{}\",signal:AbortSignal.timeout(2_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "resumeBox",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/resume`,{method:\"POST\",headers:auth,signal:bounded()})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "resumeBox",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}`,{headers:auth,signal:bounded()})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "runOnBox",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/commands`,{method:\"POST\",headers:{authorization:`Bearer${token()}`,\"content-type\":\"application/json\"},body:JSON.stringify({comm",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "fetchFrame",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/artifacts?path=${encodeURIComponent(SHOT_PATH)}`,{headers:auth,signal:AbortSignal.timeout(30_000)},)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "fetchFrame",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/files?path=${encodeURIComponent(SHOT_PATH)}&encoding=base64`,{headers:auth,signal:AbortSignal.timeout(30_000)},)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/computer-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(JSON.stringify(obj)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "catalogueOf",
+   "anchor": "process.stderr.write(`[murage-connectors]tools/listdropped=${dropped.length}withoutanameorobjectinputSchema:${named.join(\",\")}${dropped.length>named.length?\",…\"",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "logList",
+   "anchor": "process.stderr.write(`[murage-connectors]tools/listoutcome=${outcome}tools=${toolCount}${http?`http=${http}`:\"\"}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "sendAuthoritativeListNow",
+   "anchor": "process.stdout.write(`${JSON.stringify(failure)}\\n`,()=>process.exit(1))",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(`${JSON.stringify(exposedMessage(message,{...options,legacyNames:LEGACY_NAMES}))}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "pollCredentialsForTurnStart",
+   "anchor": "process.stderr.write(`[murage-connectors]credentialwatcherunavailable(${why});pollingevery${CRED_POLL_MS/1000}swhiletoolsarebeingrecovered\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "relay",
+   "anchor": "fetch(UPSTREAM,{method:\"POST\",headers:{\"content-type\":\"application/json\",accept:\"application/json,text/event-stream\",...parsedHeaders(),...(upstreamSessionId?{\"",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/connector-proxy.ts",
+   "fn": "showConnectorCards",
+   "anchor": "fetch(`${HARNESS}/api/internal/connectors/request`,{method:\"POST\",headers:{\"content-type\":\"application/json\",authorization:`Bearer${token()}`},body:JSON.stringi",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"invalidLocalVMruntime\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/container-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"invalidLocalVMconnection\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-probe-isolation.ts",
+   "fn": "<module>",
+   "anchor": "promisify(execFile)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-probe-isolation.ts",
+   "fn": "createFuigoIsolation",
+   "anchor": "writeFile(policy,\"(version1)\\n(allowdefault)\\n(denynetwork-outbound)\\n\",{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "latestFuigoVersion",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "latestFuigoVersion",
+   "anchor": "fetcher(`${REGISTRY}/fuigo/latest`,{redirect:\"error\",signal:AbortSignal.timeout(15000)})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "probeNativeFuigo",
+   "anchor": "writeFile(join(env.FUIGO_HOME!,\"config.toml\"),`[features]\\nremote_fetch=false\\n\\n[model_providers.murage_native_probe]\\nbase_url=\"http://127.0.0.1:9/v1\"\\ncontex",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "probeNativeFuigo",
+   "anchor": "spawnCli(command,[...prefix,\"--permission-mode\",\"default\",\"--no-memory\",\"agent\",\"--no-leader\",\"-m\",\"murage_native_probe\",\"stdio\"],{cwd:home,env,stdio:[\"pipe\",\"p",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "send",
+   "anchor": "child.stdin.write(JSON.stringify({jsonrpc:\"2.0\",id:requestId,method,params})+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "probeNativeFuigo",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "stageNativeFuigo",
+   "anchor": "fetcher(`${REGISTRY}/${encodeURIComponent(packageName)}/${version}`,{redirect:\"error\",signal:AbortSignal.timeout(15000)})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "stageNativeFuigo",
+   "anchor": "fetcher(tarball,{redirect:\"error\",signal:AbortSignal.timeout(90000)})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "stageNativeFuigo",
+   "anchor": "writeFile(cli,binary,{mode:0o700,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/fuigo-native-update.ts",
+   "fn": "stageNativeFuigo",
+   "anchor": "writeFile(join(directory,\"manifest.json\"),JSON.stringify(receipt,null,2),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-native-install.ts",
+   "fn": "saveVerified",
+   "anchor": "output.writeFile(value)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-native-install.ts",
+   "fn": "extractTarPackage",
+   "anchor": "output?.writeFile(part)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-native-install.ts",
+   "fn": "extractZipPackage",
+   "anchor": "createWriteStream(destination,{flags:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-management.ts",
+   "fn": "fetchLatest",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/engine-management.ts",
+   "fn": "nativeOptions",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/feedback-relay.ts",
+   "fn": "relayFeedback",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/free-web-search.ts",
+   "fn": "request",
+   "anchor": "fetcher(url,{...init,signal,redirect:\"error\"})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/graceful-shutdown.ts",
+   "fn": "writeFlushAck",
+   "anchor": "writeFileSync(ack,ok?\"1\":\"0\",{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/grok-import.ts",
+   "fn": "fetchGrokTemplateCard",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/grok-import.ts",
+   "fn": "grokImportFromInput",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/image-library.ts",
+   "fn": "storePackImage",
+   "anchor": "writeSync(fd,reference.bytes)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/image-generation.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/output-publication.ts",
+   "fn": "retainImageOutput",
+   "anchor": "writeFileSync(partial,input.bytes,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/provider-connections.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/model-adoption.ts",
+   "fn": "writeMarker",
+   "anchor": "writeFileSync(`${path}.tmp`,JSON.stringify(marker))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/settings.ts",
+   "fn": "downloadModel",
+   "anchor": "fetch(`https://huggingface.co/${spec.model}/resolve/${spec.revision}/${asset.path}`,{headers:offset?{Range:`bytes=${offset}-`}:{},signal:AbortSignal.timeout(180",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/settings.ts",
+   "fn": "downloadModel",
+   "anchor": "file.writeFile(result.value)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/control-state.ts",
+   "fn": "run",
+   "anchor": "execFileSync(helper,[],{timeout:CLOCK_HELPER_TIMEOUT_MS,maxBuffer:4096,encoding:\"utf8\",env:{},stdio:[\"ignore\",\"pipe\",\"ignore\"]})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/b1b-recovery.ts",
+   "fn": "wipeHomeEngineSignIns",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],{stdio:[\"ignore\",\"ignore\",\"ignore\",\"pipe\"],env:{PATH:\"/usr/bin:/bin\"}})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/bot-state.ts",
+   "fn": "spawnCloudLauncher",
+   "anchor": "spawn(\"/usr/bin/sudo\",[\"-n\",\"-C\",\"4\",\"--\",TURN_LAUNCHER],{env:{PATH:\"/usr/bin:/bin\"},cwd:\"/\",detached:true,stdio:[\"pipe\",\"pipe\",\"pipe\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-login.ts",
+   "fn": "relay",
+   "anchor": "child.stdin?.write(chunk)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/own-server.ts",
+   "fn": "defaultRun",
+   "anchor": "execFile(file,args,{timeout:options.timeoutMs,maxBuffer:1024*1024,shell:false,windowsHide:true,env:ownServerChildEnv({...process.env,PATH:augmentedPath()})},(er",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/own-server.ts",
+   "fn": "writeWrapper",
+   "anchor": "writeFileSync(path,script,{mode:0o700})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/own-server.ts",
+   "fn": "confirmHostKey",
+   "anchor": "writeFileSync(knownHostsPath(deps),pending.line,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/own-server.ts",
+   "fn": "saveConnection",
+   "anchor": "writeFileSync(connectionPath(deps),`${JSON.stringify(connection)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/own-server.ts",
+   "fn": "saveConnection",
+   "anchor": "writeFileSync(configPath(deps),renderSshConfig(connection,deps),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/vps-computer.ts",
+   "fn": "defaultRunner",
+   "anchor": "spawnCli(\"docker\",args,{shell:false,env:ownServerChildEnv({...process.env,PATH:augmentedPath()}),stdio:[\"pipe\",\"pipe\",\"pipe\"],},undefined,{serverTool:\"docker\"})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/vps-computer.ts",
+   "fn": "defaultRunner",
+   "anchor": "child.stdin.end(options.input)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/vps-computer.ts",
+   "fn": "vpsComputerJoin",
+   "anchor": "spawn(\"ssh\",vpsSshTunnelArgs(alias,localPort,connection.privateIp),{shell:false,env:ownServerChildEnv({...process.env,PATH:augmentedPath()}),stdio:[\"ignore\",\"ig",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-mcp-relay.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawn(command,args,{stdio:[\"pipe\",\"pipe\",\"ignore\"],env:ownServerChildEnv({...process.env,PATH:augmentedPath()})})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-mcp-relay.ts",
+   "fn": "createVpsMcpRelay",
+   "anchor": "launch(\"docker\",args)",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-mcp-relay.ts",
+   "fn": "end",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-mcp-relay.ts",
+   "fn": "bridge",
+   "anchor": "child.stdin?.write(`${text}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/ui-canary-browser.ts",
+   "fn": "proxyGetOverUnix",
+   "anchor": "httpRequest({socketPath,path,method:\"GET\",signal,headers:{host:\"127.0.0.1\",\"user-agent\":userAgent,\"x-forwarded-for\":CANARY_SOURCE,accept:\"*/*\"}},res=>{constchun",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/model-signin-device.ts",
+   "fn": "createDeviceAcquirer",
+   "anchor": "pooledFetch(String(url),{method:init?.method,headers:init?.headersasRecord<string,string>,body:init?.bodyasstring,signal:init?.signal,redirect:\"error\",dispatche",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/model-signin-device.ts",
+   "fn": "request",
+   "anchor": "fetcher(url,{method:\"POST\",redirect:\"error\",signal:AbortSignal.any([signal,timeout.signal]),headers:{accept:\"application/json\",\"content-type\":bodyinstanceofURLS",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/model-gateway.ts",
+   "fn": "call",
+   "anchor": "fetcher(url,{method:\"POST\",headers:upstreamHeaders(provider,token,provider===\"chatgpt\"||wantStream),body:JSON.stringify(upstreamBody),signal:controller.signal,r",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/model-gateway.ts",
+   "fn": "handleModelGateway",
+   "anchor": "res.write(chunk)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/model-gateway.ts",
+   "fn": "handleModelGateway",
+   "anchor": "res.write(text)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/model-gateway.ts",
+   "fn": "write",
+   "anchor": "res.write(`data:${JSON.stringify(piece)}\\n\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/email/caps-file.ts",
+   "fn": "writeCapsFile",
+   "anchor": "writeFileSync(tmp,JSON.stringify({v:1,accountRef:entry.accountRef,caps:entry.caps,readAt:entry.readAt}),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/email/runtime.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/worker-controller.ts",
+   "fn": "spawn",
+   "anchor": "fork(SPAWNED_PROXIES.memoryWorker,[],{execArgv:[\"--experimental-strip-types\"],stdio:[\"ignore\",\"ignore\",\"pipe\",\"ipc\"],env:{ELECTRON_RUN_AS_NODE:\"1\",//Thehelperlo",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-access.ts",
+   "fn": "readOrCreateMcpAccessKey",
+   "anchor": "writeFileSync(file,`${created}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-grants.ts",
+   "fn": "save",
+   "anchor": "writeFileSync(tmp,JSON.stringify({grants:this.grants},null,2),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mobile-push-relay.ts",
+   "fn": "createRelayClient",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/keepall-unwedge.ts",
+   "fn": "markUnwedged",
+   "anchor": "writeFileSync(tmp,JSON.stringify(next))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/project-export.ts",
+   "fn": "exportProjectBrief",
+   "anchor": "writeFileSync(fd,[`#${brief.summary}`,'','##Donemeans',brief.doneMeans,'','##Rules',brief.rules,'','##Wheretheworkis',...brief.whereWorkIs.map(note=>note.text),",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-host.ts",
+   "fn": "warmVoiceHost",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-host.ts",
+   "fn": "post",
+   "anchor": "call(`${endpoint.baseUrl}${path}`,{method:\"POST\",headers:{\"content-type\":\"application/json\",...headers},body:JSON.stringify(body),signal,})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-host.ts",
+   "fn": "hostTurn",
+   "anchor": "call(`${host.baseUrl}/chat/completions`,{method:\"POST\",headers:{authorization:`Bearer${host.key}`,\"content-type\":\"application/json\",...fluxCallHeadersVia(\"voice",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-host.ts",
+   "fn": "runVoiceBrief",
+   "anchor": "call(`${host.baseUrl}/chat/completions`,{method:\"POST\",headers:{authorization:`Bearer${host.key}`,\"content-type\":\"application/json\",...fluxCallHeadersVia(\"voice",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-host-route.ts",
+   "fn": "handleVoiceHostRoute",
+   "anchor": "res.write(`data:${JSON.stringify(event)}\\n\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/hermes.ts",
+   "fn": "removeHermesLocalHost",
+   "anchor": "writeFileSync(path,[...lines.slice(0,start),...lines.slice(end)].join(\"\\n\"))",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/hermes.ts",
+   "fn": "ensureHermesInjectProvider",
+   "anchor": "writeFileSync(path,next,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/hermes.ts",
+   "fn": "fetchHermesAcpModels",
+   "anchor": "spawnCli(cli,[\"-p\",profile,\"acp\"],{stdio:[\"pipe\",\"pipe\",\"ignore\"],env:envasNodeJS.ProcessEnv})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/hermes.ts",
+   "fn": "send",
+   "anchor": "child.stdin.write(`${JSON.stringify({jsonrpc:\"2.0\",id,method,params})}\\n`,(error)=>{if(error)done([]);})",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/news-signup.ts",
+   "fn": "<module>",
+   "anchor": "fetch(...args)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/thread-export.ts",
+   "fn": "write",
+   "anchor": "res.write(chunk)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-probe.ts",
+   "fn": "probeMcpServer",
+   "anchor": "spawnCli(server.command,server.args,{cwd:process.cwd(),env:probeEnvironment(server),stdio:[\"pipe\",\"pipe\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/mcp-probe.ts",
+   "fn": "write",
+   "anchor": "child.stdin.write(`${JSON.stringify(frame)}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "copyFile",
+   "anchor": "copyFileSync(from,to)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "writeManifest",
+   "anchor": "writeFileSync(temp,JSON.stringify(manifest),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "buildAntigravityScopedHome",
+   "anchor": "writeFileSync(path,`${JSON.stringify({mcpServers:servers},null,2)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "buildAntigravityScopedHome",
+   "anchor": "writeFileSync(path,options.askStopHooks,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "moveInto",
+   "anchor": "cpSync(from,to,{recursive:true,verbatimSymlinks:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "writeThrough",
+   "anchor": "writeFileSync(temp,bytes,{mode})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "withRealFileLock",
+   "anchor": "writeFileSync(join(dir,\"owner.json\"),JSON.stringify(me),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-scope.ts",
+   "fn": "keepCopy",
+   "anchor": "copyFileSync(realPath,to)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-relay.ts",
+   "fn": "openAntigravityRelay",
+   "anchor": "writeFileSync(script,ANTIGRAVITY_RELAY_SCRIPT,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity-relay.ts",
+   "fn": "openAntigravityRelay",
+   "anchor": "writeFileSync(env,envText,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "sendTurn",
+   "anchor": "spawnCli(config.cli,args,{cwd,env:turnEnv,stdio:[\"pipe\",\"pipe\",\"pipe\"],},engineJob())",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "handleLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"agy.stream\",msg:o})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "writePrompt",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"agy.stream\",msg:inputMessage})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "writePrompt",
+   "anchor": "child.stdin.end(`${JSON.stringify(inputMessage)}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "generateTextNow",
+   "anchor": "spawnCli(config.cli,[\"--input-format\",\"stream-json\",\"--output-format\",\"stream-json\",\"--model\",\"gemini-3.8-flash-low\",],//Thiscall'scopyofthescopedtextenvironmen",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/antigravity.ts",
+   "fn": "generateTextNow",
+   "anchor": "child.stdin.end(`${JSON.stringify({event:\"user\",message:{content:prompt}})}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/boxagent.ts",
+   "fn": "api",
+   "anchor": "fetch(`${BOX_API}${path}`,{...opts,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",...opts.headers},signal:(optsasany).signal??AbortSi",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/boxagent.ts",
+   "fn": "post",
+   "anchor": "fetch(`${BOX_API}/boxes/${boxId}/prompt`,{method:\"POST\",headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\"},body:JSON.stringify({provider",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurn",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"box.prompt\",msg:{model,prompt,response:started}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurn",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.events\",msg:ev})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/boxagent.ts",
+   "fn": "sendTurn",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"box.prompt.status\",msg:status})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude-signin-answers.ts",
+   "fn": "save",
+   "anchor": "writeFileSync(tmp,JSON.stringify({v:1,salt:this.salt,answers:this.answers}),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-private.ts",
+   "fn": "writePrivateFile",
+   "anchor": "writeSync(fd,bytes,at,bytes.length-at)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude-private.ts",
+   "fn": "createPrivateFile",
+   "anchor": "writeSync(fd,bytes,at,bytes.length-at)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "installMurageExec",
+   "anchor": "writeFileSync(temp,WRAPPER_SOURCE,{mode:0o755})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/murage-exec.ts",
+   "fn": "writeExecEnvFile",
+   "anchor": "writeFileSync(temp,execEnvFileText(env,cwd,shell),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "handleAskLine",
+   "anchor": "conn.write(JSON.stringify({t:\"answer\",id:askId,...systemEndedReply(kind)})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "handleAskLine",
+   "anchor": "conn.write(JSON.stringify({t:\"answer\",id:askId,...systemEndedReply(kind)})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "handleAskLine",
+   "anchor": "conn.write(JSON.stringify({t:\"answer\",id:askId,behavior:\"deny\",message:DUPLICATE_ASK_ID_NOTE})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "handleAskLine",
+   "anchor": "conn.write(JSON.stringify({t:\"answer\",id:askId,behavior:\"deny\",message:QUESTION_NOTES.unshowable(normalized.error)})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "finish",
+   "anchor": "conn.write(JSON.stringify({t:\"answer\",id:askId,behavior,message,...(answers?{answers}:{}),...(updatedInput?{updatedInput}:{})})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "claudeGitRoots",
+   "anchor": "execFileSync(\"git\",[\"rev-parse\",\"--show-toplevel\",\"--git-common-dir\"],{cwd,encoding:\"utf8\",stdio:[\"ignore\",\"pipe\",\"ignore\"],timeout:2000,windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "claudeExecLaunchCheck",
+   "anchor": "execFile(shell,[wrapper,command],{env,timeout:opts.timeoutMs??EXEC_LAUNCH_TIMEOUT_MS,windowsHide:true,maxBuffer:64*1024},(error,stdout,stderr)=>{constcode=error",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "isolationSettingsFile",
+   "anchor": "writeFileSync(temp,text,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "refreshModels",
+   "anchor": "mergeLocalInject(readClaudeModelCatalog(catalogEnv),catalogEnv,fetch,{driver:DRIVER_KIND})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "closeSession",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.session\",msg:{close:why}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "closeSession",
+   "anchor": "s.child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "writeUser",
+   "anchor": "s.child.stdin.write(JSON.stringify(promptMsg)+\"\\n\",(error)=>{if(error){boundary?.markRefused();returnresolve(false);}boundary?.markWritten();//Theenginehasthepr",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "writeUser",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:images?.length?{...promptMsg,message:{role:\"user\",content:[{type:\"text\",text},...images.map((im",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "controlRequest",
+   "anchor": "s.child.stdin.write(JSON.stringify(message)+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "controlRequest",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:message})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "gateMcpServers",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.session\",msg:{mcpGate:line}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "writeControlResponse",
+   "anchor": "s.child.stdin.write(JSON.stringify(message)+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "writeControlResponse",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:message})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.session\",msg:{dispatch:dispatchTrace}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "writeFileSync(systemPromptPath,turn.system,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "writeFileSync(mcpConfigPath,mcpJson,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "spawnCli(launchCli,args,{cwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"],//S4power(designsection2):theWindowsjobandtheprivilegeremoval;nohostPoweronMacorLinux,wherethe//bl",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "handleLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"claude.sdk.message\",msg:o})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "onOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"claude.sdk.message\",msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "child.stdin.write(JSON.stringify(ask)+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "dispatchTurn",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"claude.sdk.message\",msg:ask})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "runReview",
+   "anchor": "spawnCli(launchCli,//stream-jsonsothecallknowswhentheCLIstartedwork(`init`):onlywhatitprinted//beforethenisreadasarefusalofMurage'sownflags,thesameruleasaturn.[",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "runReview",
+   "anchor": "child.stdin.end(prompt)",
+   "kind": "stdin",
+   "reason": "adapter-write",
+   "admittedBy": "server/drivers/claude.ts memory?.gate?.admit()"
+  },
+  {
+   "file": "server/drivers/codex-catalog.ts",
+   "fn": "spawnCatalog",
+   "anchor": "spawnCli(cli,[\"app-server\"],{cwd:process.env.MURAGE_CLOUD_ROLE===\"home\"?launchEnv.HOME:homedir(),env:launchEnv,stdio:[\"pipe\",\"pipe\",\"pipe\"],})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-catalog.ts",
+   "fn": "request",
+   "anchor": "child.stdin.write(`${JSON.stringify({jsonrpc:\"2.0\",id,method,params})}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-catalog.ts",
+   "fn": "spawnCatalog",
+   "anchor": "child.stdin.write(`${JSON.stringify({jsonrpc:\"2.0\",method:\"initialized\",params:{}})}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex-catalog.ts",
+   "fn": "readCodexModelCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "refreshModels",
+   "anchor": "readCodexModelCatalog(catalogEnv,fetch,config.cli,officialFallback)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "r.conn.onLine",
+   "anchor": "r.child.stdin.write(JSON.stringify({jsonrpc:\"2.0\",id:msg.id,...idleRefusal(msg.method)})+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "launchAttempt",
+   "anchor": "spawnCli(launchCli,spawnArgs,{cwd:turnCwd,env,stdio:[\"pipe\",\"pipe\",\"pipe\"],//S4power(designsection2,revision4.1):Windowsonly;onMacandLinuxCodexkeepsitsownsandbo",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "write",
+   "anchor": "child.stdin.write(line)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "send",
+   "anchor": "child.stdin.write(JSON.stringify(obj)+\"\\n\")",
+   "kind": "stdin",
+   "reason": "adapter-write",
+   "admittedBy": "server/drivers/codex.ts turn.beforeSubmit?.()"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "send",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"codex.app-server\",msg:obj})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "conn.onOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "handleStdoutLine",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"codex.app-server\",msg:loggedMessage})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawnCli(command,args,{stdio:[\"pipe\",\"pipe\",\"pipe\"],env},engineJob())",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "kill",
+   "anchor": "child.stdin?.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/chat-mcp-client.ts",
+   "fn": "#write",
+   "anchor": "this.#child.stdin?.write(`${JSON.stringify(message)}\\n`)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/openai-chat.ts",
+   "fn": "completeWithin",
+   "anchor": "fetch(endpoint,{method:\"POST\",headers:{...(sameOrigin?{authorization:`Bearer${secret}`}:{}),\"content-type\":\"application/json\",...(flux?.headers??{}),},//theenve",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/openai-chat.ts",
+   "fn": "native",
+   "anchor": "appendNative(threadId,{dir,source:options.nativeLog.source,msg:scrub(msg)})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/fuigo.ts",
+   "fn": "ensureFuigoLocalModel",
+   "anchor": "writeFileSync(path,`${prefix}${block}`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/fuigo.ts",
+   "fn": "removeFuigoLocalHost",
+   "anchor": "writeFileSync(path,next,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/droid.ts",
+   "fn": "ensureDroidInjectModel",
+   "anchor": "writeFileSync(path,`${JSON.stringify(settings,null,2)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/droid.ts",
+   "fn": "ensureDroidInjectModel",
+   "anchor": "writeFileSync(path,`${JSON.stringify(settings,null,2)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/acp/droid.ts",
+   "fn": "removeDroidLocalHost",
+   "anchor": "writeFileSync(path,`${JSON.stringify({...existing.value,customModels:kept},null,2)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/droid.ts",
+   "fn": "applyDroidHostComputerGrant",
+   "anchor": "writeFileSync(tmp,`${JSON.stringify(doc,null,2)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/qwen.ts",
+   "fn": "ensureQwenInjectModel",
+   "anchor": "writeFileSync(path,`${JSON.stringify(settings,null,2)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/qwen.ts",
+   "fn": "removeQwenLocalHost",
+   "anchor": "writeFileSync(path,`${JSON.stringify(settings,null,2)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/qwen.ts",
+   "fn": "writeQwenSystemSettings",
+   "anchor": "writeFileSync(file,text,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/openai-compat.ts",
+   "fn": "refreshLocal",
+   "anchor": "mergeLocalInject({default:\"\",options:[]},localEnv,fetch,{driver:DRIVER_KIND})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/openai-compat.ts",
+   "fn": "fetchModels",
+   "anchor": "fetch(`${config.url}/models`,{headers:{authorization:`Bearer${apiKey}`},signal:AbortSignal.timeout(8_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-server-probe.ts",
+   "fn": "detectLocalServerKind",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-server-probe.ts",
+   "fn": "readLoadedContext",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-server-probe.ts",
+   "fn": "primeLocalContext",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-server-probe.ts",
+   "fn": "createOllamaContextCopy",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "applyPiLocalCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "ensurePiInjectModel",
+   "anchor": "writeFileSync(path,`${JSON.stringify(root,null,2)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "removePiLocalHost",
+   "anchor": "writeFileSync(path,`${JSON.stringify({...existing.value,providers:next},null,2)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "fetchPiModels",
+   "anchor": "spawnCli(cli,PI_ARGS,{stdio:[\"pipe\",\"pipe\",\"pipe\"],env})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "fetchPiModels",
+   "anchor": "child.stdin.write(JSON.stringify({id:\"catalog\",type:\"get_available_models\"})+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "sendTurn",
+   "anchor": "writeFileSync(join(mcpTempDir,\"mcp.json\"),JSON.stringify({mcpServers:stampMcpServers(turn,mcpServers,gateSecret!==null)}),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "sendTurn",
+   "anchor": "writeFileSync(extension,piPinnedBashExtension(shellForm[0]),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "sendTurn",
+   "anchor": "spawnCli(launchCli,childArgs,{stdio:[\"pipe\",\"pipe\",\"pipe\"],cwd:turn.cwd,env:handed.env,},engineJob())",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "send",
+   "anchor": "appendNative(threadId,{dir:\"out\",source:\"pi.rpc\",msg:obj})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "send",
+   "anchor": "child.stdin.write(JSON.stringify(obj)+\"\\n\")",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "terminate",
+   "anchor": "child.stdin.end()",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "onEvent",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"pi.rpc\",msg:evt})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "onOverflow",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:\"pi.rpc\",msg:{frameOverflow:overflow}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/pi.ts",
+   "fn": "probePi",
+   "anchor": "spawnCli(config.cli,[\"--version\"],{stdio:[\"ignore\",\"pipe\",\"pipe\"],env:piProbeEnv(),})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/harness/bus.ts",
+   "fn": "<module>",
+   "anchor": "appendFileSync",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/elevenlabs.ts",
+   "fn": "verifyKey",
+   "anchor": "fetch(`${API}/voices`,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/elevenlabs.ts",
+   "fn": "listVoices",
+   "anchor": "fetch(`${API}/voices`,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/elevenlabs.ts",
+   "fn": "synthesizeClip",
+   "anchor": "fetch(`${API}/text-to-speech/${encodeURIComponent(voiceId)}${route}?output_format=${FORMAT}`,{method:\"POST\",headers:{\"xi-api-key\":key,\"content-type\":\"applicatio",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/xai-speech.ts",
+   "fn": "synthesize",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/xai-speech.ts",
+   "fn": "synthesizeClip",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/flux-speech.ts",
+   "fn": "readElevenCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/flux-speech.ts",
+   "fn": "synthesize",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/flux-speech.ts",
+   "fn": "synthesizeClip",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/system-voices.ts",
+   "fn": "<module>",
+   "anchor": "promisify(execFile)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/voice-notes.ts",
+   "fn": "createVoiceNote",
+   "anchor": "writeFileSync(partial,bytes,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/telegram-transport.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/decider/log.ts",
+   "fn": "appendDeciderLog",
+   "anchor": "appendFile(file,`${JSON.stringify(row)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/decider/index.ts",
+   "fn": "createDecider",
+   "anchor": "fetch(...args)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/dictation-cleanup.ts",
+   "fn": "cleanDictation",
+   "anchor": "call(`${endpoint.baseUrl.replace(/\\/+$/,\"\")}/chat/completions`,{method:\"POST\",headers:{authorization:`Bearer${endpoint.key}`,\"content-type\":\"application/json\",.",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/voice/flux-voice.ts",
+   "fn": "transcribe",
+   "anchor": "call(`${options.endpoint?options.endpoint.baseUrl.replace(/\\/+$/,\"\"):apiBase()}/audio/transcriptions`,{method:\"POST\",//Bearer,notavendorheader:thisisthesamekeyt",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skill-fetch.ts",
+   "fn": "fetchSkillFromSource",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/publish/netlify.ts",
+   "fn": "call",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/publish/netlify.ts",
+   "fn": "liveCheck",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "writeCachedCatalog",
+   "anchor": "writeFileSync(temporary,`${JSON.stringify(payload)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "refreshRemoteCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "scheduleCatalogRefresh",
+   "anchor": "refreshRemoteCatalog(fetch,file)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "fetchTeamCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "fetchTeamCatalog",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "fetchLibraryTeam",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/team-library.ts",
+   "fn": "fetchGithubTeam",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/web-search.ts",
+   "fn": "searchWeb",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/web-search.ts",
+   "fn": "searchFlux",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skill-collection.ts",
+   "fn": "writeRecords",
+   "anchor": "writeFileSync(temp,`${JSON.stringify(records,null,1)}\\n`,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skill-collection.ts",
+   "fn": "importCollectionSkill",
+   "anchor": "writeFileSync(target,file.content,{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/skill-import-sources.ts",
+   "fn": "fetchSkillFromLink",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/bridge-host.ts",
+   "fn": "<module>",
+   "anchor": "nodeFork",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/auth-key-source.ts",
+   "fn": "fileAuthKey",
+   "anchor": "writeFileSync(fd,`${randomBytes(32).toString(\"hex\")}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/package-import-transaction.ts",
+   "fn": "replace",
+   "anchor": "writeFileSync(temporary,bytes,{flag:\"wx\",mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/package-import-transaction.ts",
+   "fn": "commitPackageImportFiles",
+   "anchor": "writeFileSync(join(tx,\"old\",String(index)),originals[index]!,{flag:\"wx\",mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/package-import-transaction.ts",
+   "fn": "commitPackageImportFiles",
+   "anchor": "writeFileSync(join(tx,\"new\",String(index)),replacements.get(item.path)!,{flag:\"wx\",mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/workspace-files.ts",
+   "fn": "stageBytes",
+   "anchor": "writeSync(fd,bytes,offset,bytes.length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-tool-probe.ts",
+   "fn": "call",
+   "anchor": "fetchImpl(base+path,{method:\"POST\",redirect:\"error\",signal,headers:{\"content-type\":\"application/json\",authorization:`Bearer${input.apiKey}`,\"x-api-key\":input.ap",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/local-models.ts",
+   "fn": "createLocalModelsRoute",
+   "anchor": "fetch(...args)",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "bindUserChromeFenced",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "bindUserChromeFenced",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "bindUserChromeFenced",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 2
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "bindUserChromeFenced",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 3
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "sharedOwnerUsageTurn",
+   "anchor": "instance.adapter.sendTurn(turn)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "sendProjectUsageTurn",
+   "anchor": "instance.adapter.sendTurn(turn)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "send",
+   "anchor": "instance.adapter.sendTurn(input)",
+   "kind": "sendTurn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "restoreWorkers",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "restoreWorkers",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "restoreWorkers",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 2
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "restoreWorkers",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 3
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "leaseRestore",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "leaseRestore",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "lifecycle",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "lifecycle",
+   "anchor": "current()",
+   "kind": "alias-call",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "atomicCommit",
+   "anchor": "process.stderr.write(\"Packageimportrecoverycouldnotestablishaconsistentinstallation.Muragestopped;therecoveryjournalandoriginalcopieswereretained.\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/index.ts",
+   "fn": "handleRequest",
+   "anchor": "res.write(value)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-archive.ts",
+   "fn": "flushExtracted",
+   "anchor": "spawnSync(tool,process.platform===\"linux\"?[\"-f\",directory]:[],{stdio:\"ignore\",env:{},timeout:120_000})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-archive.ts",
+   "fn": "inspectArchiveEntries",
+   "anchor": "writeSync(fd,buffer,offset,buffer.length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-archive.ts",
+   "fn": "writeInstallationStageArchive",
+   "anchor": "createWriteStream(file,{flags:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-backup-encryption.ts",
+   "fn": "runAge",
+   "anchor": "spawn(executable,args,{stdio:inputFd===undefined?[\"pipe\",\"pipe\",\"pipe\"]:[\"pipe\",\"pipe\",\"pipe\",inputFd],env:{PATH:\"\"},windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-backup-encryption.ts",
+   "fn": "runAge",
+   "anchor": "createWriteStream(output,{fd:outputFd,autoClose:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-damaged-export.ts",
+   "fn": "copy",
+   "anchor": "writeSync(out,buffer,offset,length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-damaged-export.ts",
+   "fn": "writeInstallationDamagedExport",
+   "anchor": "createWriteStream(file,{flags:\"wx\",mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-fidelity-snapshot.ts",
+   "fn": "inventoryFidelity",
+   "anchor": "writeFileSync(copy,JSON.stringify(parsed,null,2),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-windows-backup-transport.ts",
+   "fn": "send",
+   "anchor": "stream.write(data,cause=>cause?reject(error(\"AGE_PROCESS_FAILED\")):resolve())",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-windows-backup-transport.ts",
+   "fn": "onData",
+   "anchor": "writeSync(fd,chunk,offset,chunk.length-offset)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-windows-backup-transport.ts",
+   "fn": "runWindowsBackupTransport",
+   "anchor": "child.stdin.end(release)",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-windows-backup-transport.ts",
+   "fn": "runWindowsBackupTransport",
+   "anchor": "child.stdin.end(protocol.command(\"CANCEL\"))",
+   "kind": "stdin",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-restore-preparation.ts",
+   "fn": "materializeOwnerEntries",
+   "anchor": "copyFileSync(inside(copy.from),inside(copy.path),constants.COPYFILE_EXCL)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-restore-preparation.ts",
+   "fn": "write",
+   "anchor": "writeFileSync(absolute,JSON.stringify(value)+\"\\n\",{mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-restore-preparation.ts",
+   "fn": "prepareInstallationRestore",
+   "anchor": "writeFileSync(destination,JSON.stringify(evidence)+\"\\n\",{mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/installation-restore.ts",
+   "fn": "publishJournal",
+   "anchor": "writeFileSync(temporary,JSON.stringify(value)+\"\\n\",{flag:\"wx\",mode:0o600,flush:true})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/job-launcher.ts",
+   "fn": "report",
+   "anchor": "writeSync(3,`${JSON.stringify(line)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/job-launcher.ts",
+   "fn": "main",
+   "anchor": "spawn(command,args,{stdio:\"inherit\",env,cwd,windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/package-signing-cli.ts",
+   "fn": "signPackageFile",
+   "anchor": "writeFileSync(output,JSON.stringify(signed,null,2)+\"\\n\",{flag:\"wx\",mode:0o644})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/permission-proxy.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(`muragepermissionproxy:refusingthebrokerpath${JSON.stringify(socketPath)}(notaMuragepermissionsocket);everyaskisdenied\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/permission-proxy.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(`murage-permissions:thepermissionbrokerat${socketPath||\"(nosocketpath)\"}didnotacceptaconnectionwithin${CONNECT_DEADLINE_MS/1000}s\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/permission-proxy.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(`muragepermissionproxy:cannotreachthebrokerat${JSON.stringify(socketPath)}(${error.code??error.message});everyaskisdenied\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/permission-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(JSON.stringify(obj)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/permission-proxy.ts",
+   "fn": "handle",
+   "anchor": "conn.write(JSON.stringify(ask)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/vps-container-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"invalidVPSMCPconnection\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/core/auth-store.ts",
+   "fn": "writeFileAtomic",
+   "anchor": "handle.writeFile(data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/bridge.ts",
+   "fn": "writeLine",
+   "anchor": "writeSync(this.fd,line)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/bridge.ts",
+   "fn": "compact",
+   "anchor": "writeSync(fd,line)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/channels/whatsapp/bridge.ts",
+   "fn": "save",
+   "anchor": "writeSync(fd,chunk)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "launcherRig",
+   "anchor": "writeFileSync(command,bytes,{mode:0o755})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "launcherRig",
+   "anchor": "writeFileSync(path,text,{mode:0o644})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "launcherRig",
+   "anchor": "writeFileSync(manifest,JSON.stringify({...Object.fromEntries(CLOUD_TURN_ENGINES.map(engine=>[engine,[{path:command,sha256}]])),mcpProxies:proxies}),{mode:0o644}",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "plan",
+   "anchor": "writeFileSync(cfgPath,JSON.stringify({request,manifest,engineRoot,root,cache:join(root,\"digest-cache\"),login:options.login??false,place:options.place??false,set",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "plan",
+   "anchor": "spawnSync(\"python3\",[\"-I\",\"-c\",harness,launcher,cfgPath],{encoding:\"utf8\",maxBuffer:64*1024*1024})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "turn",
+   "anchor": "writeFileSync(cfgPath,JSON.stringify({engine:spec.engine,args:spec.args,render:spec.render??null,bot:spec.bot===undefined?FIXTURE_BOT:spec.bot,cwd:spec.cwd??hom",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "turn",
+   "anchor": "spawnSync(\"python3\",[\"-I\",\"-c\",turnHarness,launcher,cfgPath],{encoding:\"utf8\",maxBuffer:64*1024*1024})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/engine-launch-fixture.ts",
+   "fn": "py",
+   "anchor": "execFileSync(\"python3\",[\"-I\",\"-c\",`importimportlib.util,json,os,sysspec=importlib.util.spec_from_file_location(\"launcher_fixture\",sys.argv[1]);m=importlib.util.",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/supervisor.ts",
+   "fn": "bindHomeVolume",
+   "anchor": "writeFileSync(fd,`${machineId}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/supervisor.ts",
+   "fn": "startServer",
+   "anchor": "launch(input.serverCommand,input.serverArgs,{env:input.env,stdio:[\"ignore\",\"inherit\",\"inherit\",\"pipe\",\"ipc\"]})",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-relay-mcp.ts",
+   "fn": "fail",
+   "anchor": "process.stderr.write(`${message}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-relay-mcp.ts",
+   "fn": "finish",
+   "anchor": "process.stderr.write(`${message}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/cloud-home/vps-relay-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stdout.write(`${(Array.isArray(data)?Buffer.concat(data):Buffer.from(dataasBuffer)).toString(\"utf8\")}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/agents-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(JSON.stringify(msg)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/agents-proxy.ts",
+   "fn": "api",
+   "anchor": "fetch(HARNESS+path,{...init,signal:init?.signal??AbortSignal.timeout(250_000),headers:{\"content-type\":\"application/json\",authorization:`Bearer${token()}`,...ini",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/browser-extension-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"BrowserMCPdisconnected.CheckMurageconnectionsettings.\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/browser-extension-mcp.ts",
+   "fn": "<module>",
+   "anchor": "process.stderr.write(\"BrowserMCPconfigurationunavailable.PairthisclientinMurage.\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/browser-proxy.ts",
+   "fn": "hostRequest",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/browser-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(`${JSON.stringify(message)}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/dweb-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(JSON.stringify(msg)+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/dweb-proxy.ts",
+   "fn": "api",
+   "anchor": "fetch(DWEB+path,{signal:AbortSignal.timeout(30_000),...init,headers:{\"content-type\":\"application/json\",...init?.headers},})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/host-computer-proxy.ts",
+   "fn": "post",
+   "anchor": "httpRequest(url,{method:\"POST\",signal,agent:false,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",\"content-length\":Buffer.byteLength(b",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/memory-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(JSON.stringify({jsonrpc:\"2.0\",id,result})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/memory-proxy.ts",
+   "fn": "rpcError",
+   "anchor": "process.stdout.write(JSON.stringify({jsonrpc:\"2.0\",id,error:{code,message}})+\"\\n\")",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/memory-proxy.ts",
+   "fn": "handleMessage",
+   "anchor": "fetch(newURL(`/api/internal/memory/${paths[name]}`,HARNESS),{method:\"POST\",redirect:\"error\",signal:AbortSignal.timeout(timeoutMs),headers:{\"content-type\":\"appli",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/phone-jobs-proxy.ts",
+   "fn": "post",
+   "anchor": "httpRequest(url,{method:\"POST\",signal,agent:false,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",\"content-length\":Buffer.byteLength(b",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/phone-proxy.ts",
+   "fn": "runAdb",
+   "anchor": "spawn(adb,args,{stdio:[\"ignore\",\"pipe\",\"pipe\"],windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/phone-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(`${JSON.stringify(message)}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/remote-mcp-proxy.ts",
+   "fn": "send",
+   "anchor": "process.stdout.write(`${JSON.stringify(message)}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/remote-mcp-proxy.ts",
+   "fn": "post",
+   "anchor": "fetch(`${HARNESS}/api/internal/mcp-remote/${encodeURIComponent(NAME)}`,{method:\"POST\",headers:{\"content-type\":\"application/json\",accept:\"application/json,text/e",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/unified-browser-proxy.ts",
+   "fn": "forward",
+   "anchor": "fetch(url,{method:\"POST\",headers:{authorization:`Bearer${turnSecret(\"MURAGE_CONTROL_TOKEN\",env)}`,\"content-type\":\"application/json\"},body:JSON.stringify({method",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan.ts",
+   "fn": "recordScanFailure",
+   "anchor": "writeFileSync(temp,JSON.stringify({failures}),{mode:0o600,flag:\"wx\"})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/supervisor.ts",
+   "fn": "defaultSpawn",
+   "anchor": "spawn(spec.execPath,[...spec.args],{env:spec.env,stdio:\"ignore\",windowsHide:true,detached:false}satisfiesSpawnOptions)",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/cli.ts",
+   "fn": "main",
+   "anchor": "process.stdout.write(`${line}\\n`)",
+   "kind": "stream-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/memory/tiny-model-fixture.ts",
+   "fn": "writeTinyModel",
+   "anchor": "writeFileSync(join(directory,path),data)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan-fixtures.ts",
+   "fn": "append",
+   "anchor": "appendFileSync(segment(producer,\"Current\"),line.value,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan-fixtures.ts",
+   "fn": "appendRaw",
+   "anchor": "appendFileSync(segment(producer,\"Current\"),text,{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan-fixtures.ts",
+   "fn": "writeBackup",
+   "anchor": "writeFileSync(temp,JSON.stringify(status),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/sentinel/scan-fixtures.ts",
+   "fn": "writeStats",
+   "anchor": "writeFileSync(file(\"dbStatsManifest\"),JSON.stringify(manifest),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  }
+ ],
+ "callers": [
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "writeTo",
+   "anchor": "writeAcpResponse(proc.child.stdin,obj,(error,accepted)=>{if(!error){if(out&&out.id!==undefined&&out.method===undefined&&(out.result!==undefined||out.error!==und",
+   "callee": "writeAcpResponse",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fenceFrame",
+   "anchor": "writeTo(threadId,proc,{jsonrpc:\"2.0\",id:msg.id,error:{code:-32002,message:\"thatsessionisnotactiveonthisconnection\"}})",
+   "callee": "writeTo",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "idleLine",
+   "anchor": "writeTo(threadId,proc,msg.method===\"session/request_permission\"?{jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"cancelled\"}}}:{jsonrpc:\"2.0\",id:msg.id,error:",
+   "callee": "writeTo",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "writeTo(threadId,proc,obj,done)",
+   "callee": "writeTo",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "send",
+   "anchor": "writeAcpResponse(child?.stdin,obj,(error,accepted)=>{if(!error)appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)});elseif(!done)console.w",
+   "callee": "writeAcpResponse",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "request",
+   "anchor": "send({jsonrpc:\"2.0\",id,method,params})",
+   "callee": "send",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleQuestionRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:cancelled})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "finish",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "reply",
+   "anchor": "send({jsonrpc:\"2.0\",id,result:decision===\"trust\"?{outcome:\"trust\",scope:\"configAndCommands\"}:{outcome:\"reject\"}},written?(error)=>{if(error)console.warn(`acpwri",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleFolderTrustV2",
+   "anchor": "send({jsonrpc:\"2.0\",id,result:processReply?{outcome:\"trust\",scope:\"configAndCommands\",duration:\"process\"}:{outcome:\"trust\",scope:\"configAndCommands\"}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleFolderTrustV2",
+   "anchor": "send({jsonrpc:\"2.0\",id,result:{outcome:\"trust\",scope:\"configAndCommands\",duration:\"process\"}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "reply",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:{outcome:decision===\"trust\"?\"trust\":\"reject\"}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,error:{code:-32601,message:\"methodnotfound\"}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:{outcome:{outcome:\"selected\",optionId:allow}}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:reject?{outcome:{outcome:\"selected\",optionId:reject}}:cancelled})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "handleServerRequest",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:allow?{outcome:{outcome:\"selected\",optionId:allow}}:cancelled,})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "finish",
+   "anchor": "send({jsonrpc:\"2.0\",id:msg.id,result:cancelled})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "finish",
+   "anchor": "send(response,(error,accepted=true)=>{current.uncertain=!!error&&accepted;if(!error)clearAsk();elseif(expired&&behavior===\"allow\")current.stop.abort();done(erro",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "interrupt",
+   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
+   "callee": "send",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "interject",
+   "anchor": "request(support.interjection!.method,{sessionId,text,interjectionId},ackMs)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "readStates",
+   "anchor": "request(support.mcpListMethod,{sessionId},timeoutMs)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/new\",{cwd,mcpServers},NEW_SESSION_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/load\",{sessionId:resumeId,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"initialize\",{protocolVersion:1,//formandURLelicitationareadvertisedbecausebothbecome//questioncards(ASK3);aURLisshown,neverfetched.Anengine//thatgatesf",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"authenticate\",{methodId},INIT_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/load\",{sessionId:cursor,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/load\",{sessionId:cursor,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
+   "callee": "request",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/new\",{cwd,mcpServers},NEW_SESSION_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning",
+   "n": 1
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/set_config_option\",{sessionId,configId,value:cliTurn.model},INIT_TIMEOUT,)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "request",
+   "anchor": "request(method,params,timeoutMs??SESSION_CONFIG_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/set_mode\",{sessionId,modeId:readOnlyMode.readOnly},SESSION_CONFIG_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/set_mode\",{sessionId,modeId:readOnlyMode.normal},SESSION_CONFIG_TIMEOUT)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/load\",{sessionId,cwd,mcpServers:reconnecting,_meta:{noReplay:true}},windowMs)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "launch",
+   "anchor": "request(\"session/prompt\",{sessionId,prompt:[{type:\"text\",text},...(turn.images??[]).map(image=>({type:\"image\",...image}))],...(support.promptMeta?{_meta:support",
+   "callee": "request",
+   "reason": "learning-path",
+   "admittedBy": "chain:acp"
+  }
+ ],
+ "chains": [
+  {
+   "name": "codex",
+   "admittedBy": "server/drivers/codex.ts turn.beforeSubmit?.()",
+   "hops": [
+    {
+     "file": "server/drivers/codex.ts",
+     "fn": "",
+     "from": "turn.beforeSubmit?.()",
+     "to": "request(method, commandParams ?? {",
+     "payload": [
+      "turn.text",
+      "turnText",
+      "commandParams"
+     ]
+    },
+    {
+     "file": "server/drivers/codex.ts",
+     "fn": "request",
+     "from": "",
+     "to": "send({ jsonrpc: \"2.0\", id, method, params })",
+     "payload": [
+      "params"
+     ]
+    },
+    {
+     "file": "server/drivers/codex.ts",
+     "fn": "send",
+     "from": "",
+     "to": "child.stdin.write(JSON.stringify(obj) +",
+     "payload": [
+      "obj"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "acp",
+   "admittedBy": "server/drivers/acp/core.ts turn.beforeSubmit?.()",
+   "hops": [
+    {
+     "file": "server/drivers/acp/core.ts",
+     "fn": "",
+     "from": "turn.beforeSubmit?.()",
+     "to": "request(\"session/prompt\"",
+     "payload": [
+      "text",
+      "turn.text"
+     ]
+    },
+    {
+     "file": "server/drivers/acp/core.ts",
+     "fn": "request",
+     "from": "",
+     "to": "send({ jsonrpc: \"2.0\", id, method, params })",
+     "payload": [
+      "params"
+     ]
+    },
+    {
+     "file": "server/drivers/acp/core.ts",
+     "fn": "send",
+     "from": "",
+     "to": "writeTo(threadId, proc, obj, done)",
+     "payload": [
+      "obj"
+     ]
+    },
+    {
+     "file": "server/drivers/acp/core.ts",
+     "fn": "writeTo",
+     "from": "",
+     "to": "writeAcpResponse(proc.child.stdin, obj,",
+     "payload": [
+      "obj"
+     ]
+    },
+    {
+     "file": "server/drivers/acp/approval-delivery.ts",
+     "fn": "writeAcpResponse",
+     "from": "",
+     "to": "stream.write(JSON.stringify(obj) +",
+     "payload": [
+      "obj"
+     ]
+    }
+   ]
+  },
+  {
+   "name": "claude-one-shot",
+   "admittedBy": "server/drivers/claude.ts memory?.gate?.admit()",
+   "hops": [
+    {
+     "file": "server/drivers/claude.ts",
+     "fn": "",
+     "from": "memory?.gate?.admit()",
+     "to": "child.stdin.end(prompt)",
+     "payload": [
+      "prompt"
+     ]
+    }
+   ]
+  }
+ ],
+ "timers": [
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "",
+   "anchor": "queueMicrotask(() => notePromptSent(turn.threadId))"
+  },
+  {
+   "file": "server/drivers/codex.ts",
+   "fn": "request",
+   "anchor": "setTimeout(() => { if (rpcPending.delete(id)) reject(new CodexRpcTimeout("
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "request",
+   "anchor": "setTimeout(() => { rpcPending.delete(id);"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "armIdle",
+   "anchor": "setTimeout(() => { // Waiting on a person"
+  },
+  {
+   "file": "server/drivers/claude.ts",
+   "fn": "",
+   "anchor": "setTimeout(() => { killCliTree(child);"
+  }
+ ],
+ "pinnedCallers": [
+  {
+   "file": "server/drivers/acp/core.ts",
+   "name": "send"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "name": "writeTo"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "name": "request"
+  },
+  {
+   "file": "server/drivers/acp/approval-delivery.ts",
+   "name": "writeAcpResponse"
+  }
+ ]
+}

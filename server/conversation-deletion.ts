@@ -75,7 +75,7 @@ export interface DeletionLeftover { what: string; where: string }
 export const ENGINE_LABEL: Readonly<Record<string, string>> = {
   fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
   geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
-  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", customAcp: "your custom engine",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", museCode: "Muse Code", customAcp: "your custom engine",
 };
 const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 /** The driver kind whose label names an engine (codex -> Codex, grok -> Grok). */
