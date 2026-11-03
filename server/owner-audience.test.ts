@@ -275,7 +275,7 @@ describe("every registered owner-only surface", () => {
     const writes = [...body.matchAll(/ownerSurfacesByThread\.set\(threadId,surfacesForOwner\)/g)].map(match => match.index!);
     expect(writes).toHaveLength(1);
     const busy = body.indexOf("this thread or its group is already working");
-    const limit = body.indexOf("this bot is already working on three threads");
+    const limit = body.indexOf('code:"thread_limit"');
     expect(busy).toBeGreaterThan(-1);
     expect(limit).toBeGreaterThan(-1);
     expect(writes[0]).toBeGreaterThan(busy);

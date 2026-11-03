@@ -38,6 +38,9 @@ function pinFault(error:unknown,signal:AbortSignal){
 /** The learning model for flux-fast: extraction and support checks ask for the pin. A key that cannot call it is told so by a 400, 403 or 404 before
  * any reply exists, and the same call runs on flux-fast, charged once, with no attempt used; any other fault of the pin counts as that failure always
  * did, and the next call goes to flux-fast. So a dead pin can cost a key one attempt in six hours and is otherwise today's path. Every call logs its arm. */
+/** The call's one gate (learning-send.ts) rides inside `invoke` to the physical fetch (extract.ts requestMemoryTransport), which is its
+ *  only `send`: the pin and the fallback after a refused pin are two releases of the same gate, and the fallback, a second send of the
+ *  same words after a wait, is checked again there, so a Forget that committed meanwhile drops it. Nothing here sends (r8 Change 4). */
 export async function pinnedCall<T>(base:string,key:string,purpose:"extraction"|"grounding",signal:AbortSignal,invoke:(model:string)=>Promise<T>):Promise<T>{
   pinAnswered=null;
   if(base!=="flux-fast")return invoke(base);
@@ -92,11 +95,11 @@ export function resolveMemoryExtractor(
       if (!key) throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
       const config={url:FLUX_OPENAI_BASE,apiKey:key,model:flux.model};
       return dispatch?.purpose ? requestMemoryInference(config,text,maximumOutputTokens,signal,dispatch)
-        : pinnedCall(flux.model,key,"extraction",signal,model=>requestMemoryExtraction({...config,model},text,maximumOutputTokens,signal,dispatch?.messages));
+        : pinnedCall(flux.model,key,"extraction",signal,model=>requestMemoryExtraction({...config,model},text,maximumOutputTokens,signal,dispatch?.messages,dispatch?.fence));
     };
-    extract.ground=(input,maximumOutputTokens,signal)=>{
+    extract.ground=(input,maximumOutputTokens,signal,fence)=>{
       const key=readKey();if(!key)throw new Error("MEMORY_EXTRACTOR_UNAVAILABLE");
-      return pinnedCall(flux.model,key,"grounding",signal,model=>requestMemoryGrounding({url:FLUX_OPENAI_BASE,apiKey:key,model},input,Math.min(64,maximumOutputTokens),signal));
+      return pinnedCall(flux.model,key,"grounding",signal,model=>requestMemoryGrounding({url:FLUX_OPENAI_BASE,apiKey:key,model},input,Math.min(64,maximumOutputTokens),signal,fence));
     };
     extract.pinReplyUnusable=pinReplyUnusable;extract.learningConnection=selected;extract.learningModel=()=>learningModelFor(flux.model,readKey());extract.healthEngine="gateway";
     return extract;
@@ -104,7 +107,7 @@ export function resolveMemoryExtractor(
   const instance = instances.find(item => item.enabled && item.instanceId === selected);
   if(!instance?.extractMemory)return null;
   const extract:TextOnlyExtractor=instance.extractMemory.bind(instance);
-  if(instance.groundMemory)extract.ground=(input,maximum,signal)=>instance.groundMemory!(input,Math.min(64,maximum),signal);
+  if(instance.groundMemory)extract.ground=(input,maximum,signal,fence)=>instance.groundMemory!(input,Math.min(64,maximum),signal,fence);
   extract.learningConnection=selected;extract.learningModel=()=>instance.models?.default;extract.healthEngine=healthEngineKind(instance.driverKind);
   return extract;
 }
@@ -146,9 +149,10 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
    try{return await invoke(config);}catch(error){if([401,403].includes(Number((error as {status?:number}).status))){if(refused.size>=128)refused.delete(refused.keys().next().value!);refused.set(selected,config.revision);}throw error;}
   };
   // inside `call`: a refused pin must not read as a refused connection
+  // the gate rides inside invoke to the fetch; neither arm sends here
   const pin=<T>(config:ReturnType<typeof credentials>,purpose:"extraction"|"grounding",signal:AbortSignal,invoke:(model:string)=>Promise<T>)=>providerId?invoke(config.model):pinnedCall(config.model,config.apiKey,purpose,signal,invoke);
-  extractor=(text,maximum,signal,dispatch)=>call(config=>dispatch?.purpose?requestMemoryInference(config,text,maximum,signal,dispatch):pin(config,"extraction",signal,model=>requestMemoryExtraction({...config,model},text,maximum,signal,dispatch?.messages)));
-  extractor.ground=(value,maximum,signal)=>call(config=>pin(config,"grounding",signal,model=>requestMemoryGrounding({...config,model},value,Math.min(64,maximum),signal)));
+  extractor=(text,maximum,signal,dispatch)=>call(config=>dispatch?.purpose?requestMemoryInference(config,text,maximum,signal,dispatch):pin(config,"extraction",signal,model=>requestMemoryExtraction({...config,model},text,maximum,signal,dispatch?.messages,dispatch?.fence)));
+  extractor.ground=(value,maximum,signal,fence)=>call(config=>pin(config,"grounding",signal,model=>requestMemoryGrounding({...config,model},value,Math.min(64,maximum),signal,fence)));
   if(!providerId)extractor.pinReplyUnusable=pinReplyUnusable;
   extractor.learningModel=()=>{if(providerId)return providerModel(input.providerConnections!,providerId);const model=FLUX_EXTRACTORS.find(row=>row.instanceId===selected)?.model;return model&&learningModelFor(model,readKey());};
   // the transport that answers, by what was chosen: Flux Router is the gateway, an own OpenAI-compatible connection is openai-chat
@@ -161,7 +165,7 @@ export function resolveLearningConnection(input:{selected:string|null;instances:
   extractor=(text,max,signal,dispatch)=>call(instance=>instance.extractMemory!(text,max,signal,dispatch));
   extractor.learningModel=()=>current()?.models?.default;
   extractor.healthEngine=healthEngineKind(initial.driverKind);
-  if(initial.groundMemory)extractor.ground=(value,maximum,signal)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");return instance.groundMemory(value,Math.min(64,maximum),signal);});
+  if(initial.groundMemory)extractor.ground=(value,maximum,signal,fence)=>call(instance=>{if(!instance.groundMemory)throw Error("MEMORY_EXTRACTOR_UNAVAILABLE");return instance.groundMemory(value,Math.min(64,maximum),signal,fence);});
  }
  if(!extractor)return none(`${item.label}: This connection is unavailable.`);
  extractor.learningConnection=selected;extractor.reviewOnly=!input.selected&&!input.defaultOn;

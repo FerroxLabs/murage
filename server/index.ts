@@ -233,7 +233,7 @@ import { interruptOpenTurn, recordMemorySettlement } from "./memory/settlement.t
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseRuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, lstatSync, realpathSync } from "node:fs";
-import { availableParallelism, homedir, hostname as osHostname, tmpdir } from "node:os";
+import { availableParallelism, homedir, hostname as osHostname, tmpdir, totalmem } from "node:os";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { familyOffered, offeredAnswer, phoneFamily, phonesOffered, shareAskOffered } from "./phones/offered.ts";
 import { ensurePhonesTables, phoneAskCaller, phoneCaller } from "./phones/gate.ts";
@@ -688,6 +688,7 @@ import {
   setSteerQueueObserver,
   importLegacyQueueFile,
   queuedStartPending,
+  ownerLinesQueued,
 } from "./steer-queue.ts";
 import { AskTurnDevices, runQueuedStart } from "./ask-turn-device.ts";
 import { registerBotEmailAddressLookup } from "./email/export-scrub.ts";
@@ -875,7 +876,8 @@ import { checkFluxKey, requestFluxKeyRecheck, noteFluxKeyAccepted, noteFluxKeyRe
 import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupEngineUsers, setupSignedOutReading } from "./setup.ts";
 import { deriveSetupBackup, initializeSetupBackup, setupBackupRequest } from "./setup-backup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
-import { type EngineChoice, bootEngineChoice, defaultModel, pickDefaultEngine } from "./default-engine.ts";
+import { type EngineChoice, bootEngineChoice, defaultModel, fuigoBirthModel, fuigoUsable, pickDefaultEngine } from "./default-engine.ts";
+import { couldMoveEngine, createEngineRepick, targetCheck } from "./engine-repick.ts";
 import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { resumesLegacySession, withLegacyNames } from "../shared/connected-app-names.ts";
@@ -1715,11 +1717,12 @@ bus.gateDeliveries({ held: writersHeldForIndexBuild, wait: awaitWriterGateForegr
  * here, before anything can read a provider event (shouldIgnoreProviderEvent). */
 const chiefProposals = new ChiefProposalTurns();
 // ...and they leave no event or engine log behind (events/, native/).
-bus.omitLog(threadId => chiefProposals.ignores(threadId));
+// A hidden learning session (cli-memory-learning.ts) carries memory words: it leaves no event or engine log behind either (MEM-LEARNING-FENCE r8).
+bus.omitLog(threadId => chiefProposals.ignores(threadId) || isMemoryLearningThread(threadId));
 // 1.0.9 phone tools S18: a thread that used the phone tools keeps its reply text out of events/, and phone tool rows lose their
 // input and result. Read from the persisted mark and never gated on the feature flag (a mark outlives the flag, Astra AS9).
 bus.withholdText({ thread: threadId => store.threadPhoneMarked(threadId), phoneTool: makePhoneToolMatcher() });
-omitNativeLog(threadId => chiefProposals.ignores(threadId));
+omitNativeLog(threadId => chiefProposals.ignores(threadId) || isMemoryLearningThread(threadId));
 // 1.0.9 phone tools S19: the engine protocol trace of a marked thread loses every text value. Not gated on the feature flag (AS9).
 withholdNativeThread(threadId => store.threadPhoneMarked(threadId));
 // Internal presentation notifications; raw events already have a canonical log.
@@ -2497,7 +2500,8 @@ async function releaseAllBrowserCapabilities(): Promise<void> {
 }
 
 import { giveBackAdmitted, startAdmittedTurn, type AdmittedPhase, type AdmittedTurnState } from "./admitted-turn.ts";
-import { DirectRebuildCancelled, IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS, stillWaitingRemainingMs, requireDirectThreadTarget, stillWaitingLine, type DirectThreadRun, type ResourceBlocker, type ResourceYield } from "./independent-thread-runs.ts";
+import { botThreadCap, homeThreadGuard, savedThreadsPerBot } from "./thread-cap.ts";
+import { DirectRebuildCancelled, IndependentThreadRuns, stillWaitingRemainingMs, requireDirectThreadTarget, stillWaitingLine, type DirectThreadRun, type ResourceBlocker, type ResourceYield } from "./independent-thread-runs.ts";
 import { ENGINE_CLOSED_LATE_NOTE, PROVIDER_STOP_UNCONFIRMED_LINE, releaseOnLateClose } from "./direct-late-close.ts";
 import { RetainedCloses, unconfirmedCloses } from "./reload-retain.ts";
 import type { TurnOwner } from "./turn-resources.ts";
@@ -2526,6 +2530,16 @@ class DirectTurnSetupCancelled extends Error {}
 /** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
  * exactly this message when the authority a dispatch prepared under has moved. */
 const isMemoryContextRevoked = (error: unknown) => error instanceof Error && error.message === "MEMORY_CONTEXT_REVOKED";
+/** Acceptance of a dispatched turn's memory receipt (direct and room turns alike). A revoke at this point on an engine that proves it wrote
+ * nothing (DELETE-REVOKE-SCOPE (a): `fencedWrites` and no write released) seals the boundary before the error goes on, so the setup catch
+ * rebuilds the turn on fresh context instead of ending it with a card; every other refusal goes on unchanged. */
+function acceptMemoryReceipt(receipt: { accepted(): void } | undefined, boundary: TurnSubmissionBoundary, adapter: { capabilities: { fencedWrites?: boolean } }): void {
+  try { receipt?.accepted(); }
+  catch (error) {
+    if (isMemoryContextRevoked(error)) { try { boundary.sealUnwritten(error, adapter.capabilities.fencedWrites); } catch { /* proves nothing: the card stands */ } }
+    throw error;
+  }
+}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 /** Direct turns refused at a submission after the server accepted them, by
  * provider turn id: the turn's terminal event runs what is owed: the next
@@ -2601,7 +2615,8 @@ const turnAttribution = createTurnAttribution({
   },
 });
 bus.subscribe((event: RuntimeEvent) => { if (event.type === "turn.completed" && event.turnId) turnAttribution.completed(event.turnId); });
-const directRuns = new IndependentThreadRuns<BotRecord>();
+// U4 S1: both limits are read live, on every admission and every slot pump (server/thread-cap.ts)
+const directRuns = new IndependentThreadRuns<BotRecord>({ perBot: () => botThreadCap(cfg.features, totalmem()), home: () => homeThreadGuard(totalmem()) });
 /** AMEND-13 Rule 76b (Astra a13 r1 item 2): the routine run each direct turn
  * was started FOR, by that turn's own generation. Set only where the server
  * starts a scheduled or manual run's turn, or carries the same run on after
@@ -3315,8 +3330,9 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
   });
 }
 
-// default selection for new bots: first available instance, Fuigo preferred
-async function defaultSelection(): Promise<EngineChoice> {
+// 1.0.15 BIRTH-FUIGO BN1: feeds bootSelection, which engine health shows as the primary engine. Store.birthSelection decides births;
+// it reads bootSelection only for the first desktop bot when no Fuigo is usable (r3).
+async function engineHealthPrimaryProbe(): Promise<EngineChoice> {
   return pickDefaultEngine(await describedInstances({ catalogs: "due" }));
 }
 
@@ -3453,7 +3469,12 @@ let bootSelection = { instanceId: "", model: "" };
 const engineHealthMemo: EngineHealthMemo = { at: 0, body: null };
 // Every new bot gets the workspace's new-bot effort where its engine offers
 // that level (triage row 23); an explicit effort wins.
-const store = new Store(() => bootSelection, (selection) => withNewBotEffort(selection, cfg.newBots?.effort, registry.get(selection.instanceId)?.adapter.capabilities.effortLevels), true);
+// 1.0.15 BIRTH-FUIGO: a bot with no owner pick is born by Store.birthSelection from the live registry (usable Fuigo, else a desktop
+// copy of the Chief, else empty and marked). r3 (MurageMain 11-02): the FIRST desktop bot with no usable Fuigo takes the first-launch
+// probe's reading (bootSelection, a pickDefaultEngine pick that leaves out a keyless Fuigo), so a found Claude runs the first chat.
+// Birth filters the Fuigo list to the usable ones itself; the whole list lets it refuse a remembered Fuigo that cannot answer.
+const birthOnDesktop = process.env.MURAGE_CLOUD_ROLE !== "home";
+const store = new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, ...(birthOnDesktop ? { firstBot: () => bootSelection } : {}) }, (selection) => withNewBotEffort(selection, cfg.newBots?.effort, registry.get(selection.instanceId)?.adapter.capabilities.effortLevels), true);
 // A bot that still exists keeps its engine state roots: its tasks hold cursors into them (scoped-cli-home.ts retireScopes).
 setScopeRetentionHooks({ botExists: (botId) => Boolean(store.bot(botId)) });
 // Codex hook env files (0600) left by a closed Murage or a bot never launched again: swept for every bot scope at app start (codex-hook.ts).
@@ -4374,13 +4395,29 @@ function reconcileLateSteer(input: LateSteerInput, late: SteerDelivery): void {
 }
 // With bots in place the engine probe (about 2 s) runs after listen: a start
 // reads the remembered choice, and only a new bot ever reads it.
-await bootEngineChoice({ hasBots: store.bots.length > 0, file: join(DATA_DIR, "default-engine.json"), probe: defaultSelection, adopt: choice => { bootSelection = choice; },
+await bootEngineChoice({ hasBots: store.bots.length > 0, file: join(DATA_DIR, "default-engine.json"), probe: engineHealthPrimaryProbe, adopt: choice => { bootSelection = choice; },
   usable: choice => {
     const engine = registry.get(choice.instanceId);
     return !!engine && engine.enabled !== false && choice.model !== "" && !!engine.models.default && engine.models.options.some(option => option.id === choice.model);
   } });
 store.seedIfEmpty();
 seedFolderTrustFromStore();
+// 1.0.14 FIRST-ENGINE-REPICK section 5: the only automatic engine mover. Triggers start a pass; the pass decides.
+const engineRepick = createEngineRepick({
+  store,
+  registry,
+  describe: options => describedInstances(options),
+});
+// One boot pass when a key is held (a Fuigo with a catalogue): a bot left empty or on a removed engine reaches Fuigo after a restart.
+// Astra 1015 M6: a Fuigo engine present is enough to start; the pass and its ladder wait for the catalogue.
+if (registry.instances().some(instance => instance.driverKind === "fuigoAgent") && store.bots.some(bot => couldMoveEngine(registry, bot))) {
+  void engineRepick.request("boot").catch(error => console.error(`boot engine pass: ${error instanceof Error ? error.message : String(error)}`));
+}
+/** After a key save: attempt 0 of a pass that started after the save, inside a catch that never fails the save. */
+async function repickAfterKeySave(): Promise<void> {
+  try { await engineRepick.request("key"); }
+  catch (error) { console.error(`engine pass after key save: ${error instanceof Error ? error.message : String(error)}`); }
+}
 
 configureLocalPinnedModels(() => store.bots.map(bot => bot.modelSelection?.model));
 
@@ -4396,7 +4433,7 @@ const setup = new SetupChecklist();
  * Seat the bot that hosts setup.
  *
  * The bot a fresh install created first is the one the person meets, so it IS
- * the Chief of Staff, on whatever `defaultSelection()` resolved — which
+ * the Chief of Staff, on whatever the birth rule gave it (Store.birthSelection) — which
  * prefers the bundled Fuigo engine, the only one this app ships a binary for.
  *
  * Seated when the checklist is first opened rather than at boot. The role
@@ -4751,51 +4788,16 @@ function driveSetupConversation(view: SetupView): void {
 }
 
 /**
- * THE KEY IS WHAT TURNS OUR OWN ENGINE ON, SO THE CHIEF HAS TO BE ABLE TO
- * MOVE TO IT.
- *
- * Fuigo is the engine Murage ships and the one the whole zero-terminal
- * promise rests on, but with no key and no login its catalogue merges down to
- * nothing, so at boot it is not pickable and `defaultSelection()` correctly
- * hands the first bot whatever else this machine has. On a developer's
- * machine that is Claude.
- *
- * Then the first run asks for the key, the key populates Fuigo's catalogue,
- * and nothing moved the Chief. It stayed on the engine it was given in the
- * one second before the thing that unlocks ours existed. The person went
- * through a flow whose entire middle step is "this key turns on our engine"
- * and ended up on somebody else's.
- *
- * Narrowly scoped on purpose. It acts only while the guided first run is
- * live, which is the only window in which nobody has chosen an engine: the
- * flow is the only thing that has acted, so there is no decision to overrule.
- * It acts only on the Chief, only when a key is actually routing, and only
- * when the re-derived default really is Fuigo. The moment the Chief is on
- * Fuigo it is a no-op, so polling this route cannot thrash a bot's engine.
+ * 1.0.14 FIRST-ENGINE-REPICK: the setup read no longer moves the Chief. It may only START an engine pass (server/engine-repick.ts), and
+ * only while a key is routing; the pass decides, reads no sign-in, and moves only a marked bot with no engine or a gone one. Polled
+ * reads start at most one pass a minute, so a waiting empty Chief does not turn every poll into a fresh catalogue scan.
  */
-async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<string>): Promise<void> {
-  if (!view.fluxReady || !view.chiefBotId) return;
-  if (!conversationLive(view, present)) return;
-  const chief = store.bot(view.chiefBotId);
-  if (!chief) return;
-  const described = await describedInstances({ catalogs: "due" });
-  const selection = pickDefaultEngine(described);
-  if (!selection.instanceId || !selection.model) return;
-  const picked = described.find((instance) => instance.instanceId === selection.instanceId);
-  if (picked?.driverKind !== "fuigoAgent") return;
-  // THE MODEL MOVES TOO, NOT ONLY THE ENGINE.
-  //
-  // Being on Fuigo already is not the finish line. Fuigo's catalogue is
-  // assembled from whatever it can reach, so before a key exists its default
-  // may be a local model it found on this machine, which is a perfectly good
-  // answer and is NOT the one the key card just promised. When the key lands
-  // the catalogue re-forms around it, and a Chief left pinned to the local
-  // model would make the flow's central sentence, that this key gives you all
-  // the latest models routed to the best one for the job, quietly untrue.
-  const current = chief.modelSelection;
-  if (current.instanceId === selection.instanceId && current.model === selection.model) return;
-  store.patchBot(chief.id, { modelSelection: selection });
-  console.log(`setup: put the Chief on the shipped engine (${selection.instanceId} ${selection.model})`);
+let setupRepickAt = 0;
+const SETUP_REPICK_EVERY_MS = 60_000;
+function requestRepickFromSetup(view: SetupView): void {
+  if (!view.fluxReady || Date.now() - setupRepickAt < SETUP_REPICK_EVERY_MS) return;
+  setupRepickAt = Date.now();
+  void engineRepick.request("setup").catch(error => console.error(`setup engine pass: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 /** The card keys already in the Chief's thread, which is what both the
@@ -4813,11 +4815,7 @@ function setupCardKeysInChiefThread(view: SetupView): Set<string> {
 
 /** One call for everything a setup route has to do after the view is built. */
 async function driveSetup(view: SetupView): Promise<void> {
-  try {
-    await moveChiefToShippedEngine(view, setupCardKeysInChiefThread(view));
-  } catch (error) {
-    console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  requestRepickFromSetup(view);
   driveSetupConversation(view);
   nameTheSetupTask(setupCardKeysInChiefThread(view));
   // Told to the client AFTER the cards are appended, so a view that carries
@@ -9377,7 +9375,10 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
           }
           // a Stop reached it first: it is not run again, and says nothing more
           const stoppedTurn=releasedStop||(directRun!==undefined&&directRuns.get(event.threadId)?.phase==="stopping");
-          if(directRun){directRuns.release(directRun);replySpeakerTurns.ended(event.threadId,directRun.providerTurnId);}
+          // U4 S1 (Astra High 1): the one ordering point. The owner's own lines queued on this thread keep the slot this turn frees, so the
+          // release cannot hand it to a waiting routine before drainQueuedSends below admits them (dropped again if they do not start).
+          const holdForOwner=directRun!==undefined&&ownerLinesQueued(event.threadId);
+          if(directRun){directRuns.release(directRun,{holdForOwner});replySpeakerTurns.ended(event.threadId,directRun.providerTurnId);}
           if(store.taskByThread(bot.id,event.threadId)?.activity!=="dead")store.setTaskActivity(bot.id,event.threadId,"idle");
           // past the last rebuild, or a re-dispatch with no run to keep the thread: the card, never silence
           if(lateRedispatch&&!(lateRedispatch.redispatch&&stoppedTurn))lateRedispatch.run(undefined);
@@ -9387,6 +9388,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
           // the handoffs that found this bot busy their retry here too.
           retryDelegationsWaitingOn(bot.id);
           drainQueuedSends();
+          // lines that did not begin to drain now (a room turn holds the bot, say) give the held slot back at once
+          if(holdForOwner&&!queuedDrainStarting.has(event.threadId))directRuns.dropOwnerHold(event.threadId);
         };
         // A2: a terminal event is not teardown. Drivers that end a turn by
         // terminating its child expose awaitTurnTeardown; the lease is released
@@ -9812,7 +9815,7 @@ function wakeAsker(threadId: string, tries = 0): void {
   // The thread limit is checked here, not left to startTurn's refusal: a bot
   // busy on three threads would otherwise burn the wake's bounded attempts.
   if (directThreadBusy(bot.id, threadId) || activeGroupTurnForBot(bot.id) || coordinationAdmissionClosed()
-    || directRuns.forBot(bot.id).length >= MAX_CONCURRENT_BOT_THREADS) {
+    || directRuns.atLimit(bot.id)) {
     if (tries < 40 && !askerWakeRetry.has(threadId)) {
       askerWakeRetry.add(threadId);
       setTimeout(() => { askerWakeRetry.delete(threadId); wakeAsker(threadId, tries + 1); }, 250).unref?.();
@@ -10485,14 +10488,19 @@ function admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, un
   });
 }
 
+/** U4 S1: threads whose drained batch is starting right now (until its start settles); a slot held for it is released when it settles. */
+const queuedDrainStarting = new Set<string>();
 function drainQueuedSends() {
   drainSteeredMessages(store, (botId, threadId, _queuedPrompt, userMessage, excludeIds, batch) => {
+    queuedDrainStarting.add(threadId);
+    // an admitted owner batch already took its held slot, so this frees only a slot its start did not take
+    const settled = () => { queuedDrainStarting.delete(threadId); directRuns.dropOwnerHold(threadId); };
     // S39: the asking phone rides this start (from the persisted via_device, so a restart still finds it) and is recorded under the
     // turn's own generation once the turn exists. One attempt at admission: startTurn's own busy check runs in the same tick as admit,
     // so nothing can take the thread between the check and the start. A refusal because the thread is taken (whatever its shape) sends
     // the rows back into the queue in their place and the drain tries again (steer-queue.ts START_REQUEUE); only a failure of its own
     // says the line could not start.
-    return runQueuedStart({
+    const started = runQueuedStart({
       // the thread fill startTurn waits on is bounded here (ask-turn-device.ts): a fill that never finishes re-queues the rows
       prepare: () => store.prepareThread(threadId),
       start: async () => {
@@ -10531,6 +10539,8 @@ function drainQueuedSends() {
         }));
       },
     });
+    void started.then(settled, settled);
+    return started;
   },
     // a bot idle in this thread can still be speaking in a room
     (botId) => Boolean(activeGroupTurnForBot(botId)),
@@ -11180,9 +11190,11 @@ async function startTurnAdmitting(
   if (!opts?.projectCardRun && activeGroupTurnForBot(botId)) throw Object.assign(new Error("this thread or its group is already working"), { status: 409, code: "room_busy" });
   // Owner first (SPEC-P 7.2 [AMB-6], lane E1): the owner's own send is never
   // refused at the thread limit; it takes the reserved slot or waits ahead of
-  // automation (independent-thread-runs.ts).
-  const ownerFirst = isOwnerOrigin(opts?.origin) && !opts?.automationSource && !opts?.commsDepth && !opts?.cardContinuation && !opts?.unattended && !opts?.waitForThreadSlot;
-  if(!opts?.waitForThreadSlot&&!ownerFirst&&directRuns.forBot(botId).filter(held=>held.generation!==rebuildOf).length>=MAX_CONCURRENT_BOT_THREADS)throw Object.assign(new Error("this bot is already working on three threads"),{status:409,code:"thread_limit"});
+  // automation (independent-thread-runs.ts). A drained queue that is the owner's own lines, every one (queuedOwnerProof, set only by
+  // drainQueuedSends), is the same owner send arriving later: it waits first in line instead of going back behind queued automation (U4 S1).
+  const ownerFirst = (isOwnerOrigin(opts?.origin) || opts?.queuedOwnerProof === true) && !opts?.automationSource && !opts?.commsDepth && !opts?.cardContinuation && !opts?.unattended && !opts?.waitForThreadSlot;
+  const threadLimit=!opts?.waitForThreadSlot&&!ownerFirst?directRuns.limitRefusal(botId,rebuildOf):undefined;
+  if(threadLimit!==undefined)throw Object.assign(new Error(threadLimit),{status:409,code:"thread_limit"});
   // Recorded only once this start is past the busy and thread-limit checks (all in this same tick, before admission): a start refused there
   // never overwrites the audience of the turn already running on the thread.
   ownerSurfacesByThread.set(threadId,surfacesForOwner);
@@ -11324,10 +11336,10 @@ async function startTurnAdmitting(
     const replacement = opts?.runOn === "cloud" ? null : staleModelReplacement(instance.driverKind, model, instance.models);
     if (replacement) {
       const old = model;
-      const switched = { ...bot.modelSelection, model: replacement };
-      store.patchBot(bot.id, { modelSelection: switched });
-      // The thread's own selection too, so the task picker shows the new id and a second thread does not repeat the notice.
-      store.patchTask(bot.id, threadId, { modelSelection: switched });
+      // 1.0.14 FIRST-ENGINE-REPICK section 4: a compare and set on the selection that owns this chat (its own pick, else the bot's), model
+      // only, the mark kept as it is. An owner pick that landed meanwhile wins and this turn runs on what it was handed.
+      const owning = store.taskByThread(bot.id, threadId)?.modelSelection ?? store.bot(bot.id)?.modelSelection;
+      if (owning && owning.instanceId === bot.modelSelection.instanceId && owning.model === old) store.repairStaleModel(bot.id, threadId, owning, replacement);
       model = replacement;
       try { store.appendMessage(threadId, { role: "bot", kind: "text", actorKind: "murage", murage: { kind: "status" }, from: { botId: bot.id, name: bot.name, color: bot.color }, text: staleModelNotice(instance.driverKind, old, replacement) }); } catch { /* the turn still runs on the new model */ }
     }
@@ -12844,7 +12856,7 @@ async function startTurnAdmitting(
           const line = turnRefusedLine(engineNameOf(instance), kind);
           store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", turnId: providerTurnId, tool: kind === "not-started"
             ? { name: `error: ${line}`, ok: false, errorDetails: "submission_refused" }
-            : { name: line, ok: true } }));
+            : { name: line, ok: true }, ...(kind === "without-memory" ? { memoryNote: "without-memory" as const } : {}) }));
           if (kind === "not-started" && turnFailureBuzzes(opts)) notify(buildNotification("turn-failed", bot, threadId, line, { avatarUrl: bot.avatarUrl }));
         } });
         if (early) { turnRefusalNotes.get(providerTurnId)!.note("not-started"); turnRefusalNotes.delete(providerTurnId); }
@@ -12934,7 +12946,7 @@ async function startTurnAdmitting(
         recordHandoffAccepted(opts?.delegationRun, accepted.turnId);
         projectTurnLeases.bind(threadId, dispatchClaimId, accepted.turnId);
         submissionBoundary.assertNotRefused();
-        memoryReceipt?.accepted();
+        acceptMemoryReceipt(memoryReceipt, submissionBoundary, instance.adapter);
         turnAccepted(threadId, userMessage.id, instance?.driverKind);
         // Refused at a later write (an adapter that writes after handing its
         // id back): nothing was written and the adapter settles the turn; its
@@ -14752,8 +14764,9 @@ const handoffAdmission: HandoffAdmission = {
   handoffThread: (botId, sourceThreadId) => audienceTask(store, botId, threadHumanPrincipal(sourceThreadId), sourceExecutionAudience(store.botByThread(sourceThreadId)?.id, sourceThreadId))?.threadId,
   threadBusy: (botId, threadId) => directThreadBusy(botId, threadId),
   groupTurnActive: (botId) => activeGroupTurnForBot(botId) !== null,
-  runningThreads: (botId) => directRuns.forBot(botId).length,
-  maxThreads: MAX_CONCURRENT_BOT_THREADS,
+  runningThreads: (botId) => directRuns.forBot(botId).length + directRuns.ownerHoldsFor(botId),
+  // per-bot only: a full home guard is a capacity wait (canDispatch below), which spends none of the busy retries
+  maxThreads: (botId) => directRuns.capFor(botId),
 };
 
 /** Would the dispatch do anything but wait for this queued hand-off? Its own question (handoff-dispatch.ts admit), asked without taking anything: the idle and
@@ -14762,7 +14775,7 @@ function handoffCanStartNow(handoffId: string): boolean {
   return admitHandoff(handoffId, { bus: commsBus, approvalBus }, { probe: true }).kind !== "wait";
 }
 
-const commsBus: CommsBus = { store, broadcast, turnOf: runningProviderTurnOf, canDispatch: coordinationHasCapacity,
+const commsBus: CommsBus = { store, broadcast, turnOf: runningProviderTurnOf, canDispatch: () => coordinationHasCapacity() && directRuns.homeHolding() < directRuns.homeCap(),
   canStartHandoff: (botId, sourceThreadId, destinationThreadId) => handoffCanStart(handoffAdmission, botId, sourceThreadId, destinationThreadId),
   handoffRunning: (threadId, handoffId) => directRuns.get(threadId) !== undefined && delegationWatch.get(threadId)?.taskId === handoffId,
   prepareDelegation: (fromBotId, toBotId, sourceThreadId, message, id) => {
@@ -16703,9 +16716,10 @@ const workAdmission = createWorkAdmission({
   speakingInRoom: (botId) => [...groupSpeakers.values()].some((speaker) => speaker.botId === botId),
   directThreads: (botId) => {
     const admitted = new Set(workAdmission.liveTurns({ botId }).map(claim => claim.threadId));
-    return directRuns.forBot(botId).filter(run => !admitted.has(run.threadId)).length;
+    return directRuns.forBot(botId).filter(run => !admitted.has(run.threadId)).length + directRuns.ownerHoldsFor(botId);
   },
-  maxThreads: MAX_CONCURRENT_BOT_THREADS,
+  maxThreads: (botId) => directRuns.capFor(botId),
+  homeFull: () => directRuns.homeHolding() >= directRuns.homeCap(),
   installCardCap: PROJECT_CARD_RUNS_INSTALL_CAP,
   // the budget since the owner's last message in that room thread (6.2)
   rootCounters: (_rootId, input) => input.project ? conversationCounters(database(), { groupId: input.project.groupId, threadId: input.threadId, now: Date.now() }) : { wakes: 0, workMs: 0 },
@@ -18289,7 +18303,7 @@ async function runGroupMemberTurn(
         if (turnSucceeded(e) || turnStopped(e)) turnFailure = undefined;
         else turnFailure ??= e.stopReason === "submission_refused" ? turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "not-started") : e.stopReason ?? "the engine reported an error";
         // the last rebuild ran without remembered context: the room hears it once, under the member's reply
-        if (roomLastResort && turnSucceeded(e)) store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "without-memory"), ok: true } }));
+        if (roomLastResort && turnSucceeded(e)) store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, memoryNote: "without-memory", tool: { name: turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "without-memory"), ok: true } }));
         if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
@@ -18475,7 +18489,7 @@ async function runGroupMemberTurn(
         projectTurnLeases.bind(threadId, internalGeneration, accepted.turnId);
         bindProviderTurn(roomTurnLineage, accepted.turnId);
         submissionBoundary.assertNotRefused();
-        memoryReceipt?.accepted();
+        acceptMemoryReceipt(memoryReceipt, submissionBoundary, instance.adapter);
         turnAccepted(threadId, entryRequestId ?? `${threadId}:${botId}`, instance?.driverKind);
         submissionBoundary.acceptedBy((refusal) => { if (isMemoryContextRevoked(refusal)) { lateMemoryRefusal = true; turnRefused(threadId, entryRequestId ?? `${threadId}:${botId}`, instance?.driverKind); } });
         // the joining note rode an accepted turn (project_member_state, restart-safe)
@@ -20472,6 +20486,8 @@ function configStatus() {
     // not a secret — the settings picker shows it; "" = follow the system
     language: cfg.language ?? "",
     rooms: { turnTimeoutMinutes: roomTurnTimeoutMinutes(cfg) },
+    // U4 S1: the owner's saved per-bot number (null = the default) and this computer's guard, sized from its memory
+    threads: { perBot: savedThreadsPerBot(cfg.features) ?? null, homeGuard: homeThreadGuard(totalmem()) },
     // absent effort = no level is sent, so a client tells it from any level
     newBots: cfg.newBots?.effort ? { effort: cfg.newBots.effort } : {},
     localVm: {
@@ -20946,7 +20962,7 @@ const fluxConnectionTransaction = new FluxConnectionTransaction({
 /** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
 const fluxSaveBlockedAtBoot = fluxSaveBlocked(process.env, Boolean(cloudHome), Boolean(utilityParentPort));
 const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired(), ...fluxSaveBlockedAtBoot });
-async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
+async function describedInstances(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
   return instances.map(instance => {
@@ -22637,12 +22653,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         clients.revoke(body.clientId);
         for (const binding of browserExtension?.status().bindings.filter(item => item.clientId === body.clientId) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
       } else {
-        // Picked here as the other new-bot routes do: a start can open the port with the engine probe still running and nothing remembered.
-        const modelSelection = await defaultSelection();
+        // 1.0.15 BIRTH-FUIGO: no owner pick here, so createBot births the bot by the birth rule (Store.birthSelection), as the other new-bot routes do.
         if (!clients.enabled) return json(res, 409, { error: "Turn on external browser tools before pairing a client." });
         if (!browserExtension?.status().profiles.some(profile => profile.profileId === body.profileId)) return json(res, 409, { error: "Connect the browser profile before pairing a client." });
         if (store.bots.length >= MAX_WORKSPACE_BOTS) return json(res, 409, { error: "Workspace bot limit reached." });
-        const bot = store.createBot({ name: body.label, title: "External browser connection", modelSelection }, { seedMessages: false });
+        const bot = store.createBot({ name: body.label, title: "External browser connection" }, { seedMessages: false });
         store.patchBot(bot.id, { browser: true, computer: "off", composio: false, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: body.profileId });
         const paired = clients.pair({ label: body.label, profileId: body.profileId, botId: bot.id, threadId: bot.threadId });
         const clientDirectory = join(DATA_DIR, "browser-extension", "client-configs");
@@ -23958,9 +23973,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (instructions.length > 8_000) {
           return json(res, 400, { error: "instructions must be at most 8000 characters" });
         }
-        const selectedModel = body.modelSelection === undefined ? chief.modelSelection : checkedModelSelection(body.modelSelection, undefined, true);
-        if ("ok" in selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
-        const modelSelection = "ok" in selectedModel ? selectedModel.selection : selectedModel;
+        // 1.0.15 BIRTH-FUIGO P3: no owner pick is born by the birth rule inside createBot, never a copy of the Chief taken here.
+        const selectedModel = body.modelSelection === undefined ? undefined : checkedModelSelection(body.modelSelection, undefined, true);
+        if (selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
+        const modelSelection: ModelSelection | undefined = selectedModel?.ok ? selectedModel.selection : undefined;
         // The workspace size and the name are checked again after the owner's OK: the card can stay open for minutes
         // while other creates land, and a different name could otherwise take the last place.
         const createPreflight = (): EventReply | undefined => {
@@ -24004,7 +24020,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }, async ({ charge, record, unrun }) => {
         const refused = createPreflight();
         if (refused) return refused;
-        if (wantsLead) {
+        if (wantsLead && modelSelection) {
           const error = leadershipAdmissionError(registry.get(modelSelection.instanceId), modelSelection.instanceId);
           if (error) return eventReply(409, { error });
         }
@@ -24016,12 +24032,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // names that were both cleared while the owner's card was open can no longer both take the last place.
         const late = createPreflight();
         if (late) { unrun(); return late; }
+        // A born lead is admitted on the birth value read here, in the same tick as createBot's own birth read (nothing awaited between).
+        if (wantsLead && !modelSelection) {
+          const born = store.birthSelection();
+          const error = leadershipAdmissionError(registry.get(born.instanceId), born.instanceId);
+          if (error) { unrun(); return eventReply(409, { error }); }
+        }
         const created = store.createBot(
           {
             name,
             title: role,
             description: instructions,
-            modelSelection: { ...modelSelection },
+            ...(modelSelection ? { modelSelection: { ...modelSelection } } : {}),
             section: targetSection,
           },
           { seedMessages: false },
@@ -25668,13 +25690,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }
       };
       refuseRepeatedImport();
-      let importModelSelection: ModelSelection;
+      // 1.0.15 BIRTH-FUIGO P5: no starter pick means "birth": the records are born once, inside the commit below (preparePackageAddition).
+      let importModelSelection: ModelSelection | "birth" = "birth";
       if (starter && body.modelSelection !== undefined) {
         const checked = checkedModelSelection(body.modelSelection, undefined, true);
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         importModelSelection = checked.selection;
-      } else {
-        importModelSelection = await defaultSelection();
       }
       const importSelected = (options: Omit<Parameters<typeof importBotPackageArchive>[0], "archivePath">) => contents
         ? importBotPackageContents({ ...options, contents })
@@ -25683,8 +25704,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         selection: body.selection, expectedArchiveSha256: body.archiveSha256, expectedReviewHash: body.reviewHash,
         acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: importModelSelection,
         existingSections: [...store.bots, ...store.groups].flatMap(record => record.section?.trim() ? [record.section.trim()] : []),
-        // A shipped starter crew arrives led when its engine can coordinate bots.
-        starterLeads: starter && leadershipAdmissionError(registry.get(importModelSelection.instanceId), importModelSelection.instanceId) === null,
+        // A shipped starter crew names its lead; whether the lead's engine can coordinate bots is decided in the commit, on its final engine.
+        starterLeads: starter,
         assertFreshBotId: assertCloudBotIdNotTombstoned,
         atomicCommit: ({ prepared }) => {
           if (dataWritersStopped || !routines) throw new Error("Installation is closing");
@@ -25693,7 +25714,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
           for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash };
           prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
-          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups);
+          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
+          // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
+          const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
+          prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
           const routineBatch = routines.preparePackageAddition(prepared.routines);
           const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
             ...prepared.files.map(file => [file.path, file.content] as const)]);
@@ -26146,7 +26170,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const memberIds = new Map<string, string>();
       let group: GroupRecord | undefined;
       try {
-        const selection = await defaultSelection();
+        // 1.0.15 BIRTH-FUIGO P6: members are born by the birth rule inside createBot (no owner pick here); the lead check reads it too.
+        const selection = store.birthSelection();
         if (pkg?.chiefOfStaff && !roleAwarePackage) {
           const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
           if (error) return json(res, 409, { error });
@@ -26189,7 +26214,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           const created = store.createBot(
             {
               ...importedMemberProfile(member, takenNames),
-              modelSelection: selection,
               ...(packageSection ? { section: sectionFor(source.team) } : {}),
             },
             { seedMessages: false },
@@ -27272,10 +27296,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           return json(res, 400, { error: "section must be at most 60 characters" });
         }
       }
-      let selection: ModelSelection;
-      if (body.modelSelection === undefined) {
-        selection = await defaultSelection();
-      } else {
+      // 1.0.15 BIRTH-FUIGO P2: no owner selection passes none, so createBot births the bot (and marks it) after every wait below.
+      let selection: ModelSelection | undefined;
+      if (body.modelSelection !== undefined) {
         const checked = checkedModelSelection(body.modelSelection, undefined, body.requireAvailableModel === true);
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         selection = checked.selection;
@@ -27291,7 +27314,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // A caller that proved nothing (a script, a bot's own shell) gets a bot
       // with no access and in no team; the owner's surfaces keep the defaults.
       const proven = requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
-      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, modelSelection: selection }, { noAccess: !proven });
+      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven });
       return json(res, 201, {
         bot: {
           ...wireBot(bot),
@@ -27401,6 +27424,31 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { switched: result.switched.length, busy: result.busy, bot: visible });
+    }
+    // 1.0.14 FIRST-ENGINE-REPICK section 6: the owner's "Use Fuigo instead" tap on a sign-in wall. The card sends the engineRev it was
+    // drawn with; an engine write since (an owner pick, a move) answers 409 stale and nothing is written. The fleet generation is read
+    // as the request arrives, and the target check T runs at the write. Clears the mark: the owner chose.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/use-fuigo$/);
+    if (m && method === "POST") {
+      const gen = registry.generation;
+      const body = await readBody(req) as { engineRev?: unknown; threadId?: unknown } | null;
+      const record = store.bot(m[1]);
+      if (!record) return json(res, 404, { error: "no such bot" });
+      if (!body || typeof body.engineRev !== "number" || !Number.isInteger(body.engineRev)) return json(res, 400, { error: "engineRev must be an integer" });
+      if (body.threadId !== undefined && typeof body.threadId !== "string") return json(res, 400, { error: "threadId must be a string" });
+      // Astra M4: the chat the wall was drawn in. Its own pick (and the failover row it carries) ends in the same write as the move.
+      const ownerThreadId = body.threadId as string | undefined;
+      const endedFailover = ownerThreadId === undefined ? undefined : store.taskByThread(record.id, ownerThreadId)?.limitFailover;
+      // BN3: the same Fuigo-usable reading birth and the engine pass use (fuigoBirthModel: keyless Flux rows filtered, defaultModel).
+      const fuigo = registry.instances().filter(instance => fuigoUsable(instance));
+      if (fuigo.length !== 1) return json(res, 409, { error: "Fuigo is not ready yet.", code: "fuigo_unavailable" });
+      const selection = { instanceId: fuigo[0]!.instanceId, model: fuigoBirthModel(fuigo[0]!) };
+      const result = store.casEngineMove(record.id, { expectRev: body.engineRev, selection, mark: "clear", requireMark: false, predicate: () => targetCheck(registry, gen, selection), ownerThreadId });
+      const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
+      if (result === "stale") return json(res, 409, { error: "This bot's engine changed. Check it and try again.", code: "stale", engineRev: store.bot(record.id)!.engineRev ?? 0, bot: visible });
+      if (endedFailover && store.taskByThread(record.id, ownerThreadId!)?.limitFailover === undefined) { try { limitFailovers.cancel(endedFailover); } catch (error) { console.error("limit failover: could not mark the row cancelled", error); } }
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
     }
     // 1.0.4 SL-I I4: the engine that takes over when this bot's engine hits its limit (the bot's model section). Desktop only (404 elsewhere).
     m = path.match(/^\/api\/bots\/([\w-]+)\/limit-backup$/);
@@ -27716,18 +27764,26 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // default, and never two bots at once — they would act as the owner in
       // the same signed-in browser, each able to see the other's tabs.
       // "auto" (1.0.7): the owner chose "Use my Chrome" and the server picks the
-      // route: Murage for Chrome when it is paired, Chrome's remote debugging
-      // when only that is on, otherwise the extension's install steps.
+      // route: Murage for Chrome when it is paired, else its Set up my browser
+      // step (1.0.15). Remote debugging only when this copy has no Murage for
+      // Chrome and no other bot holds it, and an "auto" request never answers
+      // the one-bot 409 below: a holder sends it to setup instead
+      // (server/user-chrome.ts useMyChromeRoute).
+      const autoRequested = body.browserTransport === "auto";
       if (body.browserTransport === "auto") {
         if (body.useMyChrome !== true) return json(res, 400, { error: "Unknown browser transport." });
         const profiles = browserExtension?.status().profiles ?? [];
-        const choice = useMyChromeRoute(profiles, await userChromeListening());
+        const extensionAvailable = readBrowserExtensionBuild(browserExtensionResourcesPath()).mode !== "none";
+        const listening = extensionAvailable ? "off" : await userChromeListening();
+        // Read after the probe.
+        const heldByAnotherBot = store.bots.some(other => other.id !== existingBot?.id && other.useMyChrome && other.browserTransport !== "extension");
+        const choice = useMyChromeRoute(profiles, listening, { extensionAvailable, heldByAnotherBot });
         console.log(`[browser] use-my-chrome route ${choice.route}`);
         body.browserTransport = choice.transport ?? null;
         body.browserExtensionProfileId = useMyChromeProfile(choice, profiles, existingBot?.browserExtensionProfileId);
       }
       if (body.browserTransport !== undefined || body.browserExtensionProfileId !== undefined) {
-        if (existingBot?.busy) return json(res, 409, { error: "Stop this bot before changing its browser connection." });
+        if (existingBot?.busy) return json(res, 409, { error: `${existingBot.name} is working. Stop it, or wait for it to finish, then change its browser connection.`, code: "bot_busy" });
         if (body.browserTransport !== undefined) {
           if (body.browserTransport !== null && body.browserTransport !== "extension") return json(res, 400, { error: "Unknown browser transport." });
           patch.browserTransport = body.browserTransport === "extension" ? "extension" : undefined;
@@ -27743,7 +27799,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const requestedTransport = body.browserTransport === null ? undefined : body.browserTransport ?? existingBot?.browserTransport;
         if ((body.useMyChrome ?? existingBot?.useMyChrome) === true && requestedTransport !== "extension") {
           const holder = store.bots.find(other => other.id !== existingBot?.id && other.useMyChrome && other.browserTransport !== "extension");
-          if (holder) return json(res, 409, { error: "Another bot is already using Chrome remote debugging." });
+          if (holder && !autoRequested) return json(res, 409, { error: "Another bot is already using Chrome remote debugging." });
+          // "auto" raced another bot to remote debugging: Murage for Chrome setup instead.
+          if (holder) { body.browserTransport = "extension"; patch.browserTransport = "extension"; }
         }
         // Moving from remote debugging to Murage for Chrome: the old attach is
         // closed, so the owner's Chrome stops asking for it.
@@ -27756,11 +27814,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (body.useMyChrome !== undefined) {
         if (typeof body.useMyChrome !== "boolean") return json(res, 400, { error: "useMyChrome must be true or false" });
         if (existingBot && body.useMyChrome !== (existingBot.useMyChrome === true)) {
-          if (existingBot.busy) return json(res, 409, { error: "stop this bot's turn before changing its browser" });
+          if (existingBot.busy) return json(res, 409, { error: `${existingBot.name} is working. Stop it, or wait for it to finish, then change its browser.`, code: "bot_busy" });
           if (unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing browsers" });
           const selectedTransport = body.browserTransport === null ? undefined : body.browserTransport ?? existingBot.browserTransport;
           const holder = body.useMyChrome && selectedTransport !== "extension" ? store.bots.find((other) => other.id !== existingBot.id && other.useMyChrome && other.browserTransport !== "extension") : undefined;
-          if (holder) return json(res, 409, { error: `${holder.name} is already using your Chrome. Only one bot can use it at a time; switch ${holder.name} back to its own browser first.` });
+          // "auto" raced another bot to remote debugging during the awaits above: Murage for Chrome setup instead.
+          if (holder && autoRequested) { body.browserTransport = "extension"; patch.browserTransport = "extension"; }
+          else if (holder) return json(res, 409, { error: `${holder.name} is already using your Chrome. Only one bot can use it at a time; switch ${holder.name} back to its own browser first.` });
           if (!body.useMyChrome) {
             for (const binding of browserExtension?.status().bindings.filter(item => item.botId === existingBot.id) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
             await forgetUserChromeBrowser(existingBot.id);
@@ -27776,7 +27836,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (existingBot && requestedProfile !== existingBot.browserProfile && unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing profiles" });
         if (existingBot?.browserProfile === "guest" && requestedProfile !== "guest" && !existingBot.busy) await forgetGuestBrowser(existingBot.id);
         if (existingBot?.busy && requestedProfile !== existingBot.browserProfile) {
-          return json(res, 409, { error: "stop this bot's turn before changing its browser profile" });
+          return json(res, 409, { error: "stop this bot's turn before changing its browser profile", code: "bot_busy" });
         }
         if (requestedProfile === undefined) patch.browserProfile = undefined;
         else if (
@@ -30102,7 +30162,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
       const update = body as Record<string, unknown>;
       if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
-      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); await repickAfterKeySave(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
       if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
       return json(res, 400, { error: "Invalid Flux connection update." });
@@ -30110,9 +30170,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path === "/api/flux-connection/mutate" && method === "POST") {
       if (utilityParentPort && !cloudHome) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
       const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
-      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      let committed: Awaited<ReturnType<typeof fluxConnectionTransaction.commit>>;
+      try { committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); }
       catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
       finally { fluxConnectionTransaction.finish(reserved.lease); }
+      // The engine pass runs once the lease is released, so a scan never holds other Flux edits.
+      await repickAfterKeySave();
+      return json(res, 200, fluxConnectionStatusWithRestart(committed));
     }
 
     // ── provider instances (model picker) ──
@@ -31208,6 +31272,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // Phone tools turned off: every open phone job (its card on the phone, the bot's waiting tool call) ends now as did not
         // run, or may have run once leased, instead of waiting out its deadline behind routes that are already absent.
         if (cfg.features?.phoneTools !== true) phoneJobs.revokeFor({});
+        // U4 S1: a raised thread limit starts what waits for a slot now, without waiting for an unrelated release
+        directRuns.recheck();
         queueMicrotask(pumpRoomDispatcher);
         for (const group of store.groups) if (group.channelProject) projectFrames.strip(group.id);
       }

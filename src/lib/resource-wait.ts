@@ -2,7 +2,7 @@ import { localeCode, t } from "./i18n";
 
 /** Runtime-only marker the harness puts on a busy task while it waits for
  * another thread to release a shared folder, computer or browser profile, or
- * (a queued routine) for one of the bot's three thread slots. */
+ * for a free thread (the bot or the whole home is at its thread limit, U4 S1). */
 export type TaskResourceWait = {
   resource: "working-folder" | "computer" | "browser" | "shared" | "thread-slot";
   holderTitle?: string;
@@ -28,7 +28,7 @@ function place(position: number): string {
  * not waiting. Unknown kinds from a newer server read as "shared". A known
  * place in line reads "2nd in line for the working folder. Starts by itself
  * when the turns ahead finish.", with "About N min." once measured. */
-export function resourceWaitLabel(wait: TaskResourceWait | undefined | null): string | undefined {
+export function resourceWaitLabel(wait: TaskResourceWait | undefined | null, botName?: string): string | undefined {
   if (!wait || typeof wait !== "object") return undefined;
   const kind = KINDS.has(wait.resource) ? wait.resource : "shared";
   const position = wait.position;
@@ -39,6 +39,11 @@ export function resourceWaitLabel(wait: TaskResourceWait | undefined | null): st
     const minutes = Math.round(estimate / 60_000);
     // Under half a minute rounds to nothing: say nothing rather than "About 1 min".
     return minutes >= 1 ? `${line} ${t("runtimeError.waiting.estimate", { minutes })}` : line;
+  }
+  // a start waiting for a free thread names the bot that will start it: "{bot} will start as soon as the current one finishes"
+  if (kind === "thread-slot") {
+    const bot = typeof botName === "string" ? botName.trim() : "";
+    return bot ? t("runtimeError.waiting.thread-slot.named", { bot }) : t("runtimeError.waiting.thread-slot.unnamed");
   }
   const title = typeof wait.holderTitle === "string" ? wait.holderTitle.trim() : "";
   return title

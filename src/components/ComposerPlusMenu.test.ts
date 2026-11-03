@@ -83,7 +83,8 @@ describe("the composer on a phone", () => {
   const composer = read("./Composer.tsx");
 
   it("mounts the + only on a phone and only while the composer is open", () => {
-    expect(composer).toMatch(/phoneComposer && !locked && \(\s*<ComposerPlusMenu/);
+    // APPROVAL-ONE-CARD: and never while a card waits (the panel is the composer then)
+    expect(composer).toMatch(/phoneComposer && !locked && !approval && \(\s*<ComposerPlusMenu/);
     expect(composer).toContain("const phoneComposer = narrowPlaceholder;");
   });
 

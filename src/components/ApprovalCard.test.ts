@@ -6,7 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { ApprovalCard } from "./ApprovalCard";
 import type { CardClass } from "../../shared/fold-scopes";
-import { alwaysAllowLabel, approvalGrants, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
+import { PendingApprovalPanel, alwaysAllowLabel, approvalGrants, pendingOf, spokenApprovalPrompt, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Message } from "@/state/store";
 import { skillRequestBehavior } from "../../shared/skill-request";
 import { loadPlainApproval } from "@/lib/plain-approval";
@@ -14,6 +14,11 @@ import { loadPlainApproval } from "@/lib/plain-approval";
 // The plain words load after the first paint (src/lib/plain-approval.ts);
 // these cards are checked as they read once they have.
 beforeAll(() => loadPlainApproval());
+
+/** APPROVAL-ONE-CARD: a waiting card is read and answered in the composer
+ * panel (the chat keeps one line), so its words are checked there. */
+const waiting = (message: Message, who?: string) =>
+  renderToStaticMarkup(createElement(PendingApprovalPanel, { pending: pendingOf(message), who, threadId: message.card?.routineRequest?.threadId ?? "t1" }));
 
 const routineRequest = {
   version: 1 as const,
@@ -80,9 +85,10 @@ describe("ApprovalCard routine proposals", () => {
       },
     };
 
-    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
-    expect(markup).toContain("Wants to schedule a routine");
+    const markup = waiting(message);
+    expect(markup).toContain("Confirm this routine");
     expect(markup).toContain("Weekdays at 09:00");
+    expect(markup).not.toContain("schedule_routine");
   });
 
   it("records the exact routine action after confirmation", () => {
@@ -206,8 +212,8 @@ describe("ApprovalCard learned skills", () => {
       },
     };
 
-    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
-    expect(markup).toContain("enable a learned skill");
+    const markup = waiting(message);
+    expect(markup).toContain("Enable this learned skill");
     expect(markup).toContain("Files an expense in the company portal.");
     expect(markup).toContain("Review the complete SKILL.md before enabling");
     expect(markup).toContain("Source: learn:conversation");
@@ -252,8 +258,8 @@ describe("ApprovalCard learned skills", () => {
       },
     };
 
-    expect(renderToStaticMarkup(createElement(ApprovalCard, { message }))).toContain("update a learned skill");
-    expect(renderToStaticMarkup(createElement(ApprovalCard, { message }))).toContain("replacing the current version");
+    expect(waiting(message)).toContain("Update this learned skill");
+    expect(waiting(message)).toContain("replacing the current version");
     const spoken = spokenApprovalPrompt(
       { message, requestId: "skill-update-request", tool: "stage_skill", detail: message.card!.subtitle },
       "Mochi",
@@ -291,13 +297,13 @@ describe("ApprovalCard learned skills", () => {
       },
     };
 
-    const markup = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    const markup = waiting(message);
     expect(markup).toContain("created by an older build");
     expect(markup).toContain("cannot be applied");
     expect(markup).toContain("create the skill again");
 
     message.card!.skillRequest!.action = "update";
-    expect(renderToStaticMarkup(createElement(ApprovalCard, { message })))
+    expect(waiting(message))
       .toContain("propose the update again");
   });
 });
@@ -311,8 +317,8 @@ describe("the one-time 'use this computer' card", () => {
   const bot = { name: "Screen" } as Parameters<typeof ApprovalCard>[0]["bot"];
 
   it("reads as a sentence with a plain explanation, not a tool name and a code box", () => {
-    const markup = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: consent() }));
-    expect(markup).toContain("@Screen wants to use this computer");
+    const markup = waiting(consent(), "Screen");
+    expect(markup).toContain("Let @Screen use this computer?");
     expect(markup).not.toContain("local computer consent");
     expect(markup).not.toContain("local_computer_consent");
     expect(markup).not.toContain("<pre");
@@ -338,7 +344,7 @@ describe("ApprovalCard ACP permission kinds", () => {
     card: { title: "Approval", subtitle, options: ["Allow", "Deny"], tool, requestId: `acp-${tool}` },
   });
   const bot = { name: "Business Planner" } as Parameters<typeof ApprovalCard>[0]["bot"];
-  const render = (tool: string) => renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card(tool) }));
+  const render = (tool: string) => waiting(card(tool), bot!.name);
 
   it.each([
     ["other", "Business Planner wants to use a tool"],
@@ -358,7 +364,7 @@ describe("ApprovalCard ACP permission kinds", () => {
 
   it("never reads a bare permission kind out loud as the verb", () => {
     for (const kind of ["other", "edit", "execute", "switch_mode"]) {
-      expect(render(kind)).not.toContain(`wants to ${kind}</div>`);
+      expect(render(kind)).not.toContain(`wants to ${kind}</h2>`);
       // …and the kind is not a tool name, so it does not go in the badge either
       expect(render(kind)).not.toContain(`text-ink-secondary">${kind}<`);
     }
@@ -366,10 +372,10 @@ describe("ApprovalCard ACP permission kinds", () => {
 
   it("still shows what was asked, and says a real command in words", () => {
     expect(render("other")).toContain("agents__list_bots");
-    const real = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card("Bash", "git status") }));
+    const real = waiting(card("Bash", "git status"), bot!.name);
     expect(real).toContain("Business Planner wants to use git");
-    // the command itself is still on the card, behind Show details
-    expect(real).toContain("Show details");
+    // the command itself is still on the panel, behind Show command
+    expect(real).toContain("Show command");
     expect(real).toContain("git status");
   });
 });
@@ -488,38 +494,39 @@ describe("Murage for Chrome action cards (Fable H4, M9)", () => {
   // D3: the heading is the card's own sentence, never the tool's internal name.
   it("reads the heading the server wrote, not 'wants to browser extension action'", () => {
     const message: Message = { id: "ext-title", role: "bot", kind: "options", at: 1, card: { title: "Ember wants to click on example.com", subtitle: "click on https://example.com", options: ["Allow", "Deny"], tool: "browser_extension_action", requestId: "browser-2" } };
-    const html = renderToStaticMarkup(createElement(ApprovalCard, { message }));
+    const html = waiting(message);
     expect(html).toContain("Ember wants to click on example.com");
     expect(html).not.toContain("browser extension action");
     expect(html).not.toContain("browser_extension_action");
   });
   it("shows a long reviewed text collapsed, with a real toggle", () => {
-    const body = "word ".repeat(500); const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card(`fill on https://example.test\nArguments: {"text":"${body}"}`) }));
+    const body = "word ".repeat(500); const html = waiting(card(`fill on https://example.test\nArguments: {"text":"${body}"}`));
     expect(html).toContain('data-approval-held="collapsed"'); expect(html).toContain("aria-expanded");
   });
   it("a short one reads as before, without a toggle", () => {
-    const html = renderToStaticMarkup(createElement(ApprovalCard, { message: card("click on https://example.test") }));
+    const html = waiting(card("click on https://example.test"));
     expect(html).not.toContain("aria-expanded"); expect(html).toContain("click on https://example.test");
   });
 });
 
 describe("ApprovalCard plain-language detail", () => {
-  const render = (tool: string, subtitle: string) => renderToStaticMarkup(createElement(ApprovalCard, { message: { id: "p", role: "bot", kind: "options", at: 1,
-    card: { title: "Approval", subtitle, options: ["Allow", "Deny"], tool } } as Message }));
+  // the waiting card's detail, as the composer panel shows it
+  const render = (tool: string, subtitle: string) => waiting({ id: "p", role: "bot", kind: "options", at: 1,
+    card: { title: "Approval", subtitle, options: ["Allow", "Deny"], tool, requestId: "p" } } as Message);
   it("shows a file path as words, with the original text behind Show details", () => {
     const markup = render("Write", '{"file_path":"Newsletter/Spring offers.md"}');
     expect(markup).toContain("Newsletter/Spring offers.md");
     expect(markup).toContain("Show details");
     expect(markup).toContain("&quot;file_path&quot;:&quot;Newsletter/Spring offers.md&quot;");
   });
-  it("says a shell command in words, with the bot's note, and keeps the command behind Show details", () => {
+  it("says a shell command in words, with the bot's note, and keeps the command behind Show command", () => {
     const markup = render("mcp__x__run", '{"cmd":"rm -rf build","description":"Say hi"}');
     expect(markup).toContain("Cmd: rm -rf build");
     const sh = render("Bash", '{"command":"rm -rf build","description":"Say hi"}');
     expect(sh).toContain("Wants to delete build");
     expect(sh).toContain("What it is for: Say hi");
-    expect(sh.indexOf("What it is for: Say hi")).toBeLessThan(sh.indexOf("Show details"));
-    expect(sh.indexOf("Show details")).toBeLessThan(sh.indexOf("rm -rf build"));
+    expect(sh.indexOf("What it is for: Say hi")).toBeLessThan(sh.indexOf("Show command"));
+    expect(sh.indexOf("Show command")).toBeLessThan(sh.indexOf("rm -rf build"));
   });
   it("shortens a long value in words and keeps the whole of it behind Show details", () => {
     const markup = render("mcp__x__mystery", '{"a":"1","b":"' + "y".repeat(200) + '"}');
@@ -529,8 +536,11 @@ describe("ApprovalCard plain-language detail", () => {
   it.each(["ask_bot", "delegate", "browser_extension_action"])("renders Murage's own %s card text verbatim", tool => {
     const subtitle = '{"path":"notes.md"}';
     const markup = render(tool, subtitle);
+    // as written: one monospace block, no lines made up from it
     expect(markup).toContain("<pre");
-    expect(markup).not.toContain("Show details");
+    expect(markup).toContain("{&quot;path&quot;:&quot;notes.md&quot;}");
+    expect(markup).not.toContain("data-approval-plain");
+    expect(markup).not.toContain("Path: notes.md");
   });
   it.each([
     ["edit", "change notes.md"],
@@ -539,7 +549,7 @@ describe("ApprovalCard plain-language detail", () => {
   ])("says an engine's %s request in words, with the request itself folded", (tool, action) => {
     const markup = render(tool, '{"path":"notes.md"}');
     expect(markup).toContain(`Wants to ${action}`);
-    expect(markup).toContain("Show details");
+    expect(markup).toMatch(tool === "shell" ? />Show command</ : />Show details</);
   });
 });
 

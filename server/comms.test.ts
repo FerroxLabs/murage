@@ -518,7 +518,9 @@ describe("comms e2e (fake ACP fleet)", () => {
         composio: false,
         autoApprove: false,
         approvePeerComms: false,
-        modelSelection: { instanceId: "chiefCreator", model: "fake-model" },
+        // From 1.0.15 a specialist the Chief creates with no model_selection is born on Fuigo when Fuigo can answer (BIRTH-FUIGO: a later bot
+        // is born on Fuigo whatever the Chief is on); the fleet's `grok` instance is the Fuigo here, the Chief's `chiefCreator` is not.
+        modelSelection: { instanceId: "grok", model: "fake-model" },
       });
       expect(operator.chiefOfStaff).toBeFalsy();
       expect(operator.messages.some((message: any) => message.text?.includes("Review the new onboarding flow."))).toBe(true);

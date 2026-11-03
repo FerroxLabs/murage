@@ -21,6 +21,10 @@ import {
   type MemoryExtractionDispatch, type MemoryGroundingInput,
 } from "../memory/extract.ts";
 import { safeWipe } from "../testing/safe-wipe.mjs";
+import { MemorySendFenced } from "../memory/learning-send-fence.ts";
+import type { LearningGate } from "../memory/learning-send.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
+type MemorySendFence = LearningGate;
 
 /** Read through the registry's proxies: this instance learns on the person's own CLI or ACP login (ranked after Flux and API connections). */
 export const CLI_LEARNING = Symbol.for("murage.cli-memory-learning");
@@ -52,8 +56,11 @@ function runtimeFailure(event: Extract<RuntimeEvent, { type: "runtime.error" }>)
   return engineFailure(event.message, event.details ?? "");
 }
 
-/** One background session: the whole prompt in, the engine's answer text out. */
-export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: { maxBytes: number }) => Promise<string>;
+/** One background session: the whole prompt in, the engine's answer text out. `gate` is the call's one learning gate
+ * (memory/learning-send.ts): the runner admits through it (check and release under the write lock) immediately before it writes the
+ * prompt to the engine, with no await between, on every write (a relaunch's too), withdraws an admission that wrote nothing
+ * (`notWritten`), and marks each write (`wrote`); a refusal writes nothing and the session rejects with that error. */
+export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: { maxBytes: number; gate?: LearningGate }) => Promise<string>;
 
 export interface CliMemoryLearningOptions {
   /** How one session runs. Default: a hidden tool-free turn on the instance's adapter in an empty folder. */
@@ -101,31 +108,37 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
     tail = next.catch(() => undefined);
     return next;
   };
-  const session = (text: string, maximumOutputTokens: number, signal: AbortSignal, messages: ReadonlyArray<Message>, cap: number): Promise<string> => {
+  const session = (text: string, maximumOutputTokens: number, signal: AbortSignal, messages: ReadonlyArray<Message>, cap: number, fence?: MemorySendFence): Promise<string> => {
     if (!text.trim() || Buffer.byteLength(text) > MAX_SOURCE_BYTES || !Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 1 || maximumOutputTokens > cap)
       return Promise.reject(new Error("MEMORY_EXTRACTION_LIMIT"));
+    // No gate, no send (r6 section 0, no exemption): a learning call without its gate is refused here and nothing reaches the engine.
+    // The one gateless entry is checkReply below: a separately named, non-learning check whose only text is the fixed ENGINE_REPLY_PROMPT.
+    if (!fence) return Promise.reject(new MemorySendFenced());
     const maxBytes = Math.min(MAX_ANSWER_BYTES, Math.max(4_096, maximumOutputTokens * 8));
     return exclusive(async () => {
       await untilIdle(signal);
       if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-      const answer = stripFence(await runner(flattenMemoryMessages(messages), signal, { maxBytes }));
+      // The words waited in this queue: a Forget, delete or edit that committed meanwhile drops the call here (a cheap exit), and the
+      // runner admits through the same gate, under the write lock, right before its write.
+      fence.check();
+      const answer = stripFence(await runner(flattenMemoryMessages(messages), signal, { maxBytes, gate: fence }));
       if (!answer || Buffer.byteLength(answer) > maxBytes) throw new Error(answer ? "MEMORY_EXTRACTION_RESPONSE_LIMIT" : "MEMORY_EXTRACTION_EMPTY_REPLY");
       return answer;
     });
   };
 
   live.extractMemory = (text, maximumOutputTokens, signal, dispatch?: MemoryExtractionDispatch) => {
-    if (!dispatch?.purpose) return session(text, maximumOutputTokens, signal, dispatch?.messages ?? memoryExtractionMessages(text), 2000);
+    if (!dispatch?.purpose) return session(text, maximumOutputTokens, signal, dispatch?.messages ?? memoryExtractionMessages(text), 2000, dispatch?.fence);
     // the inference contract: the host's own messages, the purpose's output cap (extract.ts requestMemoryInference)
     const cap = dispatch.purpose === "reflection" ? 8000 : dispatch.purpose === "continuity" ? CONTINUITY_OUTPUT_CAP : 2000;
-    return session(text, maximumOutputTokens, signal, dispatch.messages, cap);
+    return session(text, maximumOutputTokens, signal, dispatch.messages, cap, dispatch.fence);
   };
-  live.groundMemory = (input: MemoryGroundingInput, maximumOutputTokens, signal) =>
-    session(JSON.stringify(input), maximumOutputTokens, signal, memoryGroundingMessages(input), 2000);
+  live.groundMemory = (input: MemoryGroundingInput, maximumOutputTokens, signal, fence?: MemorySendFence) =>
+    session(JSON.stringify(input), maximumOutputTokens, signal, memoryGroundingMessages(input), 2000, fence);
   // A press, not a pace: it does not wait for a running turn, and a caller that gave up before its place in line spends nothing.
   live.checkReply = (signal) => exclusive(async () => {
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-    return runner(ENGINE_REPLY_PROMPT, signal, { maxBytes: 4_096 });
+    return runner(fixedPrompt(ENGINE_REPLY_PROMPT), signal, { maxBytes: 4_096 });
   });
   Object.defineProperty(live, CLI_LEARNING, { value: true, enumerable: false });
 
@@ -139,13 +152,13 @@ const ANSWER_TEXT_LIMIT = MAX_ANSWER_BYTES * 2;
 /** The default session for engines that only offer a turn (Codex, ACP): one hidden turn on a thread that exists nowhere else, in an
  * empty temporary folder, with no integrations mounted, the most restrictive mode the engine offers, every ask denied, and the
  * engine's retained session for the thread retired when it ends. */
-export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner => async (prompt, signal, { maxBytes }) => {
+export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner => async (prompt, signal, { maxBytes, gate }) => {
   const adapter = live.adapter;
   const threadId = `${MEMORY_LEARNING_THREAD_PREFIX}${randomUUID()}`;
   const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
   const items: string[] = [];
   let pending = "", size = 0;
-  const state: { failure: Error | null } = { failure: null };
+  const state: { failure: Error | null; fenced: Error | null } = { failure: null, fenced: null };
   let finish: () => void = () => {};
   const finished = new Promise<void>(resolve => { finish = () => resolve(); });
   const unsubscribe = adapter.onEvent((event: RuntimeEvent) => {
@@ -164,10 +177,20 @@ export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner =>
   timer.unref?.();
   try {
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
-    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory" });
+    // The gate's admit rides as the turn's submission fence (SendTurnInput.beforeSubmit, codex.ts:2516 / acp/core.ts:5445 / claude.ts
+    // :5544): every adapter calls it with no await before the prompt write, on every write (a relaunch's too), and it checks and releases
+    // under the write lock. A refusal or busy lock writes nothing and the turn settles failed. A new admission means the one before it
+    // was written (the adapter relaunched after it); `notWritten` withdraws only the open, unwritten admission (r8 review change 1).
+    const beforeSubmit = gate ? () => { gate.wrote(); try { gate.admit(); } catch (error) { state.fenced = error instanceof Error ? error : new MemorySendFenced(); finish(); throw error; } } : undefined;
+    const notWritten = gate ? () => gate.notWritten() : undefined;
+    const sending = adapter.sendTurn({ threadId, text: prompt, sessionReset: true, cwd, stopLine: true, proposalOnly: true, background: true, usageFeature: "memory", ...(beforeSubmit ? { beforeSubmit, notWritten } : {}) });
     // sendTurn may stay pending until the turn ends: the wait is on the turn's own end, never on it.
     sending.catch(error => { state.failure ??= engineFailure(error instanceof Error ? error.message : String(error)); finish(); });
     await finished;
+    gate?.wrote();
+    // refused or busy with nothing released on any attempt: that typed error (settled at nothing); after a release, an interrupted
+    // attempt like any other (settlement reads the cumulative released, r8 section 6)
+    if (state.fenced) throw (gate?.released ?? 0) > 0 ? Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }) : state.fenced;
     if (signal.aborted) throw new Error("MEMORY_EXTRACTION_ABORTED");
     const text = [...items, ...(pending ? [pending] : [])].join("\n");
     if (state.failure) throw state.failure;

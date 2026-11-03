@@ -14,13 +14,14 @@ import { reconcilePipStances } from "./pip-stance.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { ensureScope } from "./policy.ts";
 import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, type TextOnlyExtractor } from "./extract.ts";
+import { digestOf, isMemorySendBusy, learningGate, sampleLearningFence } from "./learning-send.ts";
 import { admissibleActionSources, admissibleOwnerSources, admissionStamp, admissionVector, eachPageNow, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, livedRowAdmissible, livedRowStillShown, newestThreadSource, readShownNow, readShownSliced, settingsGen, compareAdmitted, stampMoved, THREAD_SOURCE_PAGE_ROWS, visitAdmittedActionSourcesSliced, visitAdmittedOwnerSourcesSliced, admissibleOwnerSourcesSliced, admissibleActionSourcesSliced, type AdmissionStamp, type AdmittedSource, type StampCheck, type WalkAnswer } from "./pip-admission.ts";
 import { heldStep } from "../observe.ts";
 import { applyLivedResult, expireProposals, validOwnerNominations, LIVED_SCHEMA, validLivedResult, type LivedResult } from "./pip-lived.ts";
 import { EPISODE_MAX_HANDLES, writeEpisode, writeTraceEpisode, type TraceThread } from "./pip-episodes.ts";
 import { admissibleSentenceRanges } from "./pip-claims.ts";
 import { MAX_ATTEMPTS, deadlinePassed, ensureDeadline, reconcileAttempt, sweepOrphanTempDirs, sweepStaleCredentialCopies, type ReaperDeps } from "./pip-reaper.ts";
-import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY, MAX_OUTPUT_BYTES, emptyMissHistory, isReadMoved, recordMiss, runAdmissionFence, type AdmissionFenceAnswer, type AttemptTransport, type BootEpoch, type IsolationReport, type MissHistory, type TextOnlyTurnInput, type TextOnlyTurnResult, type TransportIntent, type Verdict } from "./pip-transport.ts";
+import { HELD_PLUGIN_COPY, LOGIN_ROUTE_COPY, MAX_OUTPUT_BYTES, emptyMissHistory, isReadMoved, readMoved, recordMiss, runAdmissionFence, type AdmissionFenceAnswer, type AttemptTransport, type BootEpoch, fixedPrompt, type IsolationReport, type MissHistory, type TextOnlyTurnInput, type TextOnlyTurnResult, type TransportIntent, type Verdict } from "./pip-transport.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import type { ContinuityOptions } from "./pip-types.ts";
 import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
@@ -170,6 +171,7 @@ export const LIVED_SYSTEM = [
   "Be sparing. Returning empty lists is a good answer. Use plain hyphens, never long dashes.",
 ].join("\n");
 if (Buffer.byteLength(LIVED_SYSTEM) > SYSTEM_BYTES) throw new Error("PIP_LIVED_SYSTEM_TOO_LONG");
+const PROBE_SYSTEM = "Return the requested JSON object.";
 
 /** Byte ranges of the sentences of an owner message (the same split `parseOwnerText` uses). */
 export function sentenceRanges(text: string, options: { botName?: string } = {}): Array<{ start: number; end: number; text: string }> {
@@ -280,14 +282,14 @@ function recordUnreflected(botId: string, threadId: string, sources: AdmittedSou
 export const snapshotGen = (sources: readonly AdmittedSource[], excluded: readonly string[], threadId: string) =>
   digest([sources.map(s => [s.sourceId, s.revision]), [...excluded].sort(), excluded.includes(threadId)]);
 
-interface CurrentRow { id: string; version: number; kind: string; text: string }
+interface CurrentRow { id: string; version: number; kind: string; text: string; /** sha256 of the stored bytes at read time: the gate holds it */ digest: string }
 /** The rows the request shows the model as `current`: the newest active commitments and self-traits that pass source admission
  *  (livedRowAdmissible, Astra pip-build H1): a row resting on a forgotten, denied or excluded source is not shown. */
 export function currentLivedRows(db: DatabaseSync, botId: string, excluded: readonly string[] = []): CurrentRow[] {
   const scopeId = ensureScope("bot", botId);
   return db.prepare("SELECT id,version,kind,text FROM memory_records WHERE scope_id=? AND kind IN ('commitment','self-trait') AND state='active' ORDER BY created_at DESC,id LIMIT 24").all(scopeId)
     // masked like every other read a model sees (bundle.ts hydrateInPass)
-    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: maskFinancialIdentifiers(String(r.text)) }))
+    .map(r => ({ id: String(r.id), version: Number(r.version), kind: String(r.kind), text: maskFinancialIdentifiers(String(r.text)), digest: digestOf(String(r.text)) }))
     .filter(r => livedRowAdmissible(db, botId, r.id, r.version, excluded));
 }
 
@@ -697,6 +699,9 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   // the snapshot, by the adapter immediately before the request leaves (transport.fence), and nothing read across a move is used.
   // The `current` rows' evidence may rest in any of the bot's own threads: those are covered too (moved), the read thread alone carries
   // the "off" rules.
+  // the learning fence counter is sampled before anything is read (memory/learning-send.ts): a Forget, delete, edit or policy that commits
+  // between this read and the send drops the call at the gate
+  const fenceAt = sampleLearningFence();
   const stamp = admissionStamp(db, deps, bot.id, [run0.threadId], { run: { runId, family, attempt: rec0.attempt }, reflect: true, covered: bot.threadIds.filter(t => t !== run0.threadId) });
   const check = () => stampMoved(db, deps, bot.id, stamp);
   const rows = currentLivedRows(db, bot.id, state0.excludedThreads);
@@ -733,7 +738,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   const ctx = { botId: bot.id, runId, family, attempt };
   const history = readReflectState(db, bot.id).support[route.fingerprint]?.history ?? emptyMissHistory();
   const needsProbe = route.probeRequired && readReflectState(db, bot.id).support[route.fingerprint]?.probe?.verdict.state !== "validated";
-  const requestSystem = needsProbe ? "Return the requested JSON object." : LIVED_SYSTEM;
+  const requestSystem = needsProbe ? fixedPrompt(PROBE_SYSTEM) : fixedPrompt(LIVED_SYSTEM);
   const requestText = needsProbe ? 'Return {"ok":true}.' : envelope;
   const box: { captured?: TextOnlyTurnResult; transportError?: unknown; leaseRefusal?: string; probe?: boolean } = {};
   // The adapter's fence is the last synchronous step before the bytes leave (2.9): a call it lets through is charged right there, in the same
@@ -741,6 +746,17 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   // An adapter that never calls its fence is charged when its call returns (the next attempt's cap check sees it).
   let charged = false;
   const fence = (): AdmissionFenceAnswer => { const answer = check(); if (answer !== "none") return answer; const paid = chargePaidCall(bot.id, runId, family, attempt); charged = paid === "none"; return paid; };
+  // The call's one gate (r8 section 1): the stamp check and the counter under the write lock, then the paid charge (onAdmit, a SAVEPOINT
+  // inside the gate's transaction), then the release at the adapter's physical write. A refusal names the move that caused it.
+  let movedKind: Exclude<AdmissionFenceAnswer, "none"> = "moved";
+  // Holds every `current` row the envelope shows (id, version, read-time digest: an owner edit supersedes it, identity.ts:120) and every
+  // shown source at its revision (Astra code r1 H1); the admission stamp stays as the extra check.
+  const shownRefs = { records: rows.map(r => ({ id: r.id, version: r.version, digest: r.digest })), sources: snap.sources.map(x => ({ id: x.sourceId, revision: x.revision })) };
+  const gate = learningGate("continuity", fenceAt, shownRefs, {
+    checks: [() => { const answer = check(); if (answer !== "none") { movedKind = answer; throw readMoved(answer); } }],
+    onAdmit: () => { const paid = chargePaidCall(bot.id, runId, family, attempt); if (paid !== "none") throw readMoved(paid); charged = true; },
+    refuse: () => readMoved(movedKind),
+  });
   const turn = async (call: TextOnlyTurnInput): Promise<TextOnlyTurnResult> => {
     charged = false;
     const got = await route.textOnlyTurn!(call);
@@ -758,12 +774,13 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   };
   // HTTP routes have no pid: their durable intent is written here, still before the request.
   if (route.kind === "http") hooks.onIntent({ runId, family, attempt, tempRoot: "", bootEpoch: deps.bootEpoch, intentAt: now, deadlineAt: withDeadline.deadlineAt });
-  const extractor: TextOnlyExtractor = async (text, maxTokens, requestSignal) => {
+  const extractor: TextOnlyExtractor = async (_text, maxTokens, requestSignal) => {
     try {
       const input: TextOnlyTurnInput = {
-        system: text, text: envelope, model: route.model, providerRoute: route.providerRoute, outputSchema: LIVED_SCHEMA as unknown as Record<string, unknown>,
+        // the lease passes `text` through unchanged; the system slot takes the fixed prompt itself, never a value that could carry words
+        system: requestSystem, text: envelope, model: route.model, providerRoute: route.providerRoute, outputSchema: LIVED_SCHEMA as unknown as Record<string, unknown>,
         signal: requestSignal, maxOutputTokens: maxTokens, maxOutputBytes: MAX_OUTPUT_BYTES, context: ctx,
-        transport: { bootEpoch: deps.bootEpoch, deadlineAt: withDeadline.deadlineAt, hooks, history, fence },
+        transport: { bootEpoch: deps.bootEpoch, deadlineAt: withDeadline.deadlineAt, hooks, history, fence, recheck: check, gate },
       };
       // a cheap early exit before the adapter; the adapter checks again after its own last await, immediately before dispatch
       runAdmissionFence(check);
@@ -781,7 +798,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
         box.captured = probe;
       } else box.captured = await turn(input);
     } catch (error) {
-      // nothing was sent: the lease's reservation settles at nothing
+      // nothing was sent: the lease's reservation settles at nothing (a busy lock is settled unsent by the lease itself, extract.ts)
       if (isReadMoved(error)) reportMemoryUsage({ prompt_tokens: 0, completion_tokens: 0 });
       box.transportError = error; throw error;
     }
@@ -800,7 +817,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   requestSignal.addEventListener("abort", aborted, { once: true });
   try {
     const leased = await withContinuityInferenceLease(async lease => {
-      const result = await lease.request(extractor, requestSystem, 3000, requestSignal, [{ role: "user", content: requestText }], "continuity", { botId: bot.id, family: "lived", runId, attempt, enabled: true });
+      const result = await lease.request(extractor, requestSystem, 3000, requestSignal, [{ role: "user", content: requestText }], "continuity", { botId: bot.id, family: "lived", runId, attempt, enabled: true }, gate);
       if (result.status === "notStarted") box.leaseRefusal = result.reason;
     });
     if (leased.status === "notStarted") box.leaseRefusal = leased.reason;
@@ -808,6 +825,11 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   acceptingHooks = false;
   requestSignal.removeEventListener("abort", aborted);
   activeAttempts.delete(key);
+  // the lease's early gate check refused before any reservation: that is the same read move the adapter would have thrown
+  if (box.leaseRefusal === "memory-changed" && box.transportError === undefined) box.transportError = readMoved(movedKind);
+  // a busy lock (another connection held it past 50 ms) released nothing: the attempt is deferred as it was, with no read move and nothing
+  // spent from READ_MOVE_BUDGET (r8 Change 5)
+  if (isMemorySendBusy(box.transportError) && gate.released === 0) return deferBusy(bot.id, runId, family, attempt, rec0.state);
   // the fence answered before dispatch: no request left and no process exists, so no transport attempt is charged (2.4)
   if (isReadMoved(box.transportError)) {
     if (box.transportError.kind === "off") {
@@ -829,6 +851,15 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   return applyFamilySliced(deps, bot, runId, family, signal, held.result);
 }
 
+/** A busy lock at the gate: the family goes back to `restore` untouched (no readMoves, no attempt), and the next idle pass tries again. */
+function deferBusy(botId: string, runId: string, family: Family, attempt: number, restore: FamilyStateName): ReflectOutcome {
+  return mutateReflect(botId, (s): ReflectOutcome => {
+    const r = s.run, f = r?.families[family];
+    if (!r || r.runId !== runId || !f || f.attempt !== attempt) return { status: "idle" };
+    f.state = restore; f.transport = undefined;
+    return { status: "uncertain", reason: "busy", runId, botId };
+  });
+}
 /** A read of `family` moved (2.4): the family goes back to `restore` (pending or catch-up for an attempt, validated for a publication) with
  *  `readMoves` counted and `attempt` unchanged, and the run waits for the next idle pass; the move past READ_MOVE_BUDGET refuses it as
  *  unstable (`read-moved`) with the cooldown and drops any validated result. The run's deadline is fixed by the first move, so a run whose

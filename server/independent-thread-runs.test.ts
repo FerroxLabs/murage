@@ -8,13 +8,13 @@ it("runs three detached per-thread snapshots and stopping one does not change it
   settings.model = "two";settings.account = "account-b";settings.approval = "auto";
   const b = runs.admit("bot", "b", settings);
   runs.admit("bot", "c", settings);
-  expect(() => runs.admit("bot", "d", settings)).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", settings)).toThrow("3 threads");
   expect(a.snapshot).toMatchObject({ model: "one", account: "account-a", approval: "ask" });
   expect(b.snapshot).toMatchObject({ model: "two", account: "account-b", approval: "auto" });
   runs.dispatch(a);runs.dispatch(b);runs.accepted(a, "provider-a");runs.accepted(b, "provider-b");
   runs.cancel(a);
   expect(runs.get("b")).toMatchObject({ phase: "running", providerTurnId: "provider-b" });
-  expect(() => runs.admit("bot", "d", settings)).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", settings)).toThrow("3 threads");
   runs.release(a);expect(runs.admit("bot", "d", settings).threadId).toBe("d");
 });
 it("retains resource ownership through cancel and final settlement and rejects stale async acquisition", () => {
@@ -184,7 +184,7 @@ it("keeps the three-thread limit for waiting runs and ignores unrelated releases
   const holder = runs.admit("other", "holder", {}, ["computer:vm"]);
   const waits = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
   const pending = waits.map(run => runs.acquire(run, ["computer:vm", `browser:${run.threadId}`]));
-  expect(() => runs.admit("bot", "d", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", {})).toThrow("3 threads");
   const unrelated = runs.admit("third", "unrelated", {}, ["browser:unrelated"]);
   runs.release(unrelated);
   expect((await settled(pending[0])).done).toBe(false);
@@ -206,14 +206,14 @@ it("queues an automation run past the three-thread limit and serves slots first-
   expect(shown).toEqual(["routine-1", "routine-2"]);
   expect((await settled(firstSlot)).done).toBe(false);
   // A direct chat cannot take a slot ahead of a queued automation run.
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
   // Another bot's release frees nothing here.
   runs.release(runs.admit("other", "elsewhere", {}));
   expect((await settled(firstSlot)).done).toBe(false);
   runs.release(held[0]);
   expect(await firstSlot).toBe(true);
   expect((await settled(secondSlot)).done).toBe(false);
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
   runs.release(held[1]);
   expect(await secondSlot).toBe(true);
   runs.release(held[2]);
@@ -414,7 +414,7 @@ it("gives the owner's own send one reserved slot above the limit, and a second w
   runs.release(held[1]);
   expect(await routineSlot).toBe(true);
   // and a plain (non-owner) send is still refused at the limit
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
 });
 
 // ── SL-L: place in line, estimate, no hour limit (1.0.4 item 127) ─────────
@@ -569,4 +569,43 @@ it("SL-L L3: after a yield the second wait's notice lands at +60 min from the fi
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(notices).toBe(1);
   } finally { vi.useRealTimers(); }
+});
+
+// U4 S1 (Astra High 1): the one ordering point. A turn that ends with the owner's own lines queued on its thread keeps its slot for them:
+// a routine waiting for a slot (here at a full home of 1) is not handed it, the owner batch takes it, and the routine starts after.
+it("a release held for the owner's queued lines keeps the slot from a waiting routine until that batch is admitted", async () => {
+  const runs = new IndependentThreadRuns<Record<string, never>>({ perBot: () => 3, home: () => 1 });
+  const turn = runs.admit("owner-bot", "owner-thread", {}, [], { ownerFirst: true });
+  const routine = runs.admit("other-bot", "routine", {}, [], { queueForSlot: true });
+  let granted: boolean | undefined;
+  void runs.awaitSlot(routine).then((value) => { granted = value; });
+  runs.release(turn, { holdForOwner: true });
+  await Promise.resolve();
+  expect(granted).toBeUndefined();
+  expect(runs.homeHolding()).toBe(1);
+  const batch = runs.admit("owner-bot", "owner-thread", {}, [], { ownerFirst: true });
+  expect(await runs.awaitSlot(batch)).toBe(true);
+  expect(granted).toBeUndefined();
+  runs.release(batch);
+  await Promise.resolve();
+  expect(granted).toBe(true);
+});
+it("control: a plain release hands the slot to the waiting routine, and a held slot whose batch did not start goes to it too", async () => {
+  const runs = new IndependentThreadRuns<Record<string, never>>({ perBot: () => 3, home: () => 1 });
+  const first = runs.admit("owner-bot", "owner-thread", {}, [], { ownerFirst: true });
+  const routine = runs.admit("other-bot", "routine", {}, [], { queueForSlot: true });
+  let granted: boolean | undefined;
+  void runs.awaitSlot(routine).then((value) => { granted = value; });
+  runs.release(first, { holdForOwner: true });
+  runs.dropOwnerHold("owner-thread");
+  await Promise.resolve();
+  expect(granted).toBe(true);
+  const plain = new IndependentThreadRuns<Record<string, never>>({ perBot: () => 3, home: () => 1 });
+  const held = plain.admit("owner-bot", "owner-thread", {}, [], { ownerFirst: true });
+  const waiting = plain.admit("other-bot", "routine", {}, [], { queueForSlot: true });
+  let second: boolean | undefined;
+  void plain.awaitSlot(waiting).then((value) => { second = value; });
+  plain.release(held);
+  await Promise.resolve();
+  expect(second).toBe(true);
 });

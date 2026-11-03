@@ -88,7 +88,9 @@ export function sharedWorld() {
   const finished: string[] = [];
   const abandoned: string[] = [];
   const claims: Array<{ release(): void }> = [];
-  const admission = createWorkAdmission({ restoreReview: () => false, flags: () => ({ autonomy: true, budgets: false }), threadRunning: () => false, speakingInRoom: () => false, directThreads: () => 0, maxThreads: 3, installCardCap: 3,
+  /** U4 S1: the home-wide guard, as the server's work admission reads it (a test sets it with canDispatch) */
+  const home = { full: false };
+  const admission = createWorkAdmission({ restoreReview: () => false, flags: () => ({ autonomy: true, budgets: false }), threadRunning: () => false, speakingInRoom: () => false, directThreads: () => 0, maxThreads: 3, homeFull: () => home.full, installCardCap: 3,
     rootCounters: () => ({ wakes: 0, workMs: 0 }), askWouldDeadlock: () => false, reachable: () => true, dependencyOpen: () => false, claimWriterRoot: () => () => {}, now: () => 10 });
   const open = { value: true };
   configureSharedDrain({ admission, open: () => open.value, now: () => 10, changed: () => {}, closed: (row, line) => { closed.push(`${row.id}:${line}`); }, start: (row, claim) => { started.push(row.id); claim.release(); } });
@@ -133,6 +135,6 @@ export function sharedWorld() {
   attach();
   /** the process dies: what only it held (the arbiter's claims) goes with it */
   const crash = () => { for (const claim of claims.splice(0)) claim.release(); };
-  return { store, iris, sales, support, knobs, started, closed, turns, finished, abandoned, handoff, bus, approvalBus, crash, open, attach };
+  return { store, iris, sales, support, knobs, started, closed, turns, finished, abandoned, handoff, bus, approvalBus, crash, open, attach, home };
 }
 export type SharedWorld = ReturnType<typeof sharedWorld>;

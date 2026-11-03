@@ -29,6 +29,10 @@ beforeAll(async()=>{
     const {installCliStopGate}=await import(${JSON.stringify(new URL("./testing/cli-stop-gate.ts",import.meta.url).href)});
     installCliStopGate('working-folder-close-fixture',acp('gate'),acp('host-engine-pid'));
     cfg.instances.acpStop={driver:'customAcp',displayName:'Close-confirmed ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{MURAGE_PROCESS_TAG:'working-folder-close-fixture',FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:acp('pid'),FAKE_ACP_TERM_MARK:acp('term'),FAKE_ACP_EXIT_GATE:acp('gate'),FAKE_ACP_RPC_DUMP:acp('rpc')}};
+    // U4 S1: an engine that cannot take a line mid-turn (no interjection), so a send into its running turn really queues
+    cfg.instances.acpQueue={driver:'customAcp',displayName:'Queueing ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_RPC_FULL_LOG:acp('queue-rpc')}};
+    // U4 S1: the limit is sized from memory unless saved; these slot tests pin the owner's saved number at 3
+    cfg.features={...(cfg.features||{}),threadsPerBot:3};
     fs.writeFileSync(file,JSON.stringify(cfg));process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   `});
   const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};
@@ -211,6 +215,38 @@ it("queues a routine visibly for a free slot while three threads run, then runs 
     await api("DELETE",`/api/routines/${routine.id}`);
   }
 },40000);
+// U4 S1: the owner's queued lines, drained after their thread's turn ends, are the owner's own send arriving later. At the thread limit
+// with a routine queued for a slot, the slot that turn frees goes to them first: the routine is still waiting when they start.
+// The owner's thread runs on an engine that cannot be steered, so the line really queues (a steer would never reach the drain).
+const acpPrompted=(label:string)=>{try{return readFileSync(acpFile("queue-rpc"),"utf8").split("\n").some(line=>line.includes("session/prompt")&&line.includes(label));}catch{return false;}};
+it("a queued owner batch at the thread limit starts ahead of a queued routine instead of going back behind it",async()=>{
+  const bot=await create();
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.first}`,{modelSelection:{instanceId:"acpQueue",model:"agent-default"}})).status).toBe(200);
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.second}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third queued-owner slot"})).body.task;
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  expect((await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.first,text:"u4s1-acp-holder"})).status).toBe(202);
+  await expect.poll(()=>acpPrompted("u4s1-acp-holder"),{timeout:15000}).toBe(true);
+  await hold(bot.id,bot.second,"u4s1-second-holder");await hold(bot.id,third.threadId,"u4s1-third-holder");
+  const {routine,runId,task}=await routineOn(bot.id,"Queued owner routine","__fixture_hold_authority__ u4s1-routine-held");
+  try{
+    await expect.poll(async()=>(await task())?.waitingFor,{timeout:10000}).toEqual({resource:"thread-slot"});
+    // the owner types into the busy thread: the engine cannot take it mid-turn, so the line is queued behind the running turn
+    const queued=await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.first,text:"u4s1-queued-owner-batch"});
+    expect(queued.status).toBe(202);expect(queued.body,JSON.stringify(queued.body)).toMatchObject({queued:true});
+    // its turn ends: the slot frees, and the routine in line and the drained owner batch both want it
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
+    await expect.poll(()=>acpPrompted("u4s1-queued-owner-batch"),{timeout:15000,interval:25}).toBe(true);
+    // order: the owner's words took the slot; the routine is still waiting for one and has not reached its engine
+    expect((await task())?.waitingFor).toEqual({resource:"thread-slot"});
+    expect(dumped("u4s1-routine-held")).toBe(false);
+    expect((await messages(bot.first)).some(message=>message.tool?.ok===false&&String(message.tool?.name).includes("queued message could not start"))).toBe(false);
+  }finally{
+    await api("POST",`/api/routine-runs/${runId}/cancel`);
+    for(const threadId of [bot.first,bot.second,third.threadId])await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId});
+    await api("DELETE",`/api/routines/${routine.id}`);
+  }
+},45000);
 it("delivers the approval card of a routine that waited for a slot to its own thread and the owner",async()=>{
   const bot=await create();
   expect((await api("PATCH",`/api/bots/${bot.id}`,{notifications:true})).status).toBe(200);

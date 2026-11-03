@@ -363,6 +363,9 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
     if (!sharedDrainOpen()) return { kind: "wait", reason: "gate" };
     // an owner's drain does not take a slot ahead of an older request the shared fair order puts first: it leaves this one to the shared drain, which walks that order
     if (options.ordered && !options.probe && !options.claim && !sharedRequestIsNext(request!)) return { kind: "wait", reason: "order", ctx: { row, item, target, shared: true } };
+    // U4 S1 (Astra Medium): a full home is a capacity wait for shared work too, asked before the shared admission, whose own home guard
+    // refusal would read as "refused" here and be recorded on the request
+    if (bus.canDispatch && !bus.canDispatch()) return { kind: "wait", reason: "capacity" };
     const verdict = admitShared(request!, { ...(options.probe ? { probe: true } : {}), ...(options.claim ? { reserved: true } : {}) });
     if (verdict.kind === "skip") return { kind: "wait", reason: "refused" };
     if (verdict.kind === "wait") { if (verdict.record && !options.probe) settleShared(request!, verdict); return { kind: "wait", reason: verdict.reason === "gate" ? "gate" : "refused" }; }
@@ -394,7 +397,8 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
     return { kind: "wait", reason: "busy", ctx: { row, item, target, shared } };
   }
   // Capacity waits are not failed attempts against a busy teammate. The server redrains pending queues when an active handoff releases its slot.
-  if (!shared && bus.canDispatch && !bus.canDispatch()) return { kind: "wait", reason: "capacity" };
+  // A shared hand-off waits here too (U4 S1): at a full home it is a capacity wait, never the "refused" a shared admission wait becomes above.
+  if (bus.canDispatch && !bus.canDispatch()) return { kind: "wait", reason: "capacity" };
   return { kind: "start", ctx: { id, row, item, sender, target, destination, request, shared, ...(claim ? { claim } : {}) } };
 }
 

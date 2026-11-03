@@ -97,5 +97,8 @@
   "ux.l2a.health.level.ok": "all good",
   "ux.l2a.health.level.watch": "being looked after",
   "ux.l2a.health.level.act": "needs you",
-  "ux.l2a.health.level.unknown": "checking"
+  "ux.l2a.health.level.unknown": "checking",
+  "ux.l2a.health.back": "Back",
+  "ux.l2a.health.close": "Close Health",
+  "ux.l2a.health.loading": "Loading Health"
 }

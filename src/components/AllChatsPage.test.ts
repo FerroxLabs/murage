@@ -4,7 +4,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { AllChatsView, type AllChatsViewProps } from "./AllChatsPage";
+import { readFileSync } from "node:fs";
+import type { ReactElement } from "react";
+import { AllChatsBack, AllChatsClose, AllChatsView, type AllChatsViewProps } from "./AllChatsPage";
+import { en, loadLocalePack, localeChoices } from "@/locales";
 import { NO_CHATS, appendChatPage, type ChatRow } from "@/lib/all-chats";
 import type { Bot, Group } from "@/state/store";
 import type { SearchHit } from "@/lib/search-hit";
@@ -150,6 +153,49 @@ describe("All chats view", () => {
     expect(render()).toContain("No chats yet. Start one with any bot.");
     expect(render({ filters: { pinned: true } })).toContain("No chats match these filters.");
     expect(render({ query: "zz" })).toContain("No chat titles match “zz”. Try a shorter word, or clear the filters.");
+  });
+
+  it("has a way out on screen: Back with its word on the left, a close X at the far right of the header", () => {
+    const html = render();
+    const header = html.slice(html.indexOf("<header"), html.indexOf("</header>"));
+    const back = header.match(/<button[^>]*data-all-chats-back[^>]*>.*?<\/button>/)?.[0] ?? "";
+    const close = header.match(/<button[^>]*data-all-chats-close[^>]*>.*?<\/button>/)?.[0] ?? "";
+    expect(back).toContain(">Back</button>");
+    expect(back).toContain('title="Back (Esc)"');
+    expect(close).toContain('aria-label="Close"');
+    // a 40 px hit area that never shrinks, the app's hover and focus ring
+    for (const button of [back, close]) for (const cls of ["shrink-0", "hover:bg-raised", "focus-visible:outline-focus"]) expect(button).toContain(cls);
+    expect(close).toContain("size-10");
+    expect(back).toContain("min-h-10");
+    // Back comes before the title; close is the header's last control, after the search box
+    expect(header.indexOf("data-all-chats-back")).toBeLessThan(header.indexOf('id="all-chats-title"'));
+    expect(header.indexOf("data-all-chats-close")).toBeGreaterThan(header.indexOf('role="search"'));
+    expect(header.slice(header.indexOf("data-all-chats-close")).match(/<button/g)).toBeNull();
+    for (const pattern of BANNED) expect(header).not.toMatch(pattern);
+  });
+
+  it("closes the page from either button, and the view wires both to its onClose", () => {
+    const onClose = vi.fn();
+    (AllChatsBack({ onClose }) as ReactElement<{ onClick: () => void }>).props.onClick();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    (AllChatsClose({ onClose }) as ReactElement<{ onClick: () => void }>).props.onClick();
+    expect(onClose).toHaveBeenCalledTimes(2);
+    const source = readFileSync(new URL("./AllChatsPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain("<AllChatsBack onClose={onClose} />");
+    expect(source).toContain("<AllChatsClose onClose={onClose} />");
+  });
+
+  it("says Back and Close in every shipped language", async () => {
+    expect(en["allChats.back"]).toBe("Back");
+    expect(en["allChats.close"]).toBe("Close");
+    for (const { code } of localeChoices) {
+      if (code === "en") continue;
+      const pack = await loadLocalePack(code);
+      for (const key of ["allChats.back", "allChats.backHint", "allChats.close"] as const) {
+        expect(pack[key], `${code} ${key}`).toBeTruthy();
+        expect(pack[key], `${code} ${key}`).not.toBe(en[key]);
+      }
+    }
   });
 
   it("stacks on a phone: the time moves under the title below the small breakpoint", () => {

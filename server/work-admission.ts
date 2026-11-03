@@ -135,7 +135,10 @@ export interface WorkAdmissionDeps {
   speakingInRoom(botId: string): boolean;
   /** Direct (1:1 and task) runs, which the arbiter does not hold itself. */
   directThreads(botId: string): number;
-  maxThreads: number;
+  /** a number, or a getter read on every admission (U4 S1: the limit is live) */
+  maxThreads: number | ((botId: string) => number);
+  /** U4 S1: the whole home is at its memory guard (direct runs, every bot together); absent = never */
+  homeFull?: () => boolean;
   installCardCap: number;
   /** The conversation cap's budget for this turn's room thread (6.2). */
   rootCounters(rootId: string, input: AdmissionInput): { wakes: number; workMs: number };
@@ -235,9 +238,12 @@ export function createWorkAdmission(deps: WorkAdmissionDeps): WorkAdmission {
     // 8. thread ceiling (owner first: one reserved slot above it) [AMB-6]
     const held = live((claim) => claim.botId === input.botId && claim.kind !== "owner_direct");
     const used = deps.directThreads(input.botId) + held.length;
-    if (used >= deps.maxThreads) {
+    const maxThreads = typeof deps.maxThreads === "function" ? deps.maxThreads(input.botId) : deps.maxThreads;
+    // the home guard holds every kind, the owner's too: nothing more starts on this computer until one finishes
+    if (deps.homeFull?.()) return refuse("bot_thread_ceiling", `${name(input.botId)} will start as soon as the current one finishes`);
+    if (used >= maxThreads) {
       const reservedFree = !live((claim) => claim.botId === input.botId && claim.kind === "owner_direct").length;
-      if (!(ownerDirect && input.ownerOrigin && reservedFree && used < deps.maxThreads + 1)) {
+      if (!(ownerDirect && input.ownerOrigin && reservedFree && used < maxThreads + 1)) {
         return refuse("bot_thread_ceiling", `${name(input.botId)} is busy in another conversation`);
       }
     }

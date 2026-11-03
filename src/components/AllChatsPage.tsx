@@ -12,7 +12,8 @@
 // from transcript lines; the message search asks for the chats view, where a
 // forgotten line is never a hit (server/message-db.ts excludeForgotten).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronRight, Loader2, Pin, Search } from "lucide-react";
+import { ArrowLeft, ChevronRight, Loader2, Pin, Search, X } from "lucide-react";
+import { t } from "@/lib/i18n";
 import { api, useStore, type Bot, type Group } from "@/state/store";
 import { BotAvatar } from "./Avatar";
 import { OpenBotListButton } from "./OpenBotListButton";
@@ -20,6 +21,7 @@ import { cn } from "@/lib/cn";
 import { landOnSearchHit } from "@/lib/focus-message";
 import type { SearchHit } from "@/lib/search-hit";
 import { useRelativeNow } from "@/lib/relative-now";
+import { escapeIsFree } from "@/lib/escape-layer";
 import { formatListTime } from "@/lib/task-list";
 import {
   CHAT_SEARCH_MIN,
@@ -187,6 +189,23 @@ export interface AllChatsViewProps extends Owners {
 
 const focusRing = "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 
+// The way out (Sean 11-03): Back with its word on the left, a close X at the far right, and Esc. All three call onClose.
+export function AllChatsBack({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" onClick={onClose} data-all-chats-back title={t("allChats.backHint")} className={cn("inline-flex min-h-10 shrink-0 items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium text-ink-secondary hover:bg-raised hover:text-ink", focusRing)}>
+      <ArrowLeft size={18} aria-hidden="true" />{t("allChats.back")}
+    </button>
+  );
+}
+
+export function AllChatsClose({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" onClick={onClose} data-all-chats-close aria-label={t("allChats.close")} title={t("allChats.close")} className={cn("flex size-10 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink", focusRing)}>
+      <X size={18} aria-hidden="true" />
+    </button>
+  );
+}
+
 export function AllChatsView(props: AllChatsViewProps) {
   const { bots, groups, filters, onFilters, query, onQuery, held, loading, failed, hitRows, onClose } = props;
   const relativeNow = useRelativeNow();
@@ -202,8 +221,8 @@ export function AllChatsView(props: AllChatsViewProps) {
   // Escape goes back to the chat that was open (a search is cleared first).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) return;
+      // Only when nothing is open on top: a dialog, menu or picker closes first (src/lib/escape-layer.ts).
+      if (!escapeIsFree(event, document)) return;
       event.preventDefault();
       if (query) onQuery(""); else onClose();
     };
@@ -336,9 +355,7 @@ export function AllChatsView(props: AllChatsViewProps) {
     <main aria-labelledby="all-chats-title" className="flex h-full min-w-0 flex-1 flex-col bg-panel text-ink">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-hairline/40 px-4 py-3">
         <OpenBotListButton />
-        <button type="button" onClick={onClose} aria-label="Back to the chat" title="Back (Esc)" className={cn("rounded-lg p-2 text-ink-secondary hover:bg-raised hover:text-ink", focusRing)}>
-          <ArrowLeft size={18} />
-        </button>
+        <AllChatsBack onClose={onClose} />
         <h2 id="all-chats-title" className="min-w-0 flex-1 truncate text-[17px] font-semibold">
           {scopeName ? `Chats with ${scopeName}` : "All chats"}
           {loading !== "first" && !failed && <span className="ml-1.5 font-normal text-ink-secondary">{`· ${held.total}`}</span>}
@@ -348,6 +365,7 @@ export function AllChatsView(props: AllChatsViewProps) {
           <input ref={search} dir="auto" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search all chats" aria-label="Search all chats"
             className="min-h-7 w-full min-w-0 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none" />
         </div>
+        <AllChatsClose onClose={onClose} />
       </header>
 
       <div role="group" aria-label="Filters" className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-hairline/40 px-4 py-2">

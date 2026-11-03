@@ -375,6 +375,14 @@ export function pendingSteerItems(threadId: string): Array<{ queueId: string; se
   });
 }
 
+/** U4 S1: the next batch to drain on this thread is the owner's own words (no share or ask-intent line, an owner origin first in line).
+ * A finished turn keeps its slot for that batch (independent-thread-runs.ts ownerHolds); the batch's own start still proves every line. */
+export function ownerLinesQueued(threadId: string): boolean {
+  let first: SendRow | undefined;
+  try { first = sendStore.queuedRows(threadId, "bot")[0]; } catch { return false; }
+  return first !== undefined && first.via === null && (first.origin === "desktop" || first.origin === "companion");
+}
+
 /** Every thread with something waiting (for the hydrate snapshot). */
 export function steerQueueThreads(): string[] {
   return sendStore.queuedThreads("bot");

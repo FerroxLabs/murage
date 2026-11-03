@@ -35,7 +35,7 @@ export function ensureScope(kind: MemoryScopeKind, owner: string): string {
 }
 
 /** The facts of a roster that decide who may read what (SCOPED-REVOKES.md section 1): every bot's id, section and threads, every room's id,
- * section, members and threads, and (v2) the partition facts filterPartitionScopes and threadMemoryRoom read: a bot's partition mark, a
+ * section (a non-dm room's only, F2), members and threads, and (v2) the partition facts filterPartitionScopes and threadMemoryRoom read: a bot's partition mark, a
  * task's project desk and shared-team work, a room's dm flag and audience, project flag and per-member partition marks. Active-task
  * selection changes presentation, not the authorized thread set: the active thread usually also appears in tasks; duplicate counts must
  * not revoke running background turns when the owner opens another task. */
@@ -49,7 +49,10 @@ function rosterSnapshot(roster: MemoryRoster) {
     for (const task of b.tasks ?? []) { const m = taskMeta(task); if (m && !(task.threadId in meta)) meta[task.threadId] = m; }
     return {id:b.id, section:b.section?.trim() || "", threads:[...new Set([b.threadId,...(b.tasks??[]).map(t=>t.threadId)])].sort(), partitioned: b.partitionedAt !== undefined ? 1 : 0, meta: Object.fromEntries(Object.entries(meta).sort(([a],[c]) => a.localeCompare(c)))};
   }).sort((a,b)=>a.id.localeCompare(b.id));
-  const groups = roster.groups.map(g => ({id:g.id, section:g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort(),
+  // DELEGATION-HOLD F2: a DM pair room's section is sidebar placement only. No access rule reads it (eligibleScopes and session-audience take a
+  // member's team from bot.section; capture, homeSpace, markPartitions and threadPartition skip DMs), so it is not an audience fact. A non-dm
+  // room's section stays one.
+  const groups = roster.groups.map(g => ({id:g.id, section:g.dm ? "" : g.section?.trim() || "", members:[...g.memberIds].sort(), threads:[...new Set([g.threadId,...(g.tasks??[]).map(t=>t.threadId)])].sort(),
     dm: g.dm ? 1 : 0, project: g.channelProject ? 1 : 0, partitionedFor: Object.entries(g.partitionedFor ?? {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, mark]) => [id, JSON.stringify(mark ?? null)]), audience: g.dmAudience === undefined ? null : JSON.stringify(g.dmAudience)})).sort((a,b)=>a.id.localeCompare(b.id));
   return {v: 2 as const, bots, groups};
 }

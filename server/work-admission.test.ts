@@ -42,6 +42,19 @@ const input = (extra: Partial<AdmissionInput> = {}): AdmissionInput => ({
 });
 
 describe("work admission", () => {
+  // U4 S1: the limit is a live getter, and the home guard holds every kind, the owner's room message too
+  it("reads a live per-bot limit and holds every start while the home is at its guard", () => {
+    let cap = 1;
+    let full = false;
+    const arbiter = createWorkAdmission(deps({ maxThreads: () => cap, directThreads: () => 1, homeFull: () => full }));
+    expect(arbiter.admit(input())).toMatchObject({ admit: false, reason: "bot_thread_ceiling" });
+    cap = 2;
+    const admitted = arbiter.admit(input());
+    expect(admitted.admit).toBe(true);
+    if (admitted.admit) admitted.claim.release();
+    full = true;
+    expect(arbiter.admit(input({ ownerOrigin: true }))).toMatchObject({ admit: false, reason: "bot_thread_ceiling", retry: "queue", line: "dax will start as soon as the current one finishes" });
+  });
   it("admits a free member and tracks the live turn until released", () => {
     const arbiter = createWorkAdmission(deps());
     const decision = arbiter.admit(input());

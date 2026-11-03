@@ -37,7 +37,8 @@ export interface HandoffAdmission {
   /** how many of this bot's threads are running right now */
   runningThreads(botId: string): number;
   /** the concurrent-thread ceiling startTurn enforces */
-  maxThreads: number;
+  /** a number, or a getter read on every admission (U4 S1: the limit is live) */
+  maxThreads: number | ((botId: string) => number);
 }
 
 /** `destinationThreadId` is the conversation the hand-off is stored for: it is asked about THAT conversation, never one resolved again from the source. */
@@ -51,5 +52,6 @@ export function handoffCanStart(deps: HandoffAdmission, botId: string, sourceThr
     return false;
   }
   if (deps.threadBusy(botId, threadId) || deps.groupTurnActive(botId)) return false;
-  return deps.runningThreads(botId) < deps.maxThreads;
+  const max = typeof deps.maxThreads === "function" ? deps.maxThreads(botId) : deps.maxThreads;
+  return deps.runningThreads(botId) < max;
 }
