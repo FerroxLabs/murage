@@ -684,6 +684,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/engine-setup-check",
+    "term": "engines",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/engine-setup-command",
     "term": "engines",
     "source": "server/index.ts"

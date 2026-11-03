@@ -618,6 +618,18 @@ export function openIntakeCard<
   return null;
 }
 
+/** PHONE-INTAKE-NOTICE: the open setup question the composer's typed text is
+ *  ALSO sent to, beside the send, or null when it is not sent anywhere. On a
+ *  phone it is always null. The phone reaches the harness through the
+ *  companion's browser door, which forwards the intake GETs only
+ *  (companion/src/routes.ts) and refuses the intake POST by design, so on a
+ *  phone the alongside answer could only fail and put "could not be added as
+ *  your answer" under every message sent while a new bot's question is open.
+ *  The send itself is never affected. The desktop is unchanged. */
+export function alongsideIntakeCard<M>(open: M | null, phone: boolean): M | null {
+  return phone ? null : open;
+}
+
 /** Where every turn of the conversation is posted. Not desktop-gated: it
  *  reads the catalogue and writes transcript text, and it installs nothing.
  *  The install still crosses the desktop boundary on `assistant-profile`. */

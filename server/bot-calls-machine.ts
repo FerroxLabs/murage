@@ -403,8 +403,14 @@ export type CancelScope = { bot: string } | { rule: string } | { intent: string 
 export type CancelReason = "stop" | "pause" | "delete" | "bot_off" | "rule_off" | "never_again" | "calls_off" | "owner";
 const BOT_REASONS: ReadonlySet<CancelReason> = new Set(["stop", "pause", "delete", "bot_off"]);
 
+/** The turnId a turn_end rule's params bind it to (markTurnCall writes { threadId, turnId }), or null for a standing rule. */
+function boundTurnId(params: string): string | null {
+  try { const p = JSON.parse(params) as { turnId?: unknown } | null; return p && typeof p.turnId === "string" && p.turnId.length > 0 ? p.turnId : null; } catch { return null; }
+}
+
 /** cancelBotCalls: ONE transaction. T9 for every non-done intent in scope. A bot scope (Stop, pause, delete, switch off)
- * also ends every live session of the bot, ordinary calls included, and drops every unsent call-note of the bot. Rule
+ * also ends every live session of the bot, ordinary calls included, and drops every unsent call-note of the bot; switch
+ * off also removes the bot's pending one-turn "Call me when this finishes" marks. Rule
  * off, never again and calls off for today cancel intents only and leave a call the owner is already in. Returns what
  * ended, for the call.ended hints after commit. */
 export function cancelBotCalls(db: DatabaseSync, scope: CancelScope, reason: CancelReason, fx: CallEffects, now: number): { intents: string[]; callIds: string[] } {
@@ -425,6 +431,21 @@ export function cancelBotCalls(db: DatabaseSync, scope: CancelScope, reason: Can
       fx.resolve(intent, "stopped");
       fx.card(intent);
       intents.push(id);
+    }
+    // Switch off is a newer "don't call me" (MurageMain 11-02, BOT-CALLS-UNREACHABLE, Astra r2 #1): the bot's pending
+    // one-time "Call me when this finishes" marks (a turn_end rule bound to one turnId, and its owed row) go too, in this
+    // same transaction, so a mark made while the switch was on cannot ring after it. A mark made while the switch was
+    // already off is untouched by later off writes (the route cancels only on an on-to-off change). A later tap on the
+    // same turn makes a fresh mark: the idempotence lookup finds nothing.
+    if ("bot" in scope && reason === "bot_off") {
+      const dropOwed = db.prepare("DELETE FROM bot_call_owed WHERE fact_key=? AND bot_id=? AND kind='turn'");
+      const dropRule = db.prepare("DELETE FROM bot_call_rules WHERE id=?");
+      for (const rule of db.prepare("SELECT id, params FROM bot_call_rules WHERE bot_id=? AND kind='turn_end'").all(scope.bot) as Array<{ id: string; params: string }>) {
+        const turnId = boundTurnId(rule.params);
+        if (turnId === null) continue;
+        dropOwed.run(`turn:${turnId}`, scope.bot);
+        dropRule.run(rule.id);
+      }
     }
     const callIds: string[] = [];
     if ("bot" in scope) {

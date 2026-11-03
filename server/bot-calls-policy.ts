@@ -38,7 +38,7 @@ export interface DecideWorld {
   bootAt: number;
 }
 
-type RuleRow = { kind: string; tier: "A" | "B"; how: "ring" | "text_first"; wait_min: number | null; enabled: number; demoted: number; emergency: number; restore_held: number };
+type RuleRow = { kind: string; params: string; tier: "A" | "B"; how: "ring" | "text_first"; wait_min: number | null; enabled: number; demoted: number; emergency: number; restore_held: number };
 const count = (db: DatabaseSync, sql: string, ...args: Array<string | number>) => Number((db.prepare(sql).get(...args) as { n: number }).n);
 /** An index range with LIMIT cap + 1 (5.1). */
 const atLeast = (db: DatabaseSync, where: string, args: Array<string | number>, cap: number) =>
@@ -49,6 +49,11 @@ const atLeast = (db: DatabaseSync, where: string, args: Array<string | number>, 
 export function quietNow(db: DatabaseSync, world: Pick<DecideWorld, "quietHours">, now: number): "quiet" | "off_today" | null {
   if (world.quietHours(now)) return "quiet";
   return callsOffActive(db, now) ? "off_today" : null;
+}
+
+/** A turn_end rule's params name one turn (markTurnCall writes { threadId, turnId }). */
+function oneTurnMark(params: string): boolean {
+  try { const p = JSON.parse(params) as { turnId?: unknown }; return typeof p.turnId === "string" && p.turnId.length > 0; } catch { return false; }
 }
 
 type Pre = { final: Decision } | { ring: true; steps: ReceiptStep[]; emergency: boolean; timed: boolean };
@@ -64,11 +69,15 @@ export function evaluate(db: DatabaseSync, intent: CallIntent, entry: DecideEntr
     return text([{ check: "fresh", result: "late" }], "late");
   steps.push({ check: "fresh", result: "ok" });
   // 2. gates
-  const rule = db.prepare("SELECT kind, tier, how, wait_min, enabled, demoted, emergency, restore_held FROM bot_call_rules WHERE id=?").get(intent.ruleId) as RuleRow | undefined;
+  const rule = db.prepare("SELECT kind, params, tier, how, wait_min, enabled, demoted, emergency, restore_held FROM bot_call_rules WHERE id=?").get(intent.ruleId) as RuleRow | undefined;
   if (!rule || Number(rule.enabled) !== 1) return text([...steps, { check: "rule", result: "off" }]);
   if (Number(rule.restore_held) !== 0) return text([...steps, { check: "rule", result: "restore_held" }]);
   if (rule.tier === "B" && Number(rule.demoted) === 1) return text([...steps, { check: "rule", result: "message_only" }]);
-  if (!botCallsEnabled(db, intent.botId)) return text([...steps, { check: "bot", result: "off" }]);
+  // the bot's calls switch gates every rule, except the owner's own one-time "Call me when this finishes" mark (a turn_end
+  // rule bound to one turnId, made by POST /api/calls/turn-end): that tap asks for this one call and never turns the switch
+  // on (MurageMain 11-02, GrokBuild r1 #2). A standing turn_end rule (no turnId) still needs the switch. Turning the switch
+  // off removes the bot's pending marks (cancelBotCalls, bot_off), so only a tap made while the switch was off reaches here.
+  if (!(rule.kind === "turn_end" && oneTurnMark(rule.params)) && !botCallsEnabled(db, intent.botId)) return text([...steps, { check: "bot", result: "off" }]);
   if (!world.voiceReady(intent.botId)) return text([...steps, { check: "voice", result: "none" }]);
   if (!world.ringingDevice()) return text([...steps, { check: "device", result: "none" }]);
   if (!world.factValid(intent)) return text([...steps, { check: "fact", result: "invalid" }], "dropped");

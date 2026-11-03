@@ -10,7 +10,8 @@ import { Worker } from "node:worker_threads";
 import type { DatabaseSync } from "node:sqlite";
 import { quietForSmallWork, reclaimAllowed, type ReclaimGate } from "./root-set-reclaim.ts";
 
-export type OptionalIndex = { name: string; table: string; sql: string; minSchemaVersion: number; /** small partial index: built at the first moment with no live turn and no typing, without the idle wait */ eager?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string };
+export type OptionalIndex = { name: string; table: string; sql: string; minSchemaVersion: number; /** small partial index: built at the first moment with no live turn and no typing, without the idle wait */ eager?: boolean; /** made on the opening connection before the server listens, on EVERY launch where it is missing (buildPreListenIndexes):
+ * for a small partial index a turn's first read needs, whose build is cheap next to the walk its absence costs */ preListen?: boolean; /** also logs the build hold as `[<logTag>] index build ms=<n> ok=<0|1>` (a greppable line per owner of the index) */ logTag?: string };
 /** Every optional index. The exact text SQLite stores (sql without IF NOT EXISTS) is what validation accepts. */
 export const OPTIONAL_INDEXES: OptionalIndex[] = [];
 export function registerOptionalIndex(index: OptionalIndex): OptionalIndex {
@@ -140,9 +141,17 @@ export async function buildEagerIndexes(db: DatabaseSync, gate: ReclaimGate, opt
  * before the first request, and no reader takes its fallback for them. A failure leaves the index to the after-listen build, as before.
  * Resolves nothing asynchronously: each is one CREATE INDEX on `db`. Returns the names built. */
 export function buildEagerIndexesBeforeListen(db: DatabaseSync, options: { log?: boolean } = {}): string[] {
+  return buildBeforeListen(db, index => Boolean(index.eager), options);
+}
+/** The preListen indexes, made on the opening connection before listen on every launch (an ordinary start included) where they are missing.
+ * One CREATE INDEX each, once per install: the next launches find them. A failure leaves the index to the idle-gated build, as before. */
+export function buildPreListenIndexes(db: DatabaseSync, options: { log?: boolean } = {}): string[] {
+  return buildBeforeListen(db, index => Boolean(index.preListen), options);
+}
+function buildBeforeListen(db: DatabaseSync, pick: (index: OptionalIndex) => boolean, options: { log?: boolean }): string[] {
   const built: string[] = [];
   for (const index of OPTIONAL_INDEXES) {
-    if (!index.eager) continue;
+    if (!pick(index)) continue;
     try {
       if (index.minSchemaVersion > 0 && Number(db.prepare("SELECT schema_version AS v FROM memory_meta WHERE id=1").get()?.v) < index.minSchemaVersion) continue;
       if (optionalIndexReady(db, index.name)) continue;
