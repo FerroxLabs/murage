@@ -27,6 +27,7 @@ import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { isReservedBotId } from "../shared/bot-identity.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
 import { bumpWriteEpoch } from "./app-write-revision.ts";
+import { settleFtsCopy } from "./settle-copy.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
 import { prepareRestoredEmail } from "./email/restore.ts";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
@@ -405,6 +406,11 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }
+      // The candidate settles itself before it can be activated (SMOOTH-FTS-MERGE R6 section 3): an archive from a build before the
+      // copy rule can carry deleted conversations in its search index. inspectInstallationDatabase proved every row above, so no
+      // quick_check here. A throw fails the restore. Nothing after this inserts or deletes messages_fts rows; the candidate leaves
+      // in journal_mode=DELETE, so a read-only open by activation creates no side files.
+      settleFtsCopy(join(state, "messages.db"), { check: false });
     }
     write("bots.json", sharingBots); write("groups.json", sharingGroups);
     validateSharingPaused(sharingBots, sharingGroups);

@@ -7,15 +7,23 @@ import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
 import { readFileSync, readdirSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { en } from "@/locales";
 import { HEALTH_ISSUE_LEVELS, foldHealthRows, healthIssueLevel, strongestHealthLevel } from "../../../shared/health-levels";
 import { HEALTH_COPY, HEALTH_TITLES, HEALTH_TITLE_FALLBACK, NEXT_ACTION_LABELS, healthStateLine, type HealthIssue, type ViewSummary } from "../../../shared/sentinel-view";
 import { HEALTH_GUIDES, HEALTH_GUIDE_FALLBACK, foldTimeLine, goLabel, healthDestination, healthGuide, settingsPagesHere } from "./health-guide";
-import { HealthDigestView, HealthFoldRow, deletionCanRetry, deletionFigures, deletionHolders, healthFolds, readHealthIssues, recoveryLabel } from "./HealthIssues";
+import { HealthDigestView, HealthFoldRow, deletionCanRetry, deletionFigures, deletionMattersKey, deletionHolders, healthFolds, readHealthIssues, recoveryLabel } from "./HealthIssues";
 import { EngineNeedCard, HealthNeedCard } from "./HealthNeedCard";
-import { healthFromEngines, healthWithChecks } from "./health-status";
+import { healthFromEngines, healthInFirstRun, healthWithChecks } from "./health-status";
 import { engineNeed } from "@/lib/engine-need";
+
+// Renders run on a confirmed desktop unless a test says otherwise: a surface still unknown gets no Settings button.
+const surface = vi.hoisted(() => ({ desktop: true as boolean | undefined }));
+vi.mock("@/lib/use-surface", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/use-surface")>()),
+  useDesktopSurface: () => surface.desktop,
+}));
+afterEach(() => { surface.desktop = true; });
 
 const NOW = Date.UTC(2026, 10, 1, 12, 0);
 const DAY = 86_400_000;
@@ -118,6 +126,13 @@ describe("what reaches Needs you", () => {
     expect(opened).toBe("");
     expect(renderToStaticMarkup(createElement(EngineNeedCard, { title: "t", detail: "d", label: "Open Engines", onOpen: () => undefined }))).toContain("Open Engines");
   });
+  it("a phone that has not said what it is yet sees the words and no button", () => {
+    surface.desktop = undefined;
+    const out = renderToStaticMarkup(createElement(HealthNeedCard, { need: { titleKey: "health.backup.not-protected", issues: 1, lastSeenAt: NOW - 60_000 }, now: NOW, onOpen: () => undefined }));
+    expect(out).toContain("No recent verified backup");
+    expect(out).not.toContain("<button");
+    expect(renderToStaticMarkup(createElement(EngineNeedCard, { title: "t", detail: "d", label: "Open Engines", onOpen: () => undefined }))).not.toContain("Open Engines");
+  });
   it("the Inbox body carries no Health card, and the link sits above the scrolling list", () => {
     const inbox = source("Inbox.tsx");
     expect(inbox).not.toContain("HealthCard");
@@ -151,6 +166,20 @@ describe("the Health level", () => {
     const signedOut = healthFromEngines({ id: "a", label: "A", state: "signed-out", line: "" }, "ok", true);
     expect(healthWithChecks(signedOut, "act")).toBe(signedOut);
   });
+  it("during first run an engine or Flux problem raises no red, because its Needs you row is held back too", () => {
+    const signedOut = healthFromEngines({ id: "a", label: "A", state: "signed-out", line: "" }, "ok", true);
+    const fluxKey = healthFromEngines(null, "key-problem", true);
+    for (const status of [signedOut, fluxKey]) {
+      expect(status.level).toBe("act");
+      expect(healthInFirstRun(status, true, true).level).toBe("ok");
+      expect(healthInFirstRun(status, false, true)).toBe(status);
+      expect(engineNeed({ engine: { id: "a", label: "A", state: "signed-out", line: "" }, flux: "key-problem" }, [], true)).toBeNull();
+    }
+    expect(healthInFirstRun(signedOut, true, false).level).toBe("unknown");
+    // the Inbox's own checks still count during first run: a server act has its row
+    expect(healthWithChecks(healthInFirstRun(signedOut, true, true), "act").level).toBe("act");
+    expect(read("health-status.ts")).toContain("firstRunOwnsMainView(view)");
+  });
   it("the red dot on your name is for act alone", () => {
     expect(source("Sidebar.tsx")).toContain('{health.level === "act" && <StatusDot level="act"');
   });
@@ -176,9 +205,18 @@ describe("deleted conversations: real state and retry", () => {
     expect(deletionCanRetry({ lines: [line({ tryAgain: false })] }, true)).toBe(false);
     expect(deletionCanRetry(null, true)).toBe(false);
   });
+  it("says it finishes by itself only when no line waits for Murage's next update", () => {
+    expect(deletionMattersKey({ lines: [line()] })).toBe("ux.l2b.health.issue.deletion.matters");
+    expect(deletionMattersKey({ lines: [line({ byItself: true as const })] })).toBe("ux.l2b.health.issue.deletion.matters");
+    expect(deletionMattersKey({ lines: [line({ waitsForUpdate: true as const })] })).toBe("ux.l2b.health.issue.deletion.mattersUpdate");
+    expect(deletionMattersKey({ lines: [line(), line({ waitsForUpdate: true as const })] })).toBe("ux.l2b.health.issue.deletion.mattersSomeUpdate");
+    expect(deletionMattersKey(null)).toBe("ux.l2b.health.issue.deletion.matters");
+    const words = JSON.parse(read("../../locales/en-ux/l2b.json")) as Record<string, string>;
+    for (const key of ["mattersUpdate", "mattersSomeUpdate"]) expect(words[`ux.l2b.health.issue.deletion.${key}`]).toContain("next update");
+  });
   it("a surface without a Settings page gets no button that would land on General", () => {
     expect(settingsPagesHere(true)).toBe(true);
-    expect(settingsPagesHere(undefined)).toBe(true);
+    expect(settingsPagesHere(undefined)).toBe(false);
     expect(settingsPagesHere(false)).toBe(false);
     // the rule above holds only while every place these buttons open is desktop only
     for (const id of ["backups", "storage", "memory", "engines", "models"]) expect(SETTINGS_SECTIONS.find((entry) => entry.id === id)?.desktopOnly).toBe(true);

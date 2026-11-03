@@ -25,7 +25,9 @@ import { isOpenCardJson } from "./message-tables.ts";
 import { prioritizeThread, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
 
 import { SEQ_INDEX, newestSeqOf, nextSeq, rowToMessage, seqOfRow, storedJson, threadNumbered } from "./transcript-seq.ts";
-import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy } from "./database.ts";
+import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy, requeueSearchBackfill } from "./database.ts";
+import { kickSearchMerge } from "./search-merge-runner.ts";
+import { afterCommit } from "./tx-scope.ts";
 import { browserCheckIndexExists, isPendingBrowserCheck } from "./message-tables.ts";
 import type { Message } from "./store.ts";
 // runtime use only (inside searchDoor): bot-read.ts imports this module, so nothing of it is read while the modules load
@@ -35,7 +37,8 @@ import { imagePathsOf, tagImagePaths } from "./message-image-paths.ts";
 import {
   MIN_INDEXED_QUERY_CODEPOINTS,
   dropThreadSearchRows,
-  mergeMessageSearchIndex,
+  oweSearchMerge,
+  recoverSearchIndexAfterDropFailure,
   disableMessageSearchIndex,
   messageSearchIndexReady,
   searchableText,
@@ -1455,7 +1458,15 @@ export function deleteThread(threadId: string): void {
     captureThreadDeletion(database,threadId);
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
-    const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
+    // before the rows it is keyed by go. A drop that throws empties the index in this same transaction (a delete-all that throws too
+    // rolls the deletion back): a deletion never commits with the index still holding the thread (designs/SMOOTH-FTS-MERGE-R6.md §1).
+    let indexed: boolean, recovered = false;
+    try { indexed = dropThreadSearchRows(database, threadId); }
+    catch (error) {
+      console.warn("[message-search] a conversation's index entries could not be dropped; the index is rebuilt from the messages:", error instanceof Error ? error.message : error);
+      recoverSearchIndexAfterDropFailure(database);
+      indexed = false; recovered = true;
+    }
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     lowerSweepMarks(database);
     setupFactsCache(database).forget(threadId);
@@ -1472,7 +1483,13 @@ export function deleteThread(threadId: string): void {
     database.prepare("DELETE FROM owner_sends WHERE thread_id=?").run(threadId);
     // ...and so do the words of its room requests (a request closed later must not make a chip for a conversation that is gone)
     scrubOwnerSendsOfThread(database, threadId);
-    if (indexed) mergeMessageSearchIndex(database);
+    // No inline optimize: the merge is owed in this transaction and paid by the worker's slices after COMMIT (search-merge-runner.ts).
+    if (indexed) {
+      oweSearchMerge(database);
+      afterCommit(() => kickSearchMerge({ owed: true }));
+    }
+    // the fill was reset in this transaction; startBackgroundUpgradeWork captured its jobs at start, so the backfill is queued again
+    if (recovered) afterCommit(() => requeueSearchBackfill());
     bumpMessagesVersion();
     noteThreadChanged(threadId);
   });

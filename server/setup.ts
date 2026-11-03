@@ -16,6 +16,7 @@ import { join } from "node:path";
 
 import {
   type SetupAgentReading,
+  type SetupEngineUser,
   type SetupLiveState,
   type SetupRefusalReading,
   type SetupState,
@@ -266,6 +267,50 @@ export function setupSignedOutReading(instances: readonly SetupInstanceReading[]
       ...reading(instance),
       ...(instance.install?.signInCommand ? { signInCommand: instance.install.signInCommand } : {}),
     }));
+}
+
+/** A bot as `setupEngineUsers` reads it. Structural, like `SetupBotReading`. */
+export interface SetupEngineBotReading {
+  id: string;
+  name: string;
+  hidden?: boolean;
+  modelSelection: { instanceId: string };
+  tasks?: readonly { threadId: string; modelSelection?: { instanceId: string } }[];
+}
+
+/**
+ * WHO RUNS ON EACH SIGNED-OUT ENGINE (FUIGO-FIRST-SIGNIN-PLACEMENT, 1.0.14).
+ *
+ * Flux Router and Fuigo are front and center (Sean 11-02). Other engines stay
+ * in Settings and are never pushed, so Needs you names a signed-out engine
+ * only when a bot runs on it: those turns fail and the owner must hear it.
+ *
+ * A bot counts when the engine is its own, or one of its chats picked it. A
+ * hidden bot counts only while one of its routines is on, and only by its
+ * own engine, because nothing else of it runs. The first run reads the full list as before.
+ */
+export function setupEngineUsers(
+  signedOut: readonly SetupAgentReading[],
+  bots: readonly SetupEngineBotReading[],
+  routines: readonly { botId: string; enabled: boolean }[],
+): SetupAgentReading[] {
+  const scheduled = new Set(routines.filter((routine) => routine.enabled).map((routine) => routine.botId));
+  const live = bots.filter((bot) => !bot.hidden || scheduled.has(bot.id));
+  return signedOut.map((engine) => {
+    const usedBy: SetupEngineUser[] = [];
+    for (const bot of live) {
+      // The bot's own engine, and every chat that picked this engine for
+      // itself: "Use Fuigo instead" moves each one, so none is left behind.
+      if (bot.modelSelection.instanceId === engine.id) usedBy.push({ id: bot.id, name: bot.name });
+      // A hidden bot runs only through its routines, which run on its own
+      // engine, so its old chats never count.
+      if (bot.hidden) continue;
+      for (const task of bot.tasks ?? []) {
+        if (task.modelSelection?.instanceId === engine.id) usedBy.push({ id: bot.id, name: bot.name, threadId: task.threadId });
+      }
+    }
+    return { ...engine, usedBy };
+  });
 }
 
 // ── reading the workspace ──────────────────────────────────────────────
