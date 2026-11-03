@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { scanFolderTrustSources, upstreamTrustsFolder } from "./folder-trust.ts";
-import { deskComponents, managedThreadDesk, managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
+import { deskComponents, managedDeskQualifies, managedThreadDesk, managedWorkspaceAutoTrust } from "./managed-workspace-trust.ts";
 import { partitionRoots, type Partition } from "./execution-audience.ts";
 import type { BotRecord } from "./store.ts";
 import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles.ts";
@@ -346,5 +346,53 @@ describe("partitioned thread desks (1.0.8 thread trust)", () => {
     pinSkill(desk, "review");
     expect(decideAt(desk, "")).toBe(false);
     expect(decideAt(desk, join("workspaces", BOT, "threads", THREAD))).toBe(false);
+  });
+});
+
+// FUIGO-DESK-AUTOTRUST-1014 (GrokBuild ruling): the desk rule's own check.
+describe("managedDeskQualifies", () => {
+  const qualifies = (folder: string, bundleIds?: string[]) => managedDeskQualifies(folder, scanFolderTrustSources(folder), input(bundleIds));
+  it("a fresh desk holding only .murage-procedures and outputs is bare, and the old check still says no", () => {
+    mkdirSync(join(desk, ".murage-procedures"), { recursive: true });
+    mkdirSync(join(desk, "outputs"), { recursive: true });
+    writeFileSync(join(desk, "outputs", "AGENTS.md"), "not on the desk's own path\n");
+    expect(qualifies(desk)).toBe("bare");
+    expect(decide(desk)).toBe(false);
+  });
+  it("a desk with only Murage's skill links is linked", () => {
+    pinSkill(desk, "alpha");
+    expect(qualifies(desk)).toBe("linked");
+  });
+  for (const name of ["AGENTS.md", "CLAUDE.md", ".mcp.json", ".envrc"]) {
+    it(`a desk with ${name} does not qualify`, () => {
+      writeFileSync(join(desk, name), "x\n");
+      expect(qualifies(desk)).toBeNull();
+    });
+  }
+  it("a .fuigo/config.toml, a .grok skills root or a symlinked .claude does not qualify", () => {
+    mkdirSync(join(desk, ".fuigo"), { recursive: true });
+    writeFileSync(join(desk, ".fuigo", "config.toml"), "");
+    expect(qualifies(desk)).toBeNull();
+    removeTempDirSync(join(desk, ".fuigo"));
+    mkdirSync(join(desk, ".grok", "skills"), { recursive: true });
+    expect(qualifies(desk)).toBeNull();
+    removeTempDirSync(join(desk, ".grok"));
+    const other = join(root, "other-claude");
+    mkdirSync(other);
+    symlinkSync(other, join(desk, ".claude"), LINK);
+    expect(qualifies(desk)).toBeNull();
+  });
+  it("a folder that is not this thread's desk, a `..` spelling or a repository above it does not qualify", () => {
+    const sibling = join(dataDir, "workspaces", BOT, "threads", "thread-2");
+    mkdirSync(sibling, { recursive: true });
+    expect(qualifies(sibling)).toBeNull();
+    // spelled by hand: join() would fold the `..` away and test the desk itself
+    expect(`${desk}/../${THREAD}`).toContain("/../");
+    expect(qualifies(`${desk}/../${THREAD}`)).toBeNull();
+    const picked = join(root, "picked");
+    mkdirSync(picked);
+    expect(qualifies(picked)).toBeNull();
+    execFileSync("git", ["init", "-q", dataDir]);
+    expect(qualifies(desk)).toBeNull();
   });
 });

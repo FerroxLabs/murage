@@ -126,6 +126,14 @@ describe("the strip in the app (words for the reducer's selection)", () => {
     expect(renderToStaticMarkup(createElement(MemoryIntegrityStripView, { view: null }))).toBe("");
   });
 
+  it("loads on first use: the app mounts the lazy strip, which shows nothing while its chunk loads", async () => {
+    const app = readFileSync(fileURLToPath(new URL("../App.tsx", import.meta.url)), "utf8");
+    expect(app).toMatch(/\{desktop === true && <LazyMemoryIntegrityStrip \/>\}/);
+    expect(app).not.toMatch(/from "@\/components\/MemoryIntegrityStrip"/);
+    const { LazyMemoryIntegrityStrip } = await import("@/components/MemoryIntegrityStripLazy");
+    expect(renderToStaticMarkup(createElement(LazyMemoryIntegrityStrip)).replace(/<!--[^>]*-->/g, "")).toBe("");
+  });
+
   it("the detail row names the step, how far and how long", () => {
     const html = renderToStaticMarkup(createElement(MemoryUpgradeDetailView, { view: detailView(feed([reading(0, working())])) }));
     expect(html).toContain("Checking links, 42% done.");

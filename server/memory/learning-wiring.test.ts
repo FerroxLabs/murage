@@ -13,6 +13,7 @@ import type { Message } from "../store.ts";
 import { observeOwnerMessage } from "./outcomes.ts";
 import { detectFeedback, type FeedbackDeps, type LessonSink } from "./feedback.ts";
 import { changeLessonEvent, formLessonFromFeedback, listLessons, renderLearnedBlock, recordKeptMoment, setFeedbackLessonFormer, setKeptMomentUndoHook, setLearningLocalLessonSink, setLessonAdmitter, addLesson } from "./lessons.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { afterFeedback, leasedFeedbackClassifier, onActivePath, recordWinChip, wireBotLearning, type BotLearningWiring } from "./learning-wiring.ts";
 import { readProspectScope, isOutcomeEvidence } from "./learnable.ts";
 import { ensureRevokeLateObjects, MEMORY_SCHEMA } from "./schema.ts";
@@ -117,10 +118,10 @@ describe("the classifier runs behind the learning budget lease", () => {
   it("one call through the lease, 300 output tokens, and a refusal throws so detection falls back to stage 1", async () => {
     const seen: Array<{ max: number; purpose: unknown }> = [];
     const extractor = (async (_text: string, max: number, _signal: AbortSignal, dispatch?: { purpose?: unknown }) => { seen.push({ max, purpose: dispatch?.purpose }); return "{}"; }) as never;
-    await leasedFeedbackClassifier(extractor).classify({ turn: null, message: "good job" }, new AbortController().signal).catch(() => undefined);
+    await leasedFeedbackClassifier(extractor, () => openLearningGate("evaluation")).classify({ turn: null, message: "good job" }, new AbortController().signal).catch(() => undefined);
     // The lease needs the installation's learning budget; without one it refuses, and the classifier throws rather than calling the model.
     expect(seen.every(call => call.max === 300)).toBe(true);
-    await expect(leasedFeedbackClassifier(null as never).classify({ turn: null, message: "good job" }, new AbortController().signal)).rejects.toThrow();
+    await expect(leasedFeedbackClassifier(null as never, () => openLearningGate("evaluation")).classify({ turn: null, message: "good job" }, new AbortController().signal)).rejects.toThrow();
   });
 });
 

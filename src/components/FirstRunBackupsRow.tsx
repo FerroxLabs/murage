@@ -44,71 +44,20 @@
 // reopened after "Keep backups off", or after a checked backup, shows that
 // ending and touches nothing.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-
-import { FIRST_RUN_BACKUP_COPY, ensureFirstRunBackup, type BackupScheduleBridge, type FirstRunBackupResult } from "./backups-section-ui";
+import { FIRST_RUN_BACKUP_COPY } from "./backups-section-ui";
 import { FIRST_RUN_CHIP, FIRST_RUN_FOCUS, FirstRunFailure, FirstRunLine } from "./FirstRunChrome";
+import type { FirstRunBackupRun } from "./first-run-backup-run";
 import { t } from "@/lib/i18n";
 
-/** No window at all is the server-render and unit-test case, and it answers
- *  the same as a browser with no desktop bridge: we cannot see this machine's
- *  backups, so we say nothing about them. */
-function bridge(): BackupScheduleBridge | null {
-  if (typeof window === "undefined") return null;
-  const desktop = window.muragebox?.backupSchedule;
-  return desktop ? (desktop as BackupScheduleBridge) : null;
-}
-
-export function FirstRunBackupsRow() {
-  const [result, setResult] = useState<FirstRunBackupResult | "working" | "idle">("idle");
-  const [keyName, setKeyName] = useState("");
-  // Why the first backup is not confirmed yet, in the words the page uses.
-  const [why, setWhy] = useState("");
-  const mounted = useRef(true);
-
-  const run = useCallback(() => {
-    const host = bridge();
-    if (!host) return;
-    setResult("working");
-    setWhy("");
-    void (async () => {
-      let reason = "";
-      try {
-        const outcome = await ensureFirstRunBackup(host, {
-          applyStatus: () => {},
-          createdKey: (note) => { if (mounted.current) setKeyName(note.label); },
-          notice: () => {},
-        }, { reason: (text) => { reason = text; } });
-        if (!mounted.current) return;
-        setWhy(outcome === "unverified" ? reason : "");
-        setResult(outcome);
-      } catch {
-        if (mounted.current) { setWhy(FIRST_RUN_BACKUP_COPY.failed); setResult("unverified"); }
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    run();
-    return () => { mounted.current = false; };
-  }, [run]);
-
-  // The person's own choice, recorded by the desktop, so setup ends saying so.
-  const keepOff = useCallback(() => {
-    const host = bridge();
-    if (!host?.finishFirstRun) return;
-    setResult("working");
-    void host.finishFirstRun("off").then(
-      () => { if (mounted.current) { setWhy(""); setResult("off"); } },
-      () => { if (mounted.current) { setWhy(t("settings.l5.firstRun.offFailed")); setResult("unverified"); } },
-    );
-  }, []);
-
+/** What the step reports. The step itself runs in useFirstRunBackupRun
+ *  (first-run-backup-run.ts), started by the closing card, so this row can
+ *  load on first use without holding the step back. */
+export function FirstRunBackupsRow({ backup }: { backup: FirstRunBackupRun }) {
+  const { result, keyName, why, run, keepOff } = backup;
   // Unavailable and idle say nothing: a first run is not the place to explain
   // that a status call failed.
   if (result === "idle" || result === "unavailable") return null;
-  const offButton = bridge()?.finishFirstRun
+  const offButton = keepOff
     ? <button type="button" onClick={keepOff} className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS}`}>{t("settings.l5.firstRun.keepOff")}</button>
     : null;
   const tryAgain = (

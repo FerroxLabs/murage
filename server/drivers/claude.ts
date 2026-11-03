@@ -2,6 +2,8 @@ import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
+import { isMemorySendFenced } from "../memory/learning-send-fence.ts";
+import { isMemorySendBusy, type LearningGate } from "../memory/learning-send.ts";
 import { CLOUD_BROKER_DIR, CLOUD_RENDER_MCP, CLOUD_RENDER_SYSTEM_PROMPT, CLOUD_WORKSPACE_ROOT, cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, isCloudRenderPlaceholder } from "../cloud-home/turn-process.ts";
 import { cloudMcpStanza, cloudRenderMcp } from "../cloud-home/engine-render.ts";
 import { cloudHomeCopy } from "../cloud-home/copy.ts";
@@ -2705,12 +2707,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
   // npm on all three: the one recipe that is genuinely cross-platform. The
   // native installers differ per OS and would need verifying separately.
   install: {
-    command: {
-      darwin: "npm install -g @anthropic-ai/claude-code",
-      linux: "npm install -g @anthropic-ai/claude-code",
-      win32: "npm install -g @anthropic-ai/claude-code",
-    },
-    needsNode: true,
+    native: true,
     docsUrl: "https://claude.com/claude-code",
     signInCommand: "claude auth login",
   },
@@ -5709,7 +5706,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
      * `claude -p "prompt"` shape is not safe for review. No tools or MCP
      * servers are mounted in this isolated process. */
     // A background run of the engine: a conversation deletion pauses these, and one it stopped starts again afterwards (engine-one-shots.ts).
-    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> =>
+    const generateReview = (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string; gate?: LearningGate; sent?: boolean }): Promise<string> =>
       oneShots.run("claude", signal, async (runSignal) => {
         // Below the qualified minimum the call is refused with code update_required, before any launch.
         const probeBase = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
@@ -5717,13 +5714,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         return runReview(prompt, runSignal, proposalModel, botId, memory);
       }, true);
     /** Learning on this login (cli-memory-learning.ts): the review call with every tool off, no session file, an empty working folder. */
-    const memorySession: MemorySessionRunner = async (prompt, signal) => {
+    const memorySession: MemorySessionRunner = async (prompt, signal, { gate }) => {
       const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
-      try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, { cwd }); }
-      catch (error) { throw error instanceof Error && !("status" in error) ? engineFailure(error.message) : error; }
+      const memory: { cwd: string; gate?: LearningGate; sent?: boolean } = { cwd, ...(gate ? { gate } : {}) };
+      try { return await generateReview(prompt, signal, "claude-haiku-4-5", undefined, memory); }
+      catch (error) {
+        // the fence refused a re-run (a deletion's one-shot pause stopped an attempt that had written): that attempt was sent, so this is
+        // an interrupted call, not "nothing sent"; a refusal before any write stays the typed, content-free refusal
+        if (isMemorySendFenced(error) || isMemorySendBusy(error)) throw memory.sent || (gate?.released ?? 0) > 0 ? Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"), { interrupted: true }) : error;
+        throw error instanceof Error && !("status" in error) ? Object.assign(engineFailure(error.message), "code" in error ? { code: error.code } : {}) : error;
+      }
       finally { rmSync(cwd, { recursive: true, force: true }); }
     };
-    const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string }): Promise<string> => {
+    const runReview = async (prompt: string, signal?: AbortSignal, proposalModel?: string, botId?: string, memory?: { cwd: string; gate?: LearningGate; sent?: boolean }): Promise<string> => {
       const turnEnv = claudeEnvironment(proposalModel ?? "claude-haiku-4-5", accountEnvironment());
       // The bot this review or proposal is for: the launcher refuses a Cloud run that names none.
       cloudTurnBot(turnEnv, botId);
@@ -5748,11 +5751,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       }, turnEnv);
       const env = handed.env;
       return new Promise((resolve, reject) => {
+        // The learning gate (memory/learning-send.ts admit, r8 section 1): checked and released under the write lock; nothing below awaits before
+        // child.stdin.end(prompt), so a call
+        // whose words were forgotten while it waited (the queue, a deletion's one-shot pause and its re-run, the version and env reads
+        // above) starts no process and writes nothing.
+        try { memory?.gate?.admit(); } catch (error) { reject(error); return; }
         // The claude whose --version the review was gated on (turnEnv: Murage's own PATH), not the handed PATH's first.
         const launchCli = engineLaunchFile(config.cli, turnEnv);
         // Same isolation as a turn: no MCP server, hook, plugin or personal CLAUDE.md of the
         // owner's, with the owner's login untouched. A proposal also gets no tools at all.
-        const child = spawnCli(
+        let child: ReturnType<typeof spawnCli>;
+        // a spawn that throws wrote nothing: the admission is withdrawn (r8 review change 1)
+        try {
+        child = spawnCli(
           launchCli,
           // stream-json so the call knows when the CLI started work (`init`): only what it printed
           // before then is read as a refusal of Murage's own flags, the same rule as a turn.
@@ -5771,6 +5782,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // S4 power (design sections 1 and 7): the Windows job, as the turn spawn; no hostPower on Mac or Linux.
           engineJob({ posixHostPower: false }),
         );
+        } catch (error) { memory?.gate?.notWritten(); throw error; }
         let stdout = "";
         const stderr = new EngineStderrCapture();
         /** stderr as it stood when `init` arrived; null until then */
@@ -5830,10 +5842,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           const refusal = claudeLaunchRefusalError(preInitStderr ?? stderr.text);
           finish(refusal ?? new Error(failed ?? (stderr.redactedEnd(8_192) || (code === 0 ? "Claude review gave no result" : `Claude review exited ${code}`))));
         });
-        if (signal?.aborted) onAbort();
+        // pre-aborted: no stdin.end, so the admission is withdrawn
+        if (signal?.aborted) { memory?.gate?.notWritten(); onAbort(); }
         else {
           signal?.addEventListener("abort", onAbort, { once: true });
           child.stdin.end(prompt);
+          memory?.gate?.wrote();
+          if (memory) memory.sent = true;
         }
       });
     };

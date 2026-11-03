@@ -11,7 +11,7 @@
 // real 0.1.59 install that asked would. A second, untouched server is the
 // brand-new install of this version, which by design never opens the page.
 //
-// Screenshots of all three cards at 1280x860 and 420x860, dark and light
+// Every card the version's page has (whats-new-pages.ts) is walked; screenshots at 1280x860 and 420x860, dark and light
 // skin, and at 1440x900 and 390x844 in the dark skin (the approved preview's
 // widths), land in WHATS_NEW_SHOTS_DIR when it is set, else in the test's output
 // directory.
@@ -27,12 +27,15 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { axeScriptPath } from "./axe";
 import { accountMenuTrigger, chooseFromAccountMenu } from "./sidebar-nav";
+import { WHATS_NEW_PAGES, whatsNewCards, type WhatsNewAction } from "../components/whats-new-pages";
 
 let server: ViteDevServer, origin: string, cache: string, harness: VerificationServer, headers: Record<string, string>;
 const VERSION = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version as string;
-// A version with no page (WHATS_NEW_BY_VERSION says "none") shows nothing:
-// the page tests run for the newest version that has one.
+// A version with no page (WHATS_NEW_BY_VERSION says "none") shows nothing by
+// itself. The page tests run on this version's own page, read from its data.
 const HAS_PAGE = new RegExp(`"${VERSION.replace(/\./g, "\\.")}": \\{ kind: "page"`).test(readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8"));
+const PAGE = WHATS_NEW_PAGES[VERSION];
+const HERO_TITLE = PAGE?.hero.title ?? "";
 // The newest page on this version's major line that is not newer than it (whatsNewTarget's rule), read from the same table.
 const PAGE_VERSIONS = [...readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8").matchAll(/"(\d+(?:\.\d+)*)": \{ kind: "page"/g)].map((m) => m[1]);
 const numeric = (v: string) => v.split(".").map(Number);
@@ -88,7 +91,22 @@ const shotsDir = (fallback: string) => {
 };
 const dialog = (page: Page) => page.locator("dialog[data-whats-new]");
 const card = (page: Page, name: string) => dialog(page).locator(`[data-whats-new-card="${name}"]`);
-const CARDS = ["hero", "highlights", "more"] as const;
+const CARDS = PAGE ? whatsNewCards(PAGE) : (["hero"] as const);
+// What each shortcut asks the store for, through the real host (runWhatsNewAction).
+const DISPATCHED: Partial<Record<WhatsNewAction, unknown[]>> = {
+  allChats: [{ type: "showAllChats" }],
+  draftOnly: [{ type: "showTeamLibrary", view: "bots" }],
+  venues: [{ type: "showTeamMap" }],
+  teams: [{ type: "showTeamMap" }],
+  rooms: [{ type: "showTeamMap" }],
+  ownWords: [{ type: "toggleAppSettings", open: true, section: "memory" }],
+  memory: [{ type: "toggleAppSettings", open: true, section: "memory" }],
+  fuigo: [{ type: "toggleAppSettings", open: true, section: "engines" }],
+  engines: [{ type: "toggleAppSettings", open: true, section: "engines" }],
+  backups: [{ type: "toggleAppSettings", open: true, section: "backups" }],
+  needsYou: [{ type: "showNeedsYou" }],
+  health: [{ type: "showHealth" }],
+};
 const LAST = CARDS.length - 1;
 
 async function axe(page: Page) {
@@ -118,7 +136,7 @@ async function walkCards(page: Page, skin: string, dir: string, width = "") {
   }
 }
 
-test("a 0.1.59 install updating sees the page once, walks all three cards, and a dismissal survives a reload", async ({ page }, info) => {
+test("a 0.1.59 install updating sees the page once, walks every card, and a dismissal survives a reload", async ({ page }, info) => {
   test.skip(!HAS_PAGE, `${VERSION} has no What's new page`);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1280, height: 860 });
@@ -127,32 +145,37 @@ test("a 0.1.59 install updating sees the page once, walks all three cards, and a
 
   await page.goto(origin + "/__whats-new?skin=dark");
   await expect(card(page, "hero")).toBeVisible();
-  await expect(dialog(page).getByRole("heading", { name: "Murage for Chrome is here" })).toBeFocused();
-  // focus stays inside: Tab from the last control (the last pager dot) comes back round
-  await dialog(page).getByRole("button", { name: "Card 3", exact: true }).focus();
-  await page.keyboard.press("Tab");
-  await expect(dialog(page).getByRole("button", { name: "Close" })).toBeFocused();
-  await page.keyboard.press("Shift+Tab");
-  await expect(dialog(page).getByRole("button", { name: "Card 3", exact: true })).toBeFocused();
-  // D11: the arrow keys and the dots page on every card, and card 3 has a way back
-  await page.keyboard.press("ArrowRight");
-  await page.keyboard.press("ArrowRight");
-  await expect(card(page, "more")).toBeVisible();
-  await page.keyboard.press("ArrowRight");
-  await expect(card(page, "more")).toBeVisible();
-  await page.keyboard.press("ArrowLeft");
-  await expect(card(page, "highlights")).toBeVisible();
-  await dialog(page).getByRole("button", { name: "Card 3", exact: true }).click();
-  await dialog(page).getByRole("button", { name: "Back", exact: true }).click();
-  await expect(card(page, "highlights")).toBeVisible();
-  await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
-  await expect(card(page, "hero")).toBeVisible();
+  // the hero names the version it is for
+  await expect(card(page, "hero")).toHaveAttribute("data-whats-new-version", VERSION);
+  await expect(card(page, "hero").getByText(`NEW IN MURAGE ${VERSION}`)).toBeVisible();
+  await expect(dialog(page).getByRole("heading", { name: HERO_TITLE })).toBeFocused();
+  if (CARDS.length > 1) {
+    const lastDot = `Card ${CARDS.length}`, beforeLast = CARDS[CARDS.length - 2]!, lastCard = CARDS[LAST]!;
+    // focus stays inside: Tab from the last control (the last pager dot) comes back round
+    await dialog(page).getByRole("button", { name: lastDot, exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await expect(dialog(page).getByRole("button", { name: "Close" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(dialog(page).getByRole("button", { name: lastDot, exact: true })).toBeFocused();
+    // D11: the arrow keys and the dots page on every card, and the last card has a way back
+    for (let step = 0; step < LAST; step += 1) await page.keyboard.press("ArrowRight");
+    await expect(card(page, lastCard)).toBeVisible();
+    await page.keyboard.press("ArrowRight");
+    await expect(card(page, lastCard)).toBeVisible();
+    await page.keyboard.press("ArrowLeft");
+    await expect(card(page, beforeLast)).toBeVisible();
+    await dialog(page).getByRole("button", { name: lastDot, exact: true }).click();
+    await dialog(page).getByRole("button", { name: "Back", exact: true }).click();
+    await expect(card(page, beforeLast)).toBeVisible();
+    await dialog(page).getByRole("button", { name: "Card 1", exact: true }).click();
+    await expect(card(page, "hero")).toBeVisible();
+  }
   // back to the title (no ring) so the pictures show the resting state
-  await dialog(page).getByRole("heading", { name: "Murage for Chrome is here" }).focus();
+  await dialog(page).getByRole("heading", { name: HERO_TITLE }).focus();
 
   await walkCards(page, "dark", dir);
   await expect(dialog(page).getByRole("link", { name: "Read the full release notes" })).toHaveAttribute("href", `https://github.com/FerroxLabs/murage-releases/releases/tag/v${VERSION}`);
-  await dialog(page).getByRole("button", { name: "Let's go" }).click();
+  await dialog(page).getByRole("button", { name: CARDS.length > 1 ? "Let's go" : "Got it" }).click();
   await expect(dialog(page)).toHaveCount(0);
   await expect.poll(async () => (await seen()).show).toBe(false);
 
@@ -177,9 +200,16 @@ test("reopens from the sidebar menu in the light skin, closes on Escape, and eac
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
 
-  // the hero's shortcut opens Murage for Chrome's Chrome Web Store page outside the app, and moves nothing in it
   await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
   await chooseFromAccountMenu(page, "What's new");
+  if (PAGE!.hero.action !== "chrome") {
+    // the hero's shortcut goes to its place in the app
+    await dialog(page).getByRole("button", { name: PAGE!.hero.button }).click();
+    await expect(dialog(page)).toHaveCount(0);
+    expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual(DISPATCHED[PAGE!.hero.action]);
+    expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated)).toBe(1);
+  } else {
+  // the hero's shortcut opens Murage for Chrome's Chrome Web Store page outside the app, and moves nothing in it
   // the listing is answered here, so the spec never leaves the machine
   const asked: string[] = [];
   await page.context().route("https://chromewebstore.google.com/**", (route) => { asked.push(route.request().url()); return route.fulfill({ status: 200, contentType: "text/html", body: "<title>Murage for Chrome</title>" }); });
@@ -192,25 +222,19 @@ test("reopens from the sidebar menu in the light skin, closes on Escape, and eac
   await expect(dialog(page)).toHaveCount(0);
   expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched)).toEqual([]);
   expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated)).toBe(0);
+  }
 
-  // the six highlights, each through the real host
-  const expected: Record<string, unknown[]> = {
-    // the 1.0.6 lineup (WHATS_NEW_TILES_106), each tile's shortcut through runWhatsNewAction
-    allChats: [{ type: "showAllChats" }],
-    draftOnly: [{ type: "showTeamLibrary", view: "bots" }],
-    venues: [{ type: "showTeamMap" }],
-    ownWords: [{ type: "toggleAppSettings", open: true, section: "memory" }],
-    fuigo: [{ type: "toggleAppSettings", open: true, section: "engines" }],
-    backups: [{ type: "toggleAppSettings", open: true, section: "backups" }],
-  };
-  for (const [tile, dispatched] of Object.entries(expected)) {
+  // every highlight on this version's page, each through the real host
+  for (const { action: tile } of PAGE!.tiles) {
+    const dispatched = DISPATCHED[tile];
+    expect(dispatched, `add "${tile}" to DISPATCHED`).toBeDefined();
     await page.evaluate(() => { (window as unknown as { __dispatched: unknown[] }).__dispatched.length = 0; (window as unknown as { __navigated: number }).__navigated = 0; });
     await chooseFromAccountMenu(page, "What's new");
     await dialog(page).getByRole("button", { name: "Next" }).click();
     await dialog(page).locator(`[data-whats-new-tile="${tile}"]`).click();
     await expect(dialog(page)).toHaveCount(0);
     expect(await page.evaluate(() => (window as unknown as { __dispatched: unknown[] }).__dispatched), tile).toEqual(dispatched);
-    expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated), tile).toBe(dispatched.length ? 1 : 0);
+    expect(await page.evaluate(() => (window as unknown as { __navigated: number }).__navigated), tile).toBe(dispatched!.length ? 1 : 0);
   }
   expect((await seen()).show).toBe(false);
 });

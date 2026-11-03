@@ -58,6 +58,8 @@ function foldable(message: Message): boolean {
 function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (message?.folderPrompt) return true;
+  // DELEGATION-HOLD F5: a reply that ran without remembered context is a notice, never folded into a run Tool calls off hides
+  if (message?.memoryNote === "without-memory") return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
 }
@@ -115,6 +117,9 @@ function assistantTurnFolds(messages: Message[]): {
       message.kind === "text" &&
       // a widget (QW Q4) is a card the owner answers, never narration folded away
       !message.widget &&
+      // a row carrying a file (a voice note, a saved file, an output card) is
+      // something the bot handed over, never narration folded away
+      !message.artifactIds?.length &&
       message.turnId === terminal.turnId &&
       !message.turnTerminal
     );

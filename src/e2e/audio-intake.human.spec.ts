@@ -46,7 +46,7 @@ test.beforeAll(async () => {
         else if (path === "/api/desktop-secret") json({ error: "Not found" }, 404);
         else if (path === "/api/events") { res.statusCode = 204; res.end(); }
         else if (path === "/api/bots") json({ bots: [bot], groups: [] });
-        else if (path === "/api/config") json({ surface: "remote", features: {}, flux: { configured }, rooms: { turnTimeoutMinutes: 5 } });
+        else if (path === "/api/config") json({ surface: "remote", features: {}, flux: { configured }, composio: { configured: false }, rooms: { turnTimeoutMinutes: 5 } });
         else if (path === "/api/instances") json({ instances: [{ instanceId: "fixture", driverKind: "fixture", displayName: "Fixture", snapshot: { state: "available", authenticated: true }, models: { default: "text-model", options: [{ id: "text-model", label: "Text model" }] }, capabilities: { images: true } }] });
         else if (path === "/api/routines") json({ routines: [], runs: [] });
         else if (path === "/api/webhooks") json({ webhooks: [], attempts: [] });
