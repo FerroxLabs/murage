@@ -208,3 +208,36 @@ export function managedWorkspaceAutoTrust(folder: string, scan: FolderTrustScan,
   }
   return linked > 0;
 }
+
+/** Whether `folder` is this turn's own Murage-made thread desk with nothing of
+ * its own for Fuigo to load (FUIGO-DESK-AUTOTRUST-1014, GrokBuild ruling).
+ * Bare: the desk proof holds, the engine's key is the desk, no repository
+ * above it, the scan names no source and no skill or command root exists
+ * (`.grok` included, which the scan does not name). Linked: today's
+ * `managedWorkspaceAutoTrust`. Run on the live tree at dispatch and again
+ * when Fuigo asks; it never says who chose the folder, the caller does. */
+export function managedDeskQualifies(folder: string, scan: FolderTrustScan, input: ManagedWorkspaceTrustInput): "bare" | "linked" | null {
+  const desk = managedThreadDesk(folder, input);
+  if (!desk) return null;
+  if (scan.key !== desk || canonicalFolder(scan.folder) !== desk) return null;
+  const gitRoot = gitRootOf(desk);
+  if (gitRoot !== null && gitRoot !== desk) return null;
+  if (!scan.sources.length) {
+    for (const rel of SKILL_ROOTS) {
+      const [parent] = rel.split("/") as [string, string];
+      try {
+        lstatSync(join(desk, rel));
+        return null;
+      } catch {
+        // a symlinked parent such as `.claude` is not Murage's, skills or not
+        try {
+          if (lstatSync(join(desk, parent)).isSymbolicLink()) return null;
+        } catch {
+          /* no parent */
+        }
+      }
+    }
+    return "bare";
+  }
+  return managedWorkspaceAutoTrust(folder, scan, input) ? "linked" : null;
+}
