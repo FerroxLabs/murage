@@ -62,8 +62,10 @@ export function folderTrustQuestion(card: FolderTrustCard): QuestionSpec {
 
 /** What a generation 2 card (Fuigo 1.0.35 and later) is about. `key` is the
  * engine's own `workspace`, verbatim; `cwd` is where the bot is working;
- * `declines` are the Murage rejects a Trust of `key` may not keep, already in
- * display order, empty when every decline is known to be written. */
+ * `declines` are the Murage rejects strictly inside `key` that a Trust of it
+ * can cover, empty when every decline is known to be written;
+ * `ancestorDeclines` are the rejects strictly above `key`, deepest first,
+ * which a Trust of `key` wins over for `key` alone. A sibling is in neither. */
 export interface FolderTrustCardV2 {
   key: string;
   cwd: string;
@@ -73,6 +75,7 @@ export interface FolderTrustCardV2 {
   /** Full access or No limits: commands are not waiting on the owner. */
   fullAccess: boolean;
   declines: readonly string[];
+  ancestorDeclines: readonly string[];
 }
 
 /** "Don't trust" names its own way back on generation 2 (T2). */
@@ -112,18 +115,56 @@ function fitCardText(limit: number, write: (show: (value: string) => string) => 
   return written(low);
 }
 
+type CardSentence = "worktree" | "cwd" | "ancestor";
+
+/** The card's question, sentence by sentence, leaving out any in `drop`. The
+ * opening and the inside sentence are always written. */
+function folderTrustSentencesV2(card: FolderTrustCardV2, show: (value: string) => string, drop: ReadonlySet<CardSentence> = new Set()): string {
+  const what = describeFolderTrustSources(card.sources) || "its own settings";
+  const key = show(card.key);
+  const parts = [`Trust ${key}? Trusting it lets ${show(what)} guide the bot here. Commands still follow your approval settings.`];
+  if (card.cwd !== card.key && !drop.has("cwd")) parts.push(`The bot is working in ${show(card.cwd)}, which is part of ${key}.`);
+  if (card.repository && !drop.has("worktree")) parts.push("This includes its worktrees, wherever they are.");
+  if (card.declines.length) {
+    const list = describeFolderTrustDeclines(card.declines.map(show));
+    parts.push(card.declines.length === 1
+      ? `Your earlier "Don't trust" for ${list} is inside ${key}. Trusting ${key} can cover that folder too.`
+      : `Your earlier "Don't trust" answers for ${list} are inside ${key}. Trusting ${key} can cover those folders too.`);
+  }
+  if (card.ancestorDeclines.length && !drop.has("ancestor")) {
+    const list = describeFolderTrustDeclines(card.ancestorDeclines.map(show));
+    parts.push(card.ancestorDeclines.length === 1
+      ? `You earlier chose "Don't trust" for ${list}, which contains ${key}. Trusting ${key} covers this folder even though that answer said no. That earlier answer still applies outside ${key}.`
+      : `You earlier chose "Don't trust" for ${list}, which contain ${key}. Trusting ${key} covers this folder even though those answers said no. Those earlier answers still apply outside ${key}.`);
+  }
+  return parts.join(" ");
+}
+
+/** The longest a generation 2 card's stored summary (its subtitle, log line
+ * and notification) may be. */
+export const FOLDER_TRUST_SUMMARY_CHARS = 300;
+
+/** The card's summary within FOLDER_TRUST_SUMMARY_CHARS, sentences whole and
+ * long paths shortened in the middle. When it cannot fit, the worktree, then
+ * the folder, then the parent sentence are left out of the summary only (the
+ * card itself keeps them). Never cut mid-sentence: a summary still over the
+ * limit is returned whole. */
+export function folderTrustSummaryV2(card: FolderTrustCardV2): string {
+  const order: CardSentence[] = ["worktree", "cwd", "ancestor"];
+  let text = "";
+  for (let dropped = 0; dropped <= order.length; dropped++) {
+    const drop = new Set(order.slice(0, dropped));
+    text = fitCardText(FOLDER_TRUST_SUMMARY_CHARS, (show) => folderTrustSentencesV2(card, show, drop));
+    if (text.length <= FOLDER_TRUST_SUMMARY_CHARS) return text;
+  }
+  return text;
+}
+
 /** The generation 2 card: the engine named `key`, and a Trust grants exactly
  * that key, for the folder's settings. Commands stay with the approval level
  * in every answer, so nothing here says they stop asking. */
 export function folderTrustQuestionV2(card: FolderTrustCardV2): QuestionSpec {
-  const what = describeFolderTrustSources(card.sources) || "its own settings";
-  const question = fitCardText(QUESTION_LIMITS.questionChars, (show) => {
-    const parts = [`Trust ${show(card.key)}? Trusting it lets ${show(what)} guide the bot here. Commands still follow your approval settings.`];
-    if (card.cwd !== card.key) parts.push(`The bot is working in ${show(card.cwd)}, which is part of ${show(card.key)}.`);
-    if (card.repository) parts.push("This includes its worktrees, wherever they are.");
-    if (card.declines.length) parts.push(`Your earlier "Don't trust" for ${describeFolderTrustDeclines(card.declines.map(show))} may not carry over here: trusting ${show(card.key)} can include it.`);
-    return parts.join(" ");
-  });
+  const question = fitCardText(QUESTION_LIMITS.questionChars, (show) => folderTrustSentencesV2(card, show));
   const stays = card.fullAccess
     ? "The bot keeps working here and leaves the folder's own settings out. Commands keep running as Full access allows."
     : "The bot keeps working here, leaves the folder's own settings out and checks commands with you as your approval settings say.";

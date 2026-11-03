@@ -113,7 +113,7 @@ export function validateProviderTurnRoute(driver: string, route: ProviderTurnRou
 }
 export function applyProviderRoute(driver: string, env: NodeJS.ProcessEnv, route: ProviderTurnRoute, context?: { threadId: string; memoryTools?: boolean; nativeProfile?: string | null; /** Caller-owned private home (reflection temp root): used as the engine home instead of a retained or task-created one; the caller removes it. */ homeRoot?: string }): ProviderRouteBinding {
   validateProviderTurnRoute(driver, route);
-  for (const name of ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_API_KEY", "FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"]) delete env[name];
+  for (const name of ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "CODEX_API_KEY", "FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"]) deleteEnvNames(env, [name]); // every casing on Windows: a Fuigo_Api_Key left beside the route key would ride to the engine
   deleteEnvNames(env, [FUIGO_ALLOW_UPSTREAM_ENV]);
   let keepLogsFor = "";
   const result: ProviderRouteBinding = { model: route.model, args: [] as string[], cleanup: () => {}, keepLogs: (_turnId: string) => {} };

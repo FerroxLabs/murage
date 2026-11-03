@@ -97,14 +97,28 @@ export const USER_CHROME_ALLOW_WAIT_MS = 120_000;
 
 /** Where "Use my Chrome" goes, decided by the server when the owner confirms it.
  * - "extension": Murage for Chrome has a connected Chrome profile. No Allow prompt.
- * - "remote-debugging": no paired extension, but Chrome's remote debugging is on.
- * - "install": neither. The extension panel shows how to add Murage for Chrome
- *   and connects by itself once it pairs. */
+ * - "install": no connected profile. The extension panel shows Set up my
+ *   browser, which registers Murage's helper with Chrome, and the bot connects
+ *   once the extension pairs.
+ * - "remote-debugging": only when this copy of Murage has no Murage for Chrome
+ *   at all (`extensionAvailable` false), Chrome's remote debugging is on, and
+ *   no other bot already holds it.
+ * Since 1.0.15 Murage for Chrome comes first even while remote debugging is
+ * listening: remote debugging hands over every tab and serves one bot at a
+ * time, while the extension shares only the tabs the owner picks and serves
+ * many bots at once. Before, an owner with the extension installed but not set
+ * up landed on remote debugging and never saw Set up my browser, or got
+ * "Another bot is already using Chrome remote debugging." A bot can still ask
+ * for remote debugging explicitly (useMyChrome without "auto"). */
 export type UseMyChromeRoute = { route: "extension" | "install"; transport: "extension"; profileId?: string } | { route: "remote-debugging"; transport: undefined };
-export function useMyChromeRoute(profiles: ReadonlyArray<{ profileId: string; browser?: string }>, remoteDebugging: "listening" | "off"): UseMyChromeRoute {
+export function useMyChromeRoute(
+  profiles: ReadonlyArray<{ profileId: string; browser?: string }>,
+  remoteDebugging: "listening" | "off",
+  options: { extensionAvailable?: boolean; heldByAnotherBot?: boolean } = {},
+): UseMyChromeRoute {
   const paired = pairedExtensionProfile(profiles);
   if (paired.ready) return { route: "extension", transport: "extension", ...(paired.profileId ? { profileId: paired.profileId } : {}) };
-  if (remoteDebugging === "listening") return { route: "remote-debugging", transport: undefined };
+  if (options.extensionAvailable === false && remoteDebugging === "listening" && options.heldByAnotherBot !== true) return { route: "remote-debugging", transport: undefined };
   return { route: "install", transport: "extension" };
 }
 /** Murage for Chrome is connected in at least one Chrome profile ("Use my

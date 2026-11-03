@@ -75,6 +75,7 @@ import { isHealthPage, showHealthPage, showNotification } from "@/lib/notify";
 import { speaker } from "@/lib/tts";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
+import { configReply, instancesReply, openCardsReply, routinesReply, sidebarReply, webhooksReply } from "./hydrate-bodies";
 import type { ImageApprovalSetting } from "../../shared/image-approval-setting";
 import { fullAccessRefusalMessage } from "@/lib/permission-mode";
 import { createFirstPageTopUp, createScrollback, MESSAGE_PAGE_SIZE, needsFirstPage, type FirstPageAnswer } from "@/lib/scrollback";
@@ -266,8 +267,9 @@ export interface SecretRequestCardData {
 export interface Message {
   /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
   botCall?: import("@/lib/bot-calls").BotCallMark;
-  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
-  memoryNote?: "export-paste";
+  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
+   * "without-memory" (DELEGATION-HOLD F5): an activity row saying a reply ran without remembered context; shown with Tool calls off. */
+  memoryNote?: "export-paste" | "without-memory";
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -565,6 +567,8 @@ export interface TaskUsage {
 
 export interface Bot {
   id: string;
+  /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
+  engineRev?: number;
   /** 1.0.9 phone tools: what this bot may do on a paired phone. Absent key = off. Present only when the host offers phone tools. */
   phoneApps?: import("../../shared/phone-apps").PhoneApps;
   threadId: string;
@@ -969,6 +973,7 @@ export interface EngineInstall {
   docsUrl?: string;
   signInCommand?: string;
   needsNode?: boolean;
+  native?: boolean;
 }
 
 /** One row of GET /api/instances — the model picker's data. */
@@ -982,6 +987,8 @@ export interface InstanceInfo {
     setupAction?: "repair";
     reason?: string;
     authenticated?: boolean;
+    /** the sign-in check did not answer: neither signed in nor signed out yet */
+    authUnverified?: true;
     version?: string | null;
     /** a line shown beside the detected version (OpenClaw below its Ask floor) */
     versionNote?: string;
@@ -2941,6 +2948,7 @@ function reduceState(state: AppState, action: Action): AppState {
     case "hydrate": {
       // a roster older than every answer still applied: read it again
       if (action.expired) return requestReconcile(state);
+      if (!Array.isArray(action.bots) || !Array.isArray(action.groups)) return state;
       const known = (id: string) => action.bots.some((b) => b.id === id) || action.groups.some((g) => g.id === id);
       // Where you land when nothing else says otherwise: the Chief of Staff.
       //
@@ -3380,6 +3388,8 @@ function reduceState(state: AppState, action: Action): AppState {
         pluginsOpen: false,
       };
     case "routinesHydrated":
+      // A reply that slipped past its shape check keeps what is on screen (PHONE-HYDRATE-BAD-BODY).
+      if (!Array.isArray(action.routines) || !Array.isArray(action.runs)) return state;
       return { ...state, routines: action.routines, routineRuns: trimRoutineRuns(action.runs) };
     case "routinePatched": {
       const exists = state.routines.some((routine) => routine.id === action.routine.id);
@@ -3405,6 +3415,7 @@ function reduceState(state: AppState, action: Action): AppState {
       };
     }
     case "webhooksHydrated":
+      if (!Array.isArray(action.webhooks) || !Array.isArray(action.attempts)) return state;
       return { ...state, webhooks: action.webhooks, webhookAttempts: action.attempts, webhookIngress: action.ingress };
     case "webhookPatched": {
       const exists = state.webhooks.some((webhook) => webhook.id === action.webhook.id);
@@ -3475,6 +3486,7 @@ function reduceState(state: AppState, action: Action): AppState {
     case "groupDeleted":
       return admitRoomRemoval(state, action, action.origin);
     case "instances":
+      if (!Array.isArray(action.instances)) return state;
       return { ...state, instances: action.instances, engineNote: action.engineNote ?? "", ...(action.shellEnvironment !== undefined ? { shellEnvironment: action.shellEnvironment } : {}) };
     case "configStatus":
       return {
@@ -5812,14 +5824,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const cardsThread = cardsBot?.threadId ?? "";
   const cardsRev = cardsBot?.cardsRev ?? 0;
   const fetchedCards = useRef("");
+  // A reply without a card list is not an empty list (PHONE-HYDRATE-BAD-BODY): it keeps what is shown and is asked again after a
+  // growing wait (1 s, 2 s, 4 s ... at most 30 s, eight times per head), like the readiness fetch below.
+  const [cardsRetry, setCardsRetry] = useState(0);
+  const cardsFailures = useRef(0);
+  const cardsBase = useRef("");
+  const cardsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => { if (cardsTimer.current) clearTimeout(cardsTimer.current); }, []);
   useEffect(() => {
-    const key = `${cardsThread}:${cardsLeaf}:${cardsRev}`;
+    const base = `${cardsThread}:${cardsLeaf}:${cardsRev}`;
+    if (cardsBase.current !== base) { cardsBase.current = base; cardsFailures.current = 0; }
+    const key = `${base}:${cardsRetry}`;
     if (!cardsLeaf || fetchedCards.current === key) return;
     fetchedCards.current = key;
+    const askAgain = () => {
+      const attempt = ++cardsFailures.current;
+      if (attempt > 8) return;
+      if (cardsTimer.current) clearTimeout(cardsTimer.current);
+      cardsTimer.current = setTimeout(() => setCardsRetry((n) => n + 1), Math.min(30_000, 1000 * 2 ** (attempt - 1)));
+    };
     void api(`/api/threads/${encodeURIComponent(cardsThread)}/open-cards`)
-      .then((result: { activeLeafId?: string; openCards?: Message[]; pending?: boolean }) => dispatch({ type: "openCardsRefreshed", threadId: cardsThread, leafId: result.activeLeafId ?? cardsLeaf, cards: result.openCards ?? [], rev: cardsRev, pending: result.pending === true }))
-      .catch(() => {});
-  }, [cardsThread, cardsLeaf, cardsRev, dispatch]);
+      .then((body: unknown) => {
+        const result = openCardsReply<Message>(body);
+        dispatch({ type: "openCardsRefreshed", threadId: cardsThread, leafId: result.activeLeafId ?? cardsLeaf, cards: result.openCards, rev: cardsRev, pending: result.pending });
+        cardsFailures.current = 0;
+      })
+      .catch(askAgain);
+  }, [cardsThread, cardsLeaf, cardsRev, cardsRetry, dispatch]);
 
   // The server said this conversation's open cards became exact (open-cards.ready): ask again, once per frame, for a bot task or a room alike. The notice
   // is kept per conversation (a task opened later still finds it), and an answer fulfils it only for the transcript generation it was asked under.
@@ -5855,8 +5886,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       readyTimer.current = setTimeout(() => setReadyRetry((n) => n + 1), Math.min(30_000, 1000 * 2 ** (attempt - 1)));
     };
     void api(`/api/threads/${encodeURIComponent(readyThread)}/open-cards`)
-      .then((result: { activeLeafId?: string; openCards?: Message[]; pending?: boolean }) => {
-        dispatch({ type: "openCardsRefreshed", threadId: readyThread, leafId: result.activeLeafId ?? readyLeaf, cards: result.openCards ?? [], rev: readyCardsRev, pending: result.pending === true, readyRev, gen: readyGeneration, ...(readyIsBot ? { requestLeaf: readyLeaf } : {}) });
+      .then((body: unknown) => {
+        // a reply without a card list is refused here and asked again (bounded), never applied as an empty list
+        const result = openCardsReply<Message>(body);
+        dispatch({ type: "openCardsRefreshed", threadId: readyThread, leafId: result.activeLeafId ?? readyLeaf, cards: result.openCards, rev: readyCardsRev, pending: result.pending, readyRev, gen: readyGeneration, ...(readyIsBot ? { requestLeaf: readyLeaf } : {}) });
         // answered for a branch head other than the one held: the reducer discards it, so it is asked for again (bounded), not forgotten
         if (readyIsBot && result.activeLeafId !== undefined && result.activeLeafId !== readyLeaf) askAgain(); else readyFailures.current = 0;
       })
@@ -5948,30 +5981,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {
         key: "instances",
         request: async () => {
-          const { instances, shellEnvironment, engineNote } = await api("/api/instances");
-          return () => rawDispatch({ type: "instances", instances, shellEnvironment: shellEnvironment ?? null, engineNote });
+          const { instances, shellEnvironment, engineNote } = instancesReply<InstanceInfo>(await api("/api/instances"));
+          return () => rawDispatch({ type: "instances", instances, shellEnvironment: (shellEnvironment ?? null) as ShellEnvironment | null, engineNote });
         },
       },
       {
         key: "config",
         request: async () => {
-          const config = await api("/api/config");
+          const config = configReply<ConfigStatus>(await api("/api/config"));
           return () => rawDispatch({ type: "configStatus", config });
         },
       },
       {
         key: "routines",
         request: async () => {
-          const { routines, runs } = await api("/api/routines");
+          const { routines, runs } = routinesReply<Routine, RoutineRun>(await api("/api/routines"));
           return () => rawDispatch({ type: "routinesHydrated", routines, runs });
         },
       },
       {
         key: "webhooks",
         request: async () => {
-          const { webhooks, attempts, ingress } = await api("/api/webhooks");
+          const { webhooks, attempts, ingress } = webhooksReply<WebhookTrigger, WebhookAttempt>(await api("/api/webhooks"));
           return () =>
-            rawDispatch({ type: "webhooksHydrated", webhooks, attempts: attempts ?? [], ingress });
+            rawDispatch({ type: "webhooksHydrated", webhooks, attempts, ingress: ingress as WebhookIngressStatus });
         },
       },
     ];
@@ -6041,7 +6074,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const chat = () =>
         // The fleet with one sidebar line per conversation and no transcript rows (1.0.2, desktop and phone alike): the boot page does not grow
         // with history, and the conversation on screen fetches its first page at once (scrollback loadFirstPage).
-        api(`/api/bots?view=sidebar`).then((answer) => {
+        api(`/api/bots?view=sidebar`).then((reply) => {
+          const answer = sidebarReply(reply) as any;
           const { bots, groups, computerControl, sidebarSectionOrder, pendingSends, tasksEpoch, removed, removedGroups, roomClock } = answer;
           if (!alive) return;
           if (askedUnder !== liveGen) { rehydrateRequested = true; return; }

@@ -37,6 +37,7 @@ import { RememberedApprovals } from "./RememberedApprovals";
 import { defaultModeStep, permissionModeOf, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { useLevelChange } from "./approval/use-level-change";
 import { VoiceSettings } from "./VoiceSettings";
+import { BotCallsSettings } from "./BotCallsSettings";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 import { Switch } from "./SettingsPrimitives";
 import { BotAccessSettings } from "./BotAccessSettings";
@@ -982,6 +983,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               }}
             />
           </div>
+          {/* bot calls (design BOT-CALLS-109 3): on the desktop, like Settings > Notifications > Calls */}
+          {desktop === true && <BotCallsSettings key={`calls-${bot.id}`} botId={bot.id} botName={bot.name} />}
           </SettingsSection>
           <SettingsSection id="routines" active={section}>
           <div id="bot-setting-routines" data-setting="bot.routines.routines" className="space-y-4">

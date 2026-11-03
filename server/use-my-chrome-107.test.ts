@@ -30,7 +30,8 @@ describe("which route Use my Chrome takes", () => {
     expect(useMyChromeRoute([{ profileId: "p1", browser: "chrome" }, { profileId: "p2", browser: "chrome" }], "off")).toEqual({ route: "extension", transport: "extension" });
     // Google Chrome only: "Use my Chrome" never lands in Edge or Brave.
     expect(pairedExtensionProfile([{ profileId: "e1", browser: "edge" }, { profileId: "c1", browser: "chrome" }])).toEqual({ ready: true, profileId: "c1", profileIds: ["c1"] });
-    expect(useMyChromeRoute([{ profileId: "e1", browser: "edge" }], "listening")).toEqual({ route: "remote-debugging", transport: undefined });
+    expect(useMyChromeRoute([{ profileId: "e1", browser: "edge" }], "listening")).toEqual({ route: "install", transport: "extension" });
+    expect(useMyChromeRoute([{ profileId: "e1", browser: "edge" }], "listening", { extensionAvailable: false })).toEqual({ route: "remote-debugging", transport: undefined });
     expect(useMyChromeRoute([{ profileId: "b1", browser: "brave" }], "off")).toEqual({ route: "install", transport: "extension" });
   });
   it("counts Murage for Chrome's own hello (\"chromium\", as in real Google Chrome 156) as paired, but never pins it", () => {
@@ -56,8 +57,26 @@ describe("which route Use my Chrome takes", () => {
     expect(useMyChromeProfile(useMyChromeRoute([{ profileId: "b1", browser: "brave" }], "off"), [{ profileId: "b1", browser: "brave" }], "b1")).toBeNull();
     expect(useMyChromeProfile(useMyChromeRoute([], "listening"), [], "c1")).toBeNull();
   });
-  it("falls back to remote debugging only when nothing is paired and Chrome listens", () => {
-    expect(useMyChromeRoute([], "listening")).toEqual({ route: "remote-debugging", transport: undefined });
+  it("offers Set up my browser ahead of remote debugging, even while Chrome listens (1.0.15)", () => {
+    // Sean's 1.0.13 Mac: the extension installed but never set up, remote debugging on.
+    expect(useMyChromeRoute([], "listening")).toEqual({ route: "install", transport: "extension" });
+    expect(useMyChromeRoute([], "listening", { extensionAvailable: true, heldByAnotherBot: false })).toEqual({ route: "install", transport: "extension" });
+  });
+  it("never sends \"auto\" into the one-bot remote debugging 409: another bot holding it means setup", () => {
+    expect(useMyChromeRoute([], "listening", { extensionAvailable: true, heldByAnotherBot: true })).toEqual({ route: "install", transport: "extension" });
+    expect(useMyChromeRoute([], "listening", { extensionAvailable: false, heldByAnotherBot: true })).toEqual({ route: "install", transport: "extension" });
+  });
+  it("falls back to remote debugging only in a copy without Murage for Chrome, while Chrome listens and nobody holds it", () => {
+    expect(useMyChromeRoute([], "listening", { extensionAvailable: false })).toEqual({ route: "remote-debugging", transport: undefined });
+    expect(useMyChromeRoute([], "listening", { extensionAvailable: false, heldByAnotherBot: false })).toEqual({ route: "remote-debugging", transport: undefined });
+    expect(useMyChromeRoute([], "off", { extensionAvailable: false })).toEqual({ route: "install", transport: "extension" });
+  });
+  it("route table: a paired profile always wins", () => {
+    for (const rd of ["listening", "off"] as const) for (const extensionAvailable of [true, false]) for (const heldByAnotherBot of [true, false]) {
+      expect(useMyChromeRoute([{ profileId: "p1", browser: "chrome" }], rd, { extensionAvailable, heldByAnotherBot }).route).toBe("extension");
+      const unpaired = useMyChromeRoute([], rd, { extensionAvailable, heldByAnotherBot }).route;
+      expect(unpaired).toBe(rd === "listening" && !extensionAvailable && !heldByAnotherBot ? "remote-debugging" : "install");
+    }
   });
   it("otherwise shows the extension's install steps", () => {
     expect(useMyChromeRoute([], "off")).toEqual({ route: "install", transport: "extension" });
