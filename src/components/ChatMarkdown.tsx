@@ -13,6 +13,7 @@
 // frame by MermaidDiagram.tsx. Neither puts diagram or model HTML in this
 // window unsanitized.
 import { MessageExternalLink } from "./ThreadLinkMenu";
+import { EngineChatLink } from "./EngineChatLink";
 import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -25,6 +26,7 @@ import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import { remarkLoneListNumbers } from "@/lib/markdown-lone-number";
 import { relativeFileLink } from "@/lib/workspace-links";
 import { githubPillFor } from "@/lib/github-refs";
+import { parseEngineChatLink } from "@/lib/engine-chat-link";
 import { GithubRefPill } from "./GithubRefPill";
 import { conversationLinkPath } from "@/lib/media-resolve";
 import { api } from "@/state/store";
@@ -75,6 +77,8 @@ const urlTransform: UrlTransform = (url, key, node) => {
     const local = localHref(url);
     if (local) return local;
     if (isObsidianOpenHref(url)) return url;
+    // The exact engine and plan chat links survive to the anchor below, which draws a button and never an href.
+    if (parseEngineChatLink(url)) return url;
   }
   return defaultUrlTransform(url);
 };
@@ -439,6 +443,7 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
             );
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
+            if (href && parseEngineChatLink(href)) return <EngineChatLink href={href}>{children}</EngineChatLink>;
             const localPath = localFilePath(href);
             if (localPath) return <LocalFileLink filePath={localPath} scope={scope}>{children}</LocalFileLink>;
             // A path relative to the conversation's folder is a file link

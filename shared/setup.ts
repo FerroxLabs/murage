@@ -181,6 +181,14 @@ export interface SetupFluxReading {
  * Saying "I found three agents" on a machine with nothing on it is the kind
  * of small lie that costs the whole first hour its credibility.
  */
+/** A bot that runs on an engine. `threadId` is set when one chat picked the
+ *  engine for itself rather than following its bot. */
+export interface SetupEngineUser {
+  id: string;
+  name: string;
+  threadId?: string;
+}
+
 export interface SetupAgentReading {
   /** The engine instance id, as `/api/instances` reports it. */
   id: string;
@@ -192,6 +200,15 @@ export interface SetupAgentReading {
    *  Only ever set on a signed-out reading, and only so the card can name the
    *  command rather than hardcode one per engine. */
   signInCommand?: string;
+  /**
+   * The bots that run on this engine now (their own engine, or one chat's own
+   * pick, with that chat's thread). Only ever set on a signed-out reading.
+   *
+   * Flux Router and Fuigo are front and center (Sean 11-02): Needs you reports
+   * a signed-out engine only when this list is not empty, because those turns
+   * fail. An engine no bot uses is left to Settings and never pushed.
+   */
+  usedBy?: readonly SetupEngineUser[];
   /**
    * The local model this engine is actually pointed at, named the way its
    * owner names it, and the server it is running on.

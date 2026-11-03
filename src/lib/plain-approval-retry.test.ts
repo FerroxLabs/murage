@@ -8,8 +8,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { ApprovalCard } from "@/components/ApprovalCard";
-import { spokenToolAction } from "@/components/PendingApproval";
+import { PendingApprovalPanel, pendingOf, spokenToolAction } from "@/components/PendingApproval";
 import type { Bot, Message } from "@/state/store";
 import {
   PLAIN_APPROVAL_RETRY_DELAYS_MS,
@@ -31,7 +30,8 @@ const GMAIL = JSON.stringify({ tools: [{ tool_slug: "GMAIL_SEND_EMAIL", argument
 const message: Message = { id: "m-gmail", role: "bot", kind: "options", at: 1,
   card: { title: "Approval needed", subtitle: GMAIL, options: ["Allow", "Deny"], tool: "other", requestId: "r1" } };
 const text = (markup: string) => markup.replace(/<[^>]+>/g, " ").replace(/&quot;/g, "\"").replace(/\s+/g, " ");
-const cardText = () => text(renderToStaticMarkup(createElement(ApprovalCard, { bot, message })));
+// APPROVAL-ONE-CARD: a waiting card is read and answered in the composer panel
+const cardText = () => text(renderToStaticMarkup(createElement(PendingApprovalPanel, { pending: pendingOf(message), who: bot.name, bot, threadId: "t1" })));
 
 type PlainModule = typeof import("../../shared/approval-plain");
 let realModule: PlainModule;
