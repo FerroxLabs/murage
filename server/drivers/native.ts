@@ -193,6 +193,23 @@ function maskStreamDelta(threadId: string, msg: unknown): unknown {
     : { ...holder, delta: swapped };
 }
 
+/** The harness ids a lifecycle row carries. Each is a random UUID the harness made, never a value a user or engine
+ * supplied, so it is kept as written: the card-number rule reads a UUID's digit tail ("4111-111111111111") as a card and
+ * masked it, and the row could no longer be tied to the diagnostic that names the same generation. */
+const LIFECYCLE_ID_FIELDS = ["processGeneration", "turnId", "instanceId"] as const;
+const HARNESS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function redactLifecycle(msg: unknown): unknown {
+  const out = redactSecrets(msg);
+  if (!msg || typeof msg !== "object" || Array.isArray(msg) || !out || typeof out !== "object" || Array.isArray(out)) return out;
+  const kept = { ...(out as Record<string, unknown>) };
+  for (const field of LIFECYCLE_ID_FIELDS) {
+    const raw = (msg as Record<string, unknown>)[field];
+    if (typeof raw === "string" && HARNESS_UUID.test(raw)) kept[field] = raw;
+  }
+  return kept;
+}
+
 export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lifecycle"; source: string; msg: unknown }) {
   if (omitThread(threadId)) return;
   try {
@@ -207,7 +224,7 @@ export function appendNative(threadId: string, entry: { dir: "in" | "out" | "lif
     // scrub reads a run of digits inside a UUID as a secret number and rewrote
     // the turn id to "ab[hidden]-...", so a trace could no longer be tied to
     // its turn. Secret-name masking still applies.
-    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactSecrets(entry.msg) : redactPageOutputDeep(redactSecrets(maskStreamDelta(threadId, entry.msg))) }) + "\n";
+    let encoded = JSON.stringify({ at: new Date().toISOString(), ...entry, msg: entry.dir === "lifecycle" ? redactLifecycle(entry.msg) : redactPageOutputDeep(redactSecrets(maskStreamDelta(threadId, entry.msg))) }) + "\n";
     const encodedBytes = Buffer.byteLength(encoded);
     if (encodedBytes > RECORD_BYTES) encoded = marker("native_trace_record_omitted", { encodedBytes, limitBytes: RECORD_BYTES });
     const current = join(NATIVE_DIR, `${threadId}.ndjson`);

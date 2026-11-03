@@ -222,7 +222,6 @@ export const FIRST_RUN_COPY = {
        *  answered. Built by `probeLine` from the setup view. */
       probe: {
         signedIn: (name: string) => `Found ${name}, signed in.`,
-        signedOut: (name: string) => `Found ${name}, not signed in yet.`,
         local: (model: string) => `Found ${model} running on this computer.`,
         bundled: "Found the engine that came in the box.",
         many: (first: string, second: string) => `Found ${first} and ${second}. Details next.`,
@@ -263,11 +262,7 @@ export const FIRST_RUN_COPY = {
        *  an account for it would be the Chief taking credit for one that does
        *  not exist. */
       bundledDetail: "It came in the box, and it is already running.",
-      /** Installed, nobody signed in. Said without blame: nothing is broken
-       *  and nothing was installed wrong. */
-      offDetail: "Installed, nobody signed in.",
       readyTag: "ready when you want it",
-      offTag: "one command away",
       /** §1.4: the one row the Chief is actually on. Proven by
        *  `view.chiefInstanceId`, never guessed, so at most one row says it. */
       usingTag: "using this now",
@@ -278,8 +273,6 @@ export const FIRST_RUN_COPY = {
       /** §1.4: the level, said once as an example rather than as a label.
        *  Shown only while the Chief really is on Ask. */
       askLevel: "I start on Ask: I read and draft on my own, and I ask before I send, buy or change anything outside my folder.",
-      more: (count: number) => `and ${count} more on this computer`,
-      hide: "Hide them",
       /**
        * THE HANDOVER TO THE FLUX SCREEN, AND IT IS THE HONEST VERSION.
        *
@@ -336,8 +329,7 @@ export const FIRST_RUN_COPY = {
     "signed-out": {
       /** §1.4 Variant B, the Chief's line, verbatim. The rows below name it. */
       chief: "There is an AI tool on this computer that nobody is signed in to. Sign in and it is yours to use in here.",
-      /** The sign-in block's own line. The engine's sign-in is a command it
-       *  ships, so the block says how long it takes and then shows it. */
+      /** The sign-in block's own line: how long it takes, then the button. */
       signInLead: "Sign in takes a minute.",
       /** The ghost that moves on without signing in. */
       leave: "Leave it for now",
@@ -363,11 +355,6 @@ export const FIRST_RUN_COPY = {
        */
       thirdBare: "There is nothing else running on this computer, so nothing carries on without it. Signing in is the one thing that puts me to work.",
       action: "Help me sign in",
-      /** Named, because two engines mean two commands and an unlabelled pair
-       *  of them is a puzzle. */
-      commandFor: (name: string) => `Run this once, in a terminal, to sign in to ${name}.`,
-      copy: "Copy",
-      copied: "Copied",
       /** The sign-in finishes in another window, on its own time. A button
        *  that admits that beats a spinner that cannot know. */
       recheck: "I have done it",
@@ -1521,7 +1508,8 @@ export function briefSavedLine(time: string, now: Date): string {
  *
  * Built from the setup view's own readings, so it can only name what was
  * really found. Null while there is nothing to report, and the "while you
- * type" line stays.
+ * type" line stays. An engine nobody is signed in to is never named here:
+ * first run shows Fuigo and Flux only (FUIGO-FIRST-SIGNIN-PLACEMENT, 1.0.14).
  */
 export function probeLine(view: {
   agents: readonly { name: string; installed: boolean; localModel?: { model: string } }[];
@@ -1534,13 +1522,10 @@ export function probeLine(view: {
   const found: string[] = [
     ...signedIn.map((agent) => agent.name.trim()).filter(Boolean),
     ...(local ? ["a local model"] : []),
-    ...view.signedOutAgents.map((agent) => agent.name.trim()).filter(Boolean),
   ];
   if (found.length > 1) return words.many(found[0], found[1]);
   if (signedIn.length === 1 && signedIn[0].name.trim()) return words.signedIn(signedIn[0].name.trim());
   if (local?.localModel) return words.local(local.localModel.model.trim());
-  const out = view.signedOutAgents.find((agent) => agent.name.trim());
-  if (out) return words.signedOut(out.name.trim());
   if (view.agents.some((agent) => !agent.installed)) return words.bundled;
   return null;
 }

@@ -1,0 +1,37 @@
+---
+title: What changed in Murage 1.0.14
+description: One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.
+icon: Clock
+---
+
+## Sign-in in 1.0.14
+
+- **One button.** Signing in to an engine is one button in Settings. No terminal and no commands to copy.
+- **Ask Ember.** Ask Ember in chat on your computer to sign you in and it gives you that same button.
+- **Checking sign-in.** While Murage is still checking a sign-in, Health and Today say "Checking sign-in" until it knows.
+- **Only what you use.** Needs you only asks you to sign in to engines your bots or routines use, and first run sets you up on Fuigo and Flux.
+
+## Voice notes in 1.0.14
+
+- **Voice notes on your phone.** A bot's voice note now plays on your phone and in the browser, as well as on your computer.
+- A voice note or file a bot sends partway through a turn now sits in its reply, not inside Worked for.
+
+## Fuigo 1.0.38 in 1.0.14
+
+- Trust a folder during a conversation and Fuigo brings in its project instructions at the next turn. Conversations from before the update stay as they were, so start a new one. Nested AGENTS.md files and project skills arrive with your next new conversation. Murage now includes Fuigo 1.0.38.
+- On Flux Router, Fuigo trusts the fresh work folder Murage makes for a new chat, so a new chat starts straight away. A folder you pick yourself still asks.
+- A folder's .envrc file never runs inside Fuigo on a bot turn.
+
+## Better in 1.0.14
+
+- When Murage can't read a command, its approval card now says exactly that, and asks you before it runs.
+- On Windows, Murage reads a PowerShell command split across lines as one command, so it gets the same approval checks as the same command on one line.
+- A message queued for the next turn shows its images and files as chips, not raw tags.
+- If Murage quits or restarts during a Codex, Pi, Antigravity or OpenAI tools turn, that turn now shows it didn't finish, and the bot waiting on it hears back when Murage starts again.
+- Stop All on question cards past the follow-up limit ends them as stopped.
+- On your phone, Murage keeps its screen after a reconnect.
+- Health shows a working Fuigo as ready while the page loads, and its dot matches Needs you during first run.
+- Settings > Storage lists only files you still have.
+- Saving an MCP command picks up the latest saved copy.
+- Linux without a keyring: Settings now tells you up front why a Flux Router key can't be saved yet, and the two ways forward.
+- Plus stability fixes.
