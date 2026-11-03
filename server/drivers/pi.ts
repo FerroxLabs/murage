@@ -760,7 +760,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread
     const active = new Map<string, {
-      stop: () => void;
+      /** "asked": interruptTurn or stopAll, the turn ends as Stop. "closing": dispose, the turn ends as the engine closing. */
+      stop: (why: "asked" | "closing") => void;
       turnId: string;
       pending: Map<string, PiAskAnswer>;
       child?: { stdin: { write: (s: string) => void } };
@@ -1078,7 +1079,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           try { send({ type: "extension_ui_response", id, cancelled: true }); } catch { /* pi is gone: nothing is waiting */ }
         }
       };
-      const stop = () => {
+      const stop = (why: "asked" | "closing") => {
         if (settled || aborting) return;
         aborting = true;
         // Register before writing: pi's own events can precede the abort response, and it must
@@ -1091,7 +1092,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           rejectWaiters(new Error(`${ENGINE} stopped taking input.`));
         }
         cancelOpenAsks();
-        closeTurn({ kind: "cancelled" });
+        // Only a stop someone asked for ends as Stop; a quit or restart alone is the engine closing (ACP's rule, CLOSE-STOP-1014).
+        closeTurn(why === "asked" ? { kind: "cancelled" } : failed(engineClosedLine(ENGINE, null), { stopReason: "exit_before_result" }));
       };
       active.set(threadId, { stop, turnId, pending, child, scopedRequests });
       starting.delete(threadId);
@@ -1437,7 +1439,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
       if (earlyStops.delete(threadId)) {
-        stop();
+        stop("asked");
         return { turnId };
       }
 
@@ -1619,7 +1621,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         // requests termination; resolve on confirmed close or reject at the deadline.
         interruptTurn: async (threadId, turnId) => {
           const entry = active.get(threadId);
-          if (entry) entry.stop();
+          if (entry) entry.stop("asked");
           else if (starting.has(threadId)) earlyStops.add(threadId);
           const result = await teardowns.wait(threadId, turnId, piStopBudget());
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
@@ -1646,7 +1648,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         },
         hasSession: (threadId) => active.has(threadId),
         stopAll: async () => {
-          for (const { stop } of active.values()) stop();
+          for (const { stop } of active.values()) stop("asked");
           const result = await teardowns.waitAll(piStopBudget());
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         },
@@ -1656,7 +1658,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         },
       },
       dispose: async () => {
-        for (const { stop } of active.values()) stop();
+        for (const { stop } of active.values()) stop("closing");
         const result = await teardowns.waitAll(piStopBudget());
         if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
         listeners.clear();

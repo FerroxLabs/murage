@@ -39,7 +39,7 @@ test.beforeAll(async () => {
           window.fixtureInstance={instanceId:'claude',driverKind:'claudeAgent',displayName:'Claude',enabled:true,cliDefault:'claude',models:{default:'',options:[]},snapshot:{state:'unavailable',reason:'CLI not detected'},install:{command:{darwin:'fixture install',linux:'fixture install',win32:'fixture install'},signInCommand:'fixture login'}};
           const state={instances:[window.fixtureInstance]};
           const dispatch=action=>{if(action.type==='instances')state.instances=action.instances;if(action.type==='toggleAppSettings'){state.appSettingsOpen=action.open;state.appSettingsSection=action.section;}window.fixtureStore={state:{...state},dispatch,refreshInstances:async()=>{}};listeners.forEach(fn=>fn());};dispatch({});
-          window.muragebox={platform:'darwin',openEngineSetupTerminal:()=>new Promise((resolve,reject)=>{window.resolveTerminal=resolve;window.rejectTerminal=reject;})};
+          window.muragebox={platform:'darwin',openEngineSetupTerminal:()=>new Promise((resolve,reject)=>{window.resolveTerminal=resolve;window.rejectTerminal=reject;}),localEngineLogin:{preview:async()=>({ok:true,kind:'headless',label:'Claude',accountRoot:'/fixture/.claude'}),start:async()=>({ok:true,id:'fixture'}),stop:async()=>({ok:true}),openTerminal:async()=>({ok:true,id:'fixture'}),onData:()=>()=>{},onClosed:()=>()=>{}}};
           createRoot(document.getElementById('root')).render(React.createElement(EnginesSettings));
         `;
       },
@@ -83,7 +83,8 @@ test("engine setup reports terminal and probe outcomes without claiming installa
   const instance=await page.evaluate(()=>(window as any).fixtureInstance);
   await page.route('**/api/instances',route=>route.fulfill({json:{instances:[{...instance,snapshot:{state:'available',authenticated:false}}]}}));
   await page.getByRole('button',{name:'Check again'}).click();
-  await expect(page.getByRole('button',{name:'Open sign-in in Terminal'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Sign in to Claude',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Open sign-in in Terminal'})).toHaveCount(0);
   await expect(page.getByText('Detected · sign-in required',{exact:true})).toBeVisible();
   await expect(page.getByText('Ready',{exact:true})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
