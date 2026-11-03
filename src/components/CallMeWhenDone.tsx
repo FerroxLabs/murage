@@ -4,7 +4,8 @@
 // "Call me when this finishes" (design BOT-CALLS-109 4.1; calls-109.yaml turn-end): beside Stop while a bot's turn runs in a
 // direct conversation. POST /api/calls/turn-end marks the running turn once (a second tap is the first one's answer).
 // While "Calls off for today" holds the harness answers 409 calls_off_today and queues nothing: this offers
-// "Turn calls back on" (POST /api/calls/off-today {on:false}) and then asks again.
+// "Turn calls back on" (POST /api/calls/off-today {on:false}) and then asks again. The tap asks for this one call and
+// never changes the bot's calls switch (MurageMain 11-02, BOT-CALLS-UNREACHABLE): it rings while that switch is off.
 import { useEffect, useState } from "react";
 import { PhoneCall } from "lucide-react";
 
@@ -27,7 +28,7 @@ export function CallMeWhenDone({ threadId, botName }: { threadId: string; botNam
   const refuse = (error: unknown) => {
     if (isCallsOffToday(error)) { setPhase("off_today"); return; }
     const code = (error as { body?: { error?: unknown } })?.body?.error;
-    setRefusal(code === "calls_off" ? `${botName} can't call you yet. Turn on calls in ${botName}'s settings.`
+    setRefusal(code === "no_voice" ? BOT_CALL_WORDS.needsVoice
       : code === "not_running" ? `${botName} has already finished.` : BOT_CALL_WORDS.failed);
     setPhase("failed");
   };

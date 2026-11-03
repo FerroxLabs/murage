@@ -269,20 +269,23 @@ describe("what the Chief says when an engine is here and nobody is signed in", (
       .toBe(false);
   });
 
-  // THE ECONOMIC ONE, and the reason this variant outranks plain `bare`.
+  // FUIGO AND FLUX ARE FRONT AND CENTER (Sean 11-02, FUIGO-FIRST-SIGNIN-PLACEMENT).
   //
-  // A keyed Fuigo IS usable, so nothing here is broken and `bare` would not
-  // be a lie. But this person has a subscription sitting one command away on
-  // their own computer, and saying nothing quietly leaves them on a metered
-  // router while they pay a flat rate elsewhere. That is exactly the mistake
-  // 3c9770f1 reverted in `pickDefaultEngine`, arriving through another door.
-  it("speaks up even when something in the box already works", () => {
+  // A keyed Fuigo IS usable, so the card says the engine in the box is
+  // running. Another engine nobody is signed in to stays in Settings, where
+  // the owner can add it; the first run never pushes it.
+  it("says the engine in the box is running when it works, and pushes no other engine", () => {
     const cards = plan(
       live({ ownerName: "Sean", agents: [BUNDLED], signedOutAgents: [CLAUDE_SIGNED_OUT] }),
       opened,
     ).append;
-    expect(keys(cards)).toContain(setupCardKey("detect", "signed-out"));
-    expect(keys(cards)).not.toContain(setupCardKey("detect", "bare"));
+    expect(keys(cards)).toContain(setupCardKey("detect", "bare"));
+    expect(keys(cards)).not.toContain(setupCardKey("detect", "signed-out"));
+  });
+
+  it("titles the card with nothing that asks for another engine's sign-in", () => {
+    const { title, subtitle } = setupCardCopy("signed-out");
+    expect(`${title} ${subtitle}`).not.toMatch(/sign(?:ed)? in/i);
   });
 
   // ...but it stays quiet when something they installed is genuinely working.

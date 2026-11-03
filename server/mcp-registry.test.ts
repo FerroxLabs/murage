@@ -381,6 +381,14 @@ describe("remote MCP registry entries (T1)", () => {
     expect(rev({ ...owned, auth: "oauth", headers: {} })).not.toBe(rev(owned));
   });
 
+  it("gives every command entry its revision, and the revision changes with what it runs", () => {
+    const rev = (entry: Record<string, unknown>) => listAllMcpServers({ notes: entry })[0]!.rev;
+    const owned = { command: "npx", args: ["-y", "@x/notes"], env: { NOTES_TOKEN: true } };
+    expect(rev(owned)).toMatch(/^[0-9a-f]{12}$/);
+    expect(rev({ ...owned, command: "node" })).not.toBe(rev(owned));
+    expect(rev({ ...owned, args: ["-y", "@x/other"] })).not.toBe(rev(owned));
+  });
+
   it("computes status from secret presence", () => {
     const raw = {
       comfy: { url: "https://cloud.comfy.org/mcp", auth: "oauth" },
