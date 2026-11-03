@@ -52,7 +52,7 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 };
 
 const SLICE = [
-  "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "bots.channel-turns", "bots.rename-chief",
+  "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
   "engines.continue-with-chatgpt-grok", "engines.grok-images", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
   "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
@@ -69,6 +69,16 @@ describe("capability database", () => {
     expect(CAPABILITY_ENTRIES.map((record) => record.capability).sort()).toEqual(SLICE);
     for (const record of CAPABILITY_ENTRIES) expect(record.id).toBe(`cap:${record.capability}`);
     expect(CAPABILITY_DB_REV).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("says webhook routines exist and that the desktop link is local only (WEBHOOK-SELF-KNOWLEDGE-1015)", () => {
+    const record = CAPABILITY_ENTRIES.find((candidate) => candidate.capability === "apps.webhook-routines");
+    expect(record?.status).toBe("partial");
+    expect(record?.answer).toContain("webhook routine gives a bot a link");
+    expect(record?.limits).toContain("listens on this computer only, so outside services such as Stripe cannot reach it yet");
+    expect(record?.platforms).toEqual(["mac", "windows", "linux"]);
+    // The bot reads the same fact where it makes one: the propose_routine description.
+    expect(readFileSync(join(root, "server", "drivers", "agents-proxy.ts"), "utf8")).toContain("On the desktop app that link listens on this computer only");
   });
 
   it("rejects a Settings path under the wrong parent", () => {

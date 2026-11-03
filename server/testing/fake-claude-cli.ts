@@ -55,6 +55,10 @@
 //                      server names it was handed and the agents server's
 //                      bot, thread, depth and skill-authoring switch, plus
 //                      the prompt text, so a test can tell turns apart.
+//   FAKE_CLAUDE_DUMP_DIR directory that gets every dump (a turn's or a one-shot call's) as its own file, named by this
+//                      process and its dump count and written whole (temp file, then rename). FAKE_CLAUDE_DUMP is one file
+//                      every process overwrites, so a test waiting on it can read another launch's dump or lose its own;
+//                      a test that waits in this directory for the dump naming its bot sees every launch.
 //   FAKE_CLAUDE_MENTION_MARKER / FAKE_CLAUDE_MENTION_REPLY a turn whose prompt
 //                      contains the marker answers the reply text (a room
 //                      reply that @mentions teammates).
@@ -103,8 +107,18 @@ import { fixtureDumpEnvironment } from "./fixture-dump.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
+
+// FAKE_CLAUDE_DUMP_DIR: this process's own dump files (see the header)
+let ownDumps = 0;
+const writeOwnDump = (dump: unknown): void => {
+  const dir = process.env.FAKE_CLAUDE_DUMP_DIR;
+  if (!dir) return;
+  const name = `${process.pid}-${++ownDumps}.json`;
+  writeFileSync(join(dir, `.${name}.tmp`), JSON.stringify(dump));
+  renameSync(join(dir, `.${name}.tmp`), join(dir, name));
+};
 
 const mode = process.env.FAKE_CLAUDE_MODE ?? "happy";
 const scriptedReplies = (() => {
@@ -263,10 +277,9 @@ if (argAfter("--output-format") === "text" || (argv.includes("-p") && argAfter("
     process.stdin.on("end", () => resolve(input));
   });
   if (process.env.FAKE_CLAUDE_DUMP) {
-    writeFileSync(
-      process.env.FAKE_CLAUDE_DUMP,
-      JSON.stringify({ pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, mcpConfig: null, cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) }, null, 2),
-    );
+    const oneShotDump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, mcpConfig: null, cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()) };
+    writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify(oneShotDump, null, 2));
+    writeOwnDump(oneShotDump);
   }
   if (process.env.FAKE_CLAUDE_REVIEW_LOG) appendFileSync(process.env.FAKE_CLAUDE_REVIEW_LOG, "one-shot\n");
   // {{PROPOSAL_NONCE}}: the New project proposal block's nonce, read from the prompt as a model does
@@ -787,6 +800,7 @@ const playTurn = (prompt: JsonValue) => {
     const settingsFiles = argv.flatMap((arg, i) => (arg === "--settings" && argv[i + 1] ? [argv[i + 1]!] : [])).map((path) => { try { return JSON.parse(readFileSync(path, "utf8")) as unknown; } catch { return null; } });
     const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
     writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify(dump, null, 2));
+    writeOwnDump(dump);
     // FAKE_CLAUDE_DUMP_HISTORY: the same dump as one line per dumped turn, so a spec waits for its own turn even when a later
     // turn (another bot's, or a redispatch) has already replaced the single latest-turn file
     if (process.env.FAKE_CLAUDE_DUMP_HISTORY) appendFileSync(process.env.FAKE_CLAUDE_DUMP_HISTORY, `${JSON.stringify(dump)}\n`);
