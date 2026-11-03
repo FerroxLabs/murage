@@ -341,7 +341,6 @@ server/harness/bus-sign-in.test.ts	extended
 server/harness/event-log-read-cost.test.ts	extended
 server/harness/memory-adapter.test.ts	extended
 server/harness/registry-platform.test.ts	extended
-server/harness/registry.test.ts	extended
 server/held-scan.test.ts	extended
 server/hermes-import-route.test.ts	extended
 server/hermes-upgrade-live.test.ts	extended
@@ -781,6 +780,7 @@ server/testing/fake-acp-probes.test.ts	delete (pending review; runs here until t
 server/testing/fake-remote-mcp.test.ts	delete (pending review; runs here until then)
 server/testing/fixture-dump.test.ts	delete (pending review; runs here until then)
 server/testing/murage-env.test.ts	extended
+server/testing/progress-poll.test.ts	extended
 server/testing/route-discovery.test.ts	delete (pending review; runs here until then)
 server/testing/sse.test.ts	delete (pending review; runs here until then)
 server/testing/temp-cleanup-guard.test.ts	extended
@@ -972,7 +972,6 @@ src/components/DesktopStopControl.test.ts	extended
 src/components/DiagnosticDetails.test.ts	extended
 src/components/EngineFolderFailureCard.test.ts	extended
 src/components/EngineLoginTerminal.test.ts	extended
-src/components/EngineSetup.test.ts	extended
 src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended
@@ -1395,7 +1394,6 @@ src/lib/visual-viewport.test.ts	extended
 src/lib/voice-host.test.ts	extended
 src/lib/webhook-credentials.test.ts	extended
 src/lib/webhooks.test.ts	extended
-src/lib/whats-new.test.ts	extended
 src/lib/window-confirm.test.ts	extended
 src/lib/working-time.test.ts	extended
 src/lib/workspace-pane.test.ts	extended

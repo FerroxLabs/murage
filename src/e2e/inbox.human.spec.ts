@@ -13,7 +13,7 @@ import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 
 let vite: ViteDevServer, origin: string, root: string, db: DatabaseSync;
 /** Engines here and signed out of (GET /api/setup), and what was turned off. */
-let signedOut: Array<{ id: string; name: string; signInCommand?: string }> = [];
+let signedOut: Array<{ id: string; name: string; signInCommand?: string; usedBy: Array<{ id: string; name: string }> }> = [];
 const turnedOff: string[] = [];
 /** How long each Inbox read takes, so a test can click while one is in flight. */
 let inboxDelay = 0;
@@ -134,7 +134,7 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   for (const [id, slug] of [["connect-1", "trustpilot"], ["connect-2", "gmail"], ["connect-3", "slack"]]) {
     source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
   }
-  signedOut = [{ id: "opencode", name: "OpenCode", signInCommand: "opencode auth login" }];
+  signedOut = [{ id: "opencode", name: "OpenCode", signInCommand: "opencode auth login", usedBy: [{ id: "scout", name: "Scout" }] }];
   await page.goto(origin + "/__inbox");
   await page.getByRole("button", { name: /^Connections/ }).click();
   const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
@@ -151,13 +151,13 @@ test("old requests to connect an app can be dismissed, one or all, and an engine
   await expect.poll(dismissed).toEqual([true, true, true]);
 
   // an engine: asked first, then turned off, and its row goes
-  const engine = page.getByRole("listitem").filter({ hasText: "OpenCode is here, and nobody is signed in to it." });
+  const engine = page.getByRole("listitem").filter({ hasText: "Scout runs on OpenCode, so its turns fail" });
   await engine.getByRole("button", { name: "I don't use OpenCode" }).click();
   await expect(engine.getByText(/Turn off OpenCode\? Bots stop using it/)).toBeVisible();
   expect(turnedOff).toEqual([]);
   await engine.getByRole("button", { name: "Turn it off" }).click();
   await expect.poll(() => turnedOff).toEqual(["opencode"]);
-  await expect(page.getByText("OpenCode is here, and nobody is signed in to it.")).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText("Scout runs on OpenCode, so its turns fail")).toHaveCount(0, { timeout: 15_000 });
   signedOut = [];
 
   // a failed sign-in owes nothing: cleared, and gone until it fails again
@@ -183,14 +183,14 @@ test("Needs you answers clicks while it re-reads itself, and holds still", async
   for (const [id, slug] of [["connect-a", "trustpilot"], ["connect-b", "gmail"]]) {
     source(id, "connector", { connector: { resumeKey: `resume-${id}`, slug, status: "required", label: slug, description: "Connect it" } }, "old-task", Date.now() - 5 * days);
   }
-  signedOut = [{ id: "qwen", name: "Qwen" }, { id: "droid", name: "Droid", signInCommand: "droid" }];
+  signedOut = [{ id: "qwen", name: "Qwen", usedBy: [{ id: "scout", name: "Scout" }] }, { id: "droid", name: "Droid", signInCommand: "droid", usedBy: [{ id: "scout", name: "Scout" }] }];
   await page.goto(origin + "/__inbox");
   const requests = page.getByRole("listitem").filter({ hasText: "Connection setup" });
   await expect(requests).toHaveCount(2);
   await page.setViewportSize({ width: 900, height: 1100 });
   await page.screenshot({ path: testInfo.outputPath("inbox-needs-you.png"), fullPage: true });
   inboxDelay = 2_500;
-  const top = async () => (await page.getByRole("list", { name: "Engines to sign in to" }).boundingBox())!.y;
+  const top = async () => (await page.getByRole("list", { name: "Bots that can't answer" }).boundingBox())!.y;
   const before = await top();
   // Wait for the five-second re-read to start, then act inside it.
   await page.waitForRequest(request => request.url().includes("/api/inbox?"), { timeout: 8_000 });
@@ -198,7 +198,9 @@ test("Needs you answers clicks while it re-reads itself, and holds still", async
   await expect(page.getByText(/Updating Inbox/)).toHaveCount(0);
   await page.getByRole("button", { name: "Dismiss all 2 connection requests" }).click();
   await expect(requests).toHaveCount(0);
-  const qwen = page.getByRole("listitem").filter({ hasText: "Qwen is here" });
+  // Each row is titled by its bots and names its engine in the line under it
+  // (FUIGO-FIRST-SIGNIN-PLACEMENT, 1.0.14), so the rows are found by that line.
+  const qwen = page.getByRole("listitem").filter({ hasText: "Scout runs on Qwen," });
   await qwen.getByRole("button", { name: "I don't use Qwen" }).click();
   await qwen.getByRole("button", { name: "Turn it off" }).click();
   await expect(qwen).toHaveCount(0);
@@ -207,6 +209,6 @@ test("Needs you answers clicks while it re-reads itself, and holds still", async
   await page.waitForTimeout(6_000);
   await expect(requests).toHaveCount(0);
   await expect(qwen).toHaveCount(0);
-  await expect(page.getByRole("listitem").filter({ hasText: "Droid is here" })).toHaveCount(1);
+  await expect(page.getByRole("listitem").filter({ hasText: "Scout runs on Droid," })).toHaveCount(1);
   await expect.poll(() => (db.prepare("SELECT json FROM messages WHERE thread_id='old-task' AND kind='connector'").all() as Array<{ json: string }>).map(row => JSON.parse(row.json).connector.dismissed)).toEqual([true, true]);
 });

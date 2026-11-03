@@ -30,6 +30,8 @@ const dataDir = fs.realpathSync(process.env.MURAGE_DATA_DIR);
 const browserBinary = path.join(dataDir, 'fake-agent-browser');
 fs.writeFileSync(browserBinary, '#!/bin/sh\\nexit 0\\n', { mode: 0o755 });
 process.env.MURAGE_AGENT_BROWSER_PATH = browserBinary;
+// Murage for Chrome's build metadata lives here, so a test can say whether this copy has it (1.0.15 route table).
+process.env.MURAGE_BROWSER_EXTENSION_RESOURCES_PATH = path.join(dataDir, 'extension-resources');
 const sessionLog = path.join(dataDir, 'browser-sessions.json');
 const record = \`function record(kind, session, extra) {
   const fs = require('node:fs');
@@ -384,6 +386,92 @@ it("waits for a slow Allow, and says in the chat that Chrome is asking, once", a
     await browserCall(mounted.env.MURAGE_CONTROL_TOKEN);
     expect(await allowNotes()).toHaveLength(1);
   } finally { nativeMode({}); await stop(bot); await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false }); disableRemoteDebugging(); }
+}, 90_000);
+
+/** Whether this copy of Murage carries Murage for Chrome (its build.json). */
+const extensionBuildFile = () => join(fixture.info.dataDir, "extension-resources", "browser-extension", "build.json");
+const stageExtension = (present: boolean) => {
+  if (!present) { rmSync(extensionBuildFile(), { force: true }); return; }
+  mkdirSync(join(fixture.info.dataDir, "extension-resources", "browser-extension"), { recursive: true });
+  writeFileSync(extensionBuildFile(), JSON.stringify({ version: 1, mode: "development", developmentId: "b".repeat(32) }));
+};
+
+it("sends \"Use my Chrome\" to Set up my browser while remote debugging listens and another bot holds it, never the one-bot 409 (1.0.15)", async () => {
+  enableRemoteDebugging(); stageExtension(true);
+  const holder = await makeBot("Remote holder", "verification", { useMyChrome: true });
+  const carrie = await makeBot("Carrie", "second");
+  const fresh = await makeBot("Fresh picker", "second");
+  try {
+    // Sean's 1.0.13 Mac: another bot holds remote debugging, the extension is installed but not set up.
+    const picked = await api("PATCH", `/api/bots/${carrie.id}`, { useMyChrome: true, browserTransport: "auto" });
+    expect(picked.status, JSON.stringify(picked.body)).toBe(200);
+    expect(picked.body.bot).toMatchObject({ useMyChrome: true, browserTransport: "extension" });
+    // Nobody holding it changes nothing: Murage for Chrome still comes first.
+    expect((await api("PATCH", `/api/bots/${holder.id}`, { useMyChrome: false })).status).toBe(200);
+    const alone = await api("PATCH", `/api/bots/${fresh.id}`, { useMyChrome: true, browserTransport: "auto" });
+    expect(alone.status).toBe(200);
+    expect(alone.body.bot.browserTransport).toBe("extension");
+    // The explicit remote debugging request still holds one bot at a time.
+    expect((await api("PATCH", `/api/bots/${holder.id}`, { useMyChrome: true })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${fresh.id}`, { useMyChrome: true, browserTransport: null })).status).toBe(409);
+  } finally {
+    for (const bot of [holder, carrie, fresh]) await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false });
+    stageExtension(false); disableRemoteDebugging();
+  }
+}, 60_000);
+
+it("uses remote debugging for \"auto\" only in a copy without Murage for Chrome, and sends a second bot to setup instead of a 409", async () => {
+  stageExtension(false);
+  // "auto" probes the port for real here, so something has to listen on it.
+  const listener = createServer(socket => socket.destroy());
+  await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", () => resolve()));
+  enableRemoteDebugging((listener.address() as { port: number }).port);
+  const first = await makeBot("No extension first", "verification");
+  const second = await makeBot("No extension second", "second");
+  try {
+    const one = await api("PATCH", `/api/bots/${first.id}`, { useMyChrome: true, browserTransport: "auto" });
+    expect(one.status).toBe(200);
+    expect(one.body.bot.useMyChrome).toBe(true);
+    expect(one.body.bot.browserTransport).toBeUndefined();
+    const two = await api("PATCH", `/api/bots/${second.id}`, { useMyChrome: true, browserTransport: "auto" });
+    expect(two.status, JSON.stringify(two.body)).toBe(200);
+    expect(two.body.bot.browserTransport).toBe("extension");
+  } finally {
+    for (const bot of [first, second]) await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false });
+    disableRemoteDebugging();
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+  }
+}, 60_000);
+
+it("tells the owner which bot is working and what to do when a browser change waits for its turn (1.0.15)", async () => {
+  enableRemoteDebugging();
+  const bot = await makeBot("Busy leaver", "second", { useMyChrome: true });
+  const joiner = await makeBot("Busy joiner", "verification");
+  try {
+    await startTurn(bot, "busy-leave", true);
+    await expect.poll(async () => (await state(bot.id))?.busy, { timeout: 15_000 }).toBe(true);
+    // The panel's "Busy leaver's own": a named reason, the fix, and the code that turns on its Stop button.
+    const left = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserProfile: null });
+    expect(left.status).toBe(409);
+    expect(left.body).toMatchObject({ error: "Busy leaver is working. Stop it, or wait for it to finish, then change its browser.", code: "bot_busy" });
+    expect((await state(bot.id)).useMyChrome).toBe(true);
+    // The extension panel's own-browser payload gets the same answer.
+    const viaExtension = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserTransport: null, browserExtensionProfileId: null });
+    expect(viaExtension.status).toBe(409);
+    expect(viaExtension.body).toMatchObject({ error: "Busy leaver is working. Stop it, or wait for it to finish, then change its browser connection.", code: "bot_busy" });
+    await startTurn(joiner, "busy-join", false);
+    await expect.poll(async () => (await state(joiner.id))?.busy, { timeout: 15_000 }).toBe(true);
+    const joined = await api("PATCH", `/api/bots/${joiner.id}`, { useMyChrome: true });
+    expect(joined.status).toBe(409);
+    expect(joined.body).toMatchObject({ error: "Busy joiner is working. Stop it, or wait for it to finish, then change its browser.", code: "bot_busy" });
+    // Once stopped, leaving goes through.
+    await stop(bot);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false, browserProfile: null })).status).toBe(200);
+  } finally {
+    await stop(bot); await stop(joiner);
+    for (const item of [bot, joiner]) await api("PATCH", `/api/bots/${item.id}`, { useMyChrome: false });
+    disableRemoteDebugging();
+  }
 }, 90_000);
 
 it("refuses a non-boolean opt-in", async () => {

@@ -19,7 +19,7 @@ const MURAGE_ONLY_NAME = /^(?:MURAGE_|OMB_|ELECTRON_|CUA_DRIVER_RS_)/i;
 export function userTerminalEnv(env = process.env) {
   return Object.fromEntries(Object.entries(env).filter(([name, value]) => typeof value === "string" && !MURAGE_ONLY_NAME.test(name)));
 }
-const systemRootOf = (env) => typeof env.SystemRoot === "string" && WINDOWS_ROOT.test(env.SystemRoot) ? env.SystemRoot.replace(/\\+$/, "") : "C:\\Windows";
+export const systemRootOf = (env) => typeof env.SystemRoot === "string" && WINDOWS_ROOT.test(env.SystemRoot) ? env.SystemRoot.replace(/\\+$/, "") : "C:\\Windows";
 /** The launch for a new terminal window: [executable, args, options, kind], Windows Terminal first, else a PowerShell console window.
  * kind "wt" is awaited through its exit callback; kind "user_terminal" is the PowerShell fallback (see openWindowsTerminal). */
 export function windowsTerminalLaunches(env = process.env, exists) {

@@ -7,7 +7,7 @@
 // code does not recognise, always shows its own card and gets its own yes.
 // The list below is the only way in: a request is covered by name, never by
 // default.
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, knownToolAction, type Pending } from "@/components/PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, knownToolAction, type Pending } from "@/lib/pending-approval";
 import { isQuestionCard } from "../../shared/questions";
 
 /** The everyday lookups a call-long yes covers, as `knownToolAction` words them. */

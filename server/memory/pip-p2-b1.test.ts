@@ -151,8 +151,11 @@ describe("PIP kind list", () => {
       // forgetting a record blanks the text of its newest versions in the commit; the subquery selects rowids by record id (a point
       // lookup, an administrative write); no row, kind or text is read out or handed to a model or the owner
       "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 3, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
+      // owner-list +1 (1.0.15 MEMORY-TOOL-NAME-JUNK d57c1ba33, kept by review 676d6223a): visibleKeys looks up, by primary key, the unpinned
+      // `source` keys of the browse slice it already holds; the statement names kind='source' AND assertion='tool-observation' and returns
+      // id and version only, to leave tool excerpts out of the owner's browse; no text, and nothing it reads goes to a model
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;
       // the backfill reads record keys, kinds and times only, never text
       // +1: pendingProjectionRefsIn names the reader's own pending records (ids only) behind the PENDING predicate, which excludes PIP kinds (msearch review round 4)

@@ -6,14 +6,42 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { APP_VERSION, WHATS_NEW_BY_VERSION, changelogUrl, recordWhatsNewSeen, shouldOpenWhatsNew, whatsNewPage, whatsNewTarget } from "./whats-new";
 import { SidebarYouMenuPanel } from "@/components/SidebarYouMenuPanel";
+import { WHATS_NEW_PAGES, whatsNewCards, whatsNewContent } from "@/components/whats-new-pages";
 
 const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
 const sidebar = readFileSync(new URL("../components/Sidebar.tsx", import.meta.url), "utf8");
 
 describe("what's new pages", () => {
-  it("has a page, or an explicit none, for the version being built", () => {
+  // The release gate (ci/gate-tests.txt): every release ships its own page.
+  it("has a page of its own, with its own words, for the version being built", () => {
     expect(APP_VERSION).toBe(pkg.version);
-    expect(WHATS_NEW_BY_VERSION[pkg.version], `add "${pkg.version}" to WHATS_NEW_BY_VERSION in src/lib/whats-new.ts, as a page or { kind: "none" }`).toBeDefined();
+    expect(whatsNewPage(pkg.version), `give "${pkg.version}" a page in WHATS_NEW_BY_VERSION (src/lib/whats-new.ts); "none" is not allowed for a release`).not.toBeNull();
+    const page = whatsNewContent(pkg.version);
+    expect(page, `write "${pkg.version}"'s page in WHATS_NEW_PAGES (src/components/whats-new-pages.ts): a hero, and 1-6 tiles or a list`).not.toBeNull();
+    expect(page!.hero.title.trim()).not.toBe("");
+    // its own words: no other version's page stands in for it
+    for (const [version, other] of Object.entries(WHATS_NEW_PAGES)) {
+      if (version !== pkg.version) expect(other.hero, `${pkg.version} reuses ${version}'s hero`).not.toBe(page!.hero);
+    }
+  });
+
+  it("knows the same versions in both tables, and nothing stands in for a missing one", () => {
+    const pages = Object.entries(WHATS_NEW_BY_VERSION).filter(([, entry]) => entry.kind === "page").map(([version]) => version).sort();
+    expect(Object.keys(WHATS_NEW_PAGES).sort()).toEqual(pages);
+    expect(whatsNewContent("1.0.7")).toBeNull();
+    expect(whatsNewContent("0.0.1")).toBeNull();
+    expect(whatsNewContent(undefined)).toBeNull();
+    expect(whatsNewContent("constructor")).toBeNull();
+  });
+
+  it("gives every page a hero and at most six tiles, and every card it lists has something on it", () => {
+    for (const [version, page] of Object.entries(WHATS_NEW_PAGES)) {
+      expect(page.tiles.length, version).toBeLessThanOrEqual(6);
+      expect(whatsNewCards(page)[0], version).toBe("hero");
+      expect(new Set(page.tiles.map((tile) => tile.action)).size, version).toBe(page.tiles.length);
+    }
+    expect(whatsNewCards(WHATS_NEW_PAGES["1.0.14"]!)).toEqual(["hero", "more"]);
+    expect(whatsNewCards(WHATS_NEW_PAGES["1.0.15"]!)).toEqual(["hero", "highlights", "more"]);
   });
 
   it("links every page to its own release notes", () => {
@@ -50,7 +78,8 @@ describe("what the menu item opens", () => {
     expect(whatsNewTarget("1.0.3")).toMatchObject({ kind: "page", version: "1.0.2" });
     expect(whatsNewTarget("1.0.5")).toMatchObject({ kind: "page", version: "1.0.2" });
     expect(whatsNewTarget("1.0.7")).toMatchObject({ kind: "page", version: "1.0.6" });
-    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.6" });
+    expect(whatsNewTarget("1.0.13")).toMatchObject({ kind: "page", version: "1.0.6" });
+    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.15" });
     expect(whatsNewTarget("0.1.62")).toMatchObject({ kind: "page", version: "0.1.61" });
   });
 
@@ -60,8 +89,10 @@ describe("what the menu item opens", () => {
     expect(changelogUrl("1.0.2")).toBe("https://docs.murage.ai/docs/changelog/v1-0-2");
   });
 
-  it("points at a changelog page that exists in the docs", () => {
-    for (const version of Object.keys(WHATS_NEW_BY_VERSION).filter((v) => v.startsWith("1."))) {
+  // A page written ahead for the next version waits for its changelog, which the release cut adds.
+  it("points at a changelog page that exists in the docs, for every version up to this one", () => {
+    const notNewer = (v: string) => { const a = v.split(".").map(Number), b = pkg.version.split(".").map(Number); for (let i = 0; i < 3; i += 1) if (a[i] !== b[i]) return a[i]! < b[i]!; return true; };
+    for (const version of Object.keys(WHATS_NEW_BY_VERSION).filter((v) => v.startsWith("1.") && notNewer(v))) {
       const slug = changelogUrl(version).split("/").pop()!;
       expect(() => readFileSync(new URL(`../../apps/docs/content/docs/changelog/${slug}.mdx`, import.meta.url)), slug).not.toThrow();
     }

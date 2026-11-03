@@ -108,6 +108,7 @@ import { OpenBotListButton } from "./OpenBotListButton";
 import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { SendNoticeRow } from "./SendNoticeRow";
+import { isWithoutMemoryNote, WithoutMemoryNoteRow } from "./WithoutMemoryNote";
 import { sendNoticeCode } from "../../shared/send-notice";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
@@ -481,6 +482,9 @@ const Transcript = memo(function Transcript({
               <DelegationHeldRow text={m.tool.name} onSendAgain={() => heldAction(dispatch, "resendDelegation", m.delegationHeld!.id, group.threadId)} onDismiss={() => heldAction(dispatch, "dismissDelegation", m.delegationHeld!.id, group.threadId)} />
             ) : sendNoticeCode(m.tool.name) ? (
               <SendNoticeRow code={sendNoticeCode(m.tool.name)!} />
+            ) : isWithoutMemoryNote(m) ? (
+              // a reply that ran without remembered context: a quiet note, visible with Tool calls off (DELEGATION-HOLD F5)
+              <WithoutMemoryNoteRow text={m.tool.name} />
             ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (

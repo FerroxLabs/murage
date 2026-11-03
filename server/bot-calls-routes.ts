@@ -12,7 +12,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { CALL_DEVICE, CALL_PROTOCOL } from "../shared/bot-calls-contract.ts";
 import { getIntent, getSession, liveSessions, markTurnCall, ringingIntent, type CallIntent, type SessionEnd } from "./bot-calls-machine.ts";
 import {
-  CallRuleInputError, botCallsEnabled, callRulesHold, callsOffUntil, setCallsOffUntil, listCallRules, putCallRules, rearmCallRules, rebuildWatchThreads, setBotCallsEnabled,
+  CallRuleInputError, botCallsEnabled, callRulesHold, callsOffUntil, setCallsOffUntil, listCallRules, putCallRules, rearmCallRules, rebuildWatchThreads, setBotCallsEnabled, setNeedsOwnerNowRule, inTransaction,
   type CallRuleInput,
 } from "./bot-calls-schema.ts";
 import type { BotCallsRuntime } from "./bot-calls-runtime.ts";
@@ -156,14 +156,26 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
     const turn = d.runningTurn?.(body.threadId) ?? null;
     if (!turn || !d.bot(turn.botId)) return err(409, "not_running");
     const db = d.db();
-    if (!botCallsEnabled(db, turn.botId)) return err(409, "calls_off");
+    // The owner's own tap on "Call me when this finishes" asks for this one call (MurageMain 11-02, BOT-CALLS-UNREACHABLE,
+    // GrokBuild r1 #2): it never touches the bot's calls switch. Its one-time turn_end rule rings while the switch stays off
+    // (decide() step 2), so the Settings switch stays the only way to let the bot decide to call. With no voice source
+    // the call could never ring, so the tap is refused and nothing is written.
+    if (!d.voiceReady(turn.botId)) return err(409, "no_voice");
     // Calls off for today (MurageMain 10-27): nothing is queued; the app offers "Turn calls back on", then asks again
     if (offUntilNow(db, now()) !== null) return { status: 409, body: { error: "calls_off_today", code: "calls_off_today" } };
-    // a second tap on the same turn is the first one's answer (idempotent)
-    const marked = db.prepare("SELECT id FROM bot_call_rules WHERE bot_id=? AND kind='turn_end' AND json_extract(params,'$.turnId')=? LIMIT 1").get(turn.botId, turn.turnId) as { id: string } | undefined;
-    if (marked) return ok({ ruleId: marked.id, turnId: turn.turnId });
-    try { return ok({ ruleId: markTurnCall(db, { botId: turn.botId, threadId: body.threadId, turnId: turn.turnId, how, waitMin: waitMin as number | undefined }, now()).ruleId, turnId: turn.turnId }); }
-    catch (error) { if (error instanceof CallRuleInputError) return err(400, error.message); throw error; }
+    // the idempotence lookup and the mark are one transaction
+    try {
+      return inTransaction(db, () => {
+        // a second tap on the same turn is the first one's answer (idempotent)
+        const marked = db.prepare("SELECT id FROM bot_call_rules WHERE bot_id=? AND kind='turn_end' AND json_extract(params,'$.turnId')=? LIMIT 1").get(turn.botId, turn.turnId) as { id: string } | undefined;
+        if (marked) return ok({ ruleId: marked.id, turnId: turn.turnId });
+        const ruleId = markTurnCall(db, { botId: turn.botId, threadId: body.threadId as string, turnId: turn.turnId, how, waitMin: waitMin as number | undefined }, now()).ruleId;
+        return ok({ ruleId, turnId: turn.turnId });
+      });
+    } catch (error) {
+      if (error instanceof CallRuleInputError) return err(400, error.message);
+      throw error;
+    }
   }
   if (method === "GET" && path === "/api/calls/history") {
     const before = Number(url.searchParams.get("before") ?? Number.MAX_SAFE_INTEGER);
@@ -249,8 +261,14 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
     const body = objectOf(await d.readBody());
     if (body.rules !== undefined && !Array.isArray(body.rules)) return err(400, "rules must be a list");
     if (body.enabled !== undefined && typeof body.enabled !== "boolean") return err(400, "enabled must be true or false");
+    if (body.neededNow !== undefined && typeof body.neededNow !== "boolean") return err(400, "neededNow must be true or false");
+    if (body.neededNow !== undefined && body.rules !== undefined) return err(400, "send rules or neededNow, not both");
+    // design 3: with no voice source the switch cannot be turned on, nor the urgent rule (GrokBuild r1 Medium); nothing is written
+    if (!d.voiceReady(bot.id) && ((body.enabled === true && !botCallsEnabled(d.db(), bot.id)) || body.neededNow === true)) return err(409, "no_voice");
     try {
       if (Array.isArray(body.rules)) putCallRules(d.db(), bot.id, body.rules as CallRuleInput[], now());
+      // the Settings switch's urgent rule (needs_owner_now): only that rule is written, never the whole list
+      if (typeof body.neededNow === "boolean") for (const rule of setNeedsOwnerNowRule(d.db(), bot.id, body.neededNow, now())) d.runtime.cancel({ rule }, "rule_off");
     } catch (error) {
       if (error instanceof CallRuleInputError) return err(400, error.message);
       throw error;

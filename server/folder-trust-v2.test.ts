@@ -10,9 +10,10 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "v
 
 import { ensureDirs, NATIVE_DIR } from "./config.ts";
 import type { FolderTrustTurnInput, ProviderInstance, RuntimeEvent, SendTurnInput } from "./contracts.ts";
-import { FuigoAgentDriver, fuigoFolderTrustGeneration } from "./drivers/acp/fuigo.ts";
+import type { ProviderTurnRoute } from "./provider-routing.ts";
+import { FUIGO_PROCESS_TRUST_REPLY, FuigoAgentDriver, fuigoFolderTrustGeneration } from "./drivers/acp/fuigo.ts";
 import { FOLDER_LINE_ENGINE_DECIDES, FOLDER_LINE_TRUSTED, FOLDER_LINE_UNTRUSTED, fillFolderLineForEngine } from "./capabilities-primer.ts";
-import { FolderTrustStore, folderTrustDeclinesFor, folderTrustRecordRows, folderTrustRejectFor } from "./folder-trust.ts";
+import { FolderTrustStore, folderTrustAncestorDeclinesFor, folderTrustDeclinesFor, folderTrustRecordRows, folderTrustRejectFor } from "./folder-trust.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "./testing/events.ts";
 import {
@@ -24,6 +25,8 @@ import {
   folderTrustNotice,
   folderTrustQuestion,
   folderTrustQuestionV2,
+  folderTrustSummaryV2,
+  FOLDER_TRUST_SUMMARY_CHARS,
   folderTrustWithheld,
   folderTrustWithheldKey,
   folderTrustWithheldName,
@@ -178,19 +181,51 @@ describe("(N7.3) rule 2 is pathStartsWith on canonical paths, exactly d4.2", () 
   it("root never answers", () => {
     expect(folderTrustRejectFor([{ key: "/", folder: "/" }], p("K"), p("cwd"))).toBeNull();
   });
-  it("the card's declines leave K out and put those strictly inside K first", () => {
-    expect(folderTrustDeclinesFor([{ key: p("z"), folder: p("z") }, { key: p("K"), folder: p("K") }, { key: p("K/in"), folder: p("K/in") }], p("K"))).toEqual([p("K/in"), p("z")]);
+  it("the card names only rejects strictly inside K: never K, a sibling or an unrelated folder", () => {
+    expect(folderTrustDeclinesFor([{ key: p("z"), folder: p("z") }, { key: p("K"), folder: p("K") }, { key: p("K/in"), folder: p("K/in") }], p("K"))).toEqual([p("K/in")]);
+    // two thread desks side by side: the other desk is never named
+    expect(folderTrustDeclinesFor([{ key: p("threads/A"), folder: p("threads/A") }], p("threads/B"))).toEqual([]);
+    expect(folderTrustDeclinesFor([{ key: p("elsewhere"), folder: p("elsewhere") }], p("K"))).toEqual([]);
+  });
+  it("an ancestor is in its own list, deepest first, and never in the inside list", () => {
+    const rejects = [{ key: p("top"), folder: p("top") }, { key: p("top/mid"), folder: p("top/mid") }, { key: p("top/side"), folder: p("top/side") }];
+    expect(folderTrustDeclinesFor(rejects, p("top/mid/K"))).toEqual([]);
+    expect(folderTrustAncestorDeclinesFor(rejects, p("top/mid/K"))).toEqual([p("top/mid"), p("top")]);
+    expect(folderTrustAncestorDeclinesFor([{ key: p("K/in"), folder: p("K/in") }, { key: p("z"), folder: p("z") }], p("K"))).toEqual([]);
+  });
+  it("a key outside K with its folder inside names the folder; one entry per folder", () => {
+    expect(folderTrustDeclinesFor([{ key: p("main"), folder: p("K/wt") }], p("K"))).toEqual([p("K/wt")]);
+    expect(folderTrustDeclinesFor([{ key: p("K/in"), folder: p("K/in") }, { key: `${p("K/in")}/`, folder: p("x") }], p("K"))).toEqual([p("K/in")]);
+  });
+  it("lexical and component-wise: no realpath, no prefix match; case follows the platform", () => {
+    expect(folderTrustDeclinesFor([{ key: `${p("K")}/`, folder: `${p("K")}/` }], p("K"))).toEqual([]);
+    expect(folderTrustRejectFor([{ key: `${p("K")}/`, folder: p("gone") }], p("K"), p("cwd"))?.key).toBe(`${p("K")}/`);
+    expect(folderTrustDeclinesFor([{ key: p("repo-other"), folder: p("repo-other") }], p("repo"))).toEqual([]);
+    // On Windows (NTFS) k and K are the same folder, so a no stored under k is
+    // inside K and the card names it; on POSIX they are different folders.
+    expect(folderTrustDeclinesFor([{ key: p("k/in"), folder: p("k/in") }], p("K"))).toEqual(process.platform === "win32" ? [p("k/in")] : []);
+    // a child that does not exist on disk is still inside
+    expect(folderTrustDeclinesFor([{ key: p("K/not-made"), folder: p("K/not-made") }], p("K"))).toEqual([p("K/not-made")]);
+  });
+  it("a home or filesystem root is never named", () => {
+    expect(folderTrustAncestorDeclinesFor([{ key: "/", folder: "/" }], p("K"))).toEqual([]);
   });
 });
 
 describe("copy", () => {
-  const card = { key: "/repo", cwd: "/repo", sources: [] as string[], repository: false, fullAccess: false, declines: [] as string[] };
+  const card = { key: "/repo", cwd: "/repo", sources: [] as string[], repository: false, fullAccess: false, declines: [] as string[], ancestorDeclines: [] as string[] };
   it("the question at each shape (F2, R6, T1)", () => {
     expect(folderTrustQuestionV2(card).question).toBe("Trust /repo? Trusting it lets its own settings guide the bot here. Commands still follow your approval settings.");
     expect(folderTrustQuestionV2({ ...card, sources: ["AGENTS.md"] }).question).toContain("lets AGENTS.md guide the bot here");
     expect(folderTrustQuestionV2({ ...card, cwd: "/repo/sub" }).question).toContain(" The bot is working in /repo/sub, which is part of /repo.");
     expect(folderTrustQuestionV2({ ...card, repository: true }).question).toContain(" This includes its worktrees, wherever they are.");
-    expect(folderTrustQuestionV2({ ...card, declines: ["/d"] }).question).toContain(' Your earlier "Don\'t trust" for /d may not carry over here: trusting /repo can include it.');
+    expect(folderTrustQuestionV2({ ...card, declines: ["/repo/d"] }).question).toContain(' Your earlier "Don\'t trust" for /repo/d is inside /repo. Trusting /repo can cover that folder too.');
+    expect(folderTrustQuestionV2({ ...card, declines: ["/repo/d", "/repo/e"] }).question).toContain(' Your earlier "Don\'t trust" answers for /repo/d, /repo/e are inside /repo. Trusting /repo can cover those folders too.');
+    expect(folderTrustQuestionV2({ ...card, ancestorDeclines: ["/"] }).question).toContain(' You earlier chose "Don\'t trust" for /, which contains /repo. Trusting /repo covers this folder even though that answer said no. That earlier answer still applies outside /repo.');
+    expect(folderTrustQuestionV2({ ...card, ancestorDeclines: ["/a", "/b"] }).question).toContain(' You earlier chose "Don\'t trust" for /a, /b, which contain /repo. Trusting /repo covers this folder even though those answers said no. Those earlier answers still apply outside /repo.');
+    const both = folderTrustQuestionV2({ ...card, declines: ["/repo/d"], ancestorDeclines: ["/"] }).question;
+    expect(both.indexOf("is inside")).toBeLessThan(both.indexOf("which contains"));
+    expect(both).not.toMatch(/may not carry over|can include it/);
   });
   it("the Don't trust line, mode by mode, ends with the way back; Trust names the key", () => {
     const options = (fullAccess: boolean) => folderTrustQuestionV2({ ...card, fullAccess }).options;
@@ -205,30 +240,31 @@ describe("copy", () => {
     const SENTENCES = [
       "? Trusting it lets ", " guide the bot here. Commands still follow your approval settings.",
       "The bot is working in ", ", which is part of ", "This includes its worktrees, wherever they are.",
-      'Your earlier "Don\'t trust" for ', " may not carry over here: trusting ", " can include it.",
+      'Your earlier "Don\'t trust" for ', " is inside ", " can cover that folder too.",
     ];
     it("a 3000-character key with one decline keeps the warning and every sentence, within the limit", () => {
       expect(key.length).toBeGreaterThan(2_990);
-      const { question } = folderTrustQuestionV2({ key, cwd, sources: ["AGENTS.md"], repository: true, fullAccess: false, declines: [decline] });
+      const { question } = folderTrustQuestionV2({ key, cwd, sources: ["AGENTS.md"], repository: true, fullAccess: false, declines: [decline], ancestorDeclines: [] });
       expect(question.length).toBeLessThanOrEqual(QUESTION_LIMITS.questionChars);
       expect(question.length).toBeGreaterThan(QUESTION_LIMITS.questionChars - 10);
       expect(question.startsWith("Trust /start-of-key/k")).toBe(true);
       for (const sentence of SENTENCES) expect(question, sentence).toContain(sentence);
       expect(question).toContain("lets AGENTS.md guide");
-      for (const end of ["/end-of-key?", "/end-of-cwd,", "/end-of-decline may not", "/end-of-key can include it."]) expect(question, end).toContain(end);
+      for (const end of ["/end-of-key?", "/end-of-cwd,", "/end-of-decline is inside", "/end-of-key can cover that folder too."]) expect(question, end).toContain(end);
       expect(question).toContain("...");
     });
     it("every sentence stays in the worst shape: long key, folder, sources and five declines", () => {
       const declines = [1, 2, 3, 4, 5].map((n) => `${decline}-${n}`);
       const sources = [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `${"s".repeat(800)}-${n}`);
-      const { question } = folderTrustQuestionV2({ key, cwd, sources, repository: true, fullAccess: true, declines });
+      const { question } = folderTrustQuestionV2({ key, cwd, sources, repository: true, fullAccess: true, declines, ancestorDeclines: [] });
       expect(question.length).toBeLessThanOrEqual(QUESTION_LIMITS.questionChars);
-      for (const sentence of SENTENCES) expect(question, sentence).toContain(sentence);
+      // five declines take the plural inside sentence, whole
+      for (const sentence of [...SENTENCES.slice(0, 5), 'Your earlier "Don\'t trust" answers for ', " are inside ", " can cover those folders too."]) expect(question, sentence).toContain(sentence);
       expect(question).toContain("and 2 more folders");
     });
     it("a question at the limit is byte-identical to the plain text, and one character more is shortened", () => {
-      const text = (k: string) => `Trust ${k}? Trusting it lets AGENTS.md guide the bot here. Commands still follow your approval settings. Your earlier "Don't trust" for /d may not carry over here: trusting ${k} can include it.`;
-      const room = (QUESTION_LIMITS.questionChars - text("").length) / 2;
+      const text = (k: string) => `Trust ${k}? Trusting it lets AGENTS.md guide the bot here. Commands still follow your approval settings. Your earlier "Don't trust" for /d is inside ${k}. Trusting ${k} can cover that folder too.`;
+      const room = (QUESTION_LIMITS.questionChars - text("").length) / 3;
       const atLimit = "/" + "k".repeat(Math.floor(room) - 1);
       const shape = (k: string) => ({ ...card, key: k, cwd: k, sources: ["AGENTS.md"], declines: ["/d"] });
       expect(folderTrustQuestionV2(shape(atLimit)).question).toBe(text(atLimit));
@@ -236,7 +272,7 @@ describe("copy", () => {
       expect(text(over).length).toBeGreaterThan(QUESTION_LIMITS.questionChars);
       const shortened = folderTrustQuestionV2(shape(over)).question;
       expect(shortened).not.toBe(text(over));
-      expect(shortened).toContain("can include it.");
+      expect(shortened).toContain("can cover that folder too.");
     });
     it("the options say the whole sentence around a shortened key, and the answer is still the label", () => {
       const spec = folderTrustQuestionV2({ ...card, key, cwd: key });
@@ -259,8 +295,50 @@ describe("copy", () => {
     expect(describeFolderTrustDeclines(["/a", "/b", "/c", "/d"])).toBe("/a, /b, /c and 1 more folder");
     expect(describeFolderTrustDeclines(["/a", "/b", "/c", "/d", "/e"])).toBe("/a, /b, /c and 2 more folders");
   });
+  describe("the stored summary (subtitle, log line, notification)", () => {
+    const longKey = `/start/${"k".repeat(400)}/end-of-key`;
+    it("is the whole question when it fits", () => {
+      expect(folderTrustSummaryV2(card)).toBe(folderTrustQuestionV2(card).question);
+    });
+    it("fits 300 with sentences whole and paths shortened in the middle, never a plain cut", () => {
+      const shape = { ...card, key: longKey, cwd: `${longKey}/sub`, sources: ["AGENTS.md"], declines: [`${longKey}/in`], ancestorDeclines: ["/start"] };
+      const summary = folderTrustSummaryV2(shape);
+      const { question } = folderTrustQuestionV2(shape);
+      expect(summary.length).toBeLessThanOrEqual(FOLDER_TRUST_SUMMARY_CHARS);
+      expect(summary.endsWith(".")).toBe(true);
+      expect(summary).toContain("...");
+      expect(summary).not.toBe(question.slice(0, 300));
+      // the opening and the inside sentence stay; the card keeps every sentence
+      expect(summary).toContain("guide the bot here.");
+      expect(summary).toContain("can cover that folder too.");
+      expect(question).toContain("which contains");
+      expect(question).toContain("is inside");
+      expect(question.length).toBeLessThanOrEqual(QUESTION_LIMITS.questionChars);
+      // this shape's plain text is past 2000, so the card shortens the key too
+      expect(question).toContain("...");
+      // a shape whose plain text fits keeps the full key in the card while the summary is fitted
+      const midKey = `/start/${"k".repeat(60)}/end-of-key`;
+      const fits = { ...shape, key: midKey, cwd: `${midKey}/sub`, declines: [`${midKey}/in`] };
+      const fitsQuestion = folderTrustQuestionV2(fits).question;
+      expect(fitsQuestion).not.toContain("...");
+      expect(fitsQuestion).toContain(`Trust ${midKey}?`);
+      expect(fitsQuestion).toContain(`${midKey}/in is inside ${midKey}.`);
+      expect(fitsQuestion).toContain("which contains");
+      const fitsSummary = folderTrustSummaryV2(fits);
+      expect(fitsSummary.length).toBeLessThanOrEqual(FOLDER_TRUST_SUMMARY_CHARS);
+      expect(fitsSummary).toContain("can cover that folder too.");
+    });
+    it("drops the worktree, then the folder, then the parent sentence, only as needed", () => {
+      const key = `/start/${"k".repeat(60)}`;
+      const shape = { ...card, key, cwd: `${key}/sub`, repository: true, ancestorDeclines: ["/start"] };
+      const summary = folderTrustSummaryV2(shape);
+      expect(summary.length).toBeLessThanOrEqual(FOLDER_TRUST_SUMMARY_CHARS);
+      expect(summary).not.toContain("worktrees");
+      expect(folderTrustQuestionV2(shape).question).toContain("worktrees");
+    });
+  });
   it("no sentence claims commands stop asking, and none uses an em dash", () => {
-    const all = [folderTrustQuestionV2({ ...card, declines: ["/d"], repository: true, cwd: "/repo/x" }), folderTrustQuestionV2({ ...card, fullAccess: true })];
+    const all = [folderTrustQuestionV2({ ...card, declines: ["/repo/d"], ancestorDeclines: ["/top"], repository: true, cwd: "/repo/x" }), folderTrustQuestionV2({ ...card, fullAccess: true })];
     const text = JSON.stringify(all);
     expect(text).not.toMatch(/—|without stopping to ask|\bsafe\b/);
   });
@@ -341,7 +419,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   /** The version cache is per file, so a test of the probe runs its own path to the fake. */
   const ownCli = () => {
     const link = join(scratch, "own-fake-cli.ts");
-    symlinkSync(FAKE_CLI, link);
+    if (!existsSync(link)) symlinkSync(FAKE_CLI, link);
     return link;
   };
   const create = async (environment: Record<string, string> = {}, config: { fullAuto?: boolean; cli?: string } = {}) => {
@@ -397,6 +475,43 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     const wire = readDump();
     expect(wire.argv).toContain("--trust");
     expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true });
+  });
+
+  // Fuigo 1.0.38 runs a trusted folder's .envrc at session start, before any tool call; FUIGO_ENVRC_TIMEOUT_SECS=0
+  // keeps it from being evaluated (fuigo.ts FUIGO_ENVRC_OFF). Every way a folder reaches the engine trusted carries it.
+  describe("FUIGO_ENVRC_TIMEOUT_SECS=0 on every trusted-folder spawn, over the instance's non-zero value", () => {
+    const envrcIn = (folder: string) => writeFileSync(join(folder, ".envrc"), "touch envrc-ran\n");
+    it("generation 1, a remembered or picker trust: --trust on the spawn, .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34", FUIGO_ENVRC_TIMEOUT_SECS: "5" }, { cli: ownCli() });
+      await done(await send("t-envrc-g1", { folderTrust: gate({ decision: "trust", fromRecord: true, sources: [".envrc"] }) }));
+      const wire = readDump();
+      expect(wire.argv).toContain("--trust");
+      expect(wire.env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("generation 2, a consent-2 record: the engine's question answered trust, .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" });
+      await done(await send("t-envrc-g2", { folderTrust: gate({ trustKeys: [cwd], sources: [".envrc"] }) }));
+      expect(replies()).toEqual([TRUST_REPLY]);
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("generation 2, the owner answers the card Trust: .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" });
+      const turnId = await send("t-envrc-card", { folderTrust: gate({ sources: [".envrc"] }) });
+      const card = await opened(turnId);
+      await answer("t-envrc-card", card.requestId, "Trust this folder");
+      await done(turnId);
+      expect(replies()).toEqual([TRUST_REPLY]);
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
+    it("Full access with a one-turn setup trust: .envrc not evaluated", async () => {
+      envrcIn(cwd);
+      await create({ FUIGO_ENVRC_TIMEOUT_SECS: "5" }, { fullAuto: true });
+      await done(await send("t-envrc-full", { folderTrust: gate({ decision: "trust", sources: [".envrc"], trustKeys: [cwd] }) }));
+      expect(readDump().env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    });
   });
 
   it("an unknown version is generation 2", async () => {
@@ -498,8 +613,11 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     await create({ FAKE_ACP_TRUST_WORKSPACE: K });
     const turnId = await send("t-r3c", { folderTrust: gate({ trustKeys: [K], rejects: [{ key: unrelated, folder: unrelated }] }) });
     const card = await opened(turnId);
-    expect(card.folderTrust).toMatchObject({ key: K, v2: true, declines: [unrelated] });
-    expect(card.questions![0]!.question).toContain(`Your earlier "Don't trust" for ${unrelated} may not carry over here: trusting ${K} can include it.`);
+    // the guard holds on the whole list, but the card names only folders inside K
+    expect(card.folderTrust).toMatchObject({ key: K, v2: true });
+    expect(card.folderTrust?.declines).toBeUndefined();
+    expect(card.questions![0]!.question).not.toContain(unrelated);
+    expect(card.questions![0]!.question).not.toContain("Don't trust\" for");
     expect(replies()).toEqual([]);
     await answer("t-r3c", card.requestId, "Trust this folder");
     await done(turnId);
@@ -525,6 +643,269 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
       await skip(threadId, card.requestId);
       await done(turnId);
     }
+  });
+
+  const promptWritten = (threadId: string) => existsSync(join(NATIVE_DIR, `${threadId}.ndjson`)) && /"method":"session\/prompt"/.test(nativeOrder(threadId));
+  it("(card hold) an open card holds the first prompt past 2 s and 15 s; Trust then writes it after the reply", async () => {
+    await create({ FAKE_ACP_TRUST_KINDS: "" });
+    const turnId = await send("t-hold-trust", { routeAsks: true, askLevel: true });
+    const card = await opened(turnId);
+    await new Promise((resolve) => setTimeout(resolve, 16_000));
+    expect(promptWritten("t-hold-trust")).toBe(false);
+    expect(recorder.events.find((e) => e.type === "request.resolved")).toBeUndefined();
+    await answer("t-hold-trust", card.requestId, "Trust this folder");
+    await done(turnId);
+    expect(replies()).toEqual([TRUST_REPLY]);
+    const order = nativeOrder("t-hold-trust");
+    expect(order.indexOf('"outcome":"trust"')).toBeGreaterThan(-1);
+    expect(order.indexOf('"outcome":"trust"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+  }, 40_000);
+  it("(card hold) a stored trust held back by an unwritten no, or a recorded decision, still holds the first prompt while the card is open", async () => {
+    const K = join(scratch, "K");
+    await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: K });
+    const held = await send("t-hold-r3", { routeAsks: true, askLevel: true, folderTrust: gate({ key: K, folder: K, trustKeys: [K], rejects: [{ key: join(scratch, "other"), folder: join(scratch, "other") }] }) });
+    const heldCard = await opened(held);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(promptWritten("t-hold-r3")).toBe(false);
+    await skip("t-hold-r3", heldCard.requestId);
+    await done(held);
+    const decided = await send("t-hold-dec", { routeAsks: true, askLevel: true, folderTrust: gate({ decision: "trust" }) });
+    const decidedCard = await opened(decided);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(promptWritten("t-hold-dec")).toBe(false);
+    await skip("t-hold-dec", decidedCard.requestId);
+    await done(decided);
+  }, 30_000);
+  it("(card hold) Don't trust and a skip release it too; a skip stores nothing and marks the process", async () => {
+    await create({ FAKE_ACP_TRUST_KINDS: "" });
+    const first = await send("t-hold-reject", { routeAsks: true, askLevel: true });
+    const card = await opened(first);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(promptWritten("t-hold-reject")).toBe(false);
+    await answer("t-hold-reject", card.requestId, "Don't trust");
+    await done(first);
+    expect(replies()).toEqual([REJECT_REPLY]);
+    const second = await send("t-hold-skip", { routeAsks: true });
+    const skipped = await opened(second);
+    expect(promptWritten("t-hold-skip")).toBe(false);
+    await skip("t-hold-skip", skipped.requestId);
+    await done(second);
+    expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY]);
+    expect(recorder.events.filter((e) => e.type === "request.resolved").map((e) => (e as { folderTrustLate?: string }).folderTrustLate)).toEqual([undefined, undefined]);
+  });
+  it("(card hold) Stop while the card holds the prompt writes no prompt", async () => {
+    await create({ FAKE_ACP_TRUST_KINDS: "" });
+    const turnId = await send("t-hold-stop", { routeAsks: true, askLevel: true });
+    await opened(turnId);
+    await instance!.adapter.interruptTurn("t-hold-stop");
+    await done(turnId);
+    expect(promptWritten("t-hold-stop")).toBe(false);
+  });
+  it("(card hold) a request after the prompt is written still takes the late path", async () => {
+    await create({ FAKE_ACP_TRUST_PROMPT_FIRST: "1", FAKE_ACP_TRUST_ON_PROMPT: "1" });
+    const turnId = await send("t-hold-late", { folderTrust: gate({ sources: ["AGENTS.md"] }) });
+    await done(turnId);
+    expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ folderTrustLate: "finished" });
+    expect(replies()).toEqual([REJECT_REPLY]);
+    expect(chips()).toEqual([folderTrustWithheldName(["AGENTS.md"])]);
+  });
+  it("(A, B) a card names an inside no, never a sibling desk's, and stores a fitted summary", async () => {
+    const K = join(scratch, "threads", "B");
+    await create({ FAKE_ACP_TRUST_WORKSPACE: K });
+    const sibling = join(scratch, "threads", "A");
+    const inside = join(K, "in");
+    const turnId = await send("t-decl", { routeAsks: true, askLevel: true, folderTrust: gate({ rejects: [{ key: sibling, folder: sibling }, { key: inside, folder: inside }, { key: scratch, folder: scratch }] }) });
+    const card = await opened(turnId);
+    expect(card.folderTrust).toMatchObject({ key: K, v2: true, declines: [inside] });
+    const question = card.questions![0]!.question;
+    expect(question).not.toContain(sibling);
+    expect(question).toContain(`Your earlier "Don't trust" for ${inside} is inside ${K}.`);
+    expect(question).toContain(`You earlier chose "Don't trust" for ${scratch}, which contains ${K}.`);
+    expect(card.summary.length).toBeLessThanOrEqual(300);
+    expect(card.summary.endsWith(".")).toBe(true);
+    await answer("t-decl", card.requestId, "Don't trust");
+    await done(turnId);
+  });
+
+  describe("the desk rule: a fresh thread desk Murage made raises no card", () => {
+    let dataDir: string;
+    let desk: string;
+    beforeEach(() => {
+      dataDir = join(scratch, "data");
+      desk = join(dataDir, "workspaces", "bot_1", "threads", "thread-1");
+      mkdirSync(join(desk, ".murage-procedures"), { recursive: true });
+      mkdirSync(join(desk, "outputs"), { recursive: true });
+    });
+    const deskGate = (over: Partial<FolderTrustTurnInput> = {}): FolderTrustTurnInput => ({
+      key: desk, folder: desk, sources: [], trustKeys: [], rejects: [],
+      managedDesk: { botId: "bot_1", threadId: "thread-1", desk, bundleIds: ["bundle_a"], dataDir, ownerPicked: false }, ...over,
+    });
+    const sendDesk = async (threadId: string, input: Partial<SendTurnInput> = {}, folder = desk) =>
+      (await instance!.adapter.sendTurn({ threadId, text: "go", cwd: folder, folderTrust: deskGate(), ...input })).turnId;
+    const noCard = () => expect(recorder.events.find((e) => e.type === "request.opened")).toBeUndefined();
+    const noCardFor = (turnId: string) => expect(recorder.events.find((e) => e.type === "request.opened" && e.turnId === turnId)).toBeUndefined();
+
+    // FUIGO-PROCESS-REPLY-OFF-1014: the process-only reply is off in 1.0.14, so on the
+    // owner's own home Fuigo 1.0.38 gets no desk answer, as 1.0.37 does. The desk rule
+    // answers on a home made for this turn (a routed turn). The process-only rows of the
+    // tests below live at 2630d9aaf in this file and come back with FUIGO-PROCESS-REPLY-ON.
+    const route = { connectionId: "desk-route", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "fixture-provider-key", model: "fixture-model", revision: "r1" } as ProviderTurnRoute;
+    const routed = { providerRoute: route, model: route.model } satisfies Partial<SendTurnInput>;
+    it("at Ask, Auto, Full access and No limits on a home made for this turn: trust, no card, no chip", async () => {
+      expect(FUIGO_PROCESS_TRUST_REPLY).toBe(false);
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      for (const [threadId, level] of [["d-ask", { routeAsks: true, askLevel: true }], ["d-auto", { routeAsks: true }], ["d-nolimits", { stopLine: true }]] as const) {
+        await done(await sendDesk(threadId, { ...routed, ...level }));
+      }
+      noCard();
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli(), fullAuto: true });
+      await done(await sendDesk("d-full", routed));
+      noCard();
+      expect(replies()).toEqual([TRUST_REPLY, TRUST_REPLY, TRUST_REPLY, TRUST_REPLY]);
+      expect(replies().some((line) => line?.includes("duration"))).toBe(false);
+      expect(chips()).toEqual([]);
+      // the reply leaves before the first prompt (the hold)
+      const order = nativeOrder("d-ask");
+      expect(order.indexOf('"outcome":"trust"')).toBeGreaterThan(-1);
+      expect(order.indexOf('"outcome":"trust"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+    });
+    for (const version of ["1.0.37", "1.0.38"]) {
+      // FUIGO-DESK-BARE-REJECT-1014 (Y4): a fresh bot's first turn in its own bare desk
+      // on the owner's own home answers with no card: the plain reject, then the prompt.
+      it(`Fuigo ${version} on the owner's own home, bare desk: no card, the prompt is not held, a reply arrives, never a grant`, async () => {
+        const thread = `d-own-${version}`;
+        await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const turnId = await sendDesk(thread, { routeAsks: true, askLevel: true });
+        await done(turnId);
+        noCard();
+        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(chips()).toEqual([]);
+        const order = nativeOrder(thread);
+        expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
+        expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+        expect(order).toContain('"text":"agents: ');
+      });
+      // FUIGO-DESK-LINKED-OWNER-HOME: a fresh bot with pinned skills (a library team) has a
+      // linked desk; 1.0.13 parity is the same plain reject, no card, the prompt goes.
+      it(`Fuigo ${version} on the owner's own home, linked desk (pinned skills only): no card, the prompt is not held, a reply arrives, never a grant`, async () => {
+        const thread = `d-own-linked-${version}`;
+        const bundleRoot = join(desk, ".murage-procedures", "bundle_a");
+        mkdirSync(join(bundleRoot, "skills", "review"), { recursive: true });
+        writeFileSync(join(bundleRoot, "skills", "review", "SKILL.md"), "---\nname: review\n---\n");
+        writeFileSync(join(bundleRoot, ".complete"), "bundle_a");
+        mkdirSync(join(desk, ".claude", "skills"), { recursive: true });
+        symlinkSync(join(bundleRoot, "skills", "review"), join(desk, ".claude", "skills", "review"), "dir");
+        await create({ FAKE_ACP_TRUST_KINDS: "skills", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const turnId = await sendDesk(thread, { routeAsks: true, askLevel: true });
+        await done(turnId);
+        noCard();
+        expect(replies()).toEqual([REJECT_REPLY]);
+        expect(chips()).toEqual([]);
+        const order = nativeOrder(thread);
+        expect(order.indexOf('"outcome":"reject"')).toBeGreaterThan(-1);
+        expect(order.indexOf('"outcome":"reject"')).toBeLessThan(order.indexOf('"method":"session/prompt"'));
+        expect(order).toContain('"text":"agents: ');
+        // a linked desk where Fuigo names a kind beyond skills still cards
+        await create({ FAKE_ACP_TRUST_KINDS: "skills,mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const wider = await sendDesk(`${thread}-mcp`, { routeAsks: true, askLevel: true });
+        await skip(`${thread}-mcp`, (await opened(wider)).requestId);
+        await done(wider);
+        expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY]);
+      });
+      it(`Fuigo ${version} on the owner's own home: a desk holding settings, a kind Fuigo names, or a picked folder still cards`, async () => {
+        await create({ FAKE_ACP_TRUST_KINDS: "mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const kind = await sendDesk(`d-own-kind-${version}`, { routeAsks: true, askLevel: true });
+        await skip(`d-own-kind-${version}`, (await opened(kind)).requestId);
+        await done(kind);
+        await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const picked = await sendDesk(`d-own-picked-${version}`, { routeAsks: true, askLevel: true, folderTrust: deskGate({ managedDesk: undefined }) });
+        await skip(`d-own-picked-${version}`, (await opened(picked)).requestId);
+        await done(picked);
+        writeFileSync(join(desk, "AGENTS.md"), "# mine\n");
+        await create({ FAKE_ACP_TRUST_KINDS: "instructions", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: version }, { cli: ownCli() });
+        const settings = await sendDesk(`d-own-agents-${version}`, { routeAsks: true, askLevel: true });
+        await skip(`d-own-agents-${version}`, (await opened(settings)).requestId);
+        await done(settings);
+        expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY, REJECT_REPLY]);
+      });
+    }
+    it("a warm in the bare desk on the owner's own home: no card, no grant; the turn after answers with no card", async () => {
+      process.env.MURAGE_ACP_POOL = "1";
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      await instance!.adapter.sendTurn({ threadId: "d-warm", text: "", cwd: desk, folderTrust: deskGate(), prewarm: true } as SendTurnInput).catch(() => undefined);
+      await vi.waitFor(() => expect(requests()).toHaveLength(1), { timeout: 10_000 });
+      await vi.waitFor(() => expect(closed("folder-trust-undecided") || closed("post-turn-activity")).toBe(true), { timeout: 10_000 });
+      noCard();
+      const turnId = await sendDesk("d-warm", { routeAsks: true, askLevel: true });
+      await done(turnId);
+      noCard();
+      expect(replies().filter((raw) => raw?.includes('"outcome":"trust"'))).toEqual([]);
+      expect(nativeOrder("d-warm")).toContain('"text":"agents: ');
+    });
+    it("no desk field (an owner-picked folder): the card as before", async () => {
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      const turnId = await sendDesk("d-picked", { routeAsks: true, askLevel: true, folderTrust: deskGate({ managedDesk: undefined }) });
+      const card = await opened(turnId);
+      await skip("d-picked", card.requestId);
+      await done(turnId);
+    });
+    it("a desk that now holds settings of its own: the card, at Ask and at No limits (never a silent reject)", async () => {
+      writeFileSync(join(desk, "AGENTS.md"), "# mine\n");
+      await create({ FAKE_ACP_TRUST_KINDS: "instructions", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      for (const [threadId, level] of [["d-agents", { routeAsks: true, askLevel: true }], ["d-agents-nl", { stopLine: true }]] as const) {
+        const turnId = await sendDesk(threadId, { ...routed, ...level });
+        const card = await opened(turnId);
+        await skip(threadId, card.requestId);
+        await done(turnId);
+      }
+      expect(replies().filter((raw) => raw?.includes('"trust"'))).toEqual([]);
+    });
+    it("a .grok skills root or an engine kind the desk should not have: the card", async () => {
+      await create({ FAKE_ACP_TRUST_KINDS: "mcp", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      const first = await sendDesk("d-mcp", { ...routed, routeAsks: true, askLevel: true });
+      await skip("d-mcp", (await opened(first)).requestId);
+      await done(first);
+      mkdirSync(join(desk, ".grok", "skills"), { recursive: true });
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      const second = await sendDesk("d-grok", { ...routed, routeAsks: true, askLevel: true });
+      await skip("d-grok", (await opened(second)).requestId);
+      await done(second);
+    });
+    it("a symlink in the desk's own path, or an engine key that is not the desk: the card", async () => {
+      // workspaces/bot_1/threads is a link to a folder outside the data dir
+      const elsewhere = join(scratch, "elsewhere", "threads");
+      mkdirSync(join(elsewhere, "thread-1"), { recursive: true });
+      const data2 = join(scratch, "data2");
+      mkdirSync(join(data2, "workspaces", "bot_1"), { recursive: true });
+      symlinkSync(elsewhere, join(data2, "workspaces", "bot_1", "threads"));
+      const linked = join(data2, "workspaces", "bot_1", "threads", "thread-1");
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: linked, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      const viaLink = await sendDesk("d-link", { ...routed, routeAsks: true, askLevel: true, folderTrust: deskGate({ key: linked, folder: linked, managedDesk: { botId: "bot_1", threadId: "thread-1", desk: linked, bundleIds: ["bundle_a"], dataDir: data2, ownerPicked: false } }) }, linked);
+      await skip("d-link", (await opened(viaLink)).requestId);
+      await done(viaLink);
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: dataDir, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      const wider = await sendDesk("d-wider", { ...routed, routeAsks: true, askLevel: true });
+      await skip("d-wider", (await opened(wider)).requestId);
+      await done(wider);
+      expect(replies().filter((raw) => raw?.includes('"trust"'))).toEqual([]);
+    });
+    it("a stored no for the desk wins; one inside it, unwritten, shows the card; one elsewhere does not block", async () => {
+      await create({ FAKE_ACP_TRUST_KINDS: "", FAKE_ACP_TRUST_WORKSPACE: desk, FAKE_ACP_VERSION: "1.0.38" }, { cli: ownCli() });
+      await done(await sendDesk("d-no", { folderTrust: deskGate({ rejects: [{ key: desk, folder: desk }] }) }));
+      expect(replies()).toEqual([REJECT_REPLY]);
+      const inside = join(desk, "outputs");
+      const turnId = await sendDesk("d-inside", { routeAsks: true, askLevel: true, folderTrust: deskGate({ rejects: [{ key: inside, folder: inside }] }) });
+      const insideCard = await opened(turnId);
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(promptWritten("d-inside")).toBe(false);
+      await skip("d-inside", insideCard.requestId);
+      await done(turnId);
+      const other = join(dataDir, "workspaces", "bot_1", "threads", "thread-2");
+      const otherTurn = await sendDesk("d-other", { ...routed, routeAsks: true, askLevel: true, folderTrust: deskGate({ rejects: [{ key: other, folder: other }] }) });
+      await done(otherTurn);
+      noCardFor(otherTurn);
+      expect(replies()).toEqual([REJECT_REPLY, REJECT_REPLY, TRUST_REPLY]);
+    });
   });
 
   it("(rule 4) Full access and No limits with nothing to bring in: reject, nothing recorded, no chip", async () => {
@@ -680,7 +1061,8 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     });
 
     it("(N7.11) a card the turn outran is unanswered: marked, not parked", async () => {
-      await create({ FAKE_ACP_TRUST_PROMPT_FIRST: "1" });
+      // the engine asks only once the prompt is written, so no hold applies
+      await create({ FAKE_ACP_TRUST_PROMPT_FIRST: "1", FAKE_ACP_TRUST_ON_PROMPT: "1" });
       const threadId = "t-pool-late";
       const turnId = await send(threadId, { folderTrust: gate({ sources: ["AGENTS.md"] }) });
       await done(turnId);
