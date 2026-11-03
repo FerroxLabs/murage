@@ -9,7 +9,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { browserEngineRefusesHost } from "./browser-host.ts";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -113,6 +113,8 @@ export let connectorAliasFixture: { accounts: { id: string; alias: string; statu
 export let home: string;
 export let staticDir: string;
 export let fakeClaudeDump: string;
+/** Every fake engine launch's own dump file (fake-claude-cli.ts FAKE_CLAUDE_DUMP_DIR): read through fixtureDumpMark and waitForBotDump. */
+export let fakeClaudeDumpDir: string;
 export let stderr = "";
 export const browserCapabilityCalls: Array<{ operation: string; authorization?: string; body: any }> = [];
 export let browserRevokeFailuresRemaining = 0;
@@ -294,6 +296,70 @@ export const readJsonFileWhenReady = async <T = unknown>(file: string, timeout =
   return parsed as T;
 };
 
+/** The dump files present now: a later waitForBotDump looks only at launches after this point. */
+export const fixtureDumpMark = (): Set<string> => new Set(readdirSync(fakeClaudeDumpDir));
+
+/** The dumps written since `mark`, oldest launch first by file time: which process, and which bot it named (none for a one-shot call). */
+export const fixtureDumpsSince = (mark: ReadonlySet<string>): Array<{ file: string; pid?: number; botId?: string; threadId?: string }> =>
+  readdirSync(fakeClaudeDumpDir).filter((file) => !file.startsWith(".") && !mark.has(file)).map((file) => {
+    try {
+      const dump = JSON.parse(readFileSync(join(fakeClaudeDumpDir, file), "utf8")) as { pid?: number; mcpConfig?: { mcpServers?: Record<string, { env?: Record<string, string> }> } | null };
+      return { file, pid: dump.pid, botId: fixtureTurnBotId(dump), threadId: dump.mcpConfig?.mcpServers?.agents?.env?.MURAGE_THREAD_ID };
+    } catch { return { file }; }
+  });
+
+/** Wait for the first fake engine launch after `mark` that names `botId` (its own dump file, written whole). `diagnose` says what the server was
+ * doing when none came, so a launch that never happened reads as that, with its evidence, not as "matcher did not succeed". */
+export const waitForBotDump = async <T = unknown>(botId: string, mark: ReadonlySet<string>, timeout = 20_000, diagnose?: () => string | Promise<string>): Promise<T> => {
+  const seen = new Set(mark);
+  for (const deadline = Date.now() + timeout; ;) {
+    for (const file of readdirSync(fakeClaudeDumpDir).sort()) {
+      if (file.startsWith(".") || seen.has(file)) continue;
+      seen.add(file);
+      const dump = JSON.parse(readFileSync(join(fakeClaudeDumpDir, file), "utf8"));
+      if (fixtureTurnBotId(dump) === botId) return withTurnSecrets(dump) as T;
+    }
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  const launches = fixtureDumpsSince(mark).map((launch) => `${launch.file} pid=${launch.pid ?? "?"} bot=${launch.botId ?? "(one-shot or none)"}`);
+  throw new Error([`no fake engine launch named bot ${botId} within ${timeout} ms`,
+    `--- launches since the mark ---`, launches.length ? launches.join("\n") : "(none)",
+    ...(diagnose ? [await diagnose()] : [])].join("\n"));
+};
+
+/** Why a queued hand-off's recipient did not launch: both bots' state, the source conversation's queue rows, the source engine and its finish gate,
+ * both conversations' native dispatch logs and last messages, and the server's stderr lines about hand-offs. */
+export const handoffDiagnostics = async (input: { sourceBotId: string; sourceThreadId: string; recipientBotId: string; recipientThreadId: string; sourcePid?: number }): Promise<string> => {
+  const tail = (text: string, bytes: number) => (text.length > bytes ? `…${text.slice(-bytes)}` : text);
+  const state = await api("GET", "/api/bots?messages=0").then((r) => r.body, (error) => ({ error: String(error) }));
+  const pick = (id: string) => {
+    const bot = state?.bots?.find((b: { id: string }) => b.id === id);
+    return bot ? JSON.stringify({ busy: bot.busy, threadId: bot.threadId, status: bot.status, queued: bot.queued, waiting: bot.waiting }) : "(not listed)";
+  };
+  const db = (() => { try { return new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true }); } catch { return undefined; } })();
+  const query = (sql: string, ...args: string[]) => {
+    if (!db) return "(no database)";
+    try { return JSON.stringify(db.prepare(sql).all(...args)); } catch (error) { return `(unavailable: ${error instanceof Error ? error.message : String(error)})`; }
+  };
+  const native = (threadId: string) => { try { return tail(readFileSync(join(home, ".murage", "native", `${threadId}.ndjson`), "utf8"), 2_500); } catch (error) { return `(no native log: ${error instanceof Error ? error.message : String(error)})`; } };
+  const alive = input.sourcePid === undefined ? "(unknown)" : (() => { try { process.kill(input.sourcePid!, 0); return "running"; } catch { return "gone"; } })();
+  const gate = input.sourcePid === undefined ? "(unknown)" : existsSync(join(home, "finish-fake", String(input.sourcePid))) ? "still waiting (the engine never read it)" : "consumed";
+  try {
+    return [
+      `--- bots --- source ${pick(input.sourceBotId)} recipient ${pick(input.recipientBotId)}`,
+      `--- source engine pid ${input.sourcePid ?? "?"}: ${alive}; finish gate ${gate}`,
+      `--- queue rows of the source conversation ---`, query("SELECT * FROM pending_delegations WHERE source_thread_id = ?", input.sourceThreadId),
+      `--- queue rows naming the recipient ---`, query("SELECT * FROM pending_delegations WHERE to_bot_id = ?", input.recipientBotId),
+      `--- source native log ---`, native(input.sourceThreadId),
+      `--- recipient native log ---`, native(input.recipientThreadId),
+      `--- source last messages ---`, query("SELECT at, role, kind, substr(json, 1, 240) AS json FROM messages WHERE thread_id = ? ORDER BY at DESC LIMIT 6", input.sourceThreadId),
+      `--- recipient last messages ---`, query("SELECT at, role, kind, substr(json, 1, 240) AS json FROM messages WHERE thread_id = ? ORDER BY at DESC LIMIT 6", input.recipientThreadId),
+      `--- stderr about hand-offs and dispatch ---`, tail(stderr.split("\n").filter((line) => /delegat|handoff|hand-off|dispatch|queue|admission/i.test(line)).join("\n"), 3_000),
+    ].join("\n");
+  } finally { db?.close(); }
+};
+
 /** Obtain authority from an actual active fake-provider mount, never a test
  * mint endpoint or a bearer retained after stopping/changing its source. */
 export const startInternalFixtureTurn = async (botId: string, groupId?: string, text = "hold this fixture turn", send: typeof api = desktopApi) => {
@@ -316,6 +382,7 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
   const modelSelection = { instanceId: "claude", model: "claude-sonnet-5" };
   expect((await desktopApi("PATCH", (selected.tasks?.length ?? 1) > 1 ? `/api/bots/${botId}/tasks/${selected.threadId}` : `/api/bots/${botId}`, { modelSelection })).status).toBe(200);
   rmSync(fakeClaudeDump, { force: true });
+  const mark = fixtureDumpMark();
   const target = groupId ? `/api/groups/${groupId}/messages` : `/api/bots/${botId}/messages`;
   const started = await send("POST", target, groupId ? { text } : { text, threadId: selected.threadId });
   expect(started.status).toBe(202);
@@ -328,16 +395,9 @@ export const startInternalFixtureTurn = async (botId: string, groupId?: string, 
   // ignores it.
   let dump: { pid: number; prompt?: unknown; mcpConfig: { mcpServers: Record<string, { args: string[]; env: Record<string, string> }> } };
   try {
-    // The dump file is shared by every turn in this server. Under load a
-    // previous test's bot can launch its engine after the rmSync above and
-    // leave ITS dump here; that is not this turn's launch, so discard it and
-    // keep waiting for the one that names this bot.
-    for (const deadline = Date.now() + 15_000; ; ) {
-      dump = await readJsonFileWhenReady(fakeClaudeDump, Math.max(1_000, deadline - Date.now()));
-      if (fixtureTurnBotId(dump) === botId) break;
-      if (Date.now() >= deadline) break;
-      rmSync(fakeClaudeDump, { force: true });
-    }
+    // Every launch writes its own dump file, so this turn's launch is found by the bot it names however many other launches
+    // (another test's warm engine, a one-shot call) write theirs meanwhile; nothing is deleted, so nothing of this turn's is lost.
+    dump = await waitForBotDump<typeof dump>(botId, mark, 15_000);
   } catch (error) {
     // The fixture engine never reported a launch: say what the harness was
     // doing instead of "matcher did not succeed", so a stalled dispatch is
@@ -462,6 +522,8 @@ beforeAll(async () => {
   home = mkdtempSync(join(tmpdir(), "murage-api-test-"));
   staticDir = join(home, "static");
   fakeClaudeDump = join(home, "fake-claude-dump.json");
+  fakeClaudeDumpDir = join(home, "fake-claude-dumps");
+  mkdirSync(fakeClaudeDumpDir);
   mkdirSync(join(home, "finish-fake"));
   // Only the local fake Claude can run; every other fixture slot is a shadow.
   mkdirSync(join(home, ".murage"), { recursive: true });
@@ -727,6 +789,7 @@ beforeAll(async () => {
       MURAGE_COMPANION_TOKEN: COMPANION_TOKEN,
       FAKE_CLAUDE_MODE: "hang",
       FAKE_CLAUDE_DUMP: fakeClaudeDump,
+      FAKE_CLAUDE_DUMP_DIR: fakeClaudeDumpDir,
       // a finished turn's process stays warm for the next turn: dump every turn
       FAKE_CLAUDE_DUMP_EACH_TURN: "1",
       FAKE_CLAUDE_FINISH_GATE_DIR: join(home, "finish-fake"),

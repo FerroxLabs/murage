@@ -27,7 +27,7 @@ vi.hoisted(() => { process.env.MURAGE_TEST_FAKE_FLUX_BROKER = "1"; });
 import { z } from "zod";
 import { openSse } from "./testing/sse.ts";
 import { intakeChips, intakeNarrowPickChips, type IntakeCandidate, type IntakeCardData } from "../shared/intake-turn.ts";
-import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, desktopTicketed, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, api, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, desktopApi, fakeClaudeDump, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes } from "./testing/index-harness.ts";
+import { BASE, DESKTOP_HEADERS, DESKTOP_QUERY, DESKTOP_SECRET, desktopTicketed, FAKE_CLAUDE_CLI, PAIRED_PHONE, PORT, SERVER_DIR, STATE_ONLY_SELECTION, api, boxStubPort, browserMount, browserNativeEvents, browserSession, connectorAliasFixture, delayedJsonBody, desktopApi, fakeClaudeDump, fixtureDumpMark, handoffDiagnostics, home, readJsonFileWhenReady, setConnectorAliasFixture, startInternalFixtureTurn, stopFixtureTurn, storedMessageCount, turnMemoryOutcomes, waitForBotDump } from "./testing/index-harness.ts";
 import { browserEngineRefusesHost } from "./testing/index-harness.ts";
 
 
@@ -2207,10 +2207,12 @@ describe("internal capability authority", () => {
       expect(queued.status).toBe(200);
       expect(await queued.json()).toMatchObject({ queued: true, taskId: expect.any(String) });
       // Natural source completion is the production queue-drain trigger.
-      rmSync(fakeClaudeDump, { force: true });
+      const mark = fixtureDumpMark();
       writeFileSync(join(home, "finish-fake", String(turn.dump.pid)), "finish");
       stage("await naturally dispatched recipient mount");
-      const recipientDump = await readJsonFileWhenReady<typeof turn.dump>(fakeClaudeDump);
+      // The recipient's own launch, whatever else launches meanwhile; when none comes, the failure carries the queue, both bots and the dispatch logs.
+      const recipientDump = await waitForBotDump<typeof turn.dump>(recipient.id, mark, 20_000, () => handoffDiagnostics({
+        sourceBotId: source.id, sourceThreadId: source.threadId, recipientBotId: recipient.id, recipientThreadId: recipient.threadId, sourcePid: turn.dump.pid }));
       expect(recipientDump.pid).not.toBe(turn.dump.pid);
       const env = recipientDump.mcpConfig.mcpServers.agents.env;
       expect(env.MURAGE_BOT_ID).toBe(recipient.id);
