@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { fixtureRuns, toFiles, WANT } from "./fuigo-bump-fixture.mjs";
-import { checkRealTurns, commitFiles, hunksOf, callExpressions, machineHeader, mergeCheck, movePin, parseArgs, parseHashNote, readRealTurns, REAL_TURN_OSES, REAL_TURN_STEPS, WINDOWS_STEPS } from "./fuigo-bump.mjs";
+import { checkRealTurns, commitFiles, hunksOf, callExpressions, machineHeader, mergeCheck, movePin, parseArgs, parseHashNote, parseReviewed, protocolChanges, readRealTurns, REAL_TURN_OSES, REAL_TURN_STEPS, WINDOWS_STEPS } from "./fuigo-bump.mjs";
 
 const dirs = [];
 afterEach(() => { for (const dir of dirs.splice(0)) removeTempDirSync(dir); });
@@ -24,6 +24,23 @@ describe("fuigo-bump", () => {
     const [first, second] = hunksOf("diff\n@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d\n");
     expect(first.sha1).not.toBe(second.sha1);
     expect(hunksOf("diff\n@@ -1 +1 @@\n-a\n+B\n")[0].sha1).not.toBe(first.sha1);
+  });
+
+  it("a protocol file passes only when every hunk is reviewed against a named ruling (FUIGO-1038-TRUST-ADDITIVE)", () => {
+    const diff = "diff\n@@ -1 +1 @@\n-a\n+b\n@@ -9 +9 @@\n-c\n+d\n";
+    const [first, second] = hunksOf(diff);
+    const ruled = parseReviewed(`${first.sha1} p.rs FUIGO-1038-TRUST-ADDITIVE\n${second.sha1} p.rs FUIGO-1038-TRUST-ADDITIVE\n`);
+    expect(protocolChanges({ "p.rs": diff, "q.rs": "", "r.rs": "\n" }, ruled)).toEqual([]);
+    // A plain reviewed line (no ruling) does not open a protocol file, nor does one hunk short.
+    expect(protocolChanges({ "p.rs": diff }, parseReviewed(`${first.sha1} p.rs\n${second.sha1} p.rs\n`))).toEqual(["p.rs"]);
+    expect(protocolChanges({ "p.rs": diff }, parseReviewed(`${first.sha1} p.rs FUIGO-1038-TRUST-ADDITIVE\n`))).toEqual(["p.rs"]);
+    // A ruling for the same hunk text in another file does not carry over, and rulings for both files can sit together.
+    expect(protocolChanges({ "q.rs": diff }, ruled)).toEqual(["q.rs"]);
+    const both = parseReviewed([first, second].flatMap((hunk) => ["p.rs", "q.rs"].map((path) => `${hunk.sha1} ${path} FUIGO-1038-TRUST-ADDITIVE`)).join("\n"));
+    expect(protocolChanges({ "p.rs": diff, "q.rs": diff }, both)).toEqual([]);
+    // Any edit to a ruled hunk is a new hunk; a change with no hunk at all (binary, mode, rename) still stops.
+    expect(protocolChanges({ "p.rs": diff.replace("+d", "+D") }, ruled)).toEqual(["p.rs"]);
+    expect(protocolChanges({ "p.rs": "diff --git a/p.rs b/p.rs\nBinary files differ\n" }, ruled)).toEqual(["p.rs"]);
   });
 
   it("reads whole call expressions, nested parens included", () => {
