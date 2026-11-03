@@ -5,6 +5,7 @@ import { requireMemoryOwner } from "./authority.ts";
 import { memoryState } from "./repository.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { withMemoryInferenceLease, type MemoryInferenceObserver } from "./extract.ts";
+import { learningGate, sampleLearningFence } from "./learning-send.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { evaluateProcedureWithGepa } from "./gepa-evaluator.ts";
 import { PROCEDURE_CORPUS_DESCRIPTION, procedureFrozenSections, procedureOutcomeCorpus, procedureOutcomeEvaluator } from "./gepa-procedure-corpus.ts";
@@ -112,9 +113,11 @@ export function createProcedureEvaluator(options:ProcedureEvaluatorBridgeOptions
         const session={schema:1,reviewId:snapshot.requestId,snapshotDigest:procedureSnapshotDigest(snapshot),seedHash:procedureCandidateHash(instruction),grantId:grant.id,modelIdentity:selected,workerDigest:worker.workerDigest,evidence:handles(snapshot)};
         transaction(()=>{const existing=database().prepare("SELECT state FROM memory_scope_bindings WHERE id=?").get(sessionId);if(existing&&existing.state!=="granted")throw Error("PROCEDURE_EVALUATION_REVOKED");const prior=load<typeof session>(sessionId,SESSION);if(prior&&hash(prior)!==hash(session))throw Error("PROCEDURE_EVALUATION_IDENTITY_CHANGED");persist(sessionId,snapshot.target.scopeId,SESSION,session);});
         const extractor=options.resolveExtractor(selected);if(!extractor)throw gepaCallNotStarted();
+        // sampled after this lease's own session write and before the snapshot's words go into calls; one gate per call over it
+        const fenceAt=sampleLearningFence();
         const assertCurrent=(value:ProcedureReviewSnapshot)=>{if(signal.aborted||procedureSnapshotDigest(value)!==procedureSnapshotDigest(snapshot)||!options.host.canPublish(snapshot)||!grantFor(snapshot,instruction)||!load(sessionId,SESSION))throw Error("PROCEDURE_EVALUATION_REVOKED");};
         const request=async(text:string,messages:ReadonlyArray<Readonly<{role:string;content:string}>>,callSignal:AbortSignal,purpose:"evaluation"|"reflection"="evaluation")=>{
-          assertCurrent(snapshot);const result=await lease.request(extractor,text,purpose==="reflection"?8000:2000,callSignal,messages,purpose);if(result.status==="notStarted")throw gepaCallNotStarted();return {text:result.text,costUsd:null};
+          assertCurrent(snapshot);const result=await lease.request(extractor,text,purpose==="reflection"?8000:2000,callSignal,messages,purpose,undefined,learningGate(purpose,fenceAt,{},{checks:[()=>assertCurrent(snapshot)]}));if(result.status==="notStarted")throw gepaCallNotStarted();return {text:result.text,costUsd:null};
         };
         return await (options.evaluate??evaluateProcedureWithGepa)(snapshot,{command:worker.command,workerDigest:worker.workerDigest,evaluatorId:`procedure-outcomes-v1:${hash(selected).slice(0,24)}`,seedInstruction:instruction,corpus,
           budget:{totalUsd:null,evaluationPerCaseUsd:null,reflectionUsd:null,authorityReference:grant.id},evaluate:procedureOutcomeEvaluator(instruction,snapshot.target.kind as "skill"|"routine",request),assertCurrent,

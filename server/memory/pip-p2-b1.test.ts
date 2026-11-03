@@ -151,6 +151,9 @@ describe("PIP kind list", () => {
       // forgetting a record blanks the text of its newest versions in the commit; the subquery selects rowids by record id (a point
       // lookup, an administrative write); no row, kind or text is read out or handed to a model or the owner
       "memory/consolidate.ts": 3, "memory/eligibility.ts": 3, "memory/evolution-forgetting.ts": 2, "memory/forget.ts": 3, "memory/identity.ts": 8, "memory/import.ts": 1, "memory/index-reader.ts": 1,
+      // +3 MEM-QUEUED-LEARNING-FENCE (r1 H1): the send gate re-checks each held `current` row by id and version (state, latest
+      // version, and the text only to compare its digest under the write lock); point lookups; nothing read goes to a model or the owner
+      "memory/learning-send.ts": 3,
       "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 11, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +2 and owner-tail-index +3 (msearch2): owner search reads the never-indexed kinds through the owner-tail table in bounded slices;

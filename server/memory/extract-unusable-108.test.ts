@@ -4,6 +4,7 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { extractCandidates, memoryExtractionMessages, reportMemoryUsage, requestMemoryExtraction, type TextOnlyExtractor } from "./extract.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { EXTRACTION_FAILURE_REASONS, EXTRACTION_SUMMARY_MS, extractionOutcomes } from "./extraction-outcomes.ts";
 import { resolveLearningConnection, resolveMemoryExtractor } from "./extractor-connections.ts";
 
@@ -27,7 +28,7 @@ const fake = (reply: () => string | Promise<string>, id = "fixture", model = "fl
   reportMemoryUsage({ prompt_tokens: 10, completion_tokens: 5 });
   return reply();
 }), { learningConnection: id, learningModel: () => model });
-const run = (extractor: TextOnlyExtractor) => extractCandidates(source, extractor, signal());
+const run = (extractor: TextOnlyExtractor) => extractCandidates(source, extractor, signal(), undefined, undefined, { fence: openLearningGate() });
 const envelope = (content: unknown = "[]", extra: Record<string, unknown> = {}) => ({
   usage: { prompt_tokens: 10, completion_tokens: 2000 },
   choices: [{ finish_reason: "stop", message: { content }, ...extra }],
@@ -36,7 +37,7 @@ function http(body: unknown, status = 200) {
   const fetcher = vi.fn(async () => new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
   vi.stubGlobal("fetch", fetcher);
   const extractor: TextOnlyExtractor = (text, maximum, abort, dispatch) => requestMemoryExtraction(
-    { url: "https://fixture.invalid/v1", apiKey: "PRIVATE_KEY_SENTINEL", model: "flux-fast" }, text, maximum, abort, dispatch?.messages,
+    { url: "https://fixture.invalid/v1", apiKey: "PRIVATE_KEY_SENTINEL", model: "flux-fast" }, text, maximum, abort, dispatch?.messages, dispatch?.fence,
   );
   extractor.learningConnection = "@murage/flux-fast"; extractor.learningModel = () => "flux-fast";
   return { extractor, fetcher };
@@ -90,7 +91,7 @@ it.each([401, 403, 429, 500])("classifies HTTP status %s without logging the res
 it("classifies transport exceptions and never prints an arbitrary Error message or name", async () => {
   const error = new Error("PRIVATE_ERROR_SENTINEL"); error.name = "PRIVATE_REPLY_SENTINEL";
   vi.stubGlobal("fetch", vi.fn(async () => { throw error; }));
-  const extractor: TextOnlyExtractor = (text, maximum, abort) => requestMemoryExtraction({ url: "https://fixture.invalid", apiKey: "fake", model: "fake" }, text, maximum, abort);
+  const extractor: TextOnlyExtractor = (text, maximum, abort, dispatch) => requestMemoryExtraction({ url: "https://fixture.invalid", apiKey: "fake", model: "fake" }, text, maximum, abort, undefined, dispatch?.fence);
   await run(extractor); expectReason("transport-error");
 });
 
@@ -128,7 +129,7 @@ it.each([0, 1])("omits expired retryAfter on transport failure %s ms after backo
 it("backs off after five failures, doubles to one hour, skips reservations, and resets after success", async () => {
   let reply = "PRIVATE_REPLY_SENTINEL";
   const extractor = fake(() => reply), charged = vi.fn();
-  const attempt = () => extractCandidates(source, extractor, signal(), undefined, charged);
+  const attempt = () => extractCandidates(source, extractor, signal(), undefined, charged, { fence: openLearningGate() });
   for (let i = 0; i < 5; i++) expect(await attempt()).toMatchObject({ status: "deferred", reason: "extraction-incomplete" });
   expect(charged).toHaveBeenCalledTimes(5);
   let calls = 5;

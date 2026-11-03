@@ -1892,6 +1892,24 @@ describe("Store task working folder", () => {
     expect(store.pinTaskCwd(bot.id, next.threadId)).toBe("/tmp/project-b");
   });
 
+  it("(desk rule) the owner stamp follows the bot's folder, never Murage's desk, and a cleared folder drops it", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    // no bot folder: the fallback desk is Murage's, not the owner's
+    expect(store.pinTaskCwd(bot.id, bot.threadId, "/data/workspaces/b/threads/t")).toBe("/data/workspaces/b/threads/t");
+    expect(store.taskByThread(bot.id, bot.threadId)?.cwdOwnerSet).toBeUndefined();
+    // a folder picked for the conversation is the owner's; clearing it drops the stamp
+    store.patchTask(bot.id, bot.threadId, { cwd: "/tmp/picked", cwdOwnerSet: true });
+    expect(store.taskByThread(bot.id, bot.threadId)?.cwdOwnerSet).toBe(true);
+    store.patchTask(bot.id, bot.threadId, { cwd: "/data/workspaces/b/threads/t", cwdOwnerSet: undefined });
+    expect(store.taskByThread(bot.id, bot.threadId)).not.toHaveProperty("cwdOwnerSet");
+    // the bot's own folder copied at pin time is the owner's
+    store.patchBot(bot.id, { cwd: "/tmp/project-a" });
+    const next = store.createTask(bot.id, "second")!;
+    expect(store.pinTaskCwd(bot.id, next.threadId, "/data/workspaces/b/threads/n")).toBe("/tmp/project-a");
+    expect(store.taskByThread(bot.id, next.threadId)?.cwdOwnerSet).toBe(true);
+  });
+
   it("pins the default (null) when the bot has no folder, so a later folder can't move a live session", () => {
     const store = new Store(selection);
     const bot = store.createBot();
