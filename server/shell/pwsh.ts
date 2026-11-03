@@ -305,6 +305,8 @@ function lexPwsh(s: string): Lexed {
     }
     if (c === "`") {
       if (s[i + 1] === "\n") { i += 2; continue; }
+      // a backtick before CRLF continues the line as one before LF does (`Remove-Item -Force `CRLF$env:X)
+      if (s[i + 1] === "\r" && s[i + 2] === "\n") { i += 3; continue; }
       lit(s[i + 1] ?? "", "none");
       i += 2;
       continue;

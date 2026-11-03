@@ -100,3 +100,84 @@ describe("QueuedComposerMessages: a refused send", () => {
     expect(html).not.toContain("Cancel queued message");
   });
 });
+
+// 1.0.14 QUEUED-RAW-ATTACHMENT-TAG: the queued line holds the composed prompt
+// (composeMessage adds the attachment tags). It shows what the transcript
+// bubble shows: the words, then images and files as chips. The tag and the
+// local path never reach the screen, and the stored text is left as it was.
+describe("QueuedComposerMessages: attachments in a queued line", () => {
+  const imagePath = "/home/user/.mybot/attachments/3f2a9c1e-b7d4.png";
+  const filePath = "/home/user/Documents/brief-notes.pdf";
+
+  it("shows an attached image as a thumbnail, never the tag or the path", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q1", text: `look at this\n\n<attached-image path="${imagePath}" />` }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("look at this");
+    expect(html).toContain("<img");
+    expect(html).toContain("/api/attachments/3f2a9c1e-b7d4.png");
+    expect(html).not.toContain("attached-image");
+    expect(html).not.toContain(imagePath);
+    expect(html).toContain("Queued for the next turn");
+  });
+
+  it("shows an attached file as a chip with its name, never the tag or the path", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q2", text: `<attached-file path="${filePath}" />` }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("brief-notes.pdf");
+    expect(html).not.toContain("attached-file");
+    expect(html).not.toContain(filePath);
+    // only a chip: no empty dashed bubble under it
+    expect(html).not.toContain("border-dashed");
+  });
+
+  it("hides the pasted-text wrapper and keeps the pasted words", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q3", text: `see below\n\n<pasted-text index="1">\nline one\n</pasted-text>` }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("see below");
+    expect(html).toContain("line one");
+    expect(html).not.toContain("pasted-text");
+  });
+
+  it("leaves plain text as typed", () => {
+    const text = "also run the tests\n  and the linter";
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q4", text }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain(text);
+    expect(html).not.toContain("<img");
+  });
+
+  it("changes only what is drawn: the item keeps its composed text for Send again and Inject now", () => {
+    const text = `look\n\n<attached-image path="${imagePath}" />`;
+    const item = { queueId: "q5", text, refused: { notice: "refused" as const } };
+    renderToStaticMarkup(createElement(QueuedComposerMessages, { items: [item], onCancel: vi.fn(), onResend: vi.fn() }));
+    expect(item.text).toBe(text);
+    // Send again hands the original item, composed text and all, to the handler
+    const onResend = vi.fn();
+    const found: Array<{ children?: unknown; onClick?: () => void }> = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (!node || typeof node !== "object" || !("props" in node)) return;
+      const props = (node as { props: { children?: unknown; onClick?: () => void } }).props;
+      if (props.onClick && props.children === "Send again") found.push(props);
+      walk(props.children);
+    };
+    walk(QueuedComposerMessages({ items: [item], onCancel: vi.fn(), onResend }));
+    expect(found).toHaveLength(1);
+    found[0]!.onClick!();
+    expect(onResend).toHaveBeenCalledWith(item);
+    expect(onResend.mock.calls[0]![0].text).toBe(text);
+    // wiring checks: Send again re-sends the stored entry's text, not anything the chip drew
+    expect(composerSource).toMatch(/type: "send", botId: bot\.id, text: again\.text/);
+    expect(composerSource).toMatch(/type: "sendGroup", groupId: group\.id, text: again\.text/);
+    // Inject now names queue ids; the server keeps the words it was sent
+    expect(composerSource).toContain("queueIds: queuedMessages.map((entry) => entry.queueId)");
+  });
+});

@@ -23,7 +23,7 @@ import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.t
 // instances only; the host desktop stays off (no approval channel in print
 // mode, ever).
 import { registerIntake } from "../harness/intake.ts";
-import { awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
+import { awaitCliRootClose, awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, execCli, killCliTree, spawnCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused } from "../procs.ts";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -446,7 +446,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     try { removeAntigravityLegacyMcpEntries(realHomeOf(env)); } catch { /* the file keeps its bytes */ }
     const listeners = new Set<RuntimeEventListener>();
     // one active turn per thread; a second send while busy is a caller bug
-    const active = new Map<string, { stop: () => void; turnId: string; asks: Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean> }>();
+    const active = new Map<string, { stop: () => void; close: () => void; turnId: string; asks: Map<string, (behavior: "allow" | "deny", source: "user" | "timeout" | "system", message?: string) => boolean> }>();
     const pending = new Set<string>();
     // a Stop for a turn still reading the engine version, before it starts
     const earlyStops = new Set<string>();
@@ -488,6 +488,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       const stopped = await Promise.all([...children].map(async (child) => {
         killCliTree(child);
         const confirmed = await awaitCliTreeStopped(child);
+        // CLOSE-STOP-1014: on Windows the empty job confirms the tree gone before the root's close lands, and the finalizer that
+        // ends the turn is registered by that close: wait for it (bounded), so dispose never clears its listeners ahead of the end.
+        if (confirmed && !closeFinalizers.has(child)) await awaitCliRootClose(child);
         if (confirmed) closeFinalizers.get(child)?.();
         return confirmed;
       }));
@@ -599,6 +602,9 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // Set when Murage stopped this turn (interruptTurn, stopAll). The
       // child's exit is then the user's Stop, not a crash (STOP1).
       let stopRequested = false;
+      // Set when dispose (quit, restart, reload) stopped this turn and nobody asked: the child's exit is then the engine
+      // closing, never the owner's Stop (ACP's rule, CLOSE-STOP-1014). Never set by interruptTurn or stopAll.
+      let closing = false;
       // A step the chat does not show (planning, a response still being
       // written) is still the turn working: report it, so the thread's
       // silence watch never mistakes a long model step for a hang. A step
@@ -606,7 +612,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // state), and nothing is reported once the turn settled or was stopped.
       const shownSteps = new Set<string>();
       const working = (step?: string) => {
-        if (settled || stopRequested || askStopHalted) return;
+        if (settled || stopRequested || closing || askStopHalted) return;
         if (step !== undefined) {
           if (shownSteps.has(step)) return;
           if (shownSteps.size >= 1_000) shownSteps.clear();
@@ -808,6 +814,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         stopRequested = true;
         stop();
       };
+      /** Dispose's own end: the child is stopped as for a Stop, but the turn ends as the engine closing. */
+      const closeStop = () => {
+        closing = true;
+        stop();
+      };
       armPostSettleCleanup = () => {
         if (childClosed || postSettleReaper) return;
         // A normal agy process exits immediately after `result`. Give it a
@@ -844,7 +855,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           case "step_update": {
             // A tool agy finished (DONE) or failed (ERROR) that never reached the relay ran, or started, without
             // Murage's check: the turn stops at once. A call the relay denied is answered, so its ERROR is not one.
-            if (relay && payload.step_type === "tool" && (payload.state === "DONE" || payload.state === "ERROR") && !relay.answered(`${payload.conversation_id ?? o.conversation_id ?? conversationId}:${payload.step_index}`) && !settled && !stopRequested) {
+            if (relay && payload.step_type === "tool" && (payload.state === "DONE" || payload.state === "ERROR") && !relay.answered(`${payload.conversation_id ?? o.conversation_id ?? conversationId}:${payload.step_index}`) && !settled && !stopRequested && !closing) {
               console.warn(`${ENGINE} relay: ${String(payload.tool_name ?? "a tool")} ran without Murage's check; stopping the turn`);
               const itemId = `relay-skipped-${turnId}`;
               emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: ANTIGRAVITY_HOOK_SKIPPED, toolKind: "notice" });
@@ -859,7 +870,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
                 emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
                 // A tool that is not a read finished on an Ask turn: the hook did not hold. Stop the child at once; the
                 // turn then ends with the note, as Murage's Ask stop and not as the owner's Stop (haltForAskStop).
-                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !askStopHalted) {
+                if (askStop && !(ANTIGRAVITY_ASK_READS as readonly string[]).includes(String(payload.tool_name ?? "")) && !settled && !stopRequested && !closing && !askStopHalted) {
                   askStopRefused = true;
                   console.warn(`${ENGINE} ask stop: ${String(payload.tool_name ?? "a tool")} ran on an Ask turn; stopping the turn`);
                   haltForAskStop();
@@ -911,6 +922,12 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
             // requested stop is the user's Stop, not an engine failure:
             // same cancelled state as the close path (STOP1).
             const stoppedResult = stopRequested && payload.status !== "SUCCESS";
+            // A failed result agy writes while dispose closes it (nobody asked) is the engine closing, as ACP ends it.
+            if (closing && !stopRequested && !askStopHalted && payload.status !== "SUCCESS") {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: engineClosedLine(ENGINE, null) });
+              settle(false, "exit_before_result");
+              break;
+            }
             // After the Ask stop halted the child, its result (whatever its status) ends the turn as that stop.
             if (payload.status !== "SUCCESS" && !stoppedResult && !askStopHalted) {
               const errorMessage = antigravityResultFailure(payload);
@@ -1001,7 +1018,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         });
       });
 
-      active.set(threadId, { stop: requestStop, turnId, asks: relayAsks });
+      active.set(threadId, { stop: requestStop, close: closeStop, turnId, asks: relayAsks });
       pending.delete(threadId);
 
       emit({ ...base(threadId, turnId), type: "turn.started" });
@@ -1263,7 +1280,8 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       generateText,
       dispose: async () => {
         disposed = true;
-        for (const { stop } of active.values()) stop();
+        // close, not stop: a quit or restart alone never reads as the owner's Stop (CLOSE-STOP-1014)
+        for (const { close } of active.values()) close();
         await reapChildren(); // retain listeners on uncertainty
         listeners.clear();
       },
