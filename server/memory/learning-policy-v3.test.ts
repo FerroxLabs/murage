@@ -1,6 +1,6 @@
 // 1.0.3 I0 (SETTINGS-LANES.md): learning settings v3, the conversions and the current-month seed.
 import { mkdirSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import {
@@ -121,6 +121,21 @@ describe("seed-from-daily-ledger", () => {
       put("extract-budget:2026-09-30", "extract-budget", { input: 100, output: 10 });
       put("extract-budget:2026-10-01", "extract-budget", { input: 200, output: 20 });
       expect(learningSpendSeed(database(), "2026-10")).toEqual({ input: 200, output: 20 });
+    });
+
+    it("LEARNING-POLICY-INDEX: the seed reads the day ledgers through memory_bindings_subject, never a scan of every binding", () => {
+      put("extract-budget:2026-10-01", "extract-budget", { input: 200, output: 20 });
+      // a binding of another subject type with the same subject id is not a ledger (extract.ts writes them all as 'system')
+      database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'bot','extract-budget',0,'granted',?)").run("extract-budget:2026-10-02", "scope-1", JSON.stringify({ input: 5, output: 5 }));
+      const db = database(), seen: string[] = [];
+      const prepare = db.prepare.bind(db);
+      const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => { seen.push(sql); return prepare(sql); });
+      try { expect(learningSpendSeed(db, "2026-10")).toEqual({ input: 200, output: 20 }); } finally { spy.mockRestore(); }
+      const read = seen.find(sql => sql.includes("memory_scope_bindings"));
+      expect(read).toBeDefined();
+      const plan = db.prepare(`EXPLAIN QUERY PLAN ${read}`).all().map(row => String(row.detail)).join(" | ");
+      expect(plan).toContain("USING INDEX memory_bindings_subject");
+      expect(plan).not.toMatch(/SCAN memory_scope_bindings/);
     });
 
     it("v10-v11-fresh-install: no day rows, nothing written, the ledger reads 0", () => {
