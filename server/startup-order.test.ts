@@ -50,6 +50,19 @@ describe("cold start ordering in server/index.ts", () => {
     expect(at("await bootEngineChoice({ hasBots: store.bots.length > 0")).toBeLessThan(listen);
   });
 
+  it("a remembered Fuigo/flux-auto choice with the key removed never reaches a new bot (1.0.15 BIRTH-FUIGO)", () => {
+    // The remembered file is read only when bots exist (default-engine.ts bootEngineChoice), and then no new bot is a first bot: birth
+    // copies the Chief and never reads bootSelection. The desktop first-bot fallback (r3) gets the WHOLE Fuigo list, so birth refuses a
+    // reading that names a Fuigo which cannot answer (Store row: birth-selection.test.ts "a probe reading that names a Fuigo ...").
+    const engine = readFileSync(new URL("./default-engine.ts", import.meta.url), "utf8");
+    expect(engine).toContain("const saved = opts.hasBots ? readRememberedEngine(opts.file) : null;");
+    expect(index).toContain('new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, ...(birthOnDesktop ? { firstBot: () => bootSelection } : {}) }');
+    const store = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
+    const birth = store.slice(store.indexOf("  birthSelection(): ModelSelection {"), store.indexOf("  workspaceChief(): BotRecord | null {"));
+    expect(birth).toMatch(/if \(!source && this\.birth\.copyChief && this\.birth\.firstBot\)/);
+    expect(birth).toContain("!allFuigo.includes(probed.instanceId)");
+  });
+
   it("starts the jobs that do not gate correctness after listen, not before", () => {
     for (const call of ["startModelCatalogRefresh(async", "calendarCalls.start();", "cleanupStaleAttachmentPartials(Date.now(), { startup: true });", "sweepArtifactCandidates(join(DATA_DIR, \"artifact-files\"));", "void trackBootJob(resumePendingPublicationsInSlices())", "sweepBackupWork(DATA_DIR)"]) {
       const first = at(call, index.indexOf("const store = new Store("));

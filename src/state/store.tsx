@@ -267,8 +267,9 @@ export interface SecretRequestCardData {
 export interface Message {
   /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
   botCall?: import("@/lib/bot-calls").BotCallMark;
-  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
-  memoryNote?: "export-paste";
+  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
+   * "without-memory" (DELEGATION-HOLD F5): an activity row saying a reply ran without remembered context; shown with Tool calls off. */
+  memoryNote?: "export-paste" | "without-memory";
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -308,7 +309,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string } };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** a steered message the bot has not confirmed yet; cleared when it does */
@@ -566,6 +567,8 @@ export interface TaskUsage {
 
 export interface Bot {
   id: string;
+  /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
+  engineRev?: number;
   /** 1.0.9 phone tools: what this bot may do on a paired phone. Absent key = off. Present only when the host offers phone tools. */
   phoneApps?: import("../../shared/phone-apps").PhoneApps;
   threadId: string;

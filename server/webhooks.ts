@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
+import { escapeMarkers, fencePageText } from "./browser-untrusted.ts";
 import { DATA_DIR } from "./config.ts";
 import type { RoutineRunOn } from "./routines.ts";
 import { schemaIssue, type JsonValue } from "./schema.ts";
@@ -286,33 +287,45 @@ function taskFromPayload(payload: JsonValue): string {
   return task.trim().slice(0, 20_000);
 }
 
+/** One header value on one line: a sender cannot start a new metadata line inside the event fence. */
+function headerLine(value: string, max: number): string {
+  return value.replace(/[\r\n\u2028\u2029]+/g, " ").slice(0, max);
+}
+
+/** The task the webhook-secret holder sent, in its own block. The id is minted per delivery from randomBytes (never the
+ * delivery id, which the sender picks) and the body is marker-escaped, so the sender cannot write the closer. Not a
+ * page-content fence: page-content is data on every bot, and this block is the run's instruction. */
+function webhookTaskBlock(task: string): string[] {
+  const id = randomBytes(8).toString("hex");
+  return [`<<webhook-task id=${id}>>`, escapeMarkers(task), `<<end webhook-task id=${id}>>`];
+}
+
 function eventPrompt(trigger: StoredWebhookTrigger, event: WebhookEvent, receivedAt: number, deliveryId: string): string {
+  // Every sender-controlled field (headers, delivery id, payload) goes into one random-id fence per delivery;
+  // fencePageText does the only escape of that body.
   const metadata = [
     `Received: ${new Date(receivedAt).toISOString()}`,
-    `Delivery ID: ${deliveryId}`,
-    event.eventName && `Event: ${event.eventName.slice(0, 200)}`,
-    event.contentType && `Content-Type: ${event.contentType.slice(0, 200)}`,
-    event.userAgent && `Sender: ${event.userAgent.slice(0, 300)}`,
+    event.eventName && `Event: ${headerLine(event.eventName, 200)}`,
+    event.contentType && `Content-Type: ${headerLine(event.contentType, 200)}`,
+    event.userAgent && `Sender: ${headerLine(event.userAgent, 300)}`,
+    `Delivery ID: ${headerLine(deliveryId, deliveryId.length)}`,
   ].filter(Boolean);
   const configured = trigger.prompt.trim();
   const requestedTask = configured ? "" : taskFromPayload(event.payload);
   const instructionBlock = configured
     ? ["[USER-CONFIGURED WEBHOOK INSTRUCTIONS]", configured, "[/USER-CONFIGURED WEBHOOK INSTRUCTIONS]"]
     : requestedTask
-      ? ["[AUTHENTICATED WEBHOOK TASK]", requestedTask, "[/AUTHENTICATED WEBHOOK TASK]"]
+      ? webhookTaskBlock(requestedTask)
       : [
           "[DEFAULT WEBHOOK INSTRUCTIONS]",
           "Review the incoming event and summarize what happened. Do not take external actions unless the event clearly requires them and existing permissions allow them.",
           "[/DEFAULT WEBHOOK INSTRUCTIONS]",
         ];
+  const eventBody = [...metadata, "", serializePayload(event.payload)].join("\n");
   return [
     ...instructionBlock,
     "",
-    "[UNTRUSTED WEBHOOK EVENT DATA]",
-    ...metadata,
-    "",
-    serializePayload(event.payload),
-    "[/UNTRUSTED WEBHOOK EVENT DATA]",
+    fencePageText(eventBody, { origin: "webhook", kind: "webhook-event" }),
   ].join("\n");
 }
 

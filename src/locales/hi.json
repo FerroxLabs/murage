@@ -3758,6 +3758,11 @@
   "engineSignIn.tryAgain": "फिर से कोशिश करें",
   "engineChatLink.signedIn": "{name} में पहले से साइन इन है।",
   "engineChatLink.setUpTitle": "{name} सेट अप करें",
+  "engineWall.needsOwnAccount": "{name} में साइन इन करने के लिए आपका अपना {name} खाता चाहिए।",
+  "engineWall.useFuigo": "इसके बजाय Fuigo का उपयोग करें",
+  "allChats.back": "वापस",
+  "allChats.backHint": "वापस (Esc)",
+  "allChats.close": "बंद करें",
   "calls.botSettings.canCallMe": "{bot} मुझे कॉल कर सकता है",
   "calls.botSettings.canCallMeHelp": "{bot} आपको नीचे चुनी गई बातों के लिए कॉल करता है। बाकी सब संदेश ही रहता है।",
   "calls.botSettings.neededNow": "जब {bot} को लगे कि अभी आपकी ज़रूरत है",
@@ -3769,5 +3774,6 @@
   "calls.botSettings.quietLine": "{quiet}। इसे “सूचनाएँ” सेटिंग में बदलें।",
   "calls.botSettings.pausedAfterRestore": "रीस्टोर के बाद कॉल रुकी हुई हैं",
   "calls.turnBackOn": "कॉल फिर से चालू करें",
-  "calls.failed": "यह नहीं हो पाया। फिर से कोशिश करें।"
+  "calls.failed": "यह नहीं हो पाया। फिर से कोशिश करें।",
+  "handoff.doneWhen": "पूरा तब माना जाएगा जब: {text}"
 }

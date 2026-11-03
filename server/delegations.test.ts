@@ -328,6 +328,44 @@ describe("drainDelegations", () => {
     expect(runTargetCalls[0]!.message).toContain("[Reason: next step]");
   });
 
+  // U4 S3 (upstream D39): what "finished" means rides on the hand-off row, under its chip, and in the teammate's brief
+  it("carries done_when under the hand-off chip and into the teammate's brief", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", doneWhen: "  the report\n is in Files  ", depth: 0 }, 1);
+    const chip = store.messagesFor(from.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chip?.tool?.doneWhen).toBe("the report is in Files");
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.message).toContain("[Done when: the report is in Files]");
+  });
+
+  it("keeps done_when across a restart and reads a stored over-long value as none", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", doneWhen: "the PR is open", depth: 0 }, 1);
+    _simulateRestart();
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.message).toContain("[Done when: the PR is open]");
+  });
+
+  it("never writes a done_when over 280 characters or one that redaction changes", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "long one", doneWhen: "x".repeat(281), depth: 0 }, 1);
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "secret one", doneWhen: `the key ${"AKIA"}${"ABCDEFGHIJKLMNOP"} works`, depth: 0 }, 1); // secret-scan: fixture
+    const chips = store.messagesFor(from.threadId).filter((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) expect(chip.tool?.doneWhen).toBeUndefined();
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length >= 1);
+    for (const call of runTargetCalls) {
+      expect(call.message).not.toContain("Done when");
+      expect(call.message).not.toContain("AKIA");
+    }
+  });
+
   it("drains and mirrors a detached routine delegation on its source thread", async () => {
     const activeThreadId = from.threadId;
     const routineTask = store.createTask(from.id, "Routine run", false)!;

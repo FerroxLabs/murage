@@ -12,6 +12,7 @@ import {
   stage1, suppressedPhrases, type ClassifierInput, type FeedbackClassifier, type FeedbackDecision, type FeedbackDeps, type LessonPlan, type PriorTurn,
 } from "./feedback.ts";
 import { FEEDBACK_FIXTURE, type FixtureExpect, type FixtureRow } from "./feedback-fixture.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 const NOW = 1_800_000_000_000;
 const HOUR = 3_600_000;
@@ -157,10 +158,12 @@ describe("stage 2 contract", () => {
   it("calls the learning connection with exactly those messages and a small output budget", async () => {
     const seen: unknown[][] = [];
     const extractor = (async (...args: unknown[]) => { seen.push(args); return JSON.stringify(ok); }) as never;
-    const classifier = learningConnectionClassifier(extractor, () => "rev-1");
+    const gate = openLearningGate();
+    const classifier = learningConnectionClassifier(extractor, () => "rev-1", () => gate);
     const input: ClassifierInput = { turn: null, message: "no, use bullets" };
     expect(await classifier.classify(input, new AbortController().signal)).toContain("use bullets");
     expect(seen[0][1]).toBe(300);
+    expect((seen[0][3] as { fence?: unknown }).fence).toBe(gate);
     expect((seen[0][3] as { messages: unknown[]; policyRevision: string }).messages).toEqual(classifierMessages(input));
     expect((seen[0][3] as { policyRevision: string }).policyRevision).toBe("rev-1");
   });

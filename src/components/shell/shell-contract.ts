@@ -72,6 +72,8 @@ export interface NeedsYouPageProps {
 
 export interface HealthPageProps {
   onOpenNeedsYou: () => void;
+  /** Back, the close button and Esc: to the view the person came from, or Today. */
+  onLeave: () => void;
 }
 
 export interface FirstRunTodayCardProps {

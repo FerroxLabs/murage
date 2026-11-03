@@ -34,6 +34,7 @@ import { ReleasedText, type EgressOrigin } from "./released-text.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { coordinationTraceSchema, MAX_HANDOFFS_PER_TURN, type CoordinationTrace } from "./coordination-budget.ts";
 import { messagedRow, type CommsBus } from "./comms-visibility.ts";
+import { readDoneWhen } from "./done-when.ts";
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import type { ApprovalBus } from "./peer-approval.ts";
@@ -66,6 +67,9 @@ export interface DelegationItem {
   toBotId: string;
   message: string;
   reason?: string;
+  /** U4 S3: what "finished" means for this hand-off, one bounded line the asking bot wrote (server/done-when.ts). Shown under the
+   * hand-off row and carried in the teammate's brief. */
+  doneWhen?: string;
   /** The user already approved this exact peer message while it was still
    * an ask_bot request. If that peer became busy before dispatch, the
    * fallback handoff must not ask them to approve the same action twice. */
@@ -1016,6 +1020,8 @@ export function parsePendingItem(value: unknown): PendingDelegationItem | null {
     toBotId: item.toBotId,
     message: item.message,
     ...(typeof item.reason === "string" ? { reason: item.reason } : {}),
+    // U4 S3: a stored value is read through the same check as a new one (a restored, re-queued or hand-edited row included)
+    ...((): { doneWhen?: string } => { const read = readDoneWhen(item.doneWhen); return read.ok && read.value ? { doneWhen: read.value } : {}; })(),
     depth: Math.max(0, Math.trunc(item.depth!)),
     attempts: Number.isFinite(item.attempts) ? Math.max(0, Math.trunc(item.attempts!)) : 0,
     ...(typeof item.fromBotId === "string" && item.fromBotId ? { fromBotId: item.fromBotId } : {}),
@@ -1170,7 +1176,10 @@ export function queueDelegation(
   const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
   if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
   const senderTurnId = bus.turnOf?.(sourceThreadId) ?? null;
-  const queued: PendingDelegationItem = { ...item, ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
+  // U4 S3: checked again before the row is written, whoever called: only a value that passes is ever stored, shown or briefed
+  const doneWhen = (() => { const read = readDoneWhen(item.doneWhen); return read.ok ? read.value : undefined; })();
+  const { doneWhen: _unchecked, ...rest } = item;
+  const queued: PendingDelegationItem = { ...rest, ...(doneWhen ? { doneWhen } : {}), ...(executionAudience ? { executionAudience } : {}), id, attempts: 0, fromBotId: from.id };
   queued.senderTurnId = senderTurnId;
   // The room request that tracks this handoff and the queue row are accepted together or not at all.
   let inserting = false;
@@ -1194,7 +1203,7 @@ export function queueDelegation(
   appendDelegationRow(bus, sourceThreadId, from.id, {
     role: "bot",
     kind: "activity",
-    tool: { name: label },
+    tool: { name: label, ...(doneWhen ? { doneWhen } : {}) },
     // A room is several bots in one thread: name who delegated.
     ...(bus.store.groupByThread(sourceThreadId) ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
   });
