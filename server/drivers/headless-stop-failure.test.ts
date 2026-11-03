@@ -18,6 +18,8 @@ vi.mock("../procs.ts", async (original) => ({
 
 import { claudeTextOnlyTurn, headlessTextOnlyTurn } from "./headless-text-only.ts";
 import type { TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
 
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
 const SCHEMA = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
@@ -32,8 +34,9 @@ const records = (): Array<{ pid: number; env: Record<string, string> }> =>
   existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];
 const preflight = () => ({ etcRoot: join(base, "etc"), home: join(base, "home"), grokHome: join(base, "home", ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(base, "none.json") });
 const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: "SYS", text: "USER", model: "m", outputSchema: SCHEMA, signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
+  system: fixedPrompt("SYS"), text: "USER", model: "m", outputSchema: SCHEMA, signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
   context: { botId: "b", runId: "run1", family: "lived", attempt: 1 }, ...over,
+  transport: { ...over.transport, gate: openLearningGate("continuity") },
 });
 const cfg = (scenario: string) => ({ engine: "fuigo" as const, cli: process.execPath, cliPrefixArgs: [STUB, `--stub=${scenario}`, `--stub-out=${out}`], tmpBase: join(base, "tmp"), pathValue: "/usr/bin:/bin", fluxKey: "k", preflight: preflight(), postResultGraceMs: 3000 });
 const waitRecord = async () => { for (let i = 0; i < 100 && !records().length; i++) await sleep(50); await sleep(100); pids.push(...records().map((r) => r.pid)); };

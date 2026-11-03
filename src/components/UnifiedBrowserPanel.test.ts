@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { BrowserChoiceRefusal, RemoteDebuggingUpgrade } from "./UnifiedBrowserPanel";
 import { BROWSER_SANDBOX_ENABLE_CODE, BrowserNotRunningNotice, BrowserPanelAlerts, BrowserRestartNotice, BrowserSandboxEnable, browserChoicePatch, MY_BROWSER, MY_CHROME, MyChromeConsent, ProtectedBrowserNotice, USE_MY_CHROME_PATCH, UserChromeRetryNotice, WAITING_FOR_CHROME } from "./UnifiedBrowserPanel";
 import { LINUX_SANDBOX_ENABLE_CODE } from "../../server/browser-sandbox";
 
@@ -14,7 +15,7 @@ describe("Use my Chrome choice", () => {
     expect(browserChoicePatch({ useMyChrome: true, browserTransport: "extension" }, MY_CHROME)).toEqual({});
     expect(browserChoicePatch({}, MY_BROWSER)).toBeNull();
   });
-  it("lets the server pick Murage for Chrome or remote debugging", () => {
+  it("lets the server pick Murage for Chrome or its setup", () => {
     expect(USE_MY_CHROME_PATCH).toEqual({ useMyChrome: true, browserTransport: "auto" });
   });
   it("switching away from my Chrome turns the opt-in off along with the new profile", () => {
@@ -26,11 +27,10 @@ describe("Use my Chrome choice", () => {
     const html = renderToStaticMarkup(createElement(MyChromeConsent, { botName: "Moss", pending: false, onConfirm: () => {}, onCancel: () => {} }));
     expect(html).toContain("Moss works in your Chrome, signed in as you, in a tab of its own.");
     expect(html).toContain("Murage connects through Murage for Chrome when it is installed, and shows you one step if it is not.");
-    // The remote-debugging route, in its three clauses: one Allow, tabs of its own, one bot.
-    expect(html).toContain("If Murage for Chrome is not connected but Chrome&#x27;s remote debugging is on, Murage uses that instead.");
-    expect(html).toContain("Chrome asks you once to Allow it");
-    expect(html).toContain("Moss then works in tabs it opens, your own tabs stay yours");
-    expect(html).toContain("one bot at a time can use it.");
+    // 1.0.15: Murage for Chrome serves many bots; remote debugging only in a copy without it.
+    expect(html).not.toContain("If Murage for Chrome is not connected but");
+    expect(html).toContain("A copy of Murage without Murage for Chrome uses Chrome&#x27;s remote debugging instead, when it is on: Chrome asks you to Allow it, and one bot at a time can use it.");
+    expect(html).toContain("Several bots can use your Chrome through Murage for Chrome at once, each in tabs of its own, and your own tabs stay yours.");
     expect(html).not.toContain("—");
     expect(html).toContain(">Use my Chrome</button>");
     expect(html).toContain(">Cancel</button>");
@@ -177,5 +177,51 @@ describe("Linux AppImage Enable browser", () => {
     expect(source).toContain("status.problemCode !== BROWSER_SANDBOX_ENABLE_CODE && !status.notRunning");
     // A poll with no page yet must not wipe "the prompt was closed" the moment it appears.
     expect(source).toContain('setConnectionError(""); setCanEnable(false); if (next) setEnableNote("");');
+  });
+});
+
+describe("Use my Chrome reaches Set up my browser and says why a choice did not happen (1.0.15)", () => {
+  it("offers a bot on remote debugging the move to Murage for Chrome, in plain words", () => {
+    let switched = 0;
+    const tree = RemoteDebuggingUpgrade({ botName: "Sable", pending: false, onSwitch: () => { switched += 1; } });
+    const html = renderToStaticMarkup(tree);
+    expect(html).toContain("Sable is using your Chrome through remote debugging, which needs your Allow and serves one bot at a time.");
+    expect(html).toContain("lets several bots use your Chrome");
+    expect(html).toContain(">Set up Murage for Chrome</button>");
+    expect(html).not.toContain("—");
+    const button = (tree.props.children as any[]).find((child: any) => child?.type === "button");
+    button.props.onClick();
+    expect(switched).toBe(1);
+    expect(renderToStaticMarkup(createElement(RemoteDebuggingUpgrade, { botName: "Sable", pending: true, onSwitch: () => {} }))).toMatch(/<button disabled=""/);
+  });
+  it("shows the server's refusal under the picker, with Stop when the bot is working", () => {
+    let stopped = 0;
+    const reason = "Sable is working. Stop it, or wait for it to finish, then change its browser connection.";
+    const tree = BrowserChoiceRefusal({ botName: "Sable", refusal: reason, busy: true, onStop: () => { stopped += 1; } })!;
+    const html = renderToStaticMarkup(tree);
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(reason);
+    expect(html).toContain(">Stop Sable</button>");
+    (tree.props.children as any[]).find((child: any) => child?.type === "button").props.onClick();
+    expect(stopped).toBe(1);
+    // Not working: the refusal names its own fix and there is no Stop.
+    const idle = renderToStaticMarkup(createElement(BrowserChoiceRefusal, { botName: "Sable", refusal: "Return browser control before changing browsers", busy: false, onStop: () => {} }));
+    expect(idle).toContain("Return browser control before changing browsers");
+    expect(idle).not.toContain("Stop Sable");
+    expect(BrowserChoiceRefusal({ botName: "Sable", refusal: "", busy: true, onStop: () => {} })).toBeNull();
+  });
+  it("puts the refusal under the picker, with Stop when the server says the bot is working", () => {
+    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
+    // The server can know the bot is working before this panel does (Sean's 1.0.13 snap-back): its code turns Stop on.
+    expect(source).toContain('setRefusalBusy(cause instanceof Error && routeErrorFrom(cause).code === "bot_busy")');
+    expect(source).toContain("busy={!!bot.busy || refusalBusy}");
+    // The refusal sits right after the picker, not at the foot of the panel.
+    expect(source.indexOf("<BrowserChoiceRefusal")).toBeGreaterThan(source.indexOf('aria-label="Browser profile"'));
+    expect(source.indexOf("<BrowserChoiceRefusal")).toBeLessThan(source.indexOf("<MyChromeConsent botName"));
+    expect(source).toContain('<BrowserPanelAlerts refusal=""');
+    // Moving to Murage for Chrome sends the extension transport, whose panel offers Set up my browser.
+    expect(source).toContain('chooseBrowser({ useMyChrome: true, browserTransport: "extension" })');
+    // Only in a copy that has Murage for Chrome, and never while the bot works (the server would refuse it).
+    expect(source).toContain('{remoteDebugging && extensionBuild !== undefined && extensionBuild !== "none" && <RemoteDebuggingUpgrade botName={bot.name} pending={pending || switching || busy}');
   });
 });

@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "8386de4593a3d5c731048273bb11278d8bc8cd2763633314e8ecc4b4a905c3cd";
+export const CAPABILITY_DB_REV = "ea031914b5680189bd36054dbbc8a9f72d8a158a44d9edeb8037f4acbffec4e9";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -110,6 +110,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; Fuigo, Claude, Codex, Grok, Cursor, Kimi, Droid, OpenCode, Qwen, Hermes, Gemini, Cline.",
     "rev": "574d08b9bd4744695e9611cca24ddf2bd4b17b2f1f7d17739a395630e7d5fbc8"
+  },
+  {
+    "id": "cap:apps.webhook-routines",
+    "title": "Start a routine from a webhook",
+    "description": "Murage can do part of this.",
+    "heading": "Can a webhook start my bot? / Run a routine when another tool sends a request / Can Stripe start a routine? / Does Murage have webhooks? / Give my bot a link other apps can call",
+    "breadcrumb": "Murage capabilities",
+    "where": "Bot settings → Routines",
+    "url": "https://murage.ai/docs/features/automation#routines",
+    "text": "Yes. A webhook routine gives a bot a link, and each request to it starts a new task in the bot's chat. Your bot can propose one in your chat, or you can make one on the Routines page. On the desktop app the link listens on this computer only, so outside services such as Stripe cannot reach it yet. A script or tool on the same computer can call it. Ask your bot: Ask your bot to set up a webhook routine that a script on this computer can call.",
+    "capability": "apps.webhook-routines",
+    "status": "partial",
+    "answer": "Yes. A webhook routine gives a bot a link, and each request to it starts a new task in the bot's chat. Your bot can propose one in your chat, or you can make one on the Routines page.",
+    "limits": "On the desktop app the link listens on this computer only, so outside services such as Stripe cannot reach it yet. A script or tool on the same computer can call it.",
+    "askYourBot": "Ask your bot to set up a webhook routine that a script on this computer can call.",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "all"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; every engine.",
+    "rev": "b85b19c63403cebe1933be97af11e1426d3b6958d412fb0c1719a9ab649c3f19"
   },
   {
     "id": "cap:bots.rename-chief",

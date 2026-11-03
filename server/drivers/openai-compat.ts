@@ -242,10 +242,10 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
     if(usable)runtime.extractMemory=(text,maximumOutputTokens,signal,dispatch)=>{
       const extractionConfig={url:config.url,apiKey,model:catalog.default,...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})};
       return dispatch?.purpose?requestMemoryInference(extractionConfig,text,maximumOutputTokens,signal,dispatch)
-        :requestMemoryExtraction(extractionConfig,text,maximumOutputTokens,signal,dispatch?.messages);
+        :requestMemoryExtraction(extractionConfig,text,maximumOutputTokens,signal,dispatch?.messages,dispatch?.fence);
     };
-    if(usable)runtime.groundMemory=(claim,maximumOutputTokens,signal)=>requestMemoryGrounding({url:config.url,apiKey,model:catalog.default,
-      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},claim,Math.min(64,maximumOutputTokens),signal);
+    if(usable)runtime.groundMemory=(claim,maximumOutputTokens,signal,gate)=>requestMemoryGrounding({url:config.url,apiKey,model:catalog.default,
+      ...(config.provider&&isOpenRouterUrl(config.url)?{provider:{order:[config.provider],allow_fallbacks:false as const}}:{})},claim,Math.min(64,maximumOutputTokens),signal,gate);
     return runtime;
   },
 };
