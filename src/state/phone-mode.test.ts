@@ -9,7 +9,8 @@ const store = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)
 
 describe("phone mode in the store", () => {
   it("boots from the sidebar roster (no rows), the same on a phone as on the desktop", () => {
-    expect(store).toContain("api(`/api/bots?view=sidebar`).then((answer) => {");
+    expect(store).toContain("api(`/api/bots?view=sidebar`).then((reply) => {");
+    expect(store).toContain("const answer = sidebarReply(reply) as any;");
     expect(store).not.toMatch(/api\(`\/api\/bots\?messages=\$\{/);
   });
 

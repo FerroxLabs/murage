@@ -13,7 +13,7 @@
 //                     async-question (the turn posts request_user_input_async's agentMessage, then keeps running
 //                     until FAKE_CODEX_ASYNC_QUESTION_GATE exists; FAKE_CODEX_ASYNC_QUESTIONS replaces its questions;
 //                     with FAKE_CODEX_ASYNC_QUESTION_ONCE, a marker path, only the first turn asks) |
-//                     logged-in-stdout | logged-out | unauthorized
+//                     logged-in-stdout | logged-out | status-fails | unauthorized
 //   FAKE_CODEX_DUMP   path to write {argv, env, calls, decision} as JSON
 //   FAKE_CUSTOM_TOOL_SERVER / FAKE_CUSTOM_TOOL_LOG  every turn calls the first tool
 //                     of that owner server (fake-custom-tool.ts)
@@ -157,6 +157,10 @@ if (process.argv[2] === "--version") {
 if (process.argv[2] === "login" && process.argv[3] === "status") {
   if (mode === "logged-out") {
     process.stderr.write("Not logged in\n");
+    process.exit(1);
+  }
+  if (mode === "status-fails") {
+    process.stderr.write("Error checking login status: fixture\n");
     process.exit(1);
   }
   // Codex 0.147.0 reports a successful login on stderr; retain a mode for
