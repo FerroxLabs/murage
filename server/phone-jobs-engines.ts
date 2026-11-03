@@ -20,6 +20,7 @@ export const PHONE_JOBS_ENGINES: Readonly<Record<string, PhoneJobsEngineStatus>>
   droidAgent: { mounts: true, where: ACP + " via acp/droid.ts" },
   hermesAgent: { mounts: true, where: ACP + " via acp/hermes.ts" },
   clineAgent: { mounts: true, where: ACP + " via acp/cline.ts" },
+  museCode: { mounts: true, where: "server/drivers/muse-code.ts buildMcpServers into session/start config.mcpServers (capability sessionMcp)" },
   customAcp: { mounts: true, where: ACP + " via acp/custom.ts" },
   antigravityAgent: {
     mounts: false,

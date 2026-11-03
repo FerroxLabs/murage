@@ -801,6 +801,10 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
+  // Muse Code's Meta key. On both strip lists so no other engine or tool
+  // child inherits it; the museCode driver adds it back from its own
+  // instance env only.
+  "META_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "MURAGE_MODEL_PROVIDER_CONNECTIONS",
@@ -875,6 +879,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
   "CLINE_API_KEY",
+  "META_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -1224,6 +1229,7 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     cline: { driver: "clineAgent" },
+    muse: { driver: "museCode" },
     pi: { driver: "piAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise

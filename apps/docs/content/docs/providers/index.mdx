@@ -25,6 +25,7 @@ Each engine is an AI app on this computer. You sign in to it once, with your own
 | Qwen | Sign in to the Qwen app | Works through the common AI app connection |
 | Hermes | Sign in to the Hermes app | Works through the common AI app connection |
 | Pi | Sign in to the Pi app | Built-in connection |
+| Muse Code | Sign in to Meta's Muse Code app, or use your own Meta API key | Desktop app only. Never goes through Flux Router |
 
 The "common AI app connection" is a shared language Murage uses to talk to many AI apps the same way. An engine that is not ready stays in the list with the reason and the next step, and the others keep working. If you run Murage from source, you can add more engines in its settings file.
 
@@ -35,6 +36,12 @@ Sign in with the plan you already pay for and your bots can use the models that 
 ## Sign in with Flux
 
 Open **Settings → Models & engines** in the Murage desktop app and press **Sign in with Flux Router** on the Flux Router card. Your browser opens, you sign in there, and Murage saves the connection. It is on by default, and pasting a Flux Router key on the same card works too. Flux models use your Flux Router balance.
+
+## Muse Code
+
+Muse Code is Meta's coding app. Install it from Meta, then sign in once in a terminal with `muse login`, or add your own Meta API key to the Muse Code engine. Meta bills your own Meta account or key, and Meta's terms apply. Muse Code talks only to Meta: it never goes through Flux Router.
+
+Murage asks Muse to keep Meta's Contributor mode off on every Muse Code turn and leaves Contributor models out of the list. The model list comes from Muse Code itself and shows once it has loaded. Muse Code does not update itself while Murage runs it; update it from Meta when you choose. It runs in the desktop app on Mac, Windows and Linux, and is not on Murage Cloud yet.
 
 ## Grok and the model you picked
 

@@ -11,6 +11,8 @@ import { setFeedbackObserver } from "../message-db.ts";
 import type { Message } from "../store.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
 import { withMemoryInferenceLease } from "./extract.ts";
+import { digestOf, learningGate, sampleLearningFence, type LearningGate } from "./learning-send.ts";
+import type { ClassifierInput } from "./feedback.ts";
 import {
   classifierMessages, detectFeedback, markFeedbackLesson, planFeedbackLesson, type FeedbackClassifier, type FeedbackDecision, type FeedbackResult, type LessonSink,
 } from "./feedback.ts";
@@ -45,11 +47,15 @@ export interface BotLearningWiring {
  * shared learning budget (per-minute calls, daily tokens) through the same
  * inference lease the other learning requests use. A refusal throws, and
  * detection then falls back to its first stage alone (no model call). */
-export function leasedFeedbackClassifier(extractor: TextOnlyExtractor): FeedbackClassifier {
+/** `gateFor` (memory/learning-send.ts): one gate per classification over what it holds (the owner message, the prior bot turn and its
+ * activity rows); the words are dropped unsent if any was deleted, edited or forgotten after it was read (the observer's deferral, the
+ * lease, an engine queue). Required: a classification never reaches the lease without its gate. */
+export function leasedFeedbackClassifier(extractor: TextOnlyExtractor, gateFor: (input: ClassifierInput) => LearningGate): FeedbackClassifier {
   return {
     async classify(input, signal) {
       const messages = classifierMessages(input);
-      const leased = await withMemoryInferenceLease(lease => lease.request(extractor, messages[1].content, 300, signal, messages));
+      const gate = gateFor(input);
+      const leased = await withMemoryInferenceLease(lease => lease.request(extractor, messages[1].content, 300, signal, messages, undefined, undefined, gate));
       if (leased.status !== "complete" || leased.value.status !== "complete") throw new Error("LEARNING_BUDGET_REFUSED");
       return leased.value.text;
     },
@@ -169,6 +175,24 @@ export interface BotLearningHandle {
   /** The conversation's branch changed (a different leaf, or an edit forked it): set aside what was learned from words no longer on it. */
   onBranchChange(threadId: string): void;
 }
+/** The feedback classifier call's one gate (learning-send.ts) over every row its payload rests on: the target bot message, each same-turn
+ * bot text row joined into the turn text (feedback.ts turnFromMessage), each activity row. Each must keep its read-time bytes (digest taken
+ * here, at classify time, with no await after the reads) and stay on the visible branch; a missing row refuses (Astra code r1 H2). */
+export function feedbackClassifierGate(fenceAt: ReturnType<typeof sampleLearningFence>, threadId: string, input: ClassifierInput, deps: {
+  messageById?: (threadId: string, messageId: string) => Message | undefined;
+  branchMembership?: (threadId: string) => (messageId: string) => boolean;
+  stillCurrent: () => boolean;
+}): LearningGate {
+  const rowDigest = (id: string): string | null => { const m = deps.messageById?.(threadId, id); return m ? digestOf(JSON.stringify([m.text ?? "", m.tool ?? null])) : null; };
+  const ids = input.turn ? [...new Set([input.turn.messageId, ...(input.turn.textMessageIds ?? []), ...input.turn.actions.map(a => a.messageId).filter((id): id is string => typeof id === "string")])] : [];
+  const held = ids.map(id => [id, rowDigest(id)] as const);
+  return learningGate("extraction", fenceAt, {}, { checks: [
+    () => { if (!deps.stillCurrent()) throw new Error("source-changed"); },
+    () => { for (const [id, digest] of held) if (digest === null || rowDigest(id) !== digest) throw new Error("source-changed"); },
+    () => { const onBranch = deps.branchMembership?.(threadId); if (onBranch) for (const [id] of held) if (!onBranch(id)) throw new Error("source-changed"); },
+  ] });
+}
+
 export function wireBotLearning(wiring: BotLearningWiring): BotLearningHandle {
   setOutcomeBotLookup(id => wiring.bot(id));
   setLessonAdmitter(admitLessonText);
@@ -178,27 +202,36 @@ export function wireBotLearning(wiring: BotLearningWiring): BotLearningHandle {
   const lessons: LessonSink = { form: (plan, ctx) => lessonFromPlan(wiring, wiring.db(), plan, ctx) };
   setEditLessonSink(lessons.form);
   const defer = wiring.defer ?? queueMicrotask;
-  setFeedbackObserver((threadId, message) => defer(() => {
+  // SEC-09, design 3.6: the same owner message must still be on the visible branch, word for word.
+  const stillCurrent = (thread: string, sent: Message, target: string | null): boolean => {
+    if (!wiring.branchMembership || !wiring.messageById) return onActivePath(wiring.activePath(thread), sent, target);
+    const onBranch = wiring.branchMembership(thread), here = wiring.messageById(thread, sent.id);
+    return Boolean(here) && onBranch(sent.id) && (here!.text ?? "") === (sent.text ?? "") && (target === null || onBranch(target));
+  };
+  setFeedbackObserver((threadId, message) => {
+    // the learning fence counter when the message's words were handed over, before the deferral: a Forget, delete or edit from here on
+    // drops the call
+    const fenceAt = sampleLearningFence();
+    defer(() => {
     try {
       const db = wiring.db();
       const roster = wiring.roster();
       const extractor = wiring.connection().extractor;
+      const gateFor = (input: ClassifierInput): LearningGate =>
+        feedbackClassifierGate(fenceAt, threadId, input, { messageById: wiring.messageById, branchMembership: wiring.branchMembership, stillCurrent: () => stillCurrent(threadId, message, null) });
       void detectFeedback(db, threadId, message, {
-        classifier: extractor ? leasedFeedbackClassifier(extractor) : null,
+        classifier: extractor ? leasedFeedbackClassifier(extractor, gateFor) : null,
         botLearning: id => { const bot = wiring.bot(id); return bot ? readBotLearning(bot) : null; },
         resolveBotId: (thread, turn) => turn?.botId ?? roster.bots.find(bot => bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread))?.id ?? null,
         readThread: wiring.readThread,
         botName: id => wiring.bot(id)?.name,
         // SEC-09, design 3.6: the same owner message must still be on the visible branch, word for word, when the model has answered.
-        stillCurrent: (thread, sent, target) => {
-          if (!wiring.branchMembership || !wiring.messageById) return onActivePath(wiring.activePath(thread), sent, target);
-          const onBranch = wiring.branchMembership(thread), here = wiring.messageById(thread, sent.id);
-          return Boolean(here) && onBranch(sent.id) && (here!.text ?? "") === (sent.text ?? "") && (target === null || onBranch(target));
-        },
+        stillCurrent,
         lessons,
       }).then(result => { try { afterFeedback(wiring.db(), threadId, result); } catch { /* optional */ } }, () => { /* detection is optional */ });
     } catch { /* never into the write path */ }
-  }));
+    });
+  });
   return {
     onBranchChange(threadId) {
       try {

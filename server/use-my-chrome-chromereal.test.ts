@@ -169,12 +169,12 @@ describe.skipIf(!REAL)("Use my Chrome with real Google Chrome", () => {
   it("asks for Allow once per session, keeps the panel answering while Chrome waits, then connects and drives the owner's Chrome", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Real Chrome", modelSelection: { instanceId: "verification", model } })).body.bot;
     expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: false, computer: "off" })).status).toBe(200);
-    // The picker's "Use my Chrome": the server picks remote debugging (no extension paired).
-    const picked = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true, browserTransport: "auto" });
+    // Remote debugging, asked for explicitly: since 1.0.15 the picker's "auto" offers Murage for Chrome setup first.
+    const picked = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true });
     expect(picked.status).toBe(200);
     expect(picked.body.bot.useMyChrome).toBe(true);
     expect(picked.body.bot.browserTransport).toBeUndefined();
-    note("picked Use my Chrome (auto -> remote debugging)");
+    note("picked Use my Chrome over remote debugging (explicit)");
     const token = await startTurn(bot, "real-chrome-one");
     const listed = await rpc(token, "tools/list");
     expect(listed.status).toBe(200);
@@ -234,7 +234,7 @@ describe.skipIf(!REAL)("Use my Chrome with real Google Chrome", () => {
     const own = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: false });
     note(`switch to own browser: ${own.status}`);
     expect(own.status).toBe(200);
-    const back = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true, browserTransport: "auto" });
+    const back = await api("PATCH", `/api/bots/${bot.id}`, { useMyChrome: true });
     note(`switch back to Use my Chrome: ${back.status}`);
     expect(back.status).toBe(200);
     // A new session: Chrome asks once more, then everything rides that connection.

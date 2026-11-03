@@ -72,11 +72,11 @@ it("a release build links the live Chrome Web Store listing with no feed flag", 
   try {
     const status = await api("GET", `/api/bots/${one.id}/browser-extension`);
     expect(status.body).toMatchObject({ extensionBuild: "release", storeUrl: `https://chromewebstore.google.com/detail/${id}` });
-    expect(status.body.helper.reason).toBe("Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.");
+    expect(status.body.helper.reason).toBe("If Murage for Chrome is not in your browser, add it from the Chrome Web Store. Then press Set up my browser below and open its side panel.");
     stageBuild({ version: 1, mode: "release", productionIds: ["d".repeat(32)], chromeWebStoreId: id });
     const untrusted = await api("GET", `/api/bots/${one.id}/browser-extension`);
     expect(untrusted.body).toMatchObject({ extensionBuild: "release", storeUrl: null });
-    expect(untrusted.body.helper.reason).toBe("Open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.");
+    expect(untrusted.body.helper.reason).toBe("Press Set up my browser below, then open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.");
     stageBuild({ version: 1, mode: "resources", productionIds: [] });
     expect((await api("GET", `/api/bots/${one.id}/browser-extension`)).body).toMatchObject({ extensionBuild: "none", storeUrl: null });
   } finally { stageBuild({ version: 1, mode: "development", developmentId: "b".repeat(32) }); }

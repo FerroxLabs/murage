@@ -184,4 +184,30 @@ entries:
       - file:server/drivers/mcp-mounts.ts#export function buildMcpServers
     verified: 1.0.10
     internal: CANNOT-ANSWERS-109 item c. Cloud left out of platforms at MurageCloud's request (chat-engine tools are off on a Cloud home in their lane); docs/custom-engines.md "chat only" is stale (fix/1010-copy rewrites it).
+
+  - id: engines.muse-code
+    name: Muse Code from Meta
+    status: can
+    questions:
+      - Set up Muse Code
+      - Who pays for Muse Code?
+      - Is Muse Code on Murage Cloud?
+    answer: >
+      Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a
+      Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through
+      Flux Router, and Murage asks Muse to keep Contributor mode off.
+    limits: Not on Murage Cloud yet. Install and update it from Meta yourself.
+    settings_path: Settings → Models & engines → Engines
+    platforms: [mac, windows, linux]
+    engines: [muse]
+    anchors:
+      - settings-card:models/engines
+      - "file:server/engine-signin-recipe.ts#museCode: terminal([\"login\"]"
+      - "file:server/cloud-home/runnable-engines.ts#export const CLOUD_DESKTOP_ONLY_ENGINES = [\"museCode\"]"
+      - "file:server/flux-routing.ts#NEVER Flux, by Meta's terms"
+      - "file:server/config.ts#\"META_API_KEY\""
+    verified: 1.0.14
+    since: 1.0.16
+    doc: providers#muse-code
+    internal: GAP-MUSE (handoffs/GAP-MUSE-CHECK-1101.md). Contributor off is MUSE_CONTRIBUTOR_MODE=0 on every Muse child, probe 3 still to run. Cloud waits on GAP-MUSE-CLOUD (counsel or Meta).
 retired: []

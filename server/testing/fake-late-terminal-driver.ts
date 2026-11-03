@@ -57,6 +57,13 @@
 //   FAKE_LATE_TEARDOWN       "1": the adapter has awaitTurnTeardown, confirming the close 50 ms after the terminal event.
 //   FAKE_LATE_TOOL_FIRST     "1" (with FAKE_LATE_HANDBACK): a tool starts and completes before the late write (a later round's
 //                            submission, as openai-chat runs one per round), so a refusal there must card the turn, never rebuild it.
+//   FAKE_LATE_PRE_HANDBACK_GATE path (with FAKE_LATE_HANDBACK): sendTurn hands the id back only once this file exists (writes
+//                            `<path>.waiting` while held): the window between the adapter call and acceptance, where a revoke
+//                            refuses the turn at acceptance with nothing written (DELETE-REVOKE-SCOPE (a)).
+//   FAKE_LATE_FENCED_WRITES  "1": the adapter declares fencedWrites (true here: its only write is the late one behind beforeSubmit).
+//   FAKE_LATE_IGNORE_STOP    "1" (with FAKE_LATE_HANDBACK): the late write is still attempted after a stop; each refused write then
+//                            appends {refused: true, turnId} (only in this mode: other tests count the dump's rows).
+//   FAKE_LATE_DUMP_FRAME     "1": each prompt line also carries the memory frame's text as the engine would receive it (`frame`).
 // An uninterrupted turn replies "Hello from late" and completes on its own.
 import { appendFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import type {
@@ -116,7 +123,7 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
         snapshot: async () => ({ state: "available", version: "0.0.0-late" }),
         adapter: {
           provider: LATE_TERMINAL_DRIVER_KIND,
-          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, browserMcp: true, ...(input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memoryMcp: true } : {}) },
+          capabilities: { sessionModelSwitch: "unsupported", agentsMcp: true, browserMcp: true, ...(input.environment.FAKE_LATE_MEMORY_MCP === "1" ? { memoryMcp: true } : {}), ...(input.environment.FAKE_LATE_FENCED_WRITES === "1" ? { fencedWrites: true } : {}) },
           sendTurn: async (turn) => {
             const turnId = `late-turn-${++turnCounter}`;
             const skillAuthoring = turn.integrations?.agents?.env.MURAGE_SKILL_AUTHORING_ENABLED === "1";
@@ -128,13 +135,22 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
               const entry = { turnId, interrupted: false };
               active.set(turn.threadId, entry);
               emit({ type: "turn.started", threadId: turn.threadId, turnId });
+              // the late write starts only after the id is handed back, as ACP's does
+              const preGate = input.environment.FAKE_LATE_PRE_HANDBACK_GATE;
+              if (preGate && !existsSync(preGate)) {
+                writeFileSync(`${preGate}.waiting`, turnId);
+                await waitForFile(preGate, 25);
+              }
               void (async () => {
+                // as ACP's handshake: the write comes after the harness has heard the id (its acceptance runs first)
+                if (preGate) await new Promise(resolve => setTimeout(resolve, 20));
                 if (sessionGate && !existsSync(sessionGate)) {
                   writeFileSync(`${sessionGate}.waiting`, turnId);
                   await waitForFile(sessionGate, 25);
                 }
                 if (sessionGate && input.environment.FAKE_LATE_GATE_EACH === "1") for (const file of [sessionGate, `${sessionGate}.waiting`]) rmSync(file, { force: true });
-                if (entry.interrupted || active.get(turn.threadId) !== entry) return;
+                // FAKE_LATE_IGNORE_STOP: a misbehaving engine that still tries its write after it was stopped (the seal must refuse it)
+                if (input.environment.FAKE_LATE_IGNORE_STOP !== "1" && (entry.interrupted || active.get(turn.threadId) !== entry)) return;
                 if (input.environment.FAKE_LATE_SESSION === "1") {
                   const resumed = !turn.sessionReset && typeof turn.resumeCursor === "string" ? turn.resumeCursor : undefined;
                   emit({ type: "session.started", sessionId: resumed ?? `late-session-${turnCounter}-${turn.threadId.slice(0, 8)}`, model: "late-1", threadId: turn.threadId, turnId });
@@ -152,11 +168,12 @@ export function makeLateTerminalDriver(): AnyProviderDriver {
                   emit({ type: "item.completed", itemType: "tool", itemId: `tool-${turnId}`, ok: true, result: "written", threadId: turn.threadId, turnId });
                 }
                 try { turn.beforeSubmit?.(); } catch {
-                  active.delete(turn.threadId);
+                  if (dump && input.environment.FAKE_LATE_IGNORE_STOP === "1") appendFileSync(dump, `${JSON.stringify({ refused: true, turnId, threadId: turn.threadId })}\n`);
+                  if (active.get(turn.threadId) === entry) active.delete(turn.threadId);
                   emit({ type: "turn.completed", ok: false, stopReason: "submission_refused", threadId: turn.threadId, turnId });
                   return;
                 }
-                if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId })}\n`);
+                if (dump) appendFileSync(dump, `${JSON.stringify({ prompt: true, turnId, threadId: turn.threadId, ...(input.environment.FAKE_LATE_DUMP_FRAME === "1" ? { frame: `${turn.system ?? ""}\n${JSON.stringify(turn.memoryContext ?? null)}\n${turn.text ?? ""}` } : {}) })}\n`);
                 emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: "Hello from late", threadId: turn.threadId, turnId });
                 active.delete(turn.threadId);
                 emit({ type: "turn.completed", ok: true, threadId: turn.threadId, turnId });

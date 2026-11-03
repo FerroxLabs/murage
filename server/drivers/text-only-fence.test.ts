@@ -4,14 +4,17 @@
 // PIP-REDESIGN r3 T4 (adapter half): the admission fence runs inside each text-only adapter after its last await and immediately before
 // the request leaves (HTTP: after checkLocalServerUrl, before fetch) or the process starts (headless: after the intent write, before
 // spawnCli, inside the pre-spawn try so the temp root is removed). A moved read surfaces as ReadMoved, never as a transient refusal.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AdmissionFenceAnswer, TextOnlyTurnInput, TransportIntent } from "../memory/pip-transport.ts";
+import { readMoved, type AdmissionFenceAnswer, type TextOnlyTurnInput, type TransportIntent } from "../memory/pip-transport.ts";
+import type { LearningGate } from "../memory/learning-send.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
 const gate = vi.hoisted(() => ({ wait: null as null | (() => Promise<void>) }));
 vi.mock("../local-address-guard.ts", async original => {
   const real = await original<typeof import("../local-address-guard.ts")>();
@@ -23,14 +26,24 @@ vi.mock("../procs.ts", async original => {
   return { ...real, spawnCli: (...args: Parameters<typeof real.spawnCli>) => { spawned.count++; return real.spawnCli(...args); } };
 });
 const { httpTextOnlyTurn } = await import("./http-text-only.ts");
-const { headlessTextOnlyTurn } = await import("./headless-text-only.ts");
+const { claudeTextOnlyTurn, headlessTextOnlyTurn } = await import("./headless-text-only.ts");
 
 const SCHEMA = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
 const turn = (fence: () => AdmissionFenceAnswer, over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: "SYS", text: "USER", model: "model-x", outputSchema: SCHEMA, signal: new AbortController().signal,
+  system: fixedPrompt("SYS"), text: "USER", model: "model-x", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 1500, maxOutputBytes: 12 * 1024, context: { botId: "b", runId: "r", family: "lived", attempt: 1 },
-  ...over, transport: { ...over.transport, fence },
+  ...over, transport: { ...over.transport, fence, gate: fenceGate(fence) },
 });
+/** The call's gate as PIP builds it (pip-reflect.ts): its check and its send read the fence, and a move throws ReadMoved before any write. */
+function fenceGate(fence: () => AdmissionFenceAnswer): LearningGate {
+  const open = openLearningGate("continuity");
+  const check = () => { const answer = fence(); if (answer !== "none") throw readMoved(answer); };
+  return Object.assign(Object.create(open) as LearningGate, {
+    check,
+    send<R>(emit: () => R): R { check(); return open.send(emit); },
+    admit() { check(); open.admit(); },
+  });
+}
 /** A fence that reads "none" until the adapter's await has let the read move. */
 function movingFence(answer: "moved" | "off") {
   let moved = false, calls = 0;
@@ -75,6 +88,18 @@ describe.skipIf(process.platform === "win32")("headless: fenced after the intent
     expect(spawned.count).toBe(0);
     expect(seenRoot).not.toBe("");
     expect(existsSync(seenRoot)).toBe(false);
+    expect(roots()).toEqual([]);
+  });
+  it("MEM-QUEUED-LEARNING-FENCE: Claude, a read moved while the child hook awaited is stopped at its gated stdin write: ReadMoved, no words", async () => {
+    let moved = false;
+    const onChild = async () => { await new Promise(resolve => setImmediate(resolve)); moved = true; };
+    const input = turn(() => moved ? "moved" : "none", { transport: { hooks: { onChild } } });
+    const rec = join(base, "rec-claude.jsonl");
+    const claude = { cli: process.execPath, cliPrefixArgs: [STUB, "--stub=text-result", `--stub-out=${rec}`], tmpBase: join(base, "tmp"), env: { PATH: "/usr/bin:/bin" } as NodeJS.ProcessEnv, platform: "linux" as const, postResultGraceMs: 3000, preflight: cfg().preflight };
+    await expect(claudeTextOnlyTurn(input, claude)).rejects.toMatchObject({ name: "read-moved", kind: "moved" });
+    expect(spawned.count).toBe(1);
+    expect(input.transport!.gate!.released).toBe(0);
+    expect(existsSync(rec) ? readFileSync(rec, "utf8") : "").not.toContain("USER");
     expect(roots()).toEqual([]);
   });
   it("a read that did not move spawns the engine", async () => {

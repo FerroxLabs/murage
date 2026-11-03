@@ -154,6 +154,19 @@ Murage reads only the selected provider from Cline's saved settings
 (`~/.cline/data/settings/providers.json`), hands a saved key to the Cline
 process alone, and never stores it.
 
+### Muse Code
+
+Muse Code has its own engine (`"driver": "museCode"`, instance `muse`). Murage
+never installs it: install Muse Code from Meta, then sign in once with
+`muse login` or put `META_API_KEY` in the `muse` instance's `environment`.
+Murage starts `muse serve` and talks to it over Meta's own protocol. The key
+reaches the Muse child alone: `META_API_KEY` is on both strip lists, so no
+other engine inherits it, and a key in Murage's own environment is not handed
+to Muse either. Every Muse child runs with `MUSE_CONTRIBUTOR_MODE=0` and
+`MUSE_NO_AUTO_UPDATE=1`. Muse Code never routes through Flux Router (Meta's
+terms bar gateways and proxies), it is hidden on Murage Cloud, and Meta bills
+the owner's own account or key.
+
 ## Notes
 
 - `config.json` is written with mode 0600; values in `environment` are stored

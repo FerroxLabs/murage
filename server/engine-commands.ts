@@ -39,6 +39,7 @@ const ENGINE_LABELS: Record<string, string> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  museCode: "Muse Code",
 };
 
 /** Drivers that can report commands. Every ACP engine goes through the
