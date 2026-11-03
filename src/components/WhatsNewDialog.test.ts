@@ -21,21 +21,21 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WHATS_NEW_CARD_COUNT, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, whatsNewContentFor, whatsNewArrowStep } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction, openOutside, CHROME_STORE_OPEN_FAILED } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
 const render = (index: number) => renderToStaticMarkup(createElement(WhatsNewCard, {
-  index, releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61",
+  index, version: "0.1.61", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v0.1.61",
   onNext: () => {}, onClose: () => {}, onAction: () => {},
 }));
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/\s+/g, " ");
 
 describe("what's new cards", () => {
   it("renders the three approved cards in order", () => {
-    expect(WHATS_NEW_CARD_COUNT).toBe(3);
+    expect(whatsNewCardCount("0.1.61")).toBe(3);
     const hero = text(render(0));
-    expect(hero).toContain("NEW IN MURAGE");
+    expect(hero).toContain("NEW IN MURAGE 0.1.61");
     expect(hero).toContain("Your team, in step.");
     expect(hero).toContain("Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.");
     expect(render(0)).toContain('alt="A constellation of orange orbs of light, each joined to every other by fine threads"');
@@ -222,7 +222,7 @@ describe("where the shortcuts go", () => {
     // Card 3 had no way back: its dots were a picture and the arrow keys did nothing.
     const calls: string[] = [];
     const card = (index: number) => WhatsNewCard({
-      index, releaseNotesUrl: "https://example.invalid", onNext: () => calls.push("next"), onClose: () => calls.push("close"), onAction: () => {},
+      index, version: "0.1.61", releaseNotesUrl: "https://example.invalid", onNext: () => calls.push("next"), onClose: () => calls.push("close"), onAction: () => {},
       onBack: () => calls.push("back"), onGo: (target: number) => calls.push(`go ${target}`),
     });
     const find = (node: unknown, match: (props: Record<string, unknown>) => boolean, found: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> => {
@@ -252,7 +252,7 @@ describe("where the shortcuts go", () => {
     expect(whatsNewArrowStep("Tab")).toBe(0);
     // The dialog applies the step with a clamp, the same on every card.
     expect(source).toMatch(/const step = whatsNewArrowStep\(event\.key\);\s*if \(step !== 0\) \{ event\.preventDefault\(\); go\(index \+ step\); return; \}/);
-    expect(source).toContain("setIndex(Math.max(0, Math.min(target, WHATS_NEW_CARD_COUNT - 1)))");
+    expect(source).toContain("setIndex(Math.max(0, Math.min(target, count - 1)))");
   });
 });
 
@@ -276,8 +276,8 @@ describe("the 1.0.2 page", () => {
     // the 0.1.61 page is what every call without 1.0.2 shows
     expect(text(render(0))).toContain("Your team, in step.");
     expect(text(render(1))).toContain("Rooms that work as one");
-    expect(whatsNewContentFor("0.1.61")).toBe("0.1.61");
-    expect(whatsNewContentFor("1.0.2")).toBe("1.0.2");
+    expect(whatsNewContent("0.1.61")!.hero.title).toBe("Your team, in step.");
+    expect(whatsNewContent("1.0.2")!.hero.title).toBe("Bots that remember what matters");
   });
 
   it("follows the house copy rules and makes no speed claim beyond the changelog", () => {
@@ -334,7 +334,7 @@ describe("the 1.0.6 page", () => {
     expect(buttons(render106(0))).toEqual(["", "Open Chrome Web Store", "Next"]);
     expect(render106(0)).toContain('alt="Two matching gold glass rings, one set inside the other"');
     expect(render106(0)).toMatch(/<img[^>]*class="block h-full w-full object-contain object-right"/);
-    expect(whatsNewContentFor("1.0.6")).toBe("1.0.6");
+    expect(whatsNewContent("1.0.6")!.hero.title).toBe("Murage for Chrome is here");
   });
 
   it("has six tiles from the 1.0.6 changelog, each on art already in the app", () => {
@@ -350,8 +350,8 @@ describe("the 1.0.6 page", () => {
     for (const tile of WHATS_NEW_TILES_106) { expect(text(html)).toContain(tile.title); expect(text(html)).toContain(tile.body); expect(html).toContain(`data-whats-new-tile="${tile.action}"`); }
     expect(html.match(/<img/g)?.length).toBe(6);
     // the same pictures as the earlier pages, each with the words that describe it there
-    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.img, tile.alt]));
-    for (const tile of WHATS_NEW_TILES_106) expect(earlier.get(tile.img), tile.action).toBe(tile.alt);
+    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.art, tile.alt]));
+    for (const tile of WHATS_NEW_TILES_106) expect(earlier.get(tile.art), tile.action).toBe(tile.alt);
     expect(readdirSync(new URL("../assets/whats-new/", import.meta.url)).sort()).toEqual([
       "memory-hero.webp", "team-hero.webp", "tile-blocks.webp", "tile-chrome.webp", "tile-desktops.webp", "tile-engines.webp", "tile-gemini.webp",
       "tile-labs.webp", "tile-longwork.webp", "tile-packs.webp", "tile-rooms.webp", "tile-routing.webp", "tile-shapes.webp", "tile-speed.webp",
@@ -411,7 +411,119 @@ describe("the 1.0.6 page", () => {
 
   it("leaves the 1.0.2 and 0.1.61 pages as they were", () => {
     expect(text(render(0))).toContain("Your team, in step.");
-    expect(whatsNewContentFor("1.0.5")).toBe("0.1.61");
+    // 1.0.5 has no page: nothing stands in for it
+    expect(whatsNewContent("1.0.5")).toBeNull();
+    expect(renderToStaticMarkup(createElement(WhatsNewCard, { index: 0, version: "1.0.5", releaseNotesUrl: "https://example.invalid", onNext: () => {}, onClose: () => {}, onAction: () => {} }))).toBe("");
     expect(WHATS_NEW_TILES_102.map((tile) => tile.action)).toEqual(["routing", "library", "engines", "chrome", "speed", "desktops"]);
+  });
+});
+
+
+describe("one page per release, from 1.0.14 on", () => {
+  const renderAt = (version: string, index: number) => renderToStaticMarkup(createElement(WhatsNewCard, {
+    index, version, releaseNotesUrl: `https://github.com/FerroxLabs/murage-releases/releases/tag/v${version}`,
+    onNext: () => {}, onClose: () => {}, onAction: () => {},
+  }));
+  const buttons = (html: string) => [...html.matchAll(/<button(?![^>]*data-whats-new-dot)[^>]*>([\s\S]*?)<\/button>/g)].map(([, inner]) => text(inner).trim());
+  const allCopy = (version: string) => Array.from({ length: whatsNewCardCount(version) }, (_, index) => text(renderAt(version, index))).join(" ");
+
+  it("labels each page with its own version", () => {
+    for (const version of Object.keys(WHATS_NEW_PAGES)) expect(text(renderAt(version, 0)), version).toContain(`NEW IN MURAGE ${version}`);
+    expect(renderAt("1.0.15", 0)).toContain('data-whats-new-version="1.0.15"');
+  });
+
+  it("1.0.15 leads with Fuigo, then three tiles that each go somewhere, then its list", () => {
+    expect(whatsNewCardCount("1.0.15")).toBe(3);
+    const hero = text(renderAt("1.0.15", 0));
+    expect(hero).toContain("New bots start on Fuigo");
+    expect(buttons(renderAt("1.0.15", 0))).toEqual(["", "Open Engines", "Next"]);
+    expect(WHATS_NEW_TILES_1015.map((tile) => [tile.action, tile.title])).toEqual([
+      ["needsYou", "Answer in one place"],
+      ["allChats", "All chats, easier to get around"],
+      ["health", "Esc closes what's on top"],
+    ]);
+    const tiles = renderAt("1.0.15", 1);
+    expect(text(tiles)).toContain("Less in your way");
+    expect(tiles.match(/<img/g)?.length).toBe(3);
+    expect(tiles).toContain("grid-cols-3 max-[820px]:grid-cols-2 max-sm:grid-cols-1");
+    expect(buttons(tiles).slice(-3)).toEqual(["Back", "Next", "Got it"]);
+    const more = text(renderAt("1.0.15", 2));
+    for (const line of WHATS_NEW_MORE_1015) expect(more).toContain(line);
+    expect(renderAt("1.0.15", 2)).toContain('href="https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.15"');
+    // every picture is one already in the app, with the words it has on the earlier pages
+    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.art, tile.alt]));
+    for (const tile of WHATS_NEW_TILES_1015) expect(earlier.get(tile.art), tile.action).toBe(tile.alt);
+  });
+
+  it("1.0.14 has a hero and a list, and its last card is where it ends", () => {
+    expect(whatsNewCardCount("1.0.14")).toBe(2);
+    expect(text(renderAt("1.0.14", 0))).toContain("Sign in with one button");
+    expect(text(renderAt("1.0.14", 0)).indexOf("Fuigo")).toBeLessThan(text(renderAt("1.0.14", 0)).indexOf("Settings"));
+    const more = renderAt("1.0.14", 1);
+    expect(more).toContain('data-whats-new-card="more"');
+    expect(buttons(more)).toEqual(["Back", "Let's go"]);
+    for (const line of WHATS_NEW_MORE_1014) expect(text(more)).toContain(line);
+    expect(more).toContain('aria-label="Card 2 of 2"');
+    expect(renderAt("1.0.14", 2)).toBe("");
+  });
+
+  it("a page of one card closes from the hero and links its notes, with no pager", () => {
+    const one = { ...WHATS_NEW_PAGES["1.0.15"]!, tiles: [], more: [] };
+    (WHATS_NEW_PAGES as Record<string, typeof one>)["9.9.9"] = one;
+    try {
+      expect(whatsNewCardCount("9.9.9")).toBe(1);
+      const hero = renderAt("9.9.9", 0);
+      expect(buttons(hero)).toEqual(["", "Open Engines", "Got it"]);
+      expect(hero).toContain(">Read the full release notes</a>");
+      expect(hero).not.toContain("data-whats-new-dot");
+    } finally {
+      delete (WHATS_NEW_PAGES as Record<string, unknown>)["9.9.9"];
+    }
+  });
+
+  it("follows the house copy rules on every page", () => {
+    for (const version of Object.keys(WHATS_NEW_PAGES)) {
+      const copy = allCopy(version);
+      expect(copy, version).not.toMatch(/[\u2014\u2013]/);
+      expect(copy, version).not.toMatch(/\b(un)?saf(e|ely|ety)\b/i);
+      expect(copy, version).not.toMatch(/\bfree\b/i);
+    }
+    for (const version of ["1.0.14", "1.0.15"]) expect(allCopy(version), version).not.toMatch(/\b(broke|broken|used to|no longer|fixed|bug|crash)/i);
+  });
+
+  it("keeps every 1.0.14 and 1.0.15 tile and button a 44px target", () => {
+    for (const version of ["1.0.14", "1.0.15"]) {
+      for (let index = 0; index < whatsNewCardCount(version); index += 1) {
+        for (const [tag] of renderAt(version, index).matchAll(/<(button|a)\b[^>]*>/g)) expect(tag.includes("data-whats-new-tile") || /min-h-11|size-11/.test(tag), tag).toBe(true);
+      }
+    }
+  });
+
+  it("names every picture by a file that exists", () => {
+    const files = new Set(readdirSync(new URL("../assets/whats-new/", import.meta.url)));
+    for (const name of Object.keys(WHATS_NEW_ART)) expect(files.has(`${name}.webp`), name).toBe(true);
+    for (const page of Object.values(WHATS_NEW_PAGES)) for (const art of [page.hero.art, ...page.tiles.map((tile) => tile.art)]) expect(WHATS_NEW_ART[art], art).toBeTruthy();
+  });
+
+  it("opens nothing for a version with no page", () => {
+    expect(whatsNewCardCount("1.0.13")).toBe(0);
+    expect(renderToStaticMarkup(createElement(WhatsNewDialog, { open: true, version: "1.0.13", onClose: () => {}, onAction: () => {}, releaseNotesUrl: "https://example.invalid" }))).toBe("");
+  });
+
+  it("sends the new shortcuts somewhere real", () => {
+    const go = (action: Parameters<typeof runWhatsNewAction>[0]) => { const dispatch = vi.fn(); return { went: runWhatsNewAction(action, dispatch, () => {}), calls: dispatch.mock.calls }; };
+    expect(go("needsYou")).toEqual({ went: true, calls: [[{ type: "showNeedsYou" }]] });
+    expect(go("health")).toEqual({ went: true, calls: [[{ type: "showHealth" }]] });
+    expect(go("fuigo")).toEqual({ went: true, calls: [[{ type: "toggleAppSettings", open: true, section: "engines" }]] });
+  });
+
+  it("keeps the words and the pictures out of the first paint", () => {
+    // Code only: the header comment may point at the pages file by name.
+    const lib = readFileSync(new URL("../lib/whats-new.ts", import.meta.url), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    expect(lib).not.toMatch(/whats-new-pages|WhatsNewDialog|\.webp/);
+    const pages = readFileSync(new URL("./whats-new-pages.ts", import.meta.url), "utf8");
+    expect(pages).not.toMatch(/^import /m);
   });
 });

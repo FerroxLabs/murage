@@ -27,7 +27,7 @@ export const ENGINE_HEALTH_MEMO_MS = 60_000;
 /** The last answer and when it was made. The integrator keeps ONE of these at module level in server/index.ts. */
 export interface EngineHealthMemo { at: number; body: EngineHealthAnswer | null }
 
-export type EngineHealthState = "ready" | "signed-out" | "limit" | "off" | "missing";
+export type EngineHealthState = "ready" | "checking" | "signed-out" | "limit" | "off" | "missing";
 export type FluxHealthState = "ok" | "allowance-used-up" | "key-problem" | "none";
 export interface EngineHealthRow { id: string; label: string; state: EngineHealthState; line: string }
 export interface EngineHealthAnswer { engines: EngineHealthRow[]; primary: EngineHealthRow | null; flux: FluxHealthState; checkedAt: number }
@@ -39,7 +39,7 @@ export interface EngineHealthInstance {
   enabled?: boolean;
   /** The bundled Fuigo is a client: a missing login is a key, and Flux state speaks for it (server/setup.ts). */
   driverKind?: string;
-  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; reason?: string };
+  snapshot: { state: "available" | "unavailable"; authenticated?: boolean; authUnverified?: true; reason?: string };
 }
 
 export interface EngineHealthDeps {
@@ -61,6 +61,7 @@ export interface EngineHealthRouteAnswer { status: number; body: unknown }
 
 const LINE: Record<EngineHealthState, string> = {
   ready: "Signed in and ready.",
+  checking: "Checking sign-in.",
   "signed-out": "Signed out. Sign in again in Settings, Engines.",
   limit: "Reached its limit for now. It carries on when the limit resets.",
   off: "Switched off in Settings.",
@@ -72,7 +73,8 @@ export function engineRow(instance: EngineHealthInstance): EngineHealthRow {
     ? "off"
     : instance.snapshot.state !== "available"
       ? "missing"
-      : instance.snapshot.authenticated === false && instance.driverKind !== "fuigoAgent" ? "signed-out" : "ready";
+      : instance.snapshot.authenticated === false && instance.driverKind !== "fuigoAgent" ? "signed-out"
+        : instance.snapshot.authUnverified === true ? "checking" : "ready";
   return { id: instance.instanceId, label: instance.displayName, state, line: LINE[state] };
 }
 

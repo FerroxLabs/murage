@@ -2219,7 +2219,7 @@ describe("D1 door v2", () => {
     const rest = (await notices()).filter((n) => n.sent_at === null);
     expect(rest.map((n) => [n.bind, n.next_attempt_at])).toEqual([[bindN(4), (H + 1) * ONE_HOUR], [bindN(5), (H + 1) * ONE_HOUR]]);
     // Within the hour nothing more is sent.
-    expect(await sweepDoorNotices(testEnv(), T + 60_000, { reader, emailSender: deps.emailSender })).toBe(0);
+    expect(await sweepDoorNotices(testEnv(), Math.min(T + 60_000, (H + 1) * ONE_HOUR - 1), { reader, emailSender: deps.emailSender })).toBe(0);
     expect(await sweepDoorNotices(testEnv(), (H + 1) * ONE_HOUR + 1, { reader, emailSender: deps.emailSender })).toBe(1);
     expect(sent).toHaveLength(4);
     expect(sent[3].text).toContain("And 1 more new sign-in since the last notice.");
