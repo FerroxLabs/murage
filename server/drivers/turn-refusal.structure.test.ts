@@ -55,7 +55,8 @@ describe("turn-refusal structure", () => {
     };
     expect(firstLines("const onPreTool = async (delivery: HookDelivery): Promise<HookAnswer> => {", 1)).toMatch(/refusal\./);
     expect(firstLines("const handleServerRequest = (msg: any) => {", 1)).toMatch(/refusal\./);
-    expect(firstLines("const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {", 3)).toMatch(/refusal\.refused/);
+    // CLOSE-STOP-1014 puts the stop-end line first; stopWins is false on a refused turn, so the refusal still settles before a clean end
+    expect(firstLines("const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {", 4)).toMatch(/refusal\.refused/);
     expect(firstLines('case "item/started": {', 2)).toMatch(/refusal\.noteStarted\(\)/);
     // every card's finish turns a late allow into a deny before anything else
     const finishes = [...codex.matchAll(/const finish: AskFinish = \([^)]*\) => \{\n(.*)\n/g)];
@@ -91,6 +92,6 @@ describe("turn-refusal structure", () => {
     expect(code).toMatch(/if \(hookGate && !refusal\.hookLive\) void proveLiveness\(\)\.then\(\(\) => \{ if \(!abandoned\) handleServerRequest\(msg\); \}\);\s*else handleServerRequest\(msg\);/);
     // every clean end waits for the proof; only the user's Stop (the process is killed: not a clean end of engine work) does not (F4 design 2a).
     // A Stop that comes in while the clean end waits wins (STOP1); otherwise an unproven hook ends it as the refusal, never clean.
-    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive && !\(stopRequested && stopReason === "cancelled"\)\) \{\s*const live = await proveLiveness\(\);\s*if \(state\.settled\) return;\s*if \(stopWins\(stopReason\)\) \{ ok = true; stopReason = "cancelled"; \}\s*else if \(!live\) return;\s*\}/);
+    expect(code).toMatch(/if \(ok && hookGate && !refusal\.hookLive && !\(stopRequested && stopReason === "cancelled"\)\) \{\s*const live = await proveLiveness\(\);\s*if \(state\.settled\) return;\s*if \(stopWins\(stopReason\)\) \{ \[ok, stopReason\] = stopEnd\(\); closeCut = !ok; \}\s*else if \(!live\) return;\s*\}/);
   });
 });

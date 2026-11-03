@@ -5,6 +5,7 @@
 // The words, the receipt sentences and the small helpers the call card, the ring banner, the "Call me when this finishes"
 // button and the "Calls off for today" switch share. Pure, so the renderer suite (no DOM) can test it.
 import { CALL_COPY, CALL_DEVICE } from "../../shared/bot-calls-contract";
+import { t } from "./i18n";
 
 /** The window event the live stream raises for each SSE frame of kind "call"; the app re-reads GET /api/calls/active on each. */
 export { CALL_EVENT } from "./bot-call-event";
@@ -38,11 +39,20 @@ export const BOT_CALL_WORDS = {
   offTodayHelp: "Back on at midnight.",
   offTodayOn: (until: string) => `Calls are off until ${until}.`,
   offTodayRefusal: "Calls are off for today. Turn them back on to get this call.",
-  turnBackOn: "Turn calls back on",
+  get turnBackOn() { return t("calls.turnBackOn"); },
   history: "History",
   historyEmpty: "No calls yet.",
-  failed: "That didn't go through. Try again.",
+  get failed() { return t("calls.failed"); },
   couldNotConnect: "The call couldn't connect, so it ended. Try again in a moment.",
+  // Bot settings > Voice & alerts > Calls (design 3 and 8; MurageMain 11-02, BOT-CALLS-UNREACHABLE). These live in the
+  // language catalog (calls.botSettings.*), read when shown, so bot settings in another language carry no English.
+  canCallMe: (bot: string) => t("calls.botSettings.canCallMe", { bot }),
+  canCallMeHelp: (bot: string) => t("calls.botSettings.canCallMeHelp", { bot }),
+  neededNow: (bot: string) => t("calls.botSettings.neededNow", { bot }),
+  get tierBHelp() { return t("calls.botSettings.tierBHelp"); },
+  get botCaps() { return t("calls.botSettings.botCaps"); },
+  get needsVoice() { return t("calls.botSettings.needsVoice"); },
+  get pausedAfterRestore() { return t("calls.botSettings.pausedAfterRestore"); },
   ...CALL_COPY,
 } as const;
 
@@ -134,4 +144,30 @@ export const callsOffNow = (offUntil: number | null | undefined, now: number): b
 /** The device's IANA zone, so "today" ends at this computer's midnight. */
 export function deviceZone(): string | undefined {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; }
+}
+
+// Bot settings > Voice & alerts > Calls (BotCallsSettings.tsx): GET /api/bots/:id/calls/rules and the PUT bodies it sends.
+export interface CallRuleView { id: string; kind: string; enabled: boolean; demoted?: boolean }
+export interface BotCallRulesView {
+  enabled: boolean;
+  rules: CallRuleView[];
+  held: boolean;
+  restoreGen: string | null;
+  quietHours: { enabled?: boolean; start?: string; end?: string } | null;
+  voice: boolean;
+}
+
+/** The urgent rule is on: an enabled needs_owner_now rule that can still ring. One the owner set to "Don't call me about
+ * this again" (demoted to message only) shows off, and turning it on lifts that. */
+export const neededNowOn = (rules: readonly CallRuleView[] | undefined): boolean => (rules ?? []).some((r) => r.kind === "needs_owner_now" && r.enabled && r.demoted !== true);
+
+/** The PUT body for the bot switch: turning it on makes the urgent rule only when the bot has none yet; an urgent rule
+ * the owner switched off stays off (Astra r1 #3). */
+export function switchBody(on: boolean, rules: readonly CallRuleView[] | undefined): { enabled: boolean; neededNow?: true } {
+  return on && !(rules ?? []).some((r) => r.kind === "needs_owner_now") ? { enabled: true, neededNow: true } : { enabled: on };
+}
+
+/** "Quiet hours: 22:00 to 07:00" or "Quiet hours: off" (design 8, Calls page). */
+export function quietLine(q: BotCallRulesView["quietHours"]): string {
+  return q && q.enabled !== false && q.start && q.end ? t("calls.botSettings.quietOn", { start: q.start, end: q.end }) : t("calls.botSettings.quietOff");
 }
