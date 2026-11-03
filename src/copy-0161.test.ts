@@ -5,13 +5,13 @@
 // approved it (whats-new-art-0161/preview.html): the hero, the highlights
 // card's six tiles and the more card's twelve lines. A rewording anywhere
 // fails here first, and none of it may break the house copy rules.
-// Since 1.0.6 each version's hero lives in WHATS_NEW_CONTENT as data, so the
+// Since 1.0.15 every version's words live as data in whats-new-pages.ts, so the
 // 0.1.61 hero title and button are held as their record fields there.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
-const dialog = source("./components/WhatsNewDialog.tsx");
+const dialog = source("./components/WhatsNewDialog.tsx") + "\n" + source("./components/whats-new-pages.ts");
 
 const HERO = [
   "NEW IN MURAGE",
@@ -23,7 +23,7 @@ const HERO = [
 
 const HIGHLIGHTS = [
   "AND THERE'S MORE",
-  ">Made for bigger work<",
+  '"Made for bigger work"',
   ">Click any card to try it<",
   ">Got it<",
 ];

@@ -13,7 +13,7 @@ function clean(text: string): string {
 }
 
 /** Removes control and bidi characters, then makes every marker shape impossible. */
-function escapeMarkers(text: string): string {
+export function escapeMarkers(text: string): string {
   return clean(text).replace(/<</g, "‹‹").replace(/>>/g, "››");
 }
 

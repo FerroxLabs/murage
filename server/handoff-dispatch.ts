@@ -394,7 +394,8 @@ function decide(id: string, env: HandoffEnv, options: AdmitOptions, taken: { cla
     return { kind: "wait", reason: "busy", ctx: { row, item, target, shared } };
   }
   // Capacity waits are not failed attempts against a busy teammate. The server redrains pending queues when an active handoff releases its slot.
-  if (!shared && bus.canDispatch && !bus.canDispatch()) return { kind: "wait", reason: "capacity" };
+  // A shared hand-off waits here too (U4 S1): at a full home it is a capacity wait, never the "refused" a shared admission wait becomes above.
+  if (bus.canDispatch && !bus.canDispatch()) return { kind: "wait", reason: "capacity" };
   return { kind: "start", ctx: { id, row, item, sender, target, destination, request, shared, ...(claim ? { claim } : {}) } };
 }
 

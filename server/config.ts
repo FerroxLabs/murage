@@ -285,6 +285,18 @@ const featureConfigSchema = z.object({
   projectsAutonomy: z.boolean().optional(),
   projectsAutoWake: z.boolean().optional(),
   projectsParallelCards: z.boolean().optional(),
+  /** U4 S1: how many threads one bot runs at once, 1 to 16. Unset: the home guard sized from memory (server/thread-cap.ts).
+   * Read from config.json, anything else (0, 17, a fraction, text, null) reads as unset instead of failing the whole config. The write
+   * schemas below are strict and take null as "clear it". */
+  threadsPerBot: z.preprocess(
+    (value) => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 16 ? value : undefined,
+    z.number().int().min(1).max(16).optional(),
+  ),
+});
+/** U4 S1: what a write may send. threadsPerBot is a whole number 1 to 16, or null to clear the saved number (saveConfig removes it);
+ * anything else is refused. Used by both write validations: parseConfigPatch and saveConfig's own re-parse. */
+const featureConfigWriteSchema = featureConfigSchema.extend({
+  threadsPerBot: z.number().int().min(1).max(16).nullable().optional(),
 });
 const instanceConfigSchema = z.object({
   driver: z.string().min(1),
@@ -401,7 +413,7 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   memories: notificationPreferencesSchema.shape.memories.removeDefault().optional(),
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional(), features: featureConfigWriteSchema.optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
@@ -451,6 +463,8 @@ export interface AppConfig {
     learningDefaultOn?: boolean;
     projectsLead?: boolean; projectsGoals?: boolean; projectsBudgets?: boolean; projectsWorkProfile?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; skillRecorder?: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; cloudBoxComputers?: boolean; browser?: boolean; catalogFeaturedOnly?: boolean;
     roomsThreadAdmission?: boolean; roomsQueue?: boolean; roomsMentionChain?: boolean; projectsAutonomy?: boolean; projectsAutoWake?: boolean; projectsParallelCards?: boolean;
+    /** U4 S1 (server/thread-cap.ts) */
+    threadsPerBot?: number;
   };
   /** Named browser sessions any bot can be pointed at. */
   browserProfiles?: BrowserProfile[];
@@ -462,7 +476,11 @@ export type BrowserProfile = z.output<typeof browserProfileSchema> & {
   partitionId?: string;
 };
 export type ConfigPatch = z.output<typeof appConfigPatchSchema>;
-type ConfigWritePatch = Omit<Partial<AppConfig>, "notifications"> & { notifications?: Partial<NotificationPreferences> };
+type ConfigWritePatch = Omit<Partial<AppConfig>, "notifications" | "features"> & {
+  notifications?: Partial<NotificationPreferences>;
+  /** null clears the saved threads number (U4 S1) */
+  features?: Omit<NonNullable<AppConfig["features"]>, "threadsPerBot"> & { threadsPerBot?: number | null };
+};
 
 /** Resolve a canonical profile record to its exact durable Electron
  * partition identity. Callers must never substitute the display/API id. */
@@ -964,7 +982,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
     if (!parsed.success) throw new PersistedStateRecoveryError(p, "invalid-shape");
     disk = parsed.data;
   }
-  const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional() }).parse(patch);
+  const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional(), features: featureConfigWriteSchema.optional() }).parse(patch);
   // A write is the durable migration point. Preserve every other raw key in
   // config.json, but never write #567's mixed-case or duplicate profile ids
   // back after we have successfully recognized the legacy list.
@@ -976,6 +994,8 @@ export function saveConfig(patch: ConfigWritePatch): void {
     const current = jsonObjectSchema.safeParse(disk[key]);
     const merged: JsonObject = current.success ? { ...current.data } : {};
     Object.assign(merged, section);
+    // U4 S1: threadsPerBot sent as null is removed, so clearing the threads field restores the guard sized from memory
+    if (key === "features" && (section as { threadsPerBot?: number | null }).threadsPerBot === null) delete merged.threadsPerBot;
     disk[key] = merged;
   }
   if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);

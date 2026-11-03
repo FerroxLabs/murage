@@ -15,6 +15,7 @@ import { captureMessage } from "./capture.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { forgetMemory } from "./forget.ts";
+import { ensureScope } from "./policy.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
 const gate = vi.hoisted(() => ({ wait: null as null | (() => Promise<void>) }));
@@ -80,6 +81,8 @@ it("a source retired by another connection between the fence and the dispatch: t
   const completion = (v: unknown) => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(v) } }], usage: { prompt_tokens: 100, completion_tokens: 50 } }), { status: 200, headers: { "content-type": "application/json" } });
   const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
     bodies.push(String(init.body));
+    // the request leaves inside the gate's write lock and COMMIT follows at once (r8 section 1): the other connection writes on the next turn of the loop, still before the answer
+    await new Promise(resolve => setImmediate(resolve));
     if (bodies.length === 1) { other.exec("UPDATE memory_sources SET state='retired' WHERE id='message:private:o1'"); return completion(lived); }
     return completion(empty);
   }) as unknown as typeof fetch;
@@ -121,6 +124,8 @@ it("a conversation deleted by another connection between the fence and the dispa
   const completion = (v: unknown) => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(v) } }], usage: { prompt_tokens: 100, completion_tokens: 50 } }), { status: 200, headers: { "content-type": "application/json" } });
   const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
     bodies.push(String(init.body));
+    // the request leaves inside the gate's write lock and COMMIT follows at once (r8 section 1): the other connection writes on the next turn of the loop, still before the answer
+    await new Promise(resolve => setImmediate(resolve));
     // the deny lands after the fence sampled data_version and before the bytes leave: by definition after the send
     other.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('thread','private',1,?)").run(T0);
     return completion(lived);
@@ -142,4 +147,47 @@ it("a conversation deleted by another connection between the fence and the dispa
     expect(s.refusals).toEqual([]);
     expect(s.support["fp-http"]?.status).not.toBe("transient");
   } finally { other.close(); }
+});
+
+// Astra code r1 H1: the gate holds every `current` identity row the envelope shows. An owner edit supersedes the row (identity.ts:120) with
+// no tombstone, no policy bump and no counter move; while the adapter waits, it must still stop the request before fetch.
+it("an owner edit of a shown commitment while the HTTP adapter waits: fetch is never called; unchanged, the commitment is sent", async () => {
+  for (const edit of [false, true]) {
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+    reconcileMemoryRoster(roster); setMemoryMode("active");
+    const db = database();
+    for (let i = 1; i <= 3; i++) {
+      captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Plan ${i}.`, origin: "desktop" } as never);
+      captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    }
+    db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
+    const scope = ensureScope("bot", "moss");
+    db.prepare("INSERT INTO memory_records VALUES('c1',1,?,'commitment','zqkeep the weekly call','owner-statement','active',0,?,NULL,NULL,?)").run(scope, T0, T0);
+    const bodies: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => { bodies.push(String(init.body)); return new Response("{}"); }) as unknown as typeof fetch;
+    let edited = false;
+    gate.wait = async () => {
+      if (!edit || edited) return; edited = true;
+      // what identity.ts:120 does on an owner edit: the shown version is superseded, a new version takes its place
+      db.prepare("UPDATE memory_records SET state='superseded',valid_to=? WHERE id='c1' AND version=1").run(T0 + 61 * MIN);
+      db.prepare("INSERT INTO memory_records VALUES('c1',2,?,'commitment','zqdrop the weekly call','owner-statement','active',0,?,NULL,NULL,?)").run(scope, T0 + 61 * MIN, T0 + 61 * MIN);
+    };
+    const bot = { id: "moss", name: "Moss", threadIds: ["private"], continuity: true, options: { reflect: true as const } };
+    const deps: ReflectDeps = {
+      now: () => T0 + 60 * MIN, bootEpoch: { pid: 1, startedAt: 1 }, tmpBase: join(DATA_DIR, "pip-tmp"), bots: () => [bot], memoryMode: () => "active",
+      resolveRoute: async () => ({ fingerprint: "fp-http", engine: "Stub http", kind: "http", model: "m", textOnlyTurn: input => httpTextOnlyTurn(input, { baseUrl: "http://127.0.0.1:9/v1", apiKey: "k", buildBody: (model, messages) => ({ model, messages }), fetchImpl }) }),
+    };
+    const outcome = await runPipReflect(deps, undefined, new AbortController().signal);
+    if (edit) {
+      expect(edited).toBe(true);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(outcome).toMatchObject({ status: "uncertain", reason: "read-moved" });
+    } else {
+      // "{}" is a malformed answer, so the run's next attempt sends again (runPipReflect's family loop); what matters is that it is sent
+      expect(fetchImpl).toHaveBeenCalled();
+      expect(bodies[0]).toContain("zqkeep the weekly call");
+      expect(bodies.every(b => !b.includes("zqdrop"))).toBe(true);
+    }
+    gate.wait = null;
+  }
 });

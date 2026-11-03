@@ -12,6 +12,7 @@ import { StarterProfiles } from "./StarterProfiles";
 import { HouseRulesSettings } from "./HouseRulesSettings";
 import { ProjectAutonomySetting } from "./ProjectAutonomySetting";
 import { RoomTurnTimeoutSettings } from "./RoomTurnTimeoutSettings";
+import { ThreadsPerBotSetting } from "./ThreadsPerBotSetting";
 import { ROOM_ROUTING_COPY, RoomRoutingSettings } from "./RoomRoutingSettings";
 
 export type PageAdvanced = Pick<AdvancedSectionProps, "section" | "open" | "onOpenChange">;
@@ -25,6 +26,7 @@ export function BotsSettings({ advanced, effortRow, toolCallsRow }: { advanced: 
         <Anchor id="new-bot-effort-heading">{effortRow}</Anchor>
         <Anchor id="tool-calls-heading">{toolCallsRow}</Anchor>
         <Anchor id="project-autonomy-heading"><ProjectAutonomySetting /></Anchor>
+        <Anchor id="threads-per-bot-heading"><ThreadsPerBotSetting /></Anchor>
         <Card title="Channel turns" subtitle="Stop a bot that goes quiet in a channel. Use Stop to end a reply yourself.">
           <RoomTurnTimeoutSettings />
         </Card>

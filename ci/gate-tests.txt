@@ -600,6 +600,7 @@ server/delegation-owner-record-api.test.ts	linux+mac	handoff survives restart an
 server/delegation-routine-sites-api.test.ts	linux+mac	Routine hand-offs stay unattended
 server/delegation-unattended-restart-api.test.ts	linux+mac	unattended handoff keeps Full access card after restart
 server/delegations.test.ts	all	delegation queue and dispatch
+server/delete-revoke-scope-api.test.ts	linux+mac	deleting one chat never stops an unrelated turn
 server/deletion-banner-turn-end.test.ts	all	deletion note clears when Murage's own turn ends
 server/deletion-dismiss-api.test.ts	all	dismissed deletion lines stay dismissed
 server/deletion-owed-f16.test.ts	all	deletion banner shows one line per engine, clears, and dismiss lasts
@@ -636,10 +637,14 @@ server/drivers/acp/engine-tree-stop.test.ts	linux+mac	Stop on an ACP engine ends
 server/drivers/acp/fuigo-1032.test.ts	all	Fuigo 1.0.32: no acceptEdits, only the turn credential
 server/drivers/acp/fuigo-1037.test.ts	all	Fuigo 1.0.37: no ACP client terminal on offer at any permission level
 scripts/fuigo-bump.test.mjs	all	Fuigo pin bump: refusals, hunk review, pin move
+server/drivers/acp/fuigo-no-silent-hang.test.ts	all	a Fuigo that never answers or goes silent ends the turn with a plain line and one outcome, never a silent hang
+server/drivers/acp/fuigo-pins.test.ts	all	Fuigo retry, connect and park pins are the same in every env copy
 server/drivers/acp/fuigo-memory-permission.test.ts	all	Fuigo memory permission exact identity
+server/drivers/acp/fuigo-silence.test.ts	all	Fuigo silence rule: defaults, knobs, and when a quiet turn ends
 server/drivers/acp/fuigo-write-readable.test.ts	all	plain file writes from Fuigo and Grok Build read whole: no "could not read" card, no Deny-only phone card
 server/drivers/acp/fuigo.test.ts	all	Fuigo engine turn behaviour
 server/drivers/acp/gemini-qwen-isolation.test.ts	all	Gemini personal setup isolated per bot
+server/drivers/acp/grok-elicit.test.ts	all	a Grok Build MCP elicitation opens the question card, never auto-answered; a skipped card declines
 server/drivers/acp/grok-ask.test.ts	linux+mac	Grok at Ask runs shell commands and writes files with no approval card
 server/drivers/acp/grok-full-access.test.ts	linux+mac	Grok at Full access launched with bypassPermissions, so no call reached the guard, or left a standing allow-always grant
 server/drivers/acp/grok-setmodel.test.ts	all	a fresh grok process pins the chosen model once its model list loads, or fails with a next step
@@ -975,6 +980,9 @@ server/memory/grounding-reasoning-arms.test.ts	all	a memory whose check did not 
 server/memory/feedback.test.ts	all	secrets redacted from stored corrections; owner text only
 server/memory/first-start-work.test.ts	all	fast upgrade of a used data dir (upgrade)
 server/memory/forget-scrub.test.ts	all	Forget removes the words of a kept memory
+server/memory/learning-send-fence.test.ts	all	A learning call holding forgotten, deleted or edited words sends nothing
+server/memory/learning-send.test.ts	all	The learning send gate checks and releases under the write lock, and a held lock never sends
+server/memory/learning-send-transports.test.ts	all	Each learning transport sends once through its gate, holds the write lock under 50 ms, and sends nothing without a gate
 server/memory/fresh-recall.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/fts-segments.test.ts	all	deleted memory never returned by search (forget)
 server/memory/gaps-104.test.ts	all	memory reads and waiting sources behave on historical data
@@ -1118,6 +1126,7 @@ server/memory/stale-lease-requeue.test.ts	all	Protects forget/revoke, upgrade or
 server/memory/status-scan-content-stamp.test.ts	all	status scans no longer re-walk the whole store on every marker write
 server/memory/thread-delete-forget.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/thread-delete-single-revoke.test.ts	all	Protects forget/revoke: one revoke per conversation deletion, never zero, content gone on every delete path
+server/memory/tool-outcome-capture.test.ts	all	a tool's output never becomes a memory row in the owner's list; a name-only tool row keeps its action, every other memory untouched
 server/memory/u2-forget-bound.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
 server/memory/u29-bindings-brief.test.ts	all	forget reaches every binding through its scope index, and the owner brief is never silently left out
 server/memory/upgrade-contract.test.ts	all	Protects forget/revoke, upgrade or privacy-withholding correctness
@@ -1295,6 +1304,8 @@ server/reader-gaps-104.test.ts	all	an unread script on disk, lua os.execute, a P
 server/reader-hang-105.test.ts	all	a command text that freezes Murage: the stop line or another command reader never returning on the server thread (approval boundary)
 server/reader-loaders-105.test.ts	all	an interpreter or shell running code it loads first (ruby -I, NODE_OPTIONS, BASH_ENV, python -m runpy) with no card, under the POSIX and the PowerShell reader
 server/reader-ps-crlf-1014.test.ts	all	a PowerShell delete split over a backtick and a Windows line ending running with no card (approval boundary)
+server/reader-ps-variants-1014.test.ts	all	a PowerShell delete split by a lone carriage return, a vertical tab, a form feed or a backtick line end in quotes running with no card (approval boundary)
+server/reader-ps-variants-1015.test.ts	all	a PowerShell wipe after a here-string closed on a lone carriage return running with no card, or an ordinary CRLF script with 2>$null asking (approval boundary)
 server/recovery-engine-discovery.test.ts	all	restore never resurrects default engine fleet
 server/redact.test.ts	all	secrets masked in logs and sessions
 server/remote-computer.test.ts	all	checksummed driver, no command injection via bot name
@@ -1457,6 +1468,8 @@ server/terms.test.ts	all	terms acceptance recorded on first run
 server/testing/data-safety.test.ts	all	recursive deletes must use safe-wipe
 server/testing/safe-wipe-sh.test.ts	all	safe-wipe script refuses real data dirs
 server/testing/safe-wipe.test.ts	all	safe-wipe admits only scratch paths
+server/thread-cap-home-api.test.ts	all	a queued owner message is refused or dropped at a full home on a small computer
+server/thread-cap.test.ts	all	a bot runs more threads than the owner set or the computer's memory allows
 server/thread-events-decided-by.test.ts	all	the Inspector names the automatic rule that decided a request
 server/thread-export-identity.test.ts	all	paged export identical to one-shot
 server/thread-recall-seal-store.test.ts	all	recall seal persisted and not clearable
@@ -1615,6 +1628,7 @@ src/components/app-grant-a13-r1.test.ts	all	Always allow saves and answers in on
 src/components/app-grant-a13-r2.test.ts	all	voice reads every operation the grant card shows
 src/components/approval-queue-83b.test.ts	all	approval queue stable identity by request id
 src/components/approval-queue-83c.test.ts	all	spoken queue commands never read as a decision
+src/components/approval-one-card.test.ts	all	A waiting approval is answered in one place: the chat shows one line and the composer panel holds the choice
 src/components/cloud/Door.test.ts	all	cloud door sign-in routing
 src/components/composer-key-guard.test.ts	all	pasted key stripped before message is sent
 src/components/connect-label-collisions.test.ts	all	the label form fills in a free label, says a taken one on the form, and the chat card asks for it too
@@ -1692,7 +1706,9 @@ src/lib/team-import.test.ts	all	team import preview rejects bad files
 src/lib/terms.test.ts	all	terms accepted once, reprompt on version change
 src/lib/trusted-html.test.ts	all	Trusted Types policy restricts script URLs
 src/lib/undo.test.ts	all	Undo is local to the window and holds survive a newer offer
+src/lib/webhook-message-lazy.test.ts	all	a webhook run never shows its raw event text while the bubble's parser loads or fails
 src/lib/webhook-message.test.ts	all	untrusted webhook data cannot forge task markers
+src/lib/whats-new.test.ts	all	release ships its own What's new page, never an old one
 src/lib/workspace-links.test.ts	all	relative link cannot climb out of folder
 src/locales/locale-copy.test.ts	all	German or French copy addresses the reader formally (Sie, vous imperatives) beside informal lines
 src/mermaid-frame/protocol.test.ts	all	mermaid frame accepts only three message shapes
@@ -1831,6 +1847,8 @@ src/lib/working-now.test.ts	all	a working bot missing from Today, so the owner c
 src/lib/connectivity.test.ts	all	the offline band flickers or claims offline while the owner is online
 src/components/shell/RailDoors.test.ts	all	the four doors missing, mislabelled, unreachable by keyboard or below 44 px
 src/components/shell/shell-nav.test.ts	all	Watch or a result from Today opens the wrong conversation
+src/components/health/health-exit.test.ts	all	the person is stuck on Health with no Back, close button, Esc or rail door that gets them out
+src/lib/escape-layer.test.ts	all	Esc under a dialog closes the phone drawer and keeps the dialog open, Esc on a menu in the drawer leaves the drawer open, or Esc on a menu over Health leaves Health
 src/state/store.shell-views.test.ts	all	Today, Needs you or Health open under a dialog, or a returning owner lands in the wrong place
 server/engine-health-routes.test.ts	all	engine health readable by a non-owner, or a slow Flux check holding Today up
 server/drivers/codex-edit-contract.test.ts	all	NOLIMITS-CODEX-EDIT: a Codex patch outside the project runs at No limits and Full access with no card; a key path, an unread patch and the stop line still wait
@@ -1863,3 +1881,13 @@ server/voice/voice-note-audio.test.ts	all	a phone or browser plays a voice note 
 src/components/VoiceNoteDoors.test.ts	all	a voice note shows a working player on the phone, the browser door and the phone app, not only the caption
 server/setup-engine-users.test.ts	all	Needs you names the bots that run on an engine nobody is signed in to
 src/components/FuigoFirstSignIn.test.ts	all	Needs you shows only a used signed-out engine with Use Fuigo instead first; the first-run card offers no other engine sign-in
+server/engine-repick.test.ts	all	a bot Murage set up reaches Fuigo when the key lands, and a working engine is never moved
+server/store-engine-cas.test.ts	all	an owner engine pick is never overwritten, and a failed save never loses an engine move
+server/harness/registry.test.ts	all	a config from another build loads, and a key save reads a scan started after it
+src/components/engine/UseFuigoInstead.test.ts	all	a bot stuck on a sign-in wall can move to Fuigo with one tap
+server/birth-selection.test.ts	all	a new bot with no owner pick is born on Fuigo when Fuigo can answer, never on a keyless Fuigo or a remembered engine
+server/bots-route.http.test.ts	linux+mac	the first Chief and a sidebar New bot are born on Fuigo when it can answer, and an owner pick is kept
+src/components/FirstRunBackupsStart.test.ts	all	the first-run backup step starts on mount even when the backups row chunk never arrives, so setup can still end with a checked backup
+server/memory/delegation-hold.test.ts	all	a bot-to-bot ask leaves the pair room where it is and ends no memory receipt (every ask held every reply)
+src/components/WithoutMemoryNote.test.ts	all	a reply that ran without remembered context says so in the chat with Tool calls off
+server/memory/learning-send-boundary.test.ts	all	Every engine write in server/ goes through a learning gate or is pinned at its call site

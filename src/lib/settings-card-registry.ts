@@ -48,6 +48,7 @@ const BOT_DEFAULTS: SettingsCard[] = [
   card("new-bot-effort", "botDefaults", "new-bot-effort-heading", { keywords: ["new bots", "effort", "default", "defaults"], advanced: true }),
   card("tool-calls", "botDefaults", "tool-calls-heading", { keywords: ["tool calls", "tools", "show tool calls"], advanced: true }),
   card("project-autonomy", "botDefaults", "project-autonomy-heading", { keywords: ["autonomy", "project autonomy", "projects"], advanced: true }),
+  card("threads-per-bot", "botDefaults", "threads-per-bot-heading", { keywords: ["threads", "threads at once", "at the same time", "parallel", "limit"], advanced: true }),
   card("channel-turns", "botDefaults", "room-turn-timeout", { keywords: ["channel turns", "turn", "timeout", "quiet"], advanced: true }),
   card("room-routing", "botDefaults", "room-routing-label", { keywords: ["routing", "who answers", "channels", "rooms"], advanced: true }),
   card("starter-profiles", "botDefaults", "starter-profiles-heading", { keywords: ["starter profiles", "starter", "crew"] }),

@@ -29,6 +29,8 @@ beforeAll(async()=>{
     const {installCliStopGate}=await import(${JSON.stringify(new URL("./testing/cli-stop-gate.ts",import.meta.url).href)});
     installCliStopGate('working-folder-close-fixture',acp('gate'),acp('host-engine-pid'));
     cfg.instances.acpStop={driver:'customAcp',displayName:'Close-confirmed ACP fixture',config:{cli:${JSON.stringify(FAKE_ACP)}},environment:{MURAGE_PROCESS_TAG:'working-folder-close-fixture',FAKE_ACP_MODE:'cancel-ack',FAKE_ACP_TERM:'gate',FAKE_ACP_PID_FILE:acp('pid'),FAKE_ACP_TERM_MARK:acp('term'),FAKE_ACP_EXIT_GATE:acp('gate'),FAKE_ACP_RPC_DUMP:acp('rpc')}};
+    // U4 S1: the limit is sized from memory unless saved; these slot tests pin the owner's saved number at 3
+    cfg.features={...(cfg.features||{}),threadsPerBot:3};
     fs.writeFileSync(file,JSON.stringify(cfg));process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   `});
   const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};
@@ -211,6 +213,33 @@ it("queues a routine visibly for a free slot while three threads run, then runs 
     await api("DELETE",`/api/routines/${routine.id}`);
   }
 },40000);
+// U4 S1: the owner's queued lines, drained after their thread's turn ends, are the owner's own send arriving later. At the thread limit
+// with a routine queued for a slot they wait first in line (or take the reserved slot) and are never refused back behind it.
+it("a queued owner batch at the thread limit starts ahead of a queued routine instead of going back behind it",async()=>{
+  const bot=await create();
+  // the owner's thread runs on the second account, everything else on the first: its own dump file shows the drained batch start
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.first}`,{modelSelection:{instanceId:"second",model:modelTwo}})).status).toBe(200);
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${bot.second}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  const third=(await api("POST",`/api/bots/${bot.id}/tasks`,{title:"Third queued-owner slot"})).body.task;
+  expect((await api("PATCH",`/api/bots/${bot.id}/tasks/${third.threadId}`,{modelSelection:{instanceId:"verification",model:modelOne}})).status).toBe(200);
+  await hold(bot.id,bot.first,"u4s1-owner-first-holder",true);await hold(bot.id,bot.second,"u4s1-second-holder");await hold(bot.id,third.threadId,"u4s1-third-holder");
+  const {routine,runId,task}=await routineOn(bot.id,"Queued owner routine","__fixture_hold_authority__ u4s1-routine-held");
+  try{
+    await expect.poll(async()=>(await task())?.waitingFor,{timeout:10000}).toEqual({resource:"thread-slot"});
+    // the owner types into the busy thread: the line is queued behind its running turn
+    const queued=await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.first,text:"__fixture_hold_authority__ u4s1-queued-owner-batch"});
+    expect(queued.status).toBe(202);expect(queued.body.queued).toBe(true);
+    rmSync(join(fixture.info.dataDir,"second-dump.json"),{force:true});
+    // its turn ends: the slot frees, the routine in line and the drained owner batch both want it
+    expect((await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.first})).status).toBe(200);
+    await expect.poll(()=>{try{return JSON.stringify(dump(true).prompt).includes("u4s1-queued-owner-batch");}catch{return false;}},{timeout:15000,interval:25}).toBe(true);
+    expect((await messages(bot.first)).some(message=>message.tool?.ok===false&&String(message.tool?.name).includes("queued message could not start"))).toBe(false);
+  }finally{
+    await api("POST",`/api/routine-runs/${runId}/cancel`);
+    for(const threadId of [bot.first,bot.second,third.threadId])await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId});
+    await api("DELETE",`/api/routines/${routine.id}`);
+  }
+},45000);
 it("delivers the approval card of a routine that waited for a slot to its own thread and the owner",async()=>{
   const bot=await create();
   expect((await api("PATCH",`/api/bots/${bot.id}`,{notifications:true})).status).toBe(200);

@@ -123,6 +123,8 @@ export interface PreparedBotPackageImport {
   /** A shipped starter crew's lead. The bots are written with no access
    * (chiefOfStaff false); the caller makes these leads after the commit. */
   leadBotIds: string[];
+  /** 1.0.15 BIRTH-FUIGO P5: bots with no owner pick, written empty; Store.preparePackageAddition births them once, in the commit. */
+  bornBotIds: string[];
   files: Array<{ path: string; content: Buffer }>;
   baseline: ReturnType<typeof createPackageImportBaseline>;
 }
@@ -132,7 +134,7 @@ export interface BotPackageAtomicCommitInput { prepared: PreparedBotPackageImpor
 export type BotPackageAtomicCommit = (input: BotPackageAtomicCommitInput) => void;
 
 function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options: {
-  existingBots: readonly Pick<BotRecord, "id" | "threadId" | "name">[]; modelSelection: ModelSelection;
+  existingBots: readonly Pick<BotRecord, "id" | "threadId" | "name">[]; modelSelection: ModelSelection | "birth";
   existingSections?: readonly string[]; starterLeads?: boolean;
 }): PreparedBotPackageImport {
   const manifest = inspected.selected;
@@ -143,7 +145,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
   const freshId = () => { let id: string; do { id = randomUUID(); } while (takenIds.has(id)); takenIds.add(id); return id; };
   const result: PreparedBotPackageImport = { id: randomUUID(), archiveSha256: intake.sha256, reviewHash: inspected.reviewHash,
     selectionHash: inspected.selectionHash,
-    bots: [], groups: [], routines: [], leadBotIds: [], files: [], baseline: createPackageImportBaseline(manifest) };
+    bots: [], groups: [], routines: [], leadBotIds: [], bornBotIds: [], files: [], baseline: createPackageImportBaseline(manifest) };
   const ids = new Map<string, string>();
   const pkg = manifest.definition.package;
   // A team's label is its name everywhere it is shown, so it never carries an
@@ -157,7 +159,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
     return name;
   };
   // A shipped starter crew arrives with the lead its package names (the
-  // caller checked that the engine can coordinate bots).
+  // caller admits each lead on its final engine, inside the commit).
   const leadKeys = new Set(options.starterLeads
     ? [...new Set(pkg.agents.map((agent) => agent.team?.trim() || ""))].flatMap((team) => { const key = starterLeadKey(pkg, team); return key ? [key] : []; })
     : []);
@@ -192,7 +194,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
       // Imported bots notify like bots you create: an approval that never reaches
       // the phone silently blocks the bot (2026-10-06, owner decision).
       id, threadId, ...profile, notifications: true, unread: false,
-      modelSelection: structuredClone(options.modelSelection), resumeCursors: {}, createdAt: at,
+      modelSelection: options.modelSelection === "birth" ? { instanceId: "", model: "" } : structuredClone(options.modelSelection), resumeCursors: {}, createdAt: at,
       tasks: [{ threadId, title: "New task", createdAt: at, resumeCursors: {} }],
       // An imported bot always starts at Ask, whatever the file said (the
       // format has no such field). Raising the level is the owner's own
@@ -207,6 +209,7 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
         ...(agent.emailIntent === "was-on" ? { emailIntent: "was-on" as const } : {}) },
     };
     result.bots.push(bot); ids.set(agent.key, id);
+    if (options.modelSelection === "birth") result.bornBotIds.push(id);
     if (leadKeys.has(agent.key)) result.leadBotIds.push(id);
     const assigned = new Set<string>();
     const collect = (skillKey: string) => {
@@ -269,11 +272,12 @@ function prepare(intake: Intake, inspected: ReturnType<typeof inspect>, options:
 interface ImportOptions {
   dataDir: string; selection: BotPackageSelection;
   expectedArchiveSha256: string; expectedReviewHash: string; acknowledgeWarnings?: boolean;
-  existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection;
+  /** "birth": no owner pick; the records are born in the caller's commit (Store.preparePackageAddition). */
+  existingBots: readonly ImportHistoryBot[]; modelSelection: ModelSelection | "birth";
   /** Every team label already in use, so the new team's name is its own. */
   existingSections?: readonly string[];
-  /** A shipped starter crew whose engine can coordinate bots: name its lead
-   * in `leadBotIds` for the caller to appoint once the import is committed. */
+  /** A shipped starter crew: name its lead in `leadBotIds`; the caller admits it on its final engine in the commit and appoints it
+   * once the import is committed. */
   starterLeads?: boolean;
   atomicCommit: BotPackageAtomicCommit; signal?: AbortSignal; scanId?: string;
   /** Cloud home: refuses an id the launcher has tombstoned (a deleted bot's id is never used again).
@@ -285,7 +289,7 @@ async function importIntake(options: ImportOptions, load: () => Promise<Intake>)
   const existingBots = options.existingBots.map((bot) => ({ id: bot.id, threadId: bot.threadId, name: bot.name,
     createdAt: bot.createdAt, installedPackage: bot.installedPackage && structuredClone(bot.installedPackage),
     packageImportReceipt: bot.packageImportReceipt && structuredClone(bot.packageImportReceipt) }));
-  const modelSelection = structuredClone(options.modelSelection);
+  const modelSelection = options.modelSelection === "birth" ? "birth" as const : structuredClone(options.modelSelection);
   const intake = await load();
   const inspected = inspect(intake, selection, existingBots);
   if (intake.sha256 !== options.expectedArchiveSha256 || inspected.reviewHash !== options.expectedReviewHash) fail("PACKAGE_REVIEW_CHANGED");

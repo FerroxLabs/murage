@@ -206,3 +206,19 @@ describe.each(["owner", "shared"] as Kind[])("%s hand-offs: the same verdict whi
     if (entry === "boot redispatch") expect(after.row).toBe("held");                    // the restart holds it for the owner
   });
 });
+
+// U4 S1: the home-wide guard answers canDispatch for shared hand-offs too. At a full home a shared hand-off is a capacity wait
+// (kept, its request still queued, no busy retry spent, no refusal), and it starts once there is room. The base skipped the question for shared work.
+describe("a shared hand-off at a full home", () => {
+  it.each(ENTRIES.shared)("reached by %s: it waits for capacity, kept and never refused, and starts when there is room", async (entry) => {
+    const w = sharedWorld();
+    let room = false;
+    (w.bus as unknown as { canDispatch: () => boolean }).canDispatch = () => room;
+    const { id } = await queued(w, entry);
+    await go(w, entry, id);
+    expect(observe(w, id)).toMatchObject({ turns: 0, row: "queued", receipt: undefined, attemptsSpent: 0, request: "queued" });
+    room = true;
+    await go(w, entry, id);
+    expect(observe(w, id)).toMatchObject({ turns: 1, row: "started" });
+  });
+});

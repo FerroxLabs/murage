@@ -8,13 +8,13 @@ it("runs three detached per-thread snapshots and stopping one does not change it
   settings.model = "two";settings.account = "account-b";settings.approval = "auto";
   const b = runs.admit("bot", "b", settings);
   runs.admit("bot", "c", settings);
-  expect(() => runs.admit("bot", "d", settings)).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", settings)).toThrow("3 threads");
   expect(a.snapshot).toMatchObject({ model: "one", account: "account-a", approval: "ask" });
   expect(b.snapshot).toMatchObject({ model: "two", account: "account-b", approval: "auto" });
   runs.dispatch(a);runs.dispatch(b);runs.accepted(a, "provider-a");runs.accepted(b, "provider-b");
   runs.cancel(a);
   expect(runs.get("b")).toMatchObject({ phase: "running", providerTurnId: "provider-b" });
-  expect(() => runs.admit("bot", "d", settings)).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", settings)).toThrow("3 threads");
   runs.release(a);expect(runs.admit("bot", "d", settings).threadId).toBe("d");
 });
 it("retains resource ownership through cancel and final settlement and rejects stale async acquisition", () => {
@@ -184,7 +184,7 @@ it("keeps the three-thread limit for waiting runs and ignores unrelated releases
   const holder = runs.admit("other", "holder", {}, ["computer:vm"]);
   const waits = ["a", "b", "c"].map(id => runs.admit("bot", id, {}));
   const pending = waits.map(run => runs.acquire(run, ["computer:vm", `browser:${run.threadId}`]));
-  expect(() => runs.admit("bot", "d", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "d", {})).toThrow("3 threads");
   const unrelated = runs.admit("third", "unrelated", {}, ["browser:unrelated"]);
   runs.release(unrelated);
   expect((await settled(pending[0])).done).toBe(false);
@@ -206,14 +206,14 @@ it("queues an automation run past the three-thread limit and serves slots first-
   expect(shown).toEqual(["routine-1", "routine-2"]);
   expect((await settled(firstSlot)).done).toBe(false);
   // A direct chat cannot take a slot ahead of a queued automation run.
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
   // Another bot's release frees nothing here.
   runs.release(runs.admit("other", "elsewhere", {}));
   expect((await settled(firstSlot)).done).toBe(false);
   runs.release(held[0]);
   expect(await firstSlot).toBe(true);
   expect((await settled(secondSlot)).done).toBe(false);
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
   runs.release(held[1]);
   expect(await secondSlot).toBe(true);
   runs.release(held[2]);
@@ -414,7 +414,7 @@ it("gives the owner's own send one reserved slot above the limit, and a second w
   runs.release(held[1]);
   expect(await routineSlot).toBe(true);
   // and a plain (non-owner) send is still refused at the limit
-  expect(() => runs.admit("bot", "chat", {})).toThrow("three threads");
+  expect(() => runs.admit("bot", "chat", {})).toThrow("3 threads");
 });
 
 // ── SL-L: place in line, estimate, no hour limit (1.0.4 item 127) ─────────

@@ -1331,7 +1331,7 @@ function EventDetails({
   // SL-L L1: a run waiting for its seat shows the same place in line as the chat chip.
   const runBot = run && executionThreadId ? bots.find((candidate) => candidate.id === run.botId) : undefined;
   const runWaitLabel = run?.status === "running" && runBot && executionThreadId
-    ? resourceWaitLabel(findTask(runBot, executionThreadId)?.waitingFor)
+    ? resourceWaitLabel(findTask(runBot, executionThreadId)?.waitingFor, runBot.name)
     : undefined;
   const botIds = call?.botIds ?? [run?.botId ?? routine?.botId ?? ""];
   const invited = botIds.flatMap((id) => bots.find((bot) => bot.id === id) ?? []);

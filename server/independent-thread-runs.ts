@@ -2,7 +2,24 @@ import { randomUUID } from "node:crypto";
 import { overlaps, sameOwner, TurnResources, type TurnOwner } from "./turn-resources.ts";
 import type { TaskResourceWait } from "./store.ts";
 
+/** The per-bot thread limit before U4 S1, kept as the default for a run set built without a live limit (tests, tools).
+ * The server passes live getters (server/thread-cap.ts): the owner's saved number, else a guard sized from memory. */
 export const MAX_CONCURRENT_BOT_THREADS = 3;
+
+export type ThreadLimits = Readonly<{
+  /** this bot's limit, read on every admission and every slot pump */
+  perBot?: (botId: string) => number;
+  /** every bot's running threads together, read the same way */
+  home?: () => number;
+}>;
+
+/** A limit that is unreadable or not a positive whole number reads as `fallback` (fail closed). The getters already bound it: the
+ * saved per-bot number is 1 to 16, the home guard is total GB less 2 (server/thread-cap.ts). */
+function readLimit(read: (() => number) | undefined, fallback: number): number {
+  let value: unknown;
+  try { value = read?.(); } catch { value = undefined; }
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : fallback;
+}
 
 /** The deadline a caller may still pass to `acquire`. Since 1.0.4 (SL-L L3)
  * the server's turn waits pass none: a waiter waits until it is granted,
@@ -86,6 +103,27 @@ function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): 
  * retires dispatch authority immediately; resource and capacity leases remain
  * until the caller confirms provider teardown/final screen settlement. */
 export class IndependentThreadRuns<T> {
+  private readonly limits: ThreadLimits;
+  constructor(limits: ThreadLimits = {}) { this.limits = limits; }
+  /** This bot's thread limit right now. An unreadable per-bot limit reads as the home guard when one is given (U4 S1), else 3. */
+  capFor(botId: string): number {
+    const perBot = this.limits.perBot;
+    return readLimit(perBot ? () => perBot(botId) : undefined, this.limits.home ? this.homeCap() : MAX_CONCURRENT_BOT_THREADS);
+  }
+  /** The home-wide limit right now; unlimited when none was given. */
+  homeCap(): number { return this.limits.home ? readLimit(this.limits.home, 1) : Number.POSITIVE_INFINITY; }
+  /** Runs holding a thread slot, every bot together (a run still waiting for one holds none). */
+  homeHolding(): number { let held = 0; for (const run of this.runs.values()) if (!this.slotless.has(run.generation)) held++; return held; }
+  /** Why a new non-owner start for this bot would have to wait or be refused right now, naming the number in force; undefined when it
+   * would start. `except` is a generation not to count (a rebuild's own held run). */
+  limitRefusal(botId: string, except?: string): string | undefined {
+    const cap = this.capFor(botId);
+    if (this.forBot(botId).filter(run => run.generation !== except).length >= cap) return threadLimitText(cap);
+    const home = this.homeCap();
+    if ([...this.runs.values()].filter(run => run.generation !== except && !this.slotless.has(run.generation)).length >= home) return homeLimitText(home);
+    return undefined;
+  }
+  atLimit(botId: string, except?: string): boolean { return this.limitRefusal(botId, except) !== undefined; }
   private readonly runs = new Map<string, DirectThreadRun<T>>();
   private readonly resources = new TurnResources();
   /** FIFO. A waiter never holds a claim, so waiting cannot deadlock. */
@@ -136,17 +174,22 @@ export class IndependentThreadRuns<T> {
   private admitFree(botId: string, threadId: string, snapshot: T, resources: readonly string[], options: { queueForSlot?: boolean; ownerFirst?: boolean }): DirectThreadRun<T> {
     if (this.runs.has(threadId)) throw conflict("thread_busy", "This thread is already running or stopping.");
     const running = this.forBot(botId);
-    let needsSlot = running.length >= MAX_CONCURRENT_BOT_THREADS;
+    // one read of each limit for this admission: the refusal names the number this admission used
+    const cap = this.capFor(botId);
+    const homeFull = this.homeHolding() >= this.homeCap();
+    let needsSlot = running.length >= cap || homeFull;
     // Owner first (SPEC-P 7.2 step 8 [AMB-6]): the owner's own send is never
-    // refused at the limit. It takes one reserved slot above it; with that
-    // taken it waits for a slot ahead of every queued automation run.
+    // refused at the limit. It takes one reserved slot above the bot's limit; with that
+    // taken, or with the whole home at its guard, it waits for a slot ahead of every queued automation run.
     let reserved = false;
-    if (needsSlot && options.ownerFirst && !running.some(run => this.ownerReserved.has(run.generation))) {
+    // the reserved slot never takes the bot past its limit + 1, also right after the limit was lowered under what is running
+    const held = running.filter(run => !this.slotless.has(run.generation)).length;
+    if (needsSlot && !homeFull && held <= cap && options.ownerFirst && !running.some(run => this.ownerReserved.has(run.generation))) {
       needsSlot = false;
       reserved = true;
     }
     if (needsSlot && !options.queueForSlot && !options.ownerFirst) {
-      throw conflict("thread_limit", "This bot is already running three threads. Wait for one to finish.");
+      throw conflict("thread_limit", running.length >= cap ? threadLimitText(cap) : homeLimitText(this.homeCap()));
     }
     const copied = structuredClone(snapshot);
     const owner = { threadId, generation: randomUUID() };
@@ -158,6 +201,9 @@ export class IndependentThreadRuns<T> {
     if (reserved) this.ownerReserved.add(owner.generation);
     if (needsSlot && options.ownerFirst) this.ownerWaiting.add(owner.generation);
     if (options.ownerFirst) this.ownerSends.add(owner.generation);
+    // an owner send that must wait joins the line now, in this same call: a release before its caller reaches awaitSlot
+    // (setup yields first) can never hand its slot to automation queued behind it
+    if (needsSlot && options.ownerFirst) this.earlySlot.set(owner.generation, this.queueSlot(owner, botId));
     return run;
   }
 
@@ -165,9 +211,21 @@ export class IndependentThreadRuns<T> {
    * admitted with one), false when it is stopped, released or replaced first.
    * `onWait` fires once, synchronously, only when the run has to wait. */
   awaitSlot(owner: TurnOwner, onWait?: () => void): Promise<boolean> {
+    const early = this.earlySlot.get(owner.generation);
+    if (early) {
+      this.earlySlot.delete(owner.generation);
+      if (this.slotless.has(owner.generation) && this.claimable(owner)) onWait?.();
+      return early;
+    }
     if (!this.claimable(owner)) return Promise.resolve(false);
     if (!this.slotless.has(owner.generation)) return Promise.resolve(true);
     const botId = this.runs.get(owner.threadId)!.botId;
+    return this.queueSlot(owner, botId, onWait);
+  }
+
+  /** Owner sends queued at admission, by generation, until their caller awaits them. */
+  private readonly earlySlot = new Map<string, Promise<boolean>>();
+  private queueSlot(owner: TurnOwner, botId: string, onWait?: () => void): Promise<boolean> {
     return new Promise<boolean>((resolve) => {
       const waiter = { owner, botId, resolve };
       if (this.ownerWaiting.has(owner.generation)) {
@@ -273,7 +331,7 @@ export class IndependentThreadRuns<T> {
 
   /** Re-examine every waiter: a holder may have become one worth not waiting
    * behind (it started waiting for the person) without releasing anything. */
-  recheck(): void { if (this.waiters.length) this.pump(); }
+  recheck(): void { if (this.waiters.length || this.slotWaiters.length) this.pump(); }
 
   /** Whether this generation is waiting for a shared resource. */
   waiting(owner: TurnOwner): boolean { return this.waiters.some(waiter => sameOwner(waiter.owner, owner)); }
@@ -351,6 +409,7 @@ export class IndependentThreadRuns<T> {
     this.ownerReserved.delete(owner.generation);
     this.ownerWaiting.delete(owner.generation);
     this.ownerSends.delete(owner.generation);
+    this.earlySlot.delete(owner.generation);
   }
 
   private freed(threadId: string, botId: string | undefined, generation: string): void {
@@ -461,11 +520,16 @@ export class IndependentThreadRuns<T> {
       if (!this.claimable(waiter.owner)) {
         this.slotWaiters.splice(index, 1);waiter.resolve(false);continue;
       }
-      // the owner's reserved slot sits above the limit and frees none of it
-      const holding = this.forBot(waiter.botId).filter(run => !this.slotless.has(run.generation) && !this.ownerReserved.has(run.generation)).length;
-      if (holding < MAX_CONCURRENT_BOT_THREADS) {
+      // the owner's reserved slot sits above the bot's limit and frees none of it; the home guard counts every held slot
+      const mine = this.forBot(waiter.botId).filter(run => !this.slotless.has(run.generation));
+      const holding = mine.filter(run => !this.ownerReserved.has(run.generation)).length;
+      const homeRoom = this.homeHolding() < this.homeCap();
+      const owner = this.ownerWaiting.has(waiter.owner.generation);
+      const takesReserved = homeRoom && owner && holding >= this.capFor(waiter.botId) && mine.length <= this.capFor(waiter.botId) && !mine.some(run => this.ownerReserved.has(run.generation));
+      if (homeRoom && (holding < this.capFor(waiter.botId) || takesReserved)) {
         this.slotless.delete(waiter.owner.generation);
         this.ownerWaiting.delete(waiter.owner.generation);
+        if (takesReserved) this.ownerReserved.add(waiter.owner.generation);
         this.slotWaiters.splice(index, 1);waiter.resolve(true);continue;
       }
       index++;
@@ -526,4 +590,13 @@ export function requireDirectThreadTarget(taskIds: readonly string[], requested:
   if (typeof requested !== "string" || !/^[\w-]+$/.test(requested)) throw Object.assign(new Error("threadId must be a task id"), { status: 400 });
   if (!taskIds.includes(requested)) throw Object.assign(new Error("No such thread for this bot."), { status: 404 });
   return requested;
+}
+
+/** The refusal for a bot at its own limit, naming the number the admission used. */
+export function threadLimitText(cap: number): string {
+  return cap === 1 ? "This bot is already running a thread. Wait for it to finish." : `This bot is already running ${cap} threads. Wait for one to finish.`;
+}
+/** The refusal for a start that would pass the home-wide guard. */
+export function homeLimitText(cap: number): string {
+  return cap === 1 ? "Murage is already running a thread on this computer. Wait for it to finish." : `Murage is already running ${cap} threads on this computer. Wait for one to finish.`;
 }

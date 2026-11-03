@@ -282,7 +282,8 @@ export function teamIncidentText(incident: TeamIncident, count: TeamIncidentCoun
  * belongs on a chip, because retrying it would only produce the same refusal
  * on every future turn. */
 export function teamIncidentDispatchDeferred(error: unknown): boolean {
-  return /already working/i.test(error instanceof Error ? error.message : String(error));
+  // "already running N threads" is the thread limit (U4 S1: the number is live, so the words name it)
+  return /already (working|running)/i.test(error instanceof Error ? error.message : String(error));
 }
 
 /** How many incidents may be waiting for a free turn at once.

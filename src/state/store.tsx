@@ -267,8 +267,9 @@ export interface SecretRequestCardData {
 export interface Message {
   /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
   botCall?: import("@/lib/bot-calls").BotCallMark;
-  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
-  memoryNote?: "export-paste";
+  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
+   * "without-memory" (DELEGATION-HOLD F5): an activity row saying a reply ran without remembered context; shown with Tool calls off. */
+  memoryNote?: "export-paste" | "without-memory";
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -566,6 +567,8 @@ export interface TaskUsage {
 
 export interface Bot {
   id: string;
+  /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
+  engineRev?: number;
   /** 1.0.9 phone tools: what this bot may do on a paired phone. Absent key = off. Present only when the host offers phone tools. */
   phoneApps?: import("../../shared/phone-apps").PhoneApps;
   threadId: string;
@@ -868,6 +871,8 @@ export interface ConfigStatus {
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
+  /** U4 S1: the saved per-bot thread number (null = default) and this computer's guard; absent from an older server */
+  threads?: { perBot: number | null; homeGuard: number };
   /** Effort every new bot starts with where its engine offers it; absent = none sent. */
   newBots?: { effort?: EffortLevel };
   localVm: { mode: "shared" | "per-bot"; maxInstances: number };

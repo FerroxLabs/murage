@@ -13,9 +13,14 @@ describe("resourceWaitLabel", () => {
       .toBe("Waiting for 'Research' to finish using the browser profile");
   });
 
-  it("says a queued routine is waiting for a free thread slot", () => {
+  it("says a queued start will begin when the current one finishes (U4 S1: no fixed number)", () => {
     expect(resourceWaitLabel({ resource: "thread-slot" }))
-      .toBe("Waiting for a free slot: this bot is already working on three threads");
+      .toBe("I'll start this as soon as the current one finishes.");
+    expect(resourceWaitLabel({ resource: "thread-slot" }, " Ada "))
+      .toBe("Ada will start as soon as the current one finishes");
+    // the holder's title never stands in for the bot's name
+    expect(resourceWaitLabel({ resource: "thread-slot", holderTitle: "Research" }))
+      .toBe("I'll start this as soon as the current one finishes.");
   });
 
   it("stays generic without a visible title and for unknown kinds", () => {
@@ -59,6 +64,6 @@ describe("resourceWaitLabel", () => {
     expect(resourceWaitLabel({ resource: "working-folder", holderTitle: "Refactor", position: 0 }))
       .toBe("Waiting for 'Refactor' to finish using the working folder");
     expect(resourceWaitLabel({ resource: "thread-slot", position: 2 }))
-      .toBe("Waiting for a free slot: this bot is already working on three threads");
+      .toBe("I'll start this as soon as the current one finishes.");
   });
 });

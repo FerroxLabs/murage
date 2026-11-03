@@ -1607,3 +1607,22 @@ describe("Flux Memory switches in config", () => {
     expect(() => saveConfig({ flux: { memory: { bogus: true } } } as never)).toThrow();
   });
 });
+
+// U4 S1: clearing the threads field restores the guard sized from memory. null passes both write validations (parseConfigPatch and
+// saveConfig's own re-parse) and removes the saved number; only the read from config.json is lenient.
+describe("threads per bot: save and clear", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+
+  it("PATCH 8 saves 8; PATCH null through parseConfigPatch and saveConfig removes it and keeps the other switches", () => {
+    saveConfig(parseConfigPatch({ features: { threadsPerBot: 8, browser: true } }));
+    expect(loadConfig().features).toEqual({ threadsPerBot: 8, browser: true });
+    saveConfig(parseConfigPatch({ features: { threadsPerBot: null } }));
+    expect(loadConfig().features).toEqual({ browser: true });
+    expect(Object.hasOwn(JSON.parse(readFileSync(file, "utf8")).features, "threadsPerBot")).toBe(false);
+  });
+  it("a write refuses 0, 17, a fraction or text instead of saving or silently dropping it", () => {
+    for (const bad of [0, 17, 2.5, "x"]) expect(() => parseConfigPatch({ features: { threadsPerBot: bad } })).toThrow();
+  });
+});
