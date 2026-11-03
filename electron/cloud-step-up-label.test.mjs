@@ -50,6 +50,8 @@ const SAMPLES = [
   ["PUT", "/api/bots/b1/calls/rules"], ["POST", "/api/calls/off-today"], ["POST", "/api/calls/rearm"],
   // 1.0.13 the desktop accepts the No limits terms.
   ["POST", "/api/no-limits/terms"],
+  // 1.0.14 Call me when this finishes, and the desktop engine sign-in and set-up check.
+  ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
 ];
 
 describe("every step-up route has a human label", () => {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR, ensureDirs } from "../../config.ts";
+import type { execCli } from "../../procs.ts";
 import type { SendTurnInput } from "../../contracts.ts";
 import { OWN_READS } from "../../../shared/own-servers.ts";
 import { recordEvents } from "../../testing/events.ts";
@@ -21,6 +22,7 @@ import {
   decodeCursorAuthText,
   decodeCursorModelCatalog,
   decodeCursorModelText,
+  probeCursorAuth,
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
   fetchCursorModels,
@@ -42,6 +44,36 @@ describe("decodeCursorAuthStatus", () => {
     expect(decodeCursorAuthStatus({ auth: { isAuthenticated: true } })).toBe(true);
     expect(decodeCursorAuthStatus({ email: "user@example.com" })).toBeNull();
     expect(decodeCursorAuthStatus("logged in")).toBeNull();
+  });
+});
+
+describe("probeCursorAuth", () => {
+  type Run = typeof execCli;
+  /** One answer per call, in order. */
+  const answering = (...answers: Array<[Error | null, string, string]>): Run => {
+    let call = 0;
+    return ((_cli: string, _args: string[], _options: unknown, done: (err: Error | null, stdout: string, stderr: string) => void) => {
+      done(...answers[Math.min(call++, answers.length - 1)]!);
+    }) as unknown as Run;
+  };
+  const failed = new Error("Command failed");
+
+  it("is unknown, not signed out, when no status answers", async () => {
+    await expect(probeCursorAuth("cursor-agent", {}, answering([failed, "", ""]))).resolves.toBeUndefined();
+    await expect(probeCursorAuth("cursor-agent", {}, answering([null, "", ""]))).resolves.toBeUndefined();
+    await expect(probeCursorAuth("cursor-agent", {}, answering([null, "Cursor Agent CLI", ""]))).resolves.toBeUndefined();
+  });
+
+  it("still reads a real signed out, even from a status that exited non-zero", async () => {
+    await expect(probeCursorAuth("cursor-agent", {}, answering([null, '{"isAuthenticated":false}', ""]))).resolves.toBe(false);
+    await expect(probeCursorAuth("cursor-agent", {}, answering([failed, "Not logged in", ""]))).resolves.toBe(false);
+    await expect(probeCursorAuth("cursor-agent", {}, answering([failed, "", "Not logged in"]))).resolves.toBe(false);
+  });
+
+  it("believes signed in only from a status that finished", async () => {
+    await expect(probeCursorAuth("cursor-agent", {}, answering([null, '{"isAuthenticated":true}', ""]))).resolves.toBe(true);
+    await expect(probeCursorAuth("cursor-agent", {}, answering([failed, "logged in", ""]))).resolves.toBeUndefined();
+    await expect(probeCursorAuth("cursor-agent", {}, answering([failed, "", ""], [null, "Logged in", ""]))).resolves.toBe(true);
   });
 });
 
@@ -206,6 +238,26 @@ describe("CursorAgentDriver", () => {
       expect((await loggedIn.snapshot()).authenticated).toBe(true);
     } finally {
       await loggedIn.dispose();
+    }
+  });
+
+  it("a status check that crashes leaves the login unverified, never signed in", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    process.env.FAKE_ACP_AUTH = "crash";
+    const instance = await CursorAgentDriver.create({
+      instanceId: "cursor-status-crash",
+      displayName: "Cursor",
+      environment: {},
+      enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false },
+    });
+    try {
+      const snapshot = await instance.snapshot();
+      expect(snapshot).not.toHaveProperty("authenticated");
+      expect(snapshot.authUnverified).toBe(true);
+    } finally {
+      delete process.env.FAKE_ACP_AUTH;
+      await instance.dispose();
     }
   });
 

@@ -656,6 +656,46 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- No limits asks far less often. Your deny rules and wipe list still apply, and Codex edits and read-only PowerShell commands run under it.\n- Question cards wait for your answer, and the bot that asked picks the conversation back up when you reply.\n- Engines remember your setup answers and keep their settings across restarts.\n- Claude chats on Windows pick up where they left off.\n- Fuigo checks before it works in a folder you haven't trusted, and Murage answers from the choices you already saved. Murage now includes Fuigo 1.0.37.\n- Backups tell you if they stop, and stay inside their space budget.\n- A routine's level chip shows the level it actually runs at.…"
   },
   {
+    "id": "changelog/v1-0-14#sign-in-in-1-0-14",
+    "title": "What changed in Murage 1.0.14",
+    "description": "One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.",
+    "heading": "Sign-in in 1.0.14",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "url": "https://murage.ai/docs/changelog/v1-0-14#sign-in-in-1-0-14",
+    "text": "- One button. Signing in to an engine is one button in Settings. No terminal and no commands to copy.\n- Ask Ember. Ask Ember in chat on your computer to sign you in and it gives you that same button.\n- Checking sign-in. While Murage is still checking a sign-in, Health and Today say \"Checking sign-in\" until it knows.\n- Only what you use. Needs you only asks you to sign in to engines your bots or routines use, and first run sets you up on Fuigo and Flux."
+  },
+  {
+    "id": "changelog/v1-0-14#voice-notes-in-1-0-14",
+    "title": "What changed in Murage 1.0.14",
+    "description": "One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.",
+    "heading": "Voice notes in 1.0.14",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "url": "https://murage.ai/docs/changelog/v1-0-14#voice-notes-in-1-0-14",
+    "text": "- Voice notes on your phone. A bot's voice note now plays on your phone and in the browser, as well as on your computer.\n- A voice note or file a bot sends partway through a turn now sits in its reply, not inside Worked for."
+  },
+  {
+    "id": "changelog/v1-0-14#fuigo-1-0-38-in-1-0-14",
+    "title": "What changed in Murage 1.0.14",
+    "description": "One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.",
+    "heading": "Fuigo 1.0.38 in 1.0.14",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "url": "https://murage.ai/docs/changelog/v1-0-14#fuigo-1-0-38-in-1-0-14",
+    "text": "- Trust a folder during a conversation and Fuigo brings in its project instructions at the next turn. Conversations from before the update stay as they were, so start a new one. Nested AGENTS.md files and project skills arrive with your next new conversation. Murage now includes Fuigo 1.0.38.\n- On Flux Router, Fuigo trusts the fresh work folder Murage makes for a new chat, so a new chat starts straight away. A folder you pick yourself still asks.\n- A folder's .envrc file never runs inside Fuigo on a bot turn."
+  },
+  {
+    "id": "changelog/v1-0-14#better-in-1-0-14",
+    "title": "What changed in Murage 1.0.14",
+    "description": "One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.",
+    "heading": "Better in 1.0.14",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "url": "https://murage.ai/docs/changelog/v1-0-14#better-in-1-0-14",
+    "text": "- When Murage can't read a command, its approval card now says exactly that, and asks you before it runs.\n- On Windows, Murage reads a PowerShell command split across lines as one command, so it gets the same approval checks as the same command on one line.\n- A message queued for the next turn shows its images and files as chips, not raw tags.\n- If Murage quits or restarts during a Codex, Pi, Antigravity or OpenAI tools turn, that turn now shows it didn't finish, and the bot waiting on it hears back when Murage starts again.\n- Stop All on question cards past the follow-up limit ends them as stopped.\n- On your phone, Murage keeps its screen after a reconnect.…"
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",
@@ -1534,9 +1574,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Pair the Murage phone app with your computer, what it can do, what stays on the computer, and how to unpair a phone.",
     "heading": "Bot calls",
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
-    "where": "Settings → Notifications → Calls",
+    "where": "Bot settings → Voice & alerts",
     "url": "https://murage.ai/docs/devices/phone-app#bot-calls",
-    "text": "Your bots can call you on the phone when something needs you. The lock screen only shows that Murage is calling, never what the message says. Answer to hear what it is, or choose Not now to dismiss that call. To stop calls for the rest of the day, turn on Calls off for today in Settings → Notifications → Calls in Murage on the computer, and turn it off there when you want calls again."
+    "text": "Your bots can call you on the phone when something needs you. Each bot calls only once you let it: in Murage on the computer, open Bot settings → Voice & alerts and turn on the bot's can call me switch. When the bot thinks you're needed now, it sends a message first and rings once if you haven't seen it in 10 minutes, never during quiet hours, busy time or another call. While a bot works, tap Call me when this finishes, beside Stop, and it rings you once when it is done, even while that bot's switch is off. Turning the switch off after you tap cancels that call too. The lock screen only shows that Murage is calling, never what the message says.…"
   },
   {
     "id": "devices/phone-app#what-stays-on-the-computer",
@@ -2467,14 +2507,14 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Snooze 1 hour hides an item until later; it then shows \"Snoozed until (time)\". Tick Show snoozed items to see them, and use Return to Inbox to bring one back early. Snooze is not offered on the Needs you view, because those items are owed to you. Reading or snoozing an approval does not answer it."
   },
   {
-    "id": "features/inbox#engines-to-sign-in-to",
+    "id": "features/inbox#bots-that-can-t-answer",
     "title": "Inbox",
     "description": "Everything that needs you in one place, approvals, questions, engines to sign in to, connections to restore and routine results, with Clear, Dismiss and Snooze.",
-    "heading": "Engines to sign in to",
+    "heading": "Bots that can't answer",
     "breadcrumb": "Murage docs → Features → Inbox",
-    "where": "Settings → Engines",
-    "url": "https://murage.ai/docs/features/inbox#engines-to-sign-in-to",
-    "text": "When an engine is installed but nobody is signed in to it, the Inbox lists it under Engines to sign in to with the sign-in command to run in a terminal. The Copy button copies the command.\n\nIf you don't use that engine, press I don't use (engine) and confirm with Turn it off. Bots stop using it. You can turn it back on in Settings → Engines."
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/features/inbox#bots-that-can-t-answer",
+    "text": "When a bot runs on an engine nobody is signed in to, its turns fail, and the Inbox lists it under Bots that can't answer. Press Use Fuigo instead and the bot, and every chat that picked that engine, moves to Fuigo. Without a Flux key yet, the main button is Open Models, where the key goes. An engine no bot runs on is not listed here; sign in to it from Settings → Models & engines → Engines.\n\nTo keep the engine, press Sign in, check the engine and the account folder the box names, then press Open sign-in and finish in your browser. The box says so when you are signed in. You can also ask your bot, for example \"sign into Claude\": it replies with a button that opens the same box.…"
   },
   {
     "id": "features/inbox#connections-to-restore-and-routines",
@@ -3420,7 +3460,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Getting started → Installation",
     "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/getting-started/installation#install-an-ai-app",
-    "text": "With a ChatGPT plan, or SuperGrok or X Premium, your bots can use that plan on Fuigo with nothing to install: open Settings → Models & engines, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. The Grok sign-in is marked Unofficial. The Codex and Grok apps are separate.\n\nFor Claude Code, Kimi Code and other AI apps, ask your bot and it stays with you step by step, or do it yourself:\n\n1. Open Settings → Models & engines → Engines and find the AI app. If it says Requires Node.js and you do not have it, install the LTS version from nodejs.org first.\n2. If Open install in Terminal shows, press it. If not, tell your bot what you see.…"
+    "text": "With a ChatGPT plan, or SuperGrok or X Premium, your bots can use that plan on Fuigo with nothing to install: open Settings → Models & engines, and under Use a plan you already have press Continue with ChatGPT or Continue with Grok. The Grok sign-in is marked Unofficial. The Codex and Grok apps are separate.\n\nFor Claude Code, Codex, Kimi Code and other AI apps, ask your bot, for example \"set up Claude Code\". It replies with a button that opens the right step. Or do it yourself:\n\n1. Open Settings → Models & engines → Engines and find the AI app.\n2. For Claude Code and Codex, press Install. Murage downloads the app from its maker and checks it before it runs, with no Node.js and no Terminal.…"
   },
   {
     "id": "getting-started/installation#build-from-source",
@@ -3628,7 +3668,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Providers → Engine troubleshooting",
     "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/providers/troubleshooting#authentication-failures",
-    "text": "If you use a ChatGPT or Grok plan through Murage, open Settings → Models & engines, and under Use a plan you already have press Sign in again if it shows.\n\nFor Claude Code or another app's own account, open Settings → Models & engines → Engines, find the app and press Open sign-in in Terminal if it shows. Terminal is a window on your computer for typed commands. Murage copies the command and opens a blank window: paste it there, press Enter, follow what it shows, then press Check again. Installing an app is not enough; it needs its own sign-in.\n\nIf Codex says it is not authorized (the details show 401 Unauthorized from OpenAI), the fix depends on which sign-in the bot uses.…"
+    "text": "If you use a ChatGPT or Grok plan through Murage, open Settings → Models & engines, and under Use a plan you already have press Sign in again if it shows.\n\nOtherwise press Sign in on the engine in the Inbox, then Open sign-in, and finish in your browser. Murage uses the app's own sign-in; installing the app is not enough.\n\nFor Claude Code or another app's own account, open Settings → Models & engines → Engines, find the app, press Sign in, then Open sign-in, and finish in your browser. If the browser does not open, press Didn't open? Use Terminal. Terminal is a window on your computer for typed commands; Murage opens it with the sign-in already running, so follow what it shows.…"
   },
   {
     "id": "providers/troubleshooting#a-selected-model-fails",

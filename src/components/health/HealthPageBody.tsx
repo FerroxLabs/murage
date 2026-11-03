@@ -10,7 +10,7 @@ import { t } from "@/lib/i18n";
 import { engineNeed } from "@/lib/engine-need";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { StatusDot } from "@/components/shell/StatusDot";
-import { BOX_FRAME, BoxBody, BoxHead } from "../ui/BoxShell";
+import { BoxBody, BoxHead } from "../ui/BoxShell";
 import { OpenBotListButton } from "@/components/OpenBotListButton";
 import type { HealthPageProps } from "@/components/shell/shell-contract";
 import { strongestHealthLevel, type HealthFold } from "../../../shared/health-levels";
@@ -18,9 +18,10 @@ import { HEALTH_COPY, healthStateLine, recoveredLine, type HealthIssue, type Hea
 import { healthFromEngines, healthWithChecks } from "./health-status";
 import { healthDestination, settingsPagesHere } from "./health-guide";
 import { EngineNeedCard } from "./HealthNeedCard";
+import { HEALTH_BODY, HEALTH_FRAME, HEALTH_HEAD, HealthHeadTop } from "./HealthExit";
 import { HealthClosed, HealthDigestView, HealthIssueGroups, healthFolds, readHealthIssues } from "./HealthIssues";
 
-export function HealthPageBody(_props: HealthPageProps) {
+export function HealthPageBody({ onLeave }: HealthPageProps) {
   const { state, dispatch } = useStore();
   const server = useEngineHealthAnswer();
   const reading = useEngineReading();
@@ -51,16 +52,13 @@ export function HealthPageBody(_props: HealthPageProps) {
   const go = (to: NextAction) => { const place = healthDestination(to); if (place) dispatch({ type: "toggleAppSettings", open: true, section: place.section }); };
   const recovered = summary?.view?.summary.recoveredCount ?? 0;
   return (
-    <main aria-labelledby="health-page-title" className={`${BOX_FRAME} h-full min-w-0 flex-1 bg-app text-ink`}>
-      <BoxHead className="flex-col items-start gap-0 px-4 pt-6 sm:px-6">
-        {/* Phones only (OpenBotListButton.tsx): the way back to the rail drawer. */}
-        <div className="md:hidden"><OpenBotListButton /></div>
-        <h1 id="health-page-title" className="flex items-center gap-2 text-[20px] font-semibold">
-          <StatusDot level={status.level} />{t("ux.l2a.health.title")}
-        </h1>
+    <main aria-labelledby="health-page-title" className={HEALTH_FRAME}>
+      <BoxHead className={HEALTH_HEAD}>
+        {/* The way out (Sean 11-02): the same header as while loading (HealthExit.tsx), Back and close on every screen. */}
+        <HealthHeadTop onLeave={onLeave} menu={<OpenBotListButton />} dot={<StatusDot level={status.level} />} />
         <p role="status" className="mt-1 text-[14px] text-ink-secondary">{line}</p>
       </BoxHead>
-      <BoxBody className="flex flex-col px-4 pb-6 pt-3 sm:px-6">
+      <BoxBody className={HEALTH_BODY}>
       {checks?.time && <p className="mt-0.5 text-[12px] text-ink-secondary">{checks.time}</p>}
       {failed && <p role="alert" className="mt-2 text-[13px] text-danger">{HEALTH_COPY.unavailable}</p>}
       {server && server.engines.length > 0 && (

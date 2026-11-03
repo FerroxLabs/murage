@@ -20,7 +20,7 @@ import type { ProviderDriver } from "../../contracts.ts";
 import { recordEvents } from "../../testing/events.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
 import type { AcpConfig } from "./core.ts";
-import { FUIGO_AGENT_SPAWNS_OFF, FUIGO_UNSET_ENV, FUIGO_WITHHELD_PROVIDER_ENV, FuigoAgentDriver, scrubFuigoHandedEnv, withholdFuigoProviderEnv } from "./fuigo.ts";
+import { FUIGO_AGENT_SPAWNS_OFF, FUIGO_COMPACTION_PINS, FUIGO_ENVRC_OFF, FUIGO_RETRY_PINS, FUIGO_TURN_PINS, FUIGO_UNSET_ENV, FUIGO_WITHHELD_PROVIDER_ENV, FuigoAgentDriver, scrubFuigoHandedEnv, withholdFuigoProviderEnv } from "./fuigo.ts";
 
 // Names a provider switcher or a developer exports in the owner's shell; a Finder-launched Murage never had them.
 const SHELL_ONLY = {
@@ -37,6 +37,8 @@ const SHELL_ONLY = {
   FUIGO_GOAL: "1",
   FUIGO_AGENT: "general-purpose",
   FUIGO_WORKSPACE_REWIND_GIT: "1",
+  // a direnv user's shell: a non-zero timeout turns Fuigo 1.0.38's .envrc evaluation on
+  FUIGO_ENVRC_TIMEOUT_SECS: "5",
 } as const;
 
 vi.mock("../../env-path.ts", async (original) => {
@@ -137,16 +139,16 @@ describe("Fuigo subagents are off on every bot turn: a subagent definition canno
   it("strips FUIGO_AGENT and FUIGO_WORKSPACE_REWIND_GIT in any casing on Windows, from the child env and the handed map", () => {
     const env: Record<string, string | undefined> = { Fuigo_Agent: "general-purpose", fuigo_workspace_rewind_git: "1", FUIGO_AGENT: "", LANG: "C" };
     withholdFuigoProviderEnv(env, "win32");
-    expect(env).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+    expect(env).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", FUIGO_ENVRC_TIMEOUT_SECS: "0", ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS });
     const map: Record<string, string | undefined> = { FUIGO_AGENT: "general-purpose", FUIGO_WORKSPACE_REWIND_GIT: "1", LANG: "C" };
     scrubFuigoHandedEnv(map, {}, "linux");
-    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", FUIGO_ENVRC_TIMEOUT_SECS: "0", ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS });
   });
 
   it("the handed shell map is pinned too", () => {
     const map: Record<string, string | undefined> = { fuigo_subagents: "1", Fuigo_Workflows: "1", fuigo_goal: "1", LANG: "C" };
     scrubFuigoHandedEnv(map, {}, "win32");
-    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", FUIGO_ENVRC_TIMEOUT_SECS: "0", ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS });
   });
 });
 
@@ -195,13 +197,13 @@ describe("Fuigo 1.0.32: only the turn's own credential reaches the engine", () =
     const env: Record<string, string | undefined> = { Groq_Api_Key: "x", openrouter_api_key: "y", FUIGO_DISABLE_MODEL_REFRESH: "0", MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX };
     for (const name of FUIGO_WITHHELD_PROVIDER_ENV) env[name] = "fake";
     withholdFuigoProviderEnv(env, "win32");
-    expect(env).toEqual({ FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX });
+    expect(env).toEqual({ FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", FUIGO_ENVRC_TIMEOUT_SECS: "0", ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS, MURAGE_PROVIDER_API_KEY: "route", FUIGO_API_KEY: FLUX });
   });
 
-  it("keeps a Fuigo key in the handed map only with the value the child env kept", () => {
+  it("hands the engine exactly the Fuigo key the child env kept, never the shell's", () => {
     const map: Record<string, string | undefined> = { FUIGO_API_KEY: "shell-value", FUIGO_CODE_API_KEY: "shell-other", GROQ_API_KEY: "g", LANG: "C" };
     scrubFuigoHandedEnv(map, { FUIGO_API_KEY: FLUX }, "linux");
-    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0" });
+    expect(map).toEqual({ LANG: "C", FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "false", FUIGO_DISABLE_MODEL_REFRESH: "1", FUIGO_SUBAGENTS: "0", FUIGO_WORKFLOWS: "0", FUIGO_SCHEDULER_BACKGROUND_LOOPS: "0", FUIGO_GOAL: "0", FUIGO_ENVRC_TIMEOUT_SECS: "0", ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS, FUIGO_API_KEY: FLUX, FUIGO_UNCHARGED_401_PARK: "0" });
     const same: Record<string, string | undefined> = { FUIGO_API_KEY: FLUX };
     scrubFuigoHandedEnv(same, { FUIGO_API_KEY: FLUX }, "linux");
     expect(same.FUIGO_API_KEY).toBe(FLUX);
@@ -213,4 +215,41 @@ describe("Fuigo 1.0.32: only the turn's own credential reaches the engine", () =
     expect(env.FUIGO_API_KEY).toBeDefined();
     expect(env.FUIGO_DISABLE_MODEL_REFRESH).toBe("1");
   }, 30000);
+});
+
+describe("Fuigo 1.0.38 never evaluates a folder's .envrc on a bot turn", () => {
+  // A trusted folder's <cwd>/.envrc runs in the engine at session start, before any tool call reaches Murage's approvals,
+  // and a bot at Auto, Full access or No limits can write it with a command that does not name the file. 0 means
+  // "not evaluated" in fuigo-workspace envrc.rs (timeout_from, load_envrc_with_timeout), so every turn pins it.
+  it("the pin is exactly FUIGO_ENVRC_TIMEOUT_SECS=0, and it is one of the turn pins", () => {
+    expect(FUIGO_ENVRC_OFF).toEqual({ FUIGO_ENVRC_TIMEOUT_SECS: "0" });
+    expect(FUIGO_TURN_PINS).toMatchObject(FUIGO_ENVRC_OFF);
+  });
+
+  it.each([
+    ["Ask level", { fullAuto: false, enforced: { routeAsks: true as const, askLevel: true as const } }],
+    ["Auto with Murage's stop line", { fullAuto: true, enforced: { stopLine: true as const } }],
+    ["Auto routing asks to Murage", { fullAuto: true, enforced: { routeAsks: true as const } }],
+    ["Full access", { fullAuto: true }],
+  ])("%s: the engine gets 0 over the instance's 30 and the owner's shell 5", async (_label, options) => {
+    const { env } = await turn({ ...options, environment: { FUIGO_ENVRC_TIMEOUT_SECS: "30" } });
+    expect(env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+  }, 30000);
+
+  it("an empty value is not left in place: empty means Fuigo's 10 second default, so it is pinned to 0 too", async () => {
+    const { env } = await turn({ environment: { FUIGO_ENVRC_TIMEOUT_SECS: "" } });
+    expect(env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+  }, 30000);
+
+  it("the child env and the handed owner map both carry 0, any casing on Windows, never the shell's value", () => {
+    const env: Record<string, string | undefined> = { Fuigo_Envrc_Timeout_Secs: "5", fuigo_envrc_timeout_secs: "3600", LANG: "C" };
+    withholdFuigoProviderEnv(env, "win32");
+    expect(Object.entries(env).filter(([name]) => name.toUpperCase() === "FUIGO_ENVRC_TIMEOUT_SECS")).toEqual([["FUIGO_ENVRC_TIMEOUT_SECS", "0"]]);
+    const map: Record<string, string | undefined> = { FUIGO_ENVRC_TIMEOUT_SECS: "5", LANG: "C" };
+    scrubFuigoHandedEnv(map, { FUIGO_ENVRC_TIMEOUT_SECS: "0" }, "linux");
+    expect(map.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0");
+    const windows: Record<string, string | undefined> = { fuigo_ENVRC_timeout_secs: "10", LANG: "C" };
+    scrubFuigoHandedEnv(windows, {}, "win32");
+    expect(Object.entries(windows).filter(([name]) => name.toUpperCase() === "FUIGO_ENVRC_TIMEOUT_SECS")).toEqual([["FUIGO_ENVRC_TIMEOUT_SECS", "0"]]);
+  });
 });
