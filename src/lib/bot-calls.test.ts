@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { botCallHeaders, takeBotCallOpener } from "./bot-call-session";
-import { BOT_CALL_WORDS, CALL_EVENT, callsOffNow, cardActions, desktopCallDevice, isCallsOffToday, receiptLines } from "./bot-calls";
+import { BOT_CALL_WORDS, CALL_EVENT, callsOffNow, cardActions, desktopCallDevice, isCallsOffToday, neededNowOn, quietLine, receiptLines, switchBody } from "./bot-calls";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
 
@@ -60,7 +60,7 @@ describe("helpers", () => {
     expect(callsOffNow(null, 1000)).toBe(false);
   });
   it("words follow the copy rules: no em dashes, never safe/unsafe/safety", () => {
-    const sources = [read("./bot-calls.ts"), read("../components/BotCallCard.tsx"), read("../components/BotCallRing.tsx"), read("../components/CallMeWhenDone.tsx"), read("../components/CallsSettings.tsx"), read("./bot-call-session.ts")];
+    const sources = [read("./bot-calls.ts"), read("../components/BotCallCard.tsx"), read("../components/BotCallRing.tsx"), read("../components/CallMeWhenDone.tsx"), read("../components/CallsSettings.tsx"), read("../components/BotCallsSettings.tsx"), read("./bot-call-session.ts")];
     for (const source of sources) {
       expect(source).not.toMatch(/—/);
       expect(source).not.toMatch(/\b(safe|unsafe|safety)\b/i);
@@ -99,7 +99,9 @@ describe("wiring (source contracts)", () => {
     const composer = read("../components/Composer.tsx");
     expect(composer).toMatch(/<CallMeWhenDone threadId=\{threadId\}/);
     const button = read("../components/CallMeWhenDone.tsx");
+    // the tap asks for this one call and never changes the bot's calls switch (BOT-CALLS-UNREACHABLE, GrokBuild r1 #2)
     expect(button).toContain('api("/api/calls/turn-end", { method: "POST", body: JSON.stringify({ threadId }) })');
+    expect(button).not.toContain("enableCalls");
     const back = button.slice(button.indexOf("const turnBackOn"));
     expect(back.indexOf('JSON.stringify({ on: false })')).toBeGreaterThan(0);
     expect(back.indexOf("await mark()")).toBeGreaterThan(back.indexOf('JSON.stringify({ on: false })'));
@@ -110,6 +112,43 @@ describe("wiring (source contracts)", () => {
     expect(settings).toContain("setOffUntil(active.offUntil ?? null)");
     expect(settings).toContain('"/api/calls/off-today"');
     expect(read("../components/SettingsModal.tsx")).toContain("<CallsSettings />");
+  });
+});
+
+describe("Bot settings > Voice & alerts > Calls (BOT-CALLS-UNREACHABLE)", () => {
+  const urgent = { id: "r1", kind: "needs_owner_now", enabled: true };
+  it("turning the switch on makes the urgent rule only when there is none; off sends only enabled", () => {
+    expect(switchBody(true, [])).toEqual({ enabled: true, neededNow: true });
+    expect(switchBody(true, [{ ...urgent, enabled: false }])).toEqual({ enabled: true }); // the owner's off stays off
+    expect(switchBody(true, [urgent])).toEqual({ enabled: true });
+    expect(switchBody(false, [urgent])).toEqual({ enabled: false });
+    expect(neededNowOn([{ id: "t", kind: "turn_end", enabled: true }])).toBe(false);
+    expect(neededNowOn(undefined)).toBe(false);
+    // "Don't call me about this again" left it message only: it shows off until the owner turns it on (GrokBuild r1 Medium)
+    expect(neededNowOn([{ ...urgent, demoted: true }])).toBe(false);
+    expect(neededNowOn([{ ...urgent, demoted: false }])).toBe(true);
+  });
+  it("Call me when this finishes has no switch-on note", () => {
+    expect(Object.keys(BOT_CALL_WORDS)).not.toContain("callsTurnedOn");
+  });
+  it("shows quiet hours read-only in the design's words", () => {
+    expect(quietLine({ enabled: true, start: "22:00", end: "07:00" })).toBe("Quiet hours: 22:00 to 07:00");
+    expect(quietLine({ enabled: false, start: "22:00", end: "07:00" })).toBe("Quiet hours: off");
+    expect(quietLine(null)).toBe("Quiet hours: off");
+  });
+  it("uses the design's words, and the Voice & alerts section mounts it on the desktop", () => {
+    expect(BOT_CALL_WORDS.canCallMe("Scout")).toBe("Scout can call me");
+    expect(BOT_CALL_WORDS.canCallMeHelp("Scout")).toBe("Scout rings you for the things you choose below. Everything else stays a message.");
+    expect(BOT_CALL_WORDS.tierBHelp).toBe("Starts as a message. Rings once if you haven't seen it in 10 minutes, never during quiet hours, busy time or another call.");
+    expect(BOT_CALL_WORDS.botCaps).toBe("Up to 2 calls an hour and 6 a day from this bot.");
+    expect(BOT_CALL_WORDS.needsVoice).toBe("Calls need a voice. Connect Flux or add a voice provider in Settings > Models.");
+    const panel = read("../components/SettingsPanel.tsx");
+    const voice = panel.slice(panel.indexOf('<SettingsSection id="voice"'), panel.indexOf('<SettingsSection id="routines"'));
+    expect(voice).toContain("{desktop === true && <BotCallsSettings");
+    const settings = read("../components/BotCallsSettings.tsx");
+    expect(settings).toContain("void put(switchBody(!on, view?.rules))");
+    expect(settings).toContain("void put({ neededNow: !urgent })");
+    expect(settings).toContain("disabled={view === null || saving || (noVoice && !on)}");
   });
 });
 

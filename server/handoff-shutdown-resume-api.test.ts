@@ -18,6 +18,7 @@ import { SERVER_SHUTDOWN_TIMEOUT_MS } from "./graceful-shutdown.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
+const FAKE_CODEX = join(SERVER_DIR, "testing", "fake-codex-app-server.ts");
 const HELD = /didn't start for|Send again/;
 const posixOnly = describe.skipIf(process.platform === "win32");
 
@@ -79,8 +80,10 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
       cfg.instances.gated={driver:'grokAgent',displayName:'Gated fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'teammate-gate')},config:{cli,fullAuto:true}};
       cfg.instances.gatedLead={driver:'grokAgent',displayName:'Gated lead fixture',environment:{...ready,FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
       cfg.instances.setupHeld={driver:'grokAgent',displayName:'Setup held fixture',environment:{...ready,FAKE_ACP_MCP_READY_GATE_FILE:path.join(data,'setup-gate'),FAKE_ACP_MODE:'echo-gated',FAKE_ACP_GATE_FILE:path.join(data,'lead-gate')},config:{cli,fullAuto:true}};
+      cfg.instances.codexHold={driver:'codex',displayName:'Codex hold fixture',config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true},environment:{FAKE_CODEX_MODE:'tool-hold'}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
+    chmodSync(FAKE_CODEX, 0o755);
     gate = join(fixture.info.dataDir, "teammate-gate");
     await signIn();
   }, 120_000);
@@ -184,6 +187,40 @@ posixOnly("a hand-off cut short by a quit or a restart", () => {
     expect((await messages(lead.threadId)).filter(message => HELD.test(line(message))).map(line)).toEqual([]);
     expect(launches(await messages(helper.threadId)), await dump(helper.threadId)).toBe(1);
   }, 180_000);
+
+  // CLOSE-STOP-1014: a Codex teammate's accepted hand-off that only the quit cut reads as not finished (never as the owner's Stop): the asker
+  // is woken once on the new server and the teammate's work is not run again. Stop first, and it stays the owner's Stop: no wake.
+  const acceptedOn = (helperId: string) => rows("SELECT accepted_turn_id FROM pending_delegations WHERE to_bot_id=?", helperId).filter(row => row.accepted_turn_id).length;
+  /** Each wake turn of the lead fixture says LEAD RESUMED once, so this counts wake submissions (the prompt file only proves one happened). */
+  const resumed = async (threadId: string) => (await messages(threadId)).filter(message => message.kind === "text" && /LEAD RESUMED/.test(line(message))).length;
+  for (const stopFirst of [false, true]) {
+    it(`CLOSE-STOP: ${stopFirst ? "Stop then quit on a Codex teammate's hand-off: the owner's Stop, no wake" : "a quit cuts a Codex teammate's accepted hand-off: did not finish, the asker woken once, the work not re-run"}`, async () => {
+      const lead = await createBot(stopFirst ? "CsStopLead" : "CsLead", "lead"), helper = await createBot(stopFirst ? "CsStopHelper" : "CsHelper", "codexHold");
+      await onlyThese(lead.id, helper.id);
+      expect((await api("POST", `/api/bots/${lead.id}/messages`, { text: "please pick this up" })).status).toBe(202);
+      // the hand-off is accepted on the teammate, whose fake Codex then holds its turn on a command it never finishes
+      await expect.poll(() => acceptedOn(helper.id), { timeout: 60_000 }).toBe(1);
+      await expect.poll(() => busy(helper.id), { timeout: 30_000 }).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      if (stopFirst) expect((await api("POST", `/api/bots/${helper.id}/interrupt`, {})).status).toBe(200);
+
+      await cleanRestart();
+      await signIn();
+
+      const detail = async () => `${await dump(lead.threadId, helper.threadId)}\n${JSON.stringify(rows("SELECT id, phase, accepted_turn_id, start_attempts, item FROM pending_delegations"))}`;
+      if (stopFirst) {
+        await new Promise(resolve => setTimeout(resolve, 5_000));
+        expect(await resumed(lead.threadId), await detail()).toBe(0);
+      } else {
+        await expect.poll(async () => (await messages(lead.threadId)).some(message => /Delegation to @CsHelper did not finish/.test(line(message))), { timeout: 60_000 }).toBe(true)
+          .catch(async error => { throw new Error(`${error}\n${await detail()}`); });
+        await expect.poll(() => resumed(lead.threadId), { timeout: 60_000 }).toBe(1).catch(async error => { throw new Error(`${error}\n${await detail()}`); });
+        await new Promise(resolve => setTimeout(resolve, 3_000));
+        expect(await resumed(lead.threadId), await detail()).toBe(1);
+      }
+      expect(launches(await messages(helper.threadId)), await detail()).toBe(1);
+    }, 180_000);
+  }
 
   /** The asker moves on to another job of the owner's, on an engine held at its own gate, after its hand-off is parked. */
   const askerBusyAgain = async (lead: { id: string; threadId: string }) => {

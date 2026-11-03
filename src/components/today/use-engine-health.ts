@@ -71,7 +71,7 @@ export function useEngineReading(): { engine: EngineHealthRow | null; flux: Flux
   const state = useStoreIfAny()?.state;
   if (server) return { engine: server.primary, flux: server.flux, fromServer: true };
   if (!state) return { engine: null, flux: "none", fromServer: false };
-  const engines = state.instances.map((instance) => ({ instanceId: instance.instanceId, displayName: instance.displayName, enabled: instance.enabled, snapshot: instance.snapshot }));
+  const engines = state.instances.map((instance) => ({ instanceId: instance.instanceId, displayName: instance.displayName, enabled: instance.enabled, driverKind: instance.driverKind, snapshot: instance.snapshot }));
   const used = state.bots.filter((bot) => !bot.hidden).map((bot) => bot.modelSelection?.instanceId).filter((id): id is string => Boolean(id));
   const keyState = state.config?.flux?.keyState;
   const flux: FluxHealthState = keyState === "refused" || keyState === "not-flux" ? "key-problem" : state.config?.flux?.configured ? "ok" : "none";

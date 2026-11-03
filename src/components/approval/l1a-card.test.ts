@@ -157,6 +157,9 @@ describe("1.1 the card's buttons and why-line", () => {
     expect(whyLine({ why: { key: "settings.title", params: {} } } as unknown as Message["card"])).toBeUndefined();
     expect(whyLine({ why: { key: "ux.l1.why.fromANewerServer", params: {} } } as unknown as Message["card"])).toBeUndefined();
     expect(whyLine({ why: { key: "ux.l1.why.alwaysAsk", params: {} } } as unknown as Message["card"])).toBe("This could wipe this computer, so Murage asks every time, at every level.");
+    const unreadable = whyLine({ why: { key: "ux.l1.why.unreadable", params: {} } } as unknown as Message["card"]);
+    expect(unreadable).toBe("Murage could not read this command, so it asks you before it runs.");
+    expect(unreadable).not.toMatch(/wipe|safe|\u2014/i);
   });
 });
 

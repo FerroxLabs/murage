@@ -798,27 +798,6 @@
   "count": 1
  },
  {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "FileHandle.read",
-  "root": "data-dir",
-  "count": 2
- },
- {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "open",
-  "root": "data-dir",
-  "count": 1
- },
- {
-  "file": "server/codex-managed-windows.ts",
-  "function": "verifiedWindowsCodexPath",
-  "callee": "readFile",
-  "root": "data-dir",
-  "count": 2
- },
- {
   "file": "server/config.ts",
   "function": "loadBrowserProfileIdAliases",
   "callee": "readFileSync",
@@ -1556,6 +1535,48 @@
  {
   "file": "server/engine-management.ts",
   "function": "useBundled",
+  "callee": "readFile",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "extractTarEntry",
+  "callee": "createReadStream",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "extractTarEntry",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "saveVerified",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "stageCodexNative",
+  "callee": "FileHandle.read",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "stageCodexNative",
+  "callee": "open",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/engine-native-install.ts",
+  "function": "windowsEntrypoint",
   "callee": "readFile",
   "root": "data-dir",
   "count": 1

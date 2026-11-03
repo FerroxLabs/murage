@@ -224,6 +224,14 @@ export const UNREADABLE_FOLDER_MESSAGE = "Murage could not read its attachments 
 
 export interface ListQuery { order?: string | null; snapshot?: string | null; cursor?: string | null; limit?: string | null }
 
+export interface ListOptions extends UseDeps {
+  dir: string;
+  fs?: WalkFs;
+  now?: () => number;
+  /** A name a deletion of a conversation still owes: it is neither listed nor counted, as the file route answers it as never saved. */
+  hidden?: (name: string) => boolean;
+}
+
 /** The route's state: at most one snapshot, one walk at a time (R1.3). */
 export class AttachmentList {
   private snapshot: Snapshot | null = null;
@@ -231,8 +239,8 @@ export class AttachmentList {
   private expiry: ReturnType<typeof setTimeout> | undefined;
   /** For tests: whether a snapshot is held in memory. */
   get holdsSnapshot(): boolean { return this.snapshot !== null; }
-  private readonly options: UseDeps & { dir: string; fs?: WalkFs; now?: () => number };
-  constructor(options: UseDeps & { dir: string; fs?: WalkFs; now?: () => number }) { this.options = options; }
+  private readonly options: ListOptions;
+  constructor(options: ListOptions) { this.options = options; }
 
   private now() { return (this.options.now ?? Date.now)(); }
 
@@ -246,7 +254,10 @@ export class AttachmentList {
     this.snapshot = null; // a new walk drops the old snapshot
     this.walking = walkAttachments(this.options.dir, this.options.fs).then(result => {
       if (!result.ok) return null;
-      const snapshot: Snapshot = { id: randomBytes(12).toString("hex"), createdAt: this.now(), items: result.items, sorted: {}, totals: result.totals };
+      const hidden = this.options.hidden;
+      const items = hidden ? result.items.filter(item => !hidden(item.name)) : result.items;
+      const totals = items === result.items ? result.totals : { ...result.totals, count: items.length, bytes: items.reduce((sum, item) => sum + item.bytes, 0) };
+      const snapshot: Snapshot = { id: randomBytes(12).toString("hex"), createdAt: this.now(), items, sorted: {}, totals };
       this.snapshot = snapshot;
       // dropped after five minutes even when nobody asks again (R1.3)
       clearTimeout(this.expiry);
