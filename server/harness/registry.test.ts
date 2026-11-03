@@ -26,6 +26,22 @@ describe("saving a key ends the signed-out mark (item 139)", () => {
   });
 });
 
+describe("the login a sign-in reads", () => {
+  it("is the engine's own word, with the rejection mark left out, and null when the engine does not say", async () => {
+    resetKeyRejectionsForTests();
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ codex: { driver: "fake" } });
+    expect(await registry.engineLogin("codex")).toBeNull();
+    (registry as any).byId.get("codex").live.snapshot = async () => ({ state: "available", authenticated: true });
+    noteInstanceAuthFailure("codex");
+    expect((await registry.describeOne("codex"))?.snapshot.authenticated).toBe(false);
+    expect(await registry.engineLogin("codex")).toBe(true);
+    expect(await registry.engineLogin("nobody")).toBeUndefined();
+    resetKeyRejectionsForTests();
+  });
+});
+
 describe("ProviderRegistry", () => {
   it("disabled instances never reach driver configuration, creation or discovery", async () => {
     const fake = makeFakeDriver();
@@ -304,5 +320,38 @@ describe("loading the fleet", () => {
     // generous on purpose — it is proving "not the sum", not a stopwatch.
     expect(elapsed, `three 120ms engines took ${elapsed}ms — that is the sum, not the slowest`).toBeLessThan(300);
     expect(registry.entries().map(entry => entry.instanceId)).toEqual(["first", "second", "third"]);
+  });
+});
+
+describe("1.0.14 FIRST-ENGINE-M3: a scan ticket", () => {
+  it("describe startedAfter never joins an older scan", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ fuigo: { driver: "fake" } });
+    const releases: Array<() => void> = [];
+    let scans = 0;
+    (registry as any).scan = () => { scans++; return new Promise(resolve => { releases.push(() => resolve([])); }); };
+    const older = registry.describe({ catalogs: "fresh" });
+    // a caller with no ticket joins the scan in flight
+    void registry.describe({ catalogs: "fresh" });
+    expect(scans).toBe(1);
+    // a key lands: the ticket taken now names the scan already running, so it is not joined
+    const ticket = registry.scanTicket();
+    const fresh = registry.describe({ catalogs: "fresh", startedAfter: ticket });
+    expect(scans).toBe(2);
+    // a caller holding the same ticket joins the newer scan, never the older one
+    void registry.describe({ catalogs: "due", startedAfter: ticket });
+    expect(scans).toBe(2);
+    for (const release of releases) release();
+    await Promise.all([older, fresh]);
+    expect(registry.scanTicket()).toBe(2);
+  });
+
+  it("generation moves when the fleet changes", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    const before = registry.generation;
+    await registry.load({ fuigo: { driver: "fake" } });
+    expect(registry.generation).toBeGreaterThan(before);
   });
 });

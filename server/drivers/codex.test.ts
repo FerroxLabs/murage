@@ -16,7 +16,7 @@ import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling } from "./codex.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
 import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
@@ -1906,6 +1906,22 @@ describe("CodexDriver turns (fake app-server)", () => {
     });
   });
 
+  it("leaves the login unknown when login status fails, so a stale login cannot pass for a new one", async () => {
+    await create({ mode: "status-fails" });
+    const snapshot = await instance.snapshot();
+    expect(snapshot.state).toBe("available");
+    expect(snapshot).not.toHaveProperty("authenticated");
+    expect(snapshot.authUnverified).toBe(true);
+  });
+
+  it("reads login status by its words: signed out exits 1, a crash says nothing", () => {
+    expect(readCodexLogin(true, "WARNING: proceeding\nNot logged in\n")).toBe(false);
+    expect(readCodexLogin(false, "Logged in using ChatGPT\n")).toBe(true);
+    expect(readCodexLogin(true, "Logged in using ChatGPT\n")).toBeUndefined();
+    expect(readCodexLogin(true, "")).toBeUndefined();
+    expect(readCodexLogin(false, "\n")).toBeUndefined();
+  });
+
   it("also accepts login status from older Codex versions that used stdout", async () => {
     await create({ mode: "logged-in-stdout" });
     await expect(instance.snapshot()).resolves.toMatchObject({
@@ -2014,6 +2030,34 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(readFileSync(join(scratch, "codex-launches-cancel-backoff"), "utf8")).toBe("1");
     expect(instance.adapter.hasSession(threadId)).toBe(false);
   }, 20_000);
+
+  // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
+  describe("CLOSE-STOP quit vs Stop", () => {
+    const holding = async (threadId: string) => {
+      await create({ mode: "tool-hold" });
+      const { turnId } = await instance.adapter.sendTurn({ threadId, text: "go" });
+      // the fake started a command it never finishes: the turn is held mid-tool
+      await recorder.until((e) => e.type === "item.started" && e.turnId === turnId && JSON.stringify(e).includes("sleep 3600"));
+      return turnId;
+    };
+    const endsOf = (turnId: string) => recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const errorsOf = (turnId: string) => recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId).map((e: any) => e.message);
+
+    it("quit alone: one engine-closed error and ok:false exit_before_result, delivered before dispose resolves", async () => {
+      const turnId = await holding("t-close-quit");
+      await instance.dispose();
+      expect(endsOf(turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
+      expect(errorsOf(turnId)).toEqual([expect.stringContaining("closed before it finished its reply")]);
+    }, 20_000);
+
+    it("Stop then quit: the owner's Stop, once, with no error", async () => {
+      const turnId = await holding("t-close-stop");
+      await instance.adapter.interruptTurn("t-close-stop");
+      await instance.dispose();
+      expect(endsOf(turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
+      expect(errorsOf(turnId)).toEqual([]);
+    }, 20_000);
+  });
 
   // U06 (upstream 1222 Stop fence): the fixture answers turn/start with a
   // transient error only once it receives the driver's SIGTERM, so the

@@ -338,10 +338,14 @@ export function createLifecycleRecorder(options: LifecycleRecorderOptions): Life
   return { generation, record, observeStopRoute };
 }
 
+/** A UUID is the harness's own turn and process id. The only rule that ever rewrites one is the card-number rule (a
+ * digit tail like "4111-111111111111" reads as a card), so a UUID skips the detector instead of dropping the turn's
+ * lifecycle events; every other shape still goes through it. */
+const UUID_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function opaqueId(value: unknown): value is string {
   // Pattern first, then the shared secret detector: an ID-shaped credential
   // (an `sk-…` or `xai-…` token) is refused, never masked into the record.
-  return typeof value === "string" && OPAQUE_ID.test(value) && redactSecretsInText(value) === value;
+  return typeof value === "string" && OPAQUE_ID.test(value) && (UUID_ID.test(value) || redactSecretsInText(value) === value);
 }
 function version(value: unknown): boolean {
   return typeof value === "string" && SHORT_VERSION.test(value);
