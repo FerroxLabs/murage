@@ -28,6 +28,7 @@ export type WhyKey =
   | "ux.l1.why.channelUnnamed"
   | "ux.l1.why.unattended"
   | "ux.l1.why.alwaysAsk"
+  | "ux.l1.why.unreadable"
   | "ux.l1.why.sensitiveGuard"
   | "ux.l1.why.unreadCall"
   | "ux.l1.why.destructiveGuard"
@@ -49,6 +50,8 @@ export interface WhyInput {
   origin?: "webhook" | "channel";
   /** the channel by name (Telegram, Slack, Discord), when known */
   channel?: string;
+  /** the verdict's rule (an always-ask card's reader rule: `unreadable` when the reader could not follow the text) */
+  rule?: string;
 }
 
 /** The level a bot's (or a run's) flags mean. */
@@ -66,7 +69,8 @@ export function cardWhy(input: WhyInput): CardWhy | undefined {
   const { cardClass, stopHit, level } = input;
   const bot = input.botName;
   switch (cardClass.reason) {
-    case "always-ask": return { key: "ux.l1.why.alwaysAsk", params: {} };
+    // NOLIMITS-WIPE-WORD B: a text the reader could not follow is not said to wipe anything; it says what is true
+    case "always-ask": return { key: input.rule === "unreadable" ? "ux.l1.why.unreadable" : "ux.l1.why.alwaysAsk", params: {} };
     case "sensitive-guard": return { key: "ux.l1.why.sensitiveGuard", params: {} };
     case "unread-call": return { key: "ux.l1.why.unreadCall", params: {} };
     case "destructive-guard": return { key: "ux.l1.why.destructiveGuard", params: {} };
