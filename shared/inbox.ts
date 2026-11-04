@@ -165,6 +165,9 @@ export interface InboxPage {
    *  is the number the sidebar badge shows: the sum of `approvals`,
    *  `questions` and `connections`, plus one while `backupFailed` shows. */
   decisions: number;
+  /** Owed items snoozed right now (UX L2B). They are left out of `decisions` and the segments, and they are still
+   *  owed: snoozing is not answering, so the Needs you badge and the umbrella tab add this back. Absent when zero. */
+  snoozedOwed?: number;
   /** Unread news, on the same basis. */
   toRead: number;
   /** Permission owed on a specific drafted act. */

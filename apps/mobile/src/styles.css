@@ -180,7 +180,8 @@ body {
 
 .button:focus-visible,
 .row-main:focus-visible,
-.field-input:focus-visible {
+.field-input:focus-visible,
+.code-boxes.focused {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -300,4 +301,110 @@ body {
   background: #1f1f1f;
   color: #f5f5f5;
   font-size: 15px;
+}
+
+.computer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 8px 8px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  background: var(--card);
+}
+
+.computer-row[hidden],
+.field[hidden] {
+  display: none;
+}
+
+.computer-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.computer-label {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.computer-name {
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.code-boxes {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  border-radius: var(--radius);
+}
+
+.code-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 2.4em;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid var(--hairline);
+  background: var(--card);
+  color: var(--ink);
+  font-size: clamp(1.25rem, 6vw, 1.75rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font);
+}
+
+.code-box.active {
+  border: 2px solid var(--accent);
+}
+
+.code-box.active:not(.filled)::after {
+  content: "";
+  width: 2px;
+  height: 1.1em;
+  background: var(--accent);
+}
+
+/* The real input: focusable, near-invisible, laid over the boxes so a tap lands on it. */
+.code-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  /* Not opacity 0: iOS and Android autofill skip a field that is fully transparent.
+     Not a near-zero opacity either: WebKit hides the caret, selection and the
+     Paste callout of an editable element it judges transparent. Fully opaque to
+     WebKit, invisible to the eye through color, background and caret-color. */
+  opacity: 1;
+  font-size: 16px;
+  color: transparent;
+  background: transparent;
+  caret-color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+/* A long-press or autofill selection paints no highlight across the boxes. */
+.code-input::selection {
+  background: transparent;
+}
+
+.code-help {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.code-paste {
+  margin-top: 8px;
 }

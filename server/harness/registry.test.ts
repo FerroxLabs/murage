@@ -7,6 +7,7 @@ import type { ModelCatalog } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { instanceAuthFailed, noteInstanceAuthFailure, resetKeyRejectionsForTests } from "../key-rejections.ts";
 import { ProviderRegistry } from "./registry.ts";
+import { launchesThroughWsl, withWslNote, WSL_ENGINE_NOTE } from "./wsl-launch.ts";
 
 describe("saving a key ends the signed-out mark (item 139)", () => {
   it("a scoped reload clears that engine's mark and leaves the others; a full load clears all", async () => {
@@ -160,6 +161,27 @@ describe("ProviderRegistry", () => {
     const described = await registry.describe();
     const f = described.find((d) => d.instanceId === "f")!;
     expect(f.snapshot).toMatchObject({ state: "unavailable", reason: "boom at create" });
+  });
+
+  // G9 (adapted from OpenMausBot efc8b350a): an engine started through WSL chats but cannot reach Murage's tools.
+  it("G9: on Windows, says on the engine's row when its own command starts it inside WSL", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await registry.load({
+        wsl: { driver: "fake", config: { cli: "wsl.exe -d Ubuntu -- hermes" } },
+        native: { driver: "fake", config: { cli: "C:\\Users\\me\\hermes.exe" } },
+        plain: { driver: "fake" },
+      });
+      const described = Object.fromEntries((await registry.describe()).map((d) => [d.instanceId, d]));
+      expect(described.wsl.snapshot).toMatchObject({ state: "available", versionNote: WSL_ENGINE_NOTE });
+      expect(described.wsl.cli).toBe("wsl.exe -d Ubuntu -- hermes");
+      expect(described.native.snapshot).not.toHaveProperty("versionNote");
+      expect(described.plain.snapshot).not.toHaveProperty("versionNote");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
   });
 
   it("describe() reports a snapshot() failure as unavailable rather than throwing", async () => {
@@ -320,5 +342,57 @@ describe("loading the fleet", () => {
     // generous on purpose — it is proving "not the sum", not a stopwatch.
     expect(elapsed, `three 120ms engines took ${elapsed}ms — that is the sum, not the slowest`).toBeLessThan(300);
     expect(registry.entries().map(entry => entry.instanceId)).toEqual(["first", "second", "third"]);
+  });
+});
+
+describe("1.0.14 FIRST-ENGINE-M3: a scan ticket", () => {
+  it("describe startedAfter never joins an older scan", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    await registry.load({ fuigo: { driver: "fake" } });
+    const releases: Array<() => void> = [];
+    let scans = 0;
+    (registry as any).scan = () => { scans++; return new Promise(resolve => { releases.push(() => resolve([])); }); };
+    const older = registry.describe({ catalogs: "fresh" });
+    // a caller with no ticket joins the scan in flight
+    void registry.describe({ catalogs: "fresh" });
+    expect(scans).toBe(1);
+    // a key lands: the ticket taken now names the scan already running, so it is not joined
+    const ticket = registry.scanTicket();
+    const fresh = registry.describe({ catalogs: "fresh", startedAfter: ticket });
+    expect(scans).toBe(2);
+    // a caller holding the same ticket joins the newer scan, never the older one
+    void registry.describe({ catalogs: "due", startedAfter: ticket });
+    expect(scans).toBe(2);
+    for (const release of releases) release();
+    await Promise.all([older, fresh]);
+    expect(registry.scanTicket()).toBe(2);
+  });
+
+  it("generation moves when the fleet changes", async () => {
+    const fake = makeFakeDriver();
+    const registry = new ProviderRegistry([fake.driver]);
+    const before = registry.generation;
+    await registry.load({ fuigo: { driver: "fake" } });
+    expect(registry.generation).toBeGreaterThan(before);
+  });
+});
+
+describe("G9: which engine commands start an engine inside WSL", () => {
+  it("counts wsl.exe and System32's bash.exe on Windows only", () => {
+    expect(launchesThroughWsl("wsl -d Ubuntu -- hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl('"C:\\Windows\\System32\\wsl.exe" hermes', "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Windows\\System32\\bash.exe -c hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Windows\\Sysnative\\bash -c hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Program Files\\Git\\bin\\bash.exe -c hermes", "win32")).toBe(false);
+    expect(launchesThroughWsl("C:\\Users\\me\\wslhermes.exe", "win32")).toBe(false);
+    expect(launchesThroughWsl("wsl -- hermes", "linux")).toBe(false);
+    expect(launchesThroughWsl("wsl -- hermes", "darwin")).toBe(false);
+    expect(launchesThroughWsl(undefined, "win32")).toBe(false);
+  });
+  it("leaves an unavailable engine, and an engine with its own line, as they are", () => {
+    expect(withWslNote({ state: "unavailable", reason: "not found" }, "wsl hermes", "win32")).toEqual({ state: "unavailable", reason: "not found" });
+    expect(withWslNote({ state: "available", versionNote: "old" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: "old" });
+    expect(withWslNote({ state: "available" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: WSL_ENGINE_NOTE });
   });
 });
