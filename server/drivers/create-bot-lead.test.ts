@@ -43,8 +43,16 @@ describe("create_bot can be told to make a team lead", () => {
     // The narrowness is the point: this must not become a way to mint a
     // second Chief of Staff, which is single-holder and refused even to a
     // person until the incumbent stands down.
-    expect(server).toContain('return json(res, 403, { error: "only the workspace Chief of Staff can create a team lead" });');
+    // 1.0.16 TEAM-SECTION: a team lead may lead-create only into a new team it started (server/team-founding.ts).
+    const founding = readFileSync(fileURLToPath(new URL("../team-founding.ts", import.meta.url)), "utf8");
+    expect(founding).toContain('if (wantsLead) return { ok: false, status: 403, error: "only the workspace Chief of Staff can create a team lead" };');
     expect(server).toContain("wantsLead && lead");
     expect(server).toContain('store.setChiefOfStaff(safeBot.id, undefined, "section")');
+  });
+
+  it("checks for a lead again right before the bot is written, so a lead elected while the card was open is never demoted", () => {
+    const preflight = server.slice(server.indexOf("const createPreflight = ()"), server.indexOf("const createdBody = (finalBot"));
+    expect(preflight).toMatch(/const leadNow = wantsLead && store\.bots\.find\(\(candidate\) => candidate\.chiefOfStaff === true && foldTeamName/);
+    expect(preflight).toContain("if (leadNow) return eventReply(409");
   });
 });

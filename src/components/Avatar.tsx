@@ -22,7 +22,7 @@ import {
   type EmberAvatarHandle as EmberMascotHandle,
   type EmberSilhouette,
 } from "./EmberAvatar";
-import { botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
+import { avatarFraming, botAvatarProfile, type BotAvatarCrop } from "../../shared/bot-avatar";
 import { MASCOT_BODIES, MASCOT_BODY_NAMES, botMascotBody, type MascotBodyId } from "../../shared/mascot-bodies";
 
 /**
@@ -238,6 +238,9 @@ export type BotAvatarProps = Omit<EmberAvatarProps, "color"> & {
     color: EmberColor;
     avatarUrl?: string | null;
     avatarCrop?: BotAvatarCrop;
+    avatarZoom?: number;
+    avatarFocusX?: number;
+    avatarFocusY?: number;
     mascotBody?: MascotBodyId | null;
   };
   /** How the call screen shows an image it has looked at (CallAvatar.tsx):
@@ -293,7 +296,10 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
     );
   }
 
-  return (
+  // The owner's zoom and point (Settings > Appearance > Framing), the same
+  // everywhere this picture shows; a whole sprite on the call screen is not cropped.
+  const framing = presentation?.silhouette ? null : avatarFraming(bot);
+  const image = (
     <DesktopImg
       // A new element per picture: a reused <img> keeps showing the previous
       // bot's face until the next one loads, which on a slow link is a while.
@@ -309,10 +315,20 @@ export function BotAvatar({ bot, size = 44, label, presentation, ...mascotProps 
       style={{
         width: size,
         height: size,
-        borderRadius: presentation?.silhouette ? 0 : radius,
+        borderRadius: presentation?.silhouette || framing?.transform ? 0 : radius,
         imageRendering: presentation?.pixelArt ? "pixelated" : undefined,
+        objectPosition: framing?.objectPosition,
+        transform: framing?.transform,
+        transformOrigin: framing?.transformOrigin,
       }}
     />
+  );
+  // zoomed in: the tile keeps its shape and clips the larger picture
+  if (!framing?.transform) return image;
+  return (
+    <span data-avatar-zoomed="" className="block shrink-0 overflow-hidden bg-raised" style={{ width: size, height: size, borderRadius: radius }}>
+      {image}
+    </span>
   );
 }
 

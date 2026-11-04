@@ -144,7 +144,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
     <Card title={EMAIL_OWNER_COPY.sectionTitle}>
       <div className="flex items-center justify-between gap-3" data-testid="bot-email-account">
         <span className="text-[13px] text-ink">{on ? EMAIL_OWNER_COPY.accountOnLine : EMAIL_OWNER_COPY.accountOffLine}</span>
-        <Switch checked={on} disabled={busy} aria-label={on ? EMAIL_OWNER_COPY.accountOffAction : EMAIL_OWNER_COPY.accountOn} onClick={() => void change(!on)} />
+        <Switch data-setting-control="bot-email-heading" checked={on} disabled={busy} aria-label={on ? EMAIL_OWNER_COPY.accountOffAction : EMAIL_OWNER_COPY.accountOn} onClick={() => void change(!on)} />
       </div>
       {price && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-price">{price}</p>}
       {view.staleNote && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-stale">{view.staleNote}</p>}

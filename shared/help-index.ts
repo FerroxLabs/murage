@@ -1695,7 +1695,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Approvals",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#approval-levels-ask-auto-full-access-and-no-limits",
-    "text": "Choose how a conversation is approved from the permission chip beside the message box. It offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: in conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread.…"
+    "text": "Choose how a conversation is approved from the permission chip beside the message box. It offers four levels:\n- Ask (Ask for approval): ask before actions that need your permission.\n- Auto (Auto mode): keep going automatically; destructive and sensitive actions still ask.\n- Full access: keeps going without asking, but stops before deleting outside its folder, paying, messaging someone new, or reading your keys.\n- No limits: in conversations you start, runs commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before a command it cannot read that names a delete, disk or mirror tool, and before a call that did not arrive whole.…"
   },
   {
     "id": "features/approvals-and-inspector#full-access-and-the-stop-line",
@@ -1715,7 +1715,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Approvals and inspector",
     "where": "Bot settings → Permissions → Approvals",
     "url": "https://murage.ai/docs/features/approvals-and-inspector#no-limits",
-    "text": "In conversations you start at the Murage app or your paired phone, No limits runs commands and tools without asking. That includes reading and sending your keys and passwords and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it.\n\nIt still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread. It also asks before an unknown program touches your home folder or a whole disk, before a command or file tool names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run.…"
+    "text": "In conversations you start at the Murage app or your paired phone, No limits runs commands and tools without asking. That includes reading and sending your keys and passwords, running commands Murage cannot read, and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it.\n\nIt still asks before a wipe, before touching protected key or startup files, before disk tools, and before a command written in a way that hides what it runs, such as encoded text, eval, or code sent straight into a shell or a script runner. A script file can still run unread.…"
   },
   {
     "id": "features/approvals-and-inspector#images",

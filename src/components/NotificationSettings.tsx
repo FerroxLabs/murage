@@ -66,7 +66,7 @@ export function NotificationSettings() {
   const check = (field: "attention" | "completion" | "failures" | "memories" | "previewContent", label: string, detail: string) =>
     <div className="flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
       <span id={`notification-${field}`}>{label}<span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">{detail}</span></span>
-      <Switch aria-labelledby={`notification-${field}`} checked={draft[field]} disabled={!state.config || saving} onClick={() => edit({ ...draft, [field]: !draft[field] })} className={focus} />
+      <Switch data-setting-control={field === "attention" ? "notifications-heading" : undefined} aria-labelledby={`notification-${field}`} checked={draft[field]} disabled={!state.config || saving} onClick={() => edit({ ...draft, [field]: !draft[field] })} className={focus} />
     </div>;
   return <section aria-labelledby="notification-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="notification-settings-title" className="text-[15px] font-medium text-ink">{t("notificationSettings.title")}</h3>

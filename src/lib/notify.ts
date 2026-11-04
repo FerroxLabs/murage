@@ -111,3 +111,20 @@ export function showHealthPage(frame: HealthPageNotification, onOpen: () => void
   notification.onclick = () => { window.focus(); onOpen(); };
   return true;
 }
+
+/** A Needs you row the owner snoozed came back (UX L2B), while the app is open. Like a Health page, the banner says
+ * only fixed words the caller passes from the catalogue, never what the card asks, so the lock screen shows nothing
+ * private. One banner per row id; `tag` folds several returns at the same minute into one. */
+const seenSnoozeReturns = new Set<string>();
+export function showSnoozeReturn(id: string, words: { title: string; body: string }, onOpen: () => void): boolean {
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+  if (seenSnoozeReturns.has(id)) return false;
+  seenSnoozeReturns.add(id);
+  if (seenSnoozeReturns.size > 256) seenSnoozeReturns.delete(seenSnoozeReturns.values().next().value!);
+  const notification = new Notification(words.title, {
+    body: words.body, tag: "murage:needs-snooze",
+    ...(notificationSoundsEnabled() ? {} : { silent: true }),
+  });
+  notification.onclick = () => { window.focus(); onOpen(); };
+  return true;
+}

@@ -36,7 +36,7 @@ final class LaunchPolicyTests: XCTestCase {
     }
 
     func testCloseReasonsAreTheLaunchersNames() {
-        XCTAssertEqual(CloseReason.allCases.map(\.rawValue), ["unreachable", "insecure", "signedOut", "signOut", "launcher", "updateRequired", "accessoff", "hosterror"])
+        XCTAssertEqual(CloseReason.allCases.map(\.rawValue), ["unreachable", "insecure", "signedOut", "signOut", "launcher", "updateRequired", "accessoff", "hosterror", "pairRefused"])
     }
 
     /// The door answers 200 without a session only for /enter. "/" (where

@@ -66,3 +66,24 @@ export async function approvalDigest(threadId: string, requestId: string, card: 
   const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
   return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+/** APPROVE-ALL (design 7.2): the reserved thread id an Approve all batch proof is held and signed under. No conversation
+ *  may use it: both respond routes and the Approve all routes refuse it as a thread id. */
+export const APPROVE_ALL_THREAD = "approve-all-batch";
+/** One ticked card in a batch: its thread, its request and the card digest taken at preview. */
+export type BatchLine = readonly [threadId: string, requestId: string, cardDigest: string];
+
+/** What an Approve all batch proof signs: the batch id, the device that asked and exactly the ticked cards, each with the
+ *  digest of the card as previewed. Sorted, so the order the cards were ticked in never moves the digest. Its tag differs
+ *  from a card's (`murage-approval-digest/2`), so a batch digest can never equal a single card's. */
+export function approvalBatchDigestInput(batchId: string, deviceId: string, lines: readonly BatchLine[]): string {
+  const sorted = lines.map((line) => [line[0], line[1], line[2]] as const)
+    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0));
+  return JSON.stringify(["murage-approval-batch/1", batchId, deviceId, sorted]);
+}
+
+export async function approvalBatchDigest(batchId: string, deviceId: string, lines: readonly BatchLine[]): Promise<string> {
+  const bytes = new TextEncoder().encode(approvalBatchDigestInput(batchId, deviceId, lines));
+  const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}

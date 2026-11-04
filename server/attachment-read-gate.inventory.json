@@ -1281,6 +1281,20 @@
   "count": 1
  },
  {
+  "file": "server/drivers/codex-unsupported-calls.ts",
+  "function": "unsupportedCallsSince",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/codex-unsupported-calls.ts",
+  "function": "unsupportedCallsSince",
+  "callee": "readSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/drivers/headless-text-only.ts",
   "function": "ownerCredmanFlag",
   "callee": "readFileSync",
@@ -2672,6 +2686,20 @@
   "callee": "readSync",
   "root": "artifact-files",
   "count": 2
+ },
+ {
+  "file": "server/owner-prefs.ts",
+  "function": "readOwnerPrefs",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/owner-prefs.ts",
+  "function": "writeOwnerPrefs",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
  },
  {
   "file": "server/package-export-files.ts",

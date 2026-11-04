@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldPollTelegramStatus, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "./telegram-status";
+import { shouldPollTelegramStatus, telegramAutoPairPlan, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "./telegram-status";
 
 const status: TelegramStatus = { configured: true, enabled: true, paired: true, pending: 0, uncertain: 0, connecting: false };
 
@@ -34,5 +34,25 @@ describe("Telegram health polling and labels", () => {
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canResume: true, canReplaceToken: true }, false, false)).toBe("Another app is receiving this bot");
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "blocked", canReplaceToken: false, resumeMessage: "The paired Chief changed or is unavailable. Revoke this connection, then pair the current workspace Chief." }, false, false)).toBe("Chief unavailable · revoke and re-pair");
     expect(telegramHealthLabel({ ...status, paired: false, resumeState: "retry", canReplaceToken: true }, false, false)).toBe("Connection saved · retrying automatically");
+  });
+});
+
+describe("auto-pair after the first token (job 7)", () => {
+  const now = 1_000_000;
+  const unlinked: TelegramStatus = { configured: true, enabled: false, paired: false, pending: 0, uncertain: 0, connecting: false };
+  it("pairs without a revoke when nothing is pending", () => {
+    expect(telegramAutoPairPlan(unlinked, now)).toEqual({ pair: true, revokeFirst: false });
+  });
+  it("revokes an expired-by-time pending code before pairing", () => {
+    expect(telegramAutoPairPlan({ ...unlinked, pending: 1, pairingExpired: false, pairingExpiresAt: now - 1 }, now)).toEqual({ pair: true, revokeFirst: true });
+  });
+  it("revokes a pending code whose saved status says expired", () => {
+    expect(telegramAutoPairPlan({ ...unlinked, pending: 1, pairingExpired: true, pairingExpiresAt: now + 60_000 }, now)).toEqual({ pair: true, revokeFirst: true });
+  });
+  it("leaves a valid pending code alone: no pair, no revoke", () => {
+    expect(telegramAutoPairPlan({ ...unlinked, pending: 1, pairingExpired: false, pairingExpiresAt: now + 60_000 }, now)).toEqual({ pair: false, revokeFirst: false });
+  });
+  it("never starts when linked", () => {
+    for (const linked of [{ paired: true }, { enabled: true }, { connecting: true }, { requiresRevoke: true }, { configured: false }]) expect(telegramAutoPairPlan({ ...unlinked, ...linked }, now).pair).toBe(false);
   });
 });

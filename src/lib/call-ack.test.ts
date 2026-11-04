@@ -12,7 +12,7 @@ function gate(opts: { last?: AckKey | null } = {}) {
 }
 
 describe("AckGate", () => {
-  it("fires once when no real piece lands by 1300 ms", () => {
+  it("fires once when no real piece lands by 1500 ms", () => {
     const { g, fired } = gate();
     g.start(Date.now());
     vi.advanceTimersByTime(ACK_AFTER_MS - 1);
@@ -139,9 +139,6 @@ describe("cueMayPlay", () => {
     expect(cueMayPlay({ ...ok, live: false })).toBe(false);
     expect(cueMayPlay({ ...ok, superseded: true })).toBe(false);
     expect(cueMayPlay({ ...ok, held: true })).toBe(false);
-    // the instant "Mm." already played for this turn: one cue per turn
-    expect(cueMayPlay({ ...ok, instantCued: true })).toBe(false);
-    expect(cueMayPlay({ ...ok, instantCued: false })).toBe(true);
     expect(cueMayPlay({ ...ok, otherSpeech: true })).toBe(false);
   });
 

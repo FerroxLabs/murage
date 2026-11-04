@@ -53,6 +53,6 @@ function HealthBody({ status }: { status: HealthStatus }) {
 }
 /** Health of memory. On the Memory page it sits open inside Advanced (`open`); in a bot's compact view it is a fold. */
 export function MemoryHealth({ status, open = false }: { status: HealthStatus; open?: boolean }) {
-  if (open) return <section aria-label={tx("ariaLabel")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-health-heading" className="text-[14px] font-medium">{tx("heading")}</h3><HealthBody status={status} /></section>;
+  if (open) return <section aria-label={tx("ariaLabel")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-health-heading" data-setting-control="memory-health-heading" className="text-[14px] font-medium">{tx("heading")}</h3><HealthBody status={status} /></section>;
   return <Disclosure label={tx("disclosure")}><HealthBody status={status} /></Disclosure>;
 }

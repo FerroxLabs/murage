@@ -21,6 +21,19 @@ const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const KEY_READ = "cat .env";
 const GATE_READ = "cat ~/.ssh/config";
+// NOLIMITS-ASKS (1.0.16): an owner command shape the reader cannot follow (a function, background jobs, wait), as reported 11-04
+// 1.0.16 r3 (MurageMain rulings): written so every path is known from the text (a literal OUT, `$1` from literal calls);
+// the indirect read at the end keeps it a text the reader cannot follow
+const UNREAD = String.raw`OUT=out
+run() {
+  imagegen create --prompt "$(cat "$OUT/$1.txt")" --json > "$OUT/$1.json" 2> "$OUT/$1.err"
+  echo "$1 exit:$?"
+}
+run 01-portrait &
+run 02-landscape &
+wait
+echo DONE` + "\necho ${!x}";
+const UNREAD_WIPE = `${UNREAD}\nrm -rf "$OUT"`;
 const CHIP = "Approved 1 step (No limits)";
 
 let port: number;
@@ -115,7 +128,7 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     const engine = (driver: string, command: string) => ({ driver, environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: command }, config: { cli: FAKE_CLI, fullAuto: false } });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
-        keys: engine("grokAgent", KEY_READ), gate: engine("grokAgent", GATE_READ), queued: engine("customAcp", KEY_READ),
+        keys: engine("grokAgent", KEY_READ), gate: engine("grokAgent", GATE_READ), unread: engine("grokAgent", UNREAD), unreadWipe: engine("grokAgent", UNREAD_WIPE), queued: engine("customAcp", KEY_READ),
         late: { ...engine("grokAgent", KEY_READ), environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: KEY_READ, FAKE_ACP_SESSION_NEW_GATE: join(home, "late-gate") } },
         setup: { driver: "claudeAgent", environment: { FAKE_CLAUDE_PERM_TOOL: "Bash", FAKE_CLAUDE_PERM_INPUT: JSON.stringify({ command: KEY_READ }) }, config: { cli: FAKE_CLAUDE } },
       },
@@ -141,6 +154,23 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
     const card = await poll(() => liveCard(bot.threadId));
     expect(card, "a gate file ran with no card").not.toBeNull();
+    await deny(bot.threadId, card.card.requestId);
+    await waitIdle(bot.id, bot.threadId);
+  }, 60_000);
+
+  it("NOLIMITS-ASKS: a command Murage cannot read runs on the owner's own line with no card", async () => {
+    const bot = await makeBot("Unread", "unread");
+    expect((await send(bot.id, bot.threadId, "make the images")).status).toBe(202);
+    expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(await cards(bot.threadId)).toHaveLength(0);
+    expect(await chip(bot.threadId)).not.toBeNull();
+  }, 60_000);
+
+  it("NOLIMITS-ASKS: the same command naming a delete still cards on the owner's own line", async () => {
+    const bot = await makeBot("UnreadWipe", "unreadWipe");
+    expect((await send(bot.id, bot.threadId, "make the images")).status).toBe(202);
+    const card = await poll(() => liveCard(bot.threadId));
+    expect(card, "an unread delete ran with no card").not.toBeNull();
     await deny(bot.threadId, card.card.requestId);
     await waitIdle(bot.id, bot.threadId);
   }, 60_000);
@@ -267,7 +297,7 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect((await api("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).status).toBe(404);
     expect((await desktopApi("POST", "/api/no-limits/terms", {})).status).toBe(400);
     expect((await desktopApi("POST", "/api/no-limits/terms", { acknowledgeNoLimits: true })).body).toEqual({ noLimitsTerms: { accepted: true } });
-    expect(JSON.parse(readFileSync(path, "utf8")).noLimitsTermsVersion).toBe(2);
+    expect(JSON.parse(readFileSync(path, "utf8")).noLimitsTermsVersion).toBe(3);
     expect((await send(bot.id, bot.threadId, "read it again")).status).toBe(202);
     expect(await poll(() => chip(bot.threadId)), "the accepted terms did not take").not.toBeNull();
     await waitIdle(bot.id, bot.threadId);

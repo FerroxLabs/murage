@@ -488,3 +488,134 @@ describe("the native event scripts", () => {
     }
   });
 });
+
+describe.each([
+  ["iOS", "ios"],
+  ["Android", "android"],
+] as const)("%s wrapper: a refused pairing code on the desktop's /enter page (1.0.16 F1)", (_name, which) => {
+  type Reply = { ok: boolean; status: number; body: unknown; json?: () => Promise<unknown> };
+
+  /** A fake response whose clone() reads the same body; the page gets the original object. */
+  const response = (reply: Reply) => {
+    const make = (): Record<string, unknown> => ({
+      ok: reply.ok,
+      status: reply.status,
+      clone: make,
+      json: reply.json ?? (async () => reply.body),
+    });
+    return make();
+  };
+
+  function enterPage(path: string, answer: () => Promise<unknown>) {
+    const calls: unknown[][] = [];
+    const fetch = (...args: unknown[]) => (calls.push(args), answer());
+    const overrides: Win = { fetch, URL, location: { origin: ORIGIN, pathname: path, href: `${ORIGIN}${path}` } };
+    const base = which === "ios" ? iosPage(overrides) : androidPage(overrides);
+    const messages = () => base.posted.map((entry) => (typeof entry === "string" ? JSON.parse(entry) : entry)).map((m: any) => ({ method: m.method, args: m.args }));
+    return { window: base.window, fetch, calls, messages };
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const signIn = (window: Win, init: Win = { method: "POST", body: "{}" }, url = "/session") => {
+    window.__init = init;
+    window.__url = url;
+    return pageRuns(window, "fetch(__url, __init)") as Promise<unknown>;
+  };
+
+  it("posts pairRefused with the computer's own line when /session refuses the code", async () => {
+    const refused = response({ ok: false, status: 401, body: { error: "That code is no longer valid." } });
+    const { window, messages } = enterPage("/enter", async () => refused);
+    expect(await signIn(window)).toBe(refused);
+    await settle();
+    expect(messages()).toEqual([{ method: "pairRefused", args: { message: "That code is no longer valid." } }]);
+  });
+
+  it("hands the page the very same promise result, and the page still reads its body", async () => {
+    const refused = response({ ok: false, status: 429, body: { error: "Wait." } });
+    const { window } = enterPage("/enter", async () => refused);
+    const got = (await signIn(window)) as any;
+    expect(got).toBe(refused);
+    expect(await got.json()).toEqual({ error: "Wait." });
+  });
+
+  it("posts nothing when the code is accepted, or when the computer is full", async () => {
+    for (const reply of [
+      { ok: true, status: 200, body: { ok: true } },
+      { ok: false, status: 409, body: { reason: "full", error: "Too many devices" } },
+    ]) {
+      const { window, messages } = enterPage("/enter", async () => response(reply));
+      await signIn(window);
+      await settle();
+      expect(messages(), JSON.stringify(reply)).toEqual([]);
+    }
+  });
+
+  it("posts nothing for a GET, another URL, or another origin", async () => {
+    const refused = () => response({ ok: false, status: 401, body: { error: "no" } });
+    const { window, messages } = enterPage("/enter", async () => refused());
+    await signIn(window, { method: "GET" });
+    await signIn(window, {}, "/session");
+    await signIn(window, { method: "POST" }, "/other");
+    await signIn(window, { method: "POST" }, "https://elsewhere.example/session");
+    await settle();
+    expect(messages()).toEqual([]);
+  });
+
+  it("sends an empty line when the refusal has no readable body", async () => {
+    const { window, messages } = enterPage("/enter", async () => response({ ok: false, status: 500, body: null, json: async () => Promise.reject(new Error("not json")) }));
+    await signIn(window);
+    await settle();
+    expect(messages()).toEqual([{ method: "pairRefused", args: { message: "" } }]);
+  });
+
+  it("cuts a long line to 200 characters, and ignores a line that is not text", async () => {
+    const long = enterPage("/enter", async () => response({ ok: false, status: 401, body: { error: "x".repeat(500) } }));
+    await signIn(long.window);
+    await settle();
+    expect((long.messages()[0]!.args as { message: string }).message).toBe("x".repeat(200));
+    const odd = enterPage("/enter", async () => response({ ok: false, status: 401, body: { error: { nested: true } } }));
+    await signIn(odd.window);
+    await settle();
+    expect(odd.messages()).toEqual([{ method: "pairRefused", args: { message: "" } }]);
+  });
+
+  it("lets a network failure through untouched and posts nothing", async () => {
+    const failure = new Error("offline");
+    const { window, messages } = enterPage("/enter", () => Promise.reject(failure));
+    await expect(signIn(window)).rejects.toBe(failure);
+    await settle();
+    expect(messages()).toEqual([]);
+  });
+
+  it("leaves window.fetch alone on every other page", () => {
+    for (const path of ["/", "/settings", "/enterprise"]) {
+      const { window, fetch } = enterPage(path, async () => response({ ok: true, status: 200, body: {} }));
+      expect(window.fetch, path).toBe(fetch);
+    }
+  });
+
+  it("adds nothing to the page-facing API", () => {
+    const { window } = enterPage("/enter", async () => response({ ok: true, status: 200, body: {} }));
+    expect(Object.keys(window.murageNative)).not.toContain("pairRefused");
+    expect(Object.keys(window.murageNative).sort()).toEqual(["hello", "on", ...PLATFORM_METHODS[which === "ios" ? "iOS" : "Android"]!].sort());
+  });
+});
+
+describe("pairRefused in the contract and both gates (1.0.16 F1)", () => {
+  it("is not advertised in hello(), and is accepted or refused by the shared request fixtures", () => {
+    expect(METHODS).not.toContain("pairRefused");
+    const requests: { body: any; method?: string; error?: string }[] = JSON.parse(readFileSync(new URL("contract/channel.json", ROOT), "utf8")).requests;
+    const refused = requests.filter((entry) => entry.body?.method === "pairRefused");
+    expect(refused.filter((entry) => entry.method === "pairRefused").length).toBeGreaterThanOrEqual(2);
+    expect(refused.filter((entry) => entry.error === "bad_args").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("both gates know the method and check the message length", () => {
+    const swift = readFileSync(new URL("ios/App/MurageShell/Sources/MurageShellCore/ChannelGate.swift", ROOT), "utf8");
+    const java = readFileSync(new URL("android/app/src/main/java/com/murage/mobile/shell/ChannelGate.java", ROOT), "utf8");
+    expect(swift).toContain("case pairRefused");
+    expect(swift).toContain('method == .pairRefused && ChannelArgs.string(args["message"], max: 200) == nil');
+    expect(java).toContain('all.add("pairRefused")');
+    expect(java).toContain('"pairRefused".equals(method) && ChannelArgs.string(((JSONObject) args).opt("message"), 200) == null');
+  });
+});

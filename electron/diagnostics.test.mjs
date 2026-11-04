@@ -212,6 +212,14 @@ describe("buildDiagnosticsReport", () => {
     expect(report).toContain("«redacted");
   });
 
+  it("masks GitLab and Slack app-level tokens in the log tail, as server/redact.ts does", () => {
+    const tail = "abcdefghijklmnopqrstuvwxyz";
+    const tokens = [`${"glp" + "at-"}${tail}`, `${"gld" + "t-"}${tail}`, `${"glr" + "t-"}${tail}`, `${"xa" + "pp-"}1-A0123456789-${tail}`];
+    const report = buildDiagnosticsReport({ appInfo, configSummary: {}, logTail: tokens.map((token) => `saw ${token} once`).join("\n") });
+    for (const token of tokens) expect(report).not.toContain(token);
+    expect(report).not.toContain(tail);
+  });
+
   it.each(["Bearer abcdefghijklmnop", "Basic dXNlcjpwYXNzd29yZA=="])(
     "masks the full Authorization credential for %s",
     (authorization) => {
@@ -225,6 +233,16 @@ describe("buildDiagnosticsReport", () => {
       expect(report).toContain("Authorization=«redacted");
     },
   );
+
+  it.each([
+    ['{"Authorization":"Basic dXNlcjpodW50ZXIy"}', "dXNlcjpodW50ZXIy"],
+    ["{'authorization': 'Basic dXNlcjpodW50ZXIy'}", "dXNlcjpodW50ZXIy"],
+    ['{"api_key":"k9-plain-credential-value"}', "k9-plain-credential-value"],
+  ])("masks a credential whose header name is quoted, as JSON spells it: %s", (line, secret) => {
+    const report = buildDiagnosticsReport({ appInfo, configSummary: {}, logTail: `request headers ${line}` });
+    expect(report).not.toContain(secret);
+    expect(report).toContain("«redacted");
+  });
 
   it("masks a multiline PEM private key as one value", () => {
     const report = buildDiagnosticsReport({

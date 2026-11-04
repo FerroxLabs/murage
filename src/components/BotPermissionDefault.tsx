@@ -9,6 +9,7 @@ import { LevelConfirmCard } from "./approval/LevelConfirmCard";
 import { LevelStatusLine } from "./approval/LevelStatusLine";
 import type { LevelChange } from "./approval/use-level-change";
 import { fromWire, type ChangedThread, type LevelPreview } from "@/lib/level-change";
+import { ApproveAllReminderReset } from "./ApproveAll";
 
 export const FULL_ACCESS_CHANNEL_OPTION = "Also skip approvals for my messages from Telegram, Slack and Discord. Reading keys still asks.";
 export const NO_LIMITS_TERMS_NOTE = "No limits changed. This bot keeps asking as it did until you accept.";
@@ -92,6 +93,7 @@ export function BotPermissionDefault({
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         New conversations start at this level. You can change it for one conversation from the message box.
       </div>
+      <ApproveAllReminderReset />
       <div className="mt-3 flex gap-1 rounded-lg bg-inset p-0.5" role="radiogroup" aria-label="Default approval level">
         {MODES.map(({ mode, label }) => {
           // Not offered where the server would refuse it (server/full-access.ts).

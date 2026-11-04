@@ -5,7 +5,7 @@
 // openai-compat prompt contracts, the inference purpose route, pacing behind an interactive turn, and the limit pause.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
@@ -24,7 +24,7 @@ afterEach(() => { setLearningClockForTests(null); vi.unstubAllEnvs(); });
 
 type Script = (prompt: string, emit: (event: Record<string, unknown>) => void, input: SendTurnInput) => void | Promise<void>;
 /** A fake engine that only offers a turn (the shape Codex and the ACP engines have). */
-function fakeEngine(script: Script, id = "codex-fixture", name = "Codex") {
+function fakeEngine(script: Script, id = "codex-fixture", name = "Codex", options?: Parameters<typeof withCliMemoryLearning>[1]) {
   const listeners = new Set<(event: RuntimeEvent) => void>();
   const sent: SendTurnInput[] = [];
   const denied: string[] = [];
@@ -46,7 +46,7 @@ function fakeEngine(script: Script, id = "codex-fixture", name = "Codex") {
     resetSession: async () => undefined,
   };
   const instance = { instanceId: id, driverKind: "codex", displayName: name, enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance;
-  return { instance: withCliMemoryLearning(instance), sent, denied, cwds, emitFor, listeners };
+  return { instance: withCliMemoryLearning(instance, options), sent, denied, cwds, emitFor, listeners };
 }
 
 const answer = (text: string): Script => (_prompt, emit) => {
@@ -77,6 +77,24 @@ describe("CLI and ACP learning (H12)", () => {
     expect(connection).toMatchObject({ source: "chosen", instanceId: "codex-fixture" });
     expect(typeof connection.extractor!.ground).toBe("function");
     expect(typeof resolveMemoryExtractor("codex-fixture", [instance])!.ground).toBe("function");
+  });
+
+  it("runs a one-off inside the folder the engine names, wipes it after, and falls back to the temp folder", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "murage-oneshot-parent-"));
+    try {
+      const named = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => parent });
+      await named.instance.checkReply!(signal());
+      const cwd = named.sent[0].cwd!;
+      expect(dirname(cwd)).toBe(parent);
+      expect(named.cwds[0]).toEqual([]);
+      await vi.waitFor(() => expect(existsSync(cwd)).toBe(false));
+      expect(existsSync(parent)).toBe(true);
+      const failing = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => { throw new Error("no folder"); } });
+      await failing.instance.checkReply!(signal());
+      expect(dirname(failing.sent[0].cwd!)).toBe(tmpdir());
+    } finally {
+      removeTempDirSync(parent);
+    }
   });
 
   it("extracts with the openai-compat prompt, as JSON in an empty folder with no tools mounted", async () => {

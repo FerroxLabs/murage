@@ -364,7 +364,7 @@ export function LocalModelsSettings() {
       {servers.map(server => <ServerCard key={server.id} server={server} now={now} onChanged={() => void reload()} onTested={onTested} />)}
     </div>
     <div className="mt-3">
-      <button ref={addButton} type="button" disabled={adding} onClick={() => setAdding(true)} aria-expanded={adding} className={`${primary} inline-flex items-center gap-1.5`}>
+      <button ref={addButton} data-setting-control="local-models-heading" type="button" disabled={adding} onClick={() => setAdding(true)} aria-expanded={adding} className={`${primary} inline-flex items-center gap-1.5`}>
         <Plus size={13} aria-hidden />Add a server
       </button>
       {adding && <AddServerForm onAdded={() => { setAdding(false); void reload(); }} onCancel={() => setAdding(false)} />}

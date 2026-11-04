@@ -17,6 +17,11 @@ import { openSidebar } from "./fixtures.ts";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
+async function openNeedsRow(page: Page, id?: string) { // UX L2B: a Needs you row is one line; Open expands its card in place
+  const button = page.locator(id ? `[data-needs-open="${id}"]` : "[data-needs-open]").first();
+  await button.waitFor();
+  if ((await button.getAttribute("aria-expanded")) !== "true") await button.click();
+}
 test.describe.configure({ mode: "serial" });
 
 let fixture: VerificationServer, vite: ViteDevServer, origin: string, headers: Record<string, string>;
@@ -177,7 +182,8 @@ test("a question wakes a snoozed conversation, badges it, and the badge clears o
   // Answer it from Needs you; the badge goes with it.
   await openSidebar(page);
   await page.locator("[data-sidebar-needs-you]").click();
-  const card = page.locator("[data-inbox-id]").filter({ has: page.getByRole("heading", { name: "Which format should the report use?", exact: true }) });
+  await openNeedsRow(page);
+  const card = page.locator("[data-needs-row]").filter({ has: page.getByRole("heading", { name: "Which format should the report use?", exact: true }) });
   await card.getByRole("radio", { name: /Summary/ }).click();
   await card.getByRole("checkbox", { name: /Intro/ }).click();
   await card.getByRole("button", { name: "Send answer" }).click();

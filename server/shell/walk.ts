@@ -498,7 +498,19 @@ export function deviceInWord(text: string): string | undefined {
     // a device name starts a word, follows `=`, a quote, a bracket or a
     // blank, ends a glued short option (`-o/dev/sda`) or a URL scheme
     // (`file:///dev/sda`); `~/dev/x` and `/home/me/dev/x` are folders
-    if (i > 0 && /[A-Za-z0-9_.~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) continue;
+    if (i > 0 && /[A-Za-z0-9_.~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) {
+      // 1.0.16 (GrokBuild r1 H3): `//dev/sda`, `/./dev/sda` and `/x/../dev/sda` are the disk once the path is
+      // normalized; `~/dev/x` and `/home/me/dev/x` are not
+      if ((plain[i - 1] === "/" || plain[i - 1] === ".") && plain.startsWith("/dev/", i)) {
+        let start = i;
+        while (start > 0 && !/[\s"'=<>(){}[\];,|&`]/.test(plain[start - 1]!)) start--;
+        let stop = i;
+        while (stop < plain.length && /[A-Za-z0-9_.+\-/:@%~]/.test(plain[stop]!)) stop++;
+        const word = plain.slice(start, stop).replace(/[.:@%~+\-]+$/, "");
+        if (word.startsWith("/") && normalizePath(word).startsWith("/dev/") && isDeviceWrite(normalizePath(word))) return normalizePath(word);
+      }
+      continue;
+    }
     let end = i;
     // a `/dev/` name is made of name characters: it ends at a quote, a
     // bracket, `#` or anything else around it (`open('/dev/null')`,

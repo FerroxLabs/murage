@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
-import { shouldPollTelegramStatus, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "@/lib/telegram-status";
+import { shouldPollTelegramStatus, telegramAutoPairPlan, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "@/lib/telegram-status";
 import { copyTextOrThrow } from "@/lib/copy-text";
 
 interface PairCode { code: string; expiresAt: number; username?: string; botIdentityId: string }
@@ -20,8 +20,8 @@ export function TelegramSettings() {
     setStatus(next); if (next.paired) setPair(null); setRefreshError(null);
     return true;
   };
-  const refresh = async (version: number) => { applyStatus(telegramStatusFrom(await api("/api/telegram/status")), version); };
-  const run = async (action: string, work: (version: number) => Promise<void>) => {
+  const refresh = async (version: number) => { const next = telegramStatusFrom(await api("/api/telegram/status")); applyStatus(next, version); return next; };
+  const run = async (action: string, work: (version: number) => Promise<unknown>) => {
     if (gate.current) return; gate.current = true; const version = ++actionVersion.current; setBusy(action); setError(null); setNotice(null);
     try { await work(version); } catch { if (version === actionVersion.current) setError("Telegram setup could not be completed. Check the token and connection, then refresh or try again."); }
     finally { gate.current = false; setBusy(null); }
@@ -52,22 +52,44 @@ export function TelegramSettings() {
   // B17: Telegram rejected the saved token; a token for the SAME bot may replace it without revoking.
   const replaceable = Boolean(status?.canReplaceToken);
   const tokenLocked = Boolean(linked) && !replaceable;
+  // Ten jobs (job 7): when the first status says nothing is set up, the cursor waits in the token field, so pasting
+  // the token is the owner's first move. Decided once, on the first status only, and never when the owner has
+  // already put the cursor in another text field.
+  const tokenInput = useRef<HTMLInputElement>(null);
+  const tokenFocused = useRef(false);
+  useEffect(() => {
+    if (tokenFocused.current || !status || busy) return;
+    tokenFocused.current = true;
+    if (status.configured || linked) return;
+    // Opening this screen leaves focus on the button that was pressed, so only another text field counts as the owner's choice.
+    const active = document.activeElement;
+    if (active && active !== tokenInput.current && active.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
+    tokenInput.current?.focus();
+  }, [status, busy, linked]);
   const save = () => run("save", async version => {
     if (tokenLocked) throw new Error("Revoke first");
     try {
       if (window.muragebox?.setCredential) await window.muragebox.setCredential("telegramBotToken", token.trim());
       else await api("/api/config", { method: "PUT", body: JSON.stringify({ telegram: { botToken: token.trim() } }) });
     } catch (error) { if (replaceable) await refresh(version).catch(() => {}); throw error; } // the server puts the refusal reason in resumeMessage
-    setToken(""); await refresh(version);
-    if (version === actionVersion.current) setNotice(replaceable ? "Token replaced. Reconnecting with your saved pairing." : "Token saved. Pairing has not started.");
+    setToken(""); const saved = await refresh(version);
+    if (version !== actionVersion.current) return;
+    if (replaceable) { setNotice("Token replaced. Reconnecting with your saved pairing."); return; }
+    // Ten jobs (job 7): a first token goes straight on to the pairing code; the owner never presses a second button
+    // for the step that always comes next. Only when nothing is linked yet; a pairing failure shows the usual error.
+    // An expired code left from an earlier try is revoked first, as Pair with Chief does.
+    const plan = telegramAutoPairPlan(saved, Date.now());
+    if (plan.pair) await pairWork(version, plan.revokeFirst);
+    else setNotice("Token saved. Pairing has not started.");
   });
-  const startPair = () => run("pair", async version => {
-    if (expired) { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); setPair(null); }
+  const pairWork = async (version: number, revokeFirst: boolean) => {
+    if (revokeFirst) { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); setPair(null); }
     const result = await api("/api/telegram/pair", { method: "POST", body: "{}" });
     if (typeof result.code !== "string" || !/^[A-Za-z0-9_-]{4,128}$/.test(result.code) || !Number.isFinite(result.expiresAt)) throw new Error("Invalid pairing response");
     if (version !== actionVersion.current) return;
     setNow(Date.now()); setPair(result); await refresh(version);
-  });
+  };
+  const startPair = () => run("pair", version => pairWork(version, expired));
   const username = pair?.username && /^[A-Za-z0-9_]{5,32}$/.test(pair.username) ? pair.username : null;
   return <section aria-labelledby="telegram-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
     <h3 id="telegram-settings-title" className="text-[15px] font-semibold text-ink">Telegram</h3>
@@ -78,7 +100,7 @@ export function TelegramSettings() {
     <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">{status?.configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
-      <input type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
+      <input ref={tokenInput} data-setting-control="telegram-settings-title" type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
         className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50" />
     </label>
     {tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>}

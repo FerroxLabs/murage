@@ -57,7 +57,7 @@ export function SearchSettings() {
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("searchSettings.intro")}</p>
     {!search && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("searchSettings.unavailable")}</p>}
     <label className="mt-3 block text-[12px] font-medium text-ink" htmlFor="web-search-provider">{t("searchSettings.provider")}</label>
-    <select id="web-search-provider" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
+    <select id="web-search-provider" data-setting-control="search-settings-heading" value={search?.provider ?? "engine"} disabled={!search || Boolean(busy)}
       onChange={event => void choose(event.target.value as SearchProvider)}
       className={"mt-1 min-h-11 w-full rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50 " + focus}>
       <option value="engine">Engine search first, then Parallel and DuckDuckGo if needed</option>
@@ -94,7 +94,7 @@ export function SearchSettings() {
             <span className={"text-[11px] " + (configured ? "text-success" : "text-ink-secondary")}>{t(configured ? "searchSettings.keySaved" : "searchSettings.noKey")}</span>
           </div>
           <div className="mt-1.5 flex flex-wrap gap-2">
-            <input id={provider + "-search-key"} type="password" value={values[provider]} autoComplete="off" spellCheck={false}
+            <input id={provider + "-search-key"} data-setting-control={provider === "tavily" ? "search-keys-heading" : undefined} type="password" value={values[provider]} autoComplete="off" spellCheck={false}
               placeholder={t(configured ? "searchSettings.pasteReplacement" : "searchSettings.pasteKey")} disabled={!search || Boolean(busy)}
               onChange={event => { setValues(current => ({ ...current, [provider]: event.target.value })); setError(""); setNotice(""); }}
               onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void saveKey(provider); } }}

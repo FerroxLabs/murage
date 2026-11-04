@@ -142,6 +142,7 @@ export function PasteKeysBody({
       <div className="mb-1.5 text-[13px] text-ink-secondary">Review keys to add or replace</div>
       <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">{HELP}</div>
       <textarea
+        data-setting-control="paste-any-keys"
         ref={box}
         rows={4}
         defaultValue=""

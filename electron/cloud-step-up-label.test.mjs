@@ -52,6 +52,8 @@ const SAMPLES = [
   ["POST", "/api/no-limits/terms"],
   // 1.0.14 Call me when this finishes, and the desktop engine sign-in and set-up check.
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
+  // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
+  ["POST", "/api/tts/voices/add"],
 ];
 
 describe("every step-up route has a human label", () => {
