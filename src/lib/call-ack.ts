@@ -4,8 +4,10 @@
 // started, and never after the turn is cancelled (barge-in, hang-up, a
 // superseded turn).
 
-/** No first text by this long after the send: the reply is slow. */
-export const ACK_AFTER_MS = 1_300;
+/** No first text by this long after the send: the reply is slow. Under it
+ *  the wait stays silent (the avatar's inhale shows the bot heard); a cue
+ *  any sooner would land on most normal turns and sound like a filler. */
+export const ACK_AFTER_MS = 1_500;
 
 export const ACK_KEYS = ["calls.ack.look", "calls.ack.oneSec", "calls.ack.onIt", "calls.ack.checking"] as const;
 export type AckKey = (typeof ACK_KEYS)[number];
@@ -24,11 +26,9 @@ export const ACK_STALE_MS = 1_500;
 
 /** Whether a cue that is ready may sound now. Pure; the call screens read
  *  their refs into it. `otherSpeech`: the bot is already saying something
- *  that is not this cue (a cue must never cut it off). `instantCued`: the
- *  instant cached cue already played for this turn, so at most one cue
- *  sounds. */
-export function cueMayPlay(s: { live: boolean; superseded: boolean; held: boolean; realStarted: boolean; otherSpeech: boolean; closed: boolean; ageMs: number; instantCued?: boolean }): boolean {
-  return !s.instantCued && s.live && !s.superseded && !s.held && !s.realStarted && !s.otherSpeech && !s.closed && s.ageMs <= ACK_STALE_MS;
+ *  that is not this cue (a cue must never cut it off). */
+export function cueMayPlay(s: { live: boolean; superseded: boolean; held: boolean; realStarted: boolean; otherSpeech: boolean; closed: boolean; ageMs: number }): boolean {
+  return s.live && !s.superseded && !s.held && !s.realStarted && !s.otherSpeech && !s.closed && s.ageMs <= ACK_STALE_MS;
 }
 
 /** The room's speech queue: inside the cue's own job its id is still queued,

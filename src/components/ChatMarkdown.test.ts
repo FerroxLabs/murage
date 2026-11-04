@@ -202,3 +202,10 @@ it("draws a pasted GitHub issue link as a pill and leaves custom text and lookal
   const fake = renderToStaticMarkup(createElement(ChatMarkdown, { text: "https://github.com.evil.example/acme/widgets/pull/1" }));
   expect(fake).not.toContain("github-ref");
 });
+
+it("keeps a reply's single line breaks as line breaks, outside code (upstream d124292a2)", () => {
+  const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: "1\n2\n3\n\n`a`\nb\n\n```\nx\ny\n```" }));
+  expect(html).toMatch(/>1<br\/>\n?2<br\/>\n?3<\/p>/);
+  expect(html).toMatch(/>a<\/code><br\/>\n?b<\/p>/);
+  expect(html).toContain("x\ny");
+});

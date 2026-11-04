@@ -44,10 +44,11 @@ public class ShellPlugin extends Plugin {
     }
 
     @Override public void load() {
-        closes = (origin, reason) -> {
+        closes = (origin, reason, message) -> {
             JSObject event = new JSObject();
             event.put("origin", origin);
             event.put("reason", reason);
+            if (message != null) event.put("message", message);
             // Retained until the launcher page has attached its listener.
             notifyListeners("workspaceClosed", event, true);
         };

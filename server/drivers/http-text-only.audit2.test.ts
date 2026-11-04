@@ -8,6 +8,8 @@ import { clearUnseenExcess, unseenExcessCalls, withContinuityInferenceLease } fr
 import { learningSpendLedgerId, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
 import { httpTextOnlyTurn } from "./http-text-only.ts";
 import type { TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 // Astra L3 r2 High 2 / r3: a paid reply nobody could read keeps its full reservation (never a body-size surcharge) and counts as unmetered
 // on the month row, so the ceiling bound holds without guessing its cost. Each case starts with no unmetered replies.
@@ -17,7 +19,7 @@ const ledgerOf = (botId: string) => JSON.parse(String(database().prepare("SELECT
 async function leasedTurn(botId: string, fetchImpl: typeof fetch) {
   mkdirSync(DATA_DIR, { recursive: true });
   const signal = new AbortController().signal;
-  const input: TextOnlyTurnInput = { system: "system", text: "fixture", model: "fixture", signal, outputSchema: { type: "object", required: ["ok"] }, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId, runId: "r", family: "lived", attempt: 1 } };
+  const input: TextOnlyTurnInput = { system: fixedPrompt("system"), text: "fixture", model: "fixture", signal, outputSchema: { type: "object", required: ["ok"] }, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId, runId: "r", family: "lived", attempt: 1 }, transport: { gate: openLearningGate("continuity") } };
   await withContinuityInferenceLease(lease => lease.request(async () => (await httpTextOnlyTurn(input, { baseUrl: "https://fixture.invalid", apiKey: "fixture", buildBody: model => ({ model }), fetchImpl })).text,
     "system", 3000, signal, [{ role: "user", content: "fixture" }], "continuity", { botId, family: "lived" }).catch(() => null));
 }
@@ -41,7 +43,7 @@ it("unreadable-reply: a body that is not JSON settles its reservation and counts
 it("15: rejected HTTP content without usage keeps its reservation and counts as unmetered", async () => {
   mkdirSync(DATA_DIR, { recursive: true });
   const content = '{"wrong":1}', signal = new AbortController().signal;
-  const input: TextOnlyTurnInput = { system: "system", text: "fixture", model: "fixture", signal, outputSchema: { type: "object", required: ["ok"] }, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId: "http-estimate", runId: "r", family: "lived", attempt: 1 } };
+  const input: TextOnlyTurnInput = { system: fixedPrompt("system"), text: "fixture", model: "fixture", signal, outputSchema: { type: "object", required: ["ok"] }, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId: "http-estimate", runId: "r", family: "lived", attempt: 1 }, transport: { gate: openLearningGate("continuity") } };
   await withContinuityInferenceLease(lease => lease.request(async () => {
     const result = await httpTextOnlyTurn(input, { baseUrl: "https://fixture.invalid", apiKey: "fixture", buildBody: model => ({ model }), fetchImpl: async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content } }] })) });
     expect(result.verdict.state).toBe("refused"); return result.text;

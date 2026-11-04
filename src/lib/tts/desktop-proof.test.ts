@@ -51,7 +51,6 @@ describe("voice routes carry the desktop proof", () => {
 
   it.each([
     "./index.ts",
-    "./ack-cue.ts",
     "../call-mic.ts",
     "../dictation-cleanup.ts",
     "../../components/PushToTalk.tsx",
