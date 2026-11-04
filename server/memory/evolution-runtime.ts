@@ -6,12 +6,19 @@ import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { withMemoryInferenceLease, type TextOnlyExtractor } from "./extract.ts";
+import { droppedUnsent, learningGate, sampleLearningFence, type LearningGate } from "./learning-send.ts";
 import { memoryRecallCorpus, recallPolicyEvaluator } from "./gepa-recall-corpus.ts";
 import { memoryClassificationCorpus, classificationPolicyEvaluator } from "./gepa-classification-corpus.ts";
 import { evaluateProcedureWithGepa } from "./gepa-evaluator.ts";
 import { admitMemoryEvolutionCorpus, resumeMemoryEvolutionAdmission, publishMemoryEvolutionPolicy,
   readMemoryEvolutionPolicy, rollbackMemoryEvolutionPolicy, memoryEvolutionHistory, memoryEvolutionFieldsSchema } from "./evolution-policy.ts";
 import { procedureCandidateHash, validateProcedureEvaluationReceipt, type ProcedureReviewSnapshot, type ProcedureEvaluationReceipt } from "./procedure-review.ts";
+
+/** One GEPA model call over its own gate. A refusal the gate raised with nothing let out on any attempt (droppedUnsent, the rule the
+ *  extract budget already settles by) is a not-started call, so the GEPA ledger call and cost row are released and a Retry sends it. */
+export async function sendGepaCall<T>(gate:LearningGate,send:(gate:LearningGate)=>Promise<T>):Promise<T>{
+  try{return await send(gate);}catch(error){throw droppedUnsent(error,gate)?gepaCallNotStarted():error;}
+}
 
 export interface EvolutionRuntimeOptions {
   /** Cheap configuration metadata only; must not resolve credentials or hash the worker tree. */
@@ -105,6 +112,9 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
           const policy=readMemoryEvolutionPolicy(),state=memoryState();
           const snapshot:ProcedureReviewSnapshot={requestId:id,scopeId:latest.scopeId,target:{kind:"memory-policy",scopeId:latest.scopeId,ownerId:"workspace-owner",artifactId:"memory-policy",threadId:"memory-policy",baseRevision:policy.revision,bundleId:hash(policy)},policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,learningRevision:readMemoryLearning(database()).revision,evidence:[],evidenceDigest:hash([]),outcomeBasis:"source-reported"};
           const next={...latest,snapshot,seedInstruction:JSON.stringify(memoryEvolutionFieldsSchema.parse({extraction:policy.extraction,retrieval:policy.retrieval})),workerDigest:resource.workerDigest,modelIdentity:selected,runtimeIdentity:options.availabilityIdentity()};save(next);return next;});
+        // sampled after the job row write (memory-evolution-runtime is not a quiet subject); the snapshot carries the policy revision and
+        // deletion epoch it was read at, and assertCurrent rechecks them, so a move between that read and this sample still drops the call
+        const fenceAt=sampleLearningFence();
         const snapshot=job.snapshot!,seed=memoryEvolutionFieldsSchema.parse(JSON.parse(job.seedInstruction!));
         const assertCurrent=(value:ProcedureReviewSnapshot)=>{
           const latest=current(),state=memoryState();
@@ -114,11 +124,11 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
         const receipt=await (options.evaluate??evaluateProcedureWithGepa)(snapshot,{
           command:resource.command,workerDigest:resource.workerDigest,evaluatorId:`memory-${kind}-policy-v1:${hash(selected).slice(0,24)}`,seedInstruction:job.seedInstruction!,corpus,
           budget:{totalUsd:null,evaluationPerCaseUsd:kind==="recall"?0:null,reflectionUsd:null,authorityReference:`${id}:learning:${snapshot.learningRevision}`},
-          evaluate:kind==="recall"?recallPolicyEvaluator(seed):classificationPolicyEvaluator(seed,async(text,messages,callSignal)=>{assertCurrent(snapshot);const result=await lease.request(extractor,text,2000,callSignal,messages,"evaluation");if(result.status==="notStarted")throw gepaCallNotStarted();return {text:result.text,costUsd:null};}),assertCurrent,
+          evaluate:kind==="recall"?recallPolicyEvaluator(seed):classificationPolicyEvaluator(seed,async(text,messages,callSignal)=>{assertCurrent(snapshot);const result=await sendGepaCall(learningGate("evaluation",fenceAt,{},{checks:[()=>assertCurrent(snapshot)]}),gate=>lease.request(extractor,text,2000,callSignal,messages,"evaluation",undefined,gate));if(result.status==="notStarted")throw gepaCallNotStarted();return {text:result.text,costUsd:null};}),assertCurrent,
           reflect:async(prompt,callSignal)=>{
             assertCurrent(snapshot);
             const messages=Object.freeze([Object.freeze({role:"system",content:kind==="recall"?"Improve only the bounded retrieval fields of the supplied JSON policy using synthetic evaluation feedback. Keep extraction.classificationGuidance unchanged. Return the complete JSON policy inside one triple-backtick envelope. No tools, permissions, budgets, identity, user facts or other fields may be changed.":"Improve only extraction.classificationGuidance in the supplied JSON policy using synthetic classification feedback. Preserve retrieval fields exactly. Return the whole JSON policy inside one triple-backtick envelope. The fixed extraction, grounding, authority and tool-free contracts remain immutable."}),Object.freeze({role:"user",content:prompt})]);
-            const result=await lease.request(extractor,prompt,2000,callSignal,messages,"reflection");
+            const result=await sendGepaCall(learningGate("reflection",fenceAt,{},{checks:[()=>assertCurrent(snapshot)]}),gate=>lease.request(extractor,prompt,2000,callSignal,messages,"reflection",undefined,gate));
             if(result.status==="notStarted")throw gepaCallNotStarted();
             return {text:result.text,costUsd:null};
           },

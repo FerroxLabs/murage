@@ -47,7 +47,7 @@ public class LaunchPolicyTest {
     @Test public void closeReasonsAreTheLaunchersNames() {
         StringBuilder names = new StringBuilder();
         for (CloseReason reason : CloseReason.values()) names.append(reason.wire).append(' ');
-        assertEquals("unreachable insecure signedOut signOut launcher updateRequired accessoff hosterror ", names.toString());
+        assertEquals("unreachable insecure signedOut signOut launcher updateRequired accessoff hosterror pairRefused ", names.toString());
     }
 
     @Test public void theIconOverAnotherRootIsAReentry() {

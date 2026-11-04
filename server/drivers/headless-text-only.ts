@@ -20,10 +20,12 @@ import { augmentedPath } from "../env-path.ts";
 import { awaitCliTreeStopped, cliJobRefused, spawnCli } from "../procs.ts";
 import { cloudTurnBot } from "../cloud-home/turn-process.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
+import type { LearningGate } from "../memory/learning-send.ts";
+import { MemorySendFenced } from "../memory/learning-send-fence.ts";
 import {
   FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot, pinReflectionFuigoConfig,
   gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
-  type AdmissionFenceAnswer, type BootEpoch, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
+  type AdmissionFenceAnswer, type BootEpoch, type FixedPrompt, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
   type TextOnlyTurnResult, type TransportHooks, type Verdict,
 } from "../memory/pip-transport.ts";
 
@@ -46,8 +48,14 @@ export interface HeadlessRunOptions {
   bootEpoch?: BootEpoch; history?: MissHistory; hooks?: TransportHooks; binaryIdentity?: string | null;
   /** The admission fence (TextOnlyTurnInput.transport.fence): called after the intent is written, immediately before the spawn. */
   fence?: () => AdmissionFenceAnswer;
+  /** The read check alone (TextOnlyTurnInput.transport.recheck): asked again immediately before the stdin write. */
+  recheck?: () => AdmissionFenceAnswer;
   /** Written to stdin then closed (Claude); otherwise stdin is closed at once. */
   stdinText?: string;
+  /** The call's learning gate (TextOnlyTurnInput.transport.gate): the physical write is released through it, under the write lock. */
+  gate?: LearningGate;
+  /** Fuigo and Grok with a gate: the prompt, written to the (empty) prompt file inside the gate's send, together with the spawn. */
+  promptText?: string;
   cleanup?: () => void; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
   /** After the result line, the child gets this long to exit on its own before the tree is stopped. */
   postResultGraceMs?: number;
@@ -90,14 +98,17 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     // The intent write is awaited: cancellation can arrive during it, and the abort listener does not exist yet.
     if (o.signal.aborted) throw cancelled();
     // the last await before the spawn: a read that moved meanwhile throws here, the root is removed and no process ever exists
-    runAdmissionFence(o.fence);
+    if (o.gate) o.gate.check(); else runAdmissionFence(o.fence);
   } catch (error) { finish(true); throw error; }
 
   let child: ReturnType<typeof spawnCli>;
   // The bot this reflection runs for: the launcher refuses a Cloud run that names none.
   const env: Record<string, string | undefined> = { ...o.env };
   cloudTurnBot(env, o.context?.botId);
-  try { child = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job); }
+  const spawnIt = () => spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
+  // Fuigo and Grok read the prompt file at start: the file is written and the process started inside the gate's send (r8 section 1)
+  const promptText = o.promptText;
+  try { child = o.gate && promptText !== undefined ? o.gate.send(() => { writeFileSync(o.temp.promptFile, promptText, { mode: 0o600 }); return spawnIt(); }) : spawnIt(); }
   catch (error) {
     finish(true);
     // No job, no CLI: the run is refused for isolation, exactly as a failed assignment is (jobRefusal below).
@@ -163,7 +174,23 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       return { text: "", usage: accountUsage(), isolation: { ...noProcessReport(), exited }, verdict: { state: "uncertain-transport", reason: spawnError ? "spawn-failed" : "register-failed" } };
     }
     await o.hooks?.onChild?.(registered);
-    try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ }
+    // registration and the child hook were awaited after the fence: a read that moved meanwhile (a Forget, a delete) stops the child
+    // before its prompt is written, so the words never reach it; the move reaches the caller as before the spawn
+    // With a gate, Claude's stdin write is the release: checked and written under the write lock (r8 section 1)
+    let moved: unknown = null, written = false;
+    if (o.gate && promptText === undefined) {
+      try { o.gate.send(() => { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }); written = true; }
+      catch (error) { moved = error; }
+    } else if (!o.gate) { try { runAdmissionFence(o.recheck); } catch (error) { moved = error; } }
+    if (moved) {
+      void stop();
+      const first = await Promise.race([closed.then(() => "closed" as const), stopFailedSignal]);
+      clearAll();
+      if (first === "stop-failed") return uncertain("read-moved-exit-not-confirmed");
+      finish(await stop());
+      throw moved;
+    }
+    if (!written) { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }
 
     const first = await Promise.race([closed.then(() => "closed" as const), stopFailedSignal]);
     clearAll();
@@ -247,13 +274,17 @@ export function headlessArgv(temp: TempRoot, model: string, schema: JsonSchema):
 
 export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: HeadlessEngineConfig): Promise<TextOnlyTurnResult> {
   assertSupportedSchema(input.outputSchema);
+  // No gate, no send (r6 section 0, no exemption): a turn without its call's gate is refused before any file or process and nothing leaves.
+  if (!input.transport?.gate) throw new MemorySendFenced();
   // One parent home for the whole route: preflight inspects the same directory the auth copy reads.
   const parentGrokHome = cfg.parentGrokHome ?? cfg.preflight?.grokHome;
   // Step 1a: path checks, no process. A refusal here has spawned nothing.
   const pre = preflightRoute(cfg.engine, { ...cfg.preflight, ...(parentGrokHome ? { grokHome: parentGrokHome } : {}) });
   if (!pre.ok) return settledWithout(pre.verdict);
   if (input.signal.aborted) throw cancelled();
-  const temp = createTempRoot(cfg.tmpBase, input.context.runId, input.context.attempt, `${input.system}\n\n${input.text}`);
+  // with a gate the prompt file starts empty: its words are written inside the gate's send, with the spawn
+  const prompt = `${input.system}\n\n${input.text}`, gate = input.transport?.gate;
+  const temp = createTempRoot(cfg.tmpBase, input.context.runId, input.context.attempt, gate ? "" : prompt);
   // Everything up to the run holds no process: a failure here removes the root. After this block runHeadlessCli owns it.
   let cleanup = () => {}, model: string, env: Record<string, string>;
   try {
@@ -278,7 +309,7 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     temp, tmpBase: cfg.tmpBase, outputSchema: input.outputSchema, signal: input.signal, engine: cfg.engine,
     maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens, firstByteMs: cfg.firstByteMs,
     deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
-    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, binaryIdentity: cfg.binaryIdentity,
+    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, recheck: input.transport?.recheck, ...(gate ? { gate, promptText: prompt } : {}), binaryIdentity: cfg.binaryIdentity,
     cleanup, allowedHomeNew: cfg.allowedHomeNew, postResultGraceMs: cfg.postResultGraceMs,
   });
 }
@@ -413,7 +444,7 @@ export async function resolveClaudeLoginProbes(full: NodeJS.ProcessEnv, platform
 /** The unique per-attempt settings file. Its path rides in argv so the registration-gap sweep can find a Claude child. */
 export const claudeSettingsPath = (temp: TempRoot): string => join(temp.root, "settings.json");
 
-export function claudeTextOnlyArgv(model: string, system: string, schema: JsonSchema, settingsFile: string, debugFile: string): string[] {
+export function claudeTextOnlyArgv(model: string, system: FixedPrompt, schema: JsonSchema, settingsFile: string, debugFile: string): string[] {
   return [
     "-p", "--model", model, "--system-prompt", system, "--output-format", "stream-json", "--verbose",
     "--json-schema", JSON.stringify(schema), "--tools", "", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
@@ -433,6 +464,8 @@ export interface ClaudeTextOnlyConfig {
 
 export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTextOnlyConfig): Promise<TextOnlyTurnResult> {
   assertSupportedSchema(input.outputSchema);
+  // No gate, no send (r6 section 0, no exemption): a turn without its call's gate is refused before any file or process and nothing leaves.
+  if (!input.transport?.gate) throw new MemorySendFenced();
   const pre = preflightRoute("claude", cfg.preflight);
   if (!pre.ok) return settledWithout(pre.verdict);
   if (input.signal.aborted) throw cancelled();
@@ -455,7 +488,7 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
     env: claudeAllowlistEnv(cfg.env, temp, input.maxOutputTokens, loginNamespace), temp, tmpBase: cfg.tmpBase, engine: "claude",
     outputSchema: input.outputSchema, signal: input.signal, maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens,
     firstByteMs: cfg.firstByteMs, deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
-    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, binaryIdentity: cfg.binaryIdentity,
+    history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, recheck: input.transport?.recheck, ...(input.transport?.gate ? { gate: input.transport.gate } : {}), binaryIdentity: cfg.binaryIdentity,
     stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
   }).then((result) => {
     // a run that did not validate may be a sign-in that moved: the Keychain answer is asked again next time

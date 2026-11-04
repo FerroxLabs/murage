@@ -49,6 +49,8 @@ export interface TodayInput {
   now: Date;
   ownerName: string;
   firstRun: boolean;
+  /** UX-L6A part 2: during first run, nothing on this computer can answer yet (setup view `nothingCanAnswer`). */
+  firstRunBare?: boolean;
   connectivity: Connectivity;
   /** the engine Today names first, from GET /api/engine-health or the client's own reading */
   engine: EngineHealthRow | null;
@@ -201,7 +203,11 @@ export function todayModel(input: TodayInput): TodayModel {
   const greeting = greetingFor(input.now, input.ownerName);
   const dateLine = new Intl.DateTimeFormat(undefined, { weekday: "long", day: "numeric", month: "long" }).format(input.now);
   if (input.firstRun) {
-    return { greeting, dateLine, firstRun: true, tags: [{ key: "setup", tone: "info", text: t("ux.l2a.tag.gettingSetUp"), action: "setup" }], routinesToday: [], finished: [] };
+    // FIRSTRUN 1.9: a machine with nothing to think with says so first.
+    const setup: TodayTagModel = input.firstRunBare === true
+      ? { key: "setup", tone: "warn", text: t("ux.l6a.today.tagBare"), action: "setup" }
+      : { key: "setup", tone: "info", text: t("ux.l2a.tag.gettingSetUp"), action: "setup" };
+    return { greeting, dateLine, firstRun: true, tags: [setup], routinesToday: [], finished: [] };
   }
   const tags: TodayTagModel[] = [];
   const engine = engineTag(input);

@@ -37,8 +37,10 @@ export function CommandLine({ command, name }: { command: string; name: string }
   );
 }
 
-export function EngineSignInButton({ instanceId, name, command, className, onDone, secondary = false, bridge = currentLocalEngineLogin() }: {
+export function EngineSignInButton({ instanceId, name, command, className, onDone, quiet = false, secondary = false, bridge = currentLocalEngineLogin() }: {
   instanceId: string;
+  /** 1.0.14 F0: on a wall where "Use Fuigo instead" is the primary button, signing in is the secondary one. */
+  quiet?: boolean;
   name: string;
   /** The driver's command: shown only where Murage cannot start the sign-in itself. */
   command?: string;
@@ -59,7 +61,7 @@ export function EngineSignInButton({ instanceId, name, command, className, onDon
   if (surface === "elsewhere" || !bridge) return <p role="status" className={`text-[12.5px] text-ink-secondary ${className ?? ""}`}>{t("engineSignIn.elsewhere")}</p>;
   return (
     <div className={className}>
-      <button type="button" data-engine-signin-button className={secondary ? secondaryButton : primary} onClick={() => setOpen(true)}><LogIn size={14} aria-hidden />{t("engineSignIn.button", { name })}</button>
+      <button type="button" data-engine-signin-button className={secondary || quiet ? secondaryButton : primary} onClick={() => setOpen(true)}><LogIn size={14} aria-hidden />{t("engineSignIn.button", { name })}</button>
       {open ? <LazyBoundary onRetry={Dialog.retry} onDismiss={close}><Suspense fallback={null}><EngineSignInDialog bridge={bridge} instanceId={instanceId} name={name} command={command} onClose={close} /></Suspense></LazyBoundary> : null}
     </div>
   );

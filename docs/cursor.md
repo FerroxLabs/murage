@@ -19,6 +19,11 @@ key.
 
    Windows (native): `irm 'https://cursor.com/install?win32=true' | iex`
 
+   On Windows, Murage starts the `cursor-agent.ps1` that the installer's
+   `cursor-agent.cmd` launches, with Windows PowerShell from your system folder.
+   After installing from a terminal, use Refresh engines so the version check
+   runs again.
+
 2. Sign in with `cursor-agent login`, or set `CURSOR_API_KEY` / `CURSOR_AUTH_TOKEN`
    in the environment of the Cursor instance.
 
