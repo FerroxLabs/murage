@@ -155,6 +155,49 @@ public final class ChannelScript {
           api.diagLine = function (line) { return call("diagLine", { line: text(line) }); };
           api.approveWithDevice = function (args) { args = args || {}; return call("approveWithDevice", { v: args.v, threadId: text(args.threadId), requestId: text(args.requestId), decision: text(args.decision), digest: text(args.digest), nonce: text(args.nonce), expiresAt: args.expiresAt, reason: text(args.reason) }); };
           api.on = on;
+          // 1.0.16: on the desktop's own /enter page only, tell native when /session
+          // refuses the code, so the phone shows its own code screen instead of the
+          // desktop page. The page gets its original promise and response untouched;
+          // this only reads a clone. Not part of the murageNative API.
+          if (location.pathname === "/enter" && typeof window.fetch === "function") {
+            var realFetch = window.fetch;
+            var Address = window.URL;
+            var sessionPost = function (input, init) {
+              try {
+                var asked = typeof input === "object" && input !== null && typeof input.url === "string" ? input : null;
+                var method = text((init && init.method) || (asked && asked.method) || "GET").toUpperCase();
+                if (method !== "POST") return false;
+                var target = new Address(text(asked ? asked.url : input), location.href);
+                return target.origin === location.origin && target.pathname === "/session";
+              } catch (ignored) {
+                return false;
+              }
+            };
+            var told = function (message) {
+              try {
+                var sent = call("pairRefused", { message: message });
+                if (sent && typeof sent.then === "function") sent.then(null, function () {});
+              } catch (ignored) {}
+            };
+            var refused = function (response) {
+              try {
+                if (!response || response.ok !== false) return;
+                response.clone().json().then(function (body) {
+                  if (body && body.reason === "full") return;
+                  told(body && typeof body.error === "string" ? body.error.slice(0, 200) : "");
+                }, function () {
+                  told("");
+                });
+              } catch (ignored) {}
+            };
+            window.fetch = function (input, init) {
+              var answer = realFetch.apply(window, arguments);
+              try {
+                if (sessionPost(input, init) && answer && typeof answer.then === "function") answer.then(refused, function () {});
+              } catch (ignored) {}
+              return answer;
+            };
+          }
           Object.defineProperty(window, "murageNative", { value: Object.freeze(api), writable: false, configurable: false, enumerable: false });
           Object.defineProperty(window, "__murageNativeEmit", { value: emit, writable: false, configurable: false, enumerable: false });
         })();

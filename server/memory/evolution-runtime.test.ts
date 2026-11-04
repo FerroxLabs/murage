@@ -1,15 +1,20 @@
 import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { setMemoryMode } from "./repository.ts";
-import { createMemoryEvolutionRuntime, type EvolutionRuntimeOptions } from "./evolution-runtime.ts";
+import { createMemoryEvolutionRuntime, sendGepaCall, type EvolutionRuntimeOptions } from "./evolution-runtime.ts";
+import { isGepaCallNotStarted } from "../gepa-worker.ts";
 import { readMemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt } from "./procedure-review.ts";
 import type { MemoryExtractionDispatch, TextOnlyExtractor } from "./extract.ts";
 import { memoryOwnerRoute } from "./settings.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { bumpLearningFence } from "./authority-epoch.ts";
+import { MemorySendFenced } from "./learning-send-fence.ts";
+import { MemorySendBusy } from "./learning-send.ts";
 
 const hash=(value:unknown)=>procedureCandidateHash(JSON.stringify(value));
 beforeEach(()=>{vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(new Date("2026-09-15T12:00:00Z"));closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});setMemoryMode("capture");});
@@ -90,4 +95,108 @@ it("keeps recall and classification authorization and status separate while usin
 
 it("omits monetary accounting from an authorized evolution status",()=>{
  const f=fixture();f.runtime.authorize(ownerMemoryTicket());expect(f.runtime.status().job).not.toHaveProperty("costKnown");expect(f.runtime.status().job).not.toHaveProperty("actualCostUsd");
+});
+
+// S1 (designs/GEPA-S1-UNSENT-RELEASE.md): the real GEPA evaluator, call ledger and cost rows over the protocol fixture worker. A call the
+// learning gate refuses inside its own lock is released unsent, so the owner's Retry sends it once and the job completes.
+function gepaFixture(kind:"recall"|"classification"){
+  const policy=readMemoryEvolutionPolicy(),sent={evaluation:0,reflection:0},seen={evaluation:0,reflection:0};
+  type How="fence"|"released"|"busy"|"authority";type At="evaluation"|"reflection"|"holdout";
+  let late:{how:How;purpose:At;at:number}|undefined,model="qualified-model-one";
+  const rows=(prefix:string)=>database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='system' AND id LIKE ? ORDER BY rowid").all(`${prefix}:%`).map(row=>JSON.parse(String(row.intent)));
+  const heldoutReserved=()=>rows("gepa-call").some(call=>String(call.callId).endsWith(":evaluate:holdout-baseline")&&call.state==="reserved");
+  const extractor:TextOnlyExtractor=async(_text,_maximum,_signal,dispatch)=>{
+    const purpose=dispatch!.purpose as "evaluation"|"reflection",gate=dispatch!.fence!;seen[purpose]++;
+    if(late&&(late.purpose==="holdout"?purpose==="evaluation"&&heldoutReserved():late.purpose===purpose&&late.at===seen[purpose])){
+      const how=late.how;late=undefined;
+      // a counter move between the cheap check and the send: the gate itself refuses under its lock, nothing let out
+      if(how==="fence"){bumpLearningFence(database());return gate.send(()=>"unreachable");}
+      // the gate's own assertCurrent check fails under the lock (the model changed): also a refusal with nothing let out
+      if(how==="authority"){model="qualified-model-two";return gate.send(()=>"unreachable");}
+      if(how==="busy")throw new MemorySendBusy();
+      gate.send(()=>undefined);throw new MemorySendFenced();
+    }
+    sent[purpose]++;
+    if(purpose==="evaluation")return "no labelled quotes";
+    return "```\n"+JSON.stringify(kind==="recall"?{extraction:policy.extraction,retrieval:{semanticBandRatio:0.7,rareFacetDivisor:4}}:{extraction:{classificationGuidance:"Use exact explicit source labels."},retrieval:policy.retrieval})+"\n```";
+  };
+  const options:EvolutionRuntimeOptions={availabilityIdentity:()=>"configuration-one",modelIdentity:()=>model,resolveExtractor:()=>extractor,
+    worker:()=>({available:true as const,command:{executable:process.execPath,args:[resolve("server/testing/fake-gepa-worker.mjs"),"reflect"],cwd:DATA_DIR,expectedPythonVersion:"3.13.13",runAsNode:true},workerDigest:"a".repeat(64)})};
+  const runtime=createMemoryEvolutionRuntime(options);
+  return {runtime,sent,seen,late:(how:How,purpose:At,at=1)=>{late={how,purpose,at};},
+    calls:(type:"evaluate"|"reflect")=>rows("gepa-call").filter(call=>call.kind===type).map(call=>({id:String(call.callId).split(":").slice(-2).join(":"),state:call.state})),
+    costs:()=>rows("gepa-charge").map(cost=>({id:String(cost.callId).split(":").slice(-2).join(":"),confirmed:cost.confirmed,notStarted:cost.notStarted===true}))};
+}
+const authorized=(g:ReturnType<typeof gepaFixture>,kind:"recall"|"classification")=>g.runtime.authorize(ownerMemoryTicket(),kind).job!.id;
+it("S1: a reflection the fence drops inside its gate is released unsent, and Retry sends it once and completes the job",async()=>{
+  const g=gepaFixture("recall"),id=authorized(g,"recall");g.late("fence","reflection");
+  await g.runtime.run(id,signal());
+  expect(g.runtime.status().job).toMatchObject({status:"deferred",reason:"GEPA_CALL_NOT_STARTED"});
+  expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"not-started"}]);
+  expect(g.costs().find(cost=>cost.id==="reflect:1")).toEqual({id:"reflect:1",confirmed:true,notStarted:true});
+  expect(g.sent.reflection).toBe(0);const evaluationsBefore=g.calls("evaluate").length;
+  g.runtime.retry(ownerMemoryTicket(),id);await g.runtime.run(id,signal());
+  expect(g.runtime.status().job!.status).toBe("complete");
+  expect(g.sent.reflection).toBe(1);expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"complete"}]);
+  expect(g.calls("evaluate").length).toBeGreaterThan(evaluationsBefore);expect(g.calls("evaluate").every(call=>call.state==="complete")).toBe(true);
+  expect(g.costs().every(cost=>cost.confirmed===true)).toBe(true);
+});
+it("S1: an evaluation the fence drops inside its gate is released unsent; Retry replays the finished calls and sends each other call once",async()=>{
+  const g=gepaFixture("classification"),id=authorized(g,"classification");g.late("fence","evaluation",2);
+  await g.runtime.run(id,signal());
+  expect(g.runtime.status("classification").job).toMatchObject({status:"deferred",reason:"GEPA_CALL_NOT_STARTED"});
+  expect(g.calls("evaluate")).toEqual([{id:"evaluate:1",state:"complete"},{id:"evaluate:2",state:"not-started"}]);
+  expect(g.costs().find(cost=>cost.id==="evaluate:2")).toEqual({id:"evaluate:2",confirmed:true,notStarted:true});
+  expect(g.sent.evaluation).toBe(1);
+  g.runtime.retry(ownerMemoryTicket(),id);await g.runtime.run(id,signal());
+  expect(g.runtime.status("classification").job!.status).toBe("complete");
+  // one model request per evaluation RPC: every completed call was sent exactly once, the dropped one included
+  expect(g.calls("evaluate").every(call=>call.state==="complete")).toBe(true);expect(g.sent.evaluation).toBe(g.calls("evaluate").length);
+  expect(g.sent.reflection).toBe(1);expect(g.costs().every(cost=>cost.confirmed===true)).toBe(true);
+});
+it("S1: a refusal after the gate let an attempt out keeps today's uncertain failure; Retry sends nothing more",async()=>{
+  const g=gepaFixture("recall"),id=authorized(g,"recall");g.late("released","reflection");
+  await g.runtime.run(id,signal());
+  expect(g.runtime.status().job!.status).toBe("deferred");
+  expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"reserved"}]);
+  expect(g.costs().find(cost=>cost.id==="reflect:1")).toEqual({id:"reflect:1",confirmed:false,notStarted:false});
+  g.runtime.retry(ownerMemoryTicket(),id);await g.runtime.run(id,signal());
+  expect(g.runtime.status().job).toMatchObject({status:"deferred",reason:expect.stringMatching(/UNCERTAIN/)});
+  expect(g.seen.reflection).toBe(1);expect(g.sent.reflection).toBe(0);expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"reserved"}]);
+});
+it("S1: a busy lock before any release is released unsent and Retry completes",async()=>{
+  const g=gepaFixture("recall"),id=authorized(g,"recall");g.late("busy","reflection");
+  await g.runtime.run(id,signal());
+  expect(g.runtime.status().job).toMatchObject({status:"deferred",reason:"GEPA_CALL_NOT_STARTED"});expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"not-started"}]);
+  g.runtime.retry(ownerMemoryTicket(),id);await g.runtime.run(id,signal());expect(g.runtime.status().job!.status).toBe("complete");expect(g.sent.reflection).toBe(1);
+});
+// its own test: the fixture's ledger and cost readers are not scoped to one job, so one job per database
+it("S1: a refusal in the held-out comparison is released unsent and Retry sends only the held-out calls",async()=>{
+  const c=gepaFixture("classification"),job=authorized(c,"classification");c.late("fence","holdout");
+  await c.runtime.run(job,signal());
+  expect(c.runtime.status("classification").job).toMatchObject({status:"deferred",reason:"GEPA_CALL_NOT_STARTED"});
+  expect(c.calls("evaluate").find(call=>call.id==="evaluate:holdout-baseline")).toEqual({id:"evaluate:holdout-baseline",state:"not-started"});
+  expect(c.costs().find(cost=>cost.id==="evaluate:holdout-baseline")).toEqual({id:"evaluate:holdout-baseline",confirmed:true,notStarted:true});
+  const sentBefore=c.sent.evaluation;c.runtime.retry(ownerMemoryTicket(),job);await c.runtime.run(job,signal());
+  expect(c.runtime.status("classification").job!.status).toBe("complete");expect(c.calls("evaluate").every(call=>call.state==="complete")).toBe(true);
+  // the GEPA calls replay from the ledger: only the held-out comparison is sent on Retry
+  expect(c.sent.evaluation-sentBefore).toBe(c.calls("evaluate").filter(call=>call.id.startsWith("evaluate:holdout-")).length);
+});
+it("S1: only a gate refusal or busy lock with nothing let out becomes a not-started call; every other error keeps its identity",async()=>{
+  const gate=(released:number)=>({released}) as unknown as Parameters<typeof sendGepaCall>[0];
+  for(const error of [new Error("transport closed"),Object.assign(new Error("aborted"),{name:"AbortError"}),new Error("GEPA_TIMEOUT"),new Error("commit failed")])
+    await expect(sendGepaCall(gate(0),async()=>{throw error;})).rejects.toBe(error);
+  for(const error of [new MemorySendFenced(),new MemorySendBusy()])await expect(sendGepaCall(gate(1),async()=>{throw error;})).rejects.toBe(error);
+  for(const error of [new MemorySendFenced(),new MemorySendBusy()]){
+    const thrown=await sendGepaCall(gate(0),async()=>{throw error;}).then(()=>undefined,(value:unknown)=>value);
+    expect(isGepaCallNotStarted(thrown)).toBe(true);expect(thrown).not.toBe(error);
+  }
+  await expect(sendGepaCall(gate(0),async()=>"sent")).resolves.toBe("sent");
+});
+it("S1: a refusal from the gate's own authority check is released unsent, and Retry rechecks authority before sending anything",async()=>{
+  const g=gepaFixture("recall"),id=authorized(g,"recall");g.late("authority","reflection");
+  await g.runtime.run(id,signal());
+  expect(g.runtime.status().job).toMatchObject({status:"deferred",reason:"GEPA_CALL_NOT_STARTED"});expect(g.calls("reflect")).toEqual([{id:"reflect:1",state:"not-started"}]);
+  g.runtime.retry(ownerMemoryTicket(),id);await g.runtime.run(id,signal());
+  expect(g.runtime.status().job).toMatchObject({status:"blocked",reason:"MEMORY_EVOLUTION_RUNTIME_CHANGED"});expect(g.seen.reflection).toBe(1);expect(g.sent.reflection).toBe(0);
 });

@@ -24,6 +24,7 @@ import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
 import { remarkLoneListNumbers } from "@/lib/markdown-lone-number";
+import { remarkSoftBreaks } from "@/lib/markdown-soft-breaks";
 import { relativeFileLink } from "@/lib/workspace-links";
 import { githubPillFor } from "@/lib/github-refs";
 import { parseEngineChatLink } from "@/lib/engine-chat-link";
@@ -397,7 +398,7 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
   return (
     <div className="chat-md min-w-0 [&>*+*]:mt-2">
       <Markdown
-        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations, remarkLoneListNumbers]}
+        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations, remarkLoneListNumbers, remarkSoftBreaks]}
         rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
         components={{

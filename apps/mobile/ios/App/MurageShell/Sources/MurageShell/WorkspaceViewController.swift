@@ -39,7 +39,10 @@ private struct ChannelReply: @unchecked Sendable {
 /// Murage origin, never Capacitor's, with the natively checked channel.
 public final class WorkspaceViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
     public let origin: WorkspaceOrigin
-    var onClose: ((CloseReason) -> Void)?
+    var onClose: ((CloseReason, String?) -> Void)?
+    /// "Your computers" tapped on a splash that is already closing: the
+    /// coordinator takes the screen off without a second close.
+    var onForceLeave: (() -> Void)?
     var onSignedIn: (() -> Void)?
     /// Still in use after signing in (going to the background, "Switch
     /// computer"): the "Last connected" time moves on, and nothing is added.
@@ -63,7 +66,12 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private var isReady = false
     /// A page on the origin loaded or called ready(): this computer was reached.
     private var signedInSeen = false
-    var pairedAtOpen = false
+    /// This workspace was opened with a pairing code, so its first page is the
+    /// door's /enter and a refused code is reported by the wrapper script.
+    var openedWithCredential = false
+    /// Holds the splash over a pairing /enter for a moment, so a refused code
+    /// never flashes the desktop's own page before the phone's code screen.
+    private var enterHold: Timer?
     /// The splash is covering the page and waiting for ready() (or a reveal).
     private var splashUp = false
     private var closing = false
@@ -127,7 +135,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         overlay.frame = view.bounds
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         overlay.onRetry = { [weak self] in self?.reloadRoute() }
-        overlay.onChoose = { [weak self] in self?.close(.launcher) }
+        overlay.onChoose = { [weak self] in
+            guard let self else { return }
+            if self.closing { self.onForceLeave?() } else { self.close(.launcher) }
+        }
         view.addSubview(overlay)
         callAudio.sink = { [weak self] event, done in
             guard let self else { done(false); return }
@@ -142,7 +153,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         PhoneJobServices.shared.attach(self)
-        if signedInSeen || pairedAtOpen { phoneAskSetup.foreground(in: self) }
+        if signedInSeen && !closing { phoneAskSetup.foreground(in: self) }
     }
 
     /// Presented only inside this native workspace hierarchy, above its WebView.
@@ -270,7 +281,21 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private func reveal() {
         splashUp = false
         readyTimer?.invalidate()
+        enterHold?.invalidate()
         overlay.hide()
+    }
+
+    /// A pairing page answers by itself within moments: a refused code closes
+    /// the workspace (`pairRefused`), an accepted one lands on "/". Anything
+    /// else (a full computer, an older door) shows the page after five seconds.
+    private func holdEnter() {
+        enterHold?.invalidate()
+        enterHold = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.closing else { return }
+                self.reveal()
+            }
+        }
     }
 
     private func markReady() {
@@ -345,14 +370,23 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     // MARK: closing, events, deep links
 
-    private func close(_ reason: CloseReason) {
+    private func close(_ reason: CloseReason, message: String? = nil) {
         guard !closing else { return }
         if reason == .launcher { stillInUse() }
         closing = true
         readyTimer?.invalidate()
+        enterHold?.invalidate()
         saves.cancelAll()
         callAudio.close(.controllerClosed)
-        DispatchQueue.main.async { self.onClose?(reason) }
+        // Nothing of this workspace may stay on screen over its own dismissal
+        // (an Ask setup alert, job cards, Phone for bots): closing is true, so
+        // none of them can come back.
+        phoneAskSetup.close()
+        phoneForBots.close()
+        PhoneJobServices.shared.detach(self)
+        presentedViewController?.dismiss(animated: false)
+        if CloseDismissal.showsRecovery(whileClosing: reason) { overlay.showClosing() }
+        DispatchQueue.main.async { self.onClose?(reason, message) }
     }
 
     func closeFromShell(_ reason: CloseReason) {
@@ -446,7 +480,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
             MainActor.assumeIsolated {
                 guard let self, !self.closing else { return }
                 if self.signedInSeen { self.phoneForBots.refresh() }
-                if self.signedInSeen || self.pairedAtOpen { self.phoneAskSetup.foreground(in: self) }
+                if self.signedInSeen && !self.closing { self.phoneAskSetup.foreground(in: self) }
             }
         })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -518,6 +552,16 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         case .showLauncher:
             reply(true, nil)
             close(.launcher)
+        case .pairRefused:
+            // Honoured only for a workspace opened with a code, before this
+            // computer was reached, and only while the page is the door's /enter.
+            guard openedWithCredential, !signedInSeen, !closing, let url = webView.url, origin.contains(url), url.path == "/enter",
+                  let message = ChannelArgs.string(request.args["message"], max: 200) else {
+                reply(nil, ChannelError.unavailable.rawValue)
+                return
+            }
+            reply(true, nil)
+            close(.pairRefused, message: PairRefusal.message(message))
         case .registerPush:
             guard let push else { reply(nil, ChannelError.unavailable.rawValue); return }
             guard pushWhilePresent("push register deferred") else { reply(nil, ChannelError.unavailable.rawValue); return }
@@ -696,7 +740,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let url = webView.url, origin.contains(url) else { return }
-        if url.path == "/enter" { reveal(); return } // the door's pairing page never calls ready()
+        if url.path == "/enter" { // the door's pairing page never calls ready()
+            if openedWithCredential && !signedInSeen && !closing { holdEnter() } else { reveal() }
+            return
+        }
         if verdict?.kind == .basic { revealBasic(); return }
         armDeadline() // keep the original progress deadline
     }

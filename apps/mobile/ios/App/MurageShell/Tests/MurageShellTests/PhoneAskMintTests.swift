@@ -426,7 +426,7 @@ final class PhoneAskMintTests: XCTestCase {
     }
 
     func testEveryBridgeEntryRemainsSeparateFromMintAndTokenStore() throws {
-        let allowed = Set("hello ready saveFile openExternal haptic signOut rePair setRoute showLauncher registerPush pushStatus issuePushTokens setBadgeCount callSessionOpen callSessionClose diagLine openPhoneForBots approveWithDevice callAudioOpen callAudioClose callAudioPlay callAudioControl".split(separator: " ").map(String.init))
+        let allowed = Set("hello ready saveFile openExternal haptic signOut rePair setRoute showLauncher registerPush pushStatus issuePushTokens setBadgeCount callSessionOpen callSessionClose diagLine openPhoneForBots approveWithDevice callAudioOpen callAudioClose callAudioPlay callAudioControl pairRefused".split(separator: " ").map(String.init))
         XCTAssertEqual(Set(ChannelMethod.allCases.map(\.rawValue)), allowed)
         for name in ["phoneAsk", "mintPhoneAsk", "signPhoneAsk", "readForAsk", "PhoneAskSigner"] {
             guard case .failure(.unknownMethod) = ChannelGate.parse(["method": name, "args": [:]]) else { XCTFail(name); continue }

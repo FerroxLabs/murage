@@ -43,7 +43,7 @@ async function rig(inFlight?: (other: import("node:sqlite").DatabaseSync) => voi
   other.exec("CREATE TABLE IF NOT EXISTS zz_unrelated(x)");
   const lived = { proposals: [], stance: [], episode: { text: `The owner shared three secrets today and asked that each be ${WORDS}.`, sourceIds: ["message:private:o1", "message:private:o2", "message:private:o3"] } };
   const completion = (v: unknown) => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(v) } }], usage: { prompt_tokens: 100, completion_tokens: 50 } }), { status: 200, headers: { "content-type": "application/json" } });
-  const fetchImpl = vi.fn(async () => { inFlight?.(other); return completion(lived); }) as unknown as typeof fetch;
+  const fetchImpl = vi.fn(async () => { await new Promise(resolve => setImmediate(resolve)); inFlight?.(other); return completion(lived); }) as unknown as typeof fetch;
   const bot = { id: "moss", name: "Moss", threadIds: ["private"], continuity: true, options: { reflect: true as const } };
   const deps: ReflectDeps = {
     now: () => T0 + 60 * MIN, bootEpoch: { pid: 1, startedAt: 1 }, tmpBase: join(DATA_DIR, "pip-tmp"), bots: () => [bot], memoryMode: () => "active",

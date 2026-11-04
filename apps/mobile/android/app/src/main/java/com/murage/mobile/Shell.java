@@ -50,7 +50,8 @@ final class Shell {
     static final String USER_AGENT_TOKEN = "MurageApp/" + BuildConfig.VERSION_NAME + " (android)";
 
     interface Listener {
-        void closed(String origin, String reason);
+        /** {@code message} is only set with pairRefused: the computer's own cleaned line about the code. */
+        void closed(String origin, String reason, String message);
     }
 
     /** The launcher's open(): exactly one of these is called, on the main thread. */
@@ -276,14 +277,18 @@ final class Shell {
 
     /** From the workspace that is closing; a replaced one (no longer live) says nothing. */
     synchronized void closed(WorkspaceActivity workspace, CloseReason reason) {
+        closed(workspace, reason, null);
+    }
+
+    synchronized void closed(WorkspaceActivity workspace, CloseReason reason, String message) {
         if (live != workspace) return;
         live = null;
         WorkspaceOrigin origin = workspace.origin;
         if (reason == CloseReason.SIGN_OUT) forget(origin, workspace.webView());
         else if (reason == CloseReason.SIGNED_OUT) { PhoneJobServices.get(app).forget(origin); PhoneAskSetup.forget(app, origin); ApprovalKeys.remove(origin); } // a 401 or re-pair takes the approval key, as on iOS
         Listener current = listener;
-        if (current != null) current.closed(origin.serialized(), reason.wire);
-        else pendingClose = new String[] {origin.serialized(), reason.wire};
+        if (current != null) current.closed(origin.serialized(), reason.wire, message);
+        else pendingClose = new String[] {origin.serialized(), reason.wire, message};
     }
 
     synchronized String[] takePendingClose() {
@@ -368,6 +373,7 @@ final class Shell {
             JSONObject close = new JSONObject();
             Json.put(close, "origin", closed[0]);
             Json.put(close, "reason", closed[1]);
+            if (closed.length > 2 && closed[2] != null) Json.put(close, "message", closed[2]);
             Json.put(state, "closed", close);
         }
         Json.put(state, "platform", "android");

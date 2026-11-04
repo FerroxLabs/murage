@@ -1,5 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { mkdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DATA_DIR } from "./config.ts";
+import { closeDatabase, database } from "./database.ts";
+import { withCliMemoryLearning, type MemorySessionRunner } from "./drivers/cli-memory-learning.ts";
+import { bumpLearningFence } from "./memory/authority-epoch.ts";
+import { isMemorySendFenced } from "./memory/learning-send-fence.ts";
+import { removeTempDirSync } from "./testing/cleanup.ts";
 import type { ProviderInstance } from "./contracts.ts";
 import { checkAction } from "./browser-action-checker.ts";
 import { FLUX_NO_RETAIN_DEPLOYED } from "./browser-extension-check-availability.ts";
@@ -204,5 +211,32 @@ describe("resolveCheckerConnection", () => {
   it("defaults exist for both stages", () => {
     expect(DEFAULT_CHECKER_MODELS.stage1).toBeTruthy();
     expect(DEFAULT_CHECKER_MODELS.stage2).toBeTruthy();
+  });
+});
+
+// MurageMain ruling 3 (Astra code r1 Medium): the bot-engine fallback carries the owner's words for the task, so it takes its own learning
+// gate. Through the real CLI learning entry (which refuses a call with no gate), the checker still answers, and a Forget that commits while
+// the call waits drops it unsent.
+describe("the browser checker's bot-engine fallback goes through its own learning gate", () => {
+  const cliBot = (runner: MemorySessionRunner) => withCliMemoryLearning(bot({ adapter: { onEvent: () => () => {} }, dispose: async () => {} }), { run: () => runner });
+  const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); };
+  afterEach(() => closeDatabase());
+  it("answers through the real CLI learning entry: one release, the engine sees the checker prompt", async () => {
+    fresh();
+    const seen: string[] = [];
+    const runner: MemorySessionRunner = async (prompt, _signal, { gate }) => { gate!.send(() => seen.push(prompt)); return "ALLOW"; };
+    const conn = resolveCheckerConnection({ switch: "bot", instances: [cliBot(runner)], readKey: () => null })!;
+    expect(await conn.transport({ model: "m", system: "SYS", user: "OWNER'S REQUEST FOR THIS TASK:\nbook it", maxTokens: 4, signal })).toBe("ALLOW");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toContain("book it");
+  });
+  it("a counter move while the call waits drops it unsent", async () => {
+    fresh();
+    const seen: string[] = [];
+    const runner: MemorySessionRunner = async (prompt, _signal, { gate }) => { bumpLearningFence(database()); gate!.send(() => seen.push(prompt)); return "ALLOW"; };
+    const conn = resolveCheckerConnection({ switch: "bot", instances: [cliBot(runner)], readKey: () => null })!;
+    const error = await conn.transport({ model: "m", system: "SYS", user: "USR", maxTokens: 4, signal }).catch((e: unknown) => e);
+    expect(isMemorySendFenced(error)).toBe(true);
+    expect(seen).toHaveLength(0);
   });
 });
