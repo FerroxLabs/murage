@@ -45,7 +45,12 @@ export const KEY_PREFIXES: RegExp[] = [
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g, // anthropic / openai / stripe
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, // github classic
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g, // github fine-grained
+  // GitLab personal (glpat-), deploy (gldt-) and runner (glrt-, glrtr-) tokens;
+  // routable ones carry dot-separated parts. Adapted from OpenMausBot 3a5af9486.
+  /\bgl(?:pat|dt|rtr?)-[A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]+)*/g,
   /\bxox[abposr]-[A-Za-z0-9-]{20,}/g, // slack
+  // Slack app-level (Socket Mode) tokens. Adapted from OpenMausBot 0fdb32dfb.
+  /\bxapp-\d-[A-Za-z0-9-]{20,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g, // aws access key id
   /\bAIza[0-9A-Za-z_-]{30,}/g, // google api key
   /\bnpm_[A-Za-z0-9]{20,}/g, // npm

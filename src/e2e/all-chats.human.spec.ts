@@ -83,6 +83,34 @@ for (const width of [1440, 390]) for (const skin of ["light", "dark"]) {
   });
 }
 
+for (const width of [1440, 390]) {
+  test(`Back and the close X both leave All chats at ${width}px, inside the screen`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const search = page.getByRole("textbox", { name: "Search all chats", exact: true });
+    for (const exit of ["[data-all-chats-close]", "[data-all-chats-back]"]) {
+      await open(page);
+      const back = page.locator("[data-all-chats-back]");
+      const close = page.locator("[data-all-chats-close]");
+      await expect(back).toHaveText("Back");
+      await expect(close).toHaveAccessibleName("Close");
+      for (const button of [back, close]) {
+        const box = (await button.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+        expect(Math.min(box.width, box.height)).toBeGreaterThanOrEqual(32);
+      }
+      // the close X sits at the top right: right of Back and of the title, on the header's first row
+      const closeBox = (await close.boundingBox())!;
+      const backBox = (await back.boundingBox())!;
+      expect(closeBox.x).toBeGreaterThan(backBox.x);
+      expect(Math.abs(closeBox.y - backBox.y)).toBeLessThan(8);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.locator(exit).click();
+      await expect(search).toHaveCount(0);
+    }
+  });
+}
+
 test("search opens an old chat at the hit and omits a forgotten reply", async ({ page }) => {
   await open(page);
   await page.getByRole("textbox", { name: "Search all chats", exact: true }).fill("cerulean");

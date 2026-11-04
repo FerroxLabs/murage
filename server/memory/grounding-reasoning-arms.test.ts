@@ -75,8 +75,8 @@ function captured() {
 }
 function realExtractor(): TextOnlyExtractor {
   const config = { url, apiKey: "rig", model: "rig-arm" };
-  const extractor = ((text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages)) as TextOnlyExtractor;
-  extractor.ground = (input, max, signal) => requestMemoryGrounding(config, input, Math.min(64, max), signal);
+  const extractor = ((text, max, signal, dispatch) => requestMemoryExtraction(config, text, max, signal, dispatch?.messages, dispatch?.fence)) as TextOnlyExtractor;
+  extractor.ground = (input, max, signal, fence) => requestMemoryGrounding(config, input, Math.min(64, max), signal, fence);
   return extractor;
 }
 const results: Array<Record<string, unknown>> = [];

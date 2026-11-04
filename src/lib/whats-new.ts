@@ -3,9 +3,10 @@
 //
 // What's new: which versions have a page, and when this install sees it.
 //
-// Every released version either has a page here or says "none" out loud, and
-// whats-new.test.ts fails the build when package.json's version has neither,
-// so a release cannot ship having simply forgotten.
+// Every release has a page of its own: whats-new.test.ts fails the build when
+// package.json's version is not a page here with its words in
+// src/components/whats-new-pages.ts, so a release cannot ship with an old
+// page. Versions before 1.0.14 that had no page keep their "none".
 //
 // The server remembers what this install has seen (server/whats-new.ts, in
 // the data dir). The renderer only asks, on the desktop, for a version that
@@ -52,8 +53,9 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   "1.0.12": { kind: "none" },
   // 1.0.13: the notes are on the docs changelog and the release page.
   "1.0.13": { kind: "none" },
-  // 1.0.14: the notes are on the docs changelog and the release page.
-  "1.0.14": { kind: "none" },
+  // From 1.0.14 on, every release has its own page (src/components/whats-new-pages.ts).
+  "1.0.14": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.14" },
+  "1.0.15": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.15" },
 };
 
 /** The page for `version`, or null when it has none. */
@@ -85,8 +87,9 @@ export type WhatsNewTarget =
   | { kind: "notes"; url: string };
 
 /** What the What's new menu item opens for `version`: its own page, else the
- *  newest page on the same major line that is not newer than it, else the
- *  release notes for the version on the docs changelog. */
+ *  newest page on the same major line that is not newer than it (the page
+ *  names its own version), else the release notes for the version on the
+ *  docs changelog. Nothing opens by itself for a version without its own page. */
 export function whatsNewTarget(version: string = APP_VERSION): WhatsNewTarget {
   const own = whatsNewPage(version);
   if (own) return { kind: "page", version, releaseNotesUrl: own.releaseNotesUrl };

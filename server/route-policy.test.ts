@@ -121,6 +121,16 @@ describe("route policy (strict)", () => {
     expect(cloudRouteDecision("GET", "/api/storage/attachments", "owner-browser", null)).toBe("allow");
   });
 
+  it("marking every routine run seen is the owner's alone: it returns runs of every bot, so phone, door, bot and nobody are refused", () => {
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    for (const route of ["/api/routine-runs/seen-all", "/api/routine-runs/run-1/seen"]) {
+      expect(routeClass("POST", route), route).toBe("desktop");
+      expect(routeAdmits(routeClass("POST", route), { ...nobody, desktop: true })).toBe(true);
+      for (const who of ["companion", "door", "bot"] as const) expect(routeAdmits(routeClass("POST", route), { ...nobody, [who]: true }), `${route} ${who}`).toBe(false);
+      expect(routeAdmits(routeClass("POST", route), nobody)).toBe(false);
+    }
+  });
+
   it("accepting the No limits terms is the desktop's alone; phone, door, bot and nobody are refused", () => {
     const route = "/api/no-limits/terms";
     expect(routePolicy("POST", route)).toMatchObject({ class: "desktop", path: route, cloudWrite: "step-up" });

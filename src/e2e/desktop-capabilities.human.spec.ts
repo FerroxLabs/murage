@@ -137,6 +137,19 @@ async function mount(page: Page, component: string, desktop = false, { claudeAcc
   await page.goto(`${origin}/__capabilities?component=${component}${desktop ? "&desktop=1" : ""}${lowRisk ? "&low=1" : ""}${cloudHome ? "&home=cloud" : ""}`);
 }
 
+// APPROVAL-ONE-CARD: the wide panel opens the grant rows from the caret beside
+// Run; a phone or narrow window (the bar layout) opens them from Details, in
+// the one sheet, under "Run, and stop asking". Same rows, same grants.
+async function openGrantChoice(page: Page) {
+  const layout = await page.locator("[data-approval-layout]").getAttribute("data-approval-layout");
+  if (layout === "bar") {
+    await page.locator("[data-approval-details]").click();
+    await expect(page.locator("[data-approval-sheet] [data-grant-fold]")).toBeVisible();
+  } else {
+    await page.locator("[data-fold-caret]").click();
+  }
+}
+
 async function mountPendingOAuth(page: Page, initial: ConnectorStatus) {
   const fixture = {
     service: initial,
@@ -418,11 +431,11 @@ test("remote calendar preserves Run now while hiding schedule administration", a
   await page.keyboard.press("c");
   await expect(page.getByPlaceholder("Add title")).toHaveCount(0);
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await expect(details.getByRole("button", { name: "Run now", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Pause routine" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
   for (const skin of ["light", "dark"]) {
     await page.evaluate((value) => document.documentElement.dataset.skin = value, skin);
     await page.screenshot({ path: testInfo.outputPath(`remote-calendar-${skin}.png`) });
@@ -464,20 +477,21 @@ test("desktop profile reports pending, failed and successful saves without dispa
 
 test("confirmed desktop retains persistent approvals, MCP and routine editing", async ({ page }) => {
   await mount(page, "approval", true);
-  await page.locator("[data-fold-caret]").click();
+  await openGrantChoice(page);
   await page.getByRole("button", { name: "Always, any git command Fixture bot runs", exact: true }).click();
   expect(await page.evaluate("window.dispatched.find(action => action.type === 'decideRequest').alwaysAllow")).toEqual({ botId: "bot-a", key: "Bash:git" });
   await mount(page, "plugins", true);
   await page.getByRole("tab", { name: "Connected tools" }).click();
   await expect(page.getByRole("tab", { name: "Connected tools" })).toHaveAttribute("aria-selected", "true");
   await mount(page, "calendar", true);
-  // The sidebar's Create below lg is the floating "New routine" button.
-  await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ })).toBeVisible();
+  // The sidebar's Create below lg is the floating "New routine" button; the
+  // header's New routine shows beside it from sm up (UX L5B).
+  await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ }).first()).toBeVisible();
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Pause routine" })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 });
 
 test("desktop profile rejects malformed success payloads", async ({ page }) => {
@@ -495,11 +509,11 @@ test("desktop profile rejects malformed success payloads", async ({ page }) => {
 test("desktop routine pause reports API failure and retains the event", async ({ page }) => {
   await mount(page, "calendar", true);
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await page.route("**/api/routines/routine-a", (route) => route.fulfill({ status: 503, json: { error: "Fixture pause unavailable" } }));
-  await details.getByRole("button", { name: "Pause routine" }).click();
+  await details.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(details.getByRole("alert")).toHaveText("Fixture pause unavailable");
-  await expect(details.getByRole("button", { name: "Pause routine" })).toBeEnabled();
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toBeEnabled();
   expect(await page.evaluate("window.dispatched.filter(action => action.type === 'routinePatched')")).toEqual([]);
 });
 
@@ -527,7 +541,7 @@ test("an exact command card recommends the narrow grant and records exactly that
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeVisible();
   // the fold is shut until asked for; the narrow grant reads first, the wider one under it
   await expect(page.locator("[data-fold-row]")).toHaveCount(0);
-  await page.locator("[data-fold-caret]").click();
+  await openGrantChoice(page);
   const exact = page.getByRole("button", { name: "Always, this exact command here (this engine, this folder)", exact: true });
   await expect(exact).toBeVisible();
   await expect(page.locator("[data-fold-row]").first()).toContainText("this exact command");

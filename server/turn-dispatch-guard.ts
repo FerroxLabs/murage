@@ -7,6 +7,10 @@ export class TurnSubmissionBoundary {
   private onLateRefusal?: (refusal: unknown) => void;
   private passed?: () => void;
   private notWrittenListener?: () => void;
+  /** Writes a passed `beforeSubmit` released to the adapter. Never reset: a write that was released may have happened. */
+  private released = 0;
+  /** Set by `sealUnwritten`: every later `beforeSubmit` of this turn refuses before it validates or releases anything. */
+  private sealed = false;
   started() { this.state = "unknown"; }
   /** A further check run on every submission, after the caller's own. */
   alsoCheck(check: () => void) { this.checks.push(check); }
@@ -23,6 +27,7 @@ export class TurnSubmissionBoundary {
   /** Every adapter write calls this, every time: validation is never skipped
    * because an earlier write or acceptance passed. */
   beforeSubmit(validate: () => void) {
+    if (this.sealed) { this.notWritten(); throw this.refusal; }
     try { validate(); for (const check of this.checks) check(); }
     catch (error) {
       this.state = "refused"; this.refusal = error;
@@ -30,7 +35,18 @@ export class TurnSubmissionBoundary {
       this.notWritten();
       throw error;
     }
+    this.released++;
     try { this.passed?.(); } catch { /* a listener never decides the submission */ }
+  }
+  /** DELETE-REVOKE-SCOPE (a): a refusal at acceptance (the adapter handed its id back, the server refused the turn) on an adapter that
+   * declares `fencedWrites` (every write carrying the turn goes through beforeSubmit) while no write was ever released is positive proof
+   * that nothing was submitted. In one synchronous step the boundary turns refused with that error and is sealed, so the stopped adapter
+   * can never write the old prompt later, and the caller may rebuild the turn. Anything else (no flag, a released write, a state other
+   * than unknown) proves nothing: false, and the boundary is left as it was. */
+  sealUnwritten(error: unknown, fencedWrites: boolean | undefined): boolean {
+    if (fencedWrites !== true || this.state !== "unknown" || this.released !== 0 || this.accepted) return false;
+    this.state = "refused"; this.refusal = error; this.sealed = true;
+    return true;
   }
   /** A refusal that happened before the adapter wrote (the send fence runs ahead of beforeSubmit): the same state beforeSubmit leaves. */
   refuse(error: unknown) {

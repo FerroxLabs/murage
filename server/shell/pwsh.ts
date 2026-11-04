@@ -32,6 +32,16 @@ const DELETE_ALIASES: Record<string, "remove-item" | "rd" | "del"> = {
   "remove-item": "remove-item", ri: "remove-item", rm: "remove-item", rmdir: "rd", rd: "rd", del: "del", erase: "del",
 };
 const BLANK = " \t\r";
+/** READER-PS-VARIANTS, 1.0.14: PowerShell's own blanks. A carriage return is
+ * a line end, as a line feed is, and vertical tab and form feed separate
+ * words. `LEGACY_BLANK` is how the reader split words before 1.0.14. */
+const PWSH_BLANK = " \t\v\f";
+const LEGACY_BLANK = BLANK;
+/** Text the reader reads two ways (a carriage return, a vertical tab, a form
+ * feed, a backtick before a line end): as PowerShell does and as the reader
+ * did before 1.0.14. Either reading that finds a hit cards, so these readings
+ * only add cards. */
+const READ_TWO_WAYS = /[\r\v\f]|`\n/;
 const VAR_CHAR = /[A-Za-z0-9_:]/;
 /** PowerShell reads the typographic quotes as quotes, and the typographic
  * dashes as `-` (its tokenizer's own tables): `Remove-Item “$HOME” –Recurse`
@@ -111,9 +121,9 @@ function commaList(words: Word[]): Word[] | undefined {
 /** The elements of `@(…)` when its body is a literal list (`@('~')`,
  * `@("a", $HOME)`): literal text, home parts, globs and plain variables
  * only. Undefined for anything that runs (`@(Get-ChildItem)`). */
-function literalArray(inner: string): Word[] | undefined {
+function literalArray(inner: string, legacy: boolean): Word[] | undefined {
   let lexed: Lexed;
-  try { lexed = lexPwsh(inner); } catch (error) { if (error instanceof Unreadable) return undefined; throw error; }
+  try { lexed = lexPwsh(inner, legacy); } catch (error) { if (error instanceof Unreadable) return undefined; throw error; }
   if (lexed.nested.length || lexed.statements.length > 1) return undefined;
   const words = lexed.statements[0]?.words ?? [];
   const elements = words.length === 1 ? commaElements(words[0]!) : commaList(words);
@@ -122,7 +132,8 @@ function literalArray(inner: string): Word[] | undefined {
   return elements.every(plain) ? elements : undefined;
 }
 
-function lexPwsh(s: string): Lexed {
+function lexPwsh(s: string, legacy = false): Lexed {
+  const blank = legacy ? LEGACY_BLANK : PWSH_BLANK;
   const statements: Statement[] = [];
   const nested: string[] = [];
   let words: Word[] = [];
@@ -200,7 +211,14 @@ function lexPwsh(s: string): Lexed {
       const d = s[i];
       if (d === undefined) throw new Unreadable("quote", '"');
       if (DOUBLE_QUOTES.includes(d) && end === undefined) { if (DOUBLE_QUOTES.includes(s[i + 1] ?? "\0")) { lit(s[i + 1]!, "double"); i += 2; continue; } i++; return; }
-      if (d === "`") { lit(s[i + 1] ?? "", "double"); i += 2; continue; }
+      if (d === "`") {
+        // a backtick before a line end continues the string's line: the line end is not in the text
+        if (!legacy && s[i + 1] === "\n") { i += 2; continue; }
+        if (!legacy && s[i + 1] === "\r") { i += s[i + 2] === "\n" ? 3 : 2; continue; }
+        lit(s[i + 1] ?? "", "double");
+        i += 2;
+        continue;
+      }
       if (d === "$") { dollar("double"); continue; }
       lit(d, "double");
       i++;
@@ -208,15 +226,17 @@ function lexPwsh(s: string): Lexed {
   };
   while (i < s.length) {
     const c = s[i]!;
-    if (BLANK.includes(c)) { endWord(); i++; continue; }
+    if (blank.includes(c)) { endWord(); i++; continue; }
     if (c === "\n" || c === ";") { endStatement(); i++; continue; }
+    // a carriage return ends the statement, CRLF as one line end
+    if (c === "\r") { endStatement(); i += s[i + 1] === "\n" ? 2 : 1; continue; }
     if (c === "|") {
       // `a || b` runs b on a's failure: a branch the reader does not follow
       if (s[i + 1] === "|") throw new Unreadable("operator", "||");
       endStatement(true);
       i++;
       let j = i;
-      while (j < s.length && BLANK.includes(s[j]!)) j++;
+      while (j < s.length && (LEGACY_BLANK.includes(s[j]!) || blank.includes(s[j]!))) j++;
       if (s[j] === "|") throw new Unreadable("operator", "||" + s[j]);
       continue;
     }
@@ -236,7 +256,7 @@ function lexPwsh(s: string): Lexed {
       continue;
     }
     if (c === "#" && parts.length === 0) {
-      while (i < s.length && s[i] !== "\n") i++;
+      while (i < s.length && s[i] !== "\n" && (legacy || s[i] !== "\r")) i++;
       continue;
     }
     if (s.startsWith("<#", i)) {
@@ -251,10 +271,16 @@ function lexPwsh(s: string): Lexed {
     if ((s.startsWith("@'", i) || s.startsWith('@"', i)) && (parts.length === 0 || afterEquals)) {
       // `$p=@"…"@`: the here-string is the value, a word of its own
       if (afterEquals) endWord();
-      const close = `\n${s[i + 1]}@`;
-      const end = s.indexOf(close, i + 2);
-      if (end < 0) throw new Unreadable("quote", "@'");
-      const start = i + 2 + (/^\r?\n/.exec(s.slice(i + 2))?.[0].length ?? 0);
+      // PowerShell opens and closes a here-string on any line end: LF, CRLF or a
+      // lone CR (READER-PS-VARIANTS). The reading as before 1.0.14 keeps LF only.
+      const quote = s[i + 1]!;
+      const closer = legacy ? new RegExp(`\\n${quote}@`, "g") : new RegExp(`(?:\\r\\n|\\r|\\n)${quote}@`, "g");
+      closer.lastIndex = i + 2;
+      const found = closer.exec(s);
+      if (!found) throw new Unreadable("quote", "@'");
+      const end = found.index;
+      const close = found[0];
+      const start = i + 2 + ((legacy ? /^\r?\n/ : /^(?:\r\n|\r|\n)/).exec(s.slice(i + 2))?.[0].length ?? 0);
       if (s[i + 1] === "'") {
         // `@'…'@` is one literal
         lit(s.slice(start, end), "single");
@@ -273,7 +299,7 @@ function lexPwsh(s: string): Lexed {
       const end = matching("(", ")", i + 2);
       const inner = s.slice(i + 2, end);
       nested.push(inner);
-      const elements = literalArray(inner);
+      const elements = literalArray(inner, legacy);
       const glued = end + 1 < s.length && !/[\s;|&,)}]/.test(s[end + 1]!);
       if (elements && !glued) {
         endWord();
@@ -307,6 +333,8 @@ function lexPwsh(s: string): Lexed {
       if (s[i + 1] === "\n") { i += 2; continue; }
       // a backtick before CRLF continues the line as one before LF does (`Remove-Item -Force `CRLF$env:X)
       if (s[i + 1] === "\r" && s[i + 2] === "\n") { i += 3; continue; }
+      // a backtick before a lone carriage return continues the line too
+      if (!legacy && s[i + 1] === "\r") { i += 2; continue; }
       lit(s[i + 1] ?? "", "none");
       i += 2;
       continue;
@@ -338,7 +366,7 @@ function lexPwsh(s: string): Lexed {
       continue;
     }
     // `??=` and `??` open a word as operators; a lone `?` is Where-Object
-    if (c === "?" && parts.length === 0 && (s[i + 1] === "?" || i + 1 >= s.length || BLANK.includes(s[i + 1]!) || s[i + 1] === "{")) {
+    if (c === "?" && parts.length === 0 && (s[i + 1] === "?" || i + 1 >= s.length || BLANK.includes(s[i + 1]!) || blank.includes(s[i + 1]!) || s[i + 1] === "{")) {
       const op = s[i + 1] === "?" ? "??" : "?";
       lit(op, "none");
       i += op.length;
@@ -1000,9 +1028,12 @@ function itemValue(word: Word): boolean {
  * else is a read: a block may keep the item, assign to it, call a member by a
  * computed name, or convert it (`-as 'System.IO.StreamWriter'` opens a file). */
 function blockReadsItem(body: string): boolean {
-  const { statements } = lexPwsh(body);
-  const words = statements[0]?.words ?? [];
-  return statements.length === 1 && words.length === 1 && itemValue(words[0]!);
+  // a read in both readings of the text (READ_TWO_WAYS), never in one only
+  return [false, true].every((legacy) => {
+    const { statements } = lexPwsh(body, legacy);
+    const words = statements[0]?.words ?? [];
+    return statements.length === 1 && words.length === 1 && itemValue(words[0]!);
+  });
 }
 
 /** A drive path or a relative one, in plain characters. No provider
@@ -1130,12 +1161,31 @@ function memberText(word: Word): string {
 /** PowerShell's expression operators: `"a" -f $x`, `'x' + $y`. */
 const EXPRESSION_OPERATOR = /^(-[ci]?(eq|ne|gt|ge|lt|le|like|notlike|match|notmatch|replace|contains|notcontains|in|notin|split)|-(is|isnot|as|and|or|xor|not|band|bor|bxor|bnot|shl|shr|join|f)|[+*/%]|-|\.\.)$/i;
 
-export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>): H | null {
+export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>, legacyOnly = false): H | null {
   if (ctx.depth > MAX_DEPTH) throw new Unreadable("depth");
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
   const loader = mentionsLoaderVariable(text, "pwsh");
   if (loader) markLoaderVariable(ctx.loaders, loader);
-  const { statements, nested } = lexPwsh(text);
+  // inside the reading as before 1.0.14, every nested script is read that way too
+  if (legacyOnly) return walkPwshLexed(text, ctx, visitor, true);
+  // READER-PS-VARIANTS: text PowerShell reads differently from the reader
+  // before 1.0.14 is read both ways, from the same start; a hit in either cards
+  const before = READ_TWO_WAYS.test(text) ? fork(ctx) : undefined;
+  // the same text at the same level: it keeps this level's stamp, which `fork`
+  // never copies so a nested shell stays unstamped
+  if (before) {
+    if (ctx.pwshStamped) before.pwshStamped = true;
+    if (ctx.pureMembers) before.pureMembers = true;
+  }
+  const hit = walkPwshLexed(text, ctx, visitor, false);
+  if (hit || !before) return hit;
+  const legacyHit = walkPwshLexed(text, before, visitor, true);
+  keepBranchWrites(ctx, before);
+  return legacyHit;
+}
+
+function walkPwshLexed<H>(text: string, ctx: WalkContext, visitor: Visitor<H>, legacy: boolean): H | null {
+  const { statements, nested } = lexPwsh(text, legacy);
   // a read-only command counts only when the engine's whole text is one
   // pipeline of reads: no earlier statement can have kept a value, built an
   // object or changed what a name runs, and no block or subexpression hides
@@ -1145,7 +1195,7 @@ export function walkPwsh<H>(text: string, ctx: WalkContext, visitor: Visitor<H>)
   for (const inner of nested) {
     const branch = fork(ctx, true);
     if (wholeRead) branch.pureMembers = true;
-    const hit = walkPwsh(inner, branch, visitor);
+    const hit = walkPwsh(inner, branch, visitor, legacy);
     if (hit) return hit;
     keepBranchWrites(ctx, branch);
   }
