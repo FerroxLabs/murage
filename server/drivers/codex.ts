@@ -95,6 +95,7 @@ import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
 import { EngineStderrCapture } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
 import { shellDialectOf } from "../shell/pwsh.ts";
+import { reportUnsupportedCalls, rolloutMark, type RolloutMark } from "./codex-unsupported-calls.ts";
 
 export { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 
@@ -490,6 +491,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     // Rule 72: the one counter of narrowing denials; Rule 67: the incident line the bot's next Codex turn carries.
     const narrowDenials = new NarrowDenials();
     const incidentNotes = new Map<string, string>();
+    // D20: each Codex conversation's rollout file, as thread/start or thread/resume named it (a retained process skips both),
+    // with the Codex homes that app-server ran with: only a file inside one is ever read.
+    const rolloutPaths = new Map<string, { path: string; roots: (string | undefined)[] }>();
+    const rolloutRoots = (env: Record<string, string | undefined>) =>
+      [env.CODEX_HOME, input.environment?.CODEX_HOME ?? process.env.CODEX_HOME, `${homedir()}${sep}.codex`];
     const settledTotals = new Map<string, { input: number; output: number; cachedInput: number }>();
 
     // One warm app-server per chat thread, kept between turns while every
@@ -1273,6 +1279,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Set just before turn/start is written. From then on the engine may
       // have accepted the turn, so a crash is never replayed (U-17).
       let turnStartSent = false;
+      // D20: where the rollout file ended when this turn was written, the only trace of a call Codex refused as unsupported
+      let rolloutAt: RolloutMark | null = null;
       // thread/compact/start answers `{}`: its turn is named only by the
       // notifications that follow, so the first one on this thread names it.
       let adoptFirstTurn = false;
@@ -1389,6 +1397,20 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
+        // D20: a call Codex refused as unsupported left no item. Read once, when the whole turn ends (continuations held for
+        // helpers included, since the mark is where the rollout ended when the turn was written), and never for a Stop.
+        const unsupportedAt = rolloutAt;
+        rolloutAt = null;
+        // best effort: a diagnostic never keeps the settled turn from completing
+        try {
+          if (!stopRequested && !abandoned) reportUnsupportedCalls(ENGINE, unsupportedAt, (message) => {
+            const itemId = `codex-unsupported-${turnId}`;
+            emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId, title: message, toolKind: "notice" });
+            emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId, ok: true });
+          });
+        } catch (error) {
+          console.warn(`[codex] unsupported-call check failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
         const complete = () => {
           if (active.get(threadId)?.stop !== stop) return;
           active.delete(threadId);
@@ -2362,6 +2384,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             });
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
+            if (typeof resumed?.thread?.path === "string") rolloutPaths.set(codexThreadId!, { path: resumed.thread.path, roots: rolloutRoots(env) });
           } catch {
             /* The replacement session has no settled total baseline. */
             settledTotals.delete(threadId);
@@ -2403,6 +2426,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ephemeral: turn.proposalOnly === true,
           });
           codexThreadId = started?.thread?.id ?? null;
+          if (codexThreadId && typeof started?.thread?.path === "string") rolloutPaths.set(codexThreadId, { path: started.thread.path, roots: rolloutRoots(env) });
           startedModel = started?.model ?? null;
         }
         if (cancelledBeforeStart()) return;
@@ -2521,6 +2545,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         awaitingTurnStart = true;
         turnStartSent = true;
+        const rollout = rolloutPaths.get(codexThreadId);
+        rolloutAt = rollout ? rolloutMark(rollout.path, rollout.roots) : null;
         // Dispatch to here is the readiness boundary of the gate's timing row.
         readyMs = Date.now() - dispatchAt;
         if (!turn.prewarm) console.info(`codex turn-ready thread=${threadId} process=${turnProcess} ms=${readyMs}`);

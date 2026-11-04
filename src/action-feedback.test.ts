@@ -111,6 +111,7 @@ export const ALLOWED: Allowed[] = [
   { file: "DiagnosticDetails.tsx", refOnly: 1, reason: "Export guard held in a ref only; the Low pending cue (disable and 'Exporting') is not built yet. Not in the audit; to triage." },
   { file: "EngineSetup.tsx", refOnly: 1, reason: "Check guard held in a ref only. Audit Low (FirstRunCard.tsx:535 family): Checking label not built yet." },
   { file: "FilesDialog.tsx", refOnly: 1, reason: "Gate held in a ref only; the dialog's buttons do not dim while a native action runs. Not in the audit; to triage." },
+  { file: "Inbox.tsx", swallowed: 1, reason: "Snooze undo only waits for the snooze write to settle before clearing it, so the clear never lands first; that write shows its own failure line (ux.l2b.snooze.failed) and a failed clear shows ux.l2b.snooze.undoFailed." },
   { file: "InboxDialog.tsx", refOnly: 1, reason: "Gate held in a ref only; approval rows have their own busy label. Audit Low (InboxMemoryWaiting.tsx:66 family)." },
   { file: "TaskPicker.tsx", refOnly: 1, reason: "Export-pending guard held in a ref only; Low pending cue for Export. Not in the audit; to triage." },
 ];

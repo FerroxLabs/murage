@@ -15,8 +15,10 @@ import {
 } from "./headless-text-only.ts";
 import { claudeAccountEnvironment } from "../claude-accounts.ts";
 import type { TempRoot, TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
 
 const posix = describe.skipIf(process.platform === "win32");
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
@@ -35,8 +37,9 @@ afterEach(() => { vi.restoreAllMocks(); removeTempDirSync(base); });
 
 const preflight = () => ({ etcRoot: etc, home, grokHome: join(home, ".grok"), platform: "linux" as const, mdmDir: null, claudeManagedPath: join(base, "no-managed.json") });
 const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: "SYS", text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
+  system: fixedPrompt("SYS"), text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 2000, maxOutputBytes: 12 * 1024, context: { botId: "bot", runId: "run1", family: "lived", attempt: 1 }, ...over,
+  transport: { ...over.transport, gate: openLearningGate("continuity") },
 });
 const claudeCfg = (env: NodeJS.ProcessEnv, extra: Partial<ClaudeTextOnlyConfig> = {}): ClaudeTextOnlyConfig => ({
   cli: process.execPath, cliPrefixArgs: [STUB, "--stub=ok", `--stub-out=${out}`], tmpBase: join(base, "tmp"), env: { PATH: "/usr/bin:/bin", ...env },

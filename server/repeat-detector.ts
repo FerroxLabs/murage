@@ -19,6 +19,17 @@ export function callKey(tool: string, args: string | undefined): string | null {
   return `${tool}:${a}`;
 }
 
+/** Cursor's ACP adapter titles every MCP call "MCP: tool" and sends no input: like a bare tool name, it names no call. */
+const NAMELESS_TITLE = /^MCP:\s*tool$/i;
+
+/** The repeat key of an engine's started tool call, by its title. A title with more than a bare identifier is a call
+ * with arguments (ACP: "echo hi", "Read src/x.ts"); a bare "Bash", or Cursor's "MCP: tool", is not countable. */
+export function toolTitleKey(title: string | undefined): string | null {
+  const t = (title ?? "").trim();
+  if (!/\s|\//.test(t) || NAMELESS_TITLE.test(t)) return null;
+  return callKey("tool", t);
+}
+
 /** What a permission ask runs, as the engine reported it (server/contracts.ts request.opened). */
 export interface RepeatAsk {
   tool: string;

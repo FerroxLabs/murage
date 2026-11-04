@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,7 +15,10 @@ import {
   createOpenCodeDriver,
   murageOwnsWorkingFolder,
   normalizeLegacyOpenCodeModel,
+  openCodeCatalogRevision,
+  openCodeOneShotFolder,
   parseOpenCodeModelsOutput,
+  resetOpenCodeOneShotFolderForTests,
 } from "./opencode-go.ts";
 import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog } from "../../contracts.ts";
@@ -577,5 +581,92 @@ describe("OpenCode model source", () => {
     resetOpenCodeModelCache();
     const failed = await discoverOpenCodeModels({}, join(tmpdir(), "murage-no-such-opencode"));
     expect(failed.source).toBe("static");
+  });
+
+  it("a person's Refresh asks the loader to refetch; startup and periodic lookups do not", async () => {
+    const asked: Array<boolean | undefined> = [];
+    const driver = createOpenCodeDriver(async (_env, _cli, options) => {
+      asked.push(options?.refresh);
+      return catalog("opencode/beam-free");
+    });
+    const instance = await driver.create({
+      instanceId: "opencode-refetch",
+      displayName: "OpenCode",
+      environment: {},
+      enabled: true,
+      config: driver.defaultConfig(),
+    });
+    try {
+      await instance.refreshModels?.();
+      await instance.refreshModels?.({ manual: true });
+      expect(asked).toEqual([false, false, true]);
+    } finally {
+      await instance.dispose();
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("Refresh runs `opencode models --refresh` first, so a model added since appears, and bumps the catalog revision", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-opencode-refresh-"));
+    const cli = join(dir, "opencode");
+    const list = join(dir, "list.txt");
+    writeFileSync(list, "opencode/beam-free\n");
+    writeFileSync(cli, [
+      "#!/bin/sh",
+      `if [ "$1" = models ] && [ "$2" = --refresh ]; then printf 'opencode/beam-free\\nopencode/new-model\\n' > '${list}'; exit 0; fi`,
+      `if [ "$1" = models ]; then cat '${list}'; exit 0; fi`,
+      "exit 1",
+      "",
+    ].join("\n"), { mode: 0o755 });
+    try {
+      resetOpenCodeModelCache();
+      const first = await discoverOpenCodeModels({ PATH: process.env.PATH }, cli);
+      expect(first.options.map((option) => option.id)).toEqual(["opencode/beam-free"]);
+      expect(openCodeCatalogRevision(cli)).toBe(0);
+      const refreshed = await discoverOpenCodeModels({ PATH: process.env.PATH }, cli, { refresh: true });
+      expect(refreshed.options.map((option) => option.id)).toContain("opencode/new-model");
+      expect(openCodeCatalogRevision(cli)).toBe(1);
+      // Same list again: no new process is needed.
+      await discoverOpenCodeModels({ PATH: process.env.PATH }, cli, { refresh: true });
+      expect(openCodeCatalogRevision(cli)).toBe(1);
+    } finally {
+      resetOpenCodeModelCache();
+      removeTempDir(dir);
+    }
+  });
+});
+
+describe("OpenCode one-off sessions (set-up check, learning)", () => {
+  it("never touch another repository an inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE points at", async () => {
+    const other = mkdtempSync(join(tmpdir(), "murage-other-repo-"));
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: other, encoding: "utf8" }).trim();
+    try {
+      git("init", "-q");
+      git("commit", "-q", "--allow-empty", "-m", "theirs");
+      writeFileSync(join(other, "staged.txt"), "staged\n");
+      git("add", "staged.txt");
+      const head = git("rev-parse", "HEAD");
+      vi.stubEnv("GIT_DIR", join(other, ".git"));
+      vi.stubEnv("GIT_WORK_TREE", other);
+      vi.stubEnv("GIT_INDEX_FILE", join(other, ".git", "index"));
+      resetOpenCodeOneShotFolderForTests();
+      const folder = await openCodeOneShotFolder();
+      vi.unstubAllEnvs();
+      expect(git("rev-parse", "HEAD")).toBe(head);
+      expect(git("diff", "--cached", "--name-only")).toBe("staged.txt");
+      expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: folder, encoding: "utf8" }).trim()).toBe("1");
+    } finally {
+      vi.unstubAllEnvs();
+      resetOpenCodeOneShotFolderForTests();
+      await removeTempDir(other);
+    }
+  });
+
+  it("run inside one git folder of Murage's own in the temp folder, never a bare temp folder OpenCode files under its global project", async () => {
+    const folder = await openCodeOneShotFolder();
+    expect(await openCodeOneShotFolder()).toBe(folder);
+    expect(dirname(folder)).toBe(tmpdir());
+    expect(existsSync(join(folder, ".git"))).toBe(true);
+    const head = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: folder, encoding: "utf8" }).trim();
+    expect(head).toBe("1");
   });
 });

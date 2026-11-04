@@ -867,6 +867,9 @@ describe("harness HTTP API", () => {
       expect(asking.status).toBe(201);
       expect(asking.body.auto).toBe(false);
       expect(asking.operator).toMatchObject({ autoApprove: false, computer: "off", approvePeerComms: false, composio: false });
+      // 1.0.15 BIRTH-FUIGO P3: no Fuigo can answer in this world, so a teammate created with no selection is born by the copy of the
+      // Chief's engine, read inside createBot (the route no longer copies it before its waits).
+      expect(asking.operator.modelSelection).toMatchObject({ instanceId: "claude", model: "claude-sonnet-5" });
       expect(asking.operator.tasks[0]).toMatchObject({ autoApprove: false });
       await stopFixtureTurn(chief.id, turn);
 

@@ -8,6 +8,9 @@
 // The shape is structural, like the rest of this server's readings, so
 // nothing here pulls the engine registry's own types into the contract.
 
+import type { ModelCatalog } from "./contracts.ts";
+import { filterFluxRows } from "./flux-surface.ts";
+
 export interface EngineReading {
   instanceId: string;
   driverKind?: string;
@@ -21,6 +24,43 @@ export interface EngineReading {
 export function defaultModel(instance: Pick<EngineReading, "models">): string {
   return instance.models.default || instance.models.options?.[0]?.id || "";
 }
+
+/** 1.0.14 FIRST-ENGINE-REPICK (BR2): the usable Fuigo instances in a scan, and the usable others. Usable means available with a model to
+ * give (defaultModel: the named default, else the first listed). Reads no sign-in field. Birth (BIRTH-FUIGO-1014) and the engine pass
+ * share this one split. */
+export function fuigoSplit<T extends EngineReading & { enabled?: boolean }>(described: readonly T[]): { fuigo: T[]; others: T[] } {
+  // BN3 (BIRTH-FUIGO-1014 r2): a Fuigo counts exactly when birth would put a bot on it (fuigoUsable), so an empty bot birth would have
+  // put on Fuigo is moved there by the pass. Other engines: available with a model to give.
+  const fuigo = described.filter(entry => entry.driverKind === "fuigoAgent" && fuigoUsable(asCatalogued(entry)));
+  const others = described.filter(entry => entry.driverKind !== "fuigoAgent" && entry.snapshot.state === "available" && defaultModel(entry) !== "");
+  return { fuigo, others };
+}
+
+/** The model the engine pass moves a bot to on a usable Fuigo: the birth model (fuigoBirthModel), never another reading. */
+export function fuigoMoveModel(entry: EngineReading & { enabled?: boolean }): string {
+  return fuigoBirthModel(asCatalogued(entry));
+}
+
+function asCatalogued(entry: EngineReading & { enabled?: boolean }): Parameters<typeof fuigoBirthModel>[0] {
+  return { driverKind: entry.driverKind, enabled: entry.enabled, models: { ...entry.models, default: entry.models.default ?? "", options: entry.models.options ?? [] } as ModelCatalog };
+}
+
+/** 1.0.15 BIRTH-FUIGO: the catalogue a new bot may be born on, the one describe() publishes (registry.ts, same filterFluxRows
+ * call): keyless Flux rows removed first. With no Flux key, Fuigo's static list (all Flux tiers) filters down to nothing, so a
+ * keyless Fuigo has no birth model; a `fuigo login` catalogue keeps its own rows. Reads the key from env at the call. */
+export function birthModels(x: { driverKind: string; models: ModelCatalog }): ModelCatalog {
+  return filterFluxRows(x.models, x.driverKind);
+}
+
+/** 1.0.15 BIRTH-FUIGO: the model a bot is born on when this instance is a usable Fuigo, else "". Usable = a Fuigo, enabled, with
+ * a birth model (defaultModel of the filtered catalogue: the named default, else the first listed). Shared with the engine pass
+ * (BN3) so "Fuigo usable" means one thing. Reads no sign-in field. */
+export function fuigoBirthModel(x: { driverKind?: string; enabled?: boolean; models: ModelCatalog }): string {
+  if (x.driverKind !== "fuigoAgent" || x.enabled === false) return "";
+  return defaultModel({ models: birthModels({ driverKind: x.driverKind, models: x.models }) });
+}
+
+export const fuigoUsable = (x: Parameters<typeof fuigoBirthModel>[0]): boolean => fuigoBirthModel(x) !== "";
 
 export interface EngineChoice {
   instanceId: string;

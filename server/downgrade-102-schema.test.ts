@@ -64,11 +64,13 @@ it("a 1.0.3 file differs from fresh 1.0.2 before the downgrade (the comparison s
 
 it("memory-downgrade --to 10 leaves sqlite_master exactly a fresh 1.0.2 install's: every table and index, each with 1.0.2's text", () => {
   file103("eager");
+  // the owner-pin index is made at every open from 1.0.15 (MEM-PIN-INDEX-BOOT): it is 1.0.2's own idle-built index, kept with 1.0.2's text
+  const kept = { missing: [], extra: ["index:memory_records_pinned"], differ: [] };
   expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
-  expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual({ missing: [], extra: [], differ: [] });
+  expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual(kept);
   // a second run changes nothing
   expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
-  expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual({ missing: [], extra: [], differ: [] });
+  expect(against102(schemaOf(join(DATA_DIR, "messages.db")))).toEqual(kept);
 });
 
 it("keeps the indexes 1.0.2 builds when idle, and the fill places of the derived tables, so 1.0.2 reads no history again", () => {

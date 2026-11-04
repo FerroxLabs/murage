@@ -173,7 +173,9 @@ async function preparingList(db:DatabaseSync,input:OwnerListInput,scopes:string[
     if(!Number.isSafeInteger(value.at)||typeof value.id!=="string"||!Number.isSafeInteger(value.version)||value.version<1)throw new Error();
     after={at:value.at,id:value.id,version:value.version};
   }catch{throw new Error("INVALID_MEMORY_CURSOR");}}
-  const base:string[]=["(? IS NULL OR r.scope_id IN (SELECT value FROM json_each(?)))"];
+  const base:string[]=["(? IS NULL OR r.scope_id IN (SELECT value FROM json_each(?)))"]
+  // browse leaves the tool excerpts out; a search the owner types still finds them, so he can read, pin or Forget one (keyedSearch too)
+  if(!input.query?.trim())base.push(TOOL_EXCERPT_SHOWN);;
   const baseArgs:Array<string|number|null>=[scopes===null?null:JSON.stringify(scopes),scopes===null?null:JSON.stringify(scopes)];
   if(input.state){base.push("r.state=?");baseArgs.push(input.state);}else base.push("r.state!='deleted'");
   if(view==="important")base.push("r.owner_pinned=1 AND r.state='active'");
@@ -235,6 +237,37 @@ function nextKey(emitted:Keyed[],frontier:number|null,remaining:boolean,trimmed:
   return null;
 }
 
+/** What a tool returned is evidence, not a memory the owner reads: its chunks (`kind='source'`, `assertion='tool-observation'`) are left
+ * out of every browse view (MEMORY-TOOL-NAME-JUNK). One the owner pinned stays: that is the owner's choice. A search the owner types
+ * still finds them: rows written before 1.0.15 can still reach a bot until MEM-JUNK-RETIRE, so the owner keeps the way to find, read,
+ * pin or Forget each one. */
+export const TOOL_EXCERPT_SHOWN="NOT (r.kind='source' AND r.assertion='tool-observation' AND r.owner_pinned=0)";
+
+/** One browse scan of the key table, newest first from `bound`, with the tool excerpts left out. `sql` selects rid, rv, ak, kind and pin and
+ * takes `args`, then the age bound, then the slice's LIMIT. It reads at most OWNER_SLICE_ROWS keys a statement and looks up only the unpinned
+ * `source` keys of a slice (one statement by primary key), and stops at `allowance` examined keys however many excerpts lie in the way: past
+ * that the page is short and `frontier` is the lowest key examined (r3.3, as the pinned scan above). `full` is 51 rows kept. */
+async function visibleKeys(db:DatabaseSync,sql:string,args:Array<string|number|null>,bound:number,allowance:number):Promise<{rows:Array<Record<string,unknown>>;full:boolean;frontier:number|null}>{
+  const kept:Array<Record<string,unknown>>=[];
+  let at=bound,examined=0;
+  for(;;){
+    const limit=Math.min(OWNER_SLICE_ROWS,allowance-examined);
+    const rows=await slice(db,"main",sql,[...args,at,limit]);
+    examined+=rows.length;
+    const sources=rows.filter(row=>row.kind==="source"&&Number(row.pin)!==1).map(row=>[String(row.rid),Number(row.rv)]);
+    const hidden=new Set(sources.length?(await slice(db,"main",`SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
+      WHERE r.kind='source' AND r.assertion='tool-observation' AND r.owner_pinned=0`,[JSON.stringify(sources)])).map(row=>`${row.id}:${row.version}`):[]);
+    for(const row of rows){
+      if(hidden.has(`${row.rid}:${row.rv}`))continue;
+      kept.push(row);
+      if(kept.length>=51)return {rows:kept,full:true,frontier:null};
+    }
+    if(rows.length<limit)return {rows:kept,full:false,frontier:null};
+    at=Number(rows.at(-1)!.ak)-1;
+    if(examined>=allowance)return {rows:kept,full:false,frontier:at+1};
+  }
+}
+
 /** Browse in the keyed modes (r3.3): a union of range scans of the key table with an equality prefix, each on its own index, merged. */
 async function keyedBrowse(db:DatabaseSync,input:OwnerListInput,scopes:string[]|null,states:string[]):Promise<OwnerListResult>{
   const G="B";
@@ -258,12 +291,24 @@ async function keyedBrowse(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
         if(examined>=OWNER_TAIL_WINDOW){complete=false;frontier=Math.max(frontier??0,at+1);break;}
       }
     }
+  }else if(scopes===null&&input.view==="important"){
+    // pinned rows only: a pinned tool excerpt is the owner's choice and stays in view
+    const rows=await slice(db,"main",`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE owner_pinned=1 AND state='active' AND age_key<=? ORDER BY age_key DESC LIMIT 51`,[below]);
+    add(rows);if(rows.length>=51)more=true;
   }else{
-    const scans:Array<{sql:string;args:Array<string|number|null>}>=[];
-    if(scopes!==null)for(const scope of scopes)for(const state of states)scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE scope_id=? AND state=? AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[scope,state,below]});
-    else if(input.view==="important")scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE owner_pinned=1 AND state='active' AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[below]});
-    else for(const state of states)scans.push({sql:`SELECT record_id AS rid,record_version AS rv,age_key AS ak FROM ${K} WHERE state=? AND age_key<=? ORDER BY age_key DESC LIMIT 51`,args:[state,below]});
-    for(const scan of scans){const rows=await slice(db,"main",scan.sql,scan.args);add(rows);if(rows.length>=51)more=true;}
+    // one scan per scope and state, or per state: the tool excerpts are left out as a residual, sliced by examined keys up to the window
+    const scans:Array<{where:string;args:Array<string|number|null>}>=[];
+    if(scopes!==null)for(const scope of scopes)for(const state of states)scans.push({where:"scope_id=? AND state=?",args:[scope,state]});
+    else for(const state of states)scans.push({where:"state=?",args:[state]});
+    // one page examines at most OWNER_TAIL_WINDOW keys over all its scans, each scan its share and never less than one slice (so every
+    // scan moves past the cursor and the next page always makes progress)
+    const allowance=Math.max(OWNER_SLICE_ROWS,Math.floor(OWNER_TAIL_WINDOW/Math.max(1,scans.length)));
+    for(const scan of scans){
+      const seen=await visibleKeys(db,`SELECT record_id AS rid,record_version AS rv,age_key AS ak,kind,owner_pinned AS pin FROM ${K} WHERE ${scan.where} AND age_key<=? ORDER BY age_key DESC LIMIT ?`,scan.args,below,allowance);
+      add(seen.rows);
+      if(seen.full)more=true;
+      if(seen.frontier!==null){complete=false;frontier=Math.max(frontier??0,seen.frontier);}
+    }
   }
   found.sort(byKey);
   const eligible=frontier===null?found:found.filter(c=>c.ak>=frontier!);

@@ -14,7 +14,7 @@ import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { openSse } from "../../testing/sse.ts";
 import { launchVerificationServer } from "../../../scripts/control-murage.ts";
 import { createAcpDriver, type AcpSupport } from "./core.ts";
-import { ApprovalDeliveryError, denyAutomaticApproval, watchApprovalRequest } from "./approval-delivery.ts";
+import { ApprovalDeliveryError, ApprovalNoLongerOpenError, denyAutomaticApproval, watchApprovalRequest } from "./approval-delivery.ts";
 
 const peer = vi.hoisted(() => ({
   child: null as ChildProcessByStdio<Writable, Readable, Readable> | null,
@@ -428,6 +428,15 @@ describe("automatic approval request lifetime", () => {
     observe({ ...opened, type: "turn.completed", turnId: "other" } as RuntimeEvent);
     expect(request.canFallback(new ApprovalDeliveryError("EPIPE", false))).toBe(true);
     expect(request.canFallback(new ApprovalDeliveryError("engine_stopped", true))).toBe(false);
+    request.dispose();
+  });
+  // OpenMausBot b873f461e (#1170): an engine that answers `unavailable` no longer holds the ask, so a card could never be answered.
+  it("never falls back to a card for an ask the engine no longer holds, even while the request looks live", () => {
+    const request = watchApprovalRequest(opened, () => () => {});
+    expect(request.live()).toBe(true);
+    expect(request.canFallback(new ApprovalNoLongerOpenError())).toBe(false);
+    // a write that failed before the engine took it still hands the ask to the owner
+    expect(request.canFallback(new ApprovalDeliveryError("EPIPE", false))).toBe(true);
     request.dispose();
   });
 });
