@@ -169,3 +169,38 @@ describe("SidebarPhoneStatusButton", () => {
     expect(markup).toContain("shrink-0");
   });
 });
+
+describe("TENJOBS-APP-GAPS job 9: the ten-jobs walk finds the phone button under every label", () => {
+  const now = 1_900_000_000_000;
+  const at = (id: string, lastSeenAt: number) => ({ ...device(lastSeenAt), id });
+  const snapshots = [
+    undefined,
+    null,
+    { enabled: true, devices: [], connectedDeviceIds: [], error: "down" },
+    { enabled: false, devices: [], connectedDeviceIds: [] },
+    { enabled: true, devices: [], connectedDeviceIds: [] },
+    { enabled: true, devices: [at("a", now)], connectedDeviceIds: ["a"] },
+    { enabled: true, devices: [at("a", now), at("b", now)], connectedDeviceIds: ["a", "b"] },
+    { enabled: true, devices: [at("a", now), at("b", now)], connectedDeviceIds: ["a"] },
+    { enabled: true, devices: [at("a", now)], connectedDeviceIds: [] },
+    { enabled: true, devices: [at("a", now), at("b", now)], connectedDeviceIds: [] },
+    { enabled: true, devices: [at("a", now)] },
+    { enabled: true, devices: [at("a", now), at("b", now)] },
+    { enabled: true, devices: [at("a", now), at("b", 1)] },
+    { enabled: true, devices: [at("a", 1)] },
+    { enabled: true, devices: [at("a", 1), at("b", 1)] },
+  ] as Parameters<typeof deriveSidebarPhoneStatus>[0][];
+
+  it("matches each label the button can carry, and the walk uses that pattern", async () => {
+    const pathsUrl = new URL("../../scripts/ten-jobs/paths.mjs", import.meta.url).href;
+    const { PATHS, PHONE_BUTTON } = (await import(/* @vite-ignore */ pathsUrl)) as {
+      PATHS: { id: number; path: { name?: unknown }[] }[];
+      PHONE_BUTTON: RegExp;
+    };
+    expect(PATHS.find((job) => job.id === 9)?.path[0]?.name).toBe(PHONE_BUTTON);
+    const labels = new Set(snapshots.map((snapshot) => deriveSidebarPhoneStatus(snapshot, now).label));
+    expect(labels.size).toBe(14);
+    for (const label of labels) expect(label).toMatch(PHONE_BUTTON);
+    expect("Phone and other devices").not.toMatch(PHONE_BUTTON);
+  });
+});

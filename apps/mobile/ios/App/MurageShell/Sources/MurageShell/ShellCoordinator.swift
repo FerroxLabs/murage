@@ -7,6 +7,21 @@ import WebKit
 public struct ClosedWorkspace: Sendable {
     public let origin: String
     public let reason: CloseReason
+    /// Only with `pairRefused`: the computer's own cleaned line about the code.
+    public let message: String?
+
+    public init(origin: String, reason: CloseReason, message: String? = nil) {
+        self.origin = origin
+        self.reason = reason
+        self.message = message
+    }
+
+    /// What the launcher receives, both as the `workspaceClosed` event and in `state().closed`.
+    public var dictionary: [String: String] {
+        var out = ["origin": origin, "reason": reason.rawValue]
+        if let message { out["message"] = message }
+        return out
+    }
 }
 
 /// `unreadable` (P14 carry): the Keychain could not be read, so there is no
@@ -41,6 +56,10 @@ public final class ShellCoordinator {
 
     private var pendingClose: ClosedWorkspace?
     private var current: WorkspaceViewController?
+    /// The close still in progress. It alone keeps its workspace alive, and only
+    /// until the close is delivered; the coordinator never holds a dismissed
+    /// workspace (its WebView and bridge go with it).
+    private var closingWork: (workspace: Weak<WorkspaceViewController>, dismissal: CloseDismissal)?
     private var autoOpened = false
     private var names: [WorkspaceOrigin: String] = [:]
     private let books = WorkspaceBookStore()
@@ -50,7 +69,7 @@ public final class ShellCoordinator {
     private var notificationOrigin: WorkspaceOrigin?
     private var pendingAskOpen: (origin: WorkspaceOrigin, hash: String)?
     /// B6: a different computer's notification held because the current
-    /// workspace has a call open, delivered by `deliverPendingCrossComputerOpen()`.
+    /// workspace has a call open, delivered by `deliverHeldOpens()`.
     private var pendingCrossComputerOpen: (origin: WorkspaceOrigin, threadId: String?, messageId: String?, heldAt: Date)?
     private var pendingNotice: String?
     /// Set by the plugin. Without a listener, a notice waits for `takePendingNotice()`.
@@ -167,19 +186,34 @@ public final class ShellCoordinator {
             path = routes.startPath(for: origin)
         }
         let workspace = WorkspaceViewController(origin: origin, startPath: path, verdict: verdict, routes: routes, debugProbe: debugProbe)
-        workspace.pairedAtOpen = credential == nil && books.load()?.entry(for: origin) != nil
-        workspace.onClose = { [weak self, weak workspace] reason in
+        workspace.openedWithCredential = credential != nil
+        workspace.onClose = { [weak self, weak workspace] reason, message in
             guard let self, let workspace else { return }
-            self.closed(workspace, reason: reason)
+            self.closed(workspace, reason: reason, message: message)
+        }
+        workspace.onForceLeave = { [weak self, weak workspace] in
+            guard let self, let workspace else { return }
+            self.forceLeave(workspace)
         }
         workspace.onSignedIn = { [weak self] in self?.signedIn(origin) }
         workspace.onInUse = { [weak self] in self?.inUse(origin) }
         workspace.onName = { [weak self] name in self?.names[origin] = name }
-        workspace.onCallEnded = { [weak self] in self?.deliverPendingCrossComputerOpen() }
+        workspace.onCallEnded = { [weak self, weak workspace] in
+            guard let self, let workspace, self.current === workspace else { return }
+            self.releaseHeldOpens()
+        }
+        workspace.onDisappeared = { [weak self, weak workspace] in
+            guard let self, let workspace, let work = self.closingWork, work.workspace.value === workspace else { return }
+            work.dismissal.disappeared()
+        }
         workspace.push = PushServices.shared
         // An older workspace still on screen closes properly (its saves are
         // cancelled) without telling the launcher, then is dismissed below.
         if let old = current { old.onClose = nil; old.closeFromShell(.launcher) }
+        // A close still pending belongs to the workspace it was made for: it may
+        // no longer dismiss anything or deliver once this one opens.
+        closingWork?.dismissal.supersede()
+        closingWork = nil
         current = workspace
         launcherRequested = false
         let show = { launcher.present(workspace, animated: false) }
@@ -212,7 +246,7 @@ public final class ShellCoordinator {
 
     // MARK: closing
 
-    private func closed(_ workspace: WorkspaceViewController, reason: CloseReason) {
+    private func closed(_ workspace: WorkspaceViewController, reason: CloseReason, message: String? = nil) {
         guard current === workspace else { return }
         current = nil
         let origin = workspace.origin
@@ -225,10 +259,52 @@ public final class ShellCoordinator {
         // person chose where to go); any other close delivers it, but only once
         // the old workspace is fully dismissed, so present() never races it.
         if reason == .launcher { pendingCrossComputerOpen = nil; pendingAskOpen = nil }
-        workspace.dismiss(animated: false) { [weak self] in
-            self?.deliver(ClosedWorkspace(origin: origin.serialized, reason: reason))
-            self?.deliverPendingCrossComputerOpen()
-        }
+        // Dismissed from the presenter, so anything the workspace has stacked on
+        // top of it (an Ask setup alert, a job card) goes too. The close is
+        // delivered once, even when UIKit drops the dismiss completion.
+        let presenter = workspace.presentingViewController ?? launcher
+        let close = CloseDismissal(
+            isPresenting: { [weak presenter, weak workspace] in
+                guard let presenter, let workspace else { return false }
+                return presenter.presentedViewController === workspace
+            },
+            dismiss: { completion in
+                guard let presenter else { completion?(); return }
+                presenter.dismiss(animated: false) { if let completion { MainActor.assumeIsolated { completion() } } }
+            },
+            afterTransition: { [weak workspace] run in
+                if let transition = workspace?.transitionCoordinator {
+                    transition.animate(alongsideTransition: nil) { _ in MainActor.assumeIsolated { run() } }
+                } else {
+                    run()
+                }
+            },
+            schedule: { delay, run in
+                let item = DispatchWorkItem { MainActor.assumeIsolated { run() } }
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+                return { item.cancel() }
+            },
+            deliver: { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.deliver(ClosedWorkspace(origin: origin.serialized, reason: reason, message: message))
+                }
+            },
+            afterGone: { [weak self] in MainActor.assumeIsolated { self?.deliverHeldOpens() } },
+            retaining: workspace
+        )
+        closingWork = (Weak(workspace), close)
+        close.start()
+    }
+
+    /// "Your computers" on a splash whose workspace is already closing: the
+    /// close was already decided, so only the screen is taken off, with
+    /// everything stacked above it, and only while it is still this workspace
+    /// on screen. The close is still delivered once, by the pending callbacks.
+    private func forceLeave(_ workspace: WorkspaceViewController) {
+        if let closingWork, closingWork.workspace.value === workspace { closingWork.dismissal.forceLeave(); return }
+        guard let presenter = workspace.presentingViewController ?? launcher,
+              presenter.presentedViewController === workspace else { return }
+        presenter.dismiss(animated: false)
     }
 
     private func deliver(_ closed: ClosedWorkspace) {
@@ -295,7 +371,7 @@ public final class ShellCoordinator {
         ]
         if let active = book.active { state["active"] = active }
         if let closed = pendingClose {
-            state["closed"] = ["origin": closed.origin, "reason": closed.reason.rawValue]
+            state["closed"] = closed.dictionary
             pendingClose = nil
         }
         return state
@@ -471,7 +547,17 @@ public final class ShellCoordinator {
     /// computer's notification has ended, or the workspace holding it is
     /// gone for some other reason. Re-run the same open now that nothing
     /// blocks it; a no-op if nothing was held.
-    private func deliverPendingCrossComputerOpen() {
+    /// The call-ended entry: a held open waits for any close still being
+    /// dismissed (its `afterGone` delivers it), so a late callback from a
+    /// closing or superseded workspace can never present over the dismissal.
+    private func releaseHeldOpens() {
+        if let work = closingWork, !work.dismissal.isGone { return }
+        deliverHeldOpens()
+    }
+
+    /// The ONE place held opens are delivered: reached from `afterGone` and
+    /// `releaseHeldOpens` only (a guard test pins that).
+    private func deliverHeldOpens() {
         if let pending = pendingAskOpen {
             openFromAskIntent(origin: pending.origin, hash: pending.hash)
             if pendingAskOpen == nil { return }
@@ -503,5 +589,11 @@ public final class ShellCoordinator {
         }
     }
     #endif
+}
+
+/// A weak reference as a value, for the tuple that records the close in progress.
+private struct Weak<T: AnyObject> {
+    weak var value: T?
+    init(_ value: T) { self.value = value }
 }
 #endif

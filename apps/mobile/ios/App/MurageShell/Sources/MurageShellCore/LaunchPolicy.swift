@@ -1,8 +1,9 @@
 import Foundation
 
 /// Why the workspace screen closed, as the launcher receives it (P22 `CloseReason`).
+/// `pairRefused` (1.0.16): the computer refused the pairing code on its own /enter page.
 public enum CloseReason: String, CaseIterable, Sendable {
-    case unreachable, insecure, signedOut, signOut, launcher, updateRequired, accessoff, hosterror
+    case unreachable, insecure, signedOut, signOut, launcher, updateRequired, accessoff, hosterror, pairRefused
 }
 
 /// What a main-document HTTP status means (spec §3.2, §7): 401 is the door

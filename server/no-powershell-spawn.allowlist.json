@@ -188,9 +188,11 @@
       }
     },
     "server/env-path.ts": {
-      "reason": "Fixed environment-probe executable only: builds Windows PowerShell from the server absolute SystemRoot; never searches handed PATH. This helper starts nothing; engine-env.ts launches the fixed bounded probe.",
+      "reason": "Fixed environment-probe executable only: builds Windows PowerShell from the server absolute SystemRoot; never searches handed PATH. This helper starts nothing; engine-env.ts launches the fixed bounded probe. 1.0.16 E18 (u12-u13, GrokBuild-reviewed): powerShellFileShim reads a Cursor PowerShell -File .cmd shim as text (WINDOWS_POWERSHELL only recognizes the shim's head token) and resolves the program through the same fixed SystemRoot probe helper; it starts nothing itself, never searches PATH, and refuses -Command, shell operators, unknown variables and scripts outside the shim's folder.",
       "lines": {
-        "185f94ce07a26daa": "return win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\");"
+        "185f94ce07a26daa": "return win32.join(root, \"System32\", \"WindowsPowerShell\", \"v1.0\", \"powershell.exe\");",
+        "e27cff3ee2ae9766": "const WINDOWS_POWERSHELL = /^(?:(?:%SystemRoot%|%WINDIR%)\\\\System32\\\\WindowsPowerShell\\\\v1\\.0\\\\)?powershell(?:\\.exe)?$/i;",
+        "29c6868d5113df11": "const command = environmentProbeProgram(\"powershell.exe\", \"win32\");"
       }
     },
     "server/own-file-reads.ts": {

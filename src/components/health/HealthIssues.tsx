@@ -4,7 +4,7 @@
 // The issues on the Health screen: identical ones folded to one line with a count and the time, each line answering
 // what happened, does it matter, what can I do. Every sentence comes from fixed tables (health-guide.ts); nothing an
 // input wrote is shown, except the deletion lines, which are the server's own fixed sentences (ownerNoticeText).
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
 import { api, useStore, useStoreIfAny } from "@/state/store";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
@@ -114,7 +114,8 @@ function DeletionState({ fold, onChanged }: { fold: HealthFold<HealthIssue>; onC
   </>;
 }
 
-export function HealthFoldRow({ fold, now, onGo, onChanged }: { fold: HealthFold<HealthIssue>; now: number; onGo?: (to: NextAction) => void; onChanged?: () => void }) {
+/** `fix`: the Health page's one-tap fix for this check (Back up now), shown in place of the go button. `extra`: Ask your bot. */
+export function HealthFoldRow({ fold, now, onGo, onChanged, fix, extra }: { fold: HealthFold<HealthIssue>; now: number; onGo?: (to: NextAction) => void; onChanged?: () => void; fix?: ReactNode; extra?: ReactNode }) {
   const guide = healthGuide(fold.titleKey);
   const desktop = useDesktopSurface();
   // The Inbox renders these rows with no store around them too (its own page fixtures).
@@ -132,7 +133,8 @@ export function HealthFoldRow({ fold, now, onGo, onChanged }: { fold: HealthFold
       <div><dt className="text-[12px] text-ink-secondary">{t("ux.l2b.health.q.canDo")}</dt><dd className="text-ink">{t(guide.canDo)}</dd></div>
     </dl>
     {guide.action.kind === "retry-deletions" && <DeletionState fold={fold} onChanged={onChanged} />}
-    {guide.action.kind === "go" && onGo && settingsPagesHere(desktop) && <div className="mt-3"><button type="button" className={button} onClick={() => onGo((guide.action as { to: NextAction }).to)}>{goLabel(guide.action.to)}</button></div>}
+    {fix ? <div className="mt-3">{fix}</div> : guide.action.kind === "go" && onGo && settingsPagesHere(desktop) && <div className="mt-3"><button type="button" className={button} onClick={() => onGo((guide.action as { to: NextAction }).to)}>{goLabel(guide.action.to)}</button></div>}
+    {extra}
     <button type="button" aria-expanded={open} aria-controls={detail} onClick={() => setOpen(!open)}
       className="mt-2 min-h-8 rounded-md text-[12px] text-ink-secondary underline-offset-2 hover:text-ink hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">
       {open ? t("ux.l2b.health.less") : t("ux.l2b.health.more")}

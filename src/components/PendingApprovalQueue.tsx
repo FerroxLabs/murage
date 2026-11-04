@@ -3,10 +3,12 @@
 // not a list: the owner sees "N requests waiting", picks any request by its own
 // id, and answers it with that card's own controls.
 import { useEffect, useReducer, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import { onSelectApprovalRequest } from "@/lib/approval-focus";
 import type { Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { nextSelection, queueStatusWords, requestsWaiting, selectRequest, type QueueSelection, type QueueStatus } from "@/lib/approval-queue";
-import { PendingApprovalActions, PendingApprovalPanel, approvalLabel, type Pending } from "./PendingApproval";
+import { PendingApprovalActions, PendingApprovalPanel, approvalLabel, useApprovalBar, type Pending } from "./PendingApproval";
 
 export interface QueueEntry {
   requestId: string;
@@ -112,6 +114,9 @@ export function PendingApprovalQueue({
   const selectedId = selection.current.id;
   const [statuses, setStatuses] = useState<Record<string, QueueStatus>>({});
   const [notice, setNotice] = useState<string | undefined>(undefined);
+  // APPROVAL-ONE-CARD: on the phone the panel is a bottom bar in the
+  // composer's place, as tall as its words, with no height cap of its own
+  const bar = useApprovalBar();
 
   // The selected request left without this panel's answer: it settled on
   // another device or surface. Say so, beside the new count.
@@ -127,6 +132,17 @@ export function PendingApprovalQueue({
     setNotice(statuses[before] === "sending" ? undefined : "Answered elsewhere.");
   }, [approvals, selectedId, statuses]);
 
+  // The chat row's Answer names its request: select that one here, at once,
+  // so the panel focus lands on shows it (never another request's buttons).
+  const live = useRef(approvals);
+  live.current = approvals;
+  useEffect(() => onSelectApprovalRequest((id) => {
+    if (!live.current.some((pending) => pending.requestId === id) || selection.current.id === id) return;
+    selection.current = selectRequest(selection.current, live.current, id);
+    setNotice(undefined);
+    flushSync(rerender);
+  }), []);
+
   // statuses of cards that are gone are dropped
   useEffect(() => {
     setStatuses((prev) => {
@@ -139,7 +155,7 @@ export function PendingApprovalQueue({
   if (!selected) return null;
   const entries = approvalQueueEntries(approvals, { whoFor, routineFor, statusFor: (id) => statuses[id] ?? "waiting" });
   return (
-    <div className="mb-2 flex max-h-[70dvh] flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card">
+    <div data-approval-queue={bar ? "bar" : "panel"} className={cn("mb-2 flex flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card", !bar && "max-h-[70dvh]")}>
       {approvals.length > 1 ? (
         <ApprovalQueueList
           entries={entries}
@@ -154,7 +170,7 @@ export function PendingApprovalQueue({
       ) : (
         <span className="sr-only" aria-live="polite">{notice ? `${notice} ` : ""}{requestsWaiting(approvals.length)}</span>
       )}
-      <PendingApprovalPanel pending={selected} count={approvals.length} index={approvals.indexOf(selected)} />
+      <PendingApprovalPanel pending={selected} who={whoFor(selected)} bot={botFor(selected)} threadId={threadId} />
       {approvals.map((pending) => (
         <div key={pending.requestId} hidden={pending.requestId !== selectedId} data-request-actions={pending.requestId}>
           <PendingApprovalActions
