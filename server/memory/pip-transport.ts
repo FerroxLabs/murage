@@ -15,6 +15,9 @@ import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import { ensureGrokInjectSlug } from "../drivers/acp/grok.ts";
+import type { LearningGate } from "./learning-send.ts";
+import type { FixedPrompt } from "./fixed-prompt.ts";
+export { fixedPrompt, type FixedPrompt } from "./fixed-prompt.ts";
 
 export type JsonSchema = Record<string, unknown>;
 export type PipEngine = "fuigo" | "grok" | "claude";
@@ -48,7 +51,7 @@ export interface IsolationReport {
 }
 
 export interface TextOnlyTurnInput {
-  system: string; text: string; model: string; providerRoute?: ProviderTurnRoute;
+  system: FixedPrompt; text: string; model: string; providerRoute?: ProviderTurnRoute;
   outputSchema: JsonSchema; signal: AbortSignal; maxOutputTokens: number; maxOutputBytes: number;
   context: { botId: string; runId: string; family: string; attempt: number };
   /** Optional host-owned transport context (B3 supplies it; absent in plain callers). */
@@ -60,6 +63,12 @@ export interface TextOnlyTurnInput {
      *  request leaves or the process starts. Anything but "none" means what the request carries is no longer admissible as read; the
      *  adapter throws readMoved() before anything is sent or spawned. */
     fence?: () => AdmissionFenceAnswer;
+    /** The same read check without the charge (MEM-QUEUED-LEARNING-FENCE): a process transport that awaits after its fence (child
+     *  registration) asks it again immediately before the prompt write; anything but "none" stops the child with nothing written. */
+    recheck?: () => AdmissionFenceAnswer;
+    /** The call's one learning gate (memory/learning-send.ts, r8 section 1). When set, the adapter releases through it at its physical
+     *  write (the fetch, Claude's stdin.end, or the prompt-file write plus spawn for Fuigo and Grok) instead of `fence` and `recheck`. */
+    gate?: LearningGate;
   };
 }
 /** "paid-cap": the caller's family has spent its paid calls (pip-reflect MAX_PAID_CALLS); like a move, nothing is sent. */

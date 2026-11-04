@@ -141,7 +141,8 @@ describe("browser approval cards by kind", () => {
     const message: Message = { id: "g", role: "bot", kind: "options", at: 1, card: { title: "Approval", subtitle: "Synthetic web search", options: ["Allow", "Deny"], tool: "WebSearch" } };
     const markup = render(message);
     expect(markup).toContain("Synthetic web search");
-    expect(markup).toContain("Waiting for your answer below");
+    // APPROVAL-ONE-CARD: no pointer line; the composer panel is the one place to answer
+    expect(markup).not.toContain("Waiting for your answer below");
     expect(markup).not.toContain("<button");
   });
 

@@ -341,7 +341,6 @@ server/harness/bus-sign-in.test.ts	extended
 server/harness/event-log-read-cost.test.ts	extended
 server/harness/memory-adapter.test.ts	extended
 server/harness/registry-platform.test.ts	extended
-server/harness/registry.test.ts	extended
 server/held-scan.test.ts	extended
 server/hermes-import-route.test.ts	extended
 server/hermes-upgrade-live.test.ts	extended
@@ -1277,6 +1276,7 @@ src/lib/page-visible.test.ts	extended
 src/lib/paged-screen-frame.test.ts	extended
 src/lib/palette-rank.test.ts	extended
 src/lib/phone-client.test.ts	extended
+src/lib/phone-intake-notice.test.ts	extended
 src/lib/phone-setup.test.ts	extended
 src/lib/picker-model-metadata.test.ts	extended
 src/lib/picture-hint-vision.test.ts	extended
@@ -1395,7 +1395,6 @@ src/lib/visual-viewport.test.ts	extended
 src/lib/voice-host.test.ts	extended
 src/lib/webhook-credentials.test.ts	extended
 src/lib/webhooks.test.ts	extended
-src/lib/whats-new.test.ts	extended
 src/lib/window-confirm.test.ts	extended
 src/lib/working-time.test.ts	extended
 src/lib/workspace-pane.test.ts	extended

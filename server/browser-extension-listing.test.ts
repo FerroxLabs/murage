@@ -22,7 +22,7 @@ it("a release build with its store item links the Chrome Web Store listing, with
   expect(build).toEqual({ mode: "release", chromeWebStoreId: ID });
   const listing = browserExtensionListing(build);
   expect(listing).toEqual({ build: "release", storeUrl: `https://chromewebstore.google.com/detail/${ID}` });
-  expect(browserExtensionSetupReason(listing)).toBe("Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.");
+  expect(browserExtensionSetupReason(listing)).toBe("If Murage for Chrome is not in your browser, add it from the Chrome Web Store. Then press Set up my browser below and open its side panel.");
 });
 
 it("the shipped release ID links its live listing", () => {

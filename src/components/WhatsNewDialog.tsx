@@ -1,22 +1,21 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// What's new in 0.1.61 and 1.0.2: three cards in the approved 0.1.59 design (the
-// whats-new-art/mockup-boards WN1, WN3 and WN4 layouts), with the copy and art
-// Sean approved in whats-new-art-0161 (preview.html, brief.md). Sizes and
-// colours are the mockups'; the colours are the `--wn-*` art-panel tokens in
-// styles.css, which do not follow the skin.
+// What's new: one page per release, in the approved 0.1.59 design (the
+// whats-new-art/mockup-boards WN1, WN3 and WN4 layouts). The words and the
+// picture names for every version are data in whats-new-pages.ts; this file
+// draws them. Sizes and colours are the mockups'; the colours are the `--wn-*`
+// art-panel tokens in styles.css, which do not follow the skin.
+//
+// A page is a hero, then a tiles card and a list card when the page has tiles
+// or lines, so a release with one or two pictures still gets its own page.
+// The hero names the version. A version with no page here shows nothing: no
+// other version's words stand in for it.
 //
 // The dialog only presents, and loads on first open (WhatsNewHost.tsx), so
-// none of it rides the first paint. Whoever mounts it decides what each
-// shortcut does and records the page as seen when it closes, however it
-// closes: X (card 1, as in the mockups), Escape, Got it, Let's go, or any
-// shortcut.
-//
-// 1.0.2 has its own hero, six tiles and list (whats-new-art-0102). 1.0.6 leads
-// with Murage for Chrome in the Chrome Web Store and reuses that art, no new
-// pictures. Every other version with a page keeps the 0.1.61 content. The
-// pictures all load with this lazy chunk, never with the first paint.
+// none of it, pictures included, rides the first paint. Whoever mounts it
+// decides what each shortcut does and records the page as seen when it
+// closes, however it closes: X, Escape, Got it, Let's go, or any shortcut.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
@@ -34,117 +33,35 @@ import tileChrome from "@/assets/whats-new/tile-chrome.webp";
 import tileSpeed from "@/assets/whats-new/tile-speed.webp";
 import tileDesktops from "@/assets/whats-new/tile-desktops.webp";
 import tileLabs from "@/assets/whats-new/tile-labs.webp";
+import tileFuigoStart from "@/assets/whats-new/tile-fuigo-start.webp";
+import tileOnePlace from "@/assets/whats-new/tile-one-place.webp";
+import { whatsNewCards, whatsNewContent, type WhatsNewAction, type WhatsNewArt, type WhatsNewCardKind } from "./whats-new-pages";
 
-export type WhatsNewAction =
-  | "teams" | "rooms" | "blocks" | "packs" | "shapes" | "gemini" | "longwork"
-  | "memory" | "routing" | "engines" | "chrome" | "speed" | "desktops" | "library"
-  | "allChats" | "draftOnly" | "venues" | "ownWords" | "fuigo" | "backups";
+export type { WhatsNewAction } from "./whats-new-pages";
+export {
+  WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106,
+  WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, whatsNewCards, whatsNewContent,
+} from "./whats-new-pages";
 
-type Tile = { action: Exclude<WhatsNewAction, "teams" | "memory">; img: string; alt: string; dot: string; title: string; body: string };
+/** Each picture name to its file. */
+export const WHATS_NEW_ART: Readonly<Record<WhatsNewArt, string>> = {
+  "team-hero": teamHero, "memory-hero": memoryHero,
+  "tile-blocks": tileBlocks, "tile-chrome": tileChrome, "tile-desktops": tileDesktops, "tile-engines": tileEngines, "tile-gemini": tileGemini,
+  "tile-labs": tileLabs, "tile-longwork": tileLongwork, "tile-packs": tilePacks, "tile-rooms": tileRooms, "tile-routing": tileRouting,
+  "tile-shapes": tileShapes, "tile-speed": tileSpeed, "tile-fuigo-start": tileFuigoStart, "tile-one-place": tileOnePlace,
+};
 
-export const WHATS_NEW_CARD_COUNT = 3;
-
-export const WHATS_NEW_TILES: Tile[] = [
-  { action: "rooms", img: tileRooms, alt: "Three glowing orange glass pebbles sharing one pool of light", dot: "bg-[var(--wn-accent)]", title: "Rooms that work as one", body: "Every bot in a room sees what its teammates said, and bots on Fuigo can ask and hand off to teammates again." },
-  { action: "blocks", img: tileBlocks, alt: "A stack of gold glass slabs with one slid forward", dot: "bg-[var(--wn-dot-gold)]", title: "Saved prompt blocks", body: "Save a character or a brand look as a named block, and every change keeps its own version." },
-  { action: "packs", img: tilePacks, alt: "A fan of blank violet glass panes", dot: "bg-[var(--wn-dot-violet)]", title: "Reference packs", body: "Keep up to 16 reference images as a named pack and use them again whenever you need them." },
-  { action: "shapes", img: tileShapes, alt: "Four blue frames of light in different proportions", dot: "bg-[var(--wn-dot-blue)]", title: "Any shape, any size", body: "Portrait, landscape or exact pixels, several at once, PNG, JPEG or WebP, a seed or a clear background, where the model allows." },
-  { action: "gemini", img: tileGemini, alt: "Two mint spheres joined by a looping ribbon of light", dot: "bg-[var(--wn-dot-mint)]", title: "Gemini for chat and images", body: "Add your Google Gemini key once and bots can chat on Gemini and make images with it." },
-  { action: "longwork", img: tileLongwork, alt: "One unbroken line of white light crossing a dark plain", dot: "bg-[var(--wn-ink)]", title: "Work runs to the end", body: "No fixed clocks: a working turn or a long command stops only when it goes quiet or you press Stop." },
-];
-
-export const WHATS_NEW_MORE: string[] = [
-  "Your recovery key stays out of cloud-synced folders",
-  "A one-time Move for a recovery key that already syncs",
-  "Translations load when you pick them, so Murage opens faster",
-  "The first 10 images in a message go through, with a note for the rest",
-  "Withheld replies stay withheld, in memory and handoffs too",
-  "Each teammate gets its turn right after its own reply",
-  "Room replies stop only after 20 quiet minutes",
-  "Long image renders are followed to the end",
-  "See each image model's limits and when it last worked",
-  "Every saved image-capable key shows in Image generation",
-  "Slow models on MiniMax, xAI and OpenAI-compatible engines get time to answer",
-  "Tool names match the engine each bot runs on",
-];
-
-/** The 1.0.2 tiles, from the 1.0.2 changelog. Each opens a real place in the app. */
-export const WHATS_NEW_TILES_102: Tile[] = [
-  { action: "routing", img: tileRouting, alt: "A ring of dim glass pebbles with one glowing orange pebble picked out by a thread of light", dot: "bg-[var(--wn-accent)]", title: "Ask the room, the right bot answers", body: "In a group chat, Murage picks the bot best placed to reply, in about a second." },
-  { action: "library", img: tileLabs, alt: "Five white glass pebbles in a crescent, one with a warm glow", dot: "bg-[var(--wn-ink)]", title: "Six teams, ready to hire", body: "Dev Shop, Marketing Agency, SEO Content Engine Room, Rival Watch, Follow-Up Desk and Community Lead Finder, each with a lead, a workflow and a first routine." },
-  { action: "engines", img: tileEngines, alt: "A glowing blue sphere resting among three differently shaped glass cradles", dot: "bg-[var(--wn-dot-blue)]", title: "Any model, any bot", body: "Move a bot between Claude, GPT, Grok and Gemini. It keeps working and tells you what it can do there." },
-  { action: "chrome", img: tileChrome, alt: "Two matching gold glass rings, one set inside the other", dot: "bg-[var(--wn-dot-gold)]", title: "Your bot, right in Chrome", body: "Work beside your bot in Chrome, with its own name and colour and the same access levels you use in the app." },
-  { action: "speed", img: tileSpeed, alt: "One calm ribbon of mint light running smoothly across a dark plane", dot: "bg-[var(--wn-dot-mint)]", title: "Long chats stay quick", body: "Memory answers in about a tenth of a second, even on a long history, and takes a fraction of the disk." },
-  { action: "desktops", img: tileDesktops, alt: "A neat row of eight violet glass panes, one slightly brighter", dot: "bg-[var(--wn-dot-violet)]", title: "Up to eight desktops per bot", body: "Give a busy bot several local desktops of its own and let it work on them side by side." },
-];
-
-export const WHATS_NEW_MORE_102: string[] = [
-  "Memory stays compact on long conversations",
-  "A Needs you block and an Inbox card list the memories waiting for your word",
-  "Keep, Keep all, Later, Edit and Undo on every waiting memory",
-  "One quiet note on your phone when memories are waiting",
-  "Unmatched actions sit in the Inspector beside the chat",
-  "House rules keep every word you type",
-  "Pictures through Flux use Flux's live image service",
-  "Murage checks your Flux key once and waits for you",
-  "Up to eight desktops, one for each bot",
-  "MCP tools start from Windows command shims",
-  "Phone pairing picks your real Wi-Fi or Ethernet address",
-  "Every release is checked on an Intel Mac",
-];
-
-/** The 1.0.6 tiles, from the 1.0.6 changelog, on art already in the app. Each opens a real place in the app. */
-export const WHATS_NEW_TILES_106: Tile[] = [
-  { action: "allChats", img: tileBlocks, alt: "A stack of gold glass slabs with one slid forward", dot: "bg-[var(--wn-dot-gold)]", title: "Every chat in one list", body: "Find any conversation in one searchable list, opened from a wider chat pop-up." },
-  { action: "draftOnly", img: tilePacks, alt: "A fan of blank violet glass panes", dot: "bg-[var(--wn-dot-violet)]", title: "Bots that draft, you send", body: "A draft-only bot prepares replies for you to review and send, on every engine and channel. Ticket Triage in the library works this way." },
-  { action: "venues", img: tileRooms, alt: "Three glowing orange glass pebbles sharing one pool of light", dot: "bg-[var(--wn-accent)]", title: "Bots know where they belong", body: "Each bot knows which projects and groups it is part of." },
-  { action: "ownWords", img: tileGemini, alt: "Two mint spheres joined by a looping ribbon of light", dot: "bg-[var(--wn-dot-mint)]", title: "Memories in your own words", body: "What your bots learn from you is anchored to what you said, and Forget clears it the moment you click." },
-  { action: "fuigo", img: tileSpeed, alt: "One calm ribbon of mint light running smoothly across a dark plane", dot: "bg-[var(--wn-dot-blue)]", title: "Fuigo starts fast on Windows", body: "Fuigo starts quickly and steadily on Windows, however Murage was installed." },
-  { action: "backups", img: tileLongwork, alt: "One unbroken line of white light crossing a dark plain", dot: "bg-[var(--wn-ink)]", title: "Backups that cover it all", body: "Every backup includes every folder Murage keeps." },
-];
-
-export const WHATS_NEW_MORE_106: string[] = [
-  "At Full access, your own scripts on disk run straight through",
-  "Bots look through your past chats without stopping to ask",
-  "A new chat follows its bot's model, and the chip shows it",
-  "Chats keep their live updates on a desktop with no internet",
-  "Hand-offs wait for their check, then land in the right chat",
-  "A Codex that needs a moment to start says so",
-  "Stop on a Codex turn ends it as stopped by you",
-  "Stop on a shared cloud computer ends just your turn",
-  "Deleting conversations on long histories finishes faster",
-  "Account and card numbers are masked in more formats, IBANs included",
-  "An app connects under the label you confirm",
-  "Library cards say plainly what each template does for you",
-];
-
-export type WhatsNewContentId = "0.1.61" | "1.0.2" | "1.0.6";
-
-/** Which content a page shows: 1.0.2 and 1.0.6 have their own; every other version with a page keeps 0.1.61's. */
-export function whatsNewContentFor(version: string | undefined): WhatsNewContentId {
-  return version === "1.0.2" || version === "1.0.6" ? version : "0.1.61";
+/** How many cards `version`'s page has: 0 when it has no page. */
+export function whatsNewCardCount(version: string | undefined): number {
+  const page = whatsNewContent(version);
+  return page ? whatsNewCards(page).length : 0;
 }
 
-type Hero = { img: string; alt: string; fit: string; title: string; body: string; action: "teams" | "memory" | "chrome"; button: string };
-
-/** Each content set: the hero, the six tiles and the list of small wins. */
-export const WHATS_NEW_CONTENT: Readonly<Record<WhatsNewContentId, { hero: Hero; tiles: Tile[]; more: string[] }>> = {
-  "0.1.61": {
-    hero: { img: teamHero, alt: "A constellation of orange orbs of light, each joined to every other by fine threads", fit: "object-cover", title: "Your team, in step.", body: "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.", action: "teams", button: "Open Teams" },
-    tiles: WHATS_NEW_TILES,
-    more: WHATS_NEW_MORE,
-  },
-  "1.0.2": {
-    hero: { img: memoryHero, alt: "A slim glowing column of fine glass layers with one small orange orb leaning toward you", fit: "object-cover", title: "Bots that remember what matters", body: "Your bots now check with you before they keep something about you. Keep it, edit it or let it go from one Needs you list.", action: "memory", button: "Open Memory" },
-    tiles: WHATS_NEW_TILES_102,
-    more: WHATS_NEW_MORE_102,
-  },
-  // The Chrome art is square: shown whole at the right, so the rings stay clear of the title.
-  "1.0.6": {
-    hero: { img: tileChrome, alt: "Two matching gold glass rings, one set inside the other", fit: "object-contain object-right", title: "Murage for Chrome is here", body: "Add it from the Chrome Web Store and your bot works beside you in your own browser, on the sites you choose.", action: "chrome", button: "Open Chrome Web Store" },
-    tiles: WHATS_NEW_TILES_106,
-    more: WHATS_NEW_MORE_106,
-  },
+/** The tiles card's grid: as many columns as tiles, up to three. */
+const TILE_GRID: Record<number, string> = {
+  1: "grid-cols-1",
+  2: "grid-cols-2 max-sm:grid-cols-1",
+  3: "grid-cols-3 max-[820px]:grid-cols-2 max-sm:grid-cols-1",
 };
 
 // Shared control styles. 44px targets everywhere; a visible focus ring that
@@ -153,6 +70,8 @@ const focusRing = "outline-none focus-visible:outline-2 focus-visible:outline-of
 const primaryDark = cn("min-h-11 cursor-pointer rounded-xl border-0 bg-[var(--wn-accent)] px-5 text-[14px] font-semibold text-[var(--wn-on-accent)] hover:brightness-110", focusRing);
 const ghostDark = cn("min-h-11 cursor-pointer rounded-xl border border-[var(--wn-ghost-edge)] bg-transparent px-[18px] text-[14px] font-medium text-[var(--wn-ink)] hover:bg-white/5", focusRing);
 const headingFocus = "outline-none";
+// What scrolls on a card takes focus, so a keyboard alone can scroll it on a short or narrow window.
+const bodyFocus = "outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[var(--wn-accent)]";
 
 function CloseIcon() {
   return (
@@ -163,12 +82,12 @@ function CloseIcon() {
 }
 
 /** One dot per card, the current one a long pill. Each dot is a button that
- *  goes to its card, on every card: on the last card the dots used to be a
- *  picture, and there was no way back at all. */
-function Pager({ index, onGo }: { index: number; onGo?: (index: number) => void }) {
+ *  goes to its card, on every card. A one-card page has no pager. */
+function Pager({ index, count, onGo }: { index: number; count: number; onGo?: (index: number) => void }) {
+  if (count < 2) return null;
   return (
-    <span role="group" aria-label={`Card ${index + 1} of ${WHATS_NEW_CARD_COUNT}`} className="flex">
-      {Array.from({ length: WHATS_NEW_CARD_COUNT }, (_, dot) => (
+    <span role="group" aria-label={`Card ${index + 1} of ${count}`} className="flex">
+      {Array.from({ length: count }, (_, dot) => (
         <button
           key={dot}
           type="button"
@@ -185,10 +104,14 @@ function Pager({ index, onGo }: { index: number; onGo?: (index: number) => void 
   );
 }
 
+function ReleaseNotesLink({ url }: { url: string }) {
+  return <a href={url} target="_blank" rel="noopener noreferrer" className={cn("flex min-h-11 items-center rounded-xl px-3 text-[13.5px] font-medium text-[var(--wn-accent-ink)] hover:text-[var(--wn-accent-ink-hover)]", focusRing)}>Read the full release notes</a>;
+}
+
 export interface WhatsNewCardProps {
   index: number;
-  /** Which version's page this is. Without it, the 0.1.61 page. */
-  version?: string;
+  /** Which version's page this is. A version with no page draws nothing. */
+  version: string;
   releaseNotesUrl: string;
   onNext: () => void;
   /** The card before this one. Offered on every card after the first. */
@@ -202,41 +125,49 @@ export interface WhatsNewCardProps {
 
 /** One card, by index. Rendered alone by the tests; the dialog wraps it. */
 export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, onGo, onClose, onAction, headingRef }: WhatsNewCardProps): ReactNode {
+  const page = whatsNewContent(version);
+  if (!page) return null;
+  const cards = whatsNewCards(page);
+  const kind: WhatsNewCardKind | undefined = cards[index];
+  if (!kind) return null;
+  const count = cards.length, last = index === count - 1;
   const titleId = `whats-new-title-${index + 1}`;
-  const { hero, tiles, more } = WHATS_NEW_CONTENT[whatsNewContentFor(version)];
-  if (index === 0) {
+  const { hero, tiles, more } = page;
+  if (kind === "hero") {
     return (
-      <section aria-labelledby={titleId} data-whats-new-card="hero" className={cn(BOX_FRAME, "whats-new-card relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
+      <section aria-labelledby={titleId} data-whats-new-card="hero" data-whats-new-version={version} className={cn(BOX_FRAME, "whats-new-card relative max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(820px,calc(100vw-32px))] rounded-[22px] border border-[var(--wn-edge)] bg-[var(--wn-panel)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
         {/* On the card, not in what scrolls: a short window cannot take Close away. */}
         <button type="button" aria-label="Close" onClick={onClose} className={cn("absolute right-3.5 top-3.5 z-10 flex size-11 cursor-pointer items-center justify-center rounded-xl border-0 bg-[var(--wn-close-ground)] text-[var(--wn-close-ink)] hover:text-[var(--wn-ink-strong)]", focusRing)}><CloseIcon /></button>
-        <BoxBody>
+        <BoxBody tabIndex={0} role="region" aria-labelledby={titleId} className={bodyFocus}>
         <div className="relative h-[342px] bg-[var(--wn-ground)] max-md:h-[260px] [@media(max-height:720px)]:h-[250px]">
-          <img src={hero.img} alt={hero.alt} width={820} height={342} className={cn("block h-full w-full", hero.fit)} />
+          <img src={WHATS_NEW_ART[hero.art]} alt={hero.alt} width={820} height={342} decoding="async" className={cn("block h-full w-full", hero.fit)} />
           <div className="absolute left-[34px] top-[26px] flex gap-2">
-            <span className="rounded-full border border-[var(--wn-chip-edge)] bg-[var(--wn-chip-ground)] px-[11px] py-1.5 text-[12px] font-semibold tracking-[0.06em] text-[var(--wn-accent-ink)]">NEW IN MURAGE</span>
+            <span className="rounded-full border border-[var(--wn-chip-edge)] bg-[var(--wn-chip-ground)] px-[11px] py-1.5 text-[12px] font-semibold tracking-[0.06em] text-[var(--wn-accent-ink)]">NEW IN MURAGE {version}</span>
           </div>
           <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display absolute bottom-[30px] left-[34px] right-[34px] m-0 text-[58px] leading-none tracking-[-0.01em] text-[var(--wn-ink-strong)] max-sm:text-[44px]", headingFocus)}>{hero.title}</h2>
         </div>
         <p className="m-0 px-[34px] pb-2 pt-6 text-[15.5px] leading-[1.55] text-[var(--wn-ink-body)] max-sm:px-5">{hero.body}</p>
         </BoxBody>
-        <BoxFoot className="justify-start gap-2.5 px-[34px] pb-[26px] pt-3 max-sm:px-5">
+        <BoxFoot className="flex-wrap justify-start gap-2.5 px-[34px] pb-[26px] pt-3 max-sm:px-5">
             <button type="button" className={primaryDark} onClick={() => onAction(hero.action)}>{hero.button}</button>
-            <button type="button" className={ghostDark} onClick={onNext}>Next</button>
+            {last
+              ? <><button type="button" className={ghostDark} onClick={onClose}>Got it</button><ReleaseNotesLink url={releaseNotesUrl} /></>
+              : <button type="button" className={ghostDark} onClick={onNext}>Next</button>}
             <span className="grow" />
-            <Pager index={0} onGo={onGo} />
+            <Pager index={index} count={count} onGo={onGo} />
         </BoxFoot>
       </section>
     );
   }
-  if (index === 1) {
+  if (kind === "highlights") {
     return (
       <section aria-labelledby={titleId} data-whats-new-card="highlights" className={cn(BOX_FRAME, "whats-new-card box-border max-h-[calc(100dvh-32px-2*max(var(--inset-top),var(--inset-bottom)))] w-[min(1040px,calc(100vw-32px))] gap-4 rounded-[22px] border border-[var(--wn-edge-soft)] bg-[var(--wn-panel-deep)] text-[var(--wn-ink)] shadow-[0_30px_90px_rgba(0,0,0,0.6)]")}>
         <BoxHead className="flex-col items-stretch gap-1.5 px-8 pt-[30px] max-sm:px-5">
           <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND THERE'S MORE</span>
-          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Made for bigger work</h2>
+          <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>{page.tilesTitle ?? "Made for bigger work"}</h2>
         </BoxHead>
-        <BoxBody className="px-8 py-1 max-sm:px-5">
-        <ul className="m-0 grid list-none grid-cols-3 gap-3.5 p-0 max-[820px]:grid-cols-2 max-sm:grid-cols-1">
+        <BoxBody tabIndex={0} role="region" aria-labelledby={titleId} className={cn("px-8 py-1 max-sm:px-5", bodyFocus)}>
+        <ul className={cn("m-0 grid list-none gap-3.5 p-0", TILE_GRID[Math.min(tiles.length, 3)])}>
           {tiles.map((tile) => (
             <li key={tile.action} className="flex">
               <button
@@ -245,7 +176,7 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
                 onClick={() => onAction(tile.action)}
                 className={cn("flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-[var(--wn-tile-edge)] bg-[var(--wn-tile)] p-0 text-left text-[var(--wn-ink)] transition-colors hover:border-[var(--wn-ghost-edge)]", focusRing)}
               >
-                <img src={tile.img} alt={tile.alt} width={316} height={150} className="block h-[150px] w-full object-cover [@media(max-height:720px)]:h-[100px]" />
+                <img src={WHATS_NEW_ART[tile.art]} alt={tile.alt} width={316} height={150} decoding="async" className="block h-[150px] w-full object-cover [@media(max-height:720px)]:h-[100px]" />
                 <span className="flex flex-col gap-1 px-3.5 pb-3.5 pt-3">
                   <span className="flex items-center gap-2"><span aria-hidden="true" className={cn("size-2 rounded-full", tile.dot)} /><span className="text-[14.5px] font-semibold">{tile.title}</span></span>
                   <span className="text-[13px] leading-normal text-[var(--wn-ink-muted)]">{tile.body}</span>
@@ -255,13 +186,14 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
           ))}
         </ul>
         </BoxBody>
-        <BoxFoot className="justify-start gap-2.5 px-8 pb-[26px] max-sm:px-5">
+        <BoxFoot className="flex-wrap justify-start gap-2.5 px-8 pb-[26px] max-sm:px-5">
           <button type="button" className={ghostDark} onClick={onBack}>Back</button>
-          <button type="button" className={primaryDark} onClick={onNext}>Next</button>
-          <button type="button" className={ghostDark} onClick={onClose}>Got it</button>
+          {last
+            ? <><button type="button" className={cn(primaryDark, "px-[22px]")} onClick={onClose}>Let's go</button><ReleaseNotesLink url={releaseNotesUrl} /></>
+            : <><button type="button" className={primaryDark} onClick={onNext}>Next</button><button type="button" className={ghostDark} onClick={onClose}>Got it</button></>}
           <span className="grow" />
           <span className="text-[12.5px] text-[var(--wn-ink-faint)] max-sm:hidden">Click any card to try it</span>
-          <span className="ml-3.5"><Pager index={1} onGo={onGo} /></span>
+          <span className="ml-3.5"><Pager index={index} count={count} onGo={onGo} /></span>
         </BoxFoot>
       </section>
     );
@@ -275,7 +207,7 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
         <span className="text-[12px] font-semibold tracking-[0.08em] text-[var(--wn-accent-ink)]">AND A LOT MORE</span>
         <h2 id={titleId} ref={headingRef} tabIndex={-1} className={cn("whats-new-display m-0 text-[42px] leading-[1.05]", headingFocus)}>Plus a long list of small wins</h2>
       </BoxHead>
-      <BoxBody className="relative px-[38px] max-sm:px-5">
+      <BoxBody tabIndex={0} role="region" aria-labelledby={titleId} className={cn("relative px-[38px] max-sm:px-5", bodyFocus)}>
       <ul className="relative m-0 grid list-none grid-cols-2 gap-x-9 gap-y-3.5 p-0 max-sm:grid-cols-1">
         {more.map((line) => (
           <li key={line} className="flex items-start gap-3">
@@ -285,12 +217,12 @@ export function WhatsNewCard({ index, version, releaseNotesUrl, onNext, onBack, 
         ))}
       </ul>
       </BoxBody>
-      <BoxFoot className="relative justify-start gap-2.5 px-[38px] pb-7 max-sm:px-5">
-        <button type="button" className={ghostDark} onClick={onBack}>Back</button>
+      <BoxFoot className="relative flex-wrap justify-start gap-2.5 px-[38px] pb-7 max-sm:px-5">
+        {index > 0 && <button type="button" className={ghostDark} onClick={onBack}>Back</button>}
         <button type="button" className={cn(primaryDark, "px-[22px]")} onClick={onClose}>Let's go</button>
-        <a href={releaseNotesUrl} target="_blank" rel="noopener noreferrer" className={cn("flex min-h-11 items-center rounded-xl px-3 text-[13.5px] font-medium text-[var(--wn-accent-ink)] hover:text-[var(--wn-accent-ink-hover)]", focusRing)}>Read the full release notes</a>
+        <ReleaseNotesLink url={releaseNotesUrl} />
         <span className="grow" />
-        <Pager index={2} onGo={onGo} />
+        <Pager index={index} count={count} onGo={onGo} />
       </BoxFoot>
     </section>
   );
@@ -345,8 +277,9 @@ export function WhatsNewDialog({
     heading.current?.focus();
   }, [index, open]);
 
-  if (!open) return null;
-  const go = (target: number) => { moved.current = true; setIndex(Math.max(0, Math.min(target, WHATS_NEW_CARD_COUNT - 1))); };
+  const count = whatsNewCardCount(version);
+  if (!open || !version || count === 0) return null;
+  const go = (target: number) => { moved.current = true; setIndex(Math.max(0, Math.min(target, count - 1))); };
   const next = () => go(index + 1);
   const back = () => go(index - 1);
   const trap = (event: KeyboardEvent<HTMLDialogElement>) => {
