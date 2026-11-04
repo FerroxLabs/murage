@@ -102,8 +102,8 @@ async function markerIdle(label: string) {
 }
 
 // The owner's House Rules open every prompt (server/house-rules.ts); the
-// speaker line comes right after them.
-const speaker = (system: string) => /^(?:<house-rules>[\s\S]*?<\/house-rules>\s*)?You are ([^,]+), a bot in the room/.exec(system)?.[1];
+// speaker line comes right after them and the reply habits (U24 S1).
+const speaker = (system: string) => /^(?:<house-rules>[\s\S]*?<\/house-rules>\s*)?(?:How you reply:\n(?:- [^\n]*\n)+\n)?You are ([^,]+), a bot in the room/.exec(system)?.[1];
 
 posixOnly("a bot carries its own notebook, memory, skills and team brief into every turn", () => {
   beforeAll(async () => {

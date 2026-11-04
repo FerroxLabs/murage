@@ -68,7 +68,7 @@ export function trayQuickAnswer(card: Card | undefined, context: { stopHit?: boo
 const oneLine = (value: string) => value.replace(/\s+/g, " ").trim();
 
 export interface TraySummaryDeps {
-  page: Pick<InboxPage, "decisions" | "items">;
+  page: Pick<InboxPage, "decisions" | "items" | "snoozedOwed">;
   bots: readonly BotRecord[];
   chiefId?: string;
   /** One message by id, and the newest tool line of a turn: what the tray
@@ -123,7 +123,8 @@ export function traySummary(deps: TraySummaryDeps): TraySummary {
   const others = visible.filter(bot => bot !== chief).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
   const ordered = [...(chief ? [chief] : []), ...others];
   return {
-    needsYou: deps.page.decisions + Math.max(0, deps.signedOutEngines ?? 0),
+    // Snoozed is not answered (UX L2B): the menu bar adds snoozed owed items back, as the sidebar badge does.
+    needsYou: deps.page.decisions + Math.max(0, deps.page.snoozedOwed ?? 0) + Math.max(0, deps.signedOutEngines ?? 0),
     items,
     working,
     bots: ordered.slice(0, BOT_LIMIT).map(bot => ({ id: bot.id, name: bot.name, chief: bot === chief })),

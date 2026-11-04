@@ -53,8 +53,8 @@ test('Telegram token, pairing, refresh and revoke remain deliberate with recover
   await page.goto(`${origin}/__telegram`);
   await expect(page.getByRole('link',{name:'BotFather',exact:true})).toHaveAttribute('href','https://t.me/BotFather');
   await page.getByLabel('Bot token',{exact:true}).fill('fake-token');await page.getByRole('button',{name:'Save token'}).click();
-  await expect(page.getByText('Token saved. Pairing has not started.')).toBeVisible();expect(pairs).toBe(0);
-  await page.getByRole('button',{name:'Pair with Chief'}).click();await expect(page.getByText('/pair PAIR1234')).toBeVisible();
+  // Ten jobs (job 7): a first token goes straight on to the pairing code, so there is no second button to press.
+  await expect(page.getByText('/pair PAIR1234')).toBeVisible();expect(pairs).toBe(1);
   await expect(page.getByRole('link',{name:'Open Telegram bot'})).toHaveAttribute('href','https://t.me/FixtureBot');
   await expect(page.getByLabel('Bot token',{exact:true})).toBeDisabled();
   await expect(page.getByLabel('Bot token',{exact:true})).toHaveValue('');

@@ -35,7 +35,8 @@ import {
   FirstRunBubble,
   FirstRunLine,
 } from "./FirstRunChrome";
-import { FirstRunBackupsRow } from "./FirstRunBackupsRow";
+import { LazyFirstRunBackupsRow } from "./FirstRunBackupsRowLazy";
+import { useFirstRunBackupRun } from "./first-run-backup-run";
 import { companionBridge } from "@/lib/companion-bridge";
 
 const copy = FIRST_RUN_COPY.routines.done;
@@ -69,6 +70,9 @@ function DoneRow({ title, line, button, onPress, primary = false, disabled = fal
 export function FirstRunNextCard({ bot }: { bot: Bot }) {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface();
+  // The backup step starts here, on mount, from always-loaded code; only the
+  // row that reports it loads on first use.
+  const backup = useFirstRunBackupRun();
   const [hired, setHired] = useState(false);
   const [phoneOpen, setPhoneOpen] = useState(false);
   // null until the read-only probe answers; then whether a code can be made.
@@ -136,7 +140,7 @@ export function FirstRunNextCard({ bot }: { bot: Bot }) {
 
       {/* Backups are a smart default, and one press. The row reads the real
           schedule before it says anything. */}
-      <FirstRunBackupsRow />
+      <LazyFirstRunBackupsRow backup={backup} />
     </FirstRunBubble>
   );
 }

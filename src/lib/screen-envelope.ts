@@ -160,7 +160,9 @@ const SECRET_SHAPES: readonly RegExp[] = [
   /\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}/g,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\bgl(?:pat|dt|rtr?)-[A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]+)*/g,
   /\bxox[abposr]-[A-Za-z0-9-]{20,}/g,
+  /\bxapp-\d-[A-Za-z0-9-]{20,}/g,
   /\bAKIA[0-9A-Z]{16}\b/g,
   /\bAIza[0-9A-Za-z_-]{30,}/g,
   /\bnpm_[A-Za-z0-9]{20,}/g,
@@ -174,9 +176,12 @@ const KEY_VALUE = /(\b(?:api[_-]?key|apikey|secret|token|password|passwd|authori
 export const REMOVED = "[removed]";
 
 export function scrubSecrets(words: string): string {
-  let out = words;
+  // Whole-credential rules run first: a token shape replaced inside a
+  // Bearer or key=value credential would end that match at the marker and
+  // leave the rest of the credential behind.
+  let out = words.replace(BEARER, `$1${REMOVED}`).replace(KEY_VALUE, `$1${REMOVED}`);
   for (const shape of SECRET_SHAPES) out = out.replace(shape, REMOVED);
-  return out.replace(BEARER, `$1${REMOVED}`).replace(KEY_VALUE, `$1${REMOVED}`);
+  return out;
 }
 
 // ── which screen is this ─────────────────────────────────────────────────
@@ -212,6 +217,9 @@ export interface HelpScreen {
   botId?: string;
   section?: string;
   gates: { id: string; reasonKey: string }[];
+  /** The index key a feedback report names when it differs from the help page shown (Today and Needs you show the
+   *  general help page but have their own names in the feedback tables). */
+  feedbackKey?: string;
 }
 
 export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
@@ -243,8 +251,11 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
     case "team-map": return make("map", "map");
     case "routines": return make("routines", "routines");
     case "skill-recorder": return make("skill-recorder", "skill-recorder");
-    // No index entry yet, so no screen name the feedback tables would refuse: the general help page, never the chat behind them.
-    case "today": case "needs-you": case "health": return make("help", "help");
+    // The general help page, never the chat behind them. A feedback report still names Today and Needs you, which have
+    // their own names in the feedback tables; Health has none yet and is named as the help page.
+    case "today": return make("help", "help", { feedbackKey: "today" });
+    case "needs-you": return make("help", "help", { feedbackKey: "needs-you" });
+    case "health": return make("help", "help");
     default: break;
   }
   if (input.noEngines && !input.enginesOff) return make("no-engines", "no-engines");
@@ -270,7 +281,9 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
 const english = (key: string): string | undefined =>
   Object.hasOwn(en, key) ? (en as Record<string, string>)[key] : undefined;
 const FIXED_NAME: Readonly<Record<string, string>> = { chat: "Chat", group: "Group chat" };
-const UNKNOWN_SCREEN = "unknown";
+/** A key with no index entry is named as the general help page, a real screen, never "unknown": a report that names no
+ *  screen cannot be acted on, and the tables hold no "unknown" for a caller to send. */
+const FALLBACK_SCREEN = "help";
 function fixedTitle(entry: ScreenIndexEntry): string {
   const filled = (english(entry.title) ?? entry.key).replace(/\{name\}/g, FIXED_NAME[entry.key] ?? "Bot");
   return /[{}]/.test(filled) || !filled.trim() ? entry.key : filled.slice(0, ENVELOPE_LIMITS.title);
@@ -285,8 +298,8 @@ const GATE_REASON_KEY: Readonly<Record<string, string>> = {
 
 /** Every value a feedback request's text fields may hold. */
 export const FEEDBACK_FIXED = (() => {
-  const screens = new Set<string>([UNKNOWN_SCREEN]);
-  const titles = new Map<string, string>([[UNKNOWN_SCREEN, UNKNOWN_SCREEN]]);
+  const screens = new Set<string>();
+  const titles = new Map<string, string>();
   const pages = new Set<string>();
   const controls = new Map<string, { label: string; address: string }>();
   for (const entry of SCREENS) {
@@ -305,9 +318,10 @@ export const FEEDBACK_FIXED = (() => {
 })();
 
 /** The envelope the feedback form sends, built from the fixed tables only. */
-export function feedbackEnvelopeForScreen(screen: Pick<HelpScreen, "key" | "page" | "gates">): ScreenEnvelope {
-  const entry = screenEntry(screen.key);
-  const key = entry ? entry.key : UNKNOWN_SCREEN;
+export function feedbackEnvelopeForScreen(screen: Pick<HelpScreen, "key" | "page" | "gates" | "feedbackKey">): ScreenEnvelope {
+  const entry = (screen.feedbackKey ? screenEntry(screen.feedbackKey) : undefined) ?? screenEntry(screen.key) ?? screenEntry(FALLBACK_SCREEN);
+  if (!entry) throw new Error("the screens index has no general help page");
+  const key = entry.key;
   const state: ScreenEnvelopeState = {};
   const page = key.startsWith("settings:") ? key.slice("settings:".length) : undefined;
   if (page && FEEDBACK_FIXED.pages.has(page)) state.page = page;

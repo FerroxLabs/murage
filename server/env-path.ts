@@ -526,6 +526,8 @@ export function findCliCandidates(name: string): string[] {
 export interface ResolvedSpawn {
   command: string;
   args: string[];
+  /** The script a launcher runs, when it is not args[0] (a PowerShell `-File` shim). */
+  script?: string;
 }
 
 /** Split a `cli` string into [command, ...fixedArgs] on unquoted whitespace —
@@ -663,7 +665,71 @@ function parseCmdShim(shim: string): ResolvedSpawn | null {
     if (node) return { command: node, args: [script] };
   }
   const exe = targets.find((p) => extname(p).toLowerCase() === ".exe");
-  return exe ? { command: exe, args: [] } : null;
+  return exe ? { command: exe, args: [] } : powerShellFileShim(shim, text);
+}
+
+/** The only switches a launcher may pass before `-File`, spelled out in full (PowerShell also takes abbreviations, so
+ * anything else, `-Com` included, could turn the line into command mode). `-ExecutionPolicy` takes one of its own values. */
+const POWERSHELL_FLAG_SWITCH = /^-(?:noprofile|nologo|noninteractive)$/i;
+const POWERSHELL_EXECUTION_POLICY = /^(?:bypass|remotesigned|allsigned|unrestricted|default|undefined)$/i;
+
+/** The switches before `-File`, or null when any is not on the allowlist. */
+function launcherSwitches(tokens: string[]): string[] | null {
+  const out: string[] = [];
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index]!;
+    if (POWERSHELL_FLAG_SWITCH.test(token)) { out.push(token); continue; }
+    const value = tokens[index + 1];
+    if (/^-executionpolicy$/i.test(token) && value && POWERSHELL_EXECUTION_POLICY.test(value)) { out.push(token, value); index++; continue; }
+    return null;
+  }
+  return out;
+}
+
+/** The sibling script is a real file whose resolved path (links and junctions followed) is still in the shim's folder. */
+export function scriptInsideShimFolder(script: string): boolean {
+  return isFile(script) && insideFolder(dirname(script), script);
+}
+const WINDOWS_POWERSHELL = /^(?:(?:%SystemRoot%|%WINDIR%)\\System32\\WindowsPowerShell\\v1\.0\\)?powershell(?:\.exe)?$/i;
+
+/** A `.ps1` named beside the shim: `%~dp0name.ps1`, or `%SCRIPT_DIR%name.ps1` when the shim sets SCRIPT_DIR to `%~dp0`. A path
+ * anywhere else, a `..` step or any other variable is not followed. */
+function siblingPowerShellScript(operand: string, shimDir: string, text: string, fileExists: (p: string) => boolean): string | null {
+  const prefix = /^(%~dp0|%SCRIPT_DIR%)\\*/i.exec(operand);
+  if (!prefix) return null;
+  if (prefix[1]!.toUpperCase() === "%SCRIPT_DIR%" && !/^[ \t]*set[ \t]+"?SCRIPT_DIR=%~dp0"?[ \t]*$/im.test(text)) return null;
+  const name = operand.slice(prefix[0].length);
+  if (!name || /[%\\/:]/.test(name) || !/\.ps1$/i.test(name)) return null;
+  const script = win32.join(shimDir, name);
+  return fileExists(script) ? script : null;
+}
+
+/** A Windows PowerShell `-File` launcher .cmd (Cursor's installer writes `cursor-agent.cmd` as one) as the spawn it makes: Windows
+ * PowerShell from the server's own SystemRoot (never one found on PATH) running the `.ps1` beside the shim, with the shim's own
+ * allowlisted switches. Any other switch (`-Command` or an abbreviation of it), a shell operator, an unknown variable, or a script
+ * elsewhere or linked out of the shim's folder is not followed: the
+ * shim then stays unspawnable, as before. Pure text parsing: nothing in the shim is executed. Exported for the platform-free test. */
+export function powerShellFileShim(shim: string, text: string, fileExists: (p: string) => boolean = scriptInsideShimFolder): ResolvedSpawn | null {
+  // A SystemRoot with a `..` step or on a network share is not trusted for a spawn.
+  const root = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "";
+  if (/(^|[\\/])\.\.([\\/]|$)/.test(root) || /^[\\/]{2}/.test(root)) return null;
+  const command = environmentProbeProgram("powershell.exe", "win32");
+  if (!command) return null;
+  const shimDir = win32.dirname(shim);
+  for (const line of text.split(/\r?\n/)) {
+    if (/[&|<>^]/.test(line)) continue;
+    const [head, ...rest] = splitCliString(line);
+    if (!head || !WINDOWS_POWERSHELL.test(head)) continue;
+    const fileAt = rest.findIndex((token) => /^-file$/i.test(token));
+    const operand = fileAt >= 0 ? rest[fileAt + 1] : undefined;
+    const script = operand ? siblingPowerShellScript(operand, shimDir, text, fileExists) : null;
+    if (!script) continue;
+    // Only allowlisted fixed switches ride along, and only `%*` (the caller's arguments) after the script.
+    const switches = launcherSwitches(rest.slice(0, fileAt));
+    if (!switches || rest.slice(fileAt + 2).some((token) => token !== "%*")) continue;
+    return { command, args: [...switches, "-File", script], script };
+  }
+  return null;
 }
 
 /** A shim target is read only as a path below the shim's own folder: no drive, no root, no UNC prefix, no `..` step.
@@ -903,7 +969,7 @@ export function engineIdentities(engine: string, configured: readonly string[] =
     add(hit);
     const ext = extname(hit).toLowerCase();
     const shim = ext === ".cmd" || ext === ".bat" ? parseCmdShim(hit) : parseNodeShebang(hit);
-    add(shim?.args[0]); // the script it runs, never the node that runs it
+    add(shim?.script ?? shim?.args[0]); // the script it runs, never the node or PowerShell that runs it
   }
   return [...out];
 }

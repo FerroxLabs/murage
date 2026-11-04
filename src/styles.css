@@ -533,6 +533,19 @@ select.procedure-history-audience:focus-visible,
   color-scheme: var(--code-color-scheme);
 }
 
+/* A native dropdown's open list is drawn by the platform, white by default,
+   while its options inherit the skin's light ink: on the dark skin they were
+   light text on white. The list follows the skin, and each option takes the
+   raised surface and ink. (Upstream e2dde06a6.) */
+select {
+  color-scheme: var(--code-color-scheme);
+}
+select option,
+select optgroup {
+  background-color: var(--color-raised);
+  color: var(--color-ink);
+}
+
 /* Chromium honours EITHER the standard properties OR the ::-webkit-scrollbar
  * pseudo-elements, never both: the moment an element sets `scrollbar-width`,
  * every webkit rule below is dropped and you get the default light scrollbar

@@ -301,7 +301,7 @@
     "message": "Murage に接続"
   },
   "spSetupBody": {
-    "message": "このコンピュータで Murage を開き、ブラウザ設定でブラウザコンパニオンをオンにしてください。"
+    "message": "接続する前に、Murage がこのブラウザを設定する必要があります。Murage アプリでボットのブラウザパネルを開き、「Use my Chrome」を選んで「Set up my browser」を押してください。そのあと、ここで「接続を確認」を押してください。"
   },
   "spCheckConnection": {
     "message": "接続を確認"

@@ -188,8 +188,13 @@ it("forgetting an early line in a 200k-line thread: the commit is flat, every de
   // that slice walks the range's 60 carried copies and two capture pages, 394 rows and 224 statements on every run (runner 4, 3 runs);
   // later slices are about 210 statements and 250 rows. 512 is twice the row budget: it holds the first slice and still fails on any slice
   // whose work grows with the thread's 200k lines.
+  // Statements: W1 (MARKER-WINDOW-FANOUT-1016 section 5) checks each child before it is enqueued with one or two indexed point reads of the
+  // job's own rows (an own visit row; a line's deny_line row; a range's reached and bounded rows), and writes nothing. The first slice
+  // enqueues one source per capture its range pass reaches and one line per source it pops, so it runs 188 more statements than the 1.0.15
+  // walk: 412 on every run (W1 off 224, build host probe 11-03, both 393 slices, 394 and 395 rows). The checks are one per child the slice enqueues,
+  // so they follow the slice's budget, not the thread's length. 480 holds that and still fails on any per-line work.
   expect(run.maxRows).toBeLessThanOrEqual(512);
-  expect(run.maxStatements).toBeLessThanOrEqual(400);
+  expect(run.maxStatements).toBeLessThanOrEqual(480);
   expect(run.slices).toBeGreaterThan(1);
   // each capture after the forgotten line was reached as a source (one deny_memory row each); the ones before were not
   expect(count(db, "SELECT count(*) AS n FROM memory_deny_memory WHERE kind='source'")).toBe(count(db, "SELECT count(*) AS n FROM memory_line_capture WHERE lsn>?", a));

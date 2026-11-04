@@ -3,6 +3,7 @@ import { database, transaction } from "../database.ts";
 import { gepaEvaluationSchema, type GepaEvaluation, type GepaJson } from "../gepa-protocol.ts";
 import { runGepaWorker, isGepaCallNotStarted, type GepaWorkerCommand } from "../gepa-worker.ts";
 import { createGepaCallLedger } from "./gepa-ledger.ts";
+import { accountingWrite } from "./learning-send.ts";
 import { procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, validateProcedureEvaluationReceipt, type ProcedureEvaluationReceipt, type ProcedureReviewSnapshot } from "./procedure-review.ts";
 
 type SplitAxis = "person" | "project" | "time";
@@ -94,7 +95,7 @@ export async function evaluateProcedureWithGepa(snapshot: ProcedureReviewSnapsho
     const rows = db.prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='system' AND subject_id=?").all(charges);
     const reserved = rows.reduce((sum, row) => { const entry = JSON.parse(String(row.intent)); return sum + Number(entry.actualUsd ?? entry.ceilingUsd ?? Infinity); }, 0);
     if (!prior && rows.length >= 26 || budget.totalUsd !== null && reserved + (ceiling ?? Infinity) > budget.totalUsd + 1e-12) throw Error("GEPA_COST_LIMIT");
-    db.prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,1,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent").run(id, snapshot.target.scopeId, charges, JSON.stringify({ callId, ceilingUsd: ceiling, actualUsd: null, confirmed: false, authorityReference: budget.authorityReference }));
+    accountingWrite(db, "gepa-evaluator.charge-reserve", id, snapshot.target.scopeId, charges, JSON.stringify({ callId, ceilingUsd: ceiling, actualUsd: null, confirmed: false, authorityReference: budget.authorityReference }));
     return id;
   });
   const releaseUnstartedCost = (id: string, error: unknown) => {
@@ -103,7 +104,7 @@ export async function evaluateProcedureWithGepa(snapshot: ProcedureReviewSnapsho
       const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_id=?").get(id, charges);
       if (!row) throw Error("GEPA_COST_RECEIPT_MISSING");
       const entry = JSON.parse(String(row.intent));
-      db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify({ ...entry, actualUsd: 0, confirmed: true, notStarted: true }), id);
+      accountingWrite(db, "gepa-evaluator.charge-release", JSON.stringify({ ...entry, actualUsd: 0, confirmed: true, notStarted: true }), id, charges);
     });
   };
   const settleCost = (id: string, actualUsd: number | null) => {
@@ -112,7 +113,7 @@ export async function evaluateProcedureWithGepa(snapshot: ProcedureReviewSnapsho
       const row = db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_id=?").get(id, charges);
       if (!row) throw Error("GEPA_COST_RECEIPT_MISSING");
       const entry = JSON.parse(String(row.intent));
-      db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify({ ...entry, actualUsd, confirmed: true }), id);
+      accountingWrite(db, "gepa-evaluator.charge-settle", JSON.stringify({ ...entry, actualUsd, confirmed: true }), id, charges);
       return actualUsd !== null && entry.ceilingUsd !== null && actualUsd > Number(entry.ceilingUsd) + 1e-12;
     });
     if (exceeded) throw Error("GEPA_COST_CEILING_EXCEEDED");

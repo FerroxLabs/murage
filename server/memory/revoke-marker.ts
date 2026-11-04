@@ -416,11 +416,78 @@ function visitKey(node: FrontierNode): string | null {
     default: return null;
   }
 }
-/** The walk's enqueue (2.4, Enqueue): a record, object, receipt or scope child of a walking audience job is not enqueued when a counting
+// ---- W1, check before enqueue (MARKER-WINDOW-FANOUT-1016 section 5)
+/** W1: a walk child whose pop would write nothing is not enqueued, so the walk writes the same marks with fewer frontier rows. Tests and
+ * the bench: false enqueues every child as 1.0.15 did (the differential baseline). */
+export const REVOKE_W1 = { enabled: true };
+/** Children W1 left out, by node kind (tests and the rig: the mechanism fired). Only ever added to. */
+export const W1_PROBE: Record<string, number> = {};
+export function resetW1Probe(): void { for (const key of Object.keys(W1_PROBE)) delete W1_PROBE[key]; }
+/** Whether a range pop (T, a) of revoke R returns at rangeNode's own-walk skip: no bounded range row of R at (T, a) (that pop walks), and
+ * R's reached row for T is at or below a. That row's from_lsn only moves down (rangeNode replaces it with a smaller a only) and goes only
+ * at tidy, which waits for an empty frontier, so what holds here holds at the pop. */
+function rangeWalked(db: DatabaseSync, R: number, T: string, a: number): boolean {
+  const bound = st(db, "SELECT reason AS why FROM memory_deny_range WHERE thread_id=? AND from_lsn=? AND revoke_id=?").get(T, a, R);
+  if (bound && String(bound.why).endsWith(BOUNDED_RANGE)) return false;
+  const held = st(db, "SELECT from_lsn FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, T)?.from_lsn;
+  return held !== undefined && held !== null && Number(held) <= a;
+}
+/** Whether popping `node` for revoke R would write nothing but its own frontier row's delete. Read from R's OWN durable rows in the
+ * caller's transaction (a ROLLBACK undoes the basis with the rest); another job's cover row never counts (a covered source still hands the
+ * job its line, so its pop decides).
+ *   visit kinds (source, record, receipt, scope, object, the object "*" children): R's reached row for the visit key exists (the pop's
+ *     visit() is an INSERT OR IGNORE that finds it and returns);
+ *   range: rangeWalked;
+ *   line: R's deny_line row at (T, lsn) exists (the pop's INSERT OR IGNORE writes nothing) and its range child is rangeWalked.
+ * A session child is never enqueued by the walk (carryChild writes it). */
+function popWritesNothing(db: DatabaseSync, R: number, node: FrontierNode): boolean {
+  switch (node.kind) {
+    case "range": return rangeWalked(db, R, node.threadId, node.fromLsn);
+    case "line": return Boolean(st(db, "SELECT 1 AS x FROM memory_deny_line WHERE thread_id=? AND lsn=? AND revoke_id=?").get(node.threadId, node.lsn, R))
+      && rangeWalked(db, R, node.threadId, node.from ?? node.lsn);
+    case "session": return false;
+    default: {
+      const key = visitKey(node);
+      return key !== null && Boolean(st(db, "SELECT 1 AS x FROM memory_revoke_reached WHERE revoke_id=? AND thread_id=?").get(R, key));
+    }
+  }
+}
+/** Whether a fold could still take job R as a member (revoke-fold.ts foldCandidates at listen, in phases flow, mark and hold; repairFoldMap's
+ * moveMember): a receipt, bulk or inherit audience job that is not itself a fold bulk. A fold copies the member's frontier rows onto its
+ * bulk B but not its reached rows, so B pops a duplicate the member would pop as a no-op and walks it at the cohort's cap: for such a job
+ * every child is enqueued, as 1.0.15 does. Wider than foldCandidates on purpose (no phase, state or root test): a job it names only loses
+ * W1. Static for a job's life; read once per job per slice. */
+const foldable = new WeakMap<DatabaseSync, Map<number, boolean>>();
+function foldableJob(db: DatabaseSync, R: number): boolean {
+  let seen = foldable.get(db);
+  if (!seen) foldable.set(db, seen = new Map());
+  let yes = seen.get(R);
+  if (yes === undefined) {
+    const bulk = hasFoldMap(db) ? " AND revoke_id NOT IN (SELECT bulk_id FROM memory_revoke_fold)" : "";
+    yes = Boolean(st(db, `SELECT 1 AS x FROM memory_revoke_jobs WHERE revoke_id=? AND kind IN ('receipt','bulk','inherit')
+      AND revoke_id IN (SELECT revoke_id FROM memory_revoke_audience)${bulk}`).get(R));
+    seen.set(R, yes);
+  }
+  return yes;
+}
+/** W1's skip: true when the child is left out (counted). */
+function w1Skip(db: DatabaseSync, revokeId: number, node: FrontierNode): boolean {
+  if (!REVOKE_W1.enabled || foldableJob(db, revokeId) || !popWritesNothing(db, revokeId, node)) return false;
+  W1_PROBE[node.kind] = (W1_PROBE[node.kind] ?? 0) + 1;
+  return true;
+}
+/** A handler's own child enqueue (a line's range, a source's or a receipt's line), through W1. */
+function enqOwn(db: DatabaseSync, revokeId: number, node: FrontierNode): void {
+  if (!w1Skip(db, revokeId, node)) enqueueNode(db, revokeId, node);
+}
+
+/** The walk's enqueue (2.4, Enqueue): a child whose pop would write nothing is left out (W1, first: the pop's own-visit check comes before
+ * its cover check). Then a record, object, receipt or scope child of a walking audience job is not enqueued when a counting
  * cover row holds it (its pop would skip it). Sources are always enqueued (their pop decides: a covered source still hands the job its
  * line); range and line children always (the pop decides, so a covered range's point pass is never lost). Only the walk's own enqueues come
  * here: inheritance and commits enqueue as before. */
 function enq(db: DatabaseSync, revokeId: number, node: FrontierNode): void {
+  if (w1Skip(db, revokeId, node)) return;
   if (cover && cover.job === revokeId && (node.kind === "record" || node.kind === "object" || node.kind === "receipt" || node.kind === "scope")) {
     const key = visitKey(node);
     const by = key !== null && REVOKE_COVER.enqueueSkip ? visitCovered(db, cover, key) : undefined;
@@ -472,7 +539,7 @@ function coverPop(db: DatabaseSync, job: JobRow, node: FrontierNode, c: Cursor, 
 
 function lineNode(db: DatabaseSync, job: JobRow, node: { threadId: string; lsn: number; from?: number }): boolean {
   writeLine(db, job.revoke_id, node.threadId, node.lsn, reasonOf(job));
-  enqueueNode(db, job.revoke_id, { kind: "range", threadId: node.threadId, fromLsn: node.from ?? node.lsn });
+  enqOwn(db, job.revoke_id, { kind: "range", threadId: node.threadId, fromLsn: node.from ?? node.lsn });
   return true;
 }
 /** A carry's child as a frontier node (lineage-types.ts decodeCarryChild: the one child_ref encoding every writer uses). A child_ref that does
@@ -640,7 +707,7 @@ function sourceNode(db: DatabaseSync, job: JobRow, node: { id: string }, c: Curs
     const at = st(db, "SELECT thread_id,message_id FROM memory_sources WHERE id=?").get(id);
     if (typeof at?.thread_id === "string" && typeof at.message_id === "string") {
       const line = lineOf(db, at.thread_id, at.message_id);
-      if (line) enqueueNode(db, R, { kind: "line", threadId: at.thread_id, lsn: Number(line.lsn) });
+      if (line) enqOwn(db, R, { kind: "line", threadId: at.thread_id, lsn: Number(line.lsn) });
     }
     c.stage = "recs"; spend(budget, 3);
     return false;
@@ -717,7 +784,7 @@ function receiptNode(db: DatabaseSync, job: JobRow, node: { bundleId: string }, 
   // its session. A receipt that produced no output resets its session only.
   const start = receiptStart(db, b);
   if (start?.session) writeSession(db, R, start.session.threadId, start.session.driverInstance, start.session.nativeSession);
-  if (start) enqueueNode(db, R, { kind: "line", threadId: start.threadId, lsn: start.firstLsn });
+  if (start) enqOwn(db, R, { kind: "line", threadId: start.threadId, lsn: start.firstLsn });
   spend(budget, 3);
   return true;
 }
@@ -973,6 +1040,7 @@ export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, 
 }
 function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null, maxChanges: number, opts: MarkerSliceOptions): boolean | "blocked" {
   if (!hasWritetime(db)) return false;
+  foldable.delete(db); // W1's fold test is read fresh each slice (a revoke id is never trusted across transactions)
   // the slice's deadline and write cap hold from its start, the flip drain included
   const capped = Number.isFinite(maxChanges), start = capped ? totalChanges(db) : 0;
   const over = capped ? () => totalChanges(db) - start >= maxChanges : undefined;

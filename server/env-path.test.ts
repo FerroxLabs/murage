@@ -3,7 +3,7 @@
 // when the process itself started with a bare GUI PATH.
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,6 +13,8 @@ import {
   bundledFuigoPath,
   cmdShimTargets,
   installScanDirsForTests,
+  powerShellFileShim,
+  scriptInsideShimFolder,
   windowsInstallDirsForTests,
   resetPathCache,
   resetPathCacheForTests,
@@ -935,4 +937,81 @@ describe("login capture runs detached and its group dies on timeout (F1)", () =>
     expect(chain).not.toMatch(/captureOwnerEnv|handedEngineEnv|ownerEnvAfterDiscovery/);
     expect(index).not.toMatch(/await\s+captureOwnerEnv/);
   }, 20_000);
+});
+
+describe("Windows PowerShell -File shims (Cursor's cursor-agent.cmd)", () => {
+  const dir = "C:\\Users\\me\\AppData\\Local\\cursor-agent";
+  const shim = `${dir}\\cursor-agent.cmd`;
+  const ps1 = `${dir}\\cursor-agent.ps1`;
+  const powershell = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const exists = (p: string) => p.toLowerCase() === ps1.toLowerCase();
+  const cursorShim = [
+    "@echo off",
+    'if exist "%~dp0versions\\promote-staged.cmd" call "%~dp0versions\\promote-staged.cmd"',
+    'set "SCRIPT_DIR=%~dp0"',
+    '%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\\cursor-agent.ps1" %*',
+  ].join("\r\n");
+  beforeEach(() => { vi.stubEnv("SystemRoot", "C:\\Windows"); });
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("spawns Windows PowerShell from SystemRoot with the script beside the shim, never a .cmd", () => {
+    expect(powerShellFileShim(shim, cursorShim, exists)).toEqual({
+      command: powershell,
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1],
+      script: ps1,
+    });
+    // a bare powershell.exe in the shim is still the SystemRoot one, never one found on PATH
+    expect(powerShellFileShim(shim, 'powershell.exe -NoProfile -File "%~dp0cursor-agent.ps1" %*', exists)?.command).toBe(powershell);
+  });
+
+  it("follows nothing but a sibling script launched with -File", () => {
+    const refused = [
+      'powershell.exe -File "%~dp0..\\cursor-agent.ps1" %*',
+      'powershell.exe -File "C:\\elsewhere\\cursor-agent.ps1" %*',
+      'powershell.exe -Command "Write-Output hi" -File "%~dp0cursor-agent.ps1"',
+      'powershell.exe /c "Write-Output hi" -File "%~dp0cursor-agent.ps1"',
+      'powershell.exe -File "%~dp0cursor-agent.ps1" %* & calc.exe',
+      'powershell.exe -File "%~dp0cursor-agent.ps1" %EXTRA%',
+      'powershell.exe -ExecutionPolicy %POLICY% -File "%~dp0cursor-agent.ps1" %*',
+      'pwsh.exe -File "%~dp0cursor-agent.ps1" %*',
+      'C:\\Tools\\powershell.exe -File "%~dp0cursor-agent.ps1" %*',
+      // SCRIPT_DIR counts only when the shim sets it to its own folder
+      'powershell.exe -File "%SCRIPT_DIR%\\cursor-agent.ps1" %*',
+      'powershell.exe -File "%~dp0missing.ps1" %*',
+      // PowerShell takes abbreviations and implicit command text: only spelled-out allowlisted switches pass
+      'powershell.exe -Com "Write-Output bypassed; #" -File "%~dp0cursor-agent.ps1" %*',
+      'powershell.exe -c "Write-Output hi" -File "%~dp0cursor-agent.ps1"',
+      'powershell.exe "Write-Output hi" -File "%~dp0cursor-agent.ps1"',
+      'powershell.exe -NoP -File "%~dp0cursor-agent.ps1" %*',
+      'powershell.exe -ExecutionPolicy "Write-Output hi" -File "%~dp0cursor-agent.ps1" %*',
+      'powershell.exe -ExecutionPolicy -File "%~dp0cursor-agent.ps1" %*',
+      'powershell.exe /File "%~dp0cursor-agent.ps1" %*',
+    ];
+    for (const line of refused) expect(powerShellFileShim(shim, line, exists), line).toBeNull();
+  });
+
+  it("takes a sibling script only when its real path stays in the shim's folder", () => {
+    const base = mkdtempSync(join(tmpdir(), "murage-ps1-shim-"));
+    try {
+      const shimDir = join(base, "cursor-agent");
+      mkdirSync(shimDir);
+      writeFileSync(join(shimDir, "cursor-agent.ps1"), "Write-Output ok\r\n");
+      writeFileSync(join(base, "outside.ps1"), "Write-Output no\r\n");
+      symlinkSync(join(base, "outside.ps1"), join(shimDir, "linked.ps1"));
+      expect(scriptInsideShimFolder(join(shimDir, "cursor-agent.ps1"))).toBe(true);
+      expect(scriptInsideShimFolder(join(shimDir, "linked.ps1"))).toBe(false);
+      expect(scriptInsideShimFolder(join(shimDir, "missing.ps1"))).toBe(false);
+    } finally {
+      removeTempDirSync(base);
+    }
+  });
+
+  it("refuses when SystemRoot is not an absolute Windows path", () => {
+    vi.stubEnv("SystemRoot", "relative\\Windows");
+    expect(powerShellFileShim(shim, cursorShim, exists)).toBeNull();
+    vi.stubEnv("SystemRoot", "C:\\Windows\\..\\Users\\Public");
+    expect(powerShellFileShim(shim, cursorShim, exists)).toBeNull();
+    vi.stubEnv("SystemRoot", "\\\\server\\share\\Windows");
+    expect(powerShellFileShim(shim, cursorShim, exists)).toBeNull();
+  });
 });
