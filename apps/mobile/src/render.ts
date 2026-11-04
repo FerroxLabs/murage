@@ -1,6 +1,7 @@
 // Draws one View. textContent only: nothing a scanned code or a computer's
 // name contains can become markup.
 import type { Act, Draft } from "./launcher";
+import { CODE_LENGTH, computerRow, createCodeEntry, highlightIndex, hintFor } from "./code-entry";
 import type { Action, View } from "./screens";
 
 export interface FormValues {
@@ -156,6 +157,7 @@ export function render(root: HTMLElement, view: View, act: Act, draft?: Draft, k
   }
 
   let values: () => FormValues = () => ({ address: "", code: "" });
+  let submitConnect: (() => void) | undefined;
   if (view.form) {
     const form = el("form", "form");
     form.noValidate = true;
@@ -166,36 +168,159 @@ export function render(root: HTMLElement, view: View, act: Act, draft?: Draft, k
     address.input.enterKeyHint = "next";
     if (draft) address.input.value = draft.address;
     else if (view.form.origin) address.input.value = view.form.origin.replace(/^https:\/\//, "");
-    const code = field("code", "Six-digit code", "text", "123456");
-    code.input.inputMode = "numeric";
-    code.input.autocomplete = "one-time-code";
-    code.input.enterKeyHint = "go";
-    code.input.maxLength = 7;
-    values = () => ({ address: address.input.value, code: code.input.value });
-    form.append(address.wrap, code.wrap);
+
+    // Code: one real input, visually hidden, over six display-only boxes.
+    const codeId = `field-code-${++fields}`;
+    const helpId = `${codeId}-help`;
+    const codeWrap = el("div", "field");
+    const codeLabel = el("label", "field-label", "Six-digit code");
+    codeLabel.htmlFor = codeId;
+    const boxes = el("div", "code-boxes");
+    const cells: HTMLElement[] = [];
+    for (let i = 0; i < CODE_LENGTH; i++) {
+      const cell = el("span", "code-box");
+      cell.setAttribute("aria-hidden", "true");
+      cells.push(cell);
+      boxes.append(cell);
+    }
+    const codeInput = el("input", "code-input");
+    codeInput.id = codeId;
+    codeInput.name = "code";
+    codeInput.type = "text";
+    codeInput.inputMode = "numeric";
+    codeInput.autocomplete = "one-time-code";
+    codeInput.enterKeyHint = "go";
+    codeInput.autocapitalize = "none";
+    codeInput.spellcheck = false;
+    codeInput.setAttribute("aria-describedby", helpId);
+    boxes.append(codeInput);
+    const help = el("p", "code-help");
+    help.id = helpId;
+    codeWrap.append(codeLabel, boxes, help);
+
+    const paint = () => {
+      const typed = codeInput.value;
+      const focused = document.activeElement === codeInput;
+      const at = highlightIndex(codeInput.selectionStart, typed.length);
+      cells.forEach((cell, i) => {
+        cell.textContent = typed[i] ?? "";
+        cell.classList.toggle("filled", i < typed.length);
+        cell.classList.toggle("active", focused && i === at);
+      });
+      boxes.classList.toggle("focused", focused);
+    };
+    // The highlight follows the real caret. Nothing here moves it, so an
+    // explicit selection (select all, then paste), an IME's marked text and a
+    // screen reader's moves are left alone.
+    document.addEventListener("selectionchange", function onSelection() {
+      if (!codeInput.isConnected) document.removeEventListener("selectionchange", onSelection);
+      else if (document.activeElement === codeInput) paint();
+    });
+
+    values = () => ({ address: address.input.value, code: entry.digits });
     const connect = view.actions.find((a) => a.id === "connect");
+    const entry = createCodeEntry(
+      () => address.input.value.trim() !== "",
+      (digits) => {
+        if (connect) act(connect, { address: address.input.value, code: digits });
+      },
+    );
+    // Before an explicit submit the field is the truth, not the last event.
+    const reconcile = () => settle(false);
+    submitConnect = () => {
+      reconcile();
+      entry.enter();
+    };
+    const syncHint = () => {
+      help.textContent = hintFor(address.input.value.trim() !== "", entry.needsConfirm, entry.digits.length === CODE_LENGTH);
+    };
+    syncHint();
+    address.input.addEventListener("input", () => {
+      entry.addressChanged();
+      syncHint();
+    });
+    // Only a non-composing input event may connect by itself; blur,
+    // compositionend and submit just normalize.
+    const settle = (mayConnect: boolean) => {
+      const digits = mayConnect ? entry.input(codeInput.value) : entry.sync(codeInput.value);
+      if (codeInput.value !== digits) codeInput.value = digits;
+      paint();
+      syncHint();
+    };
+    // Composition is tracked by the event's own isComposing flag, never by
+    // state that a missing compositionend could leave stuck.
+    codeInput.addEventListener("compositionend", () => settle(false));
+    codeInput.addEventListener("input", (event) => {
+      // An input event that is not composing means any composition is over,
+      // even if compositionend never arrived.
+      if ((event as InputEvent).isComposing) return;
+      settle(true);
+    });
+    // Landing in the field starts after the last digit; after that the caret is the person's.
+    codeInput.addEventListener("focus", () => {
+      const end = codeInput.value.length;
+      codeInput.setSelectionRange(end, end);
+      paint();
+    });
+    codeInput.addEventListener("blur", () => {
+      settle(false); // a composition cannot outlive focus; leaving never pairs
+    });
+    // A later tap lands the caret by the input's own glyph positions, which do
+    // not match the boxes. Send it to the end unless the person has made a real
+    // selection (select all, then paste).
+    const caretToEnd = () => {
+      if (codeInput.selectionStart !== codeInput.selectionEnd) return;
+      const end = codeInput.value.length;
+      codeInput.setSelectionRange(end, end);
+      paint();
+    };
+    codeInput.addEventListener("click", caretToEnd);
+    codeInput.addEventListener("pointerup", caretToEnd);
+    boxes.addEventListener("click", () => codeInput.focus());
+
+    // Computer row when the address is known; the input itself otherwise.
+    const computerName = computerRow(address.input.value, view.form, draft !== undefined);
+    if (computerName !== null) {
+      address.wrap.hidden = true;
+      const row = el("div", "computer-row");
+      const rowText = el("div", "computer-text");
+      rowText.append(el("span", "computer-label", "Computer"), el("span", "computer-name", computerName));
+      const change = el("button", "button small", "Change");
+      change.type = "button";
+      change.setAttribute("aria-label", `Change computer, now ${computerName}`);
+      change.addEventListener("click", () => {
+        row.hidden = true;
+        address.wrap.hidden = false;
+        address.input.focus();
+      });
+      row.append(rowText, change);
+      form.append(row);
+    }
+    form.append(address.wrap, codeWrap);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
     });
-    // Two fields and no submit button inside the form: Return never submits
-    // by itself. On the address it moves to the code (the keyboard says Next);
-    // on the code it connects (the keyboard says Go).
+    // Return never submits by itself. On the address it moves to the code (the
+    // keyboard says Next); on the code it connects (the keyboard says Go).
     address.input.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
-      code.input.focus();
+      codeInput.focus();
     });
-    code.input.addEventListener("keydown", (event) => {
+    codeInput.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" || event.isComposing) return;
       event.preventDefault();
-      if (connect) act(connect, values());
+      reconcile();
+      entry.enter();
     });
     screen.append(form);
   }
 
   if (view.actions.length) {
     const actions = el("div", "actions");
-    for (const action of view.actions) actions.append(button(action, () => act(action, values())));
+    for (const action of view.actions) {
+      actions.append(button(action, () => (action.id === "connect" && submitConnect ? submitConnect() : act(action, values()))));
+    }
     screen.append(actions);
   }
 

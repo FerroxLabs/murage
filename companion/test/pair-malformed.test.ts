@@ -5,7 +5,7 @@
 import { rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createSignInLimiter } from "../src/browser.ts";
 import { DeviceRegistry } from "../src/devices.ts";
@@ -60,11 +60,31 @@ describe("a malformed pairing request", () => {
   it("answers a 500 rather than ending the process when redeem itself throws", async () => {
     process.on("unhandledRejection", onRejection);
     const pair = await door(() => { throw new Error("registry exploded"); });
-    const answer = await pair('{"code":"000000"}');
-    expect(answer.status).toBe(500);
-    expect(answer.body.error).toBe("Pairing could not be completed. Try again.");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const answer = await pair('{"code":"000000"}');
+      expect(answer.status).toBe(500);
+      expect(answer.body.error).toBe("Pairing could not be completed. Try again.");
+      // the cause is logged (OpenMausBot 51e7a6886), by kind only: never the message, never the code presented
+      expect(logged).toHaveBeenCalledWith("companion: pairing failed (Error)");
+      expect(logged.mock.calls.flat().join(" ")).not.toMatch(/registry exploded|000000/);
+    } finally {
+      logged.mockRestore();
+    }
     await new Promise((resolve) => setImmediate(resolve));
     expect(rejections).toEqual([]);
+  });
+
+  it("logs a failure's code when it carries one", async () => {
+    const pair = await door(() => { throw Object.assign(new Error("ENOSPC: no space left on /Users/ada/.murage"), { code: "ENOSPC" }); });
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await pair('{"code":"000000"}')).status).toBe(500);
+      expect(logged).toHaveBeenCalledWith("companion: pairing failed (Error ENOSPC)");
+      expect(logged.mock.calls.flat().join(" ")).not.toContain("/Users/ada");
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   // Low finding: with the RIGHT credential and a deviceName String() cannot coerce, the registry spent the window ("used")

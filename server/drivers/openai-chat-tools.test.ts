@@ -20,6 +20,8 @@ import { ProviderStopUnconfirmedError } from "./child-teardown.ts";
 import { GrokDriver } from "./grok.ts";
 import { MinimaxDriver } from "./minimax.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import {
   MAX_CHAT_ROUNDS, MAX_TURN_TOOL_CALLS, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, TOOL_CALLS_TO_HELPER,
   TOOL_INTERRUPTED,
@@ -999,8 +1001,8 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(boots(log)).toHaveLength(0);
     fallback = () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { role: "assistant", content: "{}" } }] }), { status: 200, headers: { "content-type": "application/json" } });
     await instance.adapter.textOnlyTurn!({
-      system: "s", text: "t", model: "test-model", outputSchema: { type: "object" }, signal: new AbortController().signal,
-      maxOutputTokens: 64, maxOutputBytes: 4096, context: { botId: "b", runId: "r", family: "f", attempt: 1 },
+      system: fixedPrompt("s"), text: "t", model: "test-model", outputSchema: { type: "object" }, signal: new AbortController().signal,
+      maxOutputTokens: 64, maxOutputBytes: 4096, context: { botId: "b", runId: "r", family: "f", attempt: 1 }, transport: { gate: openLearningGate("continuity") },
     }).catch(() => undefined);
     expect(await instance.generateText!("hello")).toBe("{}");
     expect(bodies.length).toBeGreaterThanOrEqual(4);

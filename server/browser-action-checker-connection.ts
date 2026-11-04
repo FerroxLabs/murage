@@ -6,6 +6,7 @@ import { fluxKey } from "./flux-config.ts";
 import { FLUX_OPENAI_BASE } from "./flux-routing.ts";
 import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import type { CheckerTransport } from "./browser-action-checker.ts";
+import { learningGate, sampleLearningFence } from "./memory/learning-send.ts";
 
 /** Flux honours no-retain (verified live 2026-10-03: `x-flux-no-retain: applied` on flux-pinned-claude-haiku). Every Flux check call
  * requires that echo; a reply without it fails closed and the step is asked of the owner. If Flux were not live, the action check
@@ -124,7 +125,11 @@ export function resolveCheckerConnection(input: CheckerConnectionInput): Checker
       if (!instance) throw new Error("CHECKER_UNAVAILABLE");
       if (instance.reviewPermission) return instance.reviewPermission(`${req.system}\n\n${req.user}`, req.signal, input.botId);
       const messages = [{ role: "system", content: req.system }, { role: "user", content: req.user }];
-      return instance.extractMemory!(req.user, Math.min(req.maxTokens, 2000), req.signal, { policyRevision: "browser-check", messages });
+      // The request carries the owner's words for this task and standing instructions (owner chat rows memory captures), so the fallback
+      // through the learning connection takes its own gate like every learning call: sampled here, before the engine queue; a Forget,
+      // delete or policy that commits while it waits drops it unsent (the checker then counts an outage and asks). Not a non-learning entry.
+      const fence = learningGate("extraction", sampleLearningFence());
+      return instance.extractMemory!(req.user, Math.min(req.maxTokens, 2000), req.signal, { policyRevision: "browser-check", messages, fence });
     };
     return { source: "bot", ...(fallback ? { fallback: true } : {}), transport, calls: () => count, models };
   };

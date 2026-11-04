@@ -111,7 +111,7 @@ describe("where the button is mounted", () => {
   });
 
   it("is on every other main view a phone can reach", () => {
-    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx", "./today/TodayView.tsx", "./shell/stubs/needs-page.tsx", "./health/HealthPageBody.tsx"]) {
+    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx", "./today/TodayView.tsx", "./needs/NeedsYouPageBody.tsx", "./health/HealthPageBody.tsx"]) {
       expect(read(file), file).toContain("<OpenBotListButton />");
     }
     expect(read("./NoEngines.tsx")).toContain("<PhoneBotListBar />");

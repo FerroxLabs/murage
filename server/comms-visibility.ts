@@ -55,7 +55,10 @@ export function getOrCreateChannel(store: Store, from: BotRecord, target: BotRec
   const principal=threadHumanPrincipal(sourceThreadId);assertHumanPrincipal(principal);
   const existing = store.groups.find(group=>JSON.stringify(group.dmAudience)===JSON.stringify(dmAudience)&&group.dm&&group.memberIds.length===2&&group.memberIds.includes(from.id)&&group.memberIds.includes(target.id)&&JSON.stringify(threadHumanPrincipal(group.threadId))===JSON.stringify(principal));
   if (existing) {
-    if (!existing.dmAudience && sectionKey(existing.section) !== sectionKey(from.section)) {
+    // DELEGATION-HOLD F1: a pair room keeps the section it has while it matches either member's section, so the asking direction never moves
+    // it. Only a room left behind (its section matches neither member, e.g. after a move) is re-homed, once, to the asker's section.
+    const roomSection = sectionKey(existing.section);
+    if (!existing.dmAudience && roomSection !== sectionKey(from.section) && roomSection !== sectionKey(target.section)) {
       return store.patchGroup(existing.id, { section: from.section }) ?? existing;
     }
     return existing;

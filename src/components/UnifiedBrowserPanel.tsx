@@ -12,7 +12,8 @@ export const MY_CHROME = "@my-chrome";
 export const MY_BROWSER = "@my-browser";
 /** The PATCH a browser choice sends, or null when it must be confirmed first.
  * "Use my Chrome" is one choice: the server picks Murage for Chrome when it is
- * paired and Chrome's remote debugging only when it is not (browserTransport "auto"). */
+ * paired and its Set up my browser step when it is not (browserTransport
+ * "auto", server/user-chrome.ts useMyChromeRoute). */
 export function browserChoicePatch(bot: Pick<Bot, "useMyChrome" | "browserTransport">, value: string): Record<string, unknown> | null {
   if (value === MY_CHROME || value === MY_BROWSER) return bot.useMyChrome ? {} : null;
   return { ...(bot.useMyChrome ? { useMyChrome: false } : {}), browserProfile: value || null };
@@ -24,7 +25,8 @@ export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { bot
   return <div role="dialog" data-box-exempt="inline confirm inside a section" aria-label="Use my Chrome" className="flex flex-col gap-2 rounded-lg bg-card p-3 text-xs">
     <p className="text-sm text-ink">{botName} works in your Chrome, signed in as you, in a tab of its own.</p>
     <p className="text-ink-secondary">Murage connects through Murage for Chrome when it is installed, and shows you one step if it is not. With Murage for Chrome you choose which sites {botName} may use, and anything that sends, posts, buys or changes something asks you first. You can pause or stop at any time.</p>
-    <p className="text-ink-secondary">If Murage for Chrome is not connected but Chrome's remote debugging is on, Murage uses that instead. Chrome asks you once to Allow it, {botName} then works in tabs it opens, your own tabs stay yours, and one bot at a time can use it.</p>
+    <p className="text-ink-secondary">Several bots can use your Chrome through Murage for Chrome at once, each in tabs of its own, and your own tabs stay yours.</p>
+    <p className="text-ink-secondary">A copy of Murage without Murage for Chrome uses Chrome's remote debugging instead, when it is on: Chrome asks you to Allow it, and one bot at a time can use it.</p>
     <div className="flex gap-2"><button disabled={pending} onClick={onConfirm} className="rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Use my Chrome</button><button onClick={onCancel} className="rounded-lg bg-control px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-accent">Cancel</button></div>
   </div>;
 }
@@ -33,6 +35,20 @@ export function MyChromeConsent({ botName, pending, onConfirm, onCancel }: { bot
  * "Allow remote debugging?" prompt in Chrome. */
 export function UserChromeRetryNotice({ botName, pending, onRetry }: { botName: string; pending: boolean; onRetry: () => void }) {
   return <div role="status" className="rounded-lg bg-card p-3 text-xs text-ink-secondary"><p className="text-ink">Chrome did not connect.</p><p className="mt-1">{botName} will also try again on its next step.</p><button disabled={pending} onClick={onRetry} className="mt-2 flex items-center gap-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><RotateCcw size={12} />Try again</button></div>;
+}
+/** A bot still on Chrome's remote debugging (chosen before 1.0.15): the one
+ * step that moves it to Murage for Chrome, whose panel then offers Set up my
+ * browser. Without it an owner whose extension was never set up had no way to
+ * reach that step from here. */
+export function RemoteDebuggingUpgrade({ botName, pending, onSwitch }: { botName: string; pending: boolean; onSwitch: () => void }) {
+  return <div role="status" data-remote-debugging-upgrade className="rounded-lg bg-card p-3 text-xs text-ink-secondary"><p>{botName} is using your Chrome through remote debugging, which needs your Allow and serves one bot at a time. Murage for Chrome needs no Allow prompt, shares only the tabs you pick, and lets several bots use your Chrome.</p><button disabled={pending} onClick={onSwitch} className="mt-2 rounded bg-control px-2 py-1 text-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Set up Murage for Chrome</button></div>;
+}
+/** Why the browser choice just made did not happen, right under the picker
+ * where the owner made it, with the step that fixes it. A working bot gets a
+ * Stop button; any other refusal names its own fix in its words. */
+export function BrowserChoiceRefusal({ botName, refusal, busy, onStop }: { botName: string; refusal: string; busy: boolean; onStop: () => void }) {
+  if (!refusal) return null;
+  return <div role="alert" data-browser-choice-refusal className="rounded-lg border border-danger/30 p-2 text-xs text-danger"><p>{refusal}</p>{busy && <button onClick={onStop} className="mt-2 rounded bg-control px-2 py-1 text-ink focus-visible:ring-2 focus-visible:ring-accent">Stop {botName}</button>}</div>;
 }
 /** The live view's words for the owner's Chrome while its first connection waits. */
 export const WAITING_FOR_CHROME = "Waiting for Chrome: click Allow in its remote debugging prompt.";
@@ -88,9 +104,13 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
   const [canEnable, setCanEnable] = useState(false);
   const [enableNote, setEnableNote] = useState("");
   const [refusal, setRefusal] = useState("");
+  // The server said the bot is working (it can know before this panel does): offer Stop with the reason.
+  const [refusalBusy, setRefusalBusy] = useState(false);
   const [pending, setPending] = useState(false);
   const [confirmMyChrome, setConfirmMyChrome] = useState(false);
   const [switching, setSwitching] = useState(false);
+  // Whether this copy has Murage for Chrome at all (read by the remote debugging upgrade check below).
+  const [extensionBuild, setExtensionBuild] = useState<BrowserExtensionPanelStatus["extensionBuild"]>(undefined);
   const current = useRef<Status | null>(null);
   const epoch = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -138,6 +158,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
     const check = async () => {
       try {
         const next = await api(`/api/bots/${encodeURIComponent(bot.id)}/browser-extension`) as BrowserExtensionPanelStatus;
+        if (alive) setExtensionBuild(next?.extensionBuild);
         const paired = pairedExtensionProfile(next?.profiles ?? []);
         // Only with exactly one Chrome profile, read successfully, while idle and not held.
         if (alive && paired.profileId && !current.current?.held) {
@@ -153,7 +174,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
     return () => { alive = false; clearTimeout(timer); };
   }, [bot.id, remoteDebugging, busy]);
   const chooseBrowser = async (body: Record<string, unknown>) => {
-    setRefusal("");
+    setRefusal(""); setRefusalBusy(false);
     try {
       // Holding control: give it back first, then switch (the hold never locks the picker).
       if (current.current?.held && current.current.owned !== false) { setSwitching(true); await api(base, { method: "POST", body: JSON.stringify({ action: "release", generation: current.current.generation, control: current.current.control }) }); }
@@ -161,7 +182,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
     }
     // Refused: close the confirmation (the picker falls back to the saved
     // choice) and say why where nothing else can cover it.
-    catch (cause) { setConfirmMyChrome(false); setRefusal(cause instanceof Error ? cause.message : `Could not change ${bot.name}'s browser. Try again.`); }
+    catch (cause) { setConfirmMyChrome(false); setRefusal(cause instanceof Error ? cause.message : `Could not change ${bot.name}'s browser. Try again.`); setRefusalBusy(cause instanceof Error && routeErrorFrom(cause).code === "bot_busy"); }
     finally { setSwitching(false); }
   };
   const enableBrowser = async () => {
@@ -214,11 +235,13 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
       setConfirmMyChrome(false);
       if (Object.keys(patch).length) void chooseBrowser(patch);
     }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option><option value={MY_CHROME}>Use my Chrome</option></select></label>
+    <BrowserChoiceRefusal botName={bot.name} refusal={refusal} busy={!!bot.busy || refusalBusy} onStop={() => { setRefusal(""); setRefusalBusy(false); dispatch({ type: "interrupt", botId: bot.id }); }} />
     {bot.busy ? <p className="text-xs text-ink-secondary">Stop {bot.name}'s turn to change its browser.</p> : switching ? <p role="status" className="text-xs text-ink-secondary">Returning control, then switching…</p> : status?.held && status.owned !== false && <p className="text-xs text-ink-secondary">Choosing another browser returns control to {bot.name} first.</p>}
     {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending || switching} onConfirm={() => void chooseBrowser({ ...USE_MY_CHROME_PATCH })} onCancel={() => setConfirmMyChrome(false)} />}
     {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} works in tabs of its own, and your tabs stay yours.</p>}
+    {remoteDebugging && extensionBuild !== undefined && extensionBuild !== "none" && <RemoteDebuggingUpgrade botName={bot.name} pending={pending || switching || busy} onSwitch={() => void chooseBrowser({ useMyChrome: true, browserTransport: "extension" })} />}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
-    <BrowserPanelAlerts refusal={refusal} problem={connectionError || error || status?.problem || ""} />
+    <BrowserPanelAlerts refusal="" problem={connectionError || error || status?.problem || ""} />
     {((canEnable && connectionError) || (!connectionError && status?.problemCode === BROWSER_SANDBOX_ENABLE_CODE)) && <BrowserSandboxEnable pending={pending} note={enableNote} onEnable={() => void enableBrowser()} />}
   </div>;
 }

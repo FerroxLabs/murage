@@ -31,6 +31,7 @@ import {
 import { WEBHOOK_DEFAULT_MAX_PENDING_RUNS, WEBHOOK_MAX_PENDING_RUNS_LIMIT, webhookActivationDefaults, webhookMaxPendingRunsInput, type WebhookAttempt, type WebhookCredential, type WebhookTrigger, type WebhookTriggerInput } from "@/lib/webhooks";
 import { api, useStore, type Bot } from "@/state/store";
 import { copyTextOrThrow } from "@/lib/copy-text";
+import { webhookEventData } from "@/lib/webhook-message";
 
 // F2 (1.0.4): new Cloud VM webhooks wait for Cloud approvals; a saved one keeps its record and can move to this computer.
 const CLOUD_WEBHOOK_WAIT = "Cloud VM webhooks start when Cloud approvals arrive. Choose This computer for now.";
@@ -46,10 +47,10 @@ function relativeTime(at?: number) {
 }
 
 function deliverySummary(run: RoutineRun) {
-  const eventName = run.prompt?.match(/^Event: (.+)$/m)?.[1]?.trim() || "Webhook event";
-  const eventData = run.prompt?.match(/\[UNTRUSTED WEBHOOK EVENT DATA\]\n([\s\S]*?)\n\[\/UNTRUSTED WEBHOOK EVENT DATA\]/)?.[1] ?? "";
-  const payloadStart = eventData.indexOf("\n\n");
-  const payload = (payloadStart >= 0 ? eventData.slice(payloadStart + 2) : eventData).replace(/\s+/g, " ").trim();
+  // Event name from the metadata half only: the payload below it is the sender's text.
+  const event = webhookEventData(run.prompt ?? "");
+  const eventName = event?.metadata.match(/^Event: (.+)$/m)?.[1]?.trim() || "Webhook event";
+  const payload = (event?.payload ?? "").replace(/\s+/g, " ").trim();
   return { eventName, preview: payload.slice(0, 240) };
 }
 

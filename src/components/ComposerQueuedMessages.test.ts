@@ -14,7 +14,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { QueuedComposerMessages } from "./ComposerQueuedMessages";
+import { QueuedComposerMessages, QueuedComposerRow } from "./ComposerQueuedMessages";
+import { composerCanInjectNow } from "./ComposerInjectNow";
 
 const COMPONENTS_DIR = dirname(fileURLToPath(import.meta.url));
 const composerSource = readFileSync(join(COMPONENTS_DIR, "Composer.tsx"), "utf8");
@@ -29,7 +30,7 @@ describe("QueuedComposerMessages", () => {
     expect(html).toContain('aria-label="Queued messages"');
     expect(html).toContain("follow up after this");
     expect(html).toContain("Queued for the next turn");
-    expect(html).toContain('aria-label="Cancel queued message"');
+    expect(html).toContain('aria-label="Remove queued message"');
   });
 
   it("shows a line still being sent as Sending, with nothing to cancel yet", () => {
@@ -39,7 +40,7 @@ describe("QueuedComposerMessages", () => {
     }));
     expect(html).toContain("typed while it worked");
     expect(html).toContain("Sending");
-    expect(html).not.toContain("Cancel queued message");
+    expect(html).not.toContain("Remove queued message");
   });
 
   it("renders nothing at all when the queue is empty", () => {
@@ -97,7 +98,7 @@ describe("QueuedComposerMessages: a refused send", () => {
     expect(html).toContain("Not sent");
     expect(html).toContain("Send again");
     expect(html).toContain("Dismiss");
-    expect(html).not.toContain("Cancel queued message");
+    expect(html).not.toContain("Remove queued message");
   });
 });
 
@@ -179,5 +180,175 @@ describe("QueuedComposerMessages: attachments in a queued line", () => {
     expect(composerSource).toMatch(/type: "sendGroup", groupId: group\.id, text: again\.text/);
     // Inject now names queue ids; the server keeps the words it was sent
     expect(composerSource).toContain("queueIds: queuedMessages.map((entry) => entry.queueId)");
+  });
+});
+
+// 1.0.15 COMPOSER-QUEUE-COMPACT: queued lines take one line until opened.
+describe("QueuedComposerMessages: the compact stack", () => {
+  const imagePath = "/Users/test/.murage/attachments/7c1d0e2a-91fb.png";
+  const longText = Array.from({ length: 15 }, (_, i) => `line ${i + 1} of a long follow-up`).join("\n");
+  const two = [
+    { queueId: "q1", text: `${longText}\n\n<attached-image path="${imagePath}" />` },
+    { queueId: "q2", text: "and rename the files to match the brief" },
+  ];
+  const source = readFileSync(join(COMPONENTS_DIR, "ComposerQueuedMessages.tsx"), "utf8");
+
+  it("one waiting line is one row with no count line", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q1", text: "also run the tests" }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("also run the tests");
+    expect(html).not.toContain("messages queued for the next turn");
+    expect(html).not.toContain("data-queued-group");
+    expect(html.match(/data-queued-row/g)).toHaveLength(1);
+  });
+
+  it("two waiting lines fold to one count row, closed, with no row text in the markup", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, { items: two, onCancel: vi.fn() }));
+    expect(html).toContain("2 messages queued for the next turn");
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("line 1 of a long follow-up");
+    expect(html).not.toContain("rename the files");
+    expect(html).not.toContain("data-queued-row");
+  });
+
+  it("the phone says it shorter", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, { items: two, onCancel: vi.fn(), phone: true }));
+    expect(html).toContain("2 queued for the next turn");
+    expect(html).not.toContain("messages queued");
+  });
+
+  it("opened, each line is one clamped row with its own Remove, and an image is a chip, not a tag", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, { items: two, onCancel: vi.fn(), initialExpanded: true }));
+    expect(html).toContain('aria-expanded="true"');
+    expect(html.match(/data-queued-row/g)).toHaveLength(2);
+    expect(html.match(/aria-label="Remove queued message"/g)).toHaveLength(2);
+    // one line each: truncate (nowrap + ellipsis), never pre-wrap while closed
+    expect(html.match(/class="[^"]*\btruncate\b[^"]*"/g)!.length).toBeGreaterThanOrEqual(3);
+    expect(html).not.toContain("whitespace-pre-wrap");
+    expect(html).toContain('src="/api/attachments/7c1d0e2a-91fb.png"');
+    expect(html).not.toContain("attached-image");
+    expect(html).not.toContain(imagePath);
+    expect(html).toContain("Click a message to see all of it.");
+    expect(html).not.toContain("edit it");
+  });
+
+  it("the phone hint says Tap", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, { items: two, onCancel: vi.fn(), phone: true, initialExpanded: true }));
+    expect(html).toContain("Tap a message to see all of it.");
+  });
+
+  it("a tapped line shows all of it and its thumbnails, with no Edit", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: two, onCancel: vi.fn(), initialExpanded: true, initialOpenId: "q1",
+    }));
+    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("line 15 of a long follow-up");
+    expect(html).not.toContain("Edit queued message");
+    expect(html).not.toMatch(/>Edit</);
+    expect(html).toContain("Show less");
+    expect(html).not.toContain("attached-image");
+  });
+
+  it("the stack never takes more than a quarter of the view and scrolls inside itself", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, { items: two, onCancel: vi.fn(), initialExpanded: true }));
+    const stack = html.match(/<div class="([^"]*)" aria-label="Queued messages"/);
+    expect(stack).not.toBeNull();
+    expect(stack![1]).toContain("max-h-[25dvh]");
+    expect(stack![1]).toContain("overflow-y-auto");
+    // in the column's flow: nothing positions it over the transcript or the approval panel
+    expect(source).not.toMatch(/className="[^"]*\b(fixed|absolute)\b[^"]*max-h/);
+    expect(stack![1]).not.toMatch(/\b(fixed|absolute)\b/);
+  });
+
+  it("a refused line stays in full with Send again and Dismiss while two waiting lines stay folded", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [...two, { queueId: "q3", text: "the room could not start this", refused: { notice: "refused" } }],
+      onCancel: vi.fn(),
+      onResend: vi.fn(),
+    }));
+    expect(html).toContain("the room could not start this");
+    expect(html).toContain("Send again");
+    expect(html).toContain("Dismiss");
+    expect(html).toContain("2 messages queued for the next turn");
+    expect(html).not.toContain("rename the files");
+  });
+
+  it("Remove hands the handler the line it belongs to", () => {
+    const onCancel = vi.fn();
+    const item = two[1]!;
+    const tree = QueuedComposerRow({ item, open: true, onToggle: vi.fn(), onCancel });
+    const byLabel = (label: string) => {
+      const found: Array<{ onClick?: () => void }> = [];
+      const walk = (node: unknown): void => {
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (!node || typeof node !== "object" || !("props" in node)) return;
+        const props = (node as { props: { children?: unknown; onClick?: () => void; "aria-label"?: string } }).props;
+        if (props["aria-label"] === label && props.onClick) found.push(props);
+        walk(props.children);
+      };
+      walk(tree);
+      return found;
+    };
+    expect(byLabel("Remove queued message")).toHaveLength(1);
+    byLabel("Remove queued message")[0]!.onClick!();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onCancel).toHaveBeenCalledWith("q2");
+  });
+
+  it("a line still being sent has no Remove", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerRow, {
+      item: { queueId: "sending:s1", text: "typed while it worked", sending: true }, open: true, onToggle: vi.fn(), onCancel: vi.fn(),
+    }));
+    expect(html).not.toContain("Remove queued message");
+  });
+});
+
+describe("Remove and Inject now are the only ways a waiting line leaves", () => {
+  // Edit was cut from 1.0.15 (QUEUE-EDIT-SAVED-DRAFT): nothing copies a queued line into the box.
+  it("Edit is gone from the stack and the composer", () => {
+    const stackSource = readFileSync(join(COMPONENTS_DIR, "ComposerQueuedMessages.tsx"), "utf8");
+    for (const src of [stackSource, composerSource]) {
+      expect(src).not.toMatch(/onEdit=|editQueued|queuedItemDraft|restoreQueuedToDraft|composer\.queue\.edit/);
+    }
+  });
+
+  it("Remove is the plain server cancel for a 1:1 chat and a room", () => {
+    const start = composerSource.indexOf("const cancelQueued = (queueId: string) => {");
+    expect(start).toBeGreaterThan(-1);
+    const body = composerSource.slice(start, composerSource.indexOf("\n  };\n", start));
+    expect(body).toContain('dispatch({ type: "cancelGroupQueued", groupId: group.id, threadId, queueId })');
+    expect(body).toContain('dispatch({ type: "cancelQueued", botId: bot.id, queueId })');
+    expect(composerSource).toContain("onCancel={cancelQueued}");
+  });
+
+  it("Inject now is unchanged and still counts waiting lines only", () => {
+    expect(composerCanInjectNow(true, false, 1)).toBe(true);
+    expect(composerCanInjectNow(true, false, 0)).toBe(false);
+    expect(composerSource).toContain("shownQueued.filter((entry) => !entry.sending && !entry.refused)");
+    expect(composerSource).toContain("composerCanInjectNow(busy, locked, pendingCount)");
+  });
+});
+
+describe("the queue next to a waiting approval", () => {
+  it("stays in the column below the approval panel and keeps the pill open only for itself", () => {
+    const approvalAt = composerSource.indexOf("<PendingApprovalQueue");
+    const queueAt = composerSource.indexOf("<QueuedComposerMessages");
+    expect(approvalAt).toBeGreaterThan(-1);
+    expect(queueAt).toBeGreaterThan(approvalAt);
+    // with a card waiting the pill shows only when lines are queued, and the textarea hides
+    expect(composerSource).toContain('approval && !shownQueued.length && "hidden"');
+    expect(composerSource).toMatch(/text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-\[8rem\]", approval && "hidden"/);
+  });
+});
+
+describe("QueuedComposerMessages: attachments a screen reader can hear", () => {
+  it("a closed line with words and an image says one thing is attached", () => {
+    const html = renderToStaticMarkup(createElement(QueuedComposerMessages, {
+      items: [{ queueId: "q1", text: `look\n\n<attached-image path="/Users/test/.murage/attachments/ab12-cd34.png" />` }],
+      onCancel: vi.fn(),
+    }));
+    expect(html).toContain("(1 attached)");
   });
 });

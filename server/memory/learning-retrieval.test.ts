@@ -88,15 +88,16 @@ it("never recalls a failed tool action as done and qualifies a completed one", a
   await consolidateMemorySource(job, extract(failed, "observation"), signal());
   const hits = await recall("deployment staging");
   expect(facts(hits)).toEqual([]);
-  const chunks = hits.filter(hit => kindOf(hit) === "source");
-  expect(chunks.length).toBeGreaterThan(0);
-  for (const hit of chunks) expect(hit.sourceOutcome).toBe("failed");
+  // From 1.0.15 what a tool returned is evidence, not a memory (MEMORY-TOOL-NAME-JUNK): its capture writes no source record, so recall never
+  // quotes it, as done or otherwise. The thread checkpoint below still carries the outcome as a working note.
+  expect(hits.filter(hit => kindOf(hit) === "source")).toEqual([]);
   for (const hit of hits.filter(hit => kindOf(hit) === "checkpoint")) expect(hit.text).toContain("Observed tool outcome (failed)");
   const bundle = await bundleText("deployment staging");
-  expect(bundle).toContain("a tool reported a failed action"); expect(bundle).not.toContain("a tool showed");
+  // with no source line to quote, the bundle carries the failure as the checkpoint's working note, qualified as failed
+  expect(bundle).toContain("Observed tool outcome (failed)"); expect(bundle).not.toContain("a tool showed"); expect(bundle).not.toContain("a tool reported a completed action");
   const saved = "saved weekly report to the reports folder", done = capture("saved-report", saved, "tool", "completed");
   await consolidateMemorySource(done, extract(saved, "observation"), signal());
-  // Tool outcomes remain recallable raw evidence; per-turn learning no longer distills them.
+  // A tool outcome is no memory row; the thread checkpoint still quotes it as a working note, and per-turn learning does not distill it.
   expect(facts(await recall("weekly report reports folder"))).toEqual([]);
   expect((await recall("weekly report reports folder")).some(hit=>hit.text.includes(saved))).toBe(true);
 });

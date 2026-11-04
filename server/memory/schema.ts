@@ -612,9 +612,11 @@ export const DISCLOSURES_LIVE = registerOptionalIndex({ name: DISCLOSURES_LIVE_I
 /** 1.0.2 rc3f P3-9: the owner's pins, served by index. A partial index (only pinned active records are in it), so it stays small and a turn's
  * pin read is keyed by scope, not a walk of every active record of the scope. It is a registered optional index (optional-index.ts): never made
  * at open or on the main thread, built only through the idle-gated worker (buildOptionalIndexesWhenIdle), accepted by validation only with its
- * exact text, dropped by the downgrade, and a turn that finds it absent reads the pins the way it always did (cached per pin stamp). */
+ * exact text, dropped by the downgrade, and a turn that finds it absent reads the pins the way it always did (cached per pin stamp).
+ * 1.0.15 MEM-PIN-INDEX-BOOT: also made before listen on any launch where it is missing (preListen). The walk its absence costs is the first turn's
+ * (1.96 s from cold pages over 93,648 active records on the owner's data, for no pin at all); the build is one scan, 141 ms on the same data, once. */
 export const OWNER_PIN_INDEX = "memory_records_pinned";
-export const OWNER_PIN = registerOptionalIndex({ name: OWNER_PIN_INDEX, table: "memory_records", minSchemaVersion: 9,
+export const OWNER_PIN = registerOptionalIndex({ name: OWNER_PIN_INDEX, table: "memory_records", minSchemaVersion: 9, preListen: true,
   sql: `CREATE INDEX IF NOT EXISTS ${OWNER_PIN_INDEX} ON memory_records(scope_id) WHERE owner_pinned=1 AND state='active'` });
 /** 1.0.2 rc4 identity: the two partial indexes the identity set is read through (provenance-stamp.ts), so that a read of every identity record
  * costs the identity records, not the store (187k records on the owner's data), and an in-place promotion by another connection is seen on the

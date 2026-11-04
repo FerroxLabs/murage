@@ -241,7 +241,19 @@ describe("wiring", () => {
     expect(chat).toContain('<main className="relative flex h-full min-w-0 flex-1 flex-row bg-app">');
     expect(chat).toContain('data-testid="chat-column"');
     expect(chat).toContain("md:data-collapsed:invisible md:data-collapsed:w-0");
-    expect(chat).toContain("<WorkspacePane bot={bot} />");
+    expect(chat).toContain("<LazyWorkspacePane bot={bot} />");
+  });
+
+  it("loads the open pane on first use, and keeps the closed pane's task load and drafts in always-loaded code", () => {
+    expect(chat).not.toMatch(/from "\.\/WorkspacePane"/);
+    const lazy = read("./WorkspacePaneLazy.tsx");
+    expect(lazy).toContain('import("./WorkspacePane")');
+    expect(lazy).toMatch(/const \{ open, drafts \} = useWorkspacePaneGate\(bot\);\s*if \(!open\) return null;/);
+    expect(lazy).toContain("<Suspense fallback={<PaneLoading />}>");
+    expect(lazy).not.toMatch(/fixed inset-0/);
+    const gate = read("./workspace-pane-gate.ts");
+    expect(gate).toContain('useEnsureTask("bot"');
+    expect(gate).toContain("createMarkdownDraftStore(createIndexedDbDraftBackend())");
   });
 
   it("Files opens a file beside the chat by scope and relative path, and leaves the selection alone", () => {
