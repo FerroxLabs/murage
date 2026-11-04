@@ -50,6 +50,20 @@ needs the key off. To fix it, install and unlock a keyring such as
 Murage and enter the key again. If you want keys kept as plain text on this
 computer anyway, start Murage with `MURAGE_ALLOW_PLAINTEXT_SECRETS=1`.
 
+### Arch Linux and EndeavourOS (AppImage)
+
+Arch-based distributions are not an official target, but the portable AppImage runs there. A minimal Arch
+install can lack the FUSE 3 helper and some desktop libraries the AppImage needs, so install them first:
+
+```sh
+sudo pacman -S --needed fuse3 gtk3 nss alsa-lib libcups mesa
+chmod +x Murage.AppImage
+./Murage.AppImage
+```
+
+A full desktop install (for example EndeavourOS with KDE or GNOME) usually has all of these already, and
+`--needed` skips the ones that are present.
+
 ## Build packages
 
 Requirements for building from source:
@@ -274,3 +288,8 @@ file Murage-*-x86_64.AppImage
 
 Run it from a terminal once to collect the startup output. Do not install `libfuse2` just for this AppImage; the
 package is built with the static runtime.
+
+If it prints `No suitable fusermount binary found on the $PATH` or `Cannot mount AppImage, please check your FUSE
+setup`, install the distribution's FUSE 3 package (`fuse3` on Ubuntu, Debian and Arch). If it then names a missing
+`lib*.so` file, install the desktop libraries listed under
+[Arch Linux and EndeavourOS](#arch-linux-and-endeavouros-appimage), or your distribution's packages for them.

@@ -68,7 +68,7 @@ describe("a dispatch failure reaches a transcript a bot reads only as a code", (
     expect(dispatch).toMatch(/await h\.startTurn\(target\.id, text, \{[\s\S]{0,600}?\} catch \(error\) \{[\s\S]{0,400}?recordRefusedStart\(bus\.store, destination, error instanceof Error \? error\.message : String\(error\)\);/);
   });
   it("a synchronous ask refused before the asked bot's turn began keeps the same explanation for the owner (R8-03)", () => {
-    const ask = index.slice(index.indexOf("function askBotAndWait("), index.indexOf("async function defaultSelection("));
+    const ask = index.slice(index.indexOf("function askBotAndWait("), index.indexOf("async function engineHealthPrimaryProbe("));
     expect(ask).toMatch(/\.catch\(\(err\) => \{[\s\S]{0,500}?recordRefusedStart\(store, threadId, reason\);[\s\S]{0,120}?finish\(askOutcome\("error"/);
   });
   it("a shared run's dispatch failure is kept as a status and the engine's words only as the owner's diagnostic (R8-02)", () => {

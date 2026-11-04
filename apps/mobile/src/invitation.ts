@@ -17,6 +17,7 @@ export const COPY = {
   notACode: "That isn't a Murage pairing code. On your computer, open Murage, then Settings, then Phone and other devices, and scan the code shown there.",
   insecure: "This address isn't secure. Murage only connects over HTTPS.",
   badAddress: "That doesn't look like your computer's address. It looks like your-computer.tail1234.ts.net.",
+  codeRefused: "Your computer didn't accept that code. Check the code on your computer and try again.",
   badCode: "The code is the six digits beside the QR code on your computer.",
 } as const;
 

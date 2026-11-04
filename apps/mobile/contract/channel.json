@@ -160,6 +160,40 @@
         "args": "nope"
       },
       "error": "bad_args"
+    },
+    {
+      "body": {
+        "method": "pairRefused",
+        "args": {
+          "message": "That code is no longer valid."
+        }
+      },
+      "method": "pairRefused"
+    },
+    {
+      "body": {
+        "method": "pairRefused",
+        "args": {
+          "message": ""
+        }
+      },
+      "method": "pairRefused"
+    },
+    {
+      "body": {
+        "method": "pairRefused",
+        "args": {}
+      },
+      "error": "bad_args"
+    },
+    {
+      "body": {
+        "method": "pairRefused",
+        "args": {
+          "message": 7
+        }
+      },
+      "error": "bad_args"
     }
   ],
   "diagLineArgs": {

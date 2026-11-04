@@ -24,6 +24,8 @@ type Generation = {
   id: string;
   claims: Set<InternalCapability>;
   budgets: Record<"create" | "handoff", Budget>;
+  /** A team create_bot refused this turn (1.0.16 TEAM-SECTION): the turn may not then file bots in its own team instead. */
+  refusedTeam?: string;
 };
 type Reservation = { commit(): boolean; release(): void };
 
@@ -207,6 +209,16 @@ export class InternalCapabilities {
     this.#generations.clear();
     this.#providers.clear();
     // Keep bounded terminal tombstones: a late handshake can still resolve.
+  }
+
+  /** Remember, for the rest of this turn, that create_bot refused the team it named. */
+  markTeamRefused(claim: InternalCapability, team: string): void {
+    if (this.isActive(claim)) this.#generations.get(claim.threadId)!.refusedTeam = team;
+  }
+
+  /** The team create_bot refused earlier in this turn, if any. */
+  teamRefused(claim: InternalCapability): string | undefined {
+    return this.isActive(claim) ? this.#generations.get(claim.threadId)!.refusedTeam : undefined;
   }
 
   reserve(claim: InternalCapability, kind: "create" | "handoff", limit = 4): Reservation | null {

@@ -174,6 +174,27 @@ describe("feedback request", () => {
     expect(scrubSecrets("password: hunter2hunter2")).toBe(`password: ${REMOVED}`);
     expect(scrubSecrets("the token box was confusing")).toBe("the token box was confusing");
   });
+
+  it("scrubs GitLab and Slack app tokens, as server/redact.ts does", () => {
+    const tail = "abcdefghijklmnopqrstuvwxyz";
+    for (const token of [`${"glp" + "at-"}${tail}`, `${"gld" + "t-"}${tail}`, `${"glr" + "tr-"}${tail}`, `${"xa" + "pp-"}1-A0123456789-${tail}`]) {
+      expect(scrubSecrets(`see ${token} here`), token).toBe(`see ${REMOVED} here`);
+    }
+  });
+
+  it("removes a whole credential, tail included, when a token shape sits inside it", () => {
+    const tail = "abcdefghijklmnopqrst";
+    const cases: Array<[string, string]> = [
+      [`Authorization: Bearer ${"glp" + "at-"}${tail}/private-tail`, `Authorization: Bearer ${REMOVED}`],
+      [`api_key=${"sk" + "-"}${tail}.private-tail`, `api_key=${REMOVED}`],
+    ];
+    for (const [input, expected] of cases) {
+      expect(scrubSecrets(input), input).toBe(expected);
+      expect(scrubSecrets(expected), `idempotent: ${input}`).toBe(expected);
+      expect(scrubSecrets(input)).not.toContain("private-tail");
+      expect(scrubSecrets(input)).not.toContain("glp" + "at-");
+    }
+  });
 });
 
 describe("feedback envelope: fixed tables only (1.0.12)", () => {

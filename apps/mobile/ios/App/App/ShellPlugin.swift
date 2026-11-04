@@ -18,7 +18,7 @@ public final class ShellPlugin: CAPPlugin, CAPBridgedPlugin {
         Task { @MainActor in
             ShellCoordinator.shared.onClosed = { [weak self] closed in
                 // Retained until the launcher page has attached its listener.
-                self?.notifyListeners("workspaceClosed", data: ["origin": closed.origin, "reason": closed.reason.rawValue], retainUntilConsumed: true)
+                self?.notifyListeners("workspaceClosed", data: closed.dictionary, retainUntilConsumed: true)
             }
             // A launcher notice by code (L1 holds the words), e.g. a tap on a
             // notification from a computer that was removed. Retained, as above.

@@ -145,6 +145,13 @@ describe("the keyboard", () => {
     expect(questionKeyAction("Escape", 3, false)).toEqual({ type: "skip" });
   });
 
+  it("leaves Enter and Esc to the input method while it is composing", () => {
+    expect(questionKeyAction("Enter", 3, true, true)).toBeNull();
+    expect(questionKeyAction("Enter", 3, false, true)).toBeNull();
+    expect(questionKeyAction("Escape", 3, true, true)).toBeNull();
+    expect(read("./QuestionCard.tsx")).toContain("imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode })");
+  });
+
   it("ignores a digit past the last option, and every digit while typing an answer", () => {
     expect(questionKeyAction("4", 3, false)).toBeNull();
     expect(questionKeyAction("0", 3, false)).toBeNull();

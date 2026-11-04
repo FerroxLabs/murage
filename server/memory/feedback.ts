@@ -27,6 +27,7 @@ import { redactSecretsInText } from "../redact.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { turnAudienceIsOwner } from "../owner-audience.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
+import type { LearningGate } from "./learning-send.ts";
 import { hasPastedThirdParty } from "./prospect-text.ts";
 import { EDIT_SPECS, anchoredBy, ownerUnquotedText, parseStyleSpec, parseWhere, phraseSpec, renderStyleLine, type StyleSpec, type Where } from "./lesson-spec.ts";
 
@@ -169,7 +170,8 @@ export function raiseStrength(base: number, text: string, opts: { correction: bo
 // ---------------------------------------------------------------- stage 2
 
 export interface PriorTurnAction { label: string; summary?: string; ok?: boolean; messageId?: string }
-export interface PriorTurn { messageId: string; turnId?: string; at: number; botId?: string; text: string; actions: PriorTurnAction[] }
+/** `textMessageIds`: every same-turn bot text row joined into `text`; the classifier's gate holds each of them (never sent to the model). */
+export interface PriorTurn { messageId: string; turnId?: string; at: number; botId?: string; text: string; actions: PriorTurnAction[]; textMessageIds?: string[] }
 
 export interface ClassifierInput { turn: PriorTurn | null; message: string }
 export interface FeedbackClassification {
@@ -348,12 +350,13 @@ export function paraphraseNearOwnerWords(paraphrase: string, ownerText: string):
   return wanted.filter(t => mine.has(t)).length / wanted.length >= 0.8;
 }
 
-/** The learning connection as a classifier. Production wiring passes the resolved extractor. */
-export function learningConnectionClassifier(extractor: TextOnlyExtractor, policyRevision: () => string): FeedbackClassifier {
+/** The learning connection as a classifier, with the call's one gate over what it holds (learning-send.ts): an HTTP transport refuses a
+ *  call without one. Production wiring uses leasedFeedbackClassifier (learning-wiring.ts). */
+export function learningConnectionClassifier(extractor: TextOnlyExtractor, policyRevision: () => string, gateFor: (input: ClassifierInput) => LearningGate): FeedbackClassifier {
   return {
     classify(input, signal) {
       const messages = classifierMessages(input);
-      return extractor(messages[1].content, 300, signal, { policyRevision: policyRevision(), messages });
+      return extractor(messages[1].content, 300, signal, { policyRevision: policyRevision(), messages, fence: gateFor(input) });
     },
   };
 }
@@ -368,8 +371,9 @@ export function turnFromMessage(thread: readonly Message[], target: Message): Pr
   };
   if (target.turnId) for (const m of thread) { if (m.turnId === target.turnId) take(m); }
   else for (let i = idx - 1; i >= 0 && thread[i].role === "bot"; i--) take(thread[i]);
-  const turnText = target.turnId ? thread.filter(m => m.turnId === target.turnId && m.kind === "text" && m.role === "bot").map(m => m.text ?? "").join("\n").trim() : "";
-  return { messageId: target.id, ...(target.turnId ? { turnId: target.turnId } : {}), at: target.at, ...(target.from?.botId ? { botId: target.from.botId } : {}), text: turnText || (target.text ?? ""), actions };
+  const textRows = target.turnId ? thread.filter(m => m.turnId === target.turnId && m.kind === "text" && m.role === "bot") : [];
+  const turnText = textRows.map(m => m.text ?? "").join("\n").trim();
+  return { messageId: target.id, ...(target.turnId ? { turnId: target.turnId } : {}), at: target.at, ...(target.from?.botId ? { botId: target.from.botId } : {}), text: turnText || (target.text ?? ""), actions, ...(textRows.length ? { textMessageIds: textRows.map(m => m.id) } : {}) };
 }
 
 /** A reply reference wins; otherwise the newest terminal bot text right before the owner message. */

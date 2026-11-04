@@ -99,7 +99,7 @@ export interface View {
   lines: string[];
   actions: Action[];
   rows: Row[];
-  form?: { origin?: string };
+  form?: { origin?: string; /** The saved computer's name, when this origin is saved. */ name?: string };
   error?: string;
   busy?: boolean;
   /** The Murage mark above the title (first run's welcome). */
@@ -131,6 +131,8 @@ export function screenForClose(closed: Closed, workspaces: SavedWorkspace[]): Sc
       return { kind: "updateRequired", origin: closed.origin };
     case "signedOut":
       return { kind: "repair", origin: closed.origin };
+    case "pairRefused":
+      return { kind: "type", origin: closed.origin, error: (typeof closed.message === "string" && closed.message.trim()) || COPY.codeRefused };
     default:
       return home(workspaces);
   }
@@ -220,6 +222,11 @@ export function lastConnectedText(now: number, then: number | undefined): string
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `Last connected ${hours} h ago`;
   return `Last connected ${Math.floor(hours / 24)} days ago`;
+}
+
+function savedName(origin: string | undefined, workspaces: SavedWorkspace[]): { name?: string } {
+  const saved = origin ? workspaces.find((w) => w.origin === origin) : undefined;
+  return saved ? { name: saved.name } : {};
 }
 
 export function nameOf(origin: string, workspaces: SavedWorkspace[]): string {
@@ -315,7 +322,7 @@ export function present(screen: Screen, workspaces: SavedWorkspace[], now: numbe
         ...view,
         title: "Type the address and code",
         lines: ["Both are on your computer: open Murage, then Settings, then Phone and other devices."],
-        form: { origin: screen.origin },
+        form: { origin: screen.origin, ...savedName(screen.origin, workspaces) },
         actions: [
           { id: "connect", label: "Connect", primary: true },
           { id: "back", label: "Back" },

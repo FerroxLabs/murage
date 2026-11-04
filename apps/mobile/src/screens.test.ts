@@ -672,3 +672,27 @@ it("keeps shell-types free of runtime imports, so Node loads it without Capacito
   const source = read("./shell-types.ts");
   expect(source.match(/^import (?!type )/gm)).toBeNull();
 });
+
+describe("a refused pairing code (1.0.16 F1)", () => {
+  it("returns to the type screen on the same address, with the computer's line", () => {
+    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message: "That code is no longer valid." }, [])).toEqual({
+      kind: "type",
+      origin: "https://mac.tailnet123.ts.net",
+      error: "That code is no longer valid.",
+    });
+  });
+
+  it("uses the default sentence when there is no line, or only blanks", () => {
+    for (const message of [undefined, "", "   "]) {
+      expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message }, [])).toEqual({
+        kind: "type",
+        origin: "https://mac.tailnet123.ts.net",
+        error: COPY.codeRefused,
+      });
+    }
+  });
+
+  it("an unknown reason from a newer or older native still goes home", () => {
+    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "somethingNew" as never }, [])).toEqual({ kind: "welcome" });
+  });
+});

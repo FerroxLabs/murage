@@ -47,7 +47,8 @@ describe("free text is an answer at every turn", () => {
     expect(composer).toContain("openIntakeCard(visibleMessages(bot))");
     // U36 (68b9631b1, merged 63f62cb33) names the typed text requestText (const requestText = t), one value for the send and the answer
     expect(composer).toContain("const requestText = t;");
-    expect(composer).toContain("replyToIntake(bot.id, question.id, requestText, api, { alongside: true })");
+    // PHONE-INTAKE-NOTICE: replyAlongside posts it with { alongside: true }, except through the browser door
+    expect(composer).toContain("void replyAlongside(bot.id, question, requestText, api, surface)");
   });
 
   it("NEVER takes the turn off the engine, which is M1", () => {
@@ -63,7 +64,7 @@ describe("free text is an answer at every turn", () => {
     // the intake call cannot fail the send.
     const branch = composer.slice(composer.indexOf("openIntakeCard(visibleMessages(bot))"));
     const sendAt = branch.indexOf('type: "send"');
-    const intakeAt = branch.indexOf("replyToIntake(");
+    const intakeAt = branch.indexOf("replyAlongside(");
     expect(sendAt).toBeGreaterThan(-1);
     expect(intakeAt).toBeGreaterThan(sendAt);
     // Nothing between the question and the send may leave the function: that

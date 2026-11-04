@@ -9,6 +9,7 @@ final class LoadingOverlay: UIView {
     private let title = LoadingOverlay.label("Connecting to your computer…", style: .headline, color: ShellColors.ink)
     private let body = LoadingOverlay.label("Murage is opening your workspace.", style: .body, color: ShellColors.inkSecondary)
     private var retry: UIButton!
+    private var reveal: UIButton!
     private let mark = UIImageView(image: UIImage(named: "MurageWordmark"))
     private let panel = UIStackView()
 
@@ -24,6 +25,7 @@ final class LoadingOverlay: UIView {
         let retry = Self.button("Try again", filled: true) { [weak self] in self?.onRetry?() }
         self.retry = retry
         let reveal = Self.button("Your computers", filled: false) { [weak self] in self?.onChoose?() }
+        self.reveal = reveal
         [title, body, retry, reveal].forEach(panel.addArrangedSubview)
         panel.axis = .vertical
         panel.spacing = 12
@@ -71,6 +73,7 @@ final class LoadingOverlay: UIView {
         alpha = 1
         isHidden = false
         retry.isHidden = true
+        reveal.isHidden = false
         title.text = "Connecting to your computer…"
         body.text = "Murage is opening your workspace."
     }
@@ -82,6 +85,15 @@ final class LoadingOverlay: UIView {
         title.text = "Still connecting…"
         body.text = "You can wait for your workspace or try connecting again."
         UIAccessibility.post(notification: .screenChanged, argument: panel)
+    }
+
+    /// The workspace is closing for a reason of its own: no button is left to
+    /// tap for the frame or two before the screen is taken off.
+    func showClosing() {
+        alpha = 1
+        isHidden = false
+        retry.isHidden = true
+        reveal.isHidden = true
     }
 
     func hide() {

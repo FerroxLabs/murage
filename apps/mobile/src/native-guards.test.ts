@@ -1837,3 +1837,139 @@ describe("1.0.9 share and ask: iOS entitlements, plists and targets", () => {
     }
   });
 });
+
+describe("1.0.16 F2: a closing iOS workspace always leaves the screen", () => {
+  const swift = (name: string) => read(`ios/App/MurageShell/Sources/MurageShell/${name}`);
+  const closedBody = () => {
+    const text = swift("ShellCoordinator.swift");
+    const start = text.indexOf("private func closed(");
+    return text.slice(start, text.indexOf("private func deliver(", start));
+  };
+  const closeBody = () => {
+    const text = swift("WorkspaceViewController.swift");
+    const start = text.indexOf("private func close(_ reason: CloseReason");
+    return text.slice(start, text.indexOf("func closeFromShell", start));
+  };
+
+  it("the coordinator dismisses from the presenter, not from the workspace", () => {
+    const body = closedBody();
+    expect(body).toContain("workspace.presentingViewController ?? launcher");
+    expect(body).toContain("presenter.dismiss(animated: false");
+    expect(body).not.toContain("workspace.dismiss(");
+    expect(body).toContain("transitionCoordinator");
+  });
+
+  it("the close is delivered once, with a fallback when UIKit drops the completion", () => {
+    const body = closedBody();
+    expect(body).toContain("DeliverOnce()");
+    expect(body).toMatch(/guard once\.take\(\) else \{ return \}/);
+    expect(body).toMatch(/asyncAfter\(deadline: \.now\(\) \+ 1\.0\)/);
+    expect(body.indexOf("self?.deliver(")).toBeLessThan(body.indexOf("self?.deliverPendingCrossComputerOpen()"));
+  });
+
+  it("closing clears the workspace's own modals before the coordinator is told", () => {
+    const body = closeBody();
+    for (const call of ["phoneAskSetup.close()", "phoneForBots.close()", "PhoneJobServices.shared.detach(self)", "presentedViewController?.dismiss(animated: false)"]) {
+      expect(body, call).toContain(call);
+      expect(body.indexOf(call), call).toBeLessThan(body.indexOf("self.onClose?(reason"));
+    }
+    expect(body).toContain("overlay.showClosing()");
+  });
+
+  it("Ask setup is not offered before the computer was reached, nor while closing", () => {
+    const text = swift("WorkspaceViewController.swift");
+    expect(text).not.toMatch(/\|\|\s*(self\.)?pairedAtOpen/);
+    expect(text).not.toContain("pairedAtOpen");
+    expect(text).toContain("if signedInSeen && !closing { phoneAskSetup.foreground(in: self) }");
+    expect(text).toContain("if self.signedInSeen && !self.closing { self.phoneAskSetup.foreground(in: self) }");
+  });
+
+  it('"Your computers" on a closing splash takes the screen off without a second close', () => {
+    const text = swift("WorkspaceViewController.swift");
+    expect(text).toMatch(/overlay\.onChoose = \{[\s\S]*?if self\.closing \{ self\.onForceLeave\?\(\) \} else \{ self\.close\(\.launcher\) \}/s);
+    const coordinator = swift("ShellCoordinator.swift");
+    expect(coordinator).toContain("workspace.onForceLeave");
+    const force = coordinator.slice(coordinator.indexOf("private func forceLeave"), coordinator.indexOf("private func deliver("));
+    expect(force).toContain("presentingViewController ?? launcher");
+    expect(force).not.toContain("deliver(");
+  });
+});
+
+describe("1.0.16 F2: Android closes the Ask setup dialog with the workspace", () => {
+  it("close() closes phoneAskSetup before finish()", () => {
+    const text = read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+    const start = text.indexOf("void close(CloseReason reason)");
+    const body = text.slice(start, text.indexOf("finish();", start));
+    expect(body).toContain("phoneAskSetup.close()");
+  });
+});
+
+describe("1.0.16 F1: pairRefused is honoured only for a pairing workspace still on /enter", () => {
+  const swiftVc = () => read("ios/App/MurageShell/Sources/MurageShell/WorkspaceViewController.swift");
+  const javaActivity = () => read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+  const swiftCase = () => {
+    const text = swiftVc();
+    const start = text.indexOf("case .pairRefused:");
+    return text.slice(start, text.indexOf("case .registerPush:", start));
+  };
+  const javaCase = () => {
+    const text = javaActivity();
+    const start = text.indexOf('case "pairRefused"');
+    return text.slice(start, text.indexOf('case "callSessionOpen"', start));
+  };
+
+  it("iOS checks the credential, not-yet-signed-in and /enter before closing", () => {
+    const body = swiftCase();
+    expect(body).toContain("guard openedWithCredential, !signedInSeen, !closing");
+    expect(body).toContain('url.path == "/enter"');
+    expect(body).toContain("origin.contains(url)");
+    expect(body).toContain("close(.pairRefused, message: PairRefusal.message(message))");
+    expect(body).toContain("ChannelError.unavailable.rawValue");
+  });
+
+  it("Android checks the credential, not-yet-signed-in and /enter before closing", () => {
+    const body = javaCase();
+    expect(body).toContain("!askSetupPairing || signedInSeen || closing || !onEnter");
+    expect(body).toContain('"/enter".equals(Uri.parse(pageUrl).getPath())');
+    expect(body).toContain("close(CloseReason.PAIR_REFUSED, PairRefusal.message(line))");
+    expect(body).toContain('reply.error("unavailable")');
+  });
+
+  it("the iOS workspace is told it was opened with a code", () => {
+    expect(read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift")).toContain("workspace.openedWithCredential = credential != nil");
+  });
+
+  it("a refused code never forgets the computer or removes an approval key", () => {
+    const swift = read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift");
+    const closed = swift.slice(swift.indexOf("private func closed("), swift.indexOf("private func deliver("));
+    expect(closed).not.toContain("pairRefused");
+    expect(closed).toContain("if reason == .signOut { forget(origin) }");
+    expect(closed).toContain("if reason == .signOut || reason == .signedOut { ApprovalKeys.remove(origin: origin) }");
+    const java = read("android/app/src/main/java/com/murage/mobile/Shell.java");
+    const javaClosed = java.slice(java.indexOf("synchronized void closed(WorkspaceActivity workspace, CloseReason reason, String message)"), java.indexOf("synchronized String[] takePendingClose"));
+    expect(javaClosed).not.toContain("PAIR_REFUSED");
+    expect(javaClosed).toContain("reason == CloseReason.SIGN_OUT");
+  });
+
+  it("the message reaches the launcher on both platforms, live and from state()", () => {
+    expect(read("ios/App/App/ShellPlugin.swift")).toContain("data: closed.dictionary");
+    expect(read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift")).toContain('state["closed"] = closed.dictionary');
+    expect(read("android/app/src/main/java/com/murage/mobile/ShellPlugin.java")).toContain('event.put("message", message)');
+    expect(read("android/app/src/main/java/com/murage/mobile/Shell.java")).toContain('Json.put(close, "message", closed[2])');
+  });
+
+  it("both platforms hold the splash over a pairing /enter instead of flashing the desktop page", () => {
+    const vc = swiftVc();
+    expect(vc).toContain("if openedWithCredential && !signedInSeen && !closing { holdEnter() } else { reveal() }");
+    expect(vc).toContain("withTimeInterval: 5");
+    const activity = javaActivity();
+    expect(activity).toContain("if (askSetupPairing && !signedInSeen) holdEnter();");
+    expect(activity).toContain("main.postDelayed(enterHold, 5000)");
+  });
+
+  it("the sanitiser exists on both platforms and the launcher renders the line as text", () => {
+    expect(existsSync(join(ROOT, "ios/App/MurageShell/Sources/MurageShellCore/PairRefusal.swift"))).toBe(true);
+    expect(existsSync(join(ROOT, "android/app/src/main/java/com/murage/mobile/shell/PairRefusal.java"))).toBe(true);
+    expect(read("src/render.ts")).toMatch(/el\("p", "error", view\.error\)/);
+  });
+});
