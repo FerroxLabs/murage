@@ -64,7 +64,8 @@ function seeded() {
 }
 
 /** The answer without the cursor base never had. */
-const plain = (page: InboxPage) => ({ ...page, next: undefined });
+// `snoozedOwed` is new over base (UX L2B) and held by its own assertion below.
+const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined });
 
 describe("Inbox projection against base", () => {
   const db = seeded();
@@ -123,8 +124,13 @@ describe("Inbox projection against base", () => {
     put("t2", "fresh", NOW, { card: { requestId: "fresh", title: "Command", options: ["Allow"], tool: "Bash", answered: "Allow" } }); // answered in place (replace)
     db.prepare("UPDATE messages SET json=json_set(json,'$.card.answered','Deny') WHERE thread_id='t5' AND id='card17'").run();
     db.prepare("DELETE FROM messages WHERE thread_id='t0' AND id IN ('run0','card12','conn24')").run();
-    const row = listInbox(db, { view: "decisions" }, access, NOW).items[0];
+    const before = listInbox(db, { view: "decisions" }, access, NOW);
+    const row = before.items[0];
     updateInboxState(db, { id: row.id, version: row.version, snoozedUntil: NOW + DAY }, access, NOW);
+    // Snoozed is not answered: what leaves `decisions` comes back as `snoozedOwed`, so the badge stays put.
+    const after = listInbox(db, { view: "decisions" }, access, NOW);
+    expect(after.decisions + (after.snoozedOwed ?? 0)).toBe(before.decisions + (before.snoozedOwed ?? 0));
+    expect(after.snoozedOwed ?? 0).toBe((before.snoozedOwed ?? 0) + 1);
     for (const view of VIEWS) for (const scope of [access, narrow]) for (const page of [0, 2])
       expect(plain(listInbox(db, { view, page }, scope, NOW)), `${view} p${page}`).toEqual(base.listInbox(db, { view, page }, scope, NOW));
     expect([...owedThreads(db, access)].sort()).toEqual([...base.owedThreads(db, access)].sort());

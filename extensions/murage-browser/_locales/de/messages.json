@@ -301,7 +301,7 @@
     "message": "Mit Murage verbinden"
   },
   "spSetupBody": {
-    "message": "Öffne Murage auf diesem Computer und aktiviere den Browser-Begleiter in den Browser-Einstellungen."
+    "message": "Murage muss diesen Browser zuerst einrichten, bevor es sich verbinden kann. Öffne in der Murage-App das Browser-Feld eines Bots, wähle „Use my Chrome“ und drücke „Set up my browser“. Drücke dann hier auf Verbindung prüfen."
   },
   "spCheckConnection": {
     "message": "Verbindung prüfen"

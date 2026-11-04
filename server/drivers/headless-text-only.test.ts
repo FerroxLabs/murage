@@ -22,6 +22,8 @@ import {
 import type { ProviderTurnRoute } from "../provider-routing.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 const posix = describe.skipIf(process.platform === "win32");
 const STUB = fileURLToPath(new URL("../testing/pip-stub-cli.mjs", import.meta.url));
@@ -50,8 +52,10 @@ const cfg = (scenario: string, extra: Partial<HeadlessEngineConfig> = {}): Headl
   pathValue: process.platform === "win32" ? process.env.PATH ?? "" : "/usr/bin:/bin", fluxKey: "flux-test-key", preflight: preflight(), postResultGraceMs: 3000, ...extra,
 });
 const input = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: "SYS", text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
+  system: fixedPrompt("SYS"), text: "USER", model: "model-1", outputSchema: SCHEMA, signal: new AbortController().signal,
   maxOutputTokens: 2000, maxOutputBytes: 12 * 1024, context: { botId: "bot", runId: "run1", family: "lived", attempt: 1 }, ...over,
+  // every learning transport refuses a call without a gate; PIP always passes one
+  transport: { ...over.transport, gate: openLearningGate("continuity") },
 });
 type Rec = { argv: string[]; env: Record<string, string>; cwd: string; prompt: string | null; pid: number; homeFiles: string[] | null; stdin?: string; settingsContent?: string | null; fuigoConfig?: string | null };
 const records = (): Rec[] => existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];

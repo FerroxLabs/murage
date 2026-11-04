@@ -42,6 +42,8 @@
 //   FAKE_CODEX_CALL_LOG   file: one "<pid> <method>" line per request received
 //   (mode late-approval: turn/completed and an approval request arrive in one write)
 //   (mode split-approval: turn/completed, then an approval request split across two writes)
+//   FAKE_CODEX_ROLLOUT  rollout path thread/start and thread/resume report as `thread.path`; each happy turn appends a
+//                     namespace-less function_call for retry_thread and Codex's "unsupported call: retry_thread" output to it
 //   FAKE_CODEX_UNIQUE_THREADS  1: thread/start hands out a new id each time, as the real one does
 //   FAKE_CODEX_RESUME_GATE  gate path: hold the thread/resume answer until that file exists (a slow start)
 //   FAKE_CODEX_RESUME_MODEL  thread/resume answers like Codex 0.163: `{thread, model, modelProvider}`, echoing the requested model
@@ -317,6 +319,12 @@ const finishTurn = () => {
     accumulated.inputTokens += 7; accumulated.cachedInputTokens += 4; accumulated.outputTokens += 3;
     notify("thread/tokenUsage/updated", { tokenUsage: { total: { ...accumulated } } });
   } else notify("thread/tokenUsage/updated", { tokenUsage: { total: { inputTokens: 7, cachedInputTokens: 4, outputTokens: 3 } } });
+  if (process.env.FAKE_CODEX_ROLLOUT) {
+    const line = (payload: unknown) => `${JSON.stringify({ timestamp: new Date().toISOString(), type: "response_item", payload })}\n`;
+    appendFileSync(process.env.FAKE_CODEX_ROLLOUT,
+      line({ type: "function_call", name: "retry_thread", arguments: "{}", call_id: "call_unsupported" }) +
+      line({ type: "function_call_output", call_id: "call_unsupported", output: "unsupported call: retry_thread" }));
+  }
   dump();
   if (mode === "late-output") {
     // One write ensures the completion and late frame share the parser buffer.
@@ -595,7 +603,7 @@ process.stdin.on("data", (chunk) => {
         noteExecutionPolicy(msg.params);
         // the effective model and provider, as ThreadResumeResponse requires them (codex 0.163 schema)
         const resumeAnswer = (threadId: unknown) => ({
-          thread: { id: threadId },
+          thread: { id: threadId, ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) },
           ...(process.env.FAKE_CODEX_RESUME_MODEL === "none" ? {} : { model: process.env.FAKE_CODEX_RESUME_MODEL === "stale" ? "stale-model" : msg.params?.model ?? "fake-codex-model" }),
           modelProvider: msg.params?.modelProvider ?? "openai",
         });
@@ -628,7 +636,7 @@ process.stdin.on("data", (chunk) => {
             process.exit(1);
           }
         }
-        out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: process.env.FAKE_CODEX_UNIQUE_THREADS === "1" ? `codex-thread-${process.pid}-${Date.now()}` : "codex-thread-1" }, model: "fake-codex-model" } });
+        out({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: process.env.FAKE_CODEX_UNIQUE_THREADS === "1" ? `codex-thread-${process.pid}-${Date.now()}` : "codex-thread-1", ...(process.env.FAKE_CODEX_ROLLOUT ? { path: process.env.FAKE_CODEX_ROLLOUT } : {}) }, model: "fake-codex-model" } });
         break;
       case "turn/start": {
         nativeThreadId = msg.params.threadId;

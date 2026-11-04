@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { database, transaction } from "../database.ts";
+import { accountingWrite } from "./learning-send.ts";
 import { GEPA_FRAME_BYTES, gepaEvaluationSchema, validateGepaReflection, type GepaJson } from "../gepa-protocol.ts";
 import type { GepaCallLedger } from "../gepa-worker.ts";
 import type { ProcedureEvidence } from "./procedure-review.ts";
@@ -52,8 +53,8 @@ export function createGepaCallLedger(options: GepaLedgerOptions): GepaCallLedger
     const call = JSON.parse(String(row.intent)) as Call;
     return row.state === "granted" ? call : { ...call, state: "revoked", value: undefined };
   };
-  const save = (call: Call) => database().prepare("INSERT INTO memory_scope_bindings VALUES(?,?,'system',?,1,'granted',?) ON CONFLICT(id) DO UPDATE SET intent=excluded.intent")
-    .run(callKey(call.callId), options.scopeId, jobKey, JSON.stringify(call));
+  // GEPA's own call ledger: a quiet accounting write by exact statement name (learning-send.ts r9), so it never fences this job's next call
+  const save = (call: Call) => accountingWrite(database(), "gepa-ledger.call-save", callKey(call.callId), options.scopeId, jobKey, JSON.stringify(call));
   const assertHash = (inputHash: string) => { if (!/^[a-f0-9]{64}$/.test(inputHash)) throw new Error("GEPA_LEDGER_INPUT_INVALID"); };
   return {
     lookupOrReserve(callId, inputHash, kind) {

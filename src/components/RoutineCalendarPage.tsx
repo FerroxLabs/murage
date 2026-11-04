@@ -56,6 +56,8 @@ import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import type { CalendarCall, CalendarCallAttachment, CalendarCallInput } from "@/lib/calendar-calls";
 import { botRole } from "@/lib/bot-role";
 import { cn } from "@/lib/cn";
+import { imeComposing } from "@/lib/composer-enter";
+import { calendarCardLayout } from "@/lib/calendar-card-layout";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 import {
   intakeFiles,
@@ -657,7 +659,7 @@ function EventEditor({
 
           <div className="flex items-start gap-4">
             <span className="mt-3 size-4 shrink-0 rounded bg-accent" />
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === "routine" ? "Add title" : "Add call title"} className="keep-font-size min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder={kind === "routine" ? "Add title" : "Add call title"} className="keep-font-size min-w-0 flex-1 border-b border-hairline/60 bg-transparent px-1 pb-2 text-[22px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
           </div>
 
           <div className="flex items-start gap-4">
@@ -842,7 +844,7 @@ function EventEditor({
           <div className="flex items-start gap-4">
             <FileText size={18} className="mt-2.5 shrink-0 text-ink-secondary" />
             <div className="min-w-0 flex-1">
-              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "routine-instructions-limit" : undefined} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="block w-full min-w-0 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} aria-label={t(kind === "call" ? "routines.editor.descriptionLabel" : "routines.editor.instructionsLabel")} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "routine-instructions-limit" : undefined} placeholder={isRoomGoal ? "What should the team accomplish?" : kind === "routine" ? "Add instructions for the bot" : "Add description or agenda"} className="block w-full min-w-0 resize-y rounded-xl border border-hairline/50 bg-inset px-3.5 py-3 text-[13px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
               {instructionsLimit && <p id="routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1.5 text-[12px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
             </div>
           </div>
@@ -1016,7 +1018,7 @@ function QuickComposer({
         <button onClick={onClose} className="rounded-full p-1.5 text-ink-secondary hover:bg-inset hover:text-ink" aria-label="Close"><X size={16} /></button>
       </BoxHead>
       <BoxBody className="space-y-3 p-4">
-        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid) void save(); }} className="keep-font-size w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+        <input autoFocus value={name} onChange={(event) => setName(event.target.value)} aria-label={t("routines.editor.titleLabel")} placeholder="Add title" onKeyDown={(event) => { if (event.key === "Enter" && valid && !imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode })) void save(); }} className="keep-font-size w-full border-b border-hairline/60 bg-transparent pb-2 text-[18px] font-medium text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
         <div className="flex items-center gap-1 border-b border-hairline/35 pb-2">
           <button type="button" onClick={() => { setKind("routine"); setBotIds((ids) => ids.slice(0, 1)); }} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "routine" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Routine</button>
           <button type="button" onClick={() => setKind("call")} className={cn("rounded-lg px-3 py-1.5 text-[12px] font-medium", kind === "call" ? "bg-accent/15 text-accent" : "text-ink-secondary hover:bg-raised hover:text-ink")}>Call</button>
@@ -1053,7 +1055,7 @@ function QuickComposer({
         <div className="flex items-start gap-3">
           <FileText size={16} className="mt-2.5 shrink-0 text-ink-secondary" />
           <div className="min-w-0 flex-1">
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "quick-routine-instructions-limit" : undefined} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="block w-full min-w-0 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} aria-label={t(kind === "routine" ? "routines.editor.instructionsLabel" : "routines.editor.descriptionLabel")} aria-invalid={instructionsLimit?.over || undefined} aria-describedby={instructionsLimit ? "quick-routine-instructions-limit" : undefined} placeholder={kind === "routine" ? "What should the bot do?" : "Add a description (optional)"} className="block w-full min-w-0 resize-none rounded-lg border border-hairline/50 bg-inset px-3 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-ink-secondary/55 focus:border-accent" />
             {instructionsLimit && <p id="quick-routine-instructions-limit" role={instructionsLimit.over ? "alert" : undefined} className={cn("mt-1 text-[11.5px]", instructionsLimit.over ? "text-danger" : "text-ink-secondary")}>{instructionsLimit.line}</p>}
           </div>
         </div>
@@ -1132,10 +1134,16 @@ function CalendarEventCard({
     document.addEventListener("pointerup", up, { once: true });
   };
 
+  const height = Math.max(16, (previewDuration / 60) * HOUR_HEIGHT);
+  const fit = calendarCardLayout(height);
+  const detail = intervalCadence ?? (isCall ? `${ownerBots.length} bot${ownerBots.length === 1 ? "" : "s"}` : isRoomGoal ? `Team goal · ${room?.name ?? "Channel"}${statusLabel ? ` · ${statusLabel}` : ""}` : statusLabel ?? primary?.name);
+
   return (
     <button
       data-event-card
+      data-fit={fit}
       type="button"
+      title={[name, niceTime(item.at), detail].filter(Boolean).join(" · ")}
       draggable={canMove}
       onDragStart={(event) => {
         if (!canMove) return event.preventDefault();
@@ -1143,23 +1151,23 @@ function CalendarEventCard({
         event.dataTransfer.setData(EVENT_DRAG_TYPE, JSON.stringify({ kind: item.kind, id: isCall ? item.call.id : routine!.id, at: item.at }));
       }}
       onClick={(event) => { event.stopPropagation(); onOpen(); }}
-      className={cn("group absolute z-10 overflow-hidden rounded-md border text-left shadow-sm transition hover:z-20 hover:brightness-110 focus:z-20 focus:outline-none focus:ring-2 focus:ring-accent", previewDuration < 30 ? "px-1.5 py-0" : "px-2 py-1.5", status === "cancelled" && "opacity-55", (status === "failed" || status === "missed") && "border-danger/60")}
+      className={cn("group absolute z-10 overflow-hidden rounded-md border text-left shadow-sm transition hover:z-20 hover:brightness-110 focus:z-20 focus:outline-none focus:ring-2 focus:ring-accent", fit === "roomy" ? "px-2 py-1.5" : fit === "compact" ? "px-1.5 py-1" : "px-1.5 py-0", status === "cancelled" && "opacity-55", (status === "failed" || status === "missed") && "border-danger/60")}
       style={{
         left: `calc(${(layout.column / layout.columns) * 100}% + 2px)`,
         width: `calc(${100 / layout.columns}% - 4px)`,
         top: `${((new Date(item.at).getHours() * 60 + new Date(item.at).getMinutes()) / 60) * HOUR_HEIGHT}px`,
-        height: `${Math.max(16, (previewDuration / 60) * HOUR_HEIGHT)}px`,
+        height: `${height}px`,
         background: `linear-gradient(110deg, color-mix(in srgb, ${color} 58%, #242424), color-mix(in srgb, ${color} 28%, #181818))`,
         borderColor: `color-mix(in srgb, ${color} 70%, transparent)`,
       }}
     >
       <div className="flex min-w-0 items-start gap-1.5 text-white">
-        {previewDuration >= 30 && (isCall ? <Video size={compact ? 11 : 13} className="mt-0.5 shrink-0" /> : primary ? <BotAvatar bot={primary} state={status ? statusState(status) : "idle"} size={compact ? 22 : 26} animated={status === "running" || status === "waiting" || status === "needs-you"} /> : null)}
+        {fit === "roomy" && (isCall ? <Video size={compact ? 11 : 13} className="mt-0.5 shrink-0" /> : primary ? <BotAvatar bot={primary} state={status ? statusState(status) : "idle"} size={compact ? 22 : 26} animated={status === "running" || status === "waiting" || status === "needs-you"} /> : null)}
         <div className="min-w-0 flex-1">
-          <div className={cn("truncate text-[11px] font-semibold", previewDuration < 30 ? "leading-none" : "leading-tight")}>{name}</div>
-          {previewDuration >= 30 && <div className="mt-0.5 truncate text-[9.5px] text-white/75">{niceTime(item.at)} · {intervalCadence ?? (isCall ? `${ownerBots.length} bot${ownerBots.length === 1 ? "" : "s"}` : isRoomGoal ? `Team goal · ${room?.name ?? "Channel"}${statusLabel ? ` · ${statusLabel}` : ""}` : statusLabel ?? primary?.name)}</div>}
+          <div className={cn("truncate text-[11px] font-semibold", fit === "tiny" ? "leading-none" : "leading-tight")}>{name}{fit === "compact" && <span className="ml-1 font-normal text-white/75">{niceTime(item.at)}</span>}</div>
+          {fit === "roomy" && <div className="mt-0.5 truncate text-[9.5px] text-white/75">{niceTime(item.at)} · {detail}</div>}
         </div>
-        {previewDuration >= 30 && ownerBots.length > 1 && <span className="rounded bg-black/20 px-1 py-0.5 text-[8px]">+{ownerBots.length - 1}</span>}
+        {fit === "roomy" && ownerBots.length > 1 && <span className="rounded bg-black/20 px-1 py-0.5 text-[8px]">+{ownerBots.length - 1}</span>}
       </div>
       {canEdit && isCall && <div onPointerDown={beginResize} className="absolute inset-x-1 bottom-0 h-1.5 cursor-ns-resize rounded-full opacity-0 transition group-hover:opacity-100" aria-label="Resize event"><div className="mx-auto mt-0.5 h-0.5 w-5 rounded-full bg-white/55" /></div>}
     </button>

@@ -55,7 +55,7 @@ import { callTrace, wordCount } from "@/lib/call-trace";
 import { freshAuthSpoken, type FreshAuthCode } from "@/lib/fresh-auth";
 import { coveredForCall, FOR_CALL_OFFER, FOR_CALL_SPOKEN } from "@/lib/call-grant";
 import { useSpeech } from "@/lib/tts/useSpeech";
-import { AckCues, indexedDbStore } from "@/lib/tts/ack-cue";
+import { dropOldAckCues } from "@/lib/tts/ack-cue";
 import { Inhale } from "@/lib/tts/inhale";
 import { usePushToTalk } from "@/lib/push-to-talk";
 import { CallAvatar } from "./CallAvatar";
@@ -66,7 +66,7 @@ import { callStatusText } from "@/lib/call-status";
 import { auraPhaseFor } from "@/lib/call-aura";
 import { useKeyboardHints } from "@/lib/use-keyboard-hints";
 import { CallCaption } from "./CallCaption";
-import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, spokenToolAction, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "./PendingApproval";
+import { isHostConsentApproval, isRoutineApproval, isSkillApproval, openQuestions, pendingApprovals, spokenApprovalPrompt, spokenQueueList, spokenToolAction, QUEUE_OFFER, QUEUE_ONE_AT_A_TIME, QUEUE_WHICH, type Pending } from "@/lib/pending-approval";
 import { followingRequest, nextSelection, queueCommand, reachesPastOneRequest, requestsWaiting, selectRequest, type QueueSelection } from "@/lib/approval-queue";
 import { holdForPlainWords, usePlainApprovalSettled } from "@/lib/plain-approval";
 import { cn } from "@/lib/cn";
@@ -85,8 +85,8 @@ const STOP_ONLY = /^(?:(?:ok(?:ay)?|please|hey|no|just|all right|alright)[,.!\s]
 /** Listening noises while the bot talks: "uh-huh", "yeah", "mm", "right". */
 const BACKCHANNEL = /^(u+h+[- ]?h+u+h+|m+h?m+|mm+[- ]?h+m+|yeah|yep|yes|right|okay|ok|sure|got it|i see|oh|ah|wow|nice|cool|uh|um)[.!?]*$/i;
 
-/** One acknowledgement cue per voice, kept between calls. */
-const ackCues = new AckCues(undefined, typeof indexedDB === "undefined" ? null : indexedDbStore());
+// The old instant "Mm." clips are no longer played; clear them once.
+dropOldAckCues();
 
 type Phase = "listening" | "sending" | "working" | "speaking";
 /** How long the bot stays paused for what may be the owner before carrying
@@ -303,18 +303,15 @@ export function Call({
   const nameRef = useRef(bot.name);
   nameRef.current = bot.name;
 
-  // Feels instant: the moment the owner's turn is sent, a short cached "Mm."
-  // in the bot's voice says they were heard (no network on this path), and if
-  // no audio has started 300 ms later the avatar takes a subtle inhale. A fast
-  // reply never shows it. The cue is made once per voice when the call opens.
+  // Feels instant without a fake word: the wait after the owner's turn is
+  // silent, and if no audio has started 300 ms later the avatar takes a
+  // subtle inhale. A fast reply never shows it. Only a slow turn speaks, a
+  // short real phrase from the ack gate below.
   const [inhale, setInhale] = useState(false);
   const inhaleRef = useRef<Inhale | null>(null);
   inhaleRef.current ??= new Inhale(setInhale);
   const lastPhase = useRef<Phase>(initialPhase);
-  // the instant cue played for this turn: the later spoken cue stays quiet
-  const instantCued = useRef(false);
   useEffect(() => {
-    void ackCues.prime(bot.id, voiceRef.current);
     const timer = inhaleRef.current;
     return () => timer?.cancel();
   }, [bot.id]);
@@ -322,12 +319,8 @@ export function Call({
     const was = lastPhase.current;
     lastPhase.current = phase;
     if (phase === "sending" && was === "listening") {
-      const cued = ackCues.play(bot.id, voiceRef.current, speaker);
-      instantCued.current = cued;
-      if (cued) console.warn("[voice-diag] ack cue played from cache");
       inhaleRef.current?.start();
     } else if (phase === "listening") {
-      instantCued.current = false;
       inhaleRef.current?.cancel();
     }
   }, [phase, bot.id]);
@@ -1029,7 +1022,6 @@ export function Call({
               otherSpeech: !stream && (speaker.isSpeaking() || hostSpeaking.current),
               closed,
               ageMs: Date.now() - firedAt,
-              instantCued: instantCued.current,
             })
           )
             return;
