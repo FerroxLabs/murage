@@ -75,6 +75,11 @@ describe("traySummary", () => {
     expect(withEngines.needsYou).toBe(4);
     expect(withEngines.items).toHaveLength(1);
   });
+  it("counts snoozed owed items the way the sidebar badge does", () => {
+    const snoozed = traySummary({ page: { decisions: 1, items: [item(1)], snoozedOwed: 2 }, bots, chiefId: "b-chief",
+      messagesFor: id => messages[id] ?? [], stopHit: () => false, signedOutEngines: 1 });
+    expect(snoozed.needsYou).toBe(4);
+  });
   it("lists working bots with what they are doing, never ones waiting on the owner", () => {
     expect(summary.working).toEqual([{ botId: "b-zed", botName: "Zed", threadId: "t-zed", doing: "reading a file", startedAt: 1000 }]);
   });

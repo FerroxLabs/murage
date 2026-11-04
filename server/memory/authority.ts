@@ -7,6 +7,7 @@ import { database, transaction } from "../database.ts";
 import { redactSecretsInText } from "../redact.ts";
 import type { MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
+import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from "./learning-send.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal, invitedCanonRefusal, type MemoryClaimType } from "./automatic-learning.ts";
 import { evidenceEmailDerived, markRecordEmailDerived, recordEmailDerived } from "./email-derived.ts";
@@ -126,6 +127,9 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   if(recordEmailDerived(database(),id,1))return id;
   if(!claimType||database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(id)?.state==="active")return id;
   const db=database(),learningRevision=readMemoryLearning(db).revision;
+  // sampled before the evidence words are read: the support check below is dropped unsent if a Forget, delete or edit commits before
+  // its send (memory/learning-send.ts)
+  const fenceAt=sampleLearningFence();
   if(db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=1").get(id)?.supersedes_id){transaction(()=>holdMemoryCandidate(db,id,"correction-review"));return id;}
   {
     const reason=ownerInvitation?invitedCanonRefusal(db,evidence,ownerInvitation,access.botId):ownerLearningRefusal(db,cited);
@@ -145,7 +149,7 @@ export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHand
   }
   const needsGrounding=text!==quote||claimType==="character-canon"&&(source.speaker!=="owner"||Boolean(invitation));
   if(needsGrounding&&options.budgetGate&&!options.budgetGate(String(source.scope_id))){transaction(()=>holdMemoryCandidate(db,id,"project-budget-reached"));return id;}
-  const support=needsGrounding?await groundMemoryClaim({text,quote,claimType,speaker:String(source.speaker),outcome:String(source.outcome),ownerInvitation:invitation},extractor,new AbortController().signal):undefined;
+  const support=needsGrounding?await groundMemoryClaim({text,quote,claimType,speaker:String(source.speaker),outcome:String(source.outcome),ownerInvitation:invitation},extractor,new AbortController().signal,undefined,learningGate("grounding",fenceAt,{records:[{id,version:1,digest:recordDigest(db,id,1)}],sources:[{id:String(source.id),revision:Number(source.revision),digest:sourceDigest(db,String(source.id),Number(source.revision))},...(ownerInvitation?[{id:ownerInvitation.sourceId,revision:ownerInvitation.revision,digest:sourceDigest(db,ownerInvitation.sourceId,ownerInvitation.revision)}]:[])]})):undefined;
   return transaction(()=>{
     assertMemoryAccess(access,String(source.scope_id));assertEvidenceCurrent(db,id,1);
     if(readMemoryLearning(db).revision!==learningRevision)throw new Error("MEMORY_CONSOLIDATION_REVOKED");

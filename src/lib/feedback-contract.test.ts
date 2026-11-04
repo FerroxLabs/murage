@@ -41,8 +41,19 @@ describe("the feedback form and the relay agree", () => {
     expect(fixed.words).toEqual(Object.values(FEEDBACK_CHOICE_WORDS));
   });
 
-  it("covers every screen, the fallback included", () => {
-    expect(new Set(requests.map((request) => request.screen)).size).toBe(SCREENS.length + 1);
+  it("covers every screen; a key with no entry is named as the help page", () => {
+    expect(new Set(requests.map((request) => request.screen)).size).toBe(SCREENS.length);
+    expect(feedbackEnvelopeForScreen({ key: "not-a-screen", gates: [] })).toMatchObject({ screen: "help", title: "Help" });
+  });
+
+  // FEEDBACK-SCREEN-UNKNOWN: a report reached Discord as "Screen: unknown (unknown)". Neither table holds that pair now,
+  // so no caller can send it and the relay refuses it.
+  it("no table holds an unknown screen, and the relay refuses one", () => {
+    expect(Object.keys(fixed.titles)).not.toContain("unknown");
+    expect(FEEDBACK_FIXED.screens.has("unknown")).toBe(false);
+    const request = { ...requests[0], screen: "unknown", title: "unknown" };
+    expect(feedbackRequestSchema.safeParse(request).success).toBe(false);
+    expect(checkFeedbackRequest(request)).toBe("screen");
   });
 
   it("every request the form can build passes the form's own check and the relay's schema", () => {

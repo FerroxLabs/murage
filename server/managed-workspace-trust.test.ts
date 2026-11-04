@@ -373,10 +373,10 @@ describe("managedDeskQualifies", () => {
     mkdirSync(join(desk, ".fuigo"), { recursive: true });
     writeFileSync(join(desk, ".fuigo", "config.toml"), "");
     expect(qualifies(desk)).toBeNull();
-    rmSync(join(desk, ".fuigo"), { recursive: true });
+    removeTempDirSync(join(desk, ".fuigo"));
     mkdirSync(join(desk, ".grok", "skills"), { recursive: true });
     expect(qualifies(desk)).toBeNull();
-    rmSync(join(desk, ".grok"), { recursive: true });
+    removeTempDirSync(join(desk, ".grok"));
     const other = join(root, "other-claude");
     mkdirSync(other);
     symlinkSync(other, join(desk, ".claude"), LINK);

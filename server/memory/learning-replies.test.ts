@@ -10,6 +10,7 @@ import { closeDatabase, database } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { captureSource } from "./capture.ts";
 import { captureWork } from "./chunks.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { consolidateMemorySource, pendingMemoryConsolidationJobs, promoteDueSkippedSlices, retrySkippedSlice } from "./consolidate.ts";
 import { extractCandidates, groundMemoryClaim, isNetworkFailure, type TextOnlyExtractor } from "./extract.ts";
 import { clearPinQuarantineForTests, PIN_QUARANTINE_MS, resolveLearningConnection, resolveMemoryExtractor, setLearningClockForTests } from "./extractor-connections.ts";
@@ -38,6 +39,7 @@ function captured(id = "src") {
   return work.id;
 }
 const signal = () => new AbortController().signal;
+const fenced = () => ({ fence: openLearningGate() }) as never;
 const intent = () => JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_id IN ('consolidation','consolidation-pending')").get()!.intent));
 const dueRows = () => database().prepare("SELECT id,intent FROM memory_scope_bindings WHERE subject_id='consolidation-skip-due'").all().map(row => ({ id: String(row.id), ...JSON.parse(String(row.intent)) })) as Array<{ id: string; cursor: number; dueAt: number; run: number; auto: boolean; bindingId: string }>;
 const setDue = (patch: Record<string, unknown>) => database().prepare("UPDATE memory_scope_bindings SET intent=json_patch(intent,?) WHERE subject_id='consolidation-skip-due'").run(JSON.stringify(patch));
@@ -204,8 +206,8 @@ it("extraction and support checks ask for the pinned alias, and each call logs i
   const info = vi.spyOn(console, "info").mockImplementation(() => {});
   const wire = fluxWire(() => body("[]")), { extractor } = connection();
   expect(extractor!.learningModel!()).toBe(FLUX_PINNED_LEARNING_MODEL);
-  await extractor!("text", 100, signal());
-  await extractor!.ground!({ text: "a", quote: "b", claimType: "fact", speaker: "owner", outcome: "x" }, 64, signal());
+  await extractor!("text", 100, signal(), fenced());
+  await extractor!.ground!({ text: "a", quote: "b", claimType: "fact", speaker: "owner", outcome: "x" }, 64, signal(), openLearningGate("grounding"));
   expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-pinned-gpt-5-nano"]);
   const lines = info.mock.calls.flat().join("\n");
   expect(lines).toContain("[memory] learning call: purpose=extraction arm=pinned");
@@ -216,8 +218,8 @@ it.each([403, 400, 404])("a %i on the pin, refused before routing: flux-fast ans
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {}), info = vi.spyOn(console, "info").mockImplementation(() => {});
   const wire = fluxWire(model => model === "flux-fast" ? body("[]") : refusal(status));
   const { extractor } = connection();
-  expect(await extractor!("text", 100, signal())).toBe("[]");
-  expect(await extractor!("text", 100, signal())).toBe("[]");
+  expect(await extractor!("text", 100, signal(), fenced())).toBe("[]");
+  expect(await extractor!("text", 100, signal(), fenced())).toBe("[]");
   expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-fast", "flux-fast"]);
   expect(warn.mock.calls.flat().filter(line => String(line).includes("learning model refused"))).toEqual([`[memory] learning model refused: status=${status} fallback=flux-fast for=6h`]);
   expect(info.mock.calls.flat().join("\n")).toContain("arm=fast");
@@ -225,13 +227,13 @@ it.each([403, 400, 404])("a %i on the pin, refused before routing: flux-fast ans
   expect(connection().extractor).not.toBeNull();
   // another key still tries the pin
   wire.models.length = 0;
-  await connection("other").extractor!("text", 100, signal());
+  await connection("other").extractor!("text", 100, signal(), fenced());
   expect(wire.models[0]).toBe("flux-pinned-gpt-5-nano");
 });
 
 it.each([
-  ["extraction", "not json at all", async (extractor: TextOnlyExtractor) => extractCandidates("text", extractor, signal())],
-  ["a support check", "not json at all", async (extractor: TextOnlyExtractor) => groundMemoryClaim({ text: "a", quote: "b", claimType: "fact", speaker: "owner", outcome: "x" }, extractor, signal())],
+  ["extraction", "not json at all", async (extractor: TextOnlyExtractor) => extractCandidates("text", extractor, signal(), undefined, undefined, { fence: openLearningGate() })],
+  ["a support check", "not json at all", async (extractor: TextOnlyExtractor) => groundMemoryClaim({ text: "a", quote: "b", claimType: "fact", speaker: "owner", outcome: "x" }, extractor, signal(), undefined, openLearningGate("grounding"))],
 ])("a pin reply to %s that arrives and will not parse counts as today, and the next call goes to flux-fast", async (_name, reply, call) => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -246,7 +248,7 @@ it("a caller's cancel says nothing about the pin", async () => {
   vi.spyOn(console, "info").mockImplementation(() => {});
   fluxWire(() => body("[]"));
   const { extractor } = connection(), stop = new AbortController();
-  await extractor!("text", 100, signal());
+  await extractor!("text", 100, signal(), fenced());
   stop.abort();
   extractor!.pinReplyUnusable!(new Error("cancelled after the reply"), stop.signal);
   expect(extractor!.learningModel!()).toBe(FLUX_PINNED_LEARNING_MODEL);
@@ -257,9 +259,9 @@ it("the refusal is forgotten after a while, so a key that gains the pin gets it"
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const wire = fluxWire(model => model === "flux-fast" ? body("[]") : refusal(403));
   const { extractor } = connection();
-  await extractor!("text", 100, signal());
+  await extractor!("text", 100, signal(), fenced());
   now += PIN_QUARANTINE_MS + 1;
-  await extractor!("text", 100, signal());
+  await extractor!("text", 100, signal(), fenced());
   expect(wire.models).toEqual(["flux-pinned-gpt-5-nano", "flux-fast", "flux-pinned-gpt-5-nano", "flux-fast"]);
 });
 
@@ -267,7 +269,7 @@ it("a fallback that is refused too is what today does: the connection pauses", a
   vi.spyOn(console, "warn").mockImplementation(() => {});
   fluxWire(() => refusal(403));
   const { extractor } = connection("revoked");
-  await expect(extractor!("text", 100, signal())).rejects.toMatchObject({ status: 403 });
+  await expect(extractor!("text", 100, signal(), fenced())).rejects.toMatchObject({ status: 403 });
   expect(connection("revoked").extractor).toBeNull();
 });
 
@@ -298,15 +300,15 @@ it("the network, the pace, a refusal and a long answer say nothing about the pin
   const replies: Array<() => Response | never> = [() => { throw refused("ENOTFOUND"); }, () => new Response("slow", { status: 429 }), () => body("[1,", "length")];
   const wire = fluxWire(() => replies.shift()!());
   const { extractor } = connection();
-  for (let n = 0; n < 3; n++) await extractor!("text", 100, signal()).catch(() => {});
+  for (let n = 0; n < 3; n++) await extractor!("text", 100, signal(), fenced()).catch(() => {});
   expect(wire.models).toEqual(Array(3).fill("flux-pinned-gpt-5-nano"));
   expect(extractor!.learningModel!()).toBe(FLUX_PINNED_LEARNING_MODEL);
 });
 
 it("the chosen tiers, reflection and own connections stay as they are", async () => {
   const wire = fluxWire(() => body("[]"));
-  await resolveMemoryExtractor("@murage/flux-standard", [], () => "k")!("text", 100, signal());
-  await resolveMemoryExtractor("@murage/flux-auto", [], () => "k")!("text", 100, signal());
-  await resolveMemoryExtractor("@murage/flux-fast", [], () => "k")!("text", 100, signal(), { policyRevision: "p", messages: [{ role: "user", content: "x" }], purpose: "reflection" });
+  await resolveMemoryExtractor("@murage/flux-standard", [], () => "k")!("text", 100, signal(), fenced());
+  await resolveMemoryExtractor("@murage/flux-auto", [], () => "k")!("text", 100, signal(), fenced());
+  await resolveMemoryExtractor("@murage/flux-fast", [], () => "k")!("text", 100, signal(), { policyRevision: "p", messages: [{ role: "user", content: "x" }], purpose: "reflection", fence: openLearningGate("reflection") });
   expect(wire.models).toEqual(["flux-standard", "flux-auto", "flux-fast"]);
 });

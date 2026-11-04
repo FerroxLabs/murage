@@ -27,10 +27,12 @@ import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import { TURN_BOT, TURN_MARKER } from "../cloud-home/turn-process.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { readCodexAppServerModelCatalog } from "./codex-catalog.ts";
 import { resolveCheckerConnection } from "../browser-action-checker-connection.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { resetPathCacheForTests } from "../env-path.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
 
 let base: string;
 beforeEach(() => { spawned.length = 0; base = mkdtempSync(join(tmpdir(), "cloud-bot-sites-")); });
@@ -92,9 +94,10 @@ describe("one-shot Cloud spawns name their bot", () => {
   it("a PIP text-only turn carries the bot of its run context", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
     const input = {
-      system: "SYS", text: "USER", model: "model-1", signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
+      system: fixedPrompt("SYS"), text: "USER", model: "model-1", signal: new AbortController().signal, maxOutputTokens: 2000, maxOutputBytes: 12 * 1024,
       outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false },
       context: { botId: "bot-atlas", runId: "run1", family: "lived", attempt: 1 },
+      transport: { gate: openLearningGate("continuity") },
     } as Parameters<typeof claudeTextOnlyTurn>[0];
     await expect(claudeTextOnlyTurn(input, {
       cli: "claude-fixture", tmpBase: join(base, "tmp"), env: { PATH: "/usr/bin:/bin" },

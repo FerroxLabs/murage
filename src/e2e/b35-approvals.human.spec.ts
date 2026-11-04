@@ -1,4 +1,4 @@
-import { test, expect } from "./page-error-guard";
+import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -9,6 +9,11 @@ import { openSidebar } from "./fixtures.ts";
 // Runtime URL import keeps the Node-only control tool out of app compilation.
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
+async function openNeedsRow(page: Page, id?: string) { // UX L2B: a Needs you row is one line; Open expands its card in place
+  const button = page.locator(id ? `[data-needs-open="${id}"]` : "[data-needs-open]").first();
+  await button.waitFor();
+  if ((await button.getAttribute("aria-expanded")) !== "true") await button.click();
+}
 test.describe.configure({ mode: "serial" });
 
 let fixture: VerificationServer, vite: ViteDevServer, origin: string, headers: Record<string, string>;
@@ -77,6 +82,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
     await expect(sidebar.getByRole("menuitem", { name: /Pending approvals/ })).toHaveCount(0);
     await needsYou.focus(); await page.keyboard.press("Enter");
     // The card is headed with what the bot actually asked, not a category.
+    await openNeedsRow(page);
     await expect(page.getByRole("heading", { name: "Which format should the report use?", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveClass(/bg-accent /);
@@ -113,6 +119,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   await foreground();
   await expect(needsYouRow).not.toHaveAttribute("aria-label", /out of date/, { timeout: 12000 });
   await needsYouRow.click();
+  await openNeedsRow(page);
   await page.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${pending.link.messageId}"]`)).toBeVisible();
   expect((await api("/api/inbox?view=questions")).total).toBe(1);
@@ -121,7 +128,8 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   // route — no walk to the thread, and no second answering path.
   sidebar = await openSidebar(page);
   await sidebar.locator("[data-sidebar-needs-you]").click();
-  const inboxCard = page.locator("[data-inbox-id]").filter({ has: page.getByRole("heading", { name: "Which format should the report use?", exact: true }) });
+  await openNeedsRow(page);
+  const inboxCard = page.locator("[data-needs-row]").filter({ has: page.getByRole("heading", { name: "Which format should the report use?", exact: true }) });
   await expect(inboxCard).toHaveCount(1);
   await expect(inboxCard.getByText("Which sections should it include?")).toBeVisible();
   await inboxCard.getByRole("radio", { name: /Summary/ }).click();
