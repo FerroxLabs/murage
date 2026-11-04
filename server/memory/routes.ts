@@ -11,6 +11,7 @@ import { readerWithheldMessage } from "./disclosures.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { memoryState } from "./repository.ts";
 import { groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
+import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from "./learning-send.ts";
 import { learningWriteDecision,learningEvidenceScopes,learningSourceBot } from "./learning-guard.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
 import { activateGroundedMemory, candidateReviewReason, holdMemoryCandidate, learningReviewReason, ownerLearningRefusal, pendingSaveNote } from "./automatic-learning.ts";
@@ -122,6 +123,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       hydrateMemoryRecord(target.id,target.version,access,{allowance:LineageAllowance.tool(),...withheld?{withheldMessage:withheld}:{}});
       const db=database();
       assertGenericMemoryTarget(db,target.id,target.version);
+      // sampled before the target and evidence words are read: the support check is dropped unsent if anything they rest on moves
+      const fenceAt=sampleLearningFence();
       const targetBefore=db.prepare("SELECT text,state,owner_pinned,scope_id FROM memory_records WHERE id=? AND version=?").get(target.id,target.version)!;
       const policyBefore=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
       const learningBefore=readMemoryLearning(db).revision;
@@ -147,7 +150,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
         if(source?.speaker==="owner"&&source.scope_id===targetBefore.scope_id){
           const quote=Buffer.from(JSON.parse(String(source.payload)).text).subarray(h.startByte,h.endByte).toString("utf8");
           if(options.budgetGate&&!options.budgetGate(String(source.scope_id)))refusal="project-budget-reached";
-          else support=await groundMemoryClaim({text:input.replacement,quote,claimType:"owner-statement",speaker:"owner",outcome:String(source.outcome),previousClaim:String(targetBefore.text)},extractor,new AbortController().signal);
+          else support=await groundMemoryClaim({text:input.replacement,quote,claimType:"owner-statement",speaker:"owner",outcome:String(source.outcome),previousClaim:String(targetBefore.text)},extractor,new AbortController().signal,undefined,learningGate("grounding",fenceAt,{records:[{id:target.id,version:target.version,digest:recordDigest(db,target.id,target.version)},{id:proposalId,version:1,digest:recordDigest(db,proposalId,1)}],sources:[{id:h.sourceId,revision:h.revision,digest:sourceDigest(db,h.sourceId,h.revision)}]}));
         }
       }
       if(refusal)transaction(()=>holdMemoryCandidate(db,proposalId,refusal!));

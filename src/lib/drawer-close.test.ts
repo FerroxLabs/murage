@@ -51,6 +51,20 @@ describe("the phone drawer closes when a conversation is picked", () => {
     expect(drawerCloseKey(reducer(base, { type: "botAdded", ...httpNow, bot: { id: "new", threadId: "t", messages: [] } } as never))).not.toBe(drawerCloseKey(base));
   });
 
+  it("does not count Today's landing after load, and counts the person's own Today press", () => {
+    // A returning owner (resumeId) lands on Today when hydration settles; a drawer opened during load stays.
+    const loading = { ...initialState, activeView: "chat" } as AppState;
+    const landed = reducer(loading, { type: "hydrate", ...httpNow, resumeId: "chief", bots: [{ id: "chief", threadId: "main", messages: [] }] as never, groups: [], computerControl: {} });
+    expect(landed.activeView).toBe("today");
+    expect(landed.todayLanding).toBe(true);
+    expect(drawerCloseKey(landed)).toBe(drawerCloseKey(loading));
+    // Setup handing the view back to the chat is not a pick either.
+    expect(drawerCloseKey(reducer(landed, { type: "cancelTodayLanding" }))).toBe(drawerCloseKey(loading));
+    // Pressing Today, or leaving it for another view, is the person's own move.
+    expect(drawerCloseKey(reducer(landed, { type: "showToday" }))).not.toBe(drawerCloseKey(landed));
+    expect(drawerCloseKey(reducer(base, { type: "showToday" }))).not.toBe(drawerCloseKey(base));
+  });
+
   it("does not count a thread change nobody asked for here", () => {
     const moved = { ...(base as object), bots: [{ id: "chief", threadId: "remote-switch" }] } as never;
     expect(drawerCloseKey(moved)).toBe(drawerCloseKey(base));

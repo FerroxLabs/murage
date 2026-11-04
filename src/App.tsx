@@ -7,12 +7,11 @@ import { BotCallRing } from "@/components/BotCallRing";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
-import { GroupView } from "@/components/GroupView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
 import { ServerLifecycleBanner } from "@/components/ServerLifecycleBanner";
-import { MemoryIntegrityStrip } from "@/components/MemoryIntegrityStrip";
+import { LazyMemoryIntegrityStrip } from "@/components/MemoryIntegrityStripLazy";
 import { CloudUnreachableBanner } from "@/components/cloud/CloudUnreachableBanner";
 import { WorkspaceSwitch } from "@/components/cloud/WorkspaceSwitch";
 import { isCloudOrigin, notificationBridge } from "@/lib/cloud-workspace";
@@ -49,7 +48,7 @@ import { UndoToastHost } from "@/components/ui/UndoToast";
 import { feedbackSurface } from "@/lib/feedback-surface";
 import { OfflineBand } from "@/components/shell/OfflineBand";
 import { HealthPage, NeedsYouPage, PhoneTabs, useHealthStatus, useNeedsSummary } from "@/components/shell/lane-slots";
-import { doorForView, shellNav } from "@/components/shell/shell-nav";
+import { doorForView, healthReturn, shellNav, trackShellOrigins, type CalendarOrigin, type HealthOrigin } from "@/components/shell/shell-nav";
 import type { ShellDoor } from "@/components/shell/shell-contract";
 import { TodayView } from "@/components/today/TodayView";
 import { useConnectivity } from "@/lib/connectivity";
@@ -89,6 +88,13 @@ const LocalVmWorkspace = LocalVmWorkspaceLazy.Component;
 
 const BrowserWorkspaceLazy = retryableLazy(() => import("@/components/BrowserWorkspace").then((module) => ({ default: module.BrowserWorkspace })));
 const BrowserWorkspace = BrowserWorkspaceLazy.Component;
+
+// A group or project chat opens from the rail, not on the first frame (Today
+// is the landing), so its room view, details panel and group routing load on
+// first open or once the app is idle, whichever comes first (BUNDLE-HEADROOM-1017).
+const loadGroupView = () => import("@/components/GroupView");
+const GroupViewLazy = retryableLazy(() => loadGroupView().then((module) => ({ default: module.GroupView })));
+const GroupView = GroupViewLazy.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -135,7 +141,7 @@ function Shell() {
   // (a few KiB), so a card rarely shows its pre-plain-words wording.
   useEffect(() => {
     const idle = window.requestIdleCallback ?? ((run: () => void) => window.setTimeout(run, 1500));
-    const handle = idle(() => { void loadPlainApproval().catch(() => undefined); });
+    const handle = idle(() => { void loadPlainApproval().catch(() => undefined); void loadGroupView().catch(() => undefined); });
     return () => { if (window.cancelIdleCallback) window.cancelIdleCallback(handle as number); else window.clearTimeout(handle as number); };
   }, []);
   useEffect(() => {
@@ -151,7 +157,9 @@ function Shell() {
   // the panel hands off to this and back)
   const [browserWorkspaceBotId, setBrowserWorkspaceBotId] = useState<string | null>(null);
   const previousViewRef = useRef(state.activeView);
-  const calendarOriginRef = useRef<"chat" | "team-map" | "skill-recorder" | "today" | "needs-you" | "health">("chat");
+  const calendarOriginRef = useRef<CalendarOrigin>("chat");
+  // Where Health was opened from (Sean 11-02): its Back, close button and Esc return there; unknown means Today.
+  const healthOriginRef = useRef<HealthOrigin | undefined>(undefined);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   // UX 1.0.13 (L2A): the rail shows on every view, Routines included, so a door is always one click away.
@@ -312,11 +320,13 @@ function Shell() {
   }, [closeKey]);
 
   useEffect(() => {
-    if (state.activeView === "routines" && previousViewRef.current !== "routines") {
-      // All chats is a list of chats, not a place to come back to: the calendar returns to the chat
-      calendarOriginRef.current = previousViewRef.current === "all-chats" ? "chat" : previousViewRef.current;
-    }
+    // Routines' and Health's Back targets (shell-nav.ts trackShellOrigins): All chats returns to the chat, and a
+    // return between the two keeps the first origin, so Back never bounces between them.
+    const origins = trackShellOrigins(previousViewRef.current, state.activeView, state.selectedId, { calendar: calendarOriginRef.current, health: healthOriginRef.current });
+    calendarOriginRef.current = origins.calendar;
+    healthOriginRef.current = origins.health;
     previousViewRef.current = state.activeView;
+    // selectedId is read as the view moves, not tracked: a later pick does not change where Back goes.
   }, [state.activeView]);
 
   useEffect(() => {
@@ -366,6 +376,13 @@ function Shell() {
     }
     dispatch({ type: "select", id: state.selectedId });
   }, [desktop, dispatch, state.config, state.selectedId]);
+  // Reads the latest state through a ref, so Health's Esc listener is bound once, not on every render.
+  const leaveHealthState = useRef(state);
+  leaveHealthState.current = state;
+  const leaveHealth = useCallback(() => {
+    const now = leaveHealthState.current;
+    dispatch(healthReturn(healthOriginRef.current, now, skillRecorderAvailable(now.config, desktop, isCloudOrigin(), capabilities.host.platform)));
+  }, [capabilities.host.platform, desktop, dispatch]);
   const openCalendarRoom = useCallback((id: string) => {
     dispatch({ type: "select", id });
   }, [dispatch]);
@@ -412,7 +429,7 @@ function Shell() {
           in here, and that cost the owner an hour on 2026-09-22. */}
       <ServerLifecycleBanner />
       {/* After an update, later memory work runs while chat is open: say so, calmly, with the progress. */}
-      {desktop === true && <MemoryIntegrityStrip />}
+      {desktop === true && <LazyMemoryIntegrityStrip />}
       <CloudUnreachableBanner />
       <WorkspaceSwitch />
       {/* The remote counterpart: a phone or browser whose computer went quiet. */}
@@ -464,7 +481,7 @@ function Shell() {
       ) : state.activeView === "needs-you" ? (
         <NeedsYouPage tab={state.needsYouTab ?? "decisions"} onTabChange={(tab) => dispatch({ type: "setNeedsYouTab", tab })} onOpenChat={nav.openChat} health={health} />
       ) : state.activeView === "health" ? (
-        <HealthPage onOpenNeedsYou={() => nav.showNeedsYou()} />
+        <HealthPage onOpenNeedsYou={() => nav.showNeedsYou()} onLeave={leaveHealth} />
       ) : state.activeView === "all-chats" ? (
         <LazyBoundary onRetry={AllChatsPageLazy.retry}><Suspense fallback={<LazyFallback />}><AllChatsPage /></Suspense></LazyBoundary>
       ) : state.activeView === "team-map" ? (
@@ -489,12 +506,12 @@ function Shell() {
             <button type="button" className="min-h-9 rounded-lg border border-hairline/40 px-3 text-[13px] font-medium text-ink hover:bg-app focus-visible:ring-2 focus-visible:ring-accent-border"
               onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}>Open Engines</button>
           </div>
-          <div className="flex min-h-0 flex-1">{group ? <GroupView key={group.id} group={group} /> : <ChatView bot={bot!} />}</div>
+          <div className="flex min-h-0 flex-1">{group ? <LazyBoundary key={group.id} inline onRetry={GroupViewLazy.retry}><Suspense fallback={<LazyFallback inline />}><GroupView group={group} /></Suspense></LazyBoundary> : <ChatView bot={bot!} />}</div>
         </div>
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
-        <GroupView key={group.id} group={group} />
+        <LazyBoundary key={group.id} inline onRetry={GroupViewLazy.retry}><Suspense fallback={<LazyFallback inline />}><GroupView group={group} /></Suspense></LazyBoundary>
       ) : bot ? (
         <ChatView bot={bot} />
       ) : (

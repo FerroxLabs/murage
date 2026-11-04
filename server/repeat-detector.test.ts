@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { RepeatDetector, askCallKey, askCallLabel, callKey } from "./repeat-detector.ts";
+import { RepeatDetector, askCallKey, askCallLabel, callKey, toolTitleKey } from "./repeat-detector.ts";
 
 describe("callKey", () => {
   it("keys on tool plus arguments, normalizing whitespace, and ignores a bare tool name", () => {
@@ -113,5 +113,26 @@ describe("permission asks whose summary is already the call (Claude Bash)", () =
     expect(a.length).toBeLessThan(600);
     expect(askCallKey(big(2))).not.toBe(a);
     expect(askCallKey(big(1))).toBe(a);
+  });
+});
+
+describe("toolTitleKey", () => {
+  it("keys a started call by a title that carries its arguments, as before", () => {
+    expect(toolTitleKey("Read src/x.ts")).toBe("tool:Read src/x.ts");
+    expect(toolTitleKey("  echo   hi ")).toBe("tool:echo hi");
+  });
+
+  it("never counts a bare name or Cursor's MCP calls, which all arrive titled \"MCP: tool\"", () => {
+    expect(toolTitleKey("Bash")).toBeNull();
+    expect(toolTitleKey(undefined)).toBeNull();
+    expect(toolTitleKey("MCP: tool")).toBeNull();
+    expect(toolTitleKey("mcp:tool")).toBeNull();
+    const d = new RepeatDetector({ thresholds: [5] });
+    const hits = Array.from({ length: 25 }, () => toolTitleKey("MCP: tool")).filter((key) => key && d.record("t1", key).threshold);
+    expect(hits).toEqual([]);
+  });
+
+  it("still counts an MCP call whose title names the tool", () => {
+    expect(toolTitleKey("MCP: browser_click")).toBe("tool:MCP: browser_click");
   });
 });
