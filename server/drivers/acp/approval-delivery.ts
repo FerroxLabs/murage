@@ -28,6 +28,14 @@ export class ApprovalDeliveryError extends Error {
   }
 }
 
+/** The engine answered an automatic Allow with `unavailable`: it no longer holds
+ * the ask (settled, timed out, or its turn is gone). An Allow/Deny card for it
+ * could never be answered either, so it is never a reason to raise one
+ * (OpenMausBot b873f461e, #1170). */
+export class ApprovalNoLongerOpenError extends Error {
+  constructor() { super("the ask is no longer open"); }
+}
+
 /** A false write() return means backpressure, not failure. Only its callback confirms delivery. */
 export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback): void {
   if (!stream || stream.destroyed || stream.writableEnded || !stream.writable) {
@@ -106,7 +114,7 @@ export function watchApprovalRequest(opened: RuntimeEvent, subscribe: (listener:
   });
   return {
     live: () => live,
-    canFallback: (error: unknown) => live && !(error instanceof ApprovalDeliveryError && error.terminal),
+    canFallback: (error: unknown) => live && !(error instanceof ApprovalNoLongerOpenError) && !(error instanceof ApprovalDeliveryError && error.terminal),
     dispose,
   };
 }

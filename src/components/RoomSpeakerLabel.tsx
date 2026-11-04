@@ -10,6 +10,7 @@ import { BotAvatar } from "./Avatar";
 import { CommAvatar } from "./CommAvatar";
 import { normalizeState } from "@/lib/mascot";
 import { replySnippet } from "@/lib/replies";
+import { useWebhookDisplayText } from "@/lib/webhook-message-lazy";
 import { replyingToName } from "@/lib/room-speakers";
 import { CHIP, CHIP_NAME } from "@/lib/transcript-chrome";
 import { cn } from "@/lib/cn";
@@ -31,7 +32,9 @@ export function RoomSpeakerLabel({
   onJump?: () => void;
 }) {
   const who = replyTo ? replyingToName(replyTo) : "";
-  const snippet = replyTo ? replySnippet(replyTo.text ?? replyTo.tool?.name ?? "", 120) : "";
+  // a quoted webhook run shows its task, or the placeholder while the parser loads
+  const quoted = useWebhookDisplayText(replyTo?.text ?? "", replyTo?.role === "user");
+  const snippet = replyTo ? replySnippet((replyTo.text ? quoted : "") || (replyTo.tool?.name ?? ""), 120) : "";
   return (
     <div data-testid="room-speaker" data-row-chrome="" className="mt-1 flex min-w-0 items-center gap-1.5 pl-0.5">
       <BotAvatar

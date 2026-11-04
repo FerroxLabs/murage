@@ -480,7 +480,7 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the Chief's engine; connected apps, peer-comms approval and computer control start disabled. It starts in Auto mode only if you are in Auto mode in this conversation (and never from an unattended turn); otherwise it asks the user before every action. Questions and credential requests always reach the user either way. A section's Chief creates into its own section. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the engine every new bot starts on (Fuigo when it can answer, else the Chief's engine); connected apps, peer-comms approval and computer control start disabled. It starts in Auto mode only if you are in Auto mode in this conversation (and never from an unattended turn); otherwise it asks the user before every action. Questions and credential requests always reach the user either way. A team lead creates into its own team, or starts a NEW team (for example a client team) by naming a section no bot uses yet, and can keep adding to a team it started; it cannot add bots to any other team. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. If a create into a named team is refused, do not retry without section or in another team: stop and tell the owner. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {
@@ -490,11 +490,11 @@ const TOOLS = [
         model_selection: { type: "object", properties: { instanceId: { type: "string" }, model: { type: "string" }, effort: { type: "string" }, connectionId: { type: "string" } }, required: ["instanceId", "model"], additionalProperties: false },
         section: {
           type: "string",
-          description: `The team the specialist joins, exactly as ${murageToolOnThisServer("list_bots")} spells it. Required if you are the workspace Chief of Staff; omit it otherwise. When creating a team's first lead this names the NEW team.`,
+          description: `The team the specialist joins, exactly as ${murageToolOnThisServer("list_bots")} spells it. Required if you are the workspace Chief of Staff. A team lead omits it for its own team, or names a NEW team it is starting (or one it started). When creating a team's first lead this names the NEW team.`,
         },
         lead: {
           type: "boolean",
-          description: "Make this bot the LEAD of the named team. Only the workspace Chief of Staff may do this, and only for a team that has no lead yet. Use it to stand up a new team, then create its specialists in a following call without this flag.",
+          description: "Make this bot the LEAD of the named team. Only the workspace Chief of Staff, or a team lead for a new team it started, may do this, and only for a team that has no lead yet. Use it to stand up a new team, then create its specialists in a following call without this flag.",
         },
       },
       required: ["name", "role", "instructions"],
@@ -616,7 +616,7 @@ const TOOLS = [
   {
     name: "propose_routine",
     description:
-      `Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call ${murageToolOnThisServer("list_routines")} first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card. If the user asks for the routine to run as ANOTHER bot in your section, call ${murageToolOnThisServer("list_bots")} and pass that bot's id as for_bot_id. To run each time another app calls it instead of on a schedule, pass trigger {"type":"webhook"} in place of schedule (exactly one of the two); the owner makes its link after confirming.`,
+      `Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call ${murageToolOnThisServer("list_routines")} first for relative dates or times so you use its authoritative current time and timezone. This only creates a durable confirmation card; it does NOT enable the routine. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. After calling it, end the turn and do not claim the routine exists until the user confirms the card. If the user asks for the routine to run as ANOTHER bot in your section, call ${murageToolOnThisServer("list_bots")} and pass that bot's id as for_bot_id. To run each time another app calls it instead of on a schedule, pass trigger {"type":"webhook"} in place of schedule (exactly one of the two); the owner makes its link after confirming. On the desktop app that link listens on this computer only, so outside services such as Stripe cannot reach it yet; a script or tool on the same computer can call it.`,
     inputSchema: {
       type: "object",
       additionalProperties: false,

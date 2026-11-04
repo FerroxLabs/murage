@@ -13,14 +13,16 @@ import { withContinuityInferenceLease } from "../memory/extract.ts";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
 import type { TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
 
 vi.mock("../procs.ts", async original => ({ ...await original<typeof import("../procs.ts")>(), spawnCli: vi.fn(), awaitCliTreeStopped: vi.fn() }));
 vi.mock("../memory/pip-reaper.ts", async original => ({ ...await original<typeof import("../memory/pip-reaper.ts")>(), registerChild: async (pid: number) => ({ pid, startTime: "fixture", registeredAt: Date.now() }) }));
 let base: string;
 beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); base = mkdtempSync(join(tmpdir(), "pip-audit2-runner-")); vi.mocked(awaitCliTreeStopped).mockReset(); vi.mocked(awaitCliTreeStopped).mockResolvedValue(true); });
 afterEach(() => { removeTempDirSync(base); });
-const input = (signal = new AbortController().signal): TextOnlyTurnInput => ({ system: "SYSTEM", text: "You are reliable. ".repeat(1800), model: "fixture", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, signal, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId: "fixture", family: "lived", runId: "run", attempt: 1 } });
+const input = (signal = new AbortController().signal): TextOnlyTurnInput => ({ system: fixedPrompt("SYSTEM"), text: "You are reliable. ".repeat(1800), model: "fixture", outputSchema: { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } } }, signal, maxOutputBytes: 12000, maxOutputTokens: 3000, context: { botId: "fixture", family: "lived", runId: "run", attempt: 1 }, transport: { gate: openLearningGate("continuity") } });
 function fixture(onOutput?: (child: EventEmitter) => void, debug?: string, outputTokens = 13) {
   let recorded: { argv: string[]; prompt: string } | undefined;
   vi.mocked(spawnCli).mockImplementation((_cli, argv) => {
@@ -76,7 +78,7 @@ it.each([undefined, "executing hook /external/task.sh", "text-only completed"])(
 it("27: runner reports overrun to its host before cancellation rejects", async () => {
   const abort = new AbortController(), onUsage = vi.fn();
   fixture(child => { abort.abort(); queueMicrotask(() => child.emit("close")); }, undefined, 4001);
-  const i = input(abort.signal); i.transport = { hooks: { onUsage } };
+  const i = input(abort.signal); i.transport = { ...i.transport, hooks: { onUsage } };
   await expect(run(i)).rejects.toMatchObject({ name: "cancelled" });
   expect(onUsage).toHaveBeenCalledWith({ inputTokens: 11, outputTokens: 4001 });
 });

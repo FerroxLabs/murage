@@ -191,6 +191,21 @@ export function createLineSplitter(onLine: (line: string) => void, maxBytes = MA
   };
 }
 
+const PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion";
+/** The first MCP revision whose clients reject a result without `resultType`. */
+export const RESULT_TYPE_PROTOCOL = "2026-07-28";
+
+/** An answer the bridge writes itself (a gate refusal, a ping reply) says it is complete when the request came from a
+ * client on revision 2026-07-28 or later, which rejects a result without `resultType` and would show the bot
+ * "missing required resultType" instead of the reason. The driver's own answers already carry it. Older clients, and a
+ * result that already names its type, get the result unchanged (the same object). */
+export function completeFor(meta: unknown, result: unknown): unknown {
+  const version = meta && typeof meta === "object" && !Array.isArray(meta) ? (meta as Record<string, unknown>)[PROTOCOL_VERSION_META] : undefined;
+  if (typeof version !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(version) || version < RESULT_TYPE_PROTOCOL) return result;
+  if (!result || typeof result !== "object" || Array.isArray(result) || "resultType" in result) return result;
+  return { ...result, resultType: "complete" };
+}
+
 /** The gate itself, factored free of process wiring so a test can drive it
  * with plain strings. Frames are handled on a serialized queue: the
  * held-check is async, and answering frame N+1 before frame N would
@@ -236,10 +251,10 @@ export function createGateInterceptor(options: {
         JSON.stringify({
           jsonrpc: "2.0",
           id: frame.id ?? null,
-          result: {
+          result: completeFor(frame.params?._meta, {
             content: [{ type: "text", text: verdict === "held" ? refusalText : unavailableText }],
             isError: true,
-          },
+          }),
         }),
       );
     });
@@ -260,7 +275,7 @@ export function createMcpBridgeInterceptor(options: {
     try { frame = JSON.parse(line); } catch { /* Forward unrecognized input unchanged. */ }
     if (frame?.method === "ping") {
       if (frame.id !== undefined) {
-        await options.answer(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: {} }));
+        await options.answer(JSON.stringify({ jsonrpc: "2.0", id: frame.id, result: completeFor(frame.params?._meta, {}) }));
       }
       return;
     }
