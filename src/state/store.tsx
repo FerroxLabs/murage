@@ -1,4 +1,5 @@
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
+import { createNewTaskOnce } from "./new-task-once";
 import { requestMemoryWake } from "@/lib/memory-integrity-wake";
 import { probeInstances } from "@/lib/instances-probe";
 import { projectEvents, type ProjectFrame } from "@/lib/project-events";
@@ -267,8 +268,9 @@ export interface SecretRequestCardData {
 export interface Message {
   /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
   botCall?: import("@/lib/bot-calls").BotCallMark;
-  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it. */
-  memoryNote?: "export-paste";
+  /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
+   * "without-memory" (DELEGATION-HOLD F5): an activity row saying a reply ran without remembered context; shown with Tool calls off. */
+  memoryNote?: "export-paste" | "without-memory";
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -566,6 +568,8 @@ export interface TaskUsage {
 
 export interface Bot {
   id: string;
+  /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
+  engineRev?: number;
   /** 1.0.9 phone tools: what this bot may do on a paired phone. Absent key = off. Present only when the host offers phone tools. */
   phoneApps?: import("../../shared/phone-apps").PhoneApps;
   threadId: string;
@@ -4932,6 +4936,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     // The latest task switch per bot: an answer to an earlier one is not applied.
     const switchSeq: Record<string, number> = {};
+    const newTaskOnce = createNewTaskOnce();
 
     // ── A bot Delete the person asked for (BOTADDED-DESIGN-V3 r6 §2.7) ──
     // Sent with its attempt id; an answer carrying the server's own JSON error is a refusal (shown, the bot fetched again); no answer
@@ -5606,10 +5611,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const leaving = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
           // never an unloaded thread, nor rows that predate a rehydrate: the cache holds only pages this client fetched and kept current
           if (leaving && !leaving.awaitingThreadSnapshot && !leaving.messagesUnloaded && !leaving.pageStale && !leaving.firstPageEvents) conversationCache()?.put(cachedPage(leaving));
-          const intent = requestPage(rawDispatch, stateRef.current, action.botId);
-          api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
-            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
-            .catch(showError);
+          newTaskOnce(action.botId, action.cwd, () => requestPage(rawDispatch, stateRef.current, action.botId), (intent) => {
+            return api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
+              .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
+              .catch(showError);
+          });
           break;
         }
         // A switch answers with the newest page and `hasMore` (upstream

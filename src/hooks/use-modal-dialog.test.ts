@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { modalKeyAction } from "./use-modal-dialog";
+import { modalKeyAction, tabReachable } from "./use-modal-dialog";
 
 describe("modal dialog keys", () => {
   it("Escape closes from anywhere outside a field", () => {
@@ -29,5 +29,26 @@ describe("modal dialog keys", () => {
   });
   it("other keys are left alone", () => {
     expect(modalKeyAction("a", false, "first")).toBe("none");
+  });
+});
+
+describe("which controls Tab can reach (upstream 9ee83332e)", () => {
+  const el = (attrs: Record<string, string>, insideHiddenOrInert = false) => ({
+    hasAttribute: (name: string) => name in attrs,
+    getAttribute: (name: string) => attrs[name] ?? null,
+    closest: (selector: string) => (selector === "[hidden], [inert]" && insideHiddenOrInert ? ({} as Element) : null),
+  });
+  it("reaches an ordinary control", () => {
+    expect(tabReachable(el({}))).toBe(true);
+  });
+  it("skips a control inside a hidden or inert part of the dialog", () => {
+    expect(tabReachable(el({}, true))).toBe(false);
+  });
+  it("skips a button or link taken out of the tab order", () => {
+    expect(tabReachable(el({ tabindex: "-1" }))).toBe(false);
+  });
+  it("skips disabled and aria-hidden controls", () => {
+    expect(tabReachable(el({ disabled: "" }))).toBe(false);
+    expect(tabReachable(el({ "aria-hidden": "true" }))).toBe(false);
   });
 });

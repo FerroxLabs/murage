@@ -3,24 +3,29 @@
 //
 // The Health screen (Sean 10-30, 11-01). Needs you shows only what the owner must act on; everything else about how
 // Murage is doing lives here: the status, the engines, and every open issue with what it means and what to do.
-import { useCallback, useEffect, useState } from "react";
+// As a doctor (Sean 11-02, designs/HEALTH-DOCTOR.md): one line says how many things to fix and where to start, the
+// findings follow in order of impact with one fix each, and What was checked sits beside them on a wide window.
+import { useCallback, useEffect, useId, useState } from "react";
 import { api, useStore } from "@/state/store";
 import { useEngineHealthAnswer, useEngineReading } from "@/components/today/use-engine-health";
 import { t } from "@/lib/i18n";
-import { engineNeed } from "@/lib/engine-need";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { StatusDot } from "@/components/shell/StatusDot";
-import { BOX_FRAME, BoxBody, BoxHead } from "../ui/BoxShell";
+import { BoxBody, BoxHead } from "../ui/BoxShell";
 import { OpenBotListButton } from "@/components/OpenBotListButton";
 import type { HealthPageProps } from "@/components/shell/shell-contract";
 import { strongestHealthLevel, type HealthFold } from "../../../shared/health-levels";
 import { HEALTH_COPY, healthStateLine, recoveredLine, type HealthIssue, type HealthSummaryResponse, type NextAction } from "../../../shared/sentinel-view";
 import { healthFromEngines, healthWithChecks } from "./health-status";
-import { healthDestination, settingsPagesHere } from "./health-guide";
-import { EngineNeedCard } from "./HealthNeedCard";
+import { healthDestination, healthGuide } from "./health-guide";
+import { healthFindings, summaryLine } from "./health-findings";
+import { HEALTH_BODY, HEALTH_FRAME, HEALTH_HEAD, HealthHeadTop } from "./HealthExit";
 import { HealthClosed, HealthDigestView, HealthIssueGroups, healthFolds, readHealthIssues } from "./HealthIssues";
+import { HealthFindingList } from "./HealthFindings";
+import { HealthPanel } from "./HealthPanel";
 
-export function HealthPageBody(_props: HealthPageProps) {
+
+export function HealthPageBody({ onLeave }: HealthPageProps) {
   const { state, dispatch } = useStore();
   const server = useEngineHealthAnswer();
   const reading = useEngineReading();
@@ -41,49 +46,54 @@ export function HealthPageBody(_props: HealthPageProps) {
   }, [revision, state.owedRev]);
   const now = Date.now();
   const desktop = useDesktopSurface();
-  // Flux trouble is account wide, so no engine row carries its button: it gets the same card Needs you shows.
-  const flux = reading.flux === "allowance-used-up" || reading.flux === "key-problem" ? engineNeed({ engine: null, flux: reading.flux }, [], false) : null;
+  const [panelOpen, setPanelOpen] = useState(false);
+  const panelId = useId();
   const status = healthWithChecks(healthFromEngines(reading.engine, reading.flux, reading.fromServer || state.instances.length > 0), strongestHealthLevel(folds));
   const checks = summary ? healthStateLine(summary.status, summary.view?.summary ?? null, now) : null;
   const quiet = folds.length > 0 && folds.every((fold) => fold.level === "note");
-  // Nothing open from the checks: the sentence says exactly how far they got, never more than they saw.
-  const line = status.level === "act" || status.level === "watch" ? status.line : quiet ? t("ux.l2b.health.lineNote") : checks?.sentence ?? status.line;
+  // Every finding in order of impact (Flux Router and Fuigo first), from what the page already holds.
+  // The engine actually chosen as the default; an older server only sends the fallback it names on Today.
+  const defaultId = server ? server.defaultId !== undefined ? server.defaultId : server.primary?.id ?? null : null;
+  const entries = healthFindings({ engines: server?.engines ?? [], primaryId: defaultId, flux: server?.flux ?? reading.flux, fluxInfo: server?.fluxInfo, folds, desktop: desktop === true, now });
+  const counted = summaryLine(entries, (fold) => t(healthGuide(fold.titleKey).title));
+  // Nothing to fix: the sentence is the one the page said before (how far the checks got). A new all-clear line was cut
+  // after two review rounds (FIX-LEDGER HEALTH-DOCTOR-ALLCLEAR, batch 2): it must wait for every read of this refresh.
+  const line = counted
+    ?? (status.level === "act" || status.level === "watch" ? status.line
+      : quiet ? t("ux.l2b.health.lineNote")
+        : checks?.sentence ?? status.line);
   const go = (to: NextAction) => { const place = healthDestination(to); if (place) dispatch({ type: "toggleAppSettings", open: true, section: place.section }); };
   const recovered = summary?.view?.summary.recoveredCount ?? 0;
   return (
-    <main aria-labelledby="health-page-title" className={`${BOX_FRAME} h-full min-w-0 flex-1 bg-app text-ink`}>
-      <BoxHead className="flex-col items-start gap-0 px-4 pt-6 sm:px-6">
-        {/* Phones only (OpenBotListButton.tsx): the way back to the rail drawer. */}
-        <div className="md:hidden"><OpenBotListButton /></div>
-        <h1 id="health-page-title" className="flex items-center gap-2 text-[20px] font-semibold">
-          <StatusDot level={status.level} />{t("ux.l2a.health.title")}
-        </h1>
+    <main aria-labelledby="health-page-title" className={HEALTH_FRAME}>
+      <BoxHead className={HEALTH_HEAD}>
+        {/* The way out (Sean 11-02): the same header as while loading (HealthExit.tsx), Back and close on every screen. */}
+        <HealthHeadTop onLeave={onLeave} menu={<OpenBotListButton />} dot={<StatusDot level={status.level} />} />
         <p role="status" className="mt-1 text-[14px] text-ink-secondary">{line}</p>
       </BoxHead>
-      <BoxBody className="flex flex-col px-4 pb-6 pt-3 sm:px-6">
+      <BoxBody className={HEALTH_BODY}>
       {checks?.time && <p className="mt-0.5 text-[12px] text-ink-secondary">{checks.time}</p>}
       {failed && <p role="alert" className="mt-2 text-[13px] text-danger">{HEALTH_COPY.unavailable}</p>}
-      {server && server.engines.length > 0 && (
-        <ul aria-label={t("ux.l2a.health.engines")} className="mt-4 max-w-2xl shrink-0 divide-y divide-hairline/40 rounded-xl border border-hairline/50 bg-panel">
-          {server.engines.map((engine) => (
-            <li key={engine.id} className="flex items-center gap-3 px-4 py-3 text-[14px]">
-              <StatusDot level={engine.state === "ready" ? "ok" : engine.state === "limit" || engine.state === "off" ? "watch" : "act"} />
-              <span className="min-w-0 flex-1"><span className="font-medium">{engine.label}</span><span className="block text-[13px] text-ink-secondary">{engine.line}</span></span>
-              {engine.state !== "ready" && settingsPagesHere(desktop) && (
-                <button type="button" onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}
-                  className="min-h-11 rounded-lg border border-hairline/50 px-3 text-[13px] font-medium hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
-                  {t("ux.l2a.health.openEngines")}
-                </button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      {flux && <div className="mt-4 max-w-2xl shrink-0"><EngineNeedCard title={flux.title} detail={flux.detail} label={flux.label} onOpen={() => dispatch({ type: "toggleAppSettings", open: true, section: flux.section })} /></div>}
-      <HealthIssueGroups folds={folds} now={now} onGo={go} onChanged={reread} />
-      {recovered > 0 && <p className="mt-4 text-[13px] text-ink-secondary">{recoveredLine(recovered)}</p>}
-      {summary?.digest && <HealthDigestView digest={summary.digest} now={now} />}
-      <HealthClosed now={now} />
+      {/* Two columns from 1024 px: findings on the left (7/12), What was checked on the right (5/12), centred up to 1200 px. */}
+      <div className="mx-auto mt-4 grid w-full max-w-[1200px] grid-cols-1 gap-5 lg:grid-cols-12">
+        <div className="min-w-0 lg:col-span-7">
+          <HealthFindingList entries={entries} now={now} onGo={go} onChanged={reread} />
+          {/* What Murage is on (notes) stays out of the count and out of the findings. */}
+          <HealthIssueGroups folds={folds.filter((fold) => fold.level === "note")} now={now} onGo={go} onChanged={reread} />
+          {recovered > 0 && <p className="mt-4 text-[13px] text-ink-secondary">{recoveredLine(recovered)}</p>}
+          {summary?.digest && <HealthDigestView digest={summary.digest} now={now} />}
+          <HealthClosed now={now} />
+        </div>
+        <div className="min-w-0 lg:col-span-5">
+          <button type="button" aria-expanded={panelOpen} aria-controls={panelId} onClick={() => setPanelOpen(!panelOpen)}
+            className="min-h-10 rounded-lg text-[13px] text-ink-secondary underline-offset-2 hover:text-ink hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus lg:hidden">
+            {t("ux.l2a.health.checked")}
+          </button>
+          <div id={panelId} className={`${panelOpen ? "block" : "hidden"} lg:sticky lg:top-0 lg:block`}>
+            <HealthPanel answer={server} folds={folds} />
+          </div>
+        </div>
+      </div>
       </BoxBody>
     </main>
   );
