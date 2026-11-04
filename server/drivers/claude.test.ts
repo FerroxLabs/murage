@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CLAUDE_BROKER_TOOL_TIMEOUT_MS, brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
+import { CLAUDE_BROKER_TOOL_TIMEOUT_MS, brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, socketNameHasLiveListener, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { CLAUDE_ORG_LOGIN_LINE, bashTargetsOf, claudeExecShell, claudeInProjectAllow, claudeInProjectHold, claudeMountRecords, stripCapturedCredentialNames, claudeShellRefusal } from "./claude.ts";
@@ -202,7 +202,7 @@ describe("ClaudeDriver.decodeConfig", () => {
 
   it.skipIf(process.platform !== "win32")("names permission pipes per harness process", () => {
     expect(permissionSocketPath("thread-abc")).toMatch(
-      new RegExp(`^\\\\\\\\\\.\\\\pipe\\\\murage-perm-${process.pid}-thre[0-9a-f]{4}$`),
+      new RegExp(`^\\\\\\\\\\.\\\\pipe\\\\murage-perm-${process.pid}-thre[0-9a-f]{32}$`),
     );
   });
 
@@ -225,8 +225,20 @@ describe("ClaudeDriver.decodeConfig", () => {
   });
 
   it("gives each collision test a distinct broker pipe path", () => {
-    const paths = COLLISION_THREAD_IDS.map(permissionSocketPath);
+    const paths = COLLISION_THREAD_IDS.map((threadId) => permissionSocketPath(threadId));
     expect(new Set(paths).size).toBe(COLLISION_THREAD_IDS.length);
+  });
+
+  // OpenMausBot d83f5b3b3 (#1102): the broker table is process-wide, so the bot is part of the socket's name.
+  it("gives two bots distinct broker sockets even when their turns share a thread id", () => {
+    const shared = "t-shared-by-two-bots";
+    expect(permissionSocketPath(shared, "bot-chief")).not.toBe(permissionSocketPath(shared, "bot-cliff"));
+    expect(permissionSocketPath(shared, "bot-chief")).toBe(permissionSocketPath(shared, "bot-chief"));
+    const chief = brokerSocketCandidates(shared, "bot-chief");
+    const cliff = brokerSocketCandidates(shared, "bot-cliff");
+    expect(chief[0]).toBe(permissionSocketPath(shared, "bot-chief"));
+    if (process.platform !== "win32") expect(chief[1]).not.toBe(cliff[1]);
+    for (const path of chief) expect(cliff).not.toContain(path);
   });
 
   it("keeps the deterministic path as the first broker candidate", () => {
@@ -240,8 +252,30 @@ describe("ClaudeDriver.decodeConfig", () => {
       // macOS has a small Unix-socket path limit, so a deep HOME needs a
       // short fallback under the OS temp root.
       expect(candidates).toHaveLength(2);
-      expect(candidates[1]).toMatch(/murage-perm-[0-9a-f]{16}\.sock$/);
+      expect(candidates[1]).toMatch(/murage-perm-[0-9a-f]{32}\.sock$/);
       expect(candidates[1]).not.toBe(candidates[0]);
+    }
+  });
+
+  // #1102: a broker never unlinks a socket another broker still listens on.
+  it.skipIf(process.platform === "win32")("tells a live broker socket from a dead or foreign name", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mp-"));
+    const live = join(dir, "l.sock");
+    const server = createNetServer(() => {});
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", () => resolve());
+      server.once("error", reject);
+      server.listen(live);
+    });
+    try {
+      expect(await socketNameHasLiveListener(live)).toBe(true);
+      const plain = join(dir, "plain");
+      writeFileSync(plain, "x");
+      expect(await socketNameHasLiveListener(plain)).toBe(false);
+      expect(await socketNameHasLiveListener(join(dir, "absent.sock"))).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -2777,6 +2811,31 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.interruptTurn("t-perm-full");
   });
 
+  // OpenMausBot d83f5b3b3 (#1102): a turn the harness stamped with its bot binds that bot's own socket.
+  it("binds the broker under the turn's bot, so another bot's socket name never reaches it", async () => {
+    await create("hang");
+    await instance.adapter.sendTurn({ threadId: "t-perm-bot", text: "go", warmIdentity: { botId: "bot-ada", audience: "owner" } });
+    await recorder.until((e) => e.type === "session.started");
+    expect(permissionSocketPath("t-perm-bot", "bot-ada")).not.toBe(permissionSocketPath("t-perm-bot"));
+    const conn = connect(permissionSocketPath("t-perm-bot", "bot-ada"));
+    await new Promise<void>((resolve, reject) => {
+      conn.on("connect", resolve);
+      conn.on("error", reject);
+    });
+    conn.write(JSON.stringify({ t: "ask", id: "ask-bot", tool: "Bash", input: { command: "ls" } }) + "\n");
+    const opened = await recorder.until((e) => e.type === "request.opened" && e.requestId === "ask-bot");
+    expect(opened).toMatchObject({ threadId: "t-perm-bot", tool: "Bash" });
+    const stray = connect(permissionSocketPath("t-perm-bot"));
+    const strayResult = await new Promise<string>((resolve) => {
+      stray.on("connect", () => resolve("connected"));
+      stray.on("error", () => resolve("refused"));
+    });
+    stray.destroy();
+    expect(strayResult).toBe("refused");
+    conn.destroy();
+    await instance.adapter.interruptTurn("t-perm-bot");
+  });
+
   it("brokers a permission ask into request.opened and answers over the socket", async () => {
     await create("hang");
     await instance.adapter.sendTurn({
@@ -2861,9 +2920,10 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     process.env.FAKE_CLAUDE_DUMP = dump;
     const basePath = permissionSocketPath("t-perm-squat");
     // squat the deterministic path the way a hung child from an earlier
-    // process does. On POSIX the driver steals the socket file (unlink) and
-    // still binds the base; on Windows the name is unstealable and the
-    // driver must bind a fallback — either way the ask flow must work.
+    // process does. A live listener's name is never taken over: on POSIX
+    // the driver leaves the squatter's socket alone (#1102) and binds the
+    // temp fallback; on Windows the name is unstealable and the driver
+    // binds a fresh pipe. Either way the ask flow must work.
     const squatter = createNetServer(() => {});
     await new Promise<void>((resolve, reject) => {
       squatter.once("listening", () => resolve());
@@ -2877,7 +2937,8 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       const mcpPath = seen.argv[seen.argv.indexOf("--mcp-config") + 1];
       const actual = JSON.parse(readFileSync(mcpPath, "utf8")).mcpServers.muragebox.args[1];
-      if (process.platform === "win32") expect(actual).not.toBe(basePath);
+      expect(actual).not.toBe(basePath);
+      if (process.platform !== "win32") expect(lstatSync(basePath).isSocket()).toBe(true);
       const conn = connect(actual);
       await new Promise<void>((resolve, reject) => {
         conn.on("connect", resolve);

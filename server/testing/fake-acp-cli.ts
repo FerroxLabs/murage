@@ -47,6 +47,8 @@
 //                     to this session's, held until answered;
 //                     the reply is written to FAKE_ACP_DUMP as `decision`)
 //                   | fuigo-elicit (Fuigo's `_fuigo/mcp/elicit` bridge of an MCP form elicitation)
+//                   | grok-elicit (the same bridge as Grok Build sends it, `_x.ai/mcp/elicit`,
+//                     or FAKE_ACP_ELICIT_METHOD)
 //                   | folder-trust (Fuigo 1.0.13's folder-trust gate: with
 //                     `--trust` in argv the folder is trusted and the reply
 //                     quotes ./AGENTS.md; without it the fake sends
@@ -132,6 +134,11 @@
 //   FAKE_ACP_PERMISSION_TIMING_FILE  append {askedAt, waitMs} per answered
 //                   permission-mode ask: how long the client took to answer,
 //                   as the engine sees it (Grok's own wait_ms)
+//   FUIGO_POLICY_PATH / FUIGO_POLICY_SHA256  Fuigo 1.0.36+ launch policy, as 1.0.38 handles it: the file must hash to
+//                   the env value or the process prints one {"policy_error":...} line and exits 78; session/new and
+//                   session/load carrying `_meta` fuigo/permissionPolicyPath + Sha256 are checked the same way
+//                   (-32602 with the record as data) and acknowledged in `_meta["fuigo/permissionPolicy"]`.
+//   FAKE_ACP_POLICY_ACK=0  behave like an engine older than 1.0.36: ignore the policy, never acknowledge it
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -300,7 +307,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
@@ -412,6 +419,8 @@ const dumpEnv = Object.fromEntries(
     "FAKE_ACP_MODE",
     "FAKE_ACP_RPC_DUMP",
     "TEST_POLICY",
+    "FUIGO_POLICY_PATH",
+    "FUIGO_POLICY_SHA256",
     "KIMI_MODEL_NAME",
     "KIMI_MODEL_BASE_URL",
     "KIMI_MODEL_PROVIDER_TYPE",
@@ -427,6 +436,11 @@ const dumpEnv = Object.fromEntries(
     "FUIGO_ENVRC_TIMEOUT_SECS",
     "FUIGO_AGENT",
     "FUIGO_WORKSPACE_REWIND_GIT",
+    // FUIGO-NO-SILENT-HANG pins: retries, connect limit, uncharged 401 park
+    "FUIGO_MAX_RETRIES",
+    "FUIGO_CONNECT_TIMEOUT_SECS",
+    "FUIGO_COMPACTION_WALL_CLOCK_SECS",
+    "FUIGO_UNCHARGED_401_PARK",
     "HERMES_HOME",
     "OPENCODE_DISABLE_PROJECT_CONFIG",
     // Flux Memory headers: config overlays and settings paths, no secret
@@ -543,6 +557,32 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+
+// Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
+const policyKnown = process.env.FAKE_ACP_POLICY_ACK !== "0";
+function policyFileError(path: unknown, sha256: unknown): Record<string, unknown> | null {
+  if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) return { policy_error: "hash_missing", path, line: null, message: "hash missing" };
+  if (typeof path !== "string" || !isAbsolute(path)) return { policy_error: "not_absolute", path, line: null, message: "not absolute" };
+  let bytes: Buffer;
+  try {
+    if (lstatSync(path).isSymbolicLink()) return { policy_error: "symlink", path, line: null, message: "symlink" };
+    bytes = readFileSync(path);
+  } catch { return { policy_error: "not_found", path, line: null, message: "not found" }; }
+  return createHash("sha256").update(bytes).digest("hex") === sha256 ? null : { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+}
+if (policyKnown && process.env.FUIGO_POLICY_PATH !== undefined) {
+  const failed = policyFileError(process.env.FUIGO_POLICY_PATH, process.env.FUIGO_POLICY_SHA256);
+  if (failed) { process.stderr.write(`${JSON.stringify(failed)}\n`); process.exit(78); }
+}
+/** The session answer's policy `_meta`, an error already sent (true), or nothing (no policy on the request). */
+function sessionPolicy(msg: any): { _meta?: Record<string, unknown> } | true {
+  const meta = msg.params?._meta;
+  if (!policyKnown || !meta || typeof meta !== "object" || !("fuigo/permissionPolicyPath" in meta || "fuigo/permissionPolicySha256" in meta)) return {};
+  const failed = policyFileError(meta["fuigo/permissionPolicyPath"], meta["fuigo/permissionPolicySha256"]);
+  if (failed) { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params", data: failed } }); return true; }
+  if (process.env.FAKE_ACP_DUMP) appendFileSync(`${process.env.FAKE_ACP_DUMP}.policy.jsonl`, `${JSON.stringify({ method: msg.method, path: meta["fuigo/permissionPolicyPath"], sha256: meta["fuigo/permissionPolicySha256"] })}\n`);
+  return { _meta: { "fuigo/permissionPolicy": { sha256: meta["fuigo/permissionPolicySha256"] } } };
+}
 /** A test's own gate: `then` runs once the file exists. */
 const whenFile = (file: string, then: () => void) => { if (existsSync(file)) then(); else setTimeout(() => whenFile(file, then), 10); };
 // `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
@@ -561,11 +601,47 @@ const runStrandedInterjection = () => {
   setTimeout(() => {
     out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [], runningPromptId: promptId, runningText: text, runningKind: "prompt" } });
     out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: ` fallback reply #${fallbackTurns}` } } } });
+    // FAKE_ACP_FALLBACK_STALL=tool: the fallback turn starts a tool and then sends nothing at all (FUIGO-NO-SILENT-HANG).
+    if (process.env.FAKE_ACP_FALLBACK_STALL === "tool") {
+      out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: `fb-tool-${fallbackTurns}`, title: "run", kind: "execute", status: "in_progress" } } });
+      return;
+    }
     setTimeout(() => {
       out({ jsonrpc: "2.0", method: `${ns}/session_notification`, params: { update: { sessionUpdate: "turn_completed", prompt_id: promptId, stop_reason: "end_turn" } } });
       out({ jsonrpc: "2.0", method: `${ns}/queue/changed`, params: { entries: [] } });
     }, 300);
   }, 100);
+};
+// FAKE_ACP_MODE=fuigo-script (FUIGO-NO-SILENT-HANG): FAKE_ACP_SCRIPT is a JSON list of steps, each run `at` ms after
+// session/prompt arrives (or after Murage answers request id `after`), doing one of: `update` (a session update, on
+// `rail`, default session/update, with optional `meta`), `notify` {method, params}, `request` {id, method, params}
+// (an engine request), `result` (the prompt's result; an accepted interjection then runs as a fallback turn) or
+// `error` (the prompt's RPC error). Each answer to a scripted request is appended to FAKE_ACP_SCRIPT_LOG.
+const scriptRequestIds = new Set<unknown>();
+const scriptAnswerWaiters = new Map<unknown, Array<() => void>>();
+let scriptStartedAt = 0;
+const runFuigoScript = (prompt: any) => {
+  const sid = prompt.params?.sessionId;
+  scriptStartedAt = Date.now();
+  const steps: any[] = JSON.parse(process.env.FAKE_ACP_SCRIPT ?? "[]");
+  const run = (step: any) => {
+    if (step.update) out({ jsonrpc: "2.0", method: step.rail ?? "session/update", params: { sessionId: sid, update: step.update, ...(step.meta ? { _meta: step.meta } : {}) } });
+    else if (step.notify) out({ jsonrpc: "2.0", method: step.notify.method, params: { sessionId: sid, ...step.notify.params } });
+    else if (step.request) {
+      scriptRequestIds.add(step.request.id);
+      out({ jsonrpc: "2.0", id: step.request.id, method: step.request.method, params: { sessionId: sid, ...step.request.params } });
+    } else if (step.result) { result(prompt.id, step.result); setImmediate(runStrandedInterjection); }
+    else if (step.error) out({ jsonrpc: "2.0", id: prompt.id, error: step.error });
+    else if (typeof step.exit === "number") process.exit(step.exit);
+  };
+  for (const step of steps) {
+    if (step.after !== undefined) {
+      const waiting = scriptAnswerWaiters.get(step.after) ?? [];
+      waiting.push(() => setTimeout(() => run(step), step.at ?? 0));
+      scriptAnswerWaiters.set(step.after, waiting);
+    } else setTimeout(() => run(step), step.at ?? 0);
+  }
+  setInterval(() => {}, 1_000);
 };
 const rpcMethods: string[] = [];
 const recordMethod = (method: string) => {
@@ -1146,6 +1222,13 @@ function scheduleLateFrames(sessionId: unknown) {
 }
 
 function handle(msg: any) {
+  if (mode === "fuigo-script" && msg.id !== undefined && !msg.method && scriptRequestIds.has(msg.id)) {
+    scriptRequestIds.delete(msg.id);
+    if (process.env.FAKE_ACP_SCRIPT_LOG) appendFileSync(process.env.FAKE_ACP_SCRIPT_LOG, JSON.stringify({ id: msg.id, at: Date.now() - scriptStartedAt, result: msg.result ?? null, error: msg.error ?? null }) + "\n");
+    for (const then of scriptAnswerWaiters.get(msg.id) ?? []) then();
+    scriptAnswerWaiters.delete(msg.id);
+    return;
+  }
   if (msg.id === 9300 && !msg.method) {
     if (process.env.FAKE_ACP_LATE_REPLY_LOG) appendFileSync(process.env.FAKE_ACP_LATE_REPLY_LOG, JSON.stringify({ result: msg.result, error: msg.error }) + "\n");
     return;
@@ -1259,6 +1342,8 @@ function handle(msg: any) {
         });
         break;
       }
+      const newPolicy = sessionPolicy(msg);
+      if (newPolicy === true) break;
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.mcpServers = dumpedServers(servers);
@@ -1285,6 +1370,7 @@ function handle(msg: any) {
       startMcpChild(servers);
       result(msg.id, {
         sessionId: newSessionId,
+        ...newPolicy,
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
         ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
@@ -1321,6 +1407,8 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      const loadPolicy = sessionPolicy(msg);
+      if (loadPolicy === true) break;
       const resident = liveSession !== null && msg.params?.sessionId === liveSession;
       if (resident && process.env.FAKE_ACP_REJECT_LIVE_LOAD) {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "session is already loaded" } });
@@ -1351,7 +1439,7 @@ function handle(msg: any) {
       const mdls = sessionModels();
       if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
       liveServers = loadServers;
-      result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}), ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}) });
+      result(msg.id, { ...loadPolicy, ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}), ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}) });
       if (serversChanged && typeof msg.params?.sessionId === "string" && process.env.FAKE_ACP_MCP_READY_NEW_ONLY !== "1") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
       // the real engine runs the trust prompt after session/load too
       // (`load_session_inner`), so a resumed turn is gated like a new one
@@ -1434,6 +1522,7 @@ function handle(msg: any) {
     case "session/prompt": {
       trustLog({ event: "prompt" });
       mcpTimeline("prompt");
+      if (mode === "fuigo-script") { runFuigoScript(msg); return; }
       if (mode === "parallel-card-retry" && process.env.FAKE_ACP_FAIL_ONCE_FILE && !existsSync(process.env.FAKE_ACP_FAIL_ONCE_FILE)) {
         writeFileSync(process.env.FAKE_ACP_FAIL_ONCE_FILE, "failed launch");
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "429 too many requests", data: { http_status: 429, error_kind: "rate_limited" } } });
@@ -2368,23 +2457,36 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", id: pendingPermissionId, method: process.env.FAKE_ACP_ASK_METHOD, params: askParams });
         return;
       }
-      if (mode === "fuigo-elicit") {
+      if (mode === "fuigo-elicit" || mode === "grok-elicit") {
         // Fuigo's bridge of an MCP server's elicitation (McpElicitExtRequest):
         // ACP form fields plus serverName; the reply is tagged `outcome`.
+        // Grok Build 1.0.70 sends the same request as `_x.ai/mcp/elicit`
+        // (FAKE_ACP_ELICIT_METHOD picks another spelling).
         pendingPermissionId = 9005;
         onPermissionAnswered = complete;
         out({
           jsonrpc: "2.0",
           id: pendingPermissionId,
-          method: "_fuigo/mcp/elicit",
-          params: {
-            sessionId: msg.params?.sessionId ?? "fake-acp-session",
-            toolCallId: "mcp-elicit-1",
-            serverName: "deployer",
-            message: "Which environment?",
-            mode: "form",
-            requestedSchema: { type: "object", properties: { environment: { type: "string", enum: ["staging", "production"] } }, required: ["environment"] },
-          },
+          method: mode === "grok-elicit" ? process.env.FAKE_ACP_ELICIT_METHOD || "_x.ai/mcp/elicit" : "_fuigo/mcp/elicit",
+          params:
+            mode === "grok-elicit"
+              ? {
+                  // an MCP server's billable confirm (a Yes/No form), as Grok forwards it
+                  sessionId: msg.params?.sessionId ?? "fake-acp-session",
+                  toolCallId: "mcp-elicit-grok-1",
+                  serverName: "spicyapi",
+                  message: "This run is billable. Continue?",
+                  mode: "form",
+                  requestedSchema: { type: "object", properties: { confirm: { type: "boolean", title: "Continue?" } }, required: ["confirm"] },
+                }
+              : {
+                  sessionId: msg.params?.sessionId ?? "fake-acp-session",
+                  toolCallId: "mcp-elicit-1",
+                  serverName: "deployer",
+                  message: "Which environment?",
+                  mode: "form",
+                  requestedSchema: { type: "object", properties: { environment: { type: "string", enum: ["staging", "production"] } }, required: ["environment"] },
+                },
         });
         return;
       }

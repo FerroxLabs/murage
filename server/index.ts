@@ -50,7 +50,7 @@ import { readServerSecrets } from "./cloud-home/server-secrets.ts";
 import { criteriaClaimCorrection, createReplySpeakerTurns, replyAudienceIsOwner } from "./reply-speaker-guard.ts";
 import { readBody } from "./read-body.ts";
 import { feedbackRoute } from "./feedback-routes.ts";
-import { engineHealthRoute, type EngineHealthMemo } from "./engine-health-routes.ts";
+import { dropEngineHealthMemo, engineHealthRoute, type EngineHealthMemo } from "./engine-health-routes.ts";
 import { feedbackInstallId } from "./feedback-relay.ts";
 import { helpRoute } from "./help-routes.ts";
 import { flushCoalesced } from "./atomic.ts";
@@ -169,7 +169,7 @@ import "./bot-learning-modules.ts";
 import { readBotLearning } from "./bot-learning.ts";
 import { proposeOutcomeFromAgent, recordStopForThread } from "./memory/outcomes.ts";
 import { wireBotLearning } from "./memory/learning-wiring.ts";
-import { TURN_PROMPTS, imageToolsPrompt, botShapeRows, directPersona, directTurnLayers, peerTaskPrompt, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, learnedForTurn, lineLayers, pinLearnedForTurn, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer, withLearned } from "./bot-shapes.ts";
+import { TURN_PROMPTS, imageToolsPrompt, botShapeRows, directPersona, directTurnLayers, peerTaskPrompt, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, learnedForTurn, lineLayers, pinLearnedForTurn, recordTurnShapes, replyHabitsLayer, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer, withLearned } from "./bot-shapes.ts";
 import { renderLearnedBlock } from "./memory/lessons.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { aboutMePrompt, handleAboutMeApi } from "./about-me.ts";
@@ -204,6 +204,7 @@ import { checkEngineReply } from "./engine-reply-check.ts";
 import { bootSettled, firstHealthAnswered, noteHealthAnswered, readySettle, runAfterListen, startRecovery, startupWritesReady, trackBootJob } from "./after-listen.ts";
 import { invalidateCliVersions } from "./cli-version-cache.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
+import { foldTeamName, leadTeamGate } from "./team-founding.ts";
 import { TeamChangeError, changeTeamMembers, deleteTeam, describeTeam, renameTeam, type TeamDeps } from "./team-sections.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { attachContinuityCoverage, clearContinuityCoverage } from "./memory/identity.ts";
@@ -255,6 +256,8 @@ import { PHONE_COPY, phoneInstructionLines } from "./phones/copy.ts";
 import { driverMountsPhoneJobs } from "./phone-jobs-engines.ts";
 import { aiProviderName } from "../shared/phone-ai-provider.ts";
 import { companionAuthorized, doorAuthorized, launchProofPresent, ownerActs } from "./companion-authority.ts";
+import { ownerAppSurface } from "./owner-app.ts";
+import { readOwnerPrefs, writeOwnerPrefs } from "./owner-prefs.ts";
 import { replayEarlyParentMessages } from "./launch-secret.ts";
 import { createMcpAccessCheck, readOrCreateMcpAccessKey, removeMcpAccessKey } from "./mcp-access.ts";
 import { McpGrants, mcpGrantAdmits, type McpGrant } from "./mcp-grants.ts";
@@ -273,7 +276,9 @@ import { mobilePushRoute, type PushRouteDeps } from "./mobile-push-routes.ts";
 import { pushDetail } from "./mobile-push-detail.ts";
 import { respondFromPush } from "./mobile-push-respond.ts";
 import { liveRating, pushRiskFor, ratePushRevision, workspaceInside } from "./mobile-push-risk.ts";
-import { FreshAuthGate, approvalDeviceFrom, approvalDigestSync, type GateResult } from "./approval-fresh-auth.ts";
+import { FRESH_AUTH_COPY, FreshAuthGate, approvalBatchDigestSync, approvalDeviceFrom, approvalDigestSync, type GateResult } from "./approval-fresh-auth.ts";
+import { APPROVE_ALL_CAP, ApproveAllBatches, CaptureResponse, batchLines, bulkEligibility, bulkKindKey, bulkSpecialRefusal, type BatchCard, type BulkCard, type BulkReasonKey, type BulkSpecialProbes } from "./approve-all.ts";
+import { APPROVE_ALL_THREAD } from "../shared/approval-digest.ts";
 import { AnsweredWhere, answeredByOwner, createPushWarn, settledBy } from "./mobile-push-hooks.ts";
 import { isIP } from "node:net";
 import { basename, extname, isAbsolute, join, parse, relative, sep } from "node:path";
@@ -351,7 +356,7 @@ import { handleVoiceHostRoute, VOICE_HOST_PATH } from "./voice/voice-host-route.
 import { CALL_NOTE_PATH, handleCallNoteRoute } from "./voice/call-note.ts";
 import { callAccess } from "./voice/call-access.ts";
 import { connectionFor, describeVoiceRoutes, voiceEndpoints, type VoicePart } from "./voice/voice-routes.ts";
-import type { InboxPage, InboxView } from "../shared/inbox.ts";
+import type { InboxItem, InboxPage, InboxView } from "../shared/inbox.ts";
 import { ARTIFACT_PREVIEW_MAX_BYTES, artifactsRequest, artifactOwner, describeArtifact, retainedSourceRoots, registerArtifact, readArtifact,artifactWorkspaceIdentity, authorizedArtifactRoot, sweepArtifactCandidates, runPublishedArtifactIds, publicationUnsettled, type ArtifactScope } from "./artifacts.ts";
 import { deliverRoutineRun, routineRunFallbackText, type RoutineDeliveryDeps } from "./routine-delivery.ts";
 import { storageReport } from "./storage-report.ts";
@@ -361,7 +366,7 @@ import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
 import { fluxHermesHome, HERMES_CONFIG_MODEL_ID } from "./drivers/acp/hermes.ts";
 import { openclawVersionNote } from "./drivers/acp/openclaw.ts";
-import { ApprovalDeliveryError, denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
+import { ApprovalDeliveryError, ApprovalNoLongerOpenError, denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { hermesInstanceProfiles, hermesProfileOf, listHermesProfiles, planHermesImport, planHermesProfilePins, type HermesPin } from "./hermes-profiles.ts";
 import { hermesPinNoteActivityName } from "../shared/hermes-pin-note.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, ENGINE_LABEL, instancesForHomes, engineHomeFor, runConversationDeletion, type DeletionEngine, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
@@ -796,7 +801,7 @@ import { fullAccessApprovesSetup, fullAccessChange, fullAccessOptionsChange, NO_
 import { failoverSendProof, ownerStartedAsk, ownerStartedTurn, recordOwnerStarted } from "./owner-started.ts";
 import { cancelPeerApprovalsFor, cancelPeerApprovalsForThread, dismissStalePeerCards, ownedCardThreads, peerApprovalHolder, settleStaleCardPage, settleStaleCardsFromMark, STALE_CARD_PAGE, stalePeerCardKind, requestPeerApproval, resolvePeerComms, type ApprovalBus, type StaleCardMark } from "./peer-approval.ts";
 import { PendingGrants, rememberAndAnswer as rememberGrantAndAnswer, type GrantChokeDeps, type RememberInput, type RememberResult } from "./grant-choke.ts";
-import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, staleHostConsentCardKind, hostConsentRefusal, hostConsentState, isHostComputerConsent, resolveHostComputerConsent } from "./host-computer-consent.ts";
+import { autoHostDeclined, awaitHostComputerConsent, cancelHostComputerConsentFor, cancelHostComputerConsentForThread, dismissStaleHostConsentCards, staleHostConsentCardKind, hostConsentRefusal, hostConsentState, isHostComputerConsent, hostComputerConsentPending, resolveHostComputerConsent } from "./host-computer-consent.ts";
 import {
   canReach,
   isIndividualAssistant,
@@ -875,7 +880,8 @@ import { checkFluxKey, requestFluxKeyRecheck, noteFluxKeyAccepted, noteFluxKeyRe
 import { SETUP_FILE, SetupChecklist, bundledEngineStatus, chiefDecision, readWorkspace, setupAgentsReading, setupEngineUsers, setupSignedOutReading } from "./setup.ts";
 import { deriveSetupBackup, initializeSetupBackup, setupBackupRequest } from "./setup-backup.ts";
 import { conversationLive, setupConversationPlan } from "./setup-conversation.ts";
-import { type EngineChoice, bootEngineChoice, defaultModel, pickDefaultEngine } from "./default-engine.ts";
+import { type EngineChoice, bootEngineChoice, defaultModel, fuigoBirthModel, fuigoUsable, pickDefaultEngine } from "./default-engine.ts";
+import { couldMoveEngine, createEngineRepick, targetCheck } from "./engine-repick.ts";
 import { type SetupCardData, readSetupCard, setupCardKey } from "../shared/setup-card.ts";
 import { plainConnectedAppText } from "../shared/connected-app-tools.ts";
 import { resumesLegacySession, withLegacyNames } from "../shared/connected-app-names.ts";
@@ -955,7 +961,7 @@ import { readCuaConnection, type LocalComputerConnection } from "./local-compute
 import { HostComputerBroker } from "./host-computer-broker.ts";
 import { LOCAL_VM_IDLE_SHORT_MS, LocalVmIdleTimer, localVmIdleWindowMs, taskMayReturn } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
-import { RepeatDetector, askCallKey, askCallLabel, callKey } from "./repeat-detector.ts";
+import { RepeatDetector, askCallKey, askCallLabel, toolTitleKey } from "./repeat-detector.ts";
 import { createLoopNudge, LOOP_NUDGE_ROW } from "./loop-nudge.ts";
 import { loopNoticeName } from "../shared/loop-notice.ts";
 import { createMacFolderPromptWatch } from "./mac-folder-prompt.ts";
@@ -1715,11 +1721,12 @@ bus.gateDeliveries({ held: writersHeldForIndexBuild, wait: awaitWriterGateForegr
  * here, before anything can read a provider event (shouldIgnoreProviderEvent). */
 const chiefProposals = new ChiefProposalTurns();
 // ...and they leave no event or engine log behind (events/, native/).
-bus.omitLog(threadId => chiefProposals.ignores(threadId));
+// A hidden learning session (cli-memory-learning.ts) carries memory words: it leaves no event or engine log behind either (MEM-LEARNING-FENCE r8).
+bus.omitLog(threadId => chiefProposals.ignores(threadId) || isMemoryLearningThread(threadId));
 // 1.0.9 phone tools S18: a thread that used the phone tools keeps its reply text out of events/, and phone tool rows lose their
 // input and result. Read from the persisted mark and never gated on the feature flag (a mark outlives the flag, Astra AS9).
 bus.withholdText({ thread: threadId => store.threadPhoneMarked(threadId), phoneTool: makePhoneToolMatcher() });
-omitNativeLog(threadId => chiefProposals.ignores(threadId));
+omitNativeLog(threadId => chiefProposals.ignores(threadId) || isMemoryLearningThread(threadId));
 // 1.0.9 phone tools S19: the engine protocol trace of a marked thread loses every text value. Not gated on the feature flag (AS9).
 withholdNativeThread(threadId => store.threadPhoneMarked(threadId));
 // Internal presentation notifications; raw events already have a canonical log.
@@ -1824,6 +1831,9 @@ const internalTurnOwners = new Map<string, {
    * room reply without a request reads its audience here, never as the
    * owner's by default. */
   ownerAudience?: boolean;
+  /** APPROVE-ALL: the owner typed this turn in the app, decided at dispatch (no peer ask, delegation, wake, continuation,
+   * routine, automation or queued drain). Only such a turn's cards count as origin "owner" for Approve all. */
+  ownerTyped?: boolean;
   memorySkillSource?: string;
   coordination?: CoordinationTrace;
   tokens: Partial<Record<InternalCapabilityKind, string>>;
@@ -1844,12 +1854,12 @@ setExecutionTurnLookup(generation => {
   for (const [threadId, turn] of internalTurnOwners) if (turn.generation === generation) return { botId: turn.botId, threadId };
   return undefined;
 });
-function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace, notOwnerAudience = false, ownerAudience = false): void {
+function beginInternalTurn(botId: string, threadId: string, generation: string, depth: number, skillAuthoring: boolean, eventId?: string, coordination?: CoordinationTrace, notOwnerAudience = false, ownerAudience = false, ownerTyped = false): void {
   const humanPrincipal=threadHumanPrincipal(threadId);
   assertHumanPrincipal(humanPrincipal);
   internalCapabilities.begin(botId, threadId, generation,humanPrincipal);
   memoryDispatches.delete(threadId);
-  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, notOwnerAudience, ownerAudience,
+  internalTurnOwners.set(threadId, { botId, generation, depth, skillAuthoring, eventId, notOwnerAudience, ownerAudience, ownerTyped,
     coordination: coordination ?? (depth === 0 ? coordinationBudget.begin(botId, generation) : undefined), tokens: {} });
 }
 /** F3 (02-3): the coordination a request-run turn carries, derived from the request tree (room-requests.ts requestTrace), never stored. A
@@ -2526,6 +2536,16 @@ class DirectTurnSetupCancelled extends Error {}
 /** server/memory: assertMemoryAccess and deliverMemoryDisclosure refuse with
  * exactly this message when the authority a dispatch prepared under has moved. */
 const isMemoryContextRevoked = (error: unknown) => error instanceof Error && error.message === "MEMORY_CONTEXT_REVOKED";
+/** Acceptance of a dispatched turn's memory receipt (direct and room turns alike). A revoke at this point on an engine that proves it wrote
+ * nothing (DELETE-REVOKE-SCOPE (a): `fencedWrites` and no write released) seals the boundary before the error goes on, so the setup catch
+ * rebuilds the turn on fresh context instead of ending it with a card; every other refusal goes on unchanged. */
+function acceptMemoryReceipt(receipt: { accepted(): void } | undefined, boundary: TurnSubmissionBoundary, adapter: { capabilities: { fencedWrites?: boolean } }): void {
+  try { receipt?.accepted(); }
+  catch (error) {
+    if (isMemoryContextRevoked(error)) { try { boundary.sealUnwritten(error, adapter.capabilities.fencedWrites); } catch { /* proves nothing: the card stands */ } }
+    throw error;
+  }
+}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 /** Direct turns refused at a submission after the server accepted them, by
  * provider turn id: the turn's terminal event runs what is owed: the next
@@ -3315,8 +3335,9 @@ function askBotAndWait(targetBotId: string, message: string, depth: number, _fro
   });
 }
 
-// default selection for new bots: first available instance, Fuigo preferred
-async function defaultSelection(): Promise<EngineChoice> {
+// 1.0.15 BIRTH-FUIGO BN1: feeds bootSelection, which engine health shows as the primary engine. Store.birthSelection decides births;
+// it reads bootSelection only for the first desktop bot when no Fuigo is usable (r3).
+async function engineHealthPrimaryProbe(): Promise<EngineChoice> {
   return pickDefaultEngine(await describedInstances({ catalogs: "due" }));
 }
 
@@ -3451,9 +3472,19 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const engineHealthMemo: EngineHealthMemo = { at: 0, body: null };
+/** Work an engine reload would end: running engine turns, direct and internal turns, room turns and their slots, engine
+ * picks in flight. Health's Switch on waits while any of these is running (HEALTH-DOCTOR). */
+function engineSwitchWouldInterrupt(): boolean {
+  return engineWorkActive() || directTurnDispatchClaims.size > 0 || internalTurnOwners.size > 0 || groupTurnOperations.size > 0 || coordinationSlots.size > 0 || pendingRoomStops.size > 0 || activeProviderSelections.size > 0;
+}
 // Every new bot gets the workspace's new-bot effort where its engine offers
 // that level (triage row 23); an explicit effort wins.
-const store = new Store(() => bootSelection, (selection) => withNewBotEffort(selection, cfg.newBots?.effort, registry.get(selection.instanceId)?.adapter.capabilities.effortLevels), true);
+// 1.0.15 BIRTH-FUIGO: a bot with no owner pick is born by Store.birthSelection from the live registry (usable Fuigo, else a desktop
+// copy of the Chief, else empty and marked). r3 (MurageMain 11-02): the FIRST desktop bot with no usable Fuigo takes the first-launch
+// probe's reading (bootSelection, a pickDefaultEngine pick that leaves out a keyless Fuigo), so a found Claude runs the first chat.
+// Birth filters the Fuigo list to the usable ones itself; the whole list lets it refuse a remembered Fuigo that cannot answer.
+const birthOnDesktop = process.env.MURAGE_CLOUD_ROLE !== "home";
+const store = new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, ...(birthOnDesktop ? { firstBot: () => bootSelection } : {}) }, (selection) => withNewBotEffort(selection, cfg.newBots?.effort, registry.get(selection.instanceId)?.adapter.capabilities.effortLevels), true);
 // A bot that still exists keeps its engine state roots: its tasks hold cursors into them (scoped-cli-home.ts retireScopes).
 setScopeRetentionHooks({ botExists: (botId) => Boolean(store.bot(botId)) });
 // Codex hook env files (0600) left by a closed Murage or a bot never launched again: swept for every bot scope at app start (codex-hook.ts).
@@ -4374,13 +4405,29 @@ function reconcileLateSteer(input: LateSteerInput, late: SteerDelivery): void {
 }
 // With bots in place the engine probe (about 2 s) runs after listen: a start
 // reads the remembered choice, and only a new bot ever reads it.
-await bootEngineChoice({ hasBots: store.bots.length > 0, file: join(DATA_DIR, "default-engine.json"), probe: defaultSelection, adopt: choice => { bootSelection = choice; },
+await bootEngineChoice({ hasBots: store.bots.length > 0, file: join(DATA_DIR, "default-engine.json"), probe: engineHealthPrimaryProbe, adopt: choice => { bootSelection = choice; },
   usable: choice => {
     const engine = registry.get(choice.instanceId);
     return !!engine && engine.enabled !== false && choice.model !== "" && !!engine.models.default && engine.models.options.some(option => option.id === choice.model);
   } });
 store.seedIfEmpty();
 seedFolderTrustFromStore();
+// 1.0.14 FIRST-ENGINE-REPICK section 5: the only automatic engine mover. Triggers start a pass; the pass decides.
+const engineRepick = createEngineRepick({
+  store,
+  registry,
+  describe: options => describedInstances(options),
+});
+// One boot pass when a key is held (a Fuigo with a catalogue): a bot left empty or on a removed engine reaches Fuigo after a restart.
+// Astra 1015 M6: a Fuigo engine present is enough to start; the pass and its ladder wait for the catalogue.
+if (registry.instances().some(instance => instance.driverKind === "fuigoAgent") && store.bots.some(bot => couldMoveEngine(registry, bot))) {
+  void engineRepick.request("boot").catch(error => console.error(`boot engine pass: ${error instanceof Error ? error.message : String(error)}`));
+}
+/** After a key save: attempt 0 of a pass that started after the save, inside a catch that never fails the save. */
+async function repickAfterKeySave(): Promise<void> {
+  try { await engineRepick.request("key"); }
+  catch (error) { console.error(`engine pass after key save: ${error instanceof Error ? error.message : String(error)}`); }
+}
 
 configureLocalPinnedModels(() => store.bots.map(bot => bot.modelSelection?.model));
 
@@ -4396,7 +4443,7 @@ const setup = new SetupChecklist();
  * Seat the bot that hosts setup.
  *
  * The bot a fresh install created first is the one the person meets, so it IS
- * the Chief of Staff, on whatever `defaultSelection()` resolved — which
+ * the Chief of Staff, on whatever the birth rule gave it (Store.birthSelection) — which
  * prefers the bundled Fuigo engine, the only one this app ships a binary for.
  *
  * Seated when the checklist is first opened rather than at boot. The role
@@ -4751,51 +4798,16 @@ function driveSetupConversation(view: SetupView): void {
 }
 
 /**
- * THE KEY IS WHAT TURNS OUR OWN ENGINE ON, SO THE CHIEF HAS TO BE ABLE TO
- * MOVE TO IT.
- *
- * Fuigo is the engine Murage ships and the one the whole zero-terminal
- * promise rests on, but with no key and no login its catalogue merges down to
- * nothing, so at boot it is not pickable and `defaultSelection()` correctly
- * hands the first bot whatever else this machine has. On a developer's
- * machine that is Claude.
- *
- * Then the first run asks for the key, the key populates Fuigo's catalogue,
- * and nothing moved the Chief. It stayed on the engine it was given in the
- * one second before the thing that unlocks ours existed. The person went
- * through a flow whose entire middle step is "this key turns on our engine"
- * and ended up on somebody else's.
- *
- * Narrowly scoped on purpose. It acts only while the guided first run is
- * live, which is the only window in which nobody has chosen an engine: the
- * flow is the only thing that has acted, so there is no decision to overrule.
- * It acts only on the Chief, only when a key is actually routing, and only
- * when the re-derived default really is Fuigo. The moment the Chief is on
- * Fuigo it is a no-op, so polling this route cannot thrash a bot's engine.
+ * 1.0.14 FIRST-ENGINE-REPICK: the setup read no longer moves the Chief. It may only START an engine pass (server/engine-repick.ts), and
+ * only while a key is routing; the pass decides, reads no sign-in, and moves only a marked bot with no engine or a gone one. Polled
+ * reads start at most one pass a minute, so a waiting empty Chief does not turn every poll into a fresh catalogue scan.
  */
-async function moveChiefToShippedEngine(view: SetupView, present: ReadonlySet<string>): Promise<void> {
-  if (!view.fluxReady || !view.chiefBotId) return;
-  if (!conversationLive(view, present)) return;
-  const chief = store.bot(view.chiefBotId);
-  if (!chief) return;
-  const described = await describedInstances({ catalogs: "due" });
-  const selection = pickDefaultEngine(described);
-  if (!selection.instanceId || !selection.model) return;
-  const picked = described.find((instance) => instance.instanceId === selection.instanceId);
-  if (picked?.driverKind !== "fuigoAgent") return;
-  // THE MODEL MOVES TOO, NOT ONLY THE ENGINE.
-  //
-  // Being on Fuigo already is not the finish line. Fuigo's catalogue is
-  // assembled from whatever it can reach, so before a key exists its default
-  // may be a local model it found on this machine, which is a perfectly good
-  // answer and is NOT the one the key card just promised. When the key lands
-  // the catalogue re-forms around it, and a Chief left pinned to the local
-  // model would make the flow's central sentence, that this key gives you all
-  // the latest models routed to the best one for the job, quietly untrue.
-  const current = chief.modelSelection;
-  if (current.instanceId === selection.instanceId && current.model === selection.model) return;
-  store.patchBot(chief.id, { modelSelection: selection });
-  console.log(`setup: put the Chief on the shipped engine (${selection.instanceId} ${selection.model})`);
+let setupRepickAt = 0;
+const SETUP_REPICK_EVERY_MS = 60_000;
+function requestRepickFromSetup(view: SetupView): void {
+  if (!view.fluxReady || Date.now() - setupRepickAt < SETUP_REPICK_EVERY_MS) return;
+  setupRepickAt = Date.now();
+  void engineRepick.request("setup").catch(error => console.error(`setup engine pass: ${error instanceof Error ? error.message : String(error)}`));
 }
 
 /** The card keys already in the Chief's thread, which is what both the
@@ -4813,11 +4825,7 @@ function setupCardKeysInChiefThread(view: SetupView): Set<string> {
 
 /** One call for everything a setup route has to do after the view is built. */
 async function driveSetup(view: SetupView): Promise<void> {
-  try {
-    await moveChiefToShippedEngine(view, setupCardKeysInChiefThread(view));
-  } catch (error) {
-    console.error(`setup engine move: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  requestRepickFromSetup(view);
   driveSetupConversation(view);
   nameTheSetupTask(setupCardKeysInChiefThread(view));
   // Told to the client AFTER the cards are appended, so a view that carries
@@ -6578,7 +6586,7 @@ async function answerRequest(
   answers?: QuestionAnswer[],
   /** "Allow for this task" on a stop-line card: record the card's own scoped
    * grant for this bot and conversation once the engine has taken the answer. */
-  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt },
+  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
 ): Promise<RequestOutcome> {
   const flight = `${threadId}:${requestId}`;
   answersInFlight.set(flight, (answersInFlight.get(flight) ?? 0) + 1);
@@ -6661,7 +6669,7 @@ async function deliverAnswer(
   message?: string,
   decidedFor?: { id: string; name: string },
   answers?: QuestionAnswer[],
-  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt },
+  options?: { allowForTask?: boolean; desktop?: boolean; receipt?: TaskGrantReceipt; batch?: { batchId: string; batchSize: number } },
 ): Promise<RequestOutcome> {
   // Putting something on the internet is said yes to on the computer running Murage only.
   // A chat button, a push action or a paired phone can still say no.
@@ -6770,8 +6778,10 @@ async function deliverAnswer(
       botName: decidedFor?.name,
       tool: card?.tool,
       summary: card?.summary ?? card?.subtitle,
-      decision: behavior === "allow" ? "user-approved" : "user-denied",
+      // APPROVE-ALL 6.4: a bulk Allow once is its own kind, which bot learning never reads as a yes
+      decision: options?.batch && behavior === "allow" ? "user-approved-bulk" : behavior === "allow" ? "user-approved" : "user-denied",
       source: "user",
+      ...(options?.batch ? { batchId: options.batch.batchId, batchSize: options.batch.batchSize } : {}),
     });
   }
   if (outcome === "unavailable") {
@@ -7261,6 +7271,281 @@ async function freshAuthRefusal(req: IncomingMessage, url: URL, threadId: string
     proof: body.freshAuth,
   });
   return result.ok ? null : result;
+}
+/** The one function that answers a card (APPROVE-ALL design 6.1): the body of POST /api/threads/:id/respond, branch for
+ *  branch and in its order. The route and Approve all share it. `bulk` is set only by the Approve all apply route, whose
+ *  body is always exactly { requestId, behavior: "allow" }: with it, each branch either runs as on a single Allow or
+ *  refuses the card (409 bulk_skipped), and no special resolver can answer a card. Every reply goes to `io.res`, the
+ *  route's own response on a single answer and a CaptureResponse in bulk. */
+async function respondToCard(io: { req: IncomingMessage; url: URL; res: ServerResponse }, threadId: string, body: Record<string, unknown>, bulk?: BulkCard): Promise<void> {
+  const { req, url, res } = io;
+  if (threadId === APPROVE_ALL_THREAD) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+  if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+  const behavior = requestBehavior(body.behavior);
+  const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
+  const skip = body.behavior === "skip";
+  if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
+  if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
+  const requestId = String(body.requestId);
+  // APPROVE-ALL 6.2 step 1b: the live card is re-read and must be open and eligible now, not only at preview
+  if (bulk) {
+    if (!pushCardOpen(threadId, requestId)) return bulkSkip(res, "not-open");
+    const verdict = bulkEligibility(cardByRequest(threadId, requestId)?.card, requestId);
+    if (!verdict.ok) return bulkSkip(res, `not-eligible:${verdict.reasonKey}`);
+  }
+  // Each special kind's live predicate, shared by the bulk fence just below and by that kind's own branch further down.
+  const special: BulkSpecialProbes = {
+    limit: () => requestId.startsWith("limit-"),
+    email: () => isEmailRequestId(requestId),
+    question: () => Boolean(cardByRequest(threadId, requestId, (message) => isQuestionCard(message.card))),
+    skill: () => Boolean(store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest))?.card?.skillRequest),
+    routine: () => Boolean(store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest))?.card?.routineRequest),
+    peer: () => Boolean(peerApprovalHolder(requestId)),
+    extension: () => Boolean(browserExtension?.knowsCard(requestId)),
+    "host-consent": () => hostComputerConsentPending(requestId),
+  };
+  // APPROVE-ALL second fence: in bulk every special card is refused here, before any resolver, attempt record or await
+  if (bulk) {
+    const specialRefusal = bulkSpecialRefusal(special);
+    if (specialRefusal) return bulkSkip(res, specialRefusal);
+  }
+  // "For 12 hours in this conversation" is checked first, before any branch can answer: a card whose fold shows no task row
+  // (a peer, extension or host-consent card) is refused, never answered Allow once (L1A-GRANT-AUTHORITY-1013 4, Astra 7)
+  const taskRefusal = body.allowForTask === true && behavior === "allow" ? taskGrantRefusal(cardByRequest(threadId, requestId)?.card) : undefined;
+  if (taskRefusal) return json(res, 400, { error: taskRefusal });
+  // 1.0.4 SL-I I5: the limit offer card is the harness's own (a bot's shell never answers it: mayApprove above)
+  if (requestId.startsWith("limit-") && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
+  if (bulk && special.limit()) return bulkSkip(res, "special-card:limit");
+  const limitAnswer = answerLimitCard(threadId, requestId, behavior ?? undefined, body);
+  if (limitAnswer) return json(res, limitAnswer.status, limitAnswer.body);
+  if (bulk && special.email()) return bulkSkip(res, "special-card:email");
+  if (isEmailRequestId(requestId)) { const answer = await answerEmailCard(req, url, threadId, requestId, body, behavior); return json(res, answer.status, answer.body); }
+  if (behavior === "undo") {
+    const undoCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest));
+    const undoBotId = undoCard?.from?.botId ?? store.botByThread(threadId)?.id;
+    if (undoCard && undoBotId && resolveAndSendRoutine(res, { botId: undoBotId, botName: store.bot(undoBotId)?.name, threadId, requestId, behavior })) return;
+    return json(res, 400, { error: UNDO_ONLY_AUTOMATIONS });
+  }
+  // Kept only if this route accepts the answer (AnsweredWhere.attempt).
+  try { answeredWhere.attempt(`${threadId}:${requestId}`, requestSurface(req.headers, url.searchParams) === "desktop" ? "desktop" : "elsewhere", res); } catch (error) { pushWarn("respond-route", error); }
+  // a question card (answer-as-send included) is never approved in bulk: refused before either resolver runs
+  if (bulk && special.question()) return bulkSkip(res, "special-card:question");
+  const asSend = bulk ? null : await answerAsSendReply(threadId, requestId, body, skip, requestOrigin(req, url));
+  if (asSend) {
+    if (asSend.status !== 200 || asSend.body.outcome === "sent-as-message") { try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); } }
+    return json(res, asSend.status, asSend.body);
+  }
+  const question: QuestionReply = bulk ? { kind: "none" } : questionReply(threadId, requestId, body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
+  if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
+  if (question.kind === "late") {
+    // Already settled before this answer: nothing here answered it.
+    try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); }
+    return json(res, 200, { ok: true, outcome: question.outcome });
+  }
+  // A question card is never a skill, routine or peer proposal
+  // (isQuestionCard excludes all three), so it is answered here and the
+  // harness-owned branches below are left alone.
+  if (question.kind === "deliver") {
+    const asked = threadRequestOwner(threadId, requestId);
+    const outcome = await answerRequest(threadId, asked.instanceId, requestId, question.behavior, question.message, asked.decidedFor, question.answers);
+    return json(res, 200, { ok: true, outcome });
+  }
+  if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
+  if (behavior !== "deny") {
+    // in bulk the check is synchronous, so the card read above is the card answered below (design 6.2 "No await window")
+    const refused = bulk ? freshAuthRefusalBulk(req, url, threadId, requestId, bulk) : await freshAuthRefusal(req, url, threadId, requestId, behavior, body);
+    if (refused) {
+      // a refused answer was never taken, so it is not "Answered on desktop"
+      try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); }
+      return json(res, refused.status, refused.body);
+    }
+  }
+  const skillCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest));
+  if (bulk && special.skill()) return bulkSkip(res, "special-card:skill");
+  if (skillCard?.card?.skillRequest) {
+    const skillBotId = skillCard.from?.botId ?? store.botByThread(threadId)?.id;
+    if (!skillBotId) return json(res, 400, { error: "this skill request has no valid owner" });
+    const skillOwner = store.bot(skillBotId);
+    if (sendSkillResolution(res, resolveSkillRequest({
+      botId: skillBotId,
+      botName: skillOwner?.name,
+      threadId,
+      requestId,
+      behavior,
+      reviewedSha256,
+    }))) return;
+  }
+  const routineCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest));
+  if (bulk && special.routine()) return bulkSkip(res, "special-card:routine");
+  if (routineCard?.card?.routineRequest) {
+    // Derive the owner from the conversation, not from the executable
+    // payload being authorized. Room cards carry their trusted sender;
+    // one-to-one tasks resolve through the store's thread ownership.
+    const routineBotId = routineCard.from?.botId ?? store.botByThread(threadId)?.id;
+    if (!routineBotId) return json(res, 400, { error: "this routine request has no valid owner" });
+    const routineOwner = store.bot(routineBotId);
+    if (resolveAndSendRoutine(res, {
+      botId: routineBotId,
+      botName: routineOwner?.name,
+      threadId,
+      requestId,
+      behavior,
+    })) return;
+  }
+  // peer-approval intercept (see /api/bots/:id/respond above). A peer card
+  // belongs to the bus rather than to a speaker, so resolve it before we go
+  // looking for one — a room between turns has no speaker to find.
+  if (bulk && special.peer()) return bulkSkip(res, "special-card:peer");
+  if (resolvePeerComms(approvalBus, requestId, behavior)) {
+    return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
+  }
+  if (bulk && special.extension()) return bulkSkip(res, "special-card:extension");
+  if (!bulk && await browserExtension?.answerCard(threadId, requestId, behavior)) return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
+  if (bulk && special["host-consent"]()) return bulkSkip(res, "special-card:host-consent");
+  if (resolveHostComputerConsent(requestId, behavior, rememberHostComputerConsent)) {
+    return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed" : "rejected" });
+  }
+  const asked = threadRequestOwner(threadId, requestId);
+  if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
+  const onComputer = isDesktopApp(req.headers, url.searchParams);
+  if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
+  // the task row was checked first, above; the reply names what it added (UX-TRUST-MOMENTS-1012 1.3)
+  const receipt: TaskGrantReceipt = {};
+  const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message as string | undefined, asked.decidedFor, undefined, { receipt, ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}), ...(bulk ? { batch: { batchId: bulk.batchId, batchSize: bulk.batchSize } } : {}) });
+  return json(res, 200, { ok: true, outcome, ...(receipt.taskAdded ? { taskAdded: receipt.taskAdded } : {}) });
+}
+/** APPROVE-ALL (design 6.3): fresh auth for one card of a batch, synchronous. The desktop app needs no proof; any other
+ *  surface needs the batch proof to have passed (bulk.proven, set only after freshAuth.check returned ok over exactly the
+ *  ticked cards). Either way the live card must still digest to what was previewed and signed. The low-rating shortcut is
+ *  not consulted: every phone card is covered by the batch proof, low or not. */
+function freshAuthRefusalBulk(req: IncomingMessage, url: URL, threadId: string, requestId: string, bulk: BulkCard): Extract<GateResult, { ok: false }> | null {
+  const card = pushCard(threadId, requestId);
+  if (!card) return { ok: false, status: 409, body: { error: "This request is no longer waiting.", code: "fresh_auth_gone" } };
+  const ownerApp = ownerAppSurface(req.headers, url.searchParams);
+  if (!(bulk.desktop && ownerApp.ok && ownerApp.app.kind === "desktop")) {
+    const phoneRefusal = cloudPhoneHighRiskRefusal(req.headers);
+    if (phoneRefusal) return { ok: false, ...phoneRefusal };
+    if (bulk.proven !== true) return { ok: false, status: 403, body: { error: FRESH_AUTH_COPY.failed, code: "fresh_auth_failed" } };
+  }
+  if (approvalDigestSync(threadId, requestId, card) !== bulk.previewDigest) return { ok: false, status: 409, body: { error: FRESH_AUTH_COPY.changed, code: "fresh_auth_changed" } };
+  return null;
+}
+/** A card Approve all leaves for one-by-one: nothing answered, the card stays open in the Inbox. */
+function bulkSkip(res: ServerResponse, reason: string): void {
+  return json(res, 409, { error: "Not approved with Approve all. It is still waiting for you.", code: "bulk_skipped", reason });
+}
+/** APPROVE-ALL: the frozen lists, in memory, 2 minutes each, burned on first apply. */
+const approveAllBatches = new ApproveAllBatches({ now: Date.now });
+type ApproveAllSurface = { ok: true; key: string; desktop: boolean; deviceId: string | null; device: ReturnType<typeof approvalDeviceFrom> };
+/** Design 7.1: who may press Approve all, through the one shared owner-app check (`ownerAppSurface`): the desktop
+ *  app (no proof, as a single desktop Allow), or the owner's paired phone app with an attested approval key (the batch
+ *  proof is required on every phone apply). Every browser (paired, passkey or remembered), a keyless app, a bot's shell,
+ *  a loopback script and a phone on a Cloud home are refused. */
+function approveAllSurface(req: IncomingMessage, url: URL): ApproveAllSurface | { ok: false; status: 403; body: Record<string, unknown> } {
+  const owner = ownerAppSurface(req.headers, url.searchParams);
+  if (!owner.ok) {
+    if (owner.refusal === "unattested") return { ok: false, status: 403, body: { error: FRESH_AUTH_COPY.unattested, code: "fresh_auth_unattested" } };
+    if (owner.refusal === "on_computer") return { ok: false, status: 403, body: { error: FRESH_AUTH_COPY.computerOnly, code: "approve_on_computer" } };
+    return { ok: false, status: 403, body: { error: APPROVAL_NEEDS_OWNER, code: "approve_needs_owner" } };
+  }
+  if (owner.app.kind === "desktop") return { ok: true, key: "desktop", desktop: true, deviceId: null, device: null };
+  return { ok: true, key: `app:${owner.app.device.id}`, desktop: false, deviceId: owner.app.device.id, device: owner.app.device };
+}
+/** Design 1, 2 and Server shape: the cards the owner sees in Approvals, split into the ones Approve all may answer and
+ *  the ones that stay, with the reason. Read only: writes nothing but the in-memory batch. */
+function approveAllPreview(req: IncomingMessage, url: URL, surface: ApproveAllSurface): Record<string, unknown> {
+  const page = inboxRequest(database(), { method: "GET", path: "/api/inbox", query: { view: "approvals", page: 0, pageSize: 100 } },
+    { ...inboxAccessFor(store, inboxDoor(req.headers, url.searchParams)), routineRuns: inboxRoutineRuns() });
+  const items = page.status === 200 ? ((page.body as { items?: InboxItem[] }).items ?? []) : [];
+  const eligible: Array<Record<string, unknown> & BatchCard> = [];
+  const excluded: Array<{ threadId: string; requestId: string; botId?: string; summary: string; reasonKey: BulkReasonKey }> = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (item.kind !== "request" || !item.link?.threadId || !item.link.messageId || item.link.threadId === APPROVE_ALL_THREAD) continue;
+    const message = store.messageById(item.link.threadId, item.link.messageId);
+    const card = message?.card;
+    const requestId = card?.requestId;
+    if (!message || !card || !requestId || seen.has(`${item.link.threadId}:${requestId}`)) continue;
+    seen.add(`${item.link.threadId}:${requestId}`);
+    const threadId = item.link.threadId;
+    const botId = message.from?.botId ?? item.botId;
+    const verdict = pushCardOpen(threadId, requestId) ? bulkEligibility(card, requestId) : { ok: false as const, reasonKey: "not-open" as const };
+    if (!verdict.ok) {
+      excluded.push({ threadId, requestId, ...(botId ? { botId } : {}), summary: card.summary ?? card.subtitle ?? "", reasonKey: verdict.reasonKey });
+      continue;
+    }
+    eligible.push({
+      threadId, requestId, ...(botId ? { botId } : {}), kindLine: bulkKindKey(card.tool ?? ""),
+      digest: approvalDigestSync(threadId, requestId, card),
+      // what the phone shows and digests (design 7.3): every field approvalDigestInput hashes for an ordinary card
+      card: { tool: card.tool, title: card.title, subtitle: card.subtitle, summary: card.summary, held: card.held,
+        toolInputTruncated: card.toolInputTruncated, approvalScope: card.approvalScope, taskAllowKey: card.taskAllowKey },
+    });
+  }
+  const frozen = eligible.slice(0, APPROVE_ALL_CAP);
+  const batch = frozen.length ? approveAllBatches.create(surface.key, surface.deviceId, frozen.map(({ threadId, requestId, digest }) => ({ threadId, requestId, digest }))) : null;
+  // the phone's own approval device id: the batch digest it recomputes before it signs covers it (design 7.3)
+  return { batchId: batch?.batchId ?? null, eligible: frozen, excluded, more: Math.max(0, eligible.length - frozen.length), ...(surface.deviceId ? { deviceId: surface.deviceId } : {}) };
+}
+/** Design 7.4: apply, in order. (2) the batch and the ticks, (3) the phone's batch proof, (4) burn, (5) each ticked card
+ *  through respondToCard, (6) each card's outcome. The first changed card stops the loop; the rest stay open. */
+async function approveAllApply(req: IncomingMessage, url: URL, surface: ApproveAllSurface, body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> }> {
+  const opened = approveAllBatches.open(body.batchId, surface.key, body.requestIds);
+  if (!opened.ok) return { status: 409, body: { error: "This list changed. Press Approve all again.", code: opened.code } };
+  const { batch, ticked } = opened;
+  let proven = false;
+  if (!surface.desktop) {
+    if (!surface.deviceId) return { status: 403, body: { error: FRESH_AUTH_COPY.computerOnly, code: "approve_on_computer" } };
+    const gate = freshAuth.check({
+      device: surface.device, threadId: APPROVE_ALL_THREAD, requestId: batch.batchId, decision: "allow",
+      digest: approvalBatchDigestSync(batch.batchId, surface.deviceId, batchLines(ticked)), proof: body.freshAuth,
+    });
+    // no valid proof: the gate's own challenge or refusal, and nothing answered; a challenge does not burn the batch
+    if (!gate.ok) return { status: gate.status, body: gate.body };
+    proven = true;
+  }
+  approveAllBatches.burn(batch.batchId);
+  const results: Array<{ threadId: string; requestId: string; result: "approved" | "skipped" | "not-applied"; reason?: string }> = [];
+  let stopped = false;
+  for (const card of ticked) {
+    if (stopped) {
+      results.push({ threadId: card.threadId, requestId: card.requestId, result: "not-applied", reason: "batch-changed" });
+      approveAllSkipRow(card, batch.batchId, ticked.length, "not-applied:batch-changed");
+      continue;
+    }
+    const sink = new CaptureResponse();
+    try {
+      await respondToCard({ req, url, res: sink as unknown as ServerResponse }, card.threadId, { requestId: card.requestId, behavior: "allow" },
+        { batchId: batch.batchId, batchSize: ticked.length, previewDigest: card.digest, proven, desktop: surface.desktop });
+    } catch (error) {
+      pushWarn("approve-all", error);
+      sink.statusCode = 500;
+      sink.body = { code: "failed" };
+      stopped = true;
+    }
+    const reply = sink.body ?? {};
+    if (sink.statusCode === 200 && reply.ok === true && reply.outcome !== "unavailable") {
+      results.push({ threadId: card.threadId, requestId: card.requestId, result: "approved" });
+      continue;
+    }
+    const code = typeof reply.code === "string" ? reply.code : `status-${sink.statusCode}`;
+    const reason = code === "bulk_skipped" && typeof reply.reason === "string" ? reply.reason : reply.outcome === "unavailable" ? "not-open" : code;
+    // a card that changed since preview, or a proof that does not cover it, stops the batch (design 6.3)
+    if (code.startsWith("fresh_auth") || code === "approve_on_computer") stopped = true;
+    results.push({ threadId: card.threadId, requestId: card.requestId, result: "skipped", reason });
+    approveAllSkipRow(card, batch.batchId, ticked.length, reason);
+  }
+  return { status: 200, body: { ok: true, batchId: batch.batchId, approved: results.filter((r) => r.result === "approved").length, results } };
+}
+/** Design 6.4: a card Approve all did not approve gets a non-approval row with its reason. */
+function approveAllSkipRow(card: BatchCard, batchId: string, batchSize: number, reason: string): void {
+  const live = cardByRequest(card.threadId, card.requestId);
+  const botId = live?.from?.botId ?? store.botByThread(card.threadId)?.id;
+  appendDecision(DATA_DIR, {
+    threadId: card.threadId, requestId: card.requestId, botId, botName: botId ? store.bot(botId)?.name : undefined,
+    tool: live?.card?.tool, summary: live?.card?.summary ?? live?.card?.subtitle,
+    decision: "bulk-skipped", source: "user", rule: reason, batchId, batchSize,
+  });
 }
 /** Bot email owner acts from the paired phone (2.1): a fresh device proof over the exact act, the same gate an Allow uses. */
 async function emailOwnerFreshProof(req: IncomingMessage, threadId: string, requestId: string, card: { tool: string; title: string; subtitle: string }, body: Record<string, unknown>): Promise<{ status: number; body: Record<string, unknown> } | null> {
@@ -8859,7 +9144,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             // network, memory or card. Over 250 ms means this thread was held.
             const answerMs = performance.now() - askReceivedAt;
             if (answerMs > 250) rateLimited("permission-auto-slow", 60_000, suppressed => `[permission] auto-answer slow ms=${Math.round(answerMs)} engine=${instance.driverKind}${suppressed ? ` more=${suppressed}` : ""}`);
-            if (outcome === "unavailable") throw new Error("the ask is no longer open");
+            // The engine no longer holds this ask: a card for it could never be answered, so none is raised (#1170).
+            if (outcome === "unavailable") throw new ApprovalNoLongerOpenError();
             stopHitByRequest.delete(`${event.threadId}:${requestId}`);
             rememberStopRecipients(asker.id, stopHit ?? undefined, event.threadId);
             // Full access answers almost every step now that engines ask it,
@@ -8957,6 +9243,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
         approvalScope: event.approvalScope, stopHit, tool: event.tool, summary: event.summary,
         exactAllowKey, routineAllowCard, verdict, call: event, grantCard,
         unattended: Boolean(unattended), automated: Boolean(routineRun) || routines?.isActiveThread(event.threadId) === true,
+        // APPROVE-ALL (design 2): who started this turn, so only the owner's own turns can be approved in bulk
+        ...(permission ? { origin: approveAllTurnOrigin(event.threadId) } : {}),
       });
       // UX-TRUST-MOMENTS-1012 1.4: the why-line, from the class, the stop finding and the card's level
       const runTrigger = cardGrants.cardClass?.unattended ? routines?.activeRunOrigin(event.threadId)?.triggerSource : undefined;
@@ -9954,9 +10242,10 @@ bus.subscribe((event: RuntimeEvent) => {
   let call = "";
   if (event.type === "item.started" && event.itemType === "tool") {
     // a title with more than a bare identifier is a call with arguments
-    // (ACP: "echo hi", "Read src/x.ts"); a bare "Bash" is not countable
+    // (ACP: "echo hi", "Read src/x.ts"); a bare "Bash" or Cursor's "MCP: tool" is not countable
     const title = event.title ?? "";
-    if (/\s|\//.test(title.trim())) { key = callKey("tool", title); call = askCallLabel({ tool: "tool", summary: title }); }
+    key = toolTitleKey(title);
+    if (key) call = askCallLabel({ tool: "tool", summary: title });
   } else if (event.type === "request.opened" && event.requestType === "permission") {
     // keyed on what the ask runs (its input too), named in plain words
     const ask = { tool: event.tool, summary: event.summary, toolInput: event.toolInput, toolCall: event.toolCall };
@@ -11324,10 +11613,10 @@ async function startTurnAdmitting(
     const replacement = opts?.runOn === "cloud" ? null : staleModelReplacement(instance.driverKind, model, instance.models);
     if (replacement) {
       const old = model;
-      const switched = { ...bot.modelSelection, model: replacement };
-      store.patchBot(bot.id, { modelSelection: switched });
-      // The thread's own selection too, so the task picker shows the new id and a second thread does not repeat the notice.
-      store.patchTask(bot.id, threadId, { modelSelection: switched });
+      // 1.0.14 FIRST-ENGINE-REPICK section 4: a compare and set on the selection that owns this chat (its own pick, else the bot's), model
+      // only, the mark kept as it is. An owner pick that landed meanwhile wins and this turn runs on what it was handed.
+      const owning = store.taskByThread(bot.id, threadId)?.modelSelection ?? store.bot(bot.id)?.modelSelection;
+      if (owning && owning.instanceId === bot.modelSelection.instanceId && owning.model === old) store.repairStaleModel(bot.id, threadId, owning, replacement);
       model = replacement;
       try { store.appendMessage(threadId, { role: "bot", kind: "text", actorKind: "murage", murage: { kind: "status" }, from: { botId: bot.id, name: bot.name, color: bot.color }, text: staleModelNotice(instance.driverKind, old, replacement) }); } catch { /* the turn still runs on the new model */ }
     }
@@ -11733,7 +12022,11 @@ async function startTurnAdmitting(
   // F3 (02-3): a card run or shared run is a request row: its trace comes from the request tree (`req:<id>` begun here for a depth-0 row)
   const runRequest = (opts?.projectCardRun ?? opts?.sharedWorkRun)?.request;
   const requestCoordination = opts?.coordination ?? (runRequest ? requestRunCoordination(roomRequest(database(), runRequest.id) ?? runRequest)?.coordination : undefined);
-  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, requestCoordination, memoryNotOwner, directOwnerAudience);
+  // APPROVE-ALL: the owner's own typed turn in the app, the only turn whose cards Approve all may answer
+  const ownerTyped = directOwnerAudience && isOwnerOrigin(opts?.origin) && !routineOrigin && opts?.automationSource === undefined && opts?.automation === undefined
+    && !opts?.unattended && !opts?.via && !commsDepth && !opts?.delegationRun && !opts?.cardContinuation && !opts?.askerWake && !opts?.projectCardRun
+    && !opts?.sharedWorkRun && !opts?.queuedDrain && !opts?.memoryRedispatch && opts?.memorySkillSource === undefined;
+  beginInternalTurn(bot.id, threadId, dispatchClaimId, commsDepth, skillAuthoring, eventId, requestCoordination, memoryNotOwner, directOwnerAudience, ownerTyped);
   if(opts?.memorySkillSource)internalTurnOwners.get(threadId)!.memorySkillSource=opts.memorySkillSource;
   directTurnDispatchClaims.set(threadId, { id: dispatchClaimId, botId:bot.id, threadId, phase: "setup" });
   store.setTaskActivity(bot.id, threadId, "working");
@@ -12844,7 +13137,7 @@ async function startTurnAdmitting(
           const line = turnRefusedLine(engineNameOf(instance), kind);
           store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", turnId: providerTurnId, tool: kind === "not-started"
             ? { name: `error: ${line}`, ok: false, errorDetails: "submission_refused" }
-            : { name: line, ok: true } }));
+            : { name: line, ok: true }, ...(kind === "without-memory" ? { memoryNote: "without-memory" as const } : {}) }));
           if (kind === "not-started" && turnFailureBuzzes(opts)) notify(buildNotification("turn-failed", bot, threadId, line, { avatarUrl: bot.avatarUrl }));
         } });
         if (early) { turnRefusalNotes.get(providerTurnId)!.note("not-started"); turnRefusalNotes.delete(providerTurnId); }
@@ -12934,7 +13227,7 @@ async function startTurnAdmitting(
         recordHandoffAccepted(opts?.delegationRun, accepted.turnId);
         projectTurnLeases.bind(threadId, dispatchClaimId, accepted.turnId);
         submissionBoundary.assertNotRefused();
-        memoryReceipt?.accepted();
+        acceptMemoryReceipt(memoryReceipt, submissionBoundary, instance.adapter);
         turnAccepted(threadId, userMessage.id, instance?.driverKind);
         // Refused at a later write (an adapter that writes after handing its
         // id back): nothing was written and the adapter settles the turn; its
@@ -17939,6 +18232,8 @@ async function runGroupMemberTurn(
     // The owner's House Rules open every bot's prompt, rooms included
     // (house-rules.ts).
     shapeLayer("house-rules", houseRulesPrompt()),
+    // U24 S1: the same static reply habits a 1:1 turn carries (bot-shapes.ts).
+    replyHabitsLayer(),
     shapeLayer("about-me", roomStanding.aboutMe),
     ...system,
     shapeLayer("project-brief", projectMember?.brief ? `\n${projectMember.brief}` : ""),
@@ -18289,7 +18584,7 @@ async function runGroupMemberTurn(
         if (turnSucceeded(e) || turnStopped(e)) turnFailure = undefined;
         else turnFailure ??= e.stopReason === "submission_refused" ? turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "not-started") : e.stopReason ?? "the engine reported an error";
         // the last rebuild ran without remembered context: the room hears it once, under the member's reply
-        if (roomLastResort && turnSucceeded(e)) store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, tool: { name: turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "without-memory"), ok: true } }));
+        if (roomLastResort && turnSucceeded(e)) store.appendMessage(threadId, murageLine({ role: "bot", kind: "activity", from: { botId: bot.id, name: bot.name, color: bot.color }, memoryNote: "without-memory", tool: { name: turnRefusedLine(engineNameOf(instance ?? { driverKind: bot.modelSelection.instanceId }), "without-memory"), ok: true } }));
         if (orchestration && !turnSucceeded(e)) {
           orchestration.result.stopReason = e.stopReason ?? null;
           finish("provider_failed");
@@ -18475,7 +18770,7 @@ async function runGroupMemberTurn(
         projectTurnLeases.bind(threadId, internalGeneration, accepted.turnId);
         bindProviderTurn(roomTurnLineage, accepted.turnId);
         submissionBoundary.assertNotRefused();
-        memoryReceipt?.accepted();
+        acceptMemoryReceipt(memoryReceipt, submissionBoundary, instance.adapter);
         turnAccepted(threadId, entryRequestId ?? `${threadId}:${botId}`, instance?.driverKind);
         submissionBoundary.acceptedBy((refusal) => { if (isMemoryContextRevoked(refusal)) { lateMemoryRefusal = true; turnRefused(threadId, entryRequestId ?? `${threadId}:${botId}`, instance?.driverKind); } });
         // the joining note rode an accepted turn (project_member_state, restart-safe)
@@ -19568,6 +19863,14 @@ function routineLevelRefusal(body: unknown, routineBotId?: string): string | nul
  * message counts, and an unattended mark with no run (a turn another bot's
  * unattended turn started) stays "other". */
 setExecEnvOriginReader(fullAccessTurnOrigin);
+/** APPROVE-ALL (design 2, R1-H2): the origin a card is stamped with. Full access's own reading, except that "owner" also needs
+ *  the running turn to be the owner's own typed turn (ownerTyped at dispatch): a peer ask, delegation, wake or continuation in
+ *  the owner's conversation reads "owner" to Full access but is "other" here, so Approve all leaves its cards for one-by-one. */
+function approveAllTurnOrigin(threadId: string): FullAccessOrigin {
+  const origin = fullAccessTurnOrigin(threadId);
+  if (origin !== "owner") return origin;
+  return internalTurnOwners.get(threadId)?.ownerTyped === true ? "owner" : "other";
+}
 setExecEnvBotReader(threadId => store.botByThread(threadId)?.id);
 function fullAccessTurnOrigin(threadId: string): FullAccessOrigin {
   if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return "other";
@@ -20946,7 +21249,7 @@ const fluxConnectionTransaction = new FluxConnectionTransaction({
 /** The Flux status every route answers, plus whether running engines still hold a replaced key (no key bytes). */
 const fluxSaveBlockedAtBoot = fluxSaveBlocked(process.env, Boolean(cloudHome), Boolean(utilityParentPort));
 const fluxConnectionStatusWithRestart = <T extends object>(status: T) => ({ ...status, restartRequired: fluxConnectionApply.restartRequired(), ...fluxSaveBlockedAtBoot });
-async function describedInstances(options: { catalogs?: "fresh" | "due" } = {}) {
+async function describedInstances(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
   const instances = await registry.describe(options);
   const configured = instanceConfigs(cfg);
   return instances.map(instance => {
@@ -22402,7 +22705,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // Help panel search (server/help-routes.ts): the docs this build shipped with, no owner data.
     if (method === "GET" && path === "/api/help/search") { const help = helpRoute({ method, url }); if (help) return json(res, help.status, help.body); }
     // Today's engine tag and the Health dot (server/engine-health-routes.ts): read only, owner only, one scan a minute.
-    if (method === "GET" && path === "/api/engine-health") { const eh = await engineHealthRoute({ method, url }, { owner: requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers), instances: () => describedInstances({ catalogs: "due" }), primaryId: () => bootSelection.instanceId || null, fluxKey: () => fluxKey() ?? null, memo: engineHealthMemo }); if (eh) return json(res, eh.status, eh.body); }
+    if ((method === "GET" && path === "/api/engine-health") || (method === "POST" && path === "/api/engine-health/recheck")) { const eh = await engineHealthRoute({ method, url, contentType: String(req.headers["content-type"] ?? "") }, { owner: requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers), instances: () => describedInstances({ catalogs: "due" }), primaryId: () => bootSelection.instanceId || null, fluxKey: () => fluxKey() ?? null, botEngineIds: () => store.bots.map((bot) => bot.modelSelection.instanceId), memo: engineHealthMemo }); if (eh) return json(res, eh.status, eh.body); }
     // Tester feedback from the help panel (server/feedback-routes.ts).
     if (method === "POST" && path === "/api/feedback") {
       const answered = await feedbackRoute({ method, path, readBody: (max, signal) => readBody(req, max, signal) }, { installId: () => feedbackInstallId(DATA_DIR) });
@@ -22637,12 +22940,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         clients.revoke(body.clientId);
         for (const binding of browserExtension?.status().bindings.filter(item => item.clientId === body.clientId) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
       } else {
-        // Picked here as the other new-bot routes do: a start can open the port with the engine probe still running and nothing remembered.
-        const modelSelection = await defaultSelection();
+        // 1.0.15 BIRTH-FUIGO: no owner pick here, so createBot births the bot by the birth rule (Store.birthSelection), as the other new-bot routes do.
         if (!clients.enabled) return json(res, 409, { error: "Turn on external browser tools before pairing a client." });
         if (!browserExtension?.status().profiles.some(profile => profile.profileId === body.profileId)) return json(res, 409, { error: "Connect the browser profile before pairing a client." });
         if (store.bots.length >= MAX_WORKSPACE_BOTS) return json(res, 409, { error: "Workspace bot limit reached." });
-        const bot = store.createBot({ name: body.label, title: "External browser connection", modelSelection }, { seedMessages: false });
+        const bot = store.createBot({ name: body.label, title: "External browser connection" }, { seedMessages: false });
         store.patchBot(bot.id, { browser: true, computer: "off", composio: false, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: body.profileId });
         const paired = clients.pair({ label: body.label, profileId: body.profileId, botId: bot.id, threadId: bot.threadId });
         const clientDirectory = join(DATA_DIR, "browser-extension", "client-configs");
@@ -23888,6 +24190,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const requestedSection = typeof body.section === "string" ? body.section.trim() : "";
         const wantsLead = body.lead === true;
         let targetSection: string | undefined;
+        let createdByLead = false;
+        let decideLeadTeam: (() => EventReply | undefined) | undefined;
         if (isWorkspaceChief(chief)) {
           if (!requestedSection) {
             return json(res, 400, {
@@ -23935,16 +24239,28 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           // borrow, so her requested spelling becomes the team's name.
           targetSection = lead ? lead.section : requestedSection;
         } else {
-          if (requestedSection && sectionKey(requestedSection) !== sectionKey(chief.section)) {
-            return json(res, 403, { error: "you can only create bots in your own section" });
-          }
-          // A team's lead already leads this team. Letting it create a second
-          // one would be electing its own replacement, which is a handover a
-          // person makes, not a side effect of adding a specialist.
-          if (wantsLead) {
-            return json(res, 403, { error: "only the workspace Chief of Staff can create a team lead" });
-          }
-          targetSection = chief.section;
+          // 1.0.16 TEAM-SECTION: a team lead fills its own team, or a NEW team it starts (a client team, with its own lead),
+          // never a team it did not start (server/team-founding.ts).
+          // Decided here, and decided AGAIN inside createPreflight (after the owner's card and once more with nothing awaited
+          // before createBot): while a card is open the team can gain a bot, a channel or a lead the lead did not make.
+          const gate = leadTeamGate({
+            read: () => ({ bots: store.bots, groups: store.groups }),
+            lead: () => store.bot(chief.id),
+            requested: requestedSection,
+            wantsLead,
+            markRefused: (team) => internalCapabilities.markTeamRefused(internalClaim, team),
+            refusedTeam: () => internalCapabilities.teamRefused(internalClaim),
+          });
+          const first = gate.decide();
+          if (first) return json(res, first.status, { error: first.error });
+          decideLeadTeam = () => {
+            const refused = gate.decide();
+            if (refused) return eventReply(refused.status, { error: refused.error });
+            targetSection = gate.section();
+            return undefined;
+          };
+          targetSection = gate.section();
+          createdByLead = true;
         }
         const name = String(body.name ?? "").trim();
         const role = String(body.role ?? "").trim();
@@ -23958,18 +24274,25 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (instructions.length > 8_000) {
           return json(res, 400, { error: "instructions must be at most 8000 characters" });
         }
-        const selectedModel = body.modelSelection === undefined ? chief.modelSelection : checkedModelSelection(body.modelSelection, undefined, true);
-        if ("ok" in selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
-        const modelSelection = "ok" in selectedModel ? selectedModel.selection : selectedModel;
+        // 1.0.15 BIRTH-FUIGO P3: no owner pick is born by the birth rule inside createBot, never a copy of the Chief taken here.
+        const selectedModel = body.modelSelection === undefined ? undefined : checkedModelSelection(body.modelSelection, undefined, true);
+        if (selectedModel && !selectedModel.ok) return json(res, selectedModel.status, { error: selectedModel.error });
+        const modelSelection: ModelSelection | undefined = selectedModel?.ok ? selectedModel.selection : undefined;
         // The workspace size and the name are checked again after the owner's OK: the card can stay open for minutes
         // while other creates land, and a different name could otherwise take the last place.
         const createPreflight = (): EventReply | undefined => {
+          const team = decideLeadTeam?.();
+          if (team) return team;
           if (store.bots.length >= MAX_WORKSPACE_BOTS) return eventReply(409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
+          // A lead can be elected in the team while the owner's card is open (by the owner, the workspace Chief or a team lead
+          // starting it): a lead create never demotes it, whoever asked.
+          const leadNow = wantsLead && store.bots.find((candidate) => candidate.chiefOfStaff === true && foldTeamName(sectionKey(candidate.section)) === foldTeamName(sectionKey(targetSection)));
+          if (leadNow) return eventReply(409, { error: `the ${sectionKey(targetSection)} team is already led by @${leadNow.name}: create this bot without lead` });
           const duplicate = store.bots.find(
             (candidate) =>
               !candidate.hidden &&
-              sectionKey(candidate.section) === sectionKey(targetSection) &&
-              candidate.name.trim().toLowerCase() === name.toLowerCase(),
+              foldTeamName(sectionKey(candidate.section)) === foldTeamName(sectionKey(targetSection)) &&
+              foldTeamName(candidate.name) === foldTeamName(name),
           );
           if (duplicate) return eventReply(409, { error: `@${duplicate.name} already exists in this section; use ${murageToolOnThisServer("list_bots")}` });
           return undefined;
@@ -24004,7 +24327,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }, async ({ charge, record, unrun }) => {
         const refused = createPreflight();
         if (refused) return refused;
-        if (wantsLead) {
+        if (wantsLead && modelSelection) {
           const error = leadershipAdmissionError(registry.get(modelSelection.instanceId), modelSelection.instanceId);
           if (error) return eventReply(409, { error });
         }
@@ -24016,12 +24339,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // names that were both cleared while the owner's card was open can no longer both take the last place.
         const late = createPreflight();
         if (late) { unrun(); return late; }
+        // A born lead is admitted on the birth value read here, in the same tick as createBot's own birth read (nothing awaited between).
+        if (wantsLead && !modelSelection) {
+          const born = store.birthSelection();
+          const error = leadershipAdmissionError(registry.get(born.instanceId), born.instanceId);
+          if (error) { unrun(); return eventReply(409, { error }); }
+        }
         const created = store.createBot(
           {
             name,
             title: role,
             description: instructions,
-            modelSelection: { ...modelSelection },
+            ...(modelSelection ? { modelSelection: { ...modelSelection } } : {}),
             section: targetSection,
           },
           { seedMessages: false },
@@ -24039,6 +24368,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           autoApprove: inheritedAuto,
           approvePeerComms: false,
           computer: "off",
+          // Who started it, so this lead can keep filling a team it started and no other (server/team-founding.ts).
+          ...(createdByLead ? { createdByBotId: chief.id } : {}),
         })!;
         // Elected after the record exists, and as a SECTION lead: the scope
         // argument is what keeps this from reaching the workspace tier.
@@ -24593,8 +24924,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such routine" });
     }
-    // Marking seen only clears attention dots, so like the per-run route it
-    // is open to every signed-in surface, the phone included (#1629).
+    // "Mark all as read" (upstream #1629). It stamps and returns every run,
+    // whoever's bot it is, so like the per-run route it answers the owner's
+    // own surfaces only: route-policy.ts classes it desktop, which a paired
+    // phone, a door or a bot never passes (route-policy.test.ts pins it).
     if (path === "/api/routine-runs/seen-all" && method === "POST") {
       return json(res, 200, { runs: routines!.markAllSeen() });
     }
@@ -25668,13 +26001,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         }
       };
       refuseRepeatedImport();
-      let importModelSelection: ModelSelection;
+      // 1.0.15 BIRTH-FUIGO P5: no starter pick means "birth": the records are born once, inside the commit below (preparePackageAddition).
+      let importModelSelection: ModelSelection | "birth" = "birth";
       if (starter && body.modelSelection !== undefined) {
         const checked = checkedModelSelection(body.modelSelection, undefined, true);
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         importModelSelection = checked.selection;
-      } else {
-        importModelSelection = await defaultSelection();
       }
       const importSelected = (options: Omit<Parameters<typeof importBotPackageArchive>[0], "archivePath">) => contents
         ? importBotPackageContents({ ...options, contents })
@@ -25683,8 +26015,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         selection: body.selection, expectedArchiveSha256: body.archiveSha256, expectedReviewHash: body.reviewHash,
         acknowledgeWarnings: body.acknowledgeWarnings === true, existingBots: store.bots, modelSelection: importModelSelection,
         existingSections: [...store.bots, ...store.groups].flatMap(record => record.section?.trim() ? [record.section.trim()] : []),
-        // A shipped starter crew arrives led when its engine can coordinate bots.
-        starterLeads: starter && leadershipAdmissionError(registry.get(importModelSelection.instanceId), importModelSelection.instanceId) === null,
+        // A shipped starter crew names its lead; whether the lead's engine can coordinate bots is decided in the commit, on its final engine.
+        starterLeads: starter,
         assertFreshBotId: assertCloudBotIdNotTombstoned,
         atomicCommit: ({ prepared }) => {
           if (dataWritersStopped || !routines) throw new Error("Installation is closing");
@@ -25693,7 +26025,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           if(cloudHome && [...prepared.bots,...prepared.routines].some(record=>record.alwaysAllow?.length)) throw Object.assign(new Error(cloudHomeCopy.alwaysAllowUnavailable),{status:403});
           for (const bot of prepared.bots) bot.packageImportReceipt = { reviewHash: prepared.reviewHash, archiveSha256: prepared.archiveSha256, importId: prepared.id, selectionHash: prepared.selectionHash };
           prepared.bots[0].packageImportReceipt!.baseline = prepared.baseline;
-          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups);
+          const botBatch = store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) });
+          // Leads are decided here, on each lead's final engine (born or the starter's pick), with nothing awaited since the birth.
+          const admitted = prepared.leadBotIds.filter(id => { const selection = prepared.bots.find(bot => bot.id === id)?.modelSelection; return !!selection && leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId) === null; });
+          prepared.leadBotIds.splice(0, prepared.leadBotIds.length, ...admitted);
           const routineBatch = routines.preparePackageAddition(prepared.routines);
           const replacements = new Map([...botBatch.files, ["routines.json", routineBatch.bytes] as const,
             ...prepared.files.map(file => [file.path, file.content] as const)]);
@@ -26146,7 +26481,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const memberIds = new Map<string, string>();
       let group: GroupRecord | undefined;
       try {
-        const selection = await defaultSelection();
+        // 1.0.15 BIRTH-FUIGO P6: members are born by the birth rule inside createBot (no owner pick here); the lead check reads it too.
+        const selection = store.birthSelection();
         if (pkg?.chiefOfStaff && !roleAwarePackage) {
           const error = leadershipAdmissionError(registry.get(selection.instanceId), selection.instanceId);
           if (error) return json(res, 409, { error });
@@ -26189,7 +26525,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           const created = store.createBot(
             {
               ...importedMemberProfile(member, takenNames),
-              modelSelection: selection,
               ...(packageSection ? { section: sectionFor(source.team) } : {}),
             },
             { seedMessages: false },
@@ -27272,10 +27607,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           return json(res, 400, { error: "section must be at most 60 characters" });
         }
       }
-      let selection: ModelSelection;
-      if (body.modelSelection === undefined) {
-        selection = await defaultSelection();
-      } else {
+      // 1.0.15 BIRTH-FUIGO P2: no owner selection passes none, so createBot births the bot (and marks it) after every wait below.
+      let selection: ModelSelection | undefined;
+      if (body.modelSelection !== undefined) {
         const checked = checkedModelSelection(body.modelSelection, undefined, body.requireAvailableModel === true);
         if (!checked.ok) return json(res, checked.status, { error: checked.error });
         selection = checked.selection;
@@ -27291,7 +27625,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // A caller that proved nothing (a script, a bot's own shell) gets a bot
       // with no access and in no team; the owner's surfaces keep the defaults.
       const proven = requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers);
-      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, modelSelection: selection }, { noAccess: !proven });
+      const bot = store.createBot({ ...profile.patch, section: proven ? section : undefined, ...(selection ? { modelSelection: selection } : {}) }, { noAccess: !proven });
       return json(res, 201, {
         bot: {
           ...wireBot(bot),
@@ -27401,6 +27735,31 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
       broadcast({ kind: "bot", bot: visible });
       return json(res, 200, { switched: result.switched.length, busy: result.busy, bot: visible });
+    }
+    // 1.0.14 FIRST-ENGINE-REPICK section 6: the owner's "Use Fuigo instead" tap on a sign-in wall. The card sends the engineRev it was
+    // drawn with; an engine write since (an owner pick, a move) answers 409 stale and nothing is written. The fleet generation is read
+    // as the request arrives, and the target check T runs at the write. Clears the mark: the owner chose.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/use-fuigo$/);
+    if (m && method === "POST") {
+      const gen = registry.generation;
+      const body = await readBody(req) as { engineRev?: unknown; threadId?: unknown } | null;
+      const record = store.bot(m[1]);
+      if (!record) return json(res, 404, { error: "no such bot" });
+      if (!body || typeof body.engineRev !== "number" || !Number.isInteger(body.engineRev)) return json(res, 400, { error: "engineRev must be an integer" });
+      if (body.threadId !== undefined && typeof body.threadId !== "string") return json(res, 400, { error: "threadId must be a string" });
+      // Astra M4: the chat the wall was drawn in. Its own pick (and the failover row it carries) ends in the same write as the move.
+      const ownerThreadId = body.threadId as string | undefined;
+      const endedFailover = ownerThreadId === undefined ? undefined : store.taskByThread(record.id, ownerThreadId)?.limitFailover;
+      // BN3: the same Fuigo-usable reading birth and the engine pass use (fuigoBirthModel: keyless Flux rows filtered, defaultModel).
+      const fuigo = registry.instances().filter(instance => fuigoUsable(instance));
+      if (fuigo.length !== 1) return json(res, 409, { error: "Fuigo is not ready yet.", code: "fuigo_unavailable" });
+      const selection = { instanceId: fuigo[0]!.instanceId, model: fuigoBirthModel(fuigo[0]!) };
+      const result = store.casEngineMove(record.id, { expectRev: body.engineRev, selection, mark: "clear", requireMark: false, predicate: () => targetCheck(registry, gen, selection), ownerThreadId });
+      const visible = wireBot(store.bot(record.id)!, ROSTER_TASK_WINDOW);
+      if (result === "stale") return json(res, 409, { error: "This bot's engine changed. Check it and try again.", code: "stale", engineRev: store.bot(record.id)!.engineRev ?? 0, bot: visible });
+      if (endedFailover && store.taskByThread(record.id, ownerThreadId!)?.limitFailover === undefined) { try { limitFailovers.cancel(endedFailover); } catch (error) { console.error("limit failover: could not mark the row cancelled", error); } }
+      broadcast({ kind: "bot", bot: visible });
+      return json(res, 200, { bot: visible });
     }
     // 1.0.4 SL-I I4: the engine that takes over when this bot's engine hits its limit (the bot's model section). Desktop only (404 elsewhere).
     m = path.match(/^\/api\/bots\/([\w-]+)\/limit-backup$/);
@@ -27716,18 +28075,26 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       // default, and never two bots at once — they would act as the owner in
       // the same signed-in browser, each able to see the other's tabs.
       // "auto" (1.0.7): the owner chose "Use my Chrome" and the server picks the
-      // route: Murage for Chrome when it is paired, Chrome's remote debugging
-      // when only that is on, otherwise the extension's install steps.
+      // route: Murage for Chrome when it is paired, else its Set up my browser
+      // step (1.0.15). Remote debugging only when this copy has no Murage for
+      // Chrome and no other bot holds it, and an "auto" request never answers
+      // the one-bot 409 below: a holder sends it to setup instead
+      // (server/user-chrome.ts useMyChromeRoute).
+      const autoRequested = body.browserTransport === "auto";
       if (body.browserTransport === "auto") {
         if (body.useMyChrome !== true) return json(res, 400, { error: "Unknown browser transport." });
         const profiles = browserExtension?.status().profiles ?? [];
-        const choice = useMyChromeRoute(profiles, await userChromeListening());
+        const extensionAvailable = readBrowserExtensionBuild(browserExtensionResourcesPath()).mode !== "none";
+        const listening = extensionAvailable ? "off" : await userChromeListening();
+        // Read after the probe.
+        const heldByAnotherBot = store.bots.some(other => other.id !== existingBot?.id && other.useMyChrome && other.browserTransport !== "extension");
+        const choice = useMyChromeRoute(profiles, listening, { extensionAvailable, heldByAnotherBot });
         console.log(`[browser] use-my-chrome route ${choice.route}`);
         body.browserTransport = choice.transport ?? null;
         body.browserExtensionProfileId = useMyChromeProfile(choice, profiles, existingBot?.browserExtensionProfileId);
       }
       if (body.browserTransport !== undefined || body.browserExtensionProfileId !== undefined) {
-        if (existingBot?.busy) return json(res, 409, { error: "Stop this bot before changing its browser connection." });
+        if (existingBot?.busy) return json(res, 409, { error: `${existingBot.name} is working. Stop it, or wait for it to finish, then change its browser connection.`, code: "bot_busy" });
         if (body.browserTransport !== undefined) {
           if (body.browserTransport !== null && body.browserTransport !== "extension") return json(res, 400, { error: "Unknown browser transport." });
           patch.browserTransport = body.browserTransport === "extension" ? "extension" : undefined;
@@ -27743,7 +28110,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const requestedTransport = body.browserTransport === null ? undefined : body.browserTransport ?? existingBot?.browserTransport;
         if ((body.useMyChrome ?? existingBot?.useMyChrome) === true && requestedTransport !== "extension") {
           const holder = store.bots.find(other => other.id !== existingBot?.id && other.useMyChrome && other.browserTransport !== "extension");
-          if (holder) return json(res, 409, { error: "Another bot is already using Chrome remote debugging." });
+          if (holder && !autoRequested) return json(res, 409, { error: "Another bot is already using Chrome remote debugging." });
+          // "auto" raced another bot to remote debugging: Murage for Chrome setup instead.
+          if (holder) { body.browserTransport = "extension"; patch.browserTransport = "extension"; }
         }
         // Moving from remote debugging to Murage for Chrome: the old attach is
         // closed, so the owner's Chrome stops asking for it.
@@ -27756,11 +28125,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (body.useMyChrome !== undefined) {
         if (typeof body.useMyChrome !== "boolean") return json(res, 400, { error: "useMyChrome must be true or false" });
         if (existingBot && body.useMyChrome !== (existingBot.useMyChrome === true)) {
-          if (existingBot.busy) return json(res, 409, { error: "stop this bot's turn before changing its browser" });
+          if (existingBot.busy) return json(res, 409, { error: `${existingBot.name} is working. Stop it, or wait for it to finish, then change its browser.`, code: "bot_busy" });
           if (unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing browsers" });
           const selectedTransport = body.browserTransport === null ? undefined : body.browserTransport ?? existingBot.browserTransport;
           const holder = body.useMyChrome && selectedTransport !== "extension" ? store.bots.find((other) => other.id !== existingBot.id && other.useMyChrome && other.browserTransport !== "extension") : undefined;
-          if (holder) return json(res, 409, { error: `${holder.name} is already using your Chrome. Only one bot can use it at a time; switch ${holder.name} back to its own browser first.` });
+          // "auto" raced another bot to remote debugging during the awaits above: Murage for Chrome setup instead.
+          if (holder && autoRequested) { body.browserTransport = "extension"; patch.browserTransport = "extension"; }
+          else if (holder) return json(res, 409, { error: `${holder.name} is already using your Chrome. Only one bot can use it at a time; switch ${holder.name} back to its own browser first.` });
           if (!body.useMyChrome) {
             for (const binding of browserExtension?.status().bindings.filter(item => item.botId === existingBot.id) ?? []) await browserExtension!.ownerAction(binding.bindingId, "stop");
             await forgetUserChromeBrowser(existingBot.id);
@@ -27776,7 +28147,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         if (existingBot && requestedProfile !== existingBot.browserProfile && unifiedBrowserHeld(existingBot)) return json(res, 409, { error: "Return browser control before changing profiles" });
         if (existingBot?.browserProfile === "guest" && requestedProfile !== "guest" && !existingBot.busy) await forgetGuestBrowser(existingBot.id);
         if (existingBot?.busy && requestedProfile !== existingBot.browserProfile) {
-          return json(res, 409, { error: "stop this bot's turn before changing its browser profile" });
+          return json(res, 409, { error: "stop this bot's turn before changing its browser profile", code: "bot_busy" });
         }
         if (requestedProfile === undefined) patch.browserProfile = undefined;
         else if (
@@ -29211,113 +29582,45 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!receipt && answerNotAdmitted(row)) { const held = answerHeldReply(threadId, text); return json(res, held.status, held.body); }
       return json(res, 200, { ...(receipt ? wireReceipt(receipt) : { threadId }), ok: true, outcome: "sent", text });
     }
+    // APPROVE-ALL (design rev 3 section 7, Server shape): Approve all in Inbox > Approvals. Preview freezes the list the
+    // owner sees; apply answers the ticked cards only through respondToCard, one Allow once each. Desktop app or the
+    // paired phone app only; the phone signs the exact ticked set once (the existing fresh-auth gate).
+    if (method === "POST" && path === "/api/inbox/approve-all/preview") {
+      const surface = approveAllSurface(req, url);
+      if (!surface.ok) return json(res, surface.status, surface.body);
+      return json(res, 200, approveAllPreview(req, url, surface));
+    }
+    // Batch B: whether this surface shows the Approve all button at all, from the same owner-app check preview and apply
+    // use, never a client guess. Every browser, a keyless app and a Cloud phone read show: false. Read only.
+    if (method === "POST" && path === "/api/inbox/approve-all/surface") {
+      const owner = ownerAppSurface(req.headers, url.searchParams);
+      if (!owner.ok) return json(res, 200, { show: false });
+      return json(res, 200, { show: true, app: owner.app.kind, cautionDismissed: readOwnerPrefs(DATA_DIR).approveAllCautionDismissed });
+    }
+    // Batch B (design 4): "Don't show this again" on the caution, and Settings "Show the Approve all reminder again".
+    // One owner pref on the server, so the desktop and the phone share it. Only a surface that may press Approve all.
+    if (method === "POST" && path === "/api/inbox/approve-all/caution") {
+      const surface = approveAllSurface(req, url);
+      if (!surface.ok) return json(res, surface.status, surface.body);
+      const body = await readBody(req);
+      if (typeof body?.dismissed !== "boolean") return json(res, 400, { error: "dismissed must be true or false" });
+      return json(res, 200, { cautionDismissed: writeOwnerPrefs(DATA_DIR, { approveAllCautionDismissed: body.dismissed }).approveAllCautionDismissed });
+    }
+    if (method === "POST" && path === "/api/inbox/approve-all/apply") {
+      const surface = approveAllSurface(req, url);
+      if (!surface.ok) return json(res, surface.status, surface.body);
+      const body = await readBody(req);
+      const result = await approveAllApply(req, url, surface, body);
+      return json(res, result.status, result.body);
+    }
     // Answer by THREAD, so a request raised inside a room can be answered
     // too: a member's turn runs on the room's thread, and the bot that
     // owns the pending request is the one currently speaking there.
     m = path.match(/^\/api\/threads\/([\w-]+)\/respond$/);
     if (m && method === "POST") {
       const threadId = m[1];
-      const body = await readBody(req);
-      const behavior = requestBehavior(body.behavior);
-      const reviewedSha256 = typeof body.reviewedSha256 === "string" ? body.reviewedSha256 : undefined;
-      const skip = body.behavior === "skip";
-      if (!behavior && !skip) return json(res, 400, { error: "behavior must be allow, deny, answer, or skip" });
-      if (!skip && behavior !== "deny" && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
-      const requestId = String(body.requestId);
-      // "For 12 hours in this conversation" is checked first, before any branch can answer: a card whose fold shows no task row
-      // (a peer, extension or host-consent card) is refused, never answered Allow once (L1A-GRANT-AUTHORITY-1013 4, Astra 7)
-      const taskRefusal = body.allowForTask === true && behavior === "allow" ? taskGrantRefusal(cardByRequest(threadId, requestId)?.card) : undefined;
-      if (taskRefusal) return json(res, 400, { error: taskRefusal });
-      // 1.0.4 SL-I I5: the limit offer card is the harness's own (a bot's shell never answers it: mayApprove above)
-      if (requestId.startsWith("limit-") && !mayApprove(req, url)) return json(res, 403, { error: APPROVAL_NEEDS_OWNER });
-      const limitAnswer = answerLimitCard(threadId, requestId, behavior ?? undefined, body);
-      if (limitAnswer) return json(res, limitAnswer.status, limitAnswer.body);
-      if (isEmailRequestId(requestId)) { const answer = await answerEmailCard(req, url, threadId, requestId, body, behavior); return json(res, answer.status, answer.body); }
-      if (behavior === "undo") {
-        const undoCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest));
-        const undoBotId = undoCard?.from?.botId ?? store.botByThread(threadId)?.id;
-        if (undoCard && undoBotId && resolveAndSendRoutine(res, { botId: undoBotId, botName: store.bot(undoBotId)?.name, threadId, requestId, behavior })) return;
-        return json(res, 400, { error: UNDO_ONLY_AUTOMATIONS });
-      }
-      // Kept only if this route accepts the answer (AnsweredWhere.attempt).
-      try { answeredWhere.attempt(`${threadId}:${requestId}`, requestSurface(req.headers, url.searchParams) === "desktop" ? "desktop" : "elsewhere", res); } catch (error) { pushWarn("respond-route", error); }
-      const asSend = await answerAsSendReply(threadId, requestId, body, skip, requestOrigin(req, url));
-      if (asSend) {
-        if (asSend.status !== 200 || asSend.body.outcome === "sent-as-message") { try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); } }
-        return json(res, asSend.status, asSend.body);
-      }
-      const question = questionReply(threadId, requestId, body, skip, requestSurface(req.headers, url.searchParams) === "desktop");
-      if (question.kind === "error") return json(res, question.status, { error: question.error, ...(question.code ? { code: question.code } : {}) });
-      if (question.kind === "late") {
-        // Already settled before this answer: nothing here answered it.
-        try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); }
-        return json(res, 200, { ok: true, outcome: question.outcome });
-      }
-      // A question card is never a skill, routine or peer proposal
-      // (isQuestionCard excludes all three), so it is answered here and the
-      // harness-owned branches below are left alone.
-      if (question.kind === "deliver") {
-        const asked = threadRequestOwner(threadId, requestId);
-        const outcome = await answerRequest(threadId, asked.instanceId, requestId, question.behavior, question.message, asked.decidedFor, question.answers);
-        return json(res, 200, { ok: true, outcome });
-      }
-      if (!behavior) return json(res, 400, { error: "behavior must be allow, deny, or answer" });
-      if (behavior !== "deny") {
-        const refused = await freshAuthRefusal(req, url, threadId, requestId, behavior, body);
-        if (refused) {
-          // a refused answer was never taken, so it is not "Answered on desktop"
-          try { answeredWhere.forget(`${threadId}:${requestId}`); } catch (error) { pushWarn("respond-route", error); }
-          return json(res, refused.status, refused.body);
-        }
-      }
-      const skillCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.skillRequest));
-      if (skillCard?.card?.skillRequest) {
-        const skillBotId = skillCard.from?.botId ?? store.botByThread(threadId)?.id;
-        if (!skillBotId) return json(res, 400, { error: "this skill request has no valid owner" });
-        const skillOwner = store.bot(skillBotId);
-        if (sendSkillResolution(res, resolveSkillRequest({
-          botId: skillBotId,
-          botName: skillOwner?.name,
-          threadId,
-          requestId,
-          behavior,
-          reviewedSha256,
-        }))) return;
-      }
-      const routineCard = store.cardForRequest(threadId, requestId, (message) => Boolean(message.card?.routineRequest));
-      if (routineCard?.card?.routineRequest) {
-        // Derive the owner from the conversation, not from the executable
-        // payload being authorized. Room cards carry their trusted sender;
-        // one-to-one tasks resolve through the store's thread ownership.
-        const routineBotId = routineCard.from?.botId ?? store.botByThread(threadId)?.id;
-        if (!routineBotId) return json(res, 400, { error: "this routine request has no valid owner" });
-        const routineOwner = store.bot(routineBotId);
-        if (resolveAndSendRoutine(res, {
-          botId: routineBotId,
-          botName: routineOwner?.name,
-          threadId,
-          requestId,
-          behavior,
-        })) return;
-      }
-      // peer-approval intercept (see /api/bots/:id/respond above). A peer card
-      // belongs to the bus rather than to a speaker, so resolve it before we go
-      // looking for one — a room between turns has no speaker to find.
-      if (resolvePeerComms(approvalBus, requestId, behavior)) {
-        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
-      }
-      if (await browserExtension?.answerCard(threadId, requestId, behavior)) return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed-once" : "rejected" });
-      if (resolveHostComputerConsent(requestId, behavior, rememberHostComputerConsent)) {
-        return json(res, 200, { ok: true, outcome: behavior === "allow" ? "allowed" : "rejected" });
-      }
-      const asked = threadRequestOwner(threadId, requestId);
-      if (!asked.owner && !asked.pending) return json(res, 404, { error: "nothing is waiting on an answer in this conversation" });
-      const onComputer = isDesktopApp(req.headers, url.searchParams);
-      if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });
-      // the task row was checked first, above; the reply names what it added (UX-TRUST-MOMENTS-1012 1.3)
-      const receipt: TaskGrantReceipt = {};
-      const outcome = await answerRequest(threadId, asked.instanceId, requestId, behavior, body.message, asked.decidedFor, undefined, { receipt, ...(body.allowForTask === true ? { allowForTask: true } : {}), ...(onComputer ? { desktop: true } : {}) });
-      return json(res, 200, { ok: true, outcome, ...(receipt.taskAdded ? { taskAdded: receipt.taskAdded } : {}) });
+      // awaited, so a throw inside it reaches this handler's own error path as it did before the extraction
+      return await respondToCard({ req, url, res }, threadId, await readBody(req));
     }
     // "Who this bot can message" (SPEC-P 3.12): an owner-only reach field,
     // desktop class; it only ever widens reach, so a restore resets it.
@@ -30102,7 +30405,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!body || typeof body !== "object" || Array.isArray(body)) return json(res, 400, { error: "Invalid Flux connection update." });
       const update = body as Record<string, unknown>;
       if (update.phase === "begin") return json(res, 200, fluxConnectionTransaction.begin(update.input));
-      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      if (update.phase === "commit") { const committed = await fluxConnectionTransaction.commit(update.lease, true); requestFluxKeyRecheck(); await repickAfterKeySave(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
       if (update.phase === "rollback") return json(res, 200, await fluxConnectionTransaction.rollback(update.lease, true));
       if (update.phase === "finish") return json(res, 200, fluxConnectionTransaction.finish(update.lease));
       return json(res, 400, { error: "Invalid Flux connection update." });
@@ -30110,9 +30413,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     if (path === "/api/flux-connection/mutate" && method === "POST") {
       if (utilityParentPort && !cloudHome) return json(res, 409, { error: "Use the desktop Flux connection control to preserve encrypted key storage." });
       const input = await readBody(req), reserved = fluxConnectionTransaction.begin(input);
-      try { const committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); return json(res, 200, fluxConnectionStatusWithRestart(committed)); }
+      let committed: Awaited<ReturnType<typeof fluxConnectionTransaction.commit>>;
+      try { committed = await fluxConnectionTransaction.commit(reserved.lease, false); requestFluxKeyRecheck(); }
       catch (error) { await fluxConnectionTransaction.rollback(reserved.lease, false); throw error; }
       finally { fluxConnectionTransaction.finish(reserved.lease); }
+      // The engine pass runs once the lease is released, so a scan never holds other Flux edits.
+      await repickAfterKeySave();
+      return json(res, 200, fluxConnectionStatusWithRestart(committed));
     }
 
     // ── provider instances (model picker) ──
@@ -30649,6 +30956,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!enablement && !cliOverride) return json(res, 400, { error: "Choose either a cli string or an enabled boolean" });
       if (cliOverride && /[\n\r]/.test(body.cli)) return json(res, 400, { error: "cli must not contain newlines" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      // Health's Switch on (HEALTH-DOCTOR) asks with ?whenIdle=1: it never ends a running answer. Checked here, with no
+      // await before the fence below, so no turn can start between the check and the fence.
+      if (url.searchParams.get("whenIdle") === "1" && engineSwitchWouldInterrupt()) return json(res, 409, { error: "Answers are still running. Try again in a moment.", code: "ENGINE_WORK_ACTIVE" });
       providerConfigBusy = true; void closeAllStreams();
       try {
         const result = enablement ? withInstanceEnabled(cfg, instancePatch[1], body.enabled) : withInstanceCli(cfg, instancePatch[1], body.cli);
@@ -30673,6 +30983,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         resetPathCache();
         return json(res, 200, { instances: await describedInstances() });
       } finally {
+        // Health's engine answer is read again after an engine changed, not served from the minute's memo.
+        dropEngineHealthMemo(engineHealthMemo);
         finishProviderConfigMutation();
       }
     }
@@ -31320,12 +31632,29 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // ?recheck=1 is the picker's "Check again": Flux's voice list is read
         // now, not after the ten minutes it is otherwise kept
         if (onFlux && url.searchParams.get("recheck") === "1") await tts.recheckFluxEleven();
-        const voices = await tts.listVoices(cfg, undefined, provider);
+        // ?q= searches an own ElevenLabs key's account and the Voice Library
+        const voices = await tts.listVoices(cfg, undefined, provider, { query: url.searchParams.get("q")?.slice(0, 200) ?? undefined });
         // fluxEleven: whether Flux's voice list offers its ElevenLabs voices
         // on this key; when it does not they are left out and the picker says why
         return json(res, 200, { voices, ...(onFlux ? { fluxEleven: tts.fluxElevenStatus() } : {}) });
       } catch (e) {
         return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    if (method === "POST" && path === "/api/tts/voices/add") {
+      // Adds a Voice Library voice to the owner's own ElevenLabs account (a
+      // voice slot there), so it is desktop-only (route-policy.ts).
+      const body = await readBody(req);
+      const id = (value: unknown) => (typeof value === "string" && /^[A-Za-z0-9]{1,128}$/.test(value) ? value : "");
+      const publicOwnerId = id(body.publicOwnerId);
+      const voiceId = id(body.voiceId);
+      const name = typeof body.name === "string" ? body.name.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100) : "";
+      if (!publicOwnerId || !voiceId || !name) return json(res, 400, { error: "publicOwnerId, voiceId and name required" });
+      try {
+        return json(res, 200, { voiceId: await tts.addSharedVoice(cfg, publicOwnerId, voiceId, name) });
+      } catch (e) {
+        if (e instanceof tts.NoVoiceConfigured) return json(res, 409, { error: "Add your ElevenLabs key first." });
+        return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
       }
     }
     if (method === "POST" && path === "/api/tts/speak") {

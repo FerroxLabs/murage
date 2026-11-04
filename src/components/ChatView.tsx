@@ -1,6 +1,7 @@
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
+import { bubbleWidth } from "@/lib/reply-width";
 import { loopNoticeLabel } from "@/lib/loop-notice";
 import { ServedModelNote } from "@/components/ServedModelNote";
 import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
@@ -52,8 +53,9 @@ import {
 } from "@/state/store";
 import { newDeleteAttempt } from "@/state/page-intent";
 import { EngineSetup } from "./EngineSetup";
+import { signInWall, type FuigoWall } from "./engine/SignInWall";
 import { WidgetMessage } from "./widget/WidgetMessage";
-import { LazyBoundary, retryableLazy } from "./LazyBoundary";
+import { LAZY_RETRY_TEXT, LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { claudeUpdateTarget } from "@/lib/claude-update";
 import { hermesPinNoteProfile, hermesPinNoteText } from "../../shared/hermes-pin-note";
 import { ProviderErrorCard } from "./ProviderErrorCard";
@@ -93,6 +95,7 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { SendNoticeRow } from "./SendNoticeRow";
+import { isWithoutMemoryNote, WithoutMemoryNoteRow } from "./WithoutMemoryNote";
 import { sendNoticeCode } from "../../shared/send-notice";
 import { FolderTrustRow } from "./FolderTrustRow";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
@@ -116,7 +119,7 @@ import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachedFileChips, AttachedImageGallery } from "./AttachmentPreview";
 import { ScreenFrameMedia } from "./ImageMedia";
 import { ArtifactCards } from "./ArtifactCards";
-import { WorkspacePane } from "./WorkspacePane";
+import { LazyWorkspacePane } from "./WorkspacePaneLazy";
 import { RenameTitle } from "./RenameTitle";
 
 import { SpeakButton } from "./SpeakButton";
@@ -135,13 +138,13 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
 import { FromPhoneLine } from "./FromPhoneLine";
 import { canEditLine } from "@/lib/compose-link";
-import { groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { describeRunRaw, groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
 import { ActivityRun } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
-import { webhookMessageView } from "@/lib/webhook-message";
+import { WEBHOOK_LOADING_TEXT, useWebhookDisplayText, useWebhookMessageView } from "@/lib/webhook-message-lazy";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
 import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
@@ -192,7 +195,6 @@ import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
-const noop = () => {};
 
 export function ErrorBanner({message,onDismiss}:{message:string;onDismiss:()=>void}){
   const plain = plainError(message);
@@ -410,7 +412,9 @@ const ClaudeUpdatePrompt = retryableLazy(() => import("./ClaudeUpdatePrompt")).C
 // Find in this conversation loads when someone asks for it (Cmd+F).
 const ChatFindBar = retryableLazy(() => import("./ChatFindBar").then((module) => ({ default: module.ChatFindBar })));
 
-export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings }: {
+export function ErrorRow({ message, details, errorKind, localFailure, localFailureEngine, diagnostic, turnId, incident, onRetry, retryLabel, setupInstance, authRequired = false, claudeUpdateInstance, providerError, botName, onOpenProviderSettings, fuigoWall }: {
+  /** 1.0.14 F0: the bot and the engine list, so a sign-in wall leads with "Use Fuigo instead" when Fuigo can answer. */
+  fuigoWall?: FuigoWall;
   message: string; details?: string; errorKind?: string; localFailure?: string; localFailureEngine?: string; onRetry?: () => void; retryLabel?: string; setupInstance?: InstanceInfo; botName?: string; claudeUpdateInstance?: InstanceInfo;
   authRequired?: boolean; providerError?: ProviderErrorInfo; diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection; onOpenProviderSettings: () => void;
 }) {
@@ -423,7 +427,8 @@ export function ErrorRow({ message, details, errorKind, localFailure, localFailu
       setup={<Suspense fallback={null}><ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} /></Suspense>} />;
   }
   return <RuntimeErrorCard message={message} details={details} errorKind={errorKind} localFailure={localFailure} localFailureEngine={localFailureEngine} botName={botName} diagnostic={diagnostic} turnId={turnId} incident={incident} onRetry={onRetry} retryLabel={retryLabel} onOpenProviderSettings={onOpenProviderSettings}
-    setup={needsSetup ? <EngineSetup instance={setupInstance} authRequired={forceSignIn} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" /> : undefined} />;
+    setup={needsSetup ? signInWall(setupInstance, forceSignIn, fuigoWall,
+      (secondary) => <EngineSetup instance={setupInstance} authRequired={forceSignIn} signInSecondary={secondary} onReady={() => setAuthRecovered(true)} className="mt-3 text-ink-secondary" />) : undefined} />;
 }
 
 /** One bad markdown node must not white-screen the app - the transcript
@@ -580,17 +585,23 @@ function Bubble({
   const [sheetOpen, setSheetOpen] = useState(false);
   const speech = useSpeech();
   const text = message.text ?? "";
-  const webhookView = user ? webhookMessageView(text) : null;
-  const telegramView = user ? telegramMessageDisplay(text) : null;
-  const attachments = user && !webhookView && !telegramView ? splitTranscriptAttachments(text, { hidePasteWrappers: true }) : null;
-  const visibleText = telegramView?.body ?? webhookView?.task ?? attachments?.display ?? text;
+  // The webhook parser loads on first use (webhook-message-lazy.ts). Until it is
+  // here, or if it cannot load, a message that may be a webhook run is held: it
+  // shows WEBHOOK_LOADING_TEXT and never its stored text, which carries the
+  // sender's event data outside the card's fence.
+  const webhook = useWebhookMessageView(user ? text : "");
+  const webhookView = webhook.status === "view" ? webhook.view : null;
+  const webhookHeld = webhook.status === "loading" || webhook.status === "failed";
+  const telegramView = user && !webhookHeld ? telegramMessageDisplay(text) : null;
+  const attachments = user && !webhookView && !webhookHeld && !telegramView ? splitTranscriptAttachments(text, { hidePasteWrappers: true }) : null;
+  const visibleText = webhookHeld ? "" : telegramView?.body ?? webhookView?.task ?? attachments?.display ?? text;
   const collapsible =
-    user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
+    user && !webhookView && !webhookHeld && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
   // Bot calls 1.0.9: the row is a call card (server/bot-calls-card.ts); its buttons and receipt live in BotCallCard
   if (message.botCall) return <div className="flex w-full justify-start"><BotCallCard bot={bot} message={message} /></div>;
 
-  if (user && editing && !webhookView) {
+  if (user && editing && !webhookView && !webhookHeld) {
     return (
       <div className="flex w-full justify-end">
         <BubbleEditor initial={editText ?? text} saving={editSaving} error={editError} onCancel={onCancelEdit} onSubmit={onSubmitEdit} onDraft={onDraftEdit} />
@@ -614,9 +625,11 @@ function Bubble({
   const speaking = isReading(speech, message.id);
   const actions: MessageAction[] = user
     ? [
-        { id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void copyOrReport(visibleText, (message) => raiseTransientError(dispatch, message)) },
+        ...(webhookHeld
+          ? []
+          : [{ id: "copy", label: "Copy message", icon: <Copy size={18} />, onSelect: () => void copyOrReport(visibleText, (message) => raiseTransientError(dispatch, message)) }]),
         { id: "reply", label: "Reply", icon: <MessageSquareReply size={18} />, onSelect: onReply },
-        ...(message.kind === "text" && !webhookView && !bot.busy && canEditLine(message)
+        ...(message.kind === "text" && !webhookView && !bot.busy && !webhookHeld && canEditLine(message)
           ? [{ id: "edit", label: "Edit message", icon: <Pencil size={18} />, onSelect: onStartEdit }]
           : []),
         { id: "pin", label: pinned ? "Unpin message" : "Pin message", icon: pinned ? <PinOff size={18} /> : <Pin size={18} />, onSelect: togglePin },
@@ -674,7 +687,7 @@ function Bubble({
         <div className="max-md:hidden md:contents">
         {/* editing rewinds the thread, so it waits for the turn to end -
             same rule as the version switcher below */}
-        {user && message.kind === "text" && !webhookView && !bot.busy && canEditLine(message) && (
+        {user && message.kind === "text" && !webhookView && !bot.busy && !webhookHeld && canEditLine(message) && (
           <button
             onClick={onStartEdit}
             aria-label="Edit message"
@@ -684,7 +697,7 @@ function Bubble({
             <Pencil size={14} />
           </button>
         )}
-        {user && <CopyButton text={visibleText} />}
+        {user && !webhookHeld && <CopyButton text={visibleText} />}
         {user && (
           <>
             <button
@@ -731,12 +744,13 @@ function Bubble({
           // its drop shadow reaches past the row (styles.css .transcript-row)
           data-row-lift={user && webhookView ? "" : undefined}
           className={cn(
-            "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
+            bubbleWidth(text, user),
+            "max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
             BUBBLE_TAPPABLE,
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
               : user
-                ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-ink"
+                ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap [overflow-wrap:anywhere] text-ink"
                 : "bg-card px-4 py-2.5 text-ink",
           )}
           title={new Date(message.at).toLocaleString()}
@@ -753,7 +767,15 @@ function Bubble({
               />
             </div>
           )}
-          {user && webhookView ? (
+          {user && webhookHeld ? (
+            webhook.status === "failed" ? (
+              <button type="button" onClick={() => window.location.reload()} className="min-h-11 text-[13px] text-ink underline-offset-2 hover:underline">
+                {LAZY_RETRY_TEXT}
+              </button>
+            ) : (
+              <div role="status" className="text-ink-secondary">{WEBHOOK_LOADING_TEXT}</div>
+            )
+          ) : user && webhookView ? (
             <div className="min-w-[300px] max-w-[520px]">
               <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent">
                 <Webhook size={13} />
@@ -1158,32 +1180,30 @@ const MessagesList = memo(function MessagesList({
         const dividerText = item.kind === "message" ? dividers.get(item.message.id) : item.messages.map(message => dividers.get(message.id)).find(Boolean);
         const divider = dividerText ? <div role="separator" data-testid="engine-divider" className="px-2 py-1 text-center text-[11.5px] text-ink-secondary">{dividerText}</div> : null;
         if (item.kind === "turn") {
+          // E34: the fold holds only the settled turn's tool steps; the bot's own lines stay in the transcript
+          if (!showToolCalls) {
+            if (!item.helpers?.length) return divider ? <div key={item.id}>{divider}</div> : null;
+            return (
+              <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
+                {newDay && <DaySeparator at={first.at} />}
+                {divider}
+                <HelpersSummary label={item.label} helpers={item.helpers} />
+              </div>
+            );
+          }
           return (
             <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && <DaySeparator at={first.at} />}
               {divider}
               <TurnNarrationRun
                 label={item.label}
+                title={describeRunRaw(item.messages)}
                 helpers={item.helpers}
                 forceOpen={item.messages.some((message) => message.id === focusedId)}
               >
-                {item.messages.map((message) => (
-                  <div key={message.id} className="contents" data-mid={message.id}>
-                    <Bubble
-                      bot={bot}
-                      message={message}
-                      editing={false}
-                      isLastBotText={false}
-                      onStartEdit={noop}
-                      onCancelEdit={noop}
-                      onSubmitEdit={noop}
-                      replyTarget={message.replyToId
-                        ? bot.messages.find((candidate) => candidate.id === message.replyToId)
-                        : undefined}
-                      onReply={() => onReply(message)}
-                      narrow={narrow}
-                      questionCards={fenceCards.get(message.id)}
-                    />
+                {item.messages.map((step) => (
+                  <div key={step.id} className="contents" data-mid={step.id}>
+                    <ActivityChip message={step} botName={bot.name} />
                   </div>
                 ))}
               </TurnNarrationRun>
@@ -1305,6 +1325,8 @@ const MessagesList = memo(function MessagesList({
               if (runMarker) return <RoutineRunDivider trigger={runMarker.trigger} routineName={runMarker.routineName} at={m.at} />;
               const noticeCode = sendNoticeCode(m.tool?.name);
               if (noticeCode) return <SendNoticeRow code={noticeCode} />;
+              // a reply that ran without remembered context: a quiet note, visible with Tool calls off (DELEGATION-HOLD F5)
+              if (isWithoutMemoryNote(m)) return <WithoutMemoryNoteRow text={m.tool!.name} />;
               const stoppedReason = hostStoppedReason(m.tool?.name);
               if (stoppedReason) return <StoppedRow reason={stoppedReason} />;
               // the person's Stop caught a desktop action mid-flight: say to
@@ -1348,6 +1370,7 @@ const MessagesList = memo(function MessagesList({
                     diagnostic={m.tool.diagnostic}
                     turnId={m.turnId}
                     incident={{threadId:bot.threadId,messageId:m.id}}
+                    fuigoWall={{ bot, instances: state.instances }}
                     onOpenProviderSettings={() => dispatch({ type: "toggleAppSettings", open: true, section: bot.modelSelection.connectionId ? "models" : "engines" })}
                   />
                 );
@@ -1414,10 +1437,12 @@ function PinnedBanner({
 }) {
   // may be older than the held page (upstream #1527)
   const pinned = useMessageById(bot.threadId, pinnedId || undefined, messages);
+  // a pinned webhook run shows its task, or the placeholder while the parser loads
+  const shown = useWebhookDisplayText(pinned?.text ?? "", pinned?.role === "user");
   if (!pinned || pinned.kind !== "text") return null;
   const sender =
     pinned.role === "user" ? "You" : (pinned.from?.name ?? bot.name);
-  const text = (pinned.text ?? "").replace(/\s+/g, " ").trim();
+  const text = shown.replace(/\s+/g, " ").trim();
   if (!text) return null;
   return (
     <div className="w-full px-5">
@@ -2144,7 +2169,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
       </div>
       </div>
     </div>
-      <WorkspacePane bot={bot} />
+      <LazyWorkspacePane bot={bot} />
     </main>
     </ThreadLinkProvider>
     </AccessLinkProvider></ChipsProvider>

@@ -86,7 +86,7 @@ describe("what each list says for itself", () => {
     // not find the one that mattered.
     expect(INBOX_VIEW_COPY.approvals, "an approval is already drafted").toMatch(/drafted/i);
     expect(INBOX_VIEW_COPY.questions, "a question has nothing drafted").toMatch(/nothing is drafted/i);
-    expect(INBOX_VIEW_COPY.connections, "a connection needs hands").toMatch(/your hands/i);
+    expect(INBOX_VIEW_COPY.connections, "a sign-in or an allowance stopped work (UX L2B)").toMatch(/sign-in or an allowance stopped work/i);
     expect(INBOX_VIEW_COPY.routines, "a routine is not waiting on anybody").toMatch(/nothing here is waiting on you/i);
   });
 

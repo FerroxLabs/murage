@@ -78,6 +78,13 @@ export function useEngineReading(): { engine: EngineHealthRow | null; flux: Flux
   return { engine: primaryEngine(engines, used), flux, fromServer: false };
 }
 
+/** Read the answer again now (Health's Check again and Switch on), for everyone showing it. A read already on its way
+ * started before the change, so a fresh one follows it. True when an answer came back. */
+export function refreshEngineHealth(): Promise<boolean> {
+  const fresh = () => refresh().then(() => answer !== null);
+  return inFlight ? inFlight.then(fresh, fresh) : fresh();
+}
+
 /** Tests only. */
 export function resetEngineHealthForTests(): void {
   answer = null; users = 0; inFlight = null; listeners.clear();

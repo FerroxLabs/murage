@@ -30,6 +30,7 @@ import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import type { CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { unsupportedCallsNotice } from "./codex-unsupported-calls.ts";
 import { NATIVE_DIR } from "../config.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { isMountRecord } from "../../shared/mount-identity.ts";
@@ -107,6 +108,31 @@ describe("CodexDriver turns (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  // D20 (adapted from OpenMausBot cc411b61b): a call Codex refused as unsupported left no item; the turn names it once.
+  it("D20: says which tool calls Codex refused as unsupported this turn, and not the ones from earlier turns", async () => {
+    // inside the Codex home the instance runs with: only a rollout there is read
+    mkdirSync(join(scratch, ".codex", "sessions"), { recursive: true });
+    const rollout = join(scratch, ".codex", "sessions", "rollout.jsonl");
+    // An earlier turn's refusal is already in the rollout: it was reported then.
+    writeFileSync(rollout, `${JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "old", output: "unsupported call: coordinate_bots" } })}\n`);
+    await create({ environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex"), FAKE_CODEX_ROLLOUT: rollout } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let warned: string[];
+    let turnId: string;
+    try {
+      ({ turnId } = await instance.adapter.sendTurn({ threadId: "unsupported-call", text: "Fixture", cwd: scratch }));
+      await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
+      warned = warn.mock.calls.map((call) => String(call[0]));
+    } finally {
+      warn.mockRestore();
+    }
+    const notices = recorder.events.filter((e) => e.type === "item.started" && (e as { toolKind?: string }).toolKind === "notice" && e.turnId === turnId);
+    expect(notices.map((e) => (e as { title?: string }).title)).toEqual([unsupportedCallsNotice("Codex Test", ["retry_thread"])]);
+    expect(notices[0]).toMatchObject({ origin: "murage", itemId: `codex-unsupported-${turnId}` });
+    expect(recorder.events.some((e) => e.type === "item.completed" && (e as { itemId?: string }).itemId === `codex-unsupported-${turnId}`)).toBe(true);
+    expect(warned).toContain("[codex] unsupported tool call (provider dropped the MCP namespace): retry_thread");
   });
 
   it("banks only the difference of resumed totals and drops the baseline on reset", async () => {

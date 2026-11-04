@@ -97,6 +97,8 @@ export class BrowserExtensionIntegration {
   isRoutineThread(threadId: string): boolean { try { return this.options.routine?.(threadId) === true; } catch { return true; } }
   /** The owner answers a card. A card whose call already returned WAITING (or that survived a restart) needs the saved state loaded
    * first, so its binding can be looked at again before anything runs. */
+  /** APPROVE-ALL (design 6.2 step 11): read only, whether this request is one of the extension's cards. Settles nothing. */
+  knowsCard(requestId: string): boolean { return this.approvals.knows(requestId); }
   async answerCard(threadId: string, requestId: string, behavior: string | undefined): Promise<boolean> {
     if (!this.approvals.knows(requestId)) return false;
     if (!this.service) { try { await this.start(); } catch { /* the binding cannot be checked: the answer closes the card and runs nothing */ } }

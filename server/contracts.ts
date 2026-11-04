@@ -624,6 +624,12 @@ export interface ProviderAdapter {
   readonly capabilities: {
     memoryDelivery?: "prefixed-reference" | "unavailable";
     memoryMcp?: boolean;
+    /** True only for an adapter checked to write the turn's prompt bytes, and any steer bytes, only after `turn.beforeSubmit()` passes,
+     * with no await between that check and the write, and to steer only after the prompt was sent. It does not say the engine holds
+     * nothing: launch, session setup and MCP connects may run before and carry no memory frame. A refusal at acceptance with no write
+     * released is then proof that the prompt was not submitted, and the turn is rebuilt rather than carded (DELETE-REVOKE-SCOPE (a),
+     * turn-dispatch-guard.ts sealUnwritten). Unset means unknown: the card stands. */
+    fencedWrites?: boolean;
     /** True when the driver sends `turn.fluxMemory` as request metadata on a Flux request. */
     fluxEnvelope?: boolean;
     sessionModelSwitch: "in-session" | "unsupported";
@@ -914,7 +920,7 @@ export interface ProviderInstance {
   proposeProject?(prompt: string, signal: AbortSignal, model: string, botId?: string): Promise<string>;
   /** Explicitly qualified tool-free bounded memory extraction. Absence means
    * unavailable; never infer it from chat, MCP, or generic text generation. */
-  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal): Promise<string>;
+  groundMemory?(input: import("./memory/extract.ts").MemoryGroundingInput, maximumOutputTokens: number, signal: AbortSignal, fence?: import("./memory/learning-send.ts").LearningGate): Promise<string>;
   extractMemory?(text: string, maximumOutputTokens: number, signal: AbortSignal, dispatch?: import("./memory/extract.ts").MemoryExtractionDispatch): Promise<string>;
   /** Isolated, tool-free permission review on this same provider. Kept
    * separate from generateText so the UI never infers a security capability

@@ -90,6 +90,7 @@ import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import { copyText } from "@/lib/copy-text";
+import { FONT_IDS, FONT_LABELS, applyFont, isFontId, readFont, type FontId } from "@/lib/fonts";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -686,6 +687,34 @@ function DiagnosticsRow() {
   );
 }
 
+/** The interface font, apart from the skin (B86): this machine only, like the skin. */
+function FontRow() {
+  const [current, setCurrent] = useState<FontId>(readFont);
+  return (
+    <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline pt-4">
+      <div className="min-w-0">
+        <div id="settings-interface-font" className="text-[14px] font-medium text-ink">Interface font</div>
+        <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">The lettering across the app on this computer.</div>
+      </div>
+      <select
+        value={current}
+        aria-labelledby="settings-interface-font"
+        onChange={(event) => {
+          const id = event.target.value;
+          if (!isFontId(id)) return;
+          applyFont(id);
+          setCurrent(id);
+        }}
+        className="min-h-8 w-full max-w-[200px] rounded-lg border border-hairline bg-inset px-2.5 py-1.5 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+      >
+        {FONT_IDS.map((id) => (
+          <option key={id} value={id}>{FONT_LABELS[id]}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
 const DENSITY_OPTIONS: readonly { id: SidebarDensity; label: () => string }[] = [
   { id: "compact", label: () => t("settings.sidebar.standard") },
   { id: "comfortable", label: () => t("settings.sidebar.roomy") },
@@ -1271,6 +1300,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
                     <SkinPicker />
+                    <FontRow />
                   </Card>
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}

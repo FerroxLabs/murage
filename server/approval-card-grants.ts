@@ -42,6 +42,8 @@ export interface CardGrantInput {
   unattended?: boolean;
   /** a routine's or an automation's turn */
   automated?: boolean;
+  /** APPROVE-ALL: who started the turn (fullAccessTurnOrigin), recorded on the class */
+  origin?: CardClass["origin"];
 }
 
 export interface CardGrants {
@@ -69,6 +71,7 @@ export function cardClassFor(input: CardGrantInput, keys: CardKeys): CardClass {
     unattended: input.unattended === true,
     automated: input.automated === true,
     ...(input.approvalScope ? { scope: input.approvalScope } : {}),
+    ...(input.origin ? { origin: input.origin } : {}),
     keys: fields,
   };
 }

@@ -10,6 +10,7 @@ import { PassThrough, Writable } from "node:stream";
 
 import { CONTROL_REFUSAL_PLAIN, CONTROL_UNAVAILABLE_PLAIN } from "./control-client.ts";
 import {
+  completeFor,
   createGateInterceptor,
   createInactivityWatchdog,
   createLineSplitter,
@@ -406,6 +407,51 @@ describe("createGateInterceptor", () => {
     expect(answer.result.content[0].text).toBe(CONTROL_UNAVAILABLE_PLAIN);
     expect(answer.result.content[0].text).toMatch(/NOT performed/);
     expect(answer.result.content[0].text).toMatch(/reconnect/);
+  });
+});
+
+// Upstream 6df8d5551 (#4282): a client on MCP revision 2026-07-28 rejects a result without resultType.
+describe("answers the bridge writes itself, for a 2026-07-28 client", () => {
+  const meta = (version: string) => ({ "io.modelcontextprotocol/protocolVersion": version });
+  const drain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("marks a held-gate refusal complete for a 2026-07-28 client and leaves an older one's as it was", async () => {
+    const refused: string[] = [];
+    const intercept = createGateInterceptor({ isHeld: async () => true, forward: () => {}, refuse: (line) => refused.push(line) });
+    intercept(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "list_windows", arguments: {}, _meta: meta("2026-07-28") } }));
+    intercept(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "list_windows", arguments: {}, _meta: meta("2025-06-18") } }));
+    intercept(JSON.stringify({ jsonrpc: "2.0", id: 6, method: "tools/call", params: {} }));
+    await drain();
+    expect(JSON.parse(refused[0]!).result).toEqual({ content: [{ type: "text", text: CONTROL_REFUSAL_PLAIN }], isError: true, resultType: "complete" });
+    expect(JSON.parse(refused[1]!).result).toEqual({ content: [{ type: "text", text: CONTROL_REFUSAL_PLAIN }], isError: true });
+    expect(JSON.parse(refused[2]!).result).toEqual({ content: [{ type: "text", text: CONTROL_REFUSAL_PLAIN }], isError: true });
+  });
+
+  it("marks an unknown-hold refusal complete too", async () => {
+    const refused: string[] = [];
+    const intercept = createGateInterceptor({ isHeld: async () => { throw new Error("gone"); }, forward: () => {}, refuse: (line) => refused.push(line) });
+    intercept(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { _meta: meta("2026-09-01") } }));
+    await drain();
+    expect(JSON.parse(refused[0]!).result).toEqual({ content: [{ type: "text", text: CONTROL_UNAVAILABLE_PLAIN }], isError: true, resultType: "complete" });
+  });
+
+  it("answers a ping from a 2026-07-28 client as complete, and an older ping with an empty result", async () => {
+    const answered: string[] = [];
+    const intercept = createMcpBridgeInterceptor({ answer: (line) => answered.push(line), forward: () => {} });
+    await intercept(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping", params: { _meta: meta("2026-07-28") } }));
+    await intercept(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "ping" }));
+    expect(answered).toEqual(['{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete"}}', '{"jsonrpc":"2.0","id":3,"result":{}}']);
+  });
+
+  it("completeFor: only 2026-07-28 or later, never over a resultType the driver sent, never on a malformed version", () => {
+    const failure = { content: [{ type: "text", text: "Computer-control transport closed" }], isError: true };
+    expect(completeFor(meta("2026-07-28"), failure)).toEqual({ ...failure, resultType: "complete" });
+    expect(completeFor(meta("2025-06-18"), failure)).toBe(failure);
+    expect(completeFor(meta("latest"), failure)).toBe(failure);
+    expect(completeFor(undefined, failure)).toBe(failure);
+    expect(completeFor([], failure)).toBe(failure);
+    const asked = { content: [], resultType: "input_required" };
+    expect(completeFor(meta("2026-07-28"), asked)).toBe(asked);
   });
 });
 

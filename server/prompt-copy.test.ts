@@ -251,7 +251,7 @@ describe("prompt copy: every layer a bot can read", () => {
     // A new catalogue row needs its text added above before this passes.
     const covered = new Set([...texts.keys()].map((label) => label.split(" ")[0]));
     const byLabel: Record<string, string> = {
-      "house-rules": "house", "about-me": "about-me", persona: "persona", room: "room", computer: "direct", "computer-protected-input": "direct",
+      "house-rules": "house", "reply-habits": "direct", "about-me": "about-me", persona: "persona", room: "room", computer: "direct", "computer-protected-input": "direct",
       "connected-apps": "connected-apps", "required-apps": "required-apps", browser: "browser", coordination: "chief",
       "peer-task": "peer-task", "speak-as": "speak-as", credential: "turn", images: "images", "web-search": "direct", routines: "turn", learn: "turn",
       goal: "goal", "skills-index": "imported", "team-brief": "team-brief", memory: "memory", capabilities: "primer", skill: "skill",
