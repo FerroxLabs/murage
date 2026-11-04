@@ -618,6 +618,36 @@ export function openIntakeCard<
   return null;
 }
 
+/** PHONE-INTAKE-NOTICE: what became of the composer's alongside answer, the
+ *  typed text ALSO sent to an open setup question beside the send.
+ *  - "none": no open question, or this renderer came through the companion's
+ *    browser door (surface "remote"). The door forwards the intake GETs only
+ *    (companion/src/routes.ts) and refuses the intake POST by design, so there
+ *    the answer could only fail and put "could not be added as your answer"
+ *    under every message sent while a new bot's question is open.
+ *  - "recorded" / "refused": the POST was made and succeeded / failed.
+ *  The question is which DOOR, not which device: a Cloud home's paired phone
+ *  reads as surface "desktop" and its intake POST works, so it still records
+ *  its answer. The send itself is never affected; the desktop is unchanged. */
+export type AlongsideOutcome = "none" | "recorded" | "refused";
+
+export async function replyAlongside(
+  botId: string,
+  open: { id: string } | null,
+  text: string,
+  request: IntakeRequest,
+  whichSurface: () => Promise<"desktop" | "remote">,
+): Promise<AlongsideOutcome> {
+  if (!open) return "none";
+  if ((await whichSurface()) === "remote") return "none";
+  try {
+    await replyToIntake(botId, open.id, text, request, { alongside: true });
+    return "recorded";
+  } catch {
+    return "refused";
+  }
+}
+
 /** Where every turn of the conversation is posted. Not desktop-gated: it
  *  reads the catalogue and writes transcript text, and it installs nothing.
  *  The install still crosses the desktop boundary on `assistant-profile`. */

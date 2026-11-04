@@ -7,11 +7,13 @@
 // it, sets max_tokens, counts the body and cancels it at the cap, and reports
 // the isolation facts a socket can state (no tools, no files, finish_reason).
 import { reportMemoryUsage } from "../memory/extract.ts";
+import { isMemorySendBusy } from "../memory/learning-send.ts";
+import { MemorySendFenced, isMemorySendFenced } from "../memory/learning-send-fence.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
 import {
-  RUN_BOUND_MS, assertSupportedSchema, httpIsolationReport, httpVerdict, isReadMoved, isReportedOverLimit, runAdmissionFence,
+  RUN_BOUND_MS, assertSupportedSchema, httpIsolationReport, httpVerdict, isReadMoved, isReportedOverLimit,
   type TextOnlyTurnInput, type TextOnlyTurnResult, type Verdict,
 } from "../memory/pip-transport.ts";
 
@@ -45,6 +47,9 @@ export function textOnlyBody(o: HttpTextOnlyOptions, turn: TextOnlyTurnInput, mo
 
 export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyOptions): Promise<TextOnlyTurnResult> {
   assertSupportedSchema(turn.outputSchema);
+  // No gate, no send (r6 section 0/4, no exemption): a turn without its call's gate is refused before any request and nothing leaves.
+  const gate = turn.transport?.gate;
+  if (!gate) throw new MemorySendFenced();
   if (turn.signal.aborted) throw cancelled();
   if (!o.apiKey) return settled({ state: "unsupported", reason: "auth" });
   const endpoint = `${o.baseUrl.replace(/\/+$/, "")}/chat/completions`;
@@ -56,16 +61,18 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   try {
     const reach = await checkLocalServerUrl(endpoint);
     if (!reach.ok) return settled({ state: "refused", reason: "transient", detail: `address-${reach.code}`, counted: false });
-    // the last await is behind us: what the request carries is checked once more immediately before it leaves (a moved read throws, nothing is sent)
-    runAdmissionFence(turn.transport?.fence);
-    response = await (o.fetchImpl ?? fetch)(endpoint, {
+    // the last await is behind us: the request is checked and released under the write lock through the call's gate
+    // (memory/learning-send.ts) and the fetch starts before COMMIT (r8 section 1, the aliased fetch)
+    const fetcher = o.fetchImpl ?? fetch;
+    const init = {
       method: "POST", redirect: "error", signal,
       headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}`, ...(isFluxUrl(o.baseUrl) ? fluxCallHeaders("pip-reflection", { usage: { botId: turn.context?.botId } }) : {}) },
       body: request, dispatcher: providerDispatcher(endpoint),
-    } as RequestInit);
+    } as RequestInit;
+    response = await gate.send(() => fetcher(endpoint, init));
   } catch (error) {
     // a moved read is not a provider failure: it reaches the caller as itself, never as a transient refusal
-    if (isReadMoved(error)) throw error;
+    if (isReadMoved(error) || isMemorySendBusy(error) || isMemorySendFenced(error)) throw error;
     if (turn.signal.aborted) throw cancelled();
     return settled({ state: "refused", reason: "transient", detail: "request-failed", counted: false });
   }

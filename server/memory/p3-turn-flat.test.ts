@@ -126,7 +126,9 @@ it("the owner's pins are read through the partial index once it exists, keyed by
   for (const others of [10, 100_000]) {
     closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active");
     const db = database();
-    expect(ownerPinIndexPresent(db)).toBe(false);
+    // made before listen on every launch where it is missing (MEM-PIN-INDEX-BOOT); dropped here so the worker build below is still proven
+    expect(ownerPinIndexPresent(db)).toBe(true);
+    db.exec("DROP INDEX memory_records_pinned");
     db.exec("PRAGMA foreign_keys=OFF"); db.exec("BEGIN");
     db.prepare(`WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<?)
       INSERT INTO memory_records SELECT 'r'||n,1,'s-0','note','t','a','active',CASE WHEN n%50000=0 THEN 1 ELSE 0 END,0,NULL,NULL,0 FROM c`).run(others);

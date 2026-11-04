@@ -68,7 +68,7 @@ describe("the composer's send", () => {
     expect(start).toBeGreaterThan(-1);
     const check = send.indexOf("if (messageIsTooLarge(t)) {");
     expect(check).toBeGreaterThan(-1);
-    for (const later of ['type: "sendGroup"', 'type: "send",', "replyToIntake(", "beginDraftSend("]) {
+    for (const later of ['type: "sendGroup"', 'type: "send",', "replyAlongside(", "beginDraftSend("]) {
       expect(send.indexOf(later), later).toBeGreaterThan(check);
     }
     // up to the block's own closing brace, past the notice object literal
@@ -92,7 +92,11 @@ describe("the composer's send", () => {
     expect(send.match(/refusedForSize\(error\)/g)).toHaveLength(1);
     expect(send).not.toContain("restoreDraft(");
     // a setup card that did not hear it is said quietly; it never fails the send
-    expect(send).toContain("{ alongside: true }).then(() => setIntakeNotice(null), () => setIntakeNotice(INTAKE_NOT_RECORDED))");
+    // (PHONE-INTAKE-NOTICE: replyAlongside posts { alongside: true } and never
+    // throws; only a refused POST on a door that allows it sets the notice)
+    expect(send).toContain("void replyAlongside(bot.id, question, requestText, api, surface).then((outcome) => {");
+    expect(send).toContain('if (outcome === "recorded") setIntakeNotice(null);');
+    expect(send).toContain('else if (outcome === "refused") setIntakeNotice(INTAKE_NOT_RECORDED);');
   });
 
   it("shows the notice above the textarea and points the textarea at it", () => {

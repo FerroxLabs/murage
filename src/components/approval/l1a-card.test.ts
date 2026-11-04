@@ -22,7 +22,7 @@ vi.mock("@/state/store", async (importOriginal) => {
 import type { Bot, Message } from "@/state/store";
 import type { CardClass } from "../../../shared/fold-scopes";
 import { cardFoldRows, cardVerb, foldRowWords, type FoldCard } from "@/lib/fold-words";
-import { PendingApprovalActions, whyLine, type Pending } from "@/components/PendingApproval";
+import { PendingApprovalActions, PendingApprovalPanel, whyLine, type Pending } from "@/components/PendingApproval";
 import { ApprovalCard } from "@/components/ApprovalCard";
 import { GrantFold } from "./GrantFold";
 import { grantAddedFor, noteGrantAdded, removeRequest, resetGrantAdded, takeBackAdded } from "@/lib/grant-added";
@@ -117,8 +117,11 @@ function pending(card: CardFixture): Pending {
   return { message, requestId: "req-1", tool: card.tool ?? "other", detail: "do it", allowKey: card.allowKey };
 }
 const BOT = { id: "b1", name: "Nova", autoApprove: true, threadId: "t1" } as unknown as Bot;
+// APPROVAL-ONE-CARD: the why-line sits in the panel under the title; the
+// buttons follow it. One card reads as both, in that order.
 const actions = (card: CardFixture) =>
-  renderToStaticMarkup(createElement(PendingApprovalActions, { pending: pending(card), threadId: "t1", bot: BOT, onCancelTurn: () => undefined }));
+  renderToStaticMarkup(createElement(PendingApprovalPanel, { pending: pending(card), who: "Nova", bot: BOT, threadId: "t1" }))
+  + renderToStaticMarkup(createElement(PendingApprovalActions, { pending: pending(card), threadId: "t1", bot: BOT, onCancelTurn: () => undefined }));
 
 describe("1.1 the card's buttons and why-line", () => {
   beforeEach(() => { surface.desktop = true; surface.native = false; });
@@ -147,11 +150,22 @@ describe("1.1 the card's buttons and why-line", () => {
     expect(html).not.toContain("data-fold-caret");
     expect(html).toContain("Murage could not read this whole, so it asks. Allow it once if it is right.");
   });
-  it("on the phone app the fold opens from a link, not a caret", () => {
+  it("on the phone app the fold rows sit in the Details sheet, with no caret and no second link", () => {
     surface.desktop = false; surface.native = true;
     const html = actions(PUBLIC);
     expect(html).not.toContain("data-fold-caret");
-    expect(html).toContain("Post and stop asking…");
+    expect(html).not.toContain("Post and stop asking…");
+    expect(html).not.toContain("Stop asking for this");
+    expect(html).toContain("data-approval-details");
+    expect(html).toMatch(/>Details</);
+    surface.desktop = true; surface.native = false;
+  });
+  it("a wide browser window keeps the panel layout, not the phone bar", () => {
+    surface.desktop = false; surface.native = false;
+    const html = actions(PUBLIC);
+    expect(html).toContain('data-approval-layout="panel"');
+    expect(html).not.toContain("data-approval-details");
+    surface.desktop = true;
   });
   it("whyLine reads only ux.l1.why keys", () => {
     expect(whyLine({ why: { key: "settings.title", params: {} } } as unknown as Message["card"])).toBeUndefined();

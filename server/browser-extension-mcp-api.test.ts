@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Real Murage HTTP/approval flow with a declared fake browser broker, not native proof.
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 const instrumentation = `
@@ -120,4 +121,14 @@ it("disabling a browser cancels an external action already awaiting approval", a
   expect((await pressing).status).toBeGreaterThanOrEqual(400);
   await request(`/api/threads/${threadId}/respond`, { requestId: action.requestId, behavior: "allow" });
   expect((await request("/api/browser-extension/mcp", { method: "tools/list" }, client)).status).toBe(403);
+});
+it("1.0.15 BIRTH-FUIGO: a paired client's new bot is born by the birth rule, marked, the same as a bot made with no pick", async () => {
+  const paired = await request("/api/browser-extension/clients", { action: "pair", label: "Birth fixture", profileId: "fixture_profile" });
+  expect(paired.status).toBe(201);
+  const control = await request("/api/bots", { name: "Birth control" });
+  expect(control.status).toBe(201);
+  const onDisk = (id: string) => (JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")) as Array<{ id: string; modelSelection?: { instanceId: string; model: string }; engineAutoPicked?: true }>).find(bot => bot.id === id);
+  const pairedBot = onDisk(paired.body.botId), controlBot = onDisk(control.body.bot.id);
+  expect(pairedBot?.engineAutoPicked).toBe(true);
+  expect(pairedBot?.modelSelection).toEqual(controlBot?.modelSelection);
 });

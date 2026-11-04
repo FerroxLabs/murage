@@ -46,7 +46,7 @@ it("requires semantic grounding for paraphrases and refuses negation, quoted dra
   expect(await captureBotReveals(job,()=>roster,null,signal())).toMatchObject({status:"deferred",reason:"grounding-unavailable"});
   expect(reveals()).toHaveLength(0);
   const extract=evaluator(true);await captureBotReveals(job,()=>roster,extract,signal());
-  expect(extract.ground).toHaveBeenCalledWith(expect.objectContaining({purpose:"reveal",text,quote:"In my fictional past, I looked after a beacon by the sea."}),expect.any(Number),expect.any(AbortSignal));
+  expect(extract.ground).toHaveBeenCalledWith(expect.objectContaining({purpose:"reveal",text,quote:"In my fictional past, I looked after a beacon by the sea."}),expect.any(Number),expect.any(AbortSignal),expect.objectContaining({purpose:"grounding",released:0,refused:false}));
   expect(reveals()).toHaveLength(1);
 });
 it.each(["I did not tend a lighthouse.",`Here is an unsent draft: ${text}`,"Perhaps I will tell you about the lighthouse later."])("does not label rejected semantic evidence as revealed: %s",async value=>{

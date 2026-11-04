@@ -991,6 +991,9 @@ const support: AcpSupport = {
     const normal = normalizeHermesAsk(rawInput);
     return normal?.ok ? { ok: true, rawInput: normal.rawInput, summary: normal.summary } : normal && { ok: false, why: normal.why, summary: normal.summary, ...(normal.cut ? { cut: true } : {}) };
   },
+  // U2 C7: with reasoning on, Hermes re-sends its streamed reply whole under the same messageId, after its
+  // reasoning block; that chunk is dropped so the reply shows once (upstream 40deb33ce).
+  resendsReasoningReply: true,
   spawnArgs: (config, turn, ctx) => {
     if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
     return hermesSpawnArgs(config, ctx?.env);

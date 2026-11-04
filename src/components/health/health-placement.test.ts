@@ -137,7 +137,7 @@ describe("what reaches Needs you", () => {
     const inbox = source("Inbox.tsx");
     expect(inbox).not.toContain("HealthCard");
     expect(inbox).not.toContain("inHealth");
-    const page = read("../shell/stubs/needs-page.tsx");
+    const page = read("../needs/NeedsYouPageBody.tsx");
     const link = page.indexOf("data-needs-health-link");
     expect(link).toBeGreaterThan(0);
     expect(link).toBeLessThan(page.indexOf("<Inbox"));

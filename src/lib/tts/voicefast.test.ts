@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AckCues, ACK_TEXT, type CueStore } from "./ack-cue";
 import { INHALE_AFTER_MS, Inhale, type InhaleTimers } from "./inhale";
 import { Speaker, type Audible, type ClipPlayer, type ClipOutcome } from "./index";
 
@@ -169,60 +168,7 @@ describe("barge-in", () => {
   });
 });
 
-describe("the instant acknowledgement", () => {
-  const memoryStore = (): CueStore & { map: Map<string, Blob> } => {
-    const map = new Map<string, Blob>();
-    return { map, get: async (k) => map.get(k), set: async (k, v) => void map.set(k, v) };
-  };
-
-  it("is made once per voice through the normal speech path, kept, and played with no network", async () => {
-    const made = vi.fn(async () => new Blob(["mm"]));
-    const store = memoryStore();
-    const cues = new AckCues(made, store);
-    const cue = vi.fn(async () => {});
-    expect(cues.play("b", "eve", { cue })).toBe(false);
-    await cues.prime("b", "eve");
-    await cues.prime("b", "eve");
-    expect(made).toHaveBeenCalledTimes(1);
-    expect(store.map.size).toBe(1);
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    expect(cues.play("b", "eve", { cue })).toBe(true);
-    expect(cue).toHaveBeenCalledTimes(1);
-    expect(fetchSpy).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
-  });
-
-  it("comes back from the local store on the next launch without asking the service again", async () => {
-    const store = memoryStore();
-    await new AckCues(async () => new Blob(["mm"]), store).prime("b", "ara");
-    const made = vi.fn(async () => new Blob(["other"]));
-    const next = new AckCues(made, store);
-    await next.prime("b", "ara");
-    expect(made).not.toHaveBeenCalled();
-    expect(next.has("b", "ara")).toBe(true);
-  });
-
-  it("a different voice has its own cue; a failed make means no cue, not an error", async () => {
-    const cues = new AckCues(async (_b, v) => { if (v === "bad") throw new Error("down"); return new Blob([v ?? ""]); });
-    await cues.prime("b", "eve");
-    await expect(cues.prime("b", "bad")).resolves.toBeUndefined();
-    expect(cues.has("b", "eve")).toBe(true);
-    expect(cues.has("b", "bad")).toBe(false);
-    expect(cues.has("b", "rex")).toBe(false);
-  });
-
-  it("asks speech for the short cue text through the normal /api/tts/speak", async () => {
-    const bodies: any[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)));
-      return new Response(new Blob(["mm"]), { status: 200 });
-    }));
-    await new AckCues().prime("bot1", "eve");
-    expect(bodies).toEqual([{ text: ACK_TEXT, voiceId: "eve", botId: "bot1" }]);
-    vi.unstubAllGlobals();
-  });
-
+describe("the cue output", () => {
   it("Speaker.cue plays through the output without changing speech state, and not over speech", async () => {
     const speaker = new Speaker(() => 0, () => {});
     const player = new FakePlayer();

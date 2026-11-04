@@ -1,0 +1,24 @@
+{
+  "doc": [
+    "What counts as a step (MurageMain ruling, 11-03):",
+    "- Each discrete owner input is one step: a click or tap, and each Tab, arrow, Enter, Esc or shortcut press.",
+    "- Typing a run of characters into one field is ONE step, however long.",
+    "- Mouse and keyboard runs are counted and budgeted separately, from the per-mode steps below.",
+    "- Keyboard is report only in 1.0.17 (MurageMain 11-03): its steps are walked and recorded, never passed or failed. Keyboard budgets are set in 1.0.18 after the app focus-order and shortcut work (row TENJOBS-KEYBOARD-APP); null means no budget yet.",
+    "Waits, checks and the start state a job's setup puts in place are not steps. Decisions are the steps where the owner picks between options."
+  ],
+  "source": "UX-OVERHAUL-BUILD-PLAN.md section 5 (Sean 10-30). Change a budget only with MurageMain's word.",
+  "jobs": [
+    { "id": 0, "name": "First run", "steps": { "mouse": 5, "keyboard": null }, "decisions": 1, "engine": "real" },
+    { "id": 1, "name": "Create a bot", "steps": { "mouse": 2, "keyboard": null }, "decisions": 1, "engine": "real" },
+    { "id": 2, "name": "Connect Gmail", "steps": { "mouse": 3, "keyboard": null }, "decisions": 0, "engine": "none" },
+    { "id": 3, "name": "Morning routine", "steps": { "mouse": 2, "keyboard": null }, "decisions": 1, "engine": "real" },
+    { "id": 4, "name": "Approve or deny", "steps": { "mouse": 2, "keyboard": null }, "decisions": 1, "engine": "real" },
+    { "id": 5, "name": "Change a level", "steps": { "mouse": 3, "keyboard": null }, "decisions": 1, "engine": "none" },
+    { "id": 6, "name": "Find a setting", "steps": { "mouse": 2, "keyboard": null }, "decisions": 0, "engine": "none" },
+    { "id": 7, "name": "Connect Telegram", "steps": { "mouse": 4, "keyboard": null }, "decisions": 1, "engine": "none" },
+    { "id": 8, "name": "Understand a cost", "steps": { "mouse": 1, "keyboard": null }, "decisions": 0, "engine": "none" },
+    { "id": 9, "name": "Pair the phone", "steps": { "mouse": 3, "keyboard": null }, "decisions": 0, "engine": "none" },
+    { "id": 10, "name": "Start a chat with the right bot", "steps": { "mouse": 2, "keyboard": null }, "decisions": 0, "engine": "none" }
+  ]
+}

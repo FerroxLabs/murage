@@ -5,7 +5,7 @@
 // openai-compat prompt contracts, the inference purpose route, pacing behind an interactive turn, and the limit pause.
 import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
@@ -19,11 +19,12 @@ import { CodexDriver } from "./codex.ts";
 import { GeminiAgentDriver } from "./acp/gemini.ts";
 
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 afterEach(() => { setLearningClockForTests(null); vi.unstubAllEnvs(); });
 
 type Script = (prompt: string, emit: (event: Record<string, unknown>) => void, input: SendTurnInput) => void | Promise<void>;
 /** A fake engine that only offers a turn (the shape Codex and the ACP engines have). */
-function fakeEngine(script: Script, id = "codex-fixture", name = "Codex") {
+function fakeEngine(script: Script, id = "codex-fixture", name = "Codex", options?: Parameters<typeof withCliMemoryLearning>[1]) {
   const listeners = new Set<(event: RuntimeEvent) => void>();
   const sent: SendTurnInput[] = [];
   const denied: string[] = [];
@@ -45,7 +46,7 @@ function fakeEngine(script: Script, id = "codex-fixture", name = "Codex") {
     resetSession: async () => undefined,
   };
   const instance = { instanceId: id, driverKind: "codex", displayName: name, enabled: true, adapter, dispose: async () => undefined } as unknown as ProviderInstance;
-  return { instance: withCliMemoryLearning(instance), sent, denied, cwds, emitFor, listeners };
+  return { instance: withCliMemoryLearning(instance, options), sent, denied, cwds, emitFor, listeners };
 }
 
 const answer = (text: string): Script => (_prompt, emit) => {
@@ -64,6 +65,7 @@ const contractEngine: Script = (prompt, emit) => {
 const learning = (instance: ProviderInstance, selected: string | null = instance.instanceId) =>
   resolveLearningConnection({ selected, instances: [instance], readKey: () => null, defaultOn: true });
 const signal = () => new AbortController().signal;
+const fenced = () => ({ fence: openLearningGate() }) as never;
 const grounding = (over: Record<string, unknown> = {}) => ({ text: "The owner reads reports daily.", quote: "reads reports daily", claimType: "owner-statement", speaker: "owner", outcome: "sent", ...over });
 
 describe("CLI and ACP learning (H12)", () => {
@@ -77,9 +79,27 @@ describe("CLI and ACP learning (H12)", () => {
     expect(typeof resolveMemoryExtractor("codex-fixture", [instance])!.ground).toBe("function");
   });
 
+  it("runs a one-off inside the folder the engine names, wipes it after, and falls back to the temp folder", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "murage-oneshot-parent-"));
+    try {
+      const named = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => parent });
+      await named.instance.checkReply!(signal());
+      const cwd = named.sent[0].cwd!;
+      expect(dirname(cwd)).toBe(parent);
+      expect(named.cwds[0]).toEqual([]);
+      await vi.waitFor(() => expect(existsSync(cwd)).toBe(false));
+      expect(existsSync(parent)).toBe(true);
+      const failing = fakeEngine(answer("OK"), "opencode-fixture", "OpenCode", { oneShotFolder: async () => { throw new Error("no folder"); } });
+      await failing.instance.checkReply!(signal());
+      expect(dirname(failing.sent[0].cwd!)).toBe(tmpdir());
+    } finally {
+      removeTempDirSync(parent);
+    }
+  });
+
   it("extracts with the openai-compat prompt, as JSON in an empty folder with no tools mounted", async () => {
     const engine = fakeEngine(contractEngine);
-    const raw = await learning(engine.instance).extractor!("The owner reads reports daily.", 2000, signal());
+    const raw = await learning(engine.instance).extractor!("The owner reads reports daily.", 2000, signal(), fenced());
     expect(JSON.parse(raw)).toHaveLength(1);
     const prompt = engine.sent[0].text;
     expect(prompt).toBe(flattenMemoryMessages(memoryExtractionMessages("The owner reads reports daily.")));
@@ -96,7 +116,7 @@ describe("CLI and ACP learning (H12)", () => {
     const engine = fakeEngine(contractEngine);
     const extractor = learning(engine.instance).extractor!;
     const input = grounding({ text: "Reads the reports every day.", claimType: "owner-statement" });
-    const raw = await extractor.ground!(input, 64, signal());
+    const raw = await extractor.ground!(input, 64, signal(), openLearningGate("grounding"));
     expect(JSON.parse(raw)).toEqual({ supported: true });
     expect(engine.sent[0].text).toBe(flattenMemoryMessages(memoryGroundingMessages(input)));
     expect(engine.sent[0].text).toContain("Independently judge");
@@ -106,17 +126,17 @@ describe("CLI and ACP learning (H12)", () => {
     const engine = fakeEngine(contractEngine);
     const extractor = learning(engine.instance).extractor!;
     const input = grounding({ text: "The owner moved to Lisbon.", quote: "moved to Lisbon", previousClaim: "The owner lives in Austin." });
-    expect(JSON.parse(await extractor.ground!(input, 64, signal()))).toEqual({ supported: true });
+    expect(JSON.parse(await extractor.ground!(input, 64, signal(), openLearningGate("grounding")))).toEqual({ supported: true });
     expect(engine.sent[0].text).toContain("The owner lives in Austin.");
     const mere = grounding({ text: "The owner likes Lisbon.", quote: "likes Lisbon", previousClaim: "The owner lives in Austin." });
-    expect(JSON.parse(await extractor.ground!(mere, 64, signal()))).toEqual({ supported: false });
+    expect(JSON.parse(await extractor.ground!(mere, 64, signal(), openLearningGate("grounding")))).toEqual({ supported: false });
   });
 
   it("a procedure evaluation runs through the host's own messages", async () => {
     const engine = fakeEngine(answer('{"verdict":"keep"}'));
     const extractor = learning(engine.instance).extractor!;
     const messages = [{ role: "system", content: "Evaluate this procedure." }, { role: "user", content: "{\"procedure\":\"weekly report\"}" }];
-    const raw = await extractor("weekly report", 2000, signal(), { policyRevision: "r1", messages, purpose: "evaluation" });
+    const raw = await extractor("weekly report", 2000, signal(), { policyRevision: "r1", messages, purpose: "evaluation", fence: openLearningGate("evaluation") });
     expect(raw).toBe('{"verdict":"keep"}');
     expect(engine.sent[0].text).toBe(flattenMemoryMessages(messages));
   });
@@ -125,7 +145,7 @@ describe("CLI and ACP learning (H12)", () => {
     const engine = fakeEngine(answer("{}"));
     const extractor = learning(engine.instance).extractor!;
     const messages = [{ role: "system", content: "REFLECT ON THE DAY" }, { role: "user", content: "notes" }];
-    await extractor("notes", 8000, signal(), { policyRevision: "r1", messages, purpose: "reflection" });
+    await extractor("notes", 8000, signal(), { policyRevision: "r1", messages, purpose: "reflection", fence: openLearningGate("reflection") });
     expect(engine.sent[0].text).toContain("REFLECT ON THE DAY");
     expect(engine.sent[0].text).not.toContain("Return only a JSON array");
     // the ordinary cap (2000) holds without a purpose, the reflection cap (8000) only with one
@@ -142,7 +162,7 @@ describe("CLI and ACP learning (H12)", () => {
     });
     const extractor = learning(engine.instance).extractor!;
     await expect(extractor("a".repeat(65_537), 2000, signal())).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
-    await expect(extractor("small", 2000, signal())).rejects.toThrow("MEMORY_EXTRACTION_RESPONSE_LIMIT");
+    await expect(extractor("small", 2000, signal(), fenced())).rejects.toThrow("MEMORY_EXTRACTION_RESPONSE_LIMIT");
     expect(engine.denied).toEqual(["r1"]);
   });
 
@@ -157,7 +177,7 @@ describe("CLI and ACP learning (H12)", () => {
       emit({ type: "turn.completed", ok: true });
     });
     const extractor = learning(engine.instance).extractor!;
-    const first = extractor("one", 2000, signal()), second = extractor("two", 2000, signal());
+    const first = extractor("one", 2000, signal(), fenced()), second = extractor("two", 2000, signal(), fenced());
     await vi.waitFor(() => expect(releases).toHaveLength(1));
     expect(engine.sent).toHaveLength(1);
     releases[0]();
@@ -171,21 +191,21 @@ describe("CLI and ACP learning (H12)", () => {
   it("an interactive turn makes extraction wait until the engine is idle", async () => {
     const engine = fakeEngine(answer("[]"));
     engine.emitFor("owner-chat")({ type: "turn.started" });
-    const pending = learning(engine.instance).extractor!("source", 2000, signal());
+    const pending = learning(engine.instance).extractor!("source", 2000, signal(), fenced());
     await new Promise(resolve => setTimeout(resolve, 30));
     expect(engine.sent).toHaveLength(0);
     engine.emitFor("owner-chat")({ type: "turn.completed", ok: true });
     await expect(pending).resolves.toBe("[]");
     expect(engine.sent).toHaveLength(1);
     // the hidden session's own turn is never counted as interactive
-    await expect(learning(engine.instance).extractor!("again", 2000, signal())).resolves.toBe("[]");
+    await expect(learning(engine.instance).extractor!("again", 2000, signal(), fenced())).resolves.toBe("[]");
   });
 
   it("a waiting extraction stops when its caller gives up", async () => {
     const engine = fakeEngine(answer("[]"));
     engine.emitFor("owner-chat")({ type: "turn.started" });
     const controller = new AbortController();
-    const pending = learning(engine.instance).extractor!("source", 2000, controller.signal);
+    const pending = learning(engine.instance).extractor!("source", 2000, controller.signal, fenced());
     controller.abort();
     await expect(pending).rejects.toThrow("MEMORY_EXTRACTION_ABORTED");
     expect(engine.sent).toHaveLength(0);
@@ -199,9 +219,9 @@ describe("CLI and ACP learning (H12)", () => {
       emit({ type: "turn.completed", ok: false });
     });
     const first = learning(engine.instance);
-    await expect(first.extractor!("source", 2000, signal())).rejects.toMatchObject({ status: 429, limit: true });
+    await expect(first.extractor!("source", 2000, signal(), fenced())).rejects.toMatchObject({ status: 429, limit: true });
     expect(learning(engine.instance)).toMatchObject({ source: "none", extractor: null, reason: "Learning waits while Codex is at its limit." });
-    await expect(first.extractor!("source", 2000, signal())).rejects.toThrow("MEMORY_EXTRACTOR_UNAVAILABLE");
+    await expect(first.extractor!("source", 2000, signal(), fenced())).rejects.toThrow("MEMORY_EXTRACTOR_UNAVAILABLE");
     expect(engine.sent).toHaveLength(1);
     now += ENGINE_LIMIT_PAUSE_MS + 1;
     expect(learning(engine.instance)).toMatchObject({ source: "chosen" });
@@ -212,7 +232,7 @@ describe("CLI and ACP learning (H12)", () => {
       emit({ type: "runtime.error", message: "Not logged in. Please run /login", authRequired: true });
       emit({ type: "turn.completed", ok: false });
     });
-    await expect(learning(engine.instance).extractor!("source", 2000, signal())).rejects.toMatchObject({ status: 401 });
+    await expect(learning(engine.instance).extractor!("source", 2000, signal(), fenced())).rejects.toMatchObject({ status: 401 });
     expect(learning(engine.instance)).toMatchObject({ source: "none", reason: "Learning is paused: the engine asked you to sign in again." });
   });
 });
@@ -275,7 +295,7 @@ describe("Claude one-shot learning (fake CLI)", () => {
       const extractor = learning(instance).extractor!;
       expect(typeof extractor.ground).toBe("function");
       const input = grounding();
-      expect(JSON.parse(await extractor.ground!(input, 64, signal()))).toEqual({ supported: true });
+      expect(JSON.parse(await extractor.ground!(input, 64, signal(), openLearningGate("grounding")))).toEqual({ supported: true });
       const seen = JSON.parse(readFileSync(dump, "utf8"));
       expect(seen.argv).toEqual(expect.arrayContaining(["--tools", "", "--strict-mcp-config", "--no-session-persistence"]));
       expect(seen.argv).not.toContain("--dangerously-skip-permissions");
@@ -289,7 +309,7 @@ describe("Claude one-shot learning (fake CLI)", () => {
     vi.stubEnv("FAKE_CLAUDE_ONE_SHOT_ERROR", "Claude AI usage limit reached|1760000000");
     const instance = await create();
     const first = learning(instance);
-    await expect(first.extractor!("The owner reads reports daily.", 2000, signal())).rejects.toMatchObject({ status: 429, limit: true });
+    await expect(first.extractor!("The owner reads reports daily.", 2000, signal(), fenced())).rejects.toMatchObject({ status: 429, limit: true });
     expect(learning(instance)).toMatchObject({ source: "none", reason: "Learning waits while Claude is at its limit." });
   }, 30_000);
 });
