@@ -77,4 +77,30 @@ entries:
     verified: 1.0.10
     doc: features/settings-guide#built-in-browser
     internal: KB apps-30. Engine list from browserMcp (claude.ts, codex.ts true; ACP core true unless ownTools).
+
+  - id: apps.webhook-routines
+    name: Start a routine from a webhook
+    status: partial
+    questions:
+      - Can a webhook start my bot?
+      - Run a routine when another tool sends a request
+      - Can Stripe start a routine?
+      - Does Murage have webhooks?
+      - Give my bot a link other apps can call
+    answer: >
+      Yes. A webhook routine gives a bot a link, and each request to it starts a new task in the bot's chat.
+      Your bot can propose one in your chat, or you can make one on the Routines page.
+    limits: >
+      On the desktop app the link listens on this computer only, so outside services such as Stripe cannot reach it yet.
+      A script or tool on the same computer can call it.
+    ask_your_bot: Ask your bot to set up a webhook routine that a script on this computer can call.
+    platforms: [mac, windows, linux]
+    engines: [all]
+    anchors:
+      - 'file:server/webhook-ingress.ts#const host = options.host ?? "127.0.0.1"'
+      - 'file:src/components/WebhooksPanel.tsx#New local webhook'
+      - 'file:server/drivers/agents-proxy.ts#On the desktop app that link listens on this computer only'
+    verified: 1.0.14
+    doc: features/automation#routines
+    internal: SABLE-WISHLIST-TRIAGE 1a. Ingress binds 127.0.0.1 (webhook-ingress.ts listenWebhookIngress); index.ts passes only the port. A Cloud home publishes /hooks through Caddy, so this entry is desktop only.
 retired: []

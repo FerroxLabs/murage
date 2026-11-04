@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { api, useStoreIfAny } from "@/state/store";
 import { LearningPausedCard } from "./LearningPausedCard";
@@ -17,8 +17,17 @@ import { backupWaitingSentence } from "../../shared/backup-waiting";
 import { t } from "@/lib/i18n";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { InboxEngineSignInRow } from "./InboxEngineSignInRow";
+import { NeedsRow } from "./needs/NeedsRow";
+import { offerSnoozeUndo } from "./needs/snooze-undo";
+import { BotAvatar } from "./Avatar";
+import { botChips, createSnoozeReturns, groupNeeds, needsKeyAction, nextAfterAnswer, cameBack, doorOrder, isHeldActivation, snoozeTarget, waitingSinceTime } from "@/lib/needs-keys";
+import { isEditableTarget, undoHost } from "@/lib/undo";
+import { showSnoozeReturn } from "@/lib/notify";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
+// One timer per row snoozed from the door, kept while the app is open (not while this page is), so the
+// "came back" notification still lands after the owner has gone to another view.
+const snoozeReturns = createSnoozeReturns();
 // Learning suggestions and their screen copy load the first time the inbox has one (spec §6).
 const LearningSuggestions = retryableLazy(() => import("./InboxLearningSuggestions").then((module) => ({ default: module.InboxLearningSuggestions })));
 // Memories the bots would like to keep load the first time the inbox has some.
@@ -86,7 +95,8 @@ export const INBOX_OWED_VIEWS: readonly InboxView[] = ["decisions", "approvals",
 export const INBOX_VIEW_COPY: Partial<Record<InboxView, string>> = {
   approvals: "Something is drafted and waiting on your yes. Nothing here has been sent or done. Reading one, or snoozing it, is not answering it.",
   questions: "A judgement only you can make. Nothing is drafted yet, so there is nothing to undo either way.",
-  connections: "Something needs your hands. A login has gone, and no amount of waiting brings it back. Anything depending on it is stopped until you reconnect it.",
+  // The Needs you door's words for this tab (UX plan L2B): a sign-in that went, or a Flux Router allowance used up.
+  connections: "A sign-in or an allowance stopped work. Fix it and the work goes ahead.",
   routines: "What your routines have been doing. One line per routine, not per run, and nothing here is waiting on you.",
   results: "Work your bots finished in the background.",
   decisions: "Everything waiting on an answer from you. Nothing here moves until you say. Reading one, or snoozing it, is not answering it.",
@@ -224,7 +234,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions" }: { onOpen: (link: InboxLink) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models") => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions", door = false }: { onOpen: (link: InboxLink) => void; door?: boolean; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models", anchor?: string) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -257,8 +267,19 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // they clicked cannot bring it back. Put back only if the change failed.
   const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
   const changing = useRef(false);
+  // THE NEEDS YOU DOOR (UX L2B). On the owed tabs each row is one line with Open; the card opens in place and every
+  // verb is on the open card. `openId` is the open card, `botFilter` the chip picked ("" = All).
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [botFilter, setBotFilter] = useState("");
+  const heads = useRef(new Map<string, HTMLButtonElement>());
+  const focusAfter = useRef<{ id: string; into: boolean } | null>(null);
+  // Snoozes already written, by id, with the first list revision that reads them back from the server.
+  const snoozeWritten = useRef(new Map<string, number>());
+  const revisionNow = useRef(revision);
+  revisionNow.current = revision;
   useEffect(() => {
     const controller = new AbortController();
+    const startedAt = revision;
     setLoading(true);
     const params = new URLSearchParams({ view, query, page: String(page), pageSize: "25", includeSnoozed: String(includeSnoozed) });
     const after = page > 0 ? cursors[page] : undefined;
@@ -268,6 +289,12 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       setReadError(null);
       if ((value as InboxPage).preparing) { setPreparing(true); return; }
       setPreparing(false); setResult(value as InboxPage);
+      // A written snooze was held out of the list only until a read made after the write; from here the server's answer decides (hidden, or shown with its time).
+      const landed = [...snoozeWritten.current].filter(([, at]) => at <= startedAt).map(([id]) => id);
+      if (landed.length) {
+        for (const id of landed) snoozeWritten.current.delete(id);
+        setGone(current => new Set([...current].filter(id => !landed.includes(id))));
+      }
     }).catch(reason => {
       if (!controller.signal.aborted) setReadError(reason instanceof Error ? reason.message : "Inbox could not load.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -314,7 +341,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // A new list: what was on screen belongs to the old one, so it goes rather
   // than sitting there under the new tab's name until the read lands.
   const reset = () => { setResult(null); setPage(0); setCursors([]); };
-  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); } };
+  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); setOpenId(null); setBotFilter(""); } };
   // Setting aside a request to connect an app: the same call as the card's
   // own "Not now" in the chat, one card or every one on this page.
   const dismiss = (items: InboxItem[]) => act(items.map(item => item.id), async () => {
@@ -390,9 +417,18 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const backupFailed = view === "decisions" || view === "to-read" || view === "all" ? result?.backupFailed ?? null : null;
   // WHAT NEEDS THE OWNER, FIRST (Sean 11-01). Health used to sit here as a whole card, and he scrolled past it every time
   // to reach what was waiting. Only a Health problem the owner must act on comes here, as an ordinary item with one
-  // action, already counted by the server. Everything else is on the Health screen, one quiet link away above this page (needs-page.tsx).
+  // action, already counted by the server. Everything else is on the Health screen, one quiet link away above this page (needs/NeedsYouPageBody.tsx).
   const healthNeeds = view === "decisions" || view === "all" ? result?.health?.needs ?? [] : [];
   const engineProblem = view === "decisions" || view === "connections" || view === "all" ? engineRow : null;
+  // A FLUX ROUTER ALLOWANCE USED UP is a connection problem with two ways on (UX L2B): open Flux Router, or use your own
+  // key. A live reading (GET /api/engine-health), so it goes by itself once Flux answers again; counted once, in
+  // Connections (inboxTabCounts, usePendingApprovals). Every other engine problem stays with Health.
+  const fluxUsedUp = engineProblem?.key === "flux-used-up" ? engineProblem : null;
+  const healthEngine = fluxUsedUp ? null : engineProblem;
+  const openSettingsAt = (anchor: string) => {
+    if (onOpenSettingsPage) onOpenSettingsPage("models", anchor);
+    else store?.dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor });
+  };
   // Lessons a bot suggested, waiting for the owner's yes: the only learning the Inbox shows.
   const suggestionRows = view === "decisions" || view === "all" ? result?.learningSuggestions ?? [] : [];
   // Memories the bots would like to keep: one card per bot, counted per item in `decisions` (server/inbox-memory-waiting.ts).
@@ -406,7 +442,10 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // A thread this surface cannot read simply yields nothing, and the row
   // keeps its "Open request" button.
   const [cards, setCards] = useState<Record<string, OptionCardData>>({});
-  const waiting = list.filter(item => item.kind === "request" && item.status === "pending").slice(0, INLINE_CARD_LIMIT);
+  const pendingRequests = (door ? doorOrder(list, Date.now()) : list).filter(item => item.kind === "request" && item.status === "pending");
+  // The door reads the live card of the open row too, wherever it sits, so an open card always has its verbs.
+  const openBeyond = door && openId ? pendingRequests.slice(INLINE_CARD_LIMIT).find(item => item.id === openId) : undefined;
+  const waiting = [...pendingRequests.slice(0, INLINE_CARD_LIMIT), ...(openBeyond ? [openBeyond] : [])];
   const waitingKey = waiting.map(item => `${item.link.threadId}:${item.link.messageId}:${item.version}`).join("|");
   useEffect(() => {
     if (!waiting.length) { setCards(current => (Object.keys(current).length ? {} : current)); return; }
@@ -426,10 +465,152 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     // the array itself would re-fetch on every render.
   }, [waitingKey]);
   const owed = INBOX_OWED_VIEWS.includes(view);
+  // THE DOOR'S LIST: oldest first so nothing waits twice, a chip per bot, and past 20 rows a group per bot.
+  const doorRows = door && owed;
+  const botOf = (item: InboxItem) => botNameFromSource(item.sourceLabel);
+  const ordered = doorRows ? doorOrder(list, Date.now()) : list;
+  const chips = doorRows ? botChips(ordered, botOf) : [];
+  const picked = doorRows && botFilter && chips.some(chip => chip.bot === botFilter) ? botFilter : "";
+  const groups = doorRows ? groupNeeds(picked ? ordered.filter(item => botOf(item) === picked) : ordered, botOf) : [];
+  const doorIds = groups.flatMap(group => group.rows.map(item => item.id));
+  const shownOpen = openId && doorIds.includes(openId) ? openId : null;
+  const snoozedOwed = owed ? result?.snoozedOwed ?? 0 : 0;
+  // Focus follows the sweep: into the card that just opened (its first control, so 1 to 9 pick), or back to a row's Open.
+  useEffect(() => {
+    const next = focusAfter.current;
+    if (!next) return;
+    focusAfter.current = null;
+    const head = heads.current.get(next.id);
+    if (!next.into) { head?.focus(); return; }
+    const body = document.getElementById(`needs-row-body-${next.id}`);
+    // Never onto a verb: a held Enter that opened the row must not land on Allow. A question's first group takes 1 to 9.
+    const group = body?.querySelector<HTMLElement>('[role="radiogroup"][tabindex="0"], [role="group"][tabindex="0"]');
+    const item = list.find(entry => entry.id === next.id);
+    const loading = item?.kind === "request" && item.status === "pending" && !cards[item.link.messageId];
+    if (group) group.focus();
+    else if (body) { if (!body.hasAttribute("tabindex")) body.setAttribute("tabindex", "-1"); body.focus(); }
+    else head?.focus();
+    // The live card has not arrived yet: try again when it does.
+    if (!group && loading) focusAfter.current = next;
+  });
+  const openRow = (id: string | null, into = true) => { setOpenId(id); if (id) focusAfter.current = { id, into }; };
+  const snooze = (item: InboxItem) => {
+    const target = snoozeTarget(Date.now());
+    const remaining = doorIds.filter(id => id !== item.id);
+    setGone(current => new Set([...current, item.id]));
+    if (shownOpen === item.id) openRow(nextAfterAnswer(doorIds, item.id));
+    else if (remaining.length) focusAfter.current = { id: nextAfterAnswer(doorIds, item.id) ?? remaining[0]!, into: false };
+    const putBack = () => setGone(current => new Set([...current].filter(id => id !== item.id)));
+    let written: Promise<unknown> | null = null;
+    let undone = false;
+    offerSnoozeUndo(undoHost, {
+      id: item.id,
+      message: target.tomorrow ? t("ux.l2b.snooze.doneTomorrow", { time: target.time }) : t("ux.l2b.snooze.done", { time: target.time }),
+      onUndo: (committed) => {
+        undone = true;
+        snoozeWritten.current.delete(item.id);
+        putBack();
+        snoozeReturns.cancel(item.id);
+        if (!committed) return;
+        // After the snooze write settles, so the clear can never land first.
+        void (written ?? Promise.resolve()).catch(() => undefined).then(() => saveState(item, { snoozedUntil: null })).then(() => setRevision(current => current + 1), () => setActionError(t("ux.l2b.snooze.undoFailed")));
+      },
+      commit: () => {
+        written = saveState(item, { snoozedUntil: target.until });
+        void written.then(() => {
+          if (undone) return;
+          snoozeWritten.current.set(item.id, revisionNow.current + 1);
+          snoozeReturns.schedule(item.id, target.until, Date.now(), () => {
+            showSnoozeReturn(`${item.id}:${target.until}`, { title: t("ux.l2b.snooze.returnTitle"), body: t("ux.l2b.snooze.returnBody") }, () => store?.dispatch({ type: "showNeedsYou" }));
+            setRevision(current => current + 1);
+          });
+          setRevision(current => current + 1);
+        }, () => { putBack(); setActionError(t("ux.l2b.snooze.failed")); });
+      },
+    });
+  };
+  // A held key never answers: its repeats (Enter, Space, 1 to 9) are stopped on the way down, before any card or button
+  // inside the door sees them, so each answer, and each card the sweep opens, takes a fresh press.
+  const onDoorKeyCapture = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (isHeldActivation(event) && !isEditableTarget(event.target as HTMLElement)) { event.preventDefault(); event.stopPropagation(); }
+  };
+  const onDoorKey = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    const row = target.closest<HTMLElement>("[data-needs-row]")?.dataset.needsRow ?? null;
+    const onHead = target.hasAttribute("data-needs-open");
+    // Enter and Space on a row's Open button are that button's own click.
+    if (onHead && (event.key === "Enter" || event.key === " ")) return;
+    const action = needsKeyAction({
+      key: event.key,
+      typing: event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(target),
+      handled: event.defaultPrevented,
+      inCard: Boolean(row && row === shownOpen && !onHead),
+    }, doorIds, row, shownOpen);
+    if (!action) return;
+    event.preventDefault();
+    if (action.type === "open") openRow(action.id);
+    else if (action.type === "close") { const was = shownOpen; setOpenId(null); if (was) focusAfter.current = { id: was, into: false }; }
+    else if (action.type === "focus") heads.current.get(action.id)?.focus();
+    else if (action.type === "snooze") { const item = ordered.find(entry => entry.id === action.id); if (item) snooze(item); }
+  };
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
   const sections = signedOut.length + restoreRows.length + healthNeeds.length + (engineProblem ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  /** One item's card: the classic Inbox row, and the inside of an open Needs you row (the same card, so the verbs match). */
+  const remindLabel = () => { const target = snoozeTarget(Date.now()); return t(target.tomorrow ? "ux.l2b.snooze.tomorrow" : "ux.l2b.snooze.at", { time: target.time }); };
+  const cardBody = (item: InboxItem) => {
+            // The bot's own words head the card whenever the live request can be
+            // read; `item.title` is the kind of thing it is, and stays as the
+            // line above it rather than as the headline.
+            const card = cards[item.link.messageId];
+            const headline = requestHeadline(card);
+            const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
+            const snoozed = item.snoozedUntil !== null && item.snoozedUntil > Date.now();
+            // The door shows snoozed rows only when asked to, and says when each comes back.
+            const snoozeShown = view !== "decisions" || door;
+            return <>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-secondary">
+                {!item.read && <span className="size-2 shrink-0 rounded-full bg-accent" aria-hidden />}
+                {!item.read && <span className="sr-only">Unread.</span>}
+                <span className="font-medium text-ink/80">{item.sourceLabel}</span>
+                <span aria-hidden>·</span>
+                <time dateTime={new Date(item.at).toISOString()}>{shortWhen(item.at)}</time>
+                {headline && <><span aria-hidden>·</span><span>{item.title}</span></>}
+              </div>
+              <h3 className="mt-1.5 break-words text-[15px] font-medium leading-snug">{headline || item.title}</h3>
+              {owed && <p className="mt-1 text-[12.5px] text-ink-secondary">{owedWaitingLine(item, Date.now())}</p>}
+              {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
+              {/* Only what adds something. "Pending" on a card in a list
+                  called Needs you, and "Read" on every card, said nothing. */}
+              {(item.status !== "pending" || item.duplicates > 1 || (snoozeShown && snoozed)) && <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
+                {item.status !== "pending" && <span className="rounded-md bg-control px-2 py-0.5">{statusLabel(item.status)}</span>}
+                {/* "Receipts" is the right word for the same request delivered
+                    twice. It is the wrong word for an engine that failed to sign in
+                    twenty times, which now arrives as one row carrying the count. */}
+                {item.duplicates > 1 && <span className="py-0.5 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
+                {snoozeShown && snoozed && <span className="py-0.5 text-ink-secondary">{door ? t("ux.l2b.snooze.until", { time: shortWhen(item.snoozedUntil!) }) : `Snoozed until ${shortWhen(item.snoozedUntil!)}`}</span>}
+              </div>}
+              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => {
+                // The sweep: an accepted answer takes the row away now and opens the next one.
+                snoozeReturns.cancel(item.id);
+                if (doorRows) { setGone(current => new Set([...current, item.id])); openRow(nextAfterAnswer(doorIds, item.id)); }
+                setRevision(current => current + 1);
+              }} />}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
+                <button className={button} disabled={saving} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
+                {item.dismissible && <button className={button} disabled={saving} onClick={() => void dismiss([item])}>Dismiss</button>}
+                {item.clearable && <button className={button} disabled={saving} onClick={() => void update(item, { cleared: true })}>Clear</button>}
+                {doorRows && (snoozed
+                  ? <button className={button} disabled={saving} onClick={() => { snoozeReturns.cancel(item.id); void update(item, { snoozedUntil: null }); }}>{t("ux.l2b.snooze.returnNow")}</button>
+                  : <button className={button} disabled={saving} aria-keyshortcuts="S" onClick={() => snooze(item)}>{remindLabel()}</button>)}
+                {!doorRows && view !== "decisions" && (snoozed
+                  ? <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
+                  : <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
+              </div>
+            </>;
+  };
   return <section aria-labelledby="inbox-title" aria-busy={loading} className={`${BOX_FRAME} mx-auto h-full w-full max-w-4xl bg-panel text-ink`}>
-    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">Inbox</h1>
+    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">{door ? t("ux.l2a.door.needsYou") : "Inbox"}</h1>
       <div className="flex gap-2">
         <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
           <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
@@ -449,13 +630,18 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         three different ways. */}
     <nav aria-label="Inbox views" className="mt-4 flex flex-wrap gap-2">
       {INBOX_VIEWS.map(({ value, label, count }) => <button key={value} className={viewTab(view === value)} aria-pressed={view === value} onClick={() => chooseView(value)}>
-        {label}{shown && count ? ` (${count(shown)})` : ""}
+        {/* Snoozed rows still count on the umbrella (hiding is not answering), as on the rail's badge. */}
+        {label}{shown && count ? ` (${count(shown) + (door && value === "decisions" ? result?.snoozedOwed ?? 0 : 0)})` : ""}
       </button>)}
     </nav>
     <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button}>Search</button>
     </form>
+    {door && snoozedOwed > 0 && <p className="mt-3 flex min-h-10 flex-wrap items-center gap-2 text-[13px] text-ink-secondary">
+      <span>{snoozedOwed === 1 ? t("ux.l2b.snooze.hiddenOne") : t("ux.l2b.snooze.hiddenMany", { n: snoozedOwed })}</span>
+      <button type="button" className={button} aria-pressed={includeSnoozed} onClick={() => { setIncludeSnoozed(!includeSnoozed); reset(); }}>{includeSnoozed ? t("ux.l2b.snooze.hide") : t("ux.l2b.snooze.show")}</button>
+    </p>}
     {!owed && <label className="mt-3 flex min-h-10 items-center gap-2 text-[13px] text-ink-secondary"><input type="checkbox" checked={includeSnoozed} onChange={event => { setIncludeSnoozed(event.target.checked); reset(); }} />Show snoozed items</label>}
     <div className="mt-5 flex-1">
     {actionError && <p role="alert" className="mb-3 rounded-lg border border-danger/40 p-3 text-[13px] text-danger">{actionError}</p>}
@@ -464,16 +650,29 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     {/* Routines draws its own list, so its emptiness is the rollup's, not
         the card list's. Reading `list` here would print "your routines have
         not run yet" underneath four routines that plainly had. */}
-    {result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-dashed border-hairline/60 p-8 text-center text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}</p>}
+    {result && inboxShowsEmpty(view, list, routineRows, ownRows) && <p className="rounded-xl border border-dashed border-hairline/60 p-8 text-center text-[13px] text-ink-secondary">{query ? "No matching Inbox items." : (INBOX_VIEW_EMPTY[view] ?? "No items in this view yet.")}
+      {door && !query && view === "decisions" && <span className="mt-1 block">{t("ux.l2b.door.emptyMore")}</span>}</p>}
     {/* A BACKUP THAT WAITS ON A CARD.
         Every backup closes and reopens Murage, and a run waiting on the
         owner cannot survive that, so the backup waits. Ask cards wait
         indefinitely, so this says so here instead of backups quietly
         stopping. It clears itself the moment the card is answered. */}
-    {(healthNeeds.length > 0 || engineProblem) && (
+    {fluxUsedUp && (
+      <InboxSection label={t("ux.l2b.flux.section")}>
+        <div role="status" data-needs-flux className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
+          <p className="font-medium text-ink">{t("ux.l2b.flux.title")}</p>
+          <p className="mt-1 text-ink-secondary">{t("ux.l2b.flux.detail")}</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className={button} onClick={() => openSettingsAt("flux-router-heading")}>{t("ux.l2b.flux.open")}</button>
+            <button type="button" className={button} onClick={() => openSettingsAt("models-heading")}>{t("ux.l2b.flux.ownKey")}</button>
+          </div>
+        </div>
+      </InboxSection>
+    )}
+    {(healthNeeds.length > 0 || healthEngine) && (
       <InboxSection label={t("ux.l2a.health.title")}>
         <div className="space-y-2">
-          {engineProblem && <EngineNeedCard title={engineProblem.title} detail={engineProblem.detail} label={engineProblem.label} onOpen={onOpenSettingsPage ? () => onOpenSettingsPage(engineProblem.section) : undefined} />}
+          {healthEngine && <EngineNeedCard title={healthEngine.title} detail={healthEngine.detail} label={healthEngine.label} onOpen={onOpenSettingsPage ? () => onOpenSettingsPage(healthEngine.section) : undefined} />}
           {healthNeeds.map(need => <HealthNeedCard key={need.titleKey} need={need} now={Date.now()} onOpen={onOpenSettingsPage} />)}
         </div>
       </InboxSection>
@@ -601,50 +800,39 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
           {clearable.length > 1 && <button className={button} disabled={saving} aria-label={`Clear all ${clearable.length} that need nothing from you`} onClick={() => void clearAll(clearable)}>Clear all {clearable.length}</button>}
         </>}
       >
-        <ul className="space-y-2" aria-label="Inbox items">
-          {list.map(item => {
-            // The bot's own words head the card whenever the live request can be
-            // read; `item.title` is the kind of thing it is, and stays as the
-            // line above it rather than as the headline.
-            const card = cards[item.link.messageId];
-            const headline = requestHeadline(card);
-            const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
-            const snoozed = item.snoozedUntil !== null && item.snoozedUntil > Date.now();
-            return <li key={item.id} className={`rounded-xl border bg-inset p-4 ${item.read ? "border-hairline/50" : "border-hairline"}`} data-inbox-id={item.id}>
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-ink-secondary">
-                {!item.read && <span className="size-2 shrink-0 rounded-full bg-accent" aria-hidden />}
-                {!item.read && <span className="sr-only">Unread.</span>}
-                <span className="font-medium text-ink/80">{item.sourceLabel}</span>
-                <span aria-hidden>·</span>
-                <time dateTime={new Date(item.at).toISOString()}>{shortWhen(item.at)}</time>
-                {headline && <><span aria-hidden>·</span><span>{item.title}</span></>}
-              </div>
-              <h3 className="mt-1.5 break-words text-[15px] font-medium leading-snug">{headline || item.title}</h3>
-              {owed && <p className="mt-1 text-[12.5px] text-ink-secondary">{owedWaitingLine(item, Date.now())}</p>}
-              {item.summary && <p className="mt-2 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-ink-secondary">{item.summary}</p>}
-              {/* Only what adds something. "Pending" on a card in a list
-                  called Needs you, and "Read" on every card, said nothing. */}
-              {(item.status !== "pending" || item.duplicates > 1 || (view !== "decisions" && snoozed)) && <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
-                {item.status !== "pending" && <span className="rounded-md bg-control px-2 py-0.5">{statusLabel(item.status)}</span>}
-                {/* "Receipts" is the right word for the same request delivered
-                    twice. It is the wrong word for an engine that failed to sign in
-                    twenty times, which now arrives as one row carrying the count. */}
-                {item.duplicates > 1 && <span className="py-0.5 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
-                {view !== "decisions" && snoozed && <span className="py-0.5 text-ink-secondary">Snoozed until {shortWhen(item.snoozedUntil!)}</span>}
-              </div>}
-              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => setRevision(current => current + 1)} />}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button className={button} onClick={() => onOpen(item.link)}>Open {item.kind === "artifact" ? "file" : item.kind === "routine" || item.kind === "goal" ? "report" : "request"}</button>
-                <button className={button} disabled={saving} onClick={() => void update(item, { read: !item.read })}>{item.read ? "Mark unread" : "Mark read"}</button>
-                {item.dismissible && <button className={button} disabled={saving} onClick={() => void dismiss([item])}>Dismiss</button>}
-                {item.clearable && <button className={button} disabled={saving} onClick={() => void update(item, { cleared: true })}>Clear</button>}
-                {view !== "decisions" && (snoozed
-                  ? <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: null })}>Return to Inbox</button>
-                  : <button className={button} disabled={saving} onClick={() => void update(item, { snoozedUntil: Date.now() + 60 * 60 * 1000 })}>Snooze 1 hour</button>)}
-              </div>
-            </li>;
-          })}
-        </ul>
+        {doorRows ? <>
+          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} data-needs-chips className="mb-3 flex flex-wrap gap-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>button]:shrink-0">
+            <button type="button" className={viewTab(!picked)} aria-pressed={!picked} onClick={() => setBotFilter("")}>{t("ux.l2b.door.chipAll", { n: ordered.length })}</button>
+            {chips.map(chip => <button key={chip.bot} type="button" className={viewTab(picked === chip.bot)} aria-pressed={picked === chip.bot} onClick={() => setBotFilter(chip.bot)}>{t("ux.l2b.door.chip", { bot: chip.bot, n: chip.count })}</button>)}
+          </div>}
+          <p className="sr-only">{t("ux.l2b.door.keys")}</p>
+          <div onKeyDownCapture={onDoorKeyCapture} onKeyDown={onDoorKey}>
+            {groups.map(group => <div key={group.bot || "all"} className="mt-3 first:mt-0">
+              {group.bot && <h3 className={`${sectionHeading} mb-2`}>{t("ux.l2b.door.group", { bot: group.bot, n: group.rows.length })}</h3>}
+              <ul className="space-y-2" aria-label={group.bot ? t("ux.l2b.door.group", { bot: group.bot, n: group.rows.length }) : t("ux.l2a.door.needsYou")}>
+                {group.rows.map(item => {
+                  const card = cards[item.link.messageId];
+                  const bot = botOf(item);
+                  const since = waitingSinceTime(item.at, Date.now());
+                  const botRecord = item.botId ? store?.state.bots.find(entry => entry.id === item.botId) : undefined;
+                  return <NeedsRow
+                    key={item.id}
+                    id={item.id}
+                    line={requestHeadline(card) || item.title}
+                    meta={bot ? t("ux.l2b.door.meta", { bot, time: since }) : t("ux.l2b.door.metaNoBot", { time: since })}
+                    avatar={botRecord ? <BotAvatar bot={botRecord} size={32} /> : undefined}
+                    open={shownOpen === item.id}
+                    cameBack={cameBack(item, Date.now())}
+                    onToggle={() => openRow(shownOpen === item.id ? null : item.id)}
+                    headRef={(element) => { if (element) heads.current.set(item.id, element); else heads.current.delete(item.id); }}
+                  >{cardBody(item)}</NeedsRow>;
+                })}
+              </ul>
+            </div>)}
+          </div>
+        </> : <ul className="space-y-2" aria-label="Inbox items">
+          {list.map(item => <li key={item.id} className={`rounded-xl border bg-inset p-4 ${item.read ? "border-hairline/50" : "border-hairline"}`} data-inbox-id={item.id}>{cardBody(item)}</li>)}
+        </ul>}
       </InboxSection>
     )}
     </div>

@@ -6,6 +6,7 @@
 // touching its siblings.
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
 import { findCliCandidates } from "../env-path.ts";
+import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
@@ -300,17 +301,28 @@ export class ProviderRegistry {
    * (the tray's minute-by-minute setup view, the setup poll) pass `"due"`:
    * their forced refresh spawned `fuigo models` every minute, which is a
    * GET /v1/models at Flux every 60 to 65 s, refused or not (2026-10-01). */
-  private describing: Record<"due" | "fresh", { epoch: number; run: Promise<Awaited<ReturnType<ProviderRegistry["scan"]>>> } | null> = { due: null, fresh: null };
+  private describing: Record<"due" | "fresh", { epoch: number; seq: number; run: Promise<Awaited<ReturnType<ProviderRegistry["scan"]>>> } | null> = { due: null, fresh: null };
+  /** Counts scans started; a flight carries the count it started at. */
+  private scanSeq = 0;
+
+  /** 1.0.14 FIRST-ENGINE-REPICK: the fleet's revision, bumped whenever an entry is added, replaced or removed. A read taken before an await
+   * and compared after it says whether any instance changed in between. Read only. */
+  get generation(): number { return this.epoch; }
+
+  /** The number of scans started so far. `describe({ startedAfter: ticket })` never answers from a scan that started at or before it, so
+   * a caller that takes a ticket after a key is saved always reads a scan that began after the save. */
+  scanTicket(): number { return this.scanSeq; }
 
   /** One scan at a time per mode: boot asks for the engine list and the setup view together, and every
    * engine card used to start its own. A caller that arrives mid-scan waits for it. A "fresh" scan also
    * answers a "due" caller (it refreshed at least as much); a "due" scan never answers a "fresh" one. */
-  describe(options: { catalogs?: "fresh" | "due" } = {}) {
+  describe(options: { catalogs?: "fresh" | "due"; startedAfter?: number } = {}) {
     const mode = options.catalogs === "due" ? "due" : "fresh";
-    const usable = (flight: { epoch: number } | null) => flight !== null && flight.epoch === this.epoch;
+    const after = options.startedAfter;
+    const usable = (flight: { epoch: number; seq: number } | null) => flight !== null && flight.epoch === this.epoch && (after === undefined || flight.seq > after);
     const shared = usable(this.describing.fresh) ? this.describing.fresh : mode === "due" && usable(this.describing.due) ? this.describing.due : null;
     if (shared) return shared.run;
-    const flight = { epoch: this.epoch, run: this.scan(mode === "due") };
+    const flight = { epoch: this.epoch, seq: ++this.scanSeq, run: this.scan(mode === "due") };
     this.describing[mode] = flight;
     const clear = () => { if (this.describing[mode] === flight) this.describing[mode] = null; };
     flight.run.then(clear, clear);
@@ -354,10 +366,12 @@ export class ProviderRegistry {
           };
         }
         const inst = entry.live;
+        // read before any await, so a reload that swaps the live instance meanwhile cannot hand this row another one's command
+        const cli = this.cliByInstance.get(inst.instanceId);
         let snapshot: ProviderSnapshot;
         try {
           await this.refreshCatalog(inst, dueOnly);
-          snapshot = withInstanceMark(inst.instanceId, await inst.snapshot());
+          snapshot = withWslNote(withInstanceMark(inst.instanceId, await inst.snapshot()), cli);
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
         }
@@ -388,7 +402,7 @@ export class ProviderRegistry {
           },
           access: driver?.metadata.access ?? "subscription",
           install: withServerPlatform(driver?.install),
-          cli: this.cliByInstance.get(inst.instanceId),
+          cli,
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —
           // the dropdown's "detected" entries. Snapshotted per describe() so a

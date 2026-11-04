@@ -696,6 +696,46 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- When Murage can't read a command, its approval card now says exactly that, and asks you before it runs.\n- On Windows, Murage reads a PowerShell command split across lines as one command, so it gets the same approval checks as the same command on one line.\n- A message queued for the next turn shows its images and files as chips, not raw tags.\n- If Murage quits or restarts during a Codex, Pi, Antigravity or OpenAI tools turn, that turn now shows it didn't finish, and the bot waiting on it hears back when Murage starts again.\n- Stop All on question cards past the follow-up limit ends them as stopped.\n- On your phone, Murage keeps its screen after a reconnect.…"
   },
   {
+    "id": "changelog/v1-0-15#new-bots-in-1-0-15",
+    "title": "What changed in Murage 1.0.15",
+    "description": "New bots start on Fuigo, one place to answer a bot that needs you, and a Murage that opens faster.",
+    "heading": "New bots in 1.0.15",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "url": "https://murage.ai/docs/changelog/v1-0-15#new-bots-in-1-0-15",
+    "text": "- Start on Fuigo. A new bot you have not picked an engine for starts on Fuigo when Fuigo can answer, and otherwise on the engine Murage found on this computer, so your first chat gets a reply.\n- No silent waits. If Fuigo goes quiet partway through an answer, Murage ends that turn and tells you right away, so you can send it again."
+  },
+  {
+    "id": "changelog/v1-0-15#answer-in-one-place-in-1-0-15",
+    "title": "What changed in Murage 1.0.15",
+    "description": "New bots start on Fuigo, one place to answer a bot that needs you, and a Murage that opens faster.",
+    "heading": "Answer in one place in 1.0.15",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "url": "https://murage.ai/docs/changelog/v1-0-15#answer-in-one-place-in-1-0-15",
+    "text": "- One line in the chat. A bot waiting on you shows one line in the chat. Answer it in the panel above the box, or from the bar on your phone.\n- Messages waiting for the next turn fold to one tidy line each."
+  },
+  {
+    "id": "changelog/v1-0-15#less-in-your-way-in-1-0-15",
+    "title": "What changed in Murage 1.0.15",
+    "description": "New bots start on Fuigo, one place to answer a bot that needs you, and a Murage that opens faster.",
+    "heading": "Less in your way in 1.0.15",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "url": "https://murage.ai/docs/changelog/v1-0-15#less-in-your-way-in-1-0-15",
+    "text": "- All chats. All chats has Back and a close button at the top right, like every other page.\n- Esc. Esc closes the menu or panel in front first. Health closes with Back, its close button or Esc.\n- Opens faster. Panels you have not opened yet load when you first open them."
+  },
+  {
+    "id": "changelog/v1-0-15#better-in-1-0-15",
+    "title": "What changed in Murage 1.0.15",
+    "description": "New bots start on Fuigo, one place to answer a bot that needs you, and a Murage that opens faster.",
+    "heading": "Better in 1.0.15",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.15",
+    "url": "https://murage.ai/docs/changelog/v1-0-15#better-in-1-0-15",
+    "text": "- Memories keep what you said, not tool output.\n- A message from one bot to another leaves the memory of that pair's room as it was.\n- Deleting a chat leaves work running in your other chats alone.\n- Use my Chrome offers Set up my browser first, and leaving it hands the browser back at once, even while a bot is using it.\n- On Grok Build, a question from an MCP server opens as a question card.\n- Plus stability fixes."
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",

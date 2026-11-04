@@ -206,3 +206,13 @@ describe("teamImportSkillSummary", () => {
     expect(summary.unavailable + summary.disabled).toBe(summary.failed);
   });
 });
+
+// Upstream 8b7f3e962 (#4257): without a GPU (software rendering) a full-window blur is redrawn on every frame,
+// so Templates lagged while open. The dim stays; the panel itself is opaque.
+describe("TeamLibraryPanel overlay", () => {
+  it("dims the app behind Templates without a full-window backdrop blur", () => {
+    const overlay = source.match(/className="(overlay-inset fixed [^"]*)"/)?.[1];
+    expect(overlay).toContain("bg-black/55");
+    expect(source).not.toMatch(/backdrop-blur|backdrop-filter|backdropFilter/);
+  });
+});

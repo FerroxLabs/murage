@@ -14,7 +14,7 @@ import { request as httpRequest } from "node:http";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
@@ -35,6 +35,8 @@ const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 /** The renderer's proof, pinned for this child. See `api` below. */
 const DESKTOP_SECRET = "c0ffee00c0ffee11".repeat(4);
+/** Set by comms-recall-skip.test.ts: the server skips every overlapped memory recall (testing/recall-skip-preload.mjs). */
+const RECALL_SKIP = process.env.MURAGE_COMMS_RECALL_SKIP === "1";
 
 describe("mentionedBots", () => {
   const peers = [
@@ -304,7 +306,11 @@ describe("comms e2e (fake ACP fleet)", () => {
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    // RECALL-SKIP-DROP (comms-recall-skip.test.ts): the same suite with every overlapped recall skipped, the branch a
+    // slow machine takes when recall runs past RECALL_WAIT_MS.
+    const preload = RECALL_SKIP ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-skip-preload.mjs")).href] : [];
+    if (RECALL_SKIP) env.MURAGE_TEST_RECALL_SKIP = "1";
+    child = spawn(process.execPath, [...preload, join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -328,6 +334,17 @@ describe("comms e2e (fake ACP fleet)", () => {
   afterAll(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
+  });
+
+  it.runIf(RECALL_SKIP)("takes the recall-skip branch on a bot's turn (RECALL-SKIP-DROP)", async () => {
+    // The skip is forced, so every later test in this run sends its turns without recall. Prove it is really taken.
+    for (const existing of (await api("GET", "/api/bots")).body.bots) await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
+    const bot = (await api("POST", "/api/bots")).body.bot;
+    await api("PATCH", `/api/bots/${bot.id}`, { name: "SkipProbe", modelSelection: { instanceId: "grok", model: "fake-model" } });
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello" })).status).toBe(202);
+    // the rewrite's own marker (testing/recall-skip-loader.mjs), then this probe's own skip line
+    await waitUntil(async () => stderr.includes("RECALL_SKIP_PRELOAD forced") && /memory recall skipped thread=\S+ engine=grok reason=budget/.test(stderr), 20_000, "the forced recall skip never ran");
+    await waitUntil(async () => !(await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).busy, 20_000, "the probe turn never settled");
   });
 
   it("seals the internal comms endpoints behind the boot token", async () => {
@@ -518,7 +535,9 @@ describe("comms e2e (fake ACP fleet)", () => {
         composio: false,
         autoApprove: false,
         approvePeerComms: false,
-        modelSelection: { instanceId: "chiefCreator", model: "fake-model" },
+        // From 1.0.15 a specialist the Chief creates with no model_selection is born on Fuigo when Fuigo can answer (BIRTH-FUIGO: a later bot
+        // is born on Fuigo whatever the Chief is on); the fleet's `grok` instance is the Fuigo here, the Chief's `chiefCreator` is not.
+        modelSelection: { instanceId: "grok", model: "fake-model" },
       });
       expect(operator.chiefOfStaff).toBeFalsy();
       expect(operator.messages.some((message: any) => message.text?.includes("Review the new onboarding flow."))).toBe(true);

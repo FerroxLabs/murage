@@ -301,7 +301,7 @@
     "message": "Connect to Murage"
   },
   "spSetupBody": {
-    "message": "Open Murage on this computer and turn on the browser companion in Browser settings."
+    "message": "Murage has to set up this browser before it can connect. In the Murage app, open a bot's browser panel, choose Use my Chrome, then press Set up my browser. Then press Check connection here."
   },
   "spCheckConnection": {
     "message": "Check connection"

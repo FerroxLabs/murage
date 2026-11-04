@@ -40,6 +40,32 @@ afterEach(() => {
   resetAppCatalogState({ disk: true });
 });
 
+describe("TENJOBS-APP-GAPS job 2: Gmail is one click from Connected apps, no search", () => {
+  it("leads the curated fallback with Gmail, then the other day-one apps", async () => {
+    const view = await listToolkits({});
+    expect(view.featured.slice(0, 7).map(card => card.slug)).toEqual(
+      ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "slack", "github"],
+    );
+  });
+
+  it("keeps Gmail first when the live catalog's most used apps start elsewhere", async () => {
+    // Gmail ranked last by use: first paint still leads with it
+    const all = fakeCatalogApps();
+    const apps = [...all.filter(app => app.slug !== "gmail"), { ...all.find(app => app.slug === "gmail")!, rank: 1_599 }];
+    useBroker(fakeCatalogBroker(apps));
+    const view = await listToolkits(managed());
+    expect(view.source).toBe("api");
+    expect(view.cards[0]?.slug).not.toBe("gmail");
+    expect(view.featured[0]?.slug).toBe("gmail");
+    expect(view.featured.slice(0, 7).map(card => card.slug)).toEqual(
+      ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets", "slack", "github"],
+    );
+    // each slug once, and the most used extras still follow
+    const slugs = view.featured.map(card => card.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+  });
+});
+
 describe("Part A: every fallback says why, and is logged", () => {
   it("no backend at all", async () => {
     const view = await listToolkits({});
@@ -127,9 +153,9 @@ describe("Part D: the whole catalog against a fake 1,600-app broker (contract 2)
     const disk = JSON.parse(readFileSync(join(DATA_DIR, APP_CATALOG_CACHE_FILE), "utf8"));
     expect(disk.apps).toHaveLength(1_600);
     expect(JSON.stringify(disk)).not.toContain("a".repeat(64));
-    // featured: the most used, then the rest of the curated set
-    expect(view.featured.slice(0, 3).map(card => card.slug)).toEqual(["gmail", "slack", "github"]);
-    expect(view.featured.map(card => card.slug)).toEqual(expect.arrayContaining(CURATED_SLUGS));
+    // featured: the curated common apps in their own order, then the most used
+    expect(view.featured.slice(0, CURATED_SLUGS.length).map(card => card.slug)).toEqual(CURATED_SLUGS);
+    expect(view.featured.length).toBeGreaterThan(CURATED_SLUGS.length);
     expect(view.featured.find(card => card.slug === "gmail")?.logo).toBe("https://logos.example.test/gmail.png");
   });
 

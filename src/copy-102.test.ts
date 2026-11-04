@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const dialog = readFileSync(new URL("./components/WhatsNewDialog.tsx", import.meta.url), "utf8");
+const dialog = readFileSync(new URL("./components/WhatsNewDialog.tsx", import.meta.url), "utf8") + "\n" + readFileSync(new URL("./components/whats-new-pages.ts", import.meta.url), "utf8");
 
 const LINES = [
   "Bots that remember what matters",

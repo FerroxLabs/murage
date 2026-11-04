@@ -208,6 +208,8 @@ for (const status of ["waiting", "needs-you"]) {
       .toEqual({ decisions: 1, approvals: 1, questions: 0, questionThreads: {}, total: 1 });
     expect(get(db, { view: "decisions", includeSnoozed: true }).total).toBe(1);
     expect(get(db, { view: "questions", includeSnoozed: true }).total).toBe(0);
+    // The badge adds snoozed owed items back (UX L2B); the snoozed receipt was never owed beside its card, so the badge stays 1.
+    expect(page.decisions + (page.snoozedOwed ?? 0)).toBe(1);
   });
 }
 

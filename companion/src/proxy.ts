@@ -200,6 +200,14 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
   res.end(text);
 };
 
+/** What the log keeps of a pairing failure nobody planned for: its kind and
+ *  code, never its message. */
+const pairingFailureLabel = (error: unknown): string => {
+  if (!(error instanceof Error)) return typeof error;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" && /^[A-Z0-9_]{1,40}$/.test(code) ? `${error.name} ${code}` : error.name;
+};
+
 /** Reduce live endpoint metadata to the same tiny public shape returned at
  * pairing time. The hook is internal, but this still validates and caps it at
  * the network boundary so a future producer cannot accidentally publish an
@@ -446,9 +454,13 @@ export function createProxyHandler(options: ProxyOptions) {
             if (hosts.length) response.hosts = hosts;
             if (endpoints.length) response.endpoints = endpoints;
             return sendJson(res, 201, response);
-          } catch {
+          } catch (error) {
             // Whatever a request body makes pairing throw, the answer is a
             // refusal, never an unhandled rejection that ends the companion.
+            // The log keeps the failure's kind and code, never its message,
+            // which can carry the presented code or a path (OpenMausBot
+            // 51e7a6886; the same rule as the webhook receiver's last catch).
+            console.error(`companion: pairing failed (${pairingFailureLabel(error)})`);
             sendJson(res, 500, { error: "Pairing could not be completed. Try again." });
           }
         },

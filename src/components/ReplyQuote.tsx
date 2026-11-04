@@ -1,6 +1,7 @@
 import { MessageSquareReply, X } from "lucide-react";
 
 import { replyAuthor, replyExcerpt, replySnippet } from "@/lib/replies";
+import { useWebhookDisplayText } from "@/lib/webhook-message-lazy";
 import type { Message } from "@/state/store";
 
 export function ReplyQuote({
@@ -16,12 +17,14 @@ export function ReplyQuote({
   onClear?: () => void;
   compact?: boolean;
 }) {
+  // a quoted webhook run shows its task, or the placeholder while the parser loads
+  const text = useWebhookDisplayText(message.text ?? "", message.role === "user");
   const body = (
     <>
       <MessageSquareReply size={compact ? 12 : 14} className="shrink-0 text-accent" />
       <span className="min-w-0 flex-1">
         <span className="block text-[10.5px] font-medium text-accent">Replying to {replyAuthor(message, fallbackName)}</span>
-        <span className="block truncate text-[11.5px] text-ink-secondary">{replySnippet(message.text ?? "")}</span>
+        <span className="block truncate text-[11.5px] text-ink-secondary">{replySnippet(text)}</span>
       </span>
     </>
   );
@@ -45,12 +48,13 @@ export function ReplyQuote({
 
 /** The strip above the composer while a reply is pending: one quiet line. */
 export function ComposerReplyStrip({ message, fallbackName, onClear }: { message: Message; fallbackName?: string; onClear: () => void }) {
+  const text = useWebhookDisplayText(message.text ?? "", message.role === "user");
   return (
     <div className="flex min-w-0 items-center gap-2 border-l-2 border-accent/40 px-2.5 py-1 text-[12px] text-ink-secondary">
       <MessageSquareReply size={12} className="shrink-0 text-ink-secondary" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">
         <span className="font-medium">{replyAuthor(message, fallbackName)}</span>
-        <span className="opacity-70">{": "}{replyExcerpt(message.text ?? "")}</span>
+        <span className="opacity-70">{": "}{replyExcerpt(text)}</span>
       </span>
       <button type="button" onClick={onClear} aria-label="Cancel reply" className="shrink-0 rounded p-0.5 hover:bg-raised hover:text-ink">
         <X size={13} />

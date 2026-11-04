@@ -20,7 +20,11 @@
     // of the signing certificate as unpadded base64url (not hex, no colons).
     // Empty means fail closed: ANDROID_RELEASE_CERT_SHA256 is our release
     // signing cert; with it empty no Android install gets a statement.
-    "ANDROID_RELEASE_CERT_SHA256": "",
+    // Play App Signing keys for com.murage.mobile (Play Console, App signing,
+    // read 2026-11-03): the key in use (74:F8:2E:..:3A:09, matches the 1.0.9
+    // Play install) and the previous key it rotated from (63:E5:12:..:F1:F6).
+    // Google holds both; only Play-delivered builds carry them.
+    "ANDROID_RELEASE_CERT_SHA256": "dPguy2716hPx9lkq7u1cHWQeKK1TXNkKrViCD81yOgk,Y-USyAhGC9zLyOatERYcI71jysnzHUMMCOzZtTq68fY",
     // The tester list must hold only digests of private-keystore certificates,
     // never the Android default debug key or any shared key.
     // Private upload key CN=Murage, O=Ferrox Labs (RSA 4096; Sean and MurageMain
