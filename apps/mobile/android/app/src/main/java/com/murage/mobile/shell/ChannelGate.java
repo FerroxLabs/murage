@@ -29,6 +29,7 @@ public final class ChannelGate {
     static {
         Set<String> all = new HashSet<>(ADVERTISED);
         all.add("hello");
+        all.add("pairRefused"); // 1.0.16: sent by the wrapper script on /enter only; never advertised
         METHODS = Collections.unmodifiableSet(all);
     }
 
@@ -65,6 +66,7 @@ public final class ChannelGate {
         if (args == null || args == JSONObject.NULL) return new Request(replyId, (String) method, new JSONObject());
         if (!(args instanceof JSONObject)) throw new ChannelException("bad_args", replyId);
         if ("openPhoneForBots".equals(method) && ((JSONObject) args).length() != 0) throw new ChannelException("bad_args", replyId);
+        if ("pairRefused".equals(method) && ChannelArgs.string(((JSONObject) args).opt("message"), 200) == null) throw new ChannelException("bad_args", replyId);
         return new Request(replyId, (String) method, (JSONObject) args);
     }
 

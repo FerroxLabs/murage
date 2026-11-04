@@ -37,11 +37,23 @@ describe("Settings, Storage, while a deletion of a conversation is still owed", 
 });
 
 describe("a new bot on a start whose engine probe is still running", () => {
-  it("every creation path picks an engine itself, so none reads the empty boot selection", () => {
-    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    const creations = source.match(/store\.createBot\((?:\{[^\n]*\}|\s*\{[\s\S]*?\},\s*\{ seedMessages: false \},?\s*)\)/g) ?? [];
+  // 1.0.15 BIRTH-FUIGO (design BIRTH-FUIGO-1014.md section 1 P4, section 3 "P4 pairing"): a route with no owner pick passes no selection,
+  // and createBot births the bot by the one birth rule in the same tick (Fuigo when usable, else the Chief's own selection on desktop, else
+  // the empty seed plus the mark that moves it to Fuigo). The boot probe's reading feeds only the first desktop bot. Behaviour:
+  // birth-selection.test.ts and startup-order.test.ts.
+  it("no creation path reads the boot selection: a bot with no owner pick is born by the birth rule, and marked", () => {
+    const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const store = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
+    const creations = index.match(/store\.createBot\((?:\{[^\n]*\}|\s*\{[\s\S]*?\},\s*\{ seedMessages: false \},?\s*)\)/g) ?? [];
     expect(creations.length).toBeGreaterThanOrEqual(2);
-    for (const call of creations) expect(call).toMatch(/modelSelection/);
-    expect(source).toMatch(/const modelSelection = await defaultSelection\(\);[\s\S]{0,600}title: "External browser connection", modelSelection/);
+    for (const call of creations) expect(call).not.toMatch(/bootSelection|defaultSelection/);
+    expect(index).not.toMatch(/await defaultSelection\(\)/);
+    // the pairing body is strict (label and profileId), so there is no owner pick to carry and none is invented
+    expect(index).toMatch(/z\.object\(\{ action: z\.literal\("pair"\), label: [^\n]*, profileId: [^\n]*\}\)\.strict\(\)/);
+    expect(index).toMatch(/store\.createBot\(\{ name: body\.label, title: "External browser connection" \}, \{ seedMessages: false \}\)/);
+    expect(store).toMatch(/const born = profile\.modelSelection === undefined;/);
+    expect(store).toMatch(/modelSelection: this\.completeNewBotSelection\(born \? this\.birthSelection\(\) : profile\.modelSelection!\)/);
+    expect(store).toMatch(/if \(born \|\| opts\.engineAutoPicked === true\) bot\.engineAutoPicked = true;/);
+    expect(store).toMatch(/if \(!source && this\.birth\.copyChief && this\.birth\.firstBot\) \{/);
   });
 });

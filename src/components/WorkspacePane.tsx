@@ -21,16 +21,14 @@
 // (a stat, not a 2 MiB re-read) and handed to the session, which reloads a
 // clean document and raises a conflict for a dirty one. Nothing here writes
 // a file except an explicit Save or Save a copy.
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowLeft, ChevronDown, ChevronRight, FileText, Folder, Maximize2, Minimize2, Pencil, Pin, RefreshCw, X } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
 import { findTask } from "@/lib/task-window";
-import { useEnsureTask } from "@/lib/use-ensure-task";
 import type { LocaleKey } from "@/locales";
 import { cn } from "@/lib/cn";
 import { useNarrowViewport } from "@/lib/media-query";
-import { useDesktopSurface } from "@/lib/use-surface";
 import { usePageVisible } from "@/lib/page-visible";
 import {
   canSaveEntry, entryNotice, formatFileSize, rootStateNotice, saveWorkspaceVersion, workspaceCrumbs, workspaceNativeAction, workspaceUrl,
@@ -46,7 +44,8 @@ import {
   createDocumentSessionStore, hasUnsavedChanges, openDocumentSession, saveFailureFrom,
   type DocumentSessionStore,
 } from "@/lib/document-session";
-import { createIndexedDbDraftBackend, createMarkdownDraftStore, type MarkdownDraftStore } from "@/lib/markdown-drafts";
+import type { MarkdownDraftStore } from "@/lib/markdown-drafts";
+import { useWorkspacePaneGate } from "./workspace-pane-gate";
 import { saveBlob } from "@/lib/save-file";
 import type { MarkdownEditorController } from "./MarkdownEditor";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -102,17 +101,20 @@ function closeFileTab(pane: WorkspacePaneState, dispatch: WorkspacePaneDispatch,
 // ── Store-connected pane ─────────────────────────────────────────────────
 
 /** The pane for the selected conversation. Renders nothing while closed or
- * off the desktop; the store keeps the tabs either way. */
+ * off the desktop; the store keeps the tabs either way. ChatView mounts the
+ * lazy form (WorkspacePaneLazy.tsx); this one stays for fixtures. */
 export function WorkspacePane({ bot }: { bot: Bot }) {
+  const { open, drafts } = useWorkspacePaneGate(bot);
+  return open ? <WorkspacePaneOpen bot={bot} drafts={drafts} /> : null;
+}
+
+/** The open pane, store-connected. Loaded on first open by WorkspacePaneLazy.tsx. */
+export function WorkspacePaneOpen({ bot, drafts }: { bot: Bot; drafts: MarkdownDraftStore }) {
   const { state, dispatch } = useStore();
-  const desktop = useDesktopSurface();
   const pane = state.workspacePane;
   const send = useCallback<WorkspacePaneDispatch>(action => dispatch({ type: "workspacePane", action }), [dispatch]);
   const labelForScope = useCallback((scope: WorkspaceScopeRef) => scopeLabel(state.bots, scope), [state.bots]);
-  useEnsureTask("bot", pane.filesRequest?.botId ?? bot.id, pane.filesRequest?.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId);
-  const drafts = useMemo(() => createMarkdownDraftStore(createIndexedDbDraftBackend()), []);
   const reveal = window.muragebox?.revealWorkspace;
-  if (desktop !== true || !pane.open) return null;
   return (
     <WorkspacePaneSurface
       scope={{ botId: pane.filesRequest?.botId ?? bot.id, threadId: pane.filesRequest?.threadId ?? state.bots.find(item => item.id === pane.filesRequest?.botId)?.threadId ?? bot.threadId }}

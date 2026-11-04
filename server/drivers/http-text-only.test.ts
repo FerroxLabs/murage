@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { httpTextOnlyTurn, textOnlyBody } from "./http-text-only.ts";
 import type { TextOnlyTurnInput } from "../memory/pip-transport.ts";
+import { fixedPrompt } from "../memory/fixed-prompt.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 const SCHEMA = { type: "object", required: ["ok"], properties: { ok: { type: "boolean" } }, additionalProperties: false };
 let server: Server, url: string, seen: Array<{ body: any; headers: IncomingMessage["headers"] }>, reply: (res: import("node:http").ServerResponse) => void;
@@ -27,8 +29,8 @@ beforeEach(async () => {
 afterEach(() => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }));
 
 const turn = (over: Partial<TextOnlyTurnInput> = {}): TextOnlyTurnInput => ({
-  system: "SYS", text: "USER", model: "model-x", outputSchema: SCHEMA, signal: new AbortController().signal,
-  maxOutputTokens: 1500, maxOutputBytes: 12 * 1024, context: { botId: "b", runId: "r", family: "lived", attempt: 1 }, ...over,
+  system: fixedPrompt("SYS"), text: "USER", model: "model-x", outputSchema: SCHEMA, signal: new AbortController().signal,
+  maxOutputTokens: 1500, maxOutputBytes: 12 * 1024, context: { botId: "b", runId: "r", family: "lived", attempt: 1 }, transport: { gate: openLearningGate() }, ...over,
 });
 const options = (extra = {}) => ({ baseUrl: url, apiKey: "k", jsonSchemaResponse: true, buildBody: (model: string, messages: unknown[]) => ({ model, messages, stream: true, tools: [{ type: "function" }], tool_choice: "auto", stream_options: { include_usage: true } }), ...extra });
 

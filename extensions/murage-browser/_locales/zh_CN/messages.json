@@ -301,7 +301,7 @@
     "message": "连接到 Murage"
   },
   "spSetupBody": {
-    "message": "在这台电脑上打开 Murage，并在浏览器设置中开启浏览器伴侣。"
+    "message": "Murage 需要先设置这个浏览器才能连接。在 Murage 应用中打开某个机器人的浏览器面板，选择“Use my Chrome”，然后按“Set up my browser”。之后在这里按“检查连接”。"
   },
   "spCheckConnection": {
     "message": "检查连接"

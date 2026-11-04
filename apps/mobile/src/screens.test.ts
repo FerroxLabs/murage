@@ -6,6 +6,8 @@ import { CLOSE_REASONS, SHELL_ERRORS, TAILSCALE_UNKNOWN, errorCode, readTailscal
 import {
   firstScreen,
   lastConnectedText,
+  pairRefusalMessage,
+  PAIR_REFUSAL_MAX,
   present,
   screenForClose,
   screenForOpenError,
@@ -671,4 +673,45 @@ it("uses exactly the close reasons both native sides send", () => {
 it("keeps shell-types free of runtime imports, so Node loads it without Capacitor", () => {
   const source = read("./shell-types.ts");
   expect(source.match(/^import (?!type )/gm)).toBeNull();
+});
+
+describe("a refused pairing code (1.0.16 F1)", () => {
+  it("returns to the type screen on the same address, with the computer's line", () => {
+    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message: "That code is no longer valid." }, [])).toEqual({
+      kind: "type",
+      origin: "https://mac.tailnet123.ts.net",
+      error: "That code is no longer valid.",
+    });
+  });
+
+  it("uses the default sentence when there is no line, or only blanks", () => {
+    for (const message of [undefined, "", "   "]) {
+      expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message }, [])).toEqual({
+        kind: "type",
+        origin: "https://mac.tailnet123.ts.net",
+        error: COPY.codeRefused,
+      });
+    }
+  });
+
+  it("an unknown reason from a newer or older native still goes home", () => {
+    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "somethingNew" as never }, [])).toEqual({ kind: "welcome" });
+  });
+});
+
+describe("1.0.16: the launcher cleans the refusal line itself", () => {
+  const fixture = JSON.parse(readFileSync(new URL("../contract/pair-refusal.json", import.meta.url), "utf8")) as { maxChars: number; cases: { input: string; message: string }[] };
+
+  it("matches the shared fixtures that native is held to", () => {
+    expect(PAIR_REFUSAL_MAX).toBe(fixture.maxChars);
+    expect(fixture.cases.length).toBeGreaterThan(5);
+    for (const entry of fixture.cases) expect(pairRefusalMessage(entry.input), JSON.stringify(entry.input)).toBe(entry.message);
+  });
+
+  it("shows the cleaned line for an unclean message, and the general wording when nothing is left", () => {
+    const dirty = screenForClose({ origin: MAC.origin, reason: "pairRefused", message: "ok\u202emessage\u200b  now\n" }, [MAC]);
+    expect(dirty).toMatchObject({ kind: "type", error: "okmessage now" });
+    const empty = screenForClose({ origin: MAC.origin, reason: "pairRefused", message: " \u200b\n" }, [MAC]);
+    expect(empty).toMatchObject({ kind: "type", error: COPY.codeRefused });
+  });
 });

@@ -43,19 +43,31 @@ describe("stop line copy", () => {
   });
 
   it("says why an ACP engine ended a turn early without its stop reason code", () => {
-    expect(acpStopReasonMessage("Grok", "max_tokens")).toBe("Grok reached its reply length limit, so this turn ended early.");
-    expect(acpStopReasonMessage("Grok", "max_turn_requests")).toBe("Grok reached its limit of steps for one turn, so this turn ended early.");
-    expect(acpStopReasonMessage("Grok", "refusal")).toBe("Grok declined to continue, so this turn ended early.");
-    for (const reason of [undefined, null, "something_new"]) expect(acpStopReasonMessage("Grok", reason)).toBe("Grok stopped before it finished, so this turn ended early.");
+    expect(acpStopReasonMessage("Grok", "max_tokens")).toMatch(/^Grok reached its reply length limit, so this turn ended early\. /);
+    expect(acpStopReasonMessage("Grok", "max_turn_requests")).toMatch(/^Grok reached its limit of steps for one turn, so this turn ended early\. /);
+    expect(acpStopReasonMessage("Grok", "refusal")).toMatch(/^Grok declined to continue, so this turn ended early\. /);
+    for (const reason of [undefined, null, "something_new"]) expect(acpStopReasonMessage("Grok", reason)).toMatch(/^Grok stopped before it finished, so this turn ended early\. /);
+  });
+
+  it("gives each stop reason its own next step, not one shared line (upstream d1502c648, 0bbd9d4c5)", () => {
+    const next = (reason: string | null) => acpStopReasonMessage("Grok", reason).replace(/^.*?ended early\. /, "");
+    expect(next("max_tokens")).toBe("Ask it to continue, or ask for a shorter answer.");
+    expect(next("max_turn_requests")).toBe("Ask it to carry on from where it stopped, or split the task.");
+    expect(next("refusal")).toBe("Reword the request, or switch this bot to another AI.");
+    expect(next(null)).toBe("Send the message again.");
+    expect(next("something_new")).toBe("Send the message again.");
+    const steps = ["max_tokens", "max_turn_requests", "refusal", null].map(next);
+    expect(new Set(steps).size).toBe(steps.length);
+    for (const reason of ["max_tokens", "max_turn_requests", "refusal", null]) expect(acpStopReasonMessage("Grok", reason)).not.toMatch(INTERNAL);
   });
 
   it("says why Antigravity ended a turn in plain words, never a bare \"Model turn failed: <status>\" (upstream d67c1b335)", () => {
-    expect(antigravityResultFailure({ status: "MAX_TOKENS" })).toBe("Antigravity reached its reply length limit, so this turn ended early.");
-    expect(antigravityResultFailure({ status: "MAX_TURNS" })).toBe("Antigravity reached its limit of steps for one turn, so this turn ended early.");
-    expect(antigravityResultFailure({ status: "REFUSAL" })).toBe("Antigravity declined to continue, so this turn ended early.");
+    expect(antigravityResultFailure({ status: "MAX_TOKENS" })).toBe("Antigravity reached its reply length limit, so this turn ended early. Ask it to continue, or ask for a shorter answer.");
+    expect(antigravityResultFailure({ status: "MAX_TURNS" })).toBe("Antigravity reached its limit of steps for one turn, so this turn ended early. Ask it to carry on from where it stopped, or split the task.");
+    expect(antigravityResultFailure({ status: "REFUSAL" })).toBe("Antigravity declined to continue, so this turn ended early. Reword the request, or switch this bot to another AI.");
     for (const status of [undefined, "", "ERROR", "SOMETHING_NEW"]) {
       const line = antigravityResultFailure({ status });
-      expect(line).toBe("Antigravity stopped before it finished, so this turn ended early.");
+      expect(line).toBe("Antigravity stopped before it finished, so this turn ended early. Send the message again.");
       expect(line).not.toMatch(INTERNAL);
       expect(line).not.toContain("Model turn failed");
     }

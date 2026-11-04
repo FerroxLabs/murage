@@ -507,6 +507,9 @@ export function applyGrokFluxMemory(env: Record<string, string | undefined>, hea
   env.GROK_CONFIG = fuigoConfigOverlay(headers, env.GROK_CONFIG);
 }
 
+/** The ACP auth method ids that bind the grok.com subscription login, in order of preference. */
+const GROK_LOGIN_METHODS = ["cached_token", "grok.com"] as const;
+
 const support: AcpSupport = {
   driverKind: "grokAgent",
   // The map handed to the engine skips a value equal to Murage's own env, so the pin is set on it too.
@@ -636,7 +639,8 @@ const support: AcpSupport = {
 
   // Bind the grok.com subscription login. No API-key fallback by design —
   // an unauthenticated CLI is a user action, not something to paper over.
-  pickAuthMethod: (methods) => (methods.some((m) => m.id === "cached_token") ? "cached_token" : null),
+  // Older CLIs name that login "cached_token"; current ones name it "grok.com".
+  pickAuthMethod: (methods) => GROK_LOGIN_METHODS.find((id) => methods.some((m) => m.id === id)) ?? null,
   authFailure: "fail",
   isAuthenticated: (env) => existsSync(join(grokHome(env), "auth.json")),
 

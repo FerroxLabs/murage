@@ -120,6 +120,14 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
     case "backups":
       dispatch({ type: "toggleAppSettings", open: true, section: "backups" });
       return true;
+    // 1.0.15. Needs you, on its decisions: every request waiting on you.
+    case "needsYou":
+      dispatch({ type: "showNeedsYou" });
+      return true;
+    // Health: Back, its close button and Esc all leave it.
+    case "health":
+      dispatch({ type: "showHealth" });
+      return true;
     // Settings > Bot defaults > Channel turns: the no activity limit, the one
     // clock left, which counts silence rather than working time.
     case "longwork":
