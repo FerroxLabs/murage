@@ -56,6 +56,8 @@ test("a fresh desktop shows learning immediately and saves per-bot choices", asy
     await chats.scrollIntoViewIfNeeded(); await chats.focus(); await page.keyboard.press("Shift+Tab"); await page.keyboard.press("Tab");
     await expect(chats).toBeFocused(); expect(await chats.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe("none");
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    // ALLCHATS-HUMAN-AXE-FADE: an ActionButton success line fades out over 600 ms after 3.4 s; axe read mid-fade sees a blended colour. Scan once it has gone.
+    await expect(dialog.locator("[data-action-success]")).toHaveCount(0, { timeout: 10_000 });
     await page.addScriptTag({ path: fileURLToPath(new URL("../../node_modules/axe-core/axe.min.js", import.meta.url)) });
     const audit = await page.evaluate(async () => (window as unknown as { axe: { run(element: Element | null): Promise<{ violations: Array<{ impact: string }> }> } }).axe.run(document.querySelector('[role="dialog"]')));
     expect(audit.violations.filter(item => ["critical", "serious"].includes(item.impact))).toEqual([]);

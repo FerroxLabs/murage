@@ -26,6 +26,7 @@ import {
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import { FLUX_DASHBOARD_BILLING_PAGE } from "../../shared/flux-links";
 import {
   appCountLabel,
   appsClaimFor,
@@ -190,7 +191,7 @@ export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
-export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+export const FLUXROUTER_BILLING_URL = FLUX_DASHBOARD_BILLING_PAGE;
 const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
 
 /** The cut-off date as people read it; null when absent or unparseable. */

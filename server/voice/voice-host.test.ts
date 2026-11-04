@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PassThrough } from "node:stream";
 
-import { allowedSentence, CitationFilter, runVoiceBrief, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
+import { allowedSentence, CitationFilter, dropLeadingFiller, runVoiceBrief, runVoiceHostTurn, SentenceSplitter, voiceHostPrompt, type VoiceHostEvent, type VoiceHostState } from "./voice-host.ts";
 import { clipHostTurn, handleVoiceHostRoute, HOST_TURN_CHARS, parseHistory, parseRoomHeard, voiceHostRoomState, voiceHostState, type VoiceHostRouteDeps, type VoiceHostRouteGroup } from "./voice-host-route.ts";
 import type { Message } from "../store.ts";
 import { resetUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
@@ -476,6 +476,50 @@ describe("voice host", () => {
     expect(prompt).toContain("Steps so far, newest last (the only progress you may mention): reading the sheet.");
     expect(prompt).toContain("Send the summary to the board");
     expect(prompt).toContain("[10 min ago] You: The board summary is ready");
+  });
+});
+
+describe("voice host: no filler sound opening a reply (Sean 11-04)", () => {
+  const spoken = async (frames: string[]) =>
+    (await collect(runVoiceHostTurn({ state: STATE, history: [], said: "How did it go?", host: HOST, lookup: LOOKUP, fetchImpl: sse(frames.map(text)) })))
+      .flatMap((e) => (e.type === "sentence" ? [e.text] : []));
+
+  it("drops one leading Hmm, Mm, Um or Uh and keeps the words after it", async () => {
+    for (const opener of ["Hmmm, ", "Hmm. ", "Mm, ", "Mmm... ", "Um, ", "Uh. ", "hmm "]) {
+      expect(await spoken([opener, opener.endsWith(". ") ? "Revenue is up four percent." : "revenue is up four percent."]), opener).toEqual(["Revenue is up four percent."]);
+    }
+  });
+
+  it("drops a sentence that is only the sound, then says the rest", async () => {
+    expect(await spoken(["Hmmm. ", "The board liked it."])).toEqual(["The board liked it."]);
+  });
+
+  it("never touches a word mid-reply or a real word that starts the same way", async () => {
+    expect(await spoken(["The board liked it. ", "Hmm, one question came up."])).toEqual(["The board liked it.", "Hmm, one question came up."]);
+    expect(await spoken(["Um momento, vou ver."])).toEqual(["Um momento, vou ver."]);
+    expect(await spoken(["Umbrella sales are up."])).toEqual(["Umbrella sales are up."]);
+    expect(await spoken(["Uhura called."])).toEqual(["Uhura called."]);
+  });
+
+  it("strips only the first sound, never a second one", () => {
+    expect(dropLeadingFiller("Hmm, um, let me see.")).toBe("Um, let me see.");
+    expect(dropLeadingFiller("Mmm")).toBe("");
+    expect(dropLeadingFiller("Okay, give me a moment.")).toBe("Okay, give me a moment.");
+    expect(dropLeadingFiller("Um")).toBe("Um");
+    expect(dropLeadingFiller("Hmm, iOS supports that.")).toBe("iOS supports that.");
+    expect(dropLeadingFiller("Hmm, macOS supports that.")).toBe("macOS supports that.");
+    expect(dropLeadingFiller("Hmm, eBay has it.")).toBe("eBay has it.");
+    expect(dropLeadingFiller("Hmm, okay.")).toBe("Okay.");
+  });
+
+  it("checks the first sentence actually said, and still says a doubled reply once", async () => {
+    expect(await spoken(["It is almost done. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
+    expect(await spoken(["Hmm, revenue is up four percent. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
+  });
+
+  it("a first clause said without its filler is said once when the reply comes again without it", async () => {
+    expect(await spoken(["Hmm, so I can pull that ", "together for you, ", "and send it ", "after lunch. ", "So I can pull that together for you, and send it after lunch."]))
+      .toEqual(["So I can pull that together for you,", "and send it after lunch."]);
   });
 });
 

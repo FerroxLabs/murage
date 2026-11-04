@@ -6,7 +6,7 @@
 // forwards that device's public key; this module only checks the proof.
 import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import { approvalDigestInput, type DigestCard } from "../shared/approval-digest.ts";
+import { approvalBatchDigestInput, approvalDigestInput, type BatchLine, type DigestCard } from "../shared/approval-digest.ts";
 import { UUID } from "../shared/mobile-push.ts";
 
 export const FRESH_AUTH_TTL_MS = 60_000;
@@ -31,6 +31,11 @@ export const FRESH_AUTH_COPY = {
  *  and digests it with no await in between, so a card that changes mid-request cannot be checked against a stale digest. */
 export function approvalDigestSync(threadId: string, requestId: string, card: DigestCard): string {
   return createHash("sha256").update(approvalDigestInput(threadId, requestId, card), "utf8").digest("hex");
+}
+
+/** The same digest as shared approvalBatchDigest, computed synchronously (APPROVE-ALL design 7.2). */
+export function approvalBatchDigestSync(batchId: string, deviceId: string, lines: readonly BatchLine[]): string {
+  return createHash("sha256").update(approvalBatchDigestInput(batchId, deviceId, lines), "utf8").digest("hex");
 }
 
 export type ApprovalDecision = "allow" | "allow-task" | "answer";

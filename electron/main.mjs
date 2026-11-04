@@ -1741,19 +1741,24 @@ async function startManagedCompanionConnection({ waitForVerification = true } = 
   return publicManagedCompanionState();
 }
 
-async function startDesktopCompanion({ waitForHosted = true, remember = true } = {}) {
+async function startDesktopCompanion({ waitForHosted = true, remember = true, automatic = false } = {}) {
   assertDesktopStartupActive();
   const pending = Promise.withResolvers();
   companionStarts.add(pending.promise);
   try {
     companionDesiredThisLaunch = true;
-    companionLaunchGeneration += 1;
+    const generation = ++companionLaunchGeneration;
     // Before the fork, not after: the fork's environment is where the door
     // learns it is behind a proxy, and a sidecar started without that knowledge
     // advertises its own socket. Only when remote access is actually wanted —
     // the default costs no subprocess.
     await refreshRemoteAccessObservation();
     assertDesktopStartupActive();
+    // An automatic start (launch retry or exit restart) gives way when the
+    // person stopped or started the companion while it was getting ready.
+    if (automatic && generation !== companionLaunchGeneration) {
+      return { ...(await desktopCompanionState()), superseded: true };
+    }
     // Direct LAN comes up first. The hosted endpoint is added in place only
     // after the guardian has verified the public route to this exact sidecar.
     const localState = await startCompanion(companionLaunchOptions());
@@ -1868,8 +1873,12 @@ setCompanionLifecycleListener(({ expected, pid }) => {
 });
 
 const companionRestarter = createCompanionRestarter({
-  start: () => startDesktopCompanion({ waitForHosted: false, remember: false }),
+  start: () => startDesktopCompanion({ waitForHosted: false, remember: false, automatic: true }),
   shuttingDown: () => desktopShutdownStarted || desktopRecoveryMode,
+  // The launch retry is keyed off the saved phone-on flag, so turning the
+  // phone off during a wait cancels it.
+  wanted: () => companionEnabledAtRest(),
+  generation: () => companionLaunchGeneration,
   log: slog,
 });
 
@@ -5037,18 +5046,18 @@ void androidDevice.reclaimOrphan().catch(() => {});
   }
   assertDesktopStartupActive();
   // The companion the user left on comes back without anyone finding the
-  // toggle again — one attempt, after the harness port is settled, with the
-  // exact options the IPC handler uses. A failure surfaces in companionState
-  // (the panel shows the error) rather than retrying; and it never delays
+  // toggle again, after the harness port is settled, with the exact options
+  // the IPC handler uses. A failed start is retried a few times by the one
+  // restart owner (companion-restart.mjs), and the panel shows the last
+  // error if every try fails; it never delays
   // the window.
   if (app.isPackaged && !serverReady) {
     showDesktopRecovery(memoryUpgradeBlocked ? "MEMORY_UPGRADE_BLOCKED" : serverStartSlow ? "STARTUP_SLOW" : serverStartConflictOnly ? "PORT_CONFLICT" : "STARTUP_FAILED");
     return;
   }
   if (serverReady && companionEnabledAtRest()) {
-    void startDesktopCompanion({ waitForHosted: false, remember: false }).catch(() => {
-      if (!desktopShutdownStarted) slog("companion startup did not complete");
-    });
+    // Retried after 5, 15 and 30 s while still wanted; never rejects.
+    void companionRestarter.launchStart();
   }
   const background=initializeBackgroundLifecycle();
   // Off-site backup controls are set up while the window opens (two module loads

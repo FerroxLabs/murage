@@ -67,14 +67,16 @@ export interface CatalogBackend {
 
 // Curated fallback, the services agentcal's connectors page ships. Logos
 // resolve client-side: logo → favicon(domain) → monogram.
+// The order is what the panel shows first, with no search: the apps most
+// owners connect on day one lead, Gmail first (TENJOBS-APP-GAPS job 2).
 export const CURATED: ReadonlyArray<CatalogApp> = Object.freeze([
-  { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },
-  { slug: "github", label: "GitHub", blurb: "Issues, pull requests, and code", domain: "github.com", logo: null },
   { slug: "gmail", label: "Gmail", blurb: "Read and send email", domain: "gmail.com", logo: null },
   { slug: "googlecalendar", label: "Google Calendar", blurb: "Read and create events", domain: "calendar.google.com", logo: null },
-  { slug: "googlesheets", label: "Google Sheets", blurb: "Read and update spreadsheets", domain: "sheets.google.com", logo: null },
-  { slug: "googledocs", label: "Google Docs", blurb: "Read and write documents", domain: "docs.google.com", logo: null },
   { slug: "googledrive", label: "Google Drive", blurb: "Browse and manage files", domain: "drive.google.com", logo: null },
+  { slug: "googledocs", label: "Google Docs", blurb: "Read and write documents", domain: "docs.google.com", logo: null },
+  { slug: "googlesheets", label: "Google Sheets", blurb: "Read and update spreadsheets", domain: "sheets.google.com", logo: null },
+  { slug: "slack", label: "Slack", blurb: "Post updates and read channels", domain: "slack.com", logo: null },
+  { slug: "github", label: "GitHub", blurb: "Issues, pull requests, and code", domain: "github.com", logo: null },
   { slug: "notion", label: "Notion", blurb: "Pages and databases", domain: "notion.so", logo: null },
   { slug: "linear", label: "Linear", blurb: "Issues and project tracking", domain: "linear.app", logo: null },
   { slug: "sentry", label: "Sentry", blurb: "Errors and alerts", domain: "sentry.io", logo: null },
@@ -489,16 +491,18 @@ function featuredFrom(apps: ReadonlyArray<CatalogApp>): CatalogApp[] {
   const seen = new Set<string>();
   const out: CatalogApp[] = [];
   const known = new Map(apps.map((app) => [app.slug, app]));
-  for (const app of apps.slice(0, FEATURED_TOP)) {
-    seen.add(app.slug);
-    out.push(app);
-  }
+  // The common apps lead in their own order (Gmail first), then the most
+  // used ones the curated set does not already hold.
   for (const curated of CURATED) {
-    if (seen.has(curated.slug)) continue;
     seen.add(curated.slug);
     // the live card when the catalog has it: its logo and its own words
     const live = known.get(curated.slug);
     out.push(live ? { ...live, domain: live.domain ?? curated.domain } : { ...curated });
+  }
+  for (const app of apps.slice(0, FEATURED_TOP)) {
+    if (seen.has(app.slug)) continue;
+    seen.add(app.slug);
+    out.push(app);
   }
   return out;
 }

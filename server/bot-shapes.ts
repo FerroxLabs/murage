@@ -45,6 +45,8 @@ interface CatalogueEntry {
 
 export const SHAPE_CATALOGUE: Record<string, CatalogueEntry> = {
   "house-rules": { group: "rules", label: "House rules", what: "Your rules for every bot. They come first.", switchable: true, editor: "houseRules" },
+  // U24 S1: Murage's own reply habits, right after House Rules (REPLY_HABITS).
+  "reply-habits": { group: "rules", label: "How it replies", what: "Answer first, one question at a time, plain words, and your language. The same for every bot.", locked: true },
   // The owner's own profile (about-me.ts); standing-context.ts hands it only to owner-audience turns.
   "about-me": { group: "rules", label: "About me", what: "What you wrote about yourself in Settings. Bots get it only when they are talking with you.", switchable: true, editor: "aboutMe" },
   persona: { group: "identity", label: "Description and personality", what: "Its name, role, description and personality.", editor: "identity" },
@@ -93,6 +95,22 @@ export function shapeLayer(id: string, text: string, label?: string): ShapeLayer
 }
 
 export const joinShapeLayers = (layers: readonly ShapeLayer[]): string => layers.map((layer) => layer.text).join("");
+
+/** U24 S1 (E39 prompt half, F42): how every bot replies, on every engine, in
+ *  1:1 chats and rooms. Wording from MurageMain (11-03), kept byte for byte.
+ *  One static string, never built per turn, so the stable prefix stays
+ *  byte-identical from turn to turn (T9) and nothing can make it fail open.
+ *  It sits right after House Rules, which stay the owner's own text. */
+export const REPLY_HABITS = `How you reply:
+- Lead with the answer or the result. Put any detail after it.
+- Before you ask, look for the answer yourself. If you still need something, ask one question, not several.
+- Do not name your tools, servers, or internal note and settings files. Say what you did in plain words. File names the person asked for, and links to things you made for them, are fine.
+- Before you spend money or do something in the real world on the person's behalf, say what it costs and who pays.
+- If something is refused or blocked, say what happened in one line and what the person can do next.
+- Write every line the person sees, including short updates between steps, in the language the person writes to you in. Keep names, quotes and code as they are.`;
+/** The layer as the prompt carries it: the block, then a blank line, like House Rules. */
+const REPLY_HABITS_LAYER_TEXT = `${REPLY_HABITS}\n\n`;
+export const replyHabitsLayer = (): ShapeLayer => shapeLayer("reply-habits", REPLY_HABITS_LAYER_TEXT);
 
 /** Groups of lines that were one array joined with "\n": each group's text
  *  carries the separator in front of it unless nothing came before. */
@@ -208,12 +226,16 @@ export const speakAsLine = (name: string): string =>
   `You speak only as ${name}. Never write lines as another member or answer on their behalf. If the latest message is addressed to another member, do not answer it for them: say briefly that it is for them, or hand it to them with @Name.`;
 
 /** Sentences with no leading space; a direct turn puts one in front. */
+/** LOCAL-IMAGE-CARD part 2: a picture that is only a file path in a reply does not load in chat (ImageMedia allows data:, attachment
+ *  and web addresses only). Registered, it reaches chat as a file card. */
+const IMAGE_FILE_CARD_SENTENCE = ` To show a picture that is a file on this computer (one you saved, downloaded or found, not one ${murageTool("generate_image")} made), save it in the file workspace and register it with ${murageTool("register_artifact")}: a file path written in your reply does not show as a picture in chat.`;
+
 export const TURN_PROMPTS = {
   credential: `If a supported API key is missing, use ${murageTool("request_credential")} to show the secure in-app card. Never ask the user to paste credentials into chat. If the owner has already pasted a key or named a file that holds it, use it rather than refusing, and mention the secure card for next time.`,
   routines: `If the user explicitly asks to list or review, schedule, run, or change routines, use ${murageTool("list_routines")} and ${murageTool("propose_routine")} or ${murageTool("propose_routine_action")}. A proposal is not applied until the user confirms its in-app card, so never claim the action completed before that confirmation. A scheduled or manual run of a bot's own routine works in the routine's own conversation, and when it finishes Murage posts its result, files and images in the chat where the routine was set up (or the bot's main chat if it has none), unless the owner chose Routines list only in the routine editor; room and project routines, webhooks and messaging-app routines report where they always have. Never promise results go anywhere else.`,
   learn: `If the user sends /learn or asks you to save a reusable procedure from this work, use ${murageTool("skills_list")} and ${murageTool("skill_manage")}. Create new skills; update an existing learned skill only when the user explicitly asks to revise that exact name. Include source provenance and wait for the review card decision.`,
   /** Before the IMAGE_DELIVERY_PROMPT sentence for the turn. */
-  imageTools: `To create or edit an image, use ${murageTool("generate_image")}; ${murageTool("list_image_models")} shows the configured connections, models and each model's own limits (prompt budget, sizes, references), so read it before writing a long prompt. Ask for a shape with aspect_ratio and resolution, or width and height. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with ${murageTool("resolve_image_reference")}. A prompt part or a set of references you reuse can be saved with ${murageTool("save_prompt_block")} and ${murageTool("save_reference_pack")}, then sent by name in prompt_blocks and reference_pack.`,
+  imageTools: `To create or edit an image, use ${murageTool("generate_image")}; ${murageTool("list_image_models")} shows the configured connections, models and each model's own limits (prompt budget, sizes, references), so read it before writing a long prompt. Ask for a shape with aspect_ratio and resolution, or width and height. An image attached to this conversation or generated earlier in it is a reference: pass its file name (the basename of an attached-image path, or a generated image's referenceId) in reference_ids, or prepare it with ${murageTool("resolve_image_reference")}.${IMAGE_FILE_CARD_SENTENCE} A prompt part or a set of references you reuse can be saved with ${murageTool("save_prompt_block")} and ${murageTool("save_reference_pack")}, then sent by name in prompt_blocks and reference_pack.`,
   /** After the IMAGE_DELIVERY_PROMPT sentence for the turn. */
   imageKeys: "Never search the computer for API keys; use only a key the owner hands you or one in a file they name. You may call any API or service the owner asks for, and write your own client, wrapper or MCP for it. Store an owner-given key only where they ask, in a place git does not track, such as a git-ignored .env file, read it from there to make the call, and send it only to the service it is for. Never save it to your memory or put it in a reply, a log or a committed file.",
   /** A direct turn's coordination line for a bot that is neither a Chief nor an individual assistant. */
@@ -318,6 +340,7 @@ export function directTurnLayers(v: DirectTurnShapeInput): ShapeLayer[] {
     : "";
   return [
     shapeLayer("house-rules", v.houseRules),
+    replyHabitsLayer(),
     shapeLayer("about-me", v.aboutMe ?? ""),
     shapeLayer("persona", v.persona),
     shapeLayer("computer", computer),
@@ -460,7 +483,7 @@ export interface CurrentShapes {
 }
 
 // The direct turn's order, with a room turn's own layers where they fit.
-const ORDER = ["house-rules", "about-me", "persona", "room", "project-brief", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "peer-task", "speak-as",
+const ORDER = ["house-rules", "reply-habits", "about-me", "persona", "room", "project-brief", "computer", "computer-protected-input", "connected-apps", "required-apps", "browser", "coordination", "peer-task", "speak-as",
   "credential", "images", "web-search", "routines", "learn", "goal", "learned", "skills-index", "own-skills", "team-brief", "memory", "capabilities", "skill:*", "chief-guide",
   "playbooks", "output-folder", "automation", "tagged", "project-status", "where-i-belong", "working-context", "now"];
 // Shown before the first turn as "decided when a message arrives".
@@ -481,6 +504,7 @@ export function botShapeRows(current: CurrentShapes, last: TurnShapes | null | u
   };
   for (const id of ORDER) {
     if (id === "house-rules") rows.push(row(id, current.houseRules.text, { on: current.houseRules.on }));
+    else if (id === "reply-habits") rows.push(row(id, REPLY_HABITS));
     else if (id === "about-me") { if (current.aboutMe) rows.push(row(id, current.aboutMe.text, { on: current.aboutMe.on })); }
     else if (id === "persona") rows.push(row(id, current.persona));
     // The exact block the last turn carried; before any turn, what the next one would.

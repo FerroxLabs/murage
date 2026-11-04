@@ -298,10 +298,15 @@ export class SentenceSplitter {
   clausePiece: string | null = null;
   /** The plain text of a voiced clause whose sentence is not complete yet. */
   clauseHead: string | null = null;
+  /** The clause as said, when that differs from how it was heard (its opening filler dropped). */
+  clauseHeadSaid: string | null = null;
   /** The clause was filtered, so the rest of its sentence is dropped too. */
   dropRest = false;
   /** Set by sentencesFrom just before it yields: that piece was a clause. */
   lastWasClause = false;
+  /** The reply's first spoken piece has been checked for a filler opener.
+   *  Set from the start for a splitter that only speaks mid-reply. */
+  openerChecked = false;
 
   push(delta: string): string[] {
     if (!this.firstTokenAt && delta) this.firstTokenAt = this.now();
@@ -373,6 +378,18 @@ export function spokenText(sentence: string): string {
     .trim();
 }
 
+/** A hesitation sound opening a reply: "Hmm", "Mmm", "Um,", "Uh...". "Um" and
+ *  "Uh" need punctuation after them, so a Portuguese "Um momento" stays. */
+const FILLER_OPENER = /^\s*(?:(?:h+m{2,}|m{2,})(?:[.,!?:;…–—-]+\s*|\s+|$)|(?:u+m+|u+h+)[.,!?:;…–—-]+\s*)/i;
+
+/** Sean 11-04: every call reply started with "Hmmm". The voice drops one
+ *  filler sound at the very start of a reply; the words after it are kept. */
+export function dropLeadingFiller(sentence: string): string {
+  const rest = sentence.replace(FILLER_OPENER, "").trim();
+  // "Hmm, iOS does" keeps iOS and "Hmm, macOS does" keeps macOS: only a first word written all in lower case is capitalised
+  return rest === sentence.trim() || !/^[a-z]+(?![\p{L}\p{N}])/u.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+}
+
 type StreamPart =
   | { kind: "text"; text: string }
   | { kind: "tool"; index: number; name?: string; args?: string }
@@ -441,6 +458,8 @@ const WHOLE_SENTENCE = /[.!?]["'”’)\]]*$/;
  *  and a failed clip ends the rest of the reply. */
 export const SPOKEN_MAX_CHARS = 320;
 
+const plainKey = (sentence: string) => sentence.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
 /** Speakable sentences from a stream of text pieces. `wholeOnly` drops an
  *  unfinished one, judged before a long sentence is broken into pieces. */
 function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOnly = false): Generator<string> {
@@ -449,9 +468,20 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
   // numbers only, never the words: how soon the first clause left, and how long it was
   if (!before && splitter.clauseTiming) console.warn(`[voice-diag] clause-split afterFirstTokenMs=${splitter.clauseTiming.afterFirstTokenMs} words=${splitter.clauseTiming.words}`);
   for (const raw of pieces) {
-    const sentence = spokenText(raw);
+    const heard = spokenText(raw);
+    let sentence = heard;
     const clause = splitter.clausePiece !== null && raw === splitter.clausePiece;
     if (clause) splitter.clausePiece = null;
+    // only the reply's first spoken piece, and only one sound: a "Hmm," cut
+    // off alone as the first clause goes without taking its sentence with it.
+    // The check is used up by a piece that is said, not by one filtered out.
+    if (!splitter.openerChecked && sentence) {
+      sentence = dropLeadingFiller(sentence);
+      if (!sentence) {
+        splitter.openerChecked = true;
+        continue;
+      }
+    }
     // the rest of a sentence whose clause was filtered (a time promise) would
     // be a dangling fragment: it goes with it
     if (splitter.dropRest && !clause) {
@@ -466,13 +496,20 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
     // gpt-6-luna without reasoning says its whole reply twice, a line apart
     // (seen in the raw stream, 2026-09-23): a sentence is said once a reply.
     // A clause-split sentence is remembered whole as well as in its pieces.
-    const plain = sentence.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    if (splitter.said.has(plain)) continue;
+    // A first sentence said without its filler is remembered both ways.
+    const plain = plainKey(sentence);
+    const plainHeard = plainKey(heard);
+    if (splitter.said.has(plain) || splitter.said.has(plainHeard)) continue;
     splitter.said.add(plain);
-    if (clause) splitter.clauseHead = plain;
+    splitter.said.add(plainHeard);
+    splitter.openerChecked = true;
+    if (clause) { splitter.clauseHead = plainHeard; splitter.clauseHeadSaid = plain; }
     else if (splitter.clauseHead) {
+      // both forms of the whole sentence: a doubled reply without the filler is the said form, and is still said once
       splitter.said.add(`${splitter.clauseHead} ${plain}`);
+      if (splitter.clauseHeadSaid) splitter.said.add(`${splitter.clauseHeadSaid} ${plain}`);
       splitter.clauseHead = null;
+      splitter.clauseHeadSaid = null;
     }
     splitter.lastWasClause = clause;
     if (sentence.length <= SPOKEN_MAX_CHARS) yield sentence;
@@ -1039,6 +1076,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
         options.signal?.addEventListener("abort", stopLookup, { once: true });
         const deadline = setTimeout(stopLookup, LOOKUP_TIMEOUT_MS);
         const lookupSplitter = new SentenceSplitter({ rule: "short" });
+        // something was always said before a lookup's answer: it is mid-reply
+        lookupSplitter.openerChecked = true;
         const citations = new CitationFilter();
         let answered = false;
         try {

@@ -69,8 +69,14 @@ async function open(page: Page, width: number, entry: string) {
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
   await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
   await page.goto(origin);
+  await openEntry(page, entry);
+}
+
+/** Open a chat or room from the rail and wait until it is there, the way a person waits to see it (the room view loads on first open, 1.0.17). */
+async function openEntry(page: Page, entry: string) {
   const sidebar = await openSidebar(page);
   await sidebar.getByText(entry, { exact: true }).first().click();
+  if (entry.startsWith("Room ")) await expect(page.getByRole("main").getByRole("button", { name: `More actions for ${entry}`, exact: true })).toBeVisible();
 }
 
 /** Tab until the control has focus, then say whether a ring is drawn on it. */
@@ -135,8 +141,7 @@ for (const width of WIDTHS) {
 
       // reload: the same summary comes back from the server, with no live state
       await page.reload();
-      const sidebar = await openSidebar(page);
-      await sidebar.getByText(entry, { exact: true }).first().click();
+      await openEntry(page, entry);
       const again = page.getByRole("button", { name: /^Worked/ }).first();
       await expect(again).toBeVisible();
       await again.click();

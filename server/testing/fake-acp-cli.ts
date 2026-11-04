@@ -394,6 +394,7 @@ const dumpCredentials = new Set([
   "MY_AGENT_TOKEN",
   "ANTHROPIC_AUTH_TOKEN",
   "CLINE_API_KEY",
+  "META_API_KEY",
   // every provider key name Fuigo 1.0.32 discovers (fuigo-secrets child_env.rs provider_key_env_vars)
   "FUIGO_API_KEY",
   "FUIGO_CODE_API_KEY",
@@ -2210,6 +2211,14 @@ function handle(msg: any) {
       if ((mode === "ask-peer-resume" || mode === "delegate-peer") && /handed off/.test(promptText) && /replied|did not finish/.test(promptText)) {
         // lane 0163-delegate-wake: the woken lead picks its work back up
         out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "LEAD RESUMED: finished with the teammate's reply" } } } });
+        complete();
+        return;
+      }
+      if (mode === "ask-peer" && /- @\S+ (?:replied to|did not finish) the task you handed off \(task id /.test(promptText)) {
+        // RECALL-SKIP-DROP: a woken asker answers its wake and asks no one. Re-running the ask here sent a late wake
+        // from one test to whichever bot the NEXT test had just made (the first one list_bots names), so on a slow
+        // machine that test's ask found its peer busy: no card, no conversion reply.
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "ASKER RESUMED: read the teammate's reply" } } } });
         complete();
         return;
       }

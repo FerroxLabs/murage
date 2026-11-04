@@ -29,7 +29,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
-import { createServer as createNetServer } from "node:net";
+import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
 import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, dirname, win32 } from "node:path";
@@ -671,18 +671,26 @@ export const BROKER_LOST = "permission_broker_lost";
 /** What the owner reads when that happens. */
 export const BROKER_LOST_MESSAGE = "Murage lost its connection to this engine's approval cards, so this turn stopped. Send your message again to carry on.";
 
-export function permissionSocketPath(threadId: string) {
+export function permissionSocketPath(threadId: string, botId?: string) {
   // A readable prefix alone is not unique: ids that agree on their first
   // characters ("t-perm-dup-1", "t-perm-dup-2") would share a socket. POSIX
   // hides that — a new broker's listen replaces the socket FILE, so the name
   // always points at the fresh server — but Windows named pipes live in a
   // global namespace that is never unlinked, and a reused name races the
   // previous broker's async teardown. Half the tag is a digest of the FULL
-  // id so distinct threads get distinct sockets; the tag stays at 8 chars
-  // total because the POSIX path already brushes the 104-byte sun_path
-  // limit under deep tmp home dirs.
+  // id so distinct threads get distinct sockets.
+  //
+  // The bot is folded into the digest too (OpenMausBot d83f5b3b3, #1102):
+  // the driver's broker table is process-wide, so two bots whose turns ever
+  // shared a thread id would otherwise share one socket, and one bot's
+  // approval answers could reach the other's broker. The digest keeps 128
+  // bits so no two bot and thread pairs can meet on one name by chance. A
+  // POSIX path that would pass the 104-byte sun_path limit under a deep
+  // home moves to a short temp name inside brokerSocketPath, so the longer
+  // tag never costs a bind.
+  const key = botId ? `${botId}\0${threadId}` : threadId;
   const prefix = threadId.replace(/[^\w-]/g, "").slice(0, 4);
-  const digest = createHash("sha256").update(threadId).digest("hex").slice(0, 4);
+  const digest = createHash("sha256").update(key).digest("hex").slice(0, 32);
   return brokerSocketPath(process.env.MURAGE_CLOUD_ROLE === "home" ? CLOUD_BROKER_DIR : DATA_DIR, `${prefix}${digest}`);
 }
 
@@ -693,13 +701,13 @@ export function permissionSocketPath(threadId: string) {
  * longer than its small `sun_path` limit; a deep test HOME or long username
  * can otherwise make every approval silently unavailable. The proxy learns
  * the actual bound path from its argv, so either fallback is transparent. */
-export function brokerSocketCandidates(threadId: string): string[] {
-  const base = permissionSocketPath(threadId);
+export function brokerSocketCandidates(threadId: string, botId?: string): string[] {
+  const base = permissionSocketPath(threadId, botId);
   if (process.platform !== "win32") {
     const scope = createHash("sha256")
-      .update(`${DATA_DIR}\0${process.pid}\0${threadId}`)
+      .update(`${DATA_DIR}\0${process.pid}\0${botId ?? ""}\0${threadId}`)
       .digest("hex")
-      .slice(0, 16);
+      .slice(0, 32);
     return process.env.MURAGE_CLOUD_ROLE === "home" ? [base] : [base, join(tmpdir(), `murage-perm-${scope}.sock`)];
   }
   return [
@@ -717,6 +725,37 @@ function socketNameHeldByAnotherUid(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** True when `path` is a POSIX socket some process still accepts on. A
+ * refused connect means a dead socket file that may be cleared.
+ * Windows pipes are never unlinked, so they are not probed (POSIX only). */
+export async function socketNameHasLiveListener(path: string, timeoutMs = 1_000): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  try {
+    if (!lstatSync(path).isSocket()) return false;
+  } catch {
+    return false;
+  }
+  return await new Promise<boolean>((resolve) => {
+    const probe = createNetConnection(path);
+    let settled = false;
+    const done = (live: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      probe.destroy();
+      resolve(live);
+    };
+    // A listener that neither accepts nor refuses within the window is
+    // treated as live: skipping a name is recoverable, stealing it is not.
+    const timer = setTimeout(() => done(true), timeoutMs);
+    probe.once("connect", () => done(true));
+    // Only a refusal (no listener) or a vanished name proves the socket is
+    // dead. Any other failure (EAGAIN on a full backlog, EACCES, EMFILE)
+    // leaves the name to its owner.
+    probe.once("error", (error: NodeJS.ErrnoException) => done(!(error.code === "ECONNREFUSED" || error.code === "ENOENT")));
+  });
 }
 
 export async function createPermissionBroker(opts: {
@@ -861,6 +900,14 @@ export async function createPermissionBroker(opts: {
     // A name already held by another uid is never replaced or bound over: take the next candidate.
     if (socketNameHeldByAnotherUid(candidate)) {
       console.error(`permission broker: ${candidate} is held by another user, skipped`);
+      if (index === opts.socketPaths.length - 1) console.error(`permission broker unavailable on ${candidate}`);
+      continue;
+    }
+    // A name some live broker still listens on is never unlinked: replacing
+    // it would route that broker's proxy (or this one) to the wrong turn.
+    // Only a dead socket left by an ended process is cleared.
+    if (await socketNameHasLiveListener(candidate)) {
+      console.error(`permission broker: ${candidate} has a live listener, skipped`);
       if (index === opts.socketPaths.length - 1) console.error(`permission broker unavailable on ${candidate}`);
       continue;
     }
@@ -3846,7 +3893,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       let socketPath: string | null = null;
       // A draft-only turn has no tool that asks, so no broker and no --permission-prompt-tool.
       if (!turn.draftOnly) {
-        socketPath = permissionSocketPath(threadId);
+        socketPath = permissionSocketPath(threadId, turn.warmIdentity?.botId);
         args.push("--permission-prompt-tool", "mcp__muragebox__approve");
         // Windows: the pipe in its forward-slash spelling, which survives Git Bash's
         // reading of the murage-exec command line (permission-pipe.ts).
@@ -4324,7 +4371,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           // event can scope approvals to real desktop-control tools only
           const askTools = new Map<string, string | undefined>();
           broker = await createPermissionBroker({
-            socketPaths: brokerSocketCandidates(threadId),
+            socketPaths: brokerSocketCandidates(threadId, turn.warmIdentity?.botId),
             // never while an earlier turn's continuation is playing: its asks
             // are not this turn's to open a card for
             isActive: () => { const t = sessions.get(threadId)?.turn; return Boolean(t && !t.lateContinuation); },

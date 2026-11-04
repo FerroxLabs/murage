@@ -6,7 +6,11 @@
 // touching its siblings.
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
 import { findCliCandidates } from "../env-path.ts";
+import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
+/** An empty catalogue is read again after this long, at most EMPTY_CATALOG_RETRIES times before the 24 h age applies. */
+export const EMPTY_CATALOG_RETRY_MS = 1500;
+export const EMPTY_CATALOG_RETRIES = 5;
 import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
@@ -72,7 +76,7 @@ export class ProviderRegistry {
 
   /** Bumped whenever the set of engines changes, so a scan that began before a change is never shared with a caller that came after it. */
   private epoch = 0;
-  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
+  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void>; emptyRetries?: number }>();
 
   private readonly now: () => number;
   /** Murage's own sessions wait on an instance while a deleted conversation is removed from its engine's files. */
@@ -237,7 +241,14 @@ export class ProviderRegistry {
     if (!instance.refreshModels || instance.enabled === false) return Promise.resolve();
     const state = this.catalogRefreshes.get(instance) ?? { attemptedAt: -Infinity };
     if (state.pending) return state.pending;
-    if (dueOnly && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    // CATALOG-BOOT-EMPTY-NO-RETRY: an engine whose catalogue is still empty (its first read at boot found nothing) is due again after
+    // a short pause, a few times only, so the boot engine pass and the minute poll can recover it without a key save.
+    // A full catalogue keeps the 24 h age.
+    const empty = !instance.models?.options?.length;
+    if (!empty) state.emptyRetries = 0;
+    const emptyDue = empty && (state.emptyRetries ?? 0) < EMPTY_CATALOG_RETRIES && this.now() - state.attemptedAt >= EMPTY_CATALOG_RETRY_MS;
+    if (dueOnly && !emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    if (dueOnly && emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) state.emptyRetries = (state.emptyRetries ?? 0) + 1;
     state.attemptedAt = this.now();
     state.pending = Promise.resolve().then(async () => {
       if (this.get(instance.instanceId) === instance) await instance.refreshModels!({ manual: !dueOnly });
@@ -365,10 +376,12 @@ export class ProviderRegistry {
           };
         }
         const inst = entry.live;
+        // read before any await, so a reload that swaps the live instance meanwhile cannot hand this row another one's command
+        const cli = this.cliByInstance.get(inst.instanceId);
         let snapshot: ProviderSnapshot;
         try {
           await this.refreshCatalog(inst, dueOnly);
-          snapshot = withInstanceMark(inst.instanceId, await inst.snapshot());
+          snapshot = withWslNote(withInstanceMark(inst.instanceId, await inst.snapshot()), cli);
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
         }
@@ -399,7 +412,7 @@ export class ProviderRegistry {
           },
           access: driver?.metadata.access ?? "subscription",
           install: withServerPlatform(driver?.install),
-          cli: this.cliByInstance.get(inst.instanceId),
+          cli,
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —
           // the dropdown's "detected" entries. Snapshotted per describe() so a

@@ -143,6 +143,40 @@ instance at it:
   asks, the request becomes a normal approval card in chat.
 - Multiple instances are fine, one per agent.
 
+### Example: Mistral Vibe
+
+[Mistral Vibe](https://github.com/mistralai/mistral-vibe) ships an ACP entry
+point, `vibe-acp`, so it runs as a custom ACP engine on your own Mistral
+sign-in, not a Mistral API key saved in Murage.
+
+1. Install it: `uv tool install mistral-vibe` (or `pipx install mistral-vibe`).
+   This puts `vibe` and `vibe-acp` in `~/.local/bin`.
+2. Sign in once from a terminal: run `vibe --setup` and sign in with your
+   Mistral account (a browser sign-in through Mistral AI Studio, or an API
+   key). `vibe-acp` uses the same sign-in.
+3. Add the instance and restart Murage:
+
+   ```json
+   {
+     "instances": {
+       "mistral-vibe": {
+         "driver": "customAcp",
+         "displayName": "Mistral Vibe",
+         "config": { "cli": "/home/you/.local/bin/vibe-acp" }
+       }
+     }
+   }
+   ```
+
+   Use the full path when `~/.local/bin` is not on the app's `PATH` (an app
+   started from the dock often does not have it).
+4. Pick **Mistral Vibe** for a bot. Its model menu shows **Agent default**,
+   which runs the model Vibe itself is set to.
+
+Murage never hands its own `MISTRAL_API_KEY` to the CLI, so turns use the Vibe
+sign-in from step 2. If the chat shows `Missing API key for mistral provider`,
+sign in again from a terminal (step 2).
+
 ### Cline
 
 Cline has its own engine (`"driver": "clineAgent"`), so you do not need a
@@ -153,6 +187,25 @@ it may do, and it runs on the provider and model you chose in `cline auth`.
 Murage reads only the selected provider from Cline's saved settings
 (`~/.cline/data/settings/providers.json`), hands a saved key to the Cline
 process alone, and never stores it.
+
+### Muse Code
+
+Muse Code has its own engine (`"driver": "museCode"`, instance `muse`). Murage
+never installs it: install Muse Code from Meta, then sign in once with
+`muse login` or put `META_API_KEY` in the `muse` instance's `environment`.
+Murage starts `muse serve` and talks to it over Meta's own protocol. The key
+reaches the Muse child alone: `META_API_KEY` is on both strip lists, so no
+other engine inherits it, and a key in Murage's own environment is not handed
+to Muse either. Every Muse child runs with `MUSE_CONTRIBUTOR_MODE=0`,
+`MUSE_NO_AUTO_UPDATE=1` and `MUSE_DISABLE_APPROVAL_JUDGE=1`, and every
+`muse serve` launch carries `--contributor-mode off`. Contributor is a model on
+Muse, so every session start and resume names a regular model (`muse-spark-1.3`
+unless the owner picks another), and a turn Muse runs on a Contributor model is
+refused before the message goes. Ask launches with `--disable-shell
+--disable-write`, Auto with `--disable-write` (shell asks still reach the
+owner's card), and only Full access can write files. Muse Code never routes through Flux Router (Meta's
+terms bar gateways and proxies), it is hidden on Murage Cloud, and Meta bills
+the owner's own account or key.
 
 ## Notes
 

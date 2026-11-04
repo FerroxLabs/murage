@@ -184,6 +184,43 @@ describe("a workspace closing", () => {
   });
 });
 
+describe("a refused pairing code (1.0.16 F1)", () => {
+  async function typedPairing(start: Partial<ShellState> = {}) {
+    const h = harness(start);
+    await h.launcher.boot();
+    h.shell.queue.scan!.push(fail("cancelled"));
+    await h.tap("Yes, let's connect");
+    await h.tap("I see the code, scan it");
+    await h.tap("Type the code instead");
+    await h.tap("Connect", { address: "mac.tailnet123.ts.net", code: "123456" });
+    return h;
+  }
+
+  it("connect resolves, then the refusal brings back the type screen with the address, the computer's line and no code", async () => {
+    const h = await typedPairing();
+    expect(h.shell.opens).toEqual([{ origin: MAC.origin, credential: "123456" }]);
+    h.shell.close({ origin: MAC.origin, reason: "pairRefused", message: "That code is no longer valid." });
+    await tick();
+    expect(h.screen()).toEqual({ kind: "type", origin: MAC.origin, error: "That code is no longer valid." });
+    expect(h.view().form?.origin).toBe(MAC.origin);
+    expect(h.drafts[h.drafts.length - 1]).toBeUndefined();
+    expect(JSON.stringify(h.views[h.views.length - 1])).not.toContain("123456");
+  });
+
+  it("without a line from the computer it says the code was not accepted", async () => {
+    const h = await typedPairing();
+    h.shell.close({ origin: MAC.origin, reason: "pairRefused" });
+    await tick();
+    expect(h.screen()).toEqual({ kind: "type", origin: MAC.origin, error: COPY.codeRefused });
+  });
+
+  it("a refusal handed over by state() at start-up shows the same screen", async () => {
+    const h = harness({ closed: { origin: MAC.origin, reason: "pairRefused", message: "Too many tries." } });
+    await h.launcher.boot();
+    expect(h.screen()).toEqual({ kind: "type", origin: MAC.origin, error: "Too many tries." });
+  });
+});
+
 describe("pairing and opening", () => {
   it("scans, opens with the credential, and lands on the list", async () => {
     const h = harness();

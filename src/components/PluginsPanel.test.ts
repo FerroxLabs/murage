@@ -374,7 +374,7 @@ describe("each FluxRouter key problem gets its own sentence", () => {
   });
 
   it("points the budget case at the billing page rather than at settings", () => {
-    expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/dashboard/billing");
+    expect(FLUXROUTER_BILLING_URL).toBe("https://fluxrouter.ai/auth/sign-in?return_to=%2Fdashboard%2Fbilling");
   });
 });
 

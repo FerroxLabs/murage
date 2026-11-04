@@ -17,7 +17,7 @@ import * as procs from "../procs.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
-import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -30,6 +30,7 @@ import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import type { CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
+import { unsupportedCallsNotice } from "./codex-unsupported-calls.ts";
 import { NATIVE_DIR } from "../config.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { isMountRecord } from "../../shared/mount-identity.ts";
@@ -107,6 +108,31 @@ describe("CodexDriver turns (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  // D20 (adapted from OpenMausBot cc411b61b): a call Codex refused as unsupported left no item; the turn names it once.
+  it("D20: says which tool calls Codex refused as unsupported this turn, and not the ones from earlier turns", async () => {
+    // inside the Codex home the instance runs with: only a rollout there is read
+    mkdirSync(join(scratch, ".codex", "sessions"), { recursive: true });
+    const rollout = join(scratch, ".codex", "sessions", "rollout.jsonl");
+    // An earlier turn's refusal is already in the rollout: it was reported then.
+    writeFileSync(rollout, `${JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "old", output: "unsupported call: coordinate_bots" } })}\n`);
+    await create({ environment: { HOME: scratch, CODEX_HOME: join(scratch, ".codex"), FAKE_CODEX_ROLLOUT: rollout } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let warned: string[];
+    let turnId: string;
+    try {
+      ({ turnId } = await instance.adapter.sendTurn({ threadId: "unsupported-call", text: "Fixture", cwd: scratch }));
+      await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId);
+      warned = warn.mock.calls.map((call) => String(call[0]));
+    } finally {
+      warn.mockRestore();
+    }
+    const notices = recorder.events.filter((e) => e.type === "item.started" && (e as { toolKind?: string }).toolKind === "notice" && e.turnId === turnId);
+    expect(notices.map((e) => (e as { title?: string }).title)).toEqual([unsupportedCallsNotice("Codex Test", ["retry_thread"])]);
+    expect(notices[0]).toMatchObject({ origin: "murage", itemId: `codex-unsupported-${turnId}` });
+    expect(recorder.events.some((e) => e.type === "item.completed" && (e as { itemId?: string }).itemId === `codex-unsupported-${turnId}`)).toBe(true);
+    expect(warned).toContain("[codex] unsupported tool call (provider dropped the MCP namespace): retry_thread");
   });
 
   it("banks only the difference of resumed totals and drops the baseline on reset", async () => {
@@ -2910,6 +2936,43 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
     expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine")).toBe(false);
   });
+
+  // HOOK-LIVENESS-COLD-START (1.0.15 r6 gate): on a freshly unpacked Mac app the first exec of the hook's runtime (Murage Helper as
+  // node) took longer than the 10 s bound and the first Codex turn was refused. The stand-in runtime here is slow on its first start
+  // only (3x the bound), as a program the operating system has not run yet is; every later start is fast.
+  // POSIX: the stand-in is a sh script (Windows runs the hook through its cmd launcher and keeps its wider bound, see above)
+  it.skipIf(process.platform === "win32")("runs the first turn when the hook runtime's first start is slower than the bound, and still refuses a hook that never posts", async () => {
+    const bound = 400;
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(bound);
+    const coldRuntime = (name: string) => {
+      const mark = join(scratch, `${name}.started-once`);
+      const path = join(scratch, `${name}.sh`);
+      writeFileSync(path, `#!/bin/sh\nif [ ! -e '${mark}' ]; then sleep ${(bound * 3) / 1000}; : > '${mark}'; fi\nexec '${process.execPath}' "$@"\n`);
+      chmodSync(path, 0o755);
+      setHookRuntimeForTests(path);
+      return mark;
+    };
+    onTestFinished(() => setHookRuntimeForTests());
+    const sessions = join(scratch, "cold-sessions.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const mark = coldRuntime("cold-runtime");
+    await recreate();
+    const r = await run("t-cold", [{ kind: "shell", id: "c1", command: "echo hi" }], () => ({ behavior: "allow" }));
+    expect(r.done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e: any) => e.type === "runtime.error" && /pre-execution hook did not start/.test(e.message))).toBe(false);
+    expect(existsSync(mark)).toBe(true);
+    expect(readFileSync(sessions, "utf8").split("\n").filter(Boolean)).toHaveLength(1);
+    // the bound itself is unchanged: on a cold runtime a hook that never posts is still refused, at the bound and not before
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    coldRuntime("cold-runtime-dead");
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-cold-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    // the cold first start (3x the bound) runs out before turn/start, and the whole bound runs after it (Astra r1 #3)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(bound * 3 + bound);
+  }, 30_000);
 
   // Astra BLOCK 2: the turn is held until the hook is proven, so a Codex that carries on past a dead hook never ends a turn cleanly
   it("refuses a turn that completes before the SessionStart proof, and stops a call that starts unproven", async () => {

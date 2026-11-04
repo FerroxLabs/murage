@@ -114,6 +114,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
+    "@muse-code/sdk": "1.4.14",
     "@slack/socket-mode": "3.0.1",
     "@slack/web-api": "8.1.1",
     "@tiptap/core": "3.31.3",
@@ -156,7 +157,7 @@
     "yaml": "^2.9.0",
     "yauzl": "3.4.0",
     "yazl": "3.3.1",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "1.57.0",

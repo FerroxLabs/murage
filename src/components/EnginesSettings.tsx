@@ -223,7 +223,7 @@ function CustomPicker({ instance, cliDefault, onClose, onSaved }: {
   );
 }
 
-function EngineRow({ instance }: { instance: InstanceInfo }) {
+function EngineRow({ instance, settingControl }: { instance: InstanceInfo; settingControl?: string }) {
   const { refreshInstances, dispatch } = useStore();
   // One place, one name (spec UX rule): this link is the same destination the
   // picker's empty Local rail row uses.
@@ -267,6 +267,7 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
         )}
         <span className="flex-1" />
         <button
+          data-setting-control={settingControl}
           onClick={() => { setConfirmationOpen(value => !value); setSaved(null); }}
           disabled={switching}
           aria-expanded={confirmationOpen}
@@ -328,9 +329,11 @@ function EngineRow({ instance }: { instance: InstanceInfo }) {
 /** One engine's command line, on the engines' Advanced: where its CLI comes from, with Reset and Set CLI. A row
  *  and its command line share one gate per engine, so an enable and a reset never cross. */
 const engineChangeGate = new Set<string>();
-function EngineCommandLine({ instance }: { instance: InstanceInfo }) {
+/** Engines whose command line the owner can choose; the others render no "Choose location" button. */
+const cliConfigurableEngine = (instance: InstanceInfo) => !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
+function EngineCommandLine({ instance, settingControl }: { instance: InstanceInfo; settingControl?: string }) {
   const { refreshInstances } = useStore();
-  const cliConfigurable = !["grok", "openai-compat", "boxAgent"].includes(instance.driverKind);
+  const cliConfigurable = cliConfigurableEngine(instance);
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +377,7 @@ function EngineCommandLine({ instance }: { instance: InstanceInfo }) {
           </button>
         )}
         {cliConfigurable && <button
+          data-setting-control={settingControl}
           onClick={() => setOpen((v) => !v)}
           disabled={switching}
           aria-expanded={open}
@@ -393,6 +397,8 @@ function EngineCommandLine({ instance }: { instance: InstanceInfo }) {
 
 /** Engine command lines: the Advanced of Models and engines. */
 function EngineCommandLines({ rows }: { rows: InstanceInfo[] }) {
+  // The card's mark goes on the first row that renders its control; with none, the landing takes the card.
+  const marked = rows.findIndex(cliConfigurableEngine);
   return (
     <div id="engine-command-lines-heading" tabIndex={-1} className="outline-none">
       <Card
@@ -401,7 +407,7 @@ function EngineCommandLines({ rows }: { rows: InstanceInfo[] }) {
       >
         <div className="flex flex-col gap-4">
           {rows.length === 0 && <div className="text-[13px] text-ink-secondary">{t("ux.lcopyb.engines.noneFound")}</div>}
-          {rows.map((instance) => <EngineCommandLine key={instance.instanceId} instance={instance} />)}
+          {rows.map((instance, index) => <EngineCommandLine key={instance.instanceId} instance={instance} settingControl={index === marked ? "engine-command-lines-heading" : undefined} />)}
         </div>
       </Card>
     </div>
@@ -450,14 +456,14 @@ export function EnginesSettings() {
       {rows.length === 0 && (
         <div className="text-[13px] text-ink-secondary">{t("ux.lcopyb.engines.noneFound")}</div>
       )}
-      {engineFamilies(rows).map(({primary,members})=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
+      {engineFamilies(rows).map(({primary,members},familyIndex)=><section key={primary.driverKind} className="rounded-xl border border-hairline/40 bg-card p-4">
         {/* The card's own border is the section boundary; the eyebrow is only
             worth its line when it groups more than one connection. For a
             family of one it repeated the row directly beneath it word for
             word — the same doubling the model picker's engine list had
             (engineFamilyHeader, the one rule both surfaces use). */}
         {engineFamilyHeader(primary,members)&&<EngineGroupLabel className="mb-3">{primary.displayName}</EngineGroupLabel>}
-        <EngineRow instance={primary}/>
+        <EngineRow instance={primary} settingControl={familyIndex === 0 ? "engines-heading" : undefined}/>
         {members.length>1&&<div className="mt-3 border-t border-hairline/30 pt-2"><p className="text-xs text-ink-secondary">Other accounts and installations · {members.length-1}</p><div className="mt-3 space-y-4">{members.filter(i=>i.instanceId!==primary.instanceId).map(i=><div key={i.instanceId}><EngineRow instance={i}/>{i.cli&&i.cli===primary.cli&&<p className="mt-1 text-[11px] text-ink-secondary">{t("ux.lcopyb.engines.sameApp")}</p>}</div>)}</div></div>}
         {primary.driverKind === "claudeAgent" && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       </section>)}

@@ -61,6 +61,9 @@ import type { DatabaseSync } from "node:sqlite";
 import { requireMemoryOwner } from "./memory/authority.ts";
 import { isPipKind } from "./memory/pip-kinds.ts";
 import { memoryState } from "./memory/repository.ts";
+import { DENIED_SOURCE } from "./memory/deny.ts";
+import { EXCLUDED_THREAD_SOURCE, writetimeRecordRefusal } from "./memory/readable.ts";
+import type { MemoryEvidenceHandle } from "../shared/memory.ts";
 import { capturedSourceWithheld, derivationAncestryCurrent, LineageAllowance, recordRestsOnWithheldMessage } from "./memory/replay-lineage.ts";
 import { parseSkillManifest as parseLibrarySkillManifest } from "./skill-library.ts";
 import { collectPackageExportSkills } from "./package-export-files.ts";
@@ -90,20 +93,36 @@ function memorySkillSnapshot(id: string, version: number) {
     SELECT p.id,p.version,r.scope_id,r.text,r.state,r.kind FROM parents p LEFT JOIN memory_records r ON r.id=p.id AND r.version=p.version ORDER BY p.id,p.version`).all(id,version);
   if (parents.length > 100) throw new Error("MEMORY_SKILL_SOURCE_LIMIT");
   const evidence = [];
+  // The same visibility a memory read applies (readable.ts readableMemoryRecord), run on every snapshot, so the review start, staging and
+  // approval each judge the words as they stand now: a line the owner hid or forgot, a thread excluded from memory, a withheld reply, a
+  // withdrawn ancestor. A verdict not known now (the limit error) refuses too: unknown visibility is excluded.
+  const allowance = LineageAllowance.tool();
+  const supersedes = db.prepare("SELECT supersedes_id FROM memory_records WHERE id=? AND version=?");
   for (const parent of parents) {
     if (isPipKind(parent.kind)) throw new Error("MEMORY_IDENTITY_PIP_NOT_SKILL");
     if (parent.state !== "active" || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(parent.id,parent.version)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
-    const sources = db.prepare(`SELECT e.source_id,e.source_revision,e.start_byte,e.end_byte,s.revision,s.state,v.content_hash,v.payload FROM memory_evidence e
+    const sources = db.prepare(`SELECT e.source_id,e.source_revision,e.start_byte,e.end_byte,s.revision,s.state,s.thread_id,s.message_id,s.speaker,v.content_hash,v.payload,
+      ${DENIED_SOURCE("s")} AS denied,${EXCLUDED_THREAD_SOURCE("s")} AS excluded FROM memory_evidence e
       LEFT JOIN memory_sources s ON s.id=e.source_id LEFT JOIN memory_source_versions v ON v.source_id=e.source_id AND v.revision=e.source_revision
       WHERE e.record_id=? AND e.record_version=? ORDER BY e.source_id,e.start_byte LIMIT 101`).all(parent.id,parent.version);
     if (evidence.length + sources.length > 100) throw new Error("MEMORY_SKILL_SOURCE_LIMIT");
+    const handles: MemoryEvidenceHandle[] = [];
     for (const source of sources) {
       if (source.state !== "active" || source.revision !== source.source_revision || !source.payload || db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(source.source_id,source.source_revision)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+      if (Number(source.denied) !== 0 || Number(source.excluded) !== 0 || capturedSourceWithheld(allowance, source)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
       const text = JSON.parse(String(source.payload)).text;
       if (typeof text !== "string" || Number(source.start_byte) < 0 || Number(source.end_byte) <= Number(source.start_byte) || Number(source.end_byte) > Buffer.byteLength(text)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
       evidence.push({ id: source.source_id, revision: source.source_revision, hash: source.content_hash, start: source.start_byte, end: source.end_byte });
+      handles.push({ sourceId: String(source.source_id), revision: Number(source.source_revision), startByte: Number(source.start_byte), endByte: Number(source.end_byte) });
+    }
+    const parentId = String(parent.id), parentVersion = Number(parent.version);
+    // the write-time marks (deny_memory, denied scopes, the pending window of a hide or forget in flight): "checking" throws the limit error
+    if (writetimeRecordRefusal(db, { kind: "record", id: parentId, version: parentVersion, scopeId: String(parent.scope_id) }, handles)) throw new Error("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+    if (!derivationAncestryCurrent(allowance, db, parentId, parentVersion, supersedes.get(parentId, parentVersion)?.supersedes_id) || recordRestsOnWithheldMessage(allowance, parentId, parentVersion)) {
+      throw new Error(allowance.hit ? "MEMORY_REPLAY_LIMIT" : "MEMORY_SKILL_SOURCE_UNAVAILABLE");
     }
   }
+  if (allowance.hit) throw new Error("MEMORY_REPLAY_LIMIT");
   return { record: { id, version, scopeId: String(record.scope_id), text: String(record.text) }, hash: createHash("sha256").update(JSON.stringify({parents,evidence})).digest("hex") };
 }
 

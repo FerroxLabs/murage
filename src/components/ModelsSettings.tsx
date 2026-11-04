@@ -31,7 +31,7 @@ function failureMessage(error: unknown, action: string): string {
 }
 
 /** This editor updates the existing slot; it never reads or copies its saved key. */
-function ExistingKey({ id, label, configured, onSaved }: { id: string; label: string; configured: boolean; onSaved: (status: ConfigStatus) => void }) {
+function ExistingKey({ id, label, configured, onSaved, settingControl }: { settingControl?: string; id: string; label: string; configured: boolean; onSaved: (status: ConfigStatus) => void }) {
   const key = useRef<HTMLInputElement>(null);
   const [hasValue, setHasValue] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(""), [notice, setNotice] = useState("");
   const [removing, setRemoving] = useState(false);
@@ -53,7 +53,7 @@ function ExistingKey({ id, label, configured, onSaved }: { id: string; label: st
   };
   return <div className="mt-4 space-y-2">
     <label className="block text-[13px] text-ink">{label}
-      <input ref={key} type="password" aria-label={`${label} key`} autoComplete="off" spellCheck={false} maxLength={4096} defaultValue="" placeholder={configured ? "Key saved · paste a replacement" : "Paste a key"} disabled={busy} onInput={() => { setHasValue(Boolean(key.current?.value.trim())); setError(""); }} className={`${input} mt-1.5`} />
+      <input ref={key} type="password" data-setting-control={settingControl} aria-label={`${label} key`} autoComplete="off" spellCheck={false} maxLength={4096} defaultValue="" placeholder={configured ? "Key saved · paste a replacement" : "Paste a key"} disabled={busy} onInput={() => { setHasValue(Boolean(key.current?.value.trim())); setError(""); }} className={`${input} mt-1.5`} />
     </label>
     <div className="flex flex-wrap gap-2"><button type="button" className={button} disabled={busy || !hasValue} onClick={() => void save()}>{busy ? "Saving…" : `Save ${label} key`}</button>{configured && <button type="button" className={button} disabled={busy} onClick={() => setRemoving(true)}>Remove {label} key</button>}</div>
     {removing && <div className="rounded-lg bg-card p-3 text-[12px]"><p>Remove the saved {label} key? Bots using it will need another connection.</p><div className="mt-2 flex gap-2"><button type="button" className={button} disabled={busy} onClick={() => void save(true)}>Confirm key removal</button><button type="button" className={button} disabled={busy} onClick={() => setRemoving(false)}>Cancel</button></div></div>}
@@ -184,7 +184,7 @@ export function ModelsSettings() {
       <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Paste one model API key. Recognition happens on this computer; unclear keys need a provider choice.</p>
       <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage goes through that provider account, separately from engine subscriptions.</p>
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void add(); }}>
-        <label className="block text-[13px]">API key<input ref={key} type="password" aria-label="Model API key" defaultValue="" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy)} onInput={recognize} placeholder="Paste a model API key" className={`${input} mt-1.5`} /></label>
+        <label className="block text-[13px]">API key<input ref={key} type="password" data-setting-control="models-heading" aria-label="Model API key" defaultValue="" autoComplete="off" spellCheck={false} maxLength={4096} disabled={Boolean(busy)} onInput={recognize} placeholder="Paste a model API key" className={`${input} mt-1.5`} /></label>
         {hasKey && !keyIssue && (hints.length === 1 ? <p className="text-[12px] text-success">Recognized as {labels[hints[0]]}. Nothing is sent until you add the connection.</p> : <fieldset><legend className="text-[12px] text-ink-secondary">Which provider issued this key?</legend><div className="mt-2 grid grid-cols-2 gap-2">{(hints.length ? hints : presets).map(preset => <button key={preset} type="button" aria-pressed={chosen === preset} disabled={Boolean(busy)} onClick={() => setChosen(preset)} className={`${button} ${chosen === preset ? "ring-2 ring-accent" : ""}`}>{labels[preset]}</button>)}</div></fieldset>)}
         {keyIssue && <p role="alert" className="text-[12px] text-danger">{keyIssue}</p>}
         <label className="block text-[13px]">Connection name <span className="text-ink-secondary">(optional)</span><input ref={name} aria-label="Connection name (optional)" defaultValue="" maxLength={80} disabled={Boolean(busy)} placeholder="For example: Work account" className={`${input} mt-1.5`} /></label>
@@ -192,7 +192,7 @@ export function ModelsSettings() {
       </form>
       <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{snapshot?.storage === "encrypted" ? "New connections are encrypted by your operating system. Saved keys are never shown." : snapshot ? "Development mode uses local configuration storage, not OS encryption." : "Loading connection storage…"}</p>
     </section>
-    <InAdvanced><div id="model-catalogs-heading" tabIndex={-1} className="outline-none"><Card title="Model catalogs" subtitle="The chat models each connection lists. Search them here, or refresh a connection to fetch its newest list."><label className="block min-w-0"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label></Card></div></InAdvanced>
+    <InAdvanced><div id="model-catalogs-heading" tabIndex={-1} className="outline-none"><Card title="Model catalogs" subtitle="The chat models each connection lists. Search them here, or refresh a connection to fetch its newest list."><label className="block min-w-0"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} data-setting-control="model-catalogs-heading" aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label></Card></div></InAdvanced>
     <div className="flex flex-wrap gap-2"><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
     {notice && <p role="status" className="text-[12px] text-success">{notice}</p>}{error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.length === 0 && <p className="text-[13px] text-ink-secondary">No additional model connections yet. Existing default keys are managed below.</p>}
@@ -215,7 +215,7 @@ export function ModelsSettings() {
     <InAdvanced><LocalModelsSettings /></InAdvanced>
     <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
       <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
-      <ExistingKey id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
+      <ExistingKey settingControl="existing-keys-heading" id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
       {snapshot?.connections.filter(connection => connection.legacy && ["legacy-openai-image", "legacy-xai", "legacy-openai-compatible"].includes(connection.id)).map(connection => <ExistingKey key={connection.id} id={connection.id} label={connection.label} configured={connection.configured} onSaved={existingSaved} />)}
     </section>
   </div>;

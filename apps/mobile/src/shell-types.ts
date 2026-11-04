@@ -4,7 +4,7 @@
 import type { PluginListenerHandle } from "@capacitor/core";
 
 /** LaunchPolicy.swift CloseReason and CloseReason.java, in the same order. */
-export const CLOSE_REASONS = ["unreachable", "insecure", "signedOut", "signOut", "launcher", "updateRequired", "accessoff", "hosterror"] as const;
+export const CLOSE_REASONS = ["unreachable", "insecure", "signedOut", "signOut", "launcher", "updateRequired", "accessoff", "hosterror", "pairRefused"] as const;
 export type CloseReason = (typeof CLOSE_REASONS)[number];
 
 /**
@@ -43,6 +43,8 @@ export interface SavedWorkspace {
 export interface Closed {
   origin: string;
   reason: CloseReason;
+  /** Only with `pairRefused`: the computer's own line about the code, cleaned and at most 160 characters. */
+  message?: string;
 }
 
 /**

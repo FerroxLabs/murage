@@ -111,10 +111,24 @@ describe("where the button is mounted", () => {
   });
 
   it("is on every other main view a phone can reach", () => {
-    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx", "./today/TodayView.tsx", "./shell/stubs/needs-page.tsx", "./health/HealthPageBody.tsx"]) {
+    for (const file of ["./TeamMapPage.tsx", "./SkillRecorderPage.tsx", "./BrowserWorkspace.tsx", "./LocalVmWorkspace.tsx", "./today/TodayView.tsx", "./needs/NeedsYouPageBody.tsx", "./health/HealthPageBody.tsx"]) {
       expect(read(file), file).toContain("<OpenBotListButton />");
     }
     expect(read("./NoEngines.tsx")).toContain("<PhoneBotListBar />");
     expect(read("../App.tsx")).toContain("<PhoneBotListBar />");
+  });
+
+  it("stays on a phone while a room is still loading or failed to load (1.0.17)", () => {
+    // The room view is its own chunk; until it arrives its header (and the
+    // button in it) is not drawn, so the pane's spinner and its retry carry it.
+    const fallback = read("./LazyFallback.tsx");
+    const inline = fallback.slice(fallback.indexOf("if (inline)"), fallback.indexOf("overlay-inset"));
+    expect(inline).toContain("<PhoneBotListBar />");
+    const app = read("../App.tsx");
+    const frame = app.slice(app.indexOf("const roomFrame"), app.indexOf("function Shell"));
+    expect(frame).toContain("<PhoneBotListBar />");
+    const rooms = app.match(/<LazyBoundary key=\{group\.id\}[^>]*>/g) ?? [];
+    expect(rooms.length).toBe(2);
+    for (const room of rooms) expect(room).toContain("frame={roomFrame}");
   });
 });

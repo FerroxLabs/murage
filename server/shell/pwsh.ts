@@ -20,12 +20,13 @@
 // `PWSH_READ_ONLY` (cmdlets that read, only when the engine's whole text is one
 // pipeline of reads) and `pureMemberCall` (string methods, in that same shape).
 
+import { PROGRAM_SUFFIX } from "./wipe-vocab.ts";
 import { isPlain, literalText, MAX_TEXT_CHARS, Unreadable, type Part, type Quote, type Word } from "./lex.ts";
 import { loadsCodeFirst, markLoaderRunner, markLoaderVariable, mentionsLoaderVariable, pythonModuleLoads, rReadsProfile } from "./loaders.ts";
 import { attachedInlineCode, candidatesOf, expandWord, fork, fromFileWord, INLINE_CODE, interpreterKey, MAX_DEPTH, PHYSICAL_DRIVE, resolveName, resolveWritten, runnerOption, runsRemote, simpleCommand, takesValue, walkForeignExecutor, type Provenance, type Visitor, type WalkContext } from "./walk.ts";
 
 export const POWERSHELLS = new Set(["powershell", "powershell.exe", "pwsh", "pwsh.exe"]);
-const CMDS = new Set(["cmd", "cmd.exe"]);
+export const CMDS = new Set(["cmd", "cmd.exe"]);
 const EVALS = new Set(["invoke-expression", "iex"]);
 /** Every alias of Remove-Item, and what the same name is under cmd. */
 const DELETE_ALIASES: Record<string, "remove-item" | "rd" | "del"> = {
@@ -811,7 +812,7 @@ const READ_RUNNERS = new Set([
 
 /** A name with its folder and its `.exe`/`.com`/`.cmd`/`.bat` taken off, lower case. */
 function programBase(name: string): string {
-  return name.toLowerCase().replace(/^.*[\\/]/, "").replace(/\.(exe|com|cmd|bat)$/, "");
+  return name.toLowerCase().replace(/^.*[\\/]/, "").replace(PROGRAM_SUFFIX, "");
 }
 
 /** The interpreter a name is, by its language key, or undefined. */

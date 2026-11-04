@@ -7,6 +7,7 @@ import type { ModelCatalog } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
 import { instanceAuthFailed, noteInstanceAuthFailure, resetKeyRejectionsForTests } from "../key-rejections.ts";
 import { ProviderRegistry } from "./registry.ts";
+import { launchesThroughWsl, withWslNote, WSL_ENGINE_NOTE } from "./wsl-launch.ts";
 
 describe("saving a key ends the signed-out mark (item 139)", () => {
   it("a scoped reload clears that engine's mark and leaves the others; a full load clears all", async () => {
@@ -162,6 +163,27 @@ describe("ProviderRegistry", () => {
     expect(f.snapshot).toMatchObject({ state: "unavailable", reason: "boom at create" });
   });
 
+  // G9 (adapted from OpenMausBot efc8b350a): an engine started through WSL chats but cannot reach Murage's tools.
+  it("G9: on Windows, says on the engine's row when its own command starts it inside WSL", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await registry.load({
+        wsl: { driver: "fake", config: { cli: "wsl.exe -d Ubuntu -- hermes" } },
+        native: { driver: "fake", config: { cli: "C:\\Users\\me\\hermes.exe" } },
+        plain: { driver: "fake" },
+      });
+      const described = Object.fromEntries((await registry.describe()).map((d) => [d.instanceId, d]));
+      expect(described.wsl.snapshot).toMatchObject({ state: "available", versionNote: WSL_ENGINE_NOTE });
+      expect(described.wsl.cli).toBe("wsl.exe -d Ubuntu -- hermes");
+      expect(described.native.snapshot).not.toHaveProperty("versionNote");
+      expect(described.plain.snapshot).not.toHaveProperty("versionNote");
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  });
+
   it("describe() reports a snapshot() failure as unavailable rather than throwing", async () => {
     const fake = makeFakeDriver({ failSnapshot: "provider probe exploded" });
     const registry = new ProviderRegistry([fake.driver]);
@@ -242,6 +264,33 @@ describe("ProviderRegistry", () => {
     now++; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
     await registry.describe(); expect(calls).toBe(2);
     expect(registry.get("a")).toBe(instance); expect(fake.disposed).toEqual([]);
+    await registry.disposeAll();
+  });
+
+  it("an empty catalogue at boot is read again on the next due pass, a few times, then waits the 24 h age", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; } });
+    await registry.refreshModelCatalogs(); expect(calls).toBe(0); // just created: the create read counts
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1); // still empty: due again
+    for (let i = 0; i < 10; i++) { now += 2000; await registry.refreshModelCatalogs(); }
+    expect(calls).toBe(5); // capped
+    now += 24 * 60 * 60_000; await registry.refreshModelCatalogs(); expect(calls).toBe(6); // the 24 h age still applies
+    await registry.disposeAll();
+  });
+
+  it("an empty catalogue that fills stops the short retries", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; models.default = "m"; models.options = [{ id: "m", label: "M" }]; } });
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
     await registry.disposeAll();
   });
 
@@ -353,5 +402,24 @@ describe("1.0.14 FIRST-ENGINE-M3: a scan ticket", () => {
     const before = registry.generation;
     await registry.load({ fuigo: { driver: "fake" } });
     expect(registry.generation).toBeGreaterThan(before);
+  });
+});
+
+describe("G9: which engine commands start an engine inside WSL", () => {
+  it("counts wsl.exe and System32's bash.exe on Windows only", () => {
+    expect(launchesThroughWsl("wsl -d Ubuntu -- hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl('"C:\\Windows\\System32\\wsl.exe" hermes', "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Windows\\System32\\bash.exe -c hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Windows\\Sysnative\\bash -c hermes", "win32")).toBe(true);
+    expect(launchesThroughWsl("C:\\Program Files\\Git\\bin\\bash.exe -c hermes", "win32")).toBe(false);
+    expect(launchesThroughWsl("C:\\Users\\me\\wslhermes.exe", "win32")).toBe(false);
+    expect(launchesThroughWsl("wsl -- hermes", "linux")).toBe(false);
+    expect(launchesThroughWsl("wsl -- hermes", "darwin")).toBe(false);
+    expect(launchesThroughWsl(undefined, "win32")).toBe(false);
+  });
+  it("leaves an unavailable engine, and an engine with its own line, as they are", () => {
+    expect(withWslNote({ state: "unavailable", reason: "not found" }, "wsl hermes", "win32")).toEqual({ state: "unavailable", reason: "not found" });
+    expect(withWslNote({ state: "available", versionNote: "old" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: "old" });
+    expect(withWslNote({ state: "available" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: WSL_ENGINE_NOTE });
   });
 });
