@@ -79,6 +79,35 @@ import { toolFailureText } from "../../shared/tool-activity.ts";
 import { buildMcpServers, piMountRecords } from "./mcp-mounts.ts";
 import { wakeAwareTimeout } from "../sleep-clock.ts";
 
+/** E24: the turn waits for pi's session answer however long it takes, and says so in the chat after this long. */
+export const PI_SESSION_SLOW_MS = 20_000;
+export const piSessionSlowLine = (engine: string) =>
+  `${engine} is taking longer than usual to start this chat. The reply carries on when ${engine} is ready; press Stop to cancel it.`;
+
+/** pi-ai's per-round usage: `input` leaves out cached prompt tokens, and `cost.total` is pi's own priced USD. */
+export type PiUsage = { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; cost?: { total?: number } };
+const piCount = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined);
+/** G6 (upstream 95d60df4e): one model round added to the turn's tally, in the shape the other drivers report: input counts
+ *  cached and cache-written prompt tokens too, cachedInput is the cache reads, and cost sums pi's priced USD. A zero price
+ *  is pi's default for a model it has no prices for, so it leaves the cost unknown rather than booking it as nothing. */
+export function addPiRoundUsage(
+  total: { input: number; output: number; cachedInput?: number } | undefined,
+  cost: number | undefined,
+  round: PiUsage,
+): { usage: { input: number; output: number; cachedInput?: number }; cost: number | undefined } {
+  const cacheRead = piCount(round.cacheRead);
+  const cachedInput = cacheRead === undefined ? total?.cachedInput : (total?.cachedInput ?? 0) + cacheRead;
+  const roundCost = piCount(round.cost?.total);
+  return {
+    usage: {
+      input: (total?.input ?? 0) + (piCount(round.input) ?? 0) + (cacheRead ?? 0) + (piCount(round.cacheWrite) ?? 0),
+      output: (total?.output ?? 0) + (piCount(round.output) ?? 0),
+      ...(cachedInput === undefined ? {} : { cachedInput }),
+    },
+    cost: roundCost ? (cost ?? 0) + roundCost : cost,
+  };
+}
+
 /** Pi's window for a local model whose server has not reported one. */
 const PI_UNKNOWN_CONTEXT_WINDOW = 131072;
 const PI_UNKNOWN_MAX_TOKENS = 16384;
@@ -538,8 +567,8 @@ interface PiEvent {
   result?: unknown;
   isError?: boolean;
   // turn_end / message_start / message_end
-  message?: { role?: string; stopReason?: string; errorMessage?: string; usage?: { input?: number; output?: number } };
-  usage?: { input?: number; output?: number };
+  message?: { role?: string; stopReason?: string; errorMessage?: string; usage?: PiUsage };
+  usage?: PiUsage;
   // auto_retry_start / compaction_end / agent_settled
   attempt?: number;
   maxAttempts?: number;
@@ -810,10 +839,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let settled = false;
       // Token use summed over every model round of this turn (adapted from OpenMausBot 97d7c6df3). A round is counted at
       // the first place pi reports it, normally its message_end, which precedes the round's tools.
-      let turnUsage: { input: number; output: number } | undefined;
+      let turnUsage: { input: number; output: number; cachedInput?: number } | undefined;
+      // pi's own priced USD for the turn (G6, upstream 95d60df4e); unknown until a round reports a price above zero.
+      let turnCost: number | undefined;
       let roundCounted = false;
-      const addUsage = (round: { input?: number; output?: number }) => {
-        turnUsage = { input: (turnUsage?.input ?? 0) + (round.input ?? 0), output: (turnUsage?.output ?? 0) + (round.output ?? 0) };
+      const addUsage = (round: PiUsage) => {
+        const counted = addPiRoundUsage(turnUsage, turnCost, round);
+        turnUsage = counted.usage;
+        turnCost = counted.cost;
       };
 
       // An explicit pick must land on exactly that provider/model. A bare id
@@ -986,7 +1019,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         if (out.text) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: out.text });
       };
       // resolve one-shot RPC responses (new_session / switch_session / set_model)
-      const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
+      const responseWaiters = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }>();
       const rejectWaiters = (err: Error) => {
         for (const waiter of responseWaiters.values()) {
           clearTimeout(waiter.timer);
@@ -994,13 +1027,14 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         }
         responseWaiters.clear();
       };
+      /** `timeoutMs` Infinity waits for the answer however long it takes; the child closing or a Stop still ends the wait. */
       const awaitResponse = (command: string, timeoutMs = 20_000) =>
         new Promise<unknown>((resolve, reject) => {
-          const timer = setTimeout(() => {
+          const timer = timeoutMs === Infinity ? undefined : setTimeout(() => {
             responseWaiters.delete(command);
             reject(new Error(`${ENGINE} timed out (no answer for ${plainDuration(timeoutMs)}).`));
           }, timeoutMs);
-          timer.unref?.();
+          timer?.unref?.();
           responseWaiters.set(command, { resolve, reject, timer });
         });
       /** The bounded reason a one-shot RPC failed, for a user-facing error. */
@@ -1028,10 +1062,16 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let recoveryFailure: string | null = null;
       let attemptStreamed = false;
       let compactionItem: string | null = null;
+      // The slow-session line (E24), open while the turn still waits on pi's session answer.
+      let sessionWaitItem: string | null = null;
       const askTimers = new Set<{ clear: () => void }>();
       const closeCompaction = (ok: boolean) => {
         if (compactionItem) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: compactionItem, ok });
         compactionItem = null;
+      };
+      const closeSessionWait = (ok: boolean) => {
+        if (sessionWaitItem) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: sessionWaitItem, ok });
+        sessionWaitItem = null;
       };
       const terminate = () => {
         try { child.stdin.end(); } catch { /* already closed */ }
@@ -1047,6 +1087,15 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         for (const timer of askTimers) timer.clear();
         askTimers.clear();
         closeCompaction(false);
+        closeSessionWait(false);
+        // A handshake step still waiting (E24's session answer has no timeout) ends with the turn; only Stop's own bounded
+        // abort acknowledgement is kept, so pi is not killed while it flushes.
+        for (const [key, waiter] of [...responseWaiters]) {
+          if (key === "abort") continue;
+          responseWaiters.delete(key);
+          clearTimeout(waiter.timer);
+          waiter.reject(new Error(`${ENGINE} turn ended.`));
+        }
         flushAssistantText();
         if (end.kind === "failed" && end.message) emit({ ...base(threadId, turnId), type: "runtime.error", message: end.message, ...(end.setup !== undefined ? { setup: end.setup } : {}) });
         emit({
@@ -1055,6 +1104,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           ok: end.kind !== "failed",
           stopReason: end.kind === "done" ? "end_turn" : end.kind === "cancelled" ? "cancelled" : end.stopReason ?? "failed",
           ...(turnUsage ? { usage: turnUsage } : {}),
+          ...(turnCost !== undefined ? { cost: turnCost } : {}),
         });
         if (!aborting) terminate();
         active.delete(threadId);
@@ -1456,9 +1506,22 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       let sessionFile = sessionPath;
       try {
         const command = sessionPath ? "switch_session" : "new_session";
-        const hsPromise = awaitResponse(command);
+        // E24 (upstream 4e6688954): no timeout. A prompt sent before pi answers runs on a session pi then replaces under it,
+        // and that turn never ends. A slow answer is waited for, and after PI_SESSION_SLOW_MS the chat says so; Stop, a
+        // refusal or pi closing still end the wait.
+        const hsPromise = awaitResponse(command, Infinity);
         send(sessionPath ? { type: "switch_session", sessionPath } : { type: "new_session" });
-        const hs = (await hsPromise) as { sessionFile?: string; sessionId?: string } | undefined;
+        const slow = setTimeout(() => {
+          if (settled || sessionWaitItem) return;
+          sessionWaitItem = `pi-session-wait-${turnId}`;
+          const line = piSessionSlowLine(ENGINE);
+          emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "murage", itemId: sessionWaitItem, title: line, spoken: line, toolKind: "notice" });
+        }, PI_SESSION_SLOW_MS);
+        slow.unref?.();
+        const hs = (await hsPromise.finally(() => clearTimeout(slow))) as { sessionFile?: string; sessionId?: string } | undefined;
+        closeSessionWait(true);
+        // a late answer to a turn that already ended (Stop, pi closing) announces nothing after its turn.completed
+        if (settled) return { turnId };
         if (hs?.sessionFile) sessionFile = hs.sessionFile;
         sessionReady = true;
         emit({

@@ -7,6 +7,7 @@ import { projectSurfaceEnabled } from "@/lib/project-client";
 import { track } from "@/lib/analytics";
 import { prepareArchiveFlight } from "@/lib/archive-flight";
 import { errorPreview } from "@/lib/error-preview";
+import { escapePassesModals, takeDrawerEscape } from "@/lib/escape-layer";
 import { hostStoppedLabel } from "@/lib/host-stop";
 import { sendNoticeLabel } from "@/lib/send-notice";
 import { folderTrustLabel } from "@/lib/folder-trust";
@@ -15,6 +16,7 @@ import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { closedDrawerInert, focusLeavesClosedDrawer } from "@/lib/drawer-close";
+import { showYourComputers, usePhoneLauncher } from "@/lib/phone-launcher";
 import { useMediaQuery, useNarrowViewport } from "@/lib/media-query";
 import {
   Archive,
@@ -37,6 +39,7 @@ import {
   FolderPlus,
   Info,
   Keyboard,
+  Laptop,
   LayoutTemplate,
   Loader2,
   Megaphone,
@@ -165,6 +168,8 @@ const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").
 // Opened from a menu, never on the first paint: each loads on first use.
 const TeamExportDialog = retryableLazy(() => import("./TeamExportDialog").then((module) => ({ default: module.TeamExportDialog })));
 const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialog").then((module) => ({ default: module.NewFromTemplateDialog })));
+// UX-L6A part 2: New bot is hire in one sentence; Browse templates opens the chooser above.
+const HireBotDialog = retryableLazy(() => import("./hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 // The team library (explore, import, scout) opens on a tap: its chunk loads then.
 const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
@@ -938,7 +943,9 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
       className="overlay-inset fixed inset-x-0 top-0 z-40 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/40"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")}>
+      {/* Esc closes the panel from any control in it, its bot buttons too, and is used up here so the drawer and the
+          page under it stay (src/lib/escape-layer.ts). */}
+      <div role="dialog" aria-modal="true" aria-labelledby="new-channel-title" className={cn(BOX_FRAME, "max-h-[calc(var(--vvh,100dvh)-24px)] w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-hairline/50 bg-card shadow-2xl")} onKeyDown={(e) => { if (e.key === "Escape" && !e.nativeEvent.isComposing) { e.preventDefault(); e.stopPropagation(); onClose(); } }}>
         <BoxHead className="px-4 pt-4"><div id="new-channel-title" className="text-[15px] font-semibold text-ink">{project ? "New Project" : "New Channel"}</div></BoxHead>
         <BoxBody className="px-4 pb-3 pt-0.5">
         <p className="mb-3 text-[12.5px] text-ink-secondary">
@@ -952,7 +959,6 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") create();
-            if (e.key === "Escape") onClose();
           }}
           placeholder={project ? "Project name (for example, Website launch)" : "Channel name (for example, Website launch)"}
           className="mb-3 w-full rounded-lg bg-raised/70 px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
@@ -968,7 +974,6 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
               maxLength={CHANNEL_PROJECT_GOAL_MAX}
               onChange={(e) => setGoal(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Escape") onClose();
                 if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) create();
               }}
               rows={3}
@@ -1002,7 +1007,6 @@ function NewRoomPanel({ onClose, kind = "channel" }: { onClose: () => void; kind
           onChange={(e) => setSection(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") create();
-            if (e.key === "Escape") onClose();
           }}
           placeholder="Team (optional): Work, Personal, Client…"
           aria-label={project ? "Project team" : "Channel team"}
@@ -2221,6 +2225,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   /** The New Bot / New Team chooser that is open, if any. */
   const [chooser, setChooser] = useState<TemplateKind | null>(null);
+  const [hireOpen, setHireOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2343,15 +2348,34 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
     chooseSidebarDensity(density === "icons" ? lastExpandedDensity.current : "icons");
   };
 
-  // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
-  // drawer is open — on mobile, exactly when a bot/room context menu or the
-  // New Room panel can be open on top of it, so the same Escape press closes
-  // them together. Fine, since both directions are "get me out of here."
+  // Esc closes the drawer, bound only while it is open (src/lib/escape-layer.ts).
+  // It steps aside only for a modal layer over it (a dialog, a focus trap, the
+  // Snooze popover), which closes on its own. A menu inside the drawer is part
+  // of it: one Esc closes the menu and the drawer, the + menu too. The key is
+  // used up, so a page under the drawer (Health, All chats) stays.
+  // The + menu also closes on an Esc pressed outside it, on + itself for one,
+  // and only when no dialog or focus trap is over it (src/lib/escape-layer.ts).
+  // It is a menu on top ([data-create-menu] in OPEN_ON_TOP), so Health and All
+  // chats under it stay. Focus goes back to + unless the phone drawer used the
+  // key: the drawer closes with the menu and takes focus home itself. An Esc
+  // inside the menu never gets here (its own handler above uses it up).
+  useEffect(() => {
+    if (!plusOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (!escapePassesModals(event, document)) return;
+      const drawerClosing = event.defaultPrevented;
+      setPlusOpen(false);
+      if (drawerClosing) return;
+      event.preventDefault();
+      importReturnRef.current?.focus();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [plusOpen]);
+
   useEffect(() => {
     if (!open) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
+    const closeOnEscape = (event: KeyboardEvent) => { takeDrawerEscape(event, document, () => { setPlusOpen(false); onClose(); }); };
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose]);
@@ -2756,7 +2780,10 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const openSettings = (section?: AppSettingsSection) => {
     dispatch(section ? { type: "toggleAppSettings", open: true, section } : { type: "toggleAppSettings", open: true });
   };
+  // 1.0.16 F3: inside the phone app only, the way back to the app's own list of computers.
+  const phoneLauncher = usePhoneLauncher();
   const youItems: YouMenuItem[] = [
+    ...(phoneLauncher ? [{ key: "your-computers", label: t("nav.yourComputers"), icon: <Laptop size={17} />, onSelect: () => { void showYourComputers(); } }] : []),
     // Sean 10-30: Health has its own page off this menu, with a status dot.
     { key: "health", label: health.level === "act" || health.level === "watch" ? t("ux.l2a.you.healthLevel", { level: healthLevelWords(health.level) }) : t("ux.l2a.you.health"), icon: <span className="relative inline-flex"><HeartPulse size={17} aria-hidden="true" /><StatusDot level={health.level} className="absolute -right-1 -top-1" /></span>, onSelect: () => { dispatch({ type: "showHealth" }); onNavigate(); } },
     ...(desktop === true ? [
@@ -2854,7 +2881,9 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           {plusOpen && (
             <>
               <div className="fixed inset-0 z-30" onMouseDown={() => setPlusOpen(false)} />
-              <div id="sidebar-create-options" onKeyDown={(event) => {
+              {/* An Esc inside the menu is its own (intake.human.spec.ts:55): it closes the menu alone, the phone
+                  drawer stays and focus goes back to +. With focus outside it, the listener below closes it. */}
+              <div id="sidebar-create-options" data-create-menu="" onKeyDown={(event) => {
                 if (event.key === "Escape") {
                   event.stopPropagation();
                   setPlusOpen(false);
@@ -2885,7 +2914,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                   archivedCount={archivedBots.length}
                   onNewBot={() => {
                     setPlusOpen(false);
-                    setChooser("bot");
+                    setHireOpen(true);
                   }}
                   onNewTeam={() => {
                     setPlusOpen(false);
@@ -3314,6 +3343,12 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           onRestored={(message) => setTeamFeedback({ error: false, text: message })}
           onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
+      )}
+      {hireOpen && (
+        <LazyBoundary onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}><Suspense fallback={null}><HireBotDialog.Component
+          onClose={() => setHireOpen(false)}
+          onBrowseTemplates={() => { setHireOpen(false); setChooser("bot"); }}
+        /></Suspense></LazyBoundary>
       )}
       {chooser && (
         <LazyBoundary onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}><Suspense fallback={null}><NewFromTemplateDialog.Component

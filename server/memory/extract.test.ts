@@ -6,6 +6,7 @@ import { database, closeDatabase } from "../database.ts";
 import { OpenAICompatDriver } from "../drivers/openai-compat.ts";
 import { extractCandidates, requestMemoryExtraction } from "./extract.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 
 let server:Server|undefined;
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});vi.stubEnv("OPENAI_COMPAT_API_KEY","");});
@@ -25,7 +26,7 @@ it("advertises extraction only with usable credentials and sends one bounded too
   const instance=await OpenAICompatDriver.create({instanceId:"extract",displayName:"Fixture",environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY",key:"fixture-key",model:"fixture-model"}});
   try {
     expect(typeof instance.extractMemory).toBe("function");
-    expect(await instance.extractMemory!("Keep the verified source.",2000,new AbortController().signal)).toBe("[]");
+    expect(await instance.extractMemory!("Keep the verified source.",2000,new AbortController().signal,{fence:openLearningGate()} as never)).toBe("[]");
     expect(requests).toBe(1);expect(body).toMatchObject({model:"fixture-model",max_tokens:2000,stream:false});
     expect(body).not.toHaveProperty("tools");expect(body).not.toHaveProperty("tool_choice");
     expect(JSON.stringify(body)).toContain("Keep the verified source.");
@@ -46,14 +47,14 @@ it("refuses oversized input/output budgets before dispatch and bounds provider r
   await expect(requestMemoryExtraction(config,"valid",2001,signal)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
   await expect(requestMemoryExtraction(config,"x".repeat(65537),2000,signal)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
   expect(requests).toBe(0);
-  await expect(requestMemoryExtraction(config,"valid",2000,signal)).rejects.toThrow("MEMORY_EXTRACTION_RESPONSE_LIMIT");
+  await expect(requestMemoryExtraction(config,"valid",2000,signal,undefined,openLearningGate())).rejects.toThrow("MEMORY_EXTRACTION_RESPONSE_LIMIT");
   expect(requests).toBe(1);
 });
 
 it("propagates caller cancellation to the single in-flight HTTP extraction",async()=>{
   let observed!:()=>void;const arrived=new Promise<void>(resolve=>{observed=resolve;});let requests=0;
   const url=await local((_request,_response)=>{requests++;observed();}),controller=new AbortController();
-  const pending=requestMemoryExtraction({url,apiKey:"fake",model:"fixture"},"source",2000,controller.signal);
+  const pending=requestMemoryExtraction({url,apiKey:"fake",model:"fixture"},"source",2000,controller.signal,undefined,openLearningGate());
   const rejected=expect(pending).rejects.toThrow();await arrived;controller.abort();await rejected;expect(requests).toBe(1);
 });
 
@@ -75,11 +76,11 @@ it("grounds through the admitted OpenAI compatible route with an independent too
   });
   const instance=await OpenAICompatDriver.create({instanceId:"ground",displayName:"Fixture",environment:{},enabled:true,config:{url,key:"fixture-key",apiKeyEnv:"P09_UNUSED_KEY",model:"fixture-model"}});
   try{
-    expect(await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},500,new AbortController().signal)).toBe('{"supported":true}');
+    expect(await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},500,new AbortController().signal,openLearningGate("grounding"))).toBe('{"supported":true}');
     // V2 grounding has its own 64-token output cap.
     expect(body).toMatchObject({model:"fixture-model",max_tokens:64,stream:false});
     expect(body).not.toHaveProperty("tools");expect(JSON.stringify(body)).toContain("Independently judge");
-    await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},8,new AbortController().signal);
+    await instance.groundMemory!({text:"Prefers brevity",quote:"Please keep answers concise",claimType:"owner-statement",speaker:"owner",outcome:"recorded"},8,new AbortController().signal,openLearningGate("grounding"));
     expect(body).toMatchObject({max_tokens:8});
     expect(JSON.stringify(body)).toContain("Please keep answers concise");
   }finally{await instance.dispose();}
@@ -94,7 +95,7 @@ it("the configured extraction transport sends the caller's frozen classification
   const instance=await OpenAICompatDriver.create({instanceId:"frozen-extract",displayName:"Fixture",environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY",key:"fixture-key",model:"fixture-model"}});
   const messages=Object.freeze([Object.freeze({role:"system",content:"Immutable contract plus retained classification guidance"}),Object.freeze({role:"user",content:JSON.stringify({source:"A source statement"})})]);
   try{
-    await instance.extractMemory!("A source statement",2000,new AbortController().signal,{policyRevision:"retained-version",messages});
+    await instance.extractMemory!("A source statement",2000,new AbortController().signal,{policyRevision:"retained-version",messages,fence:openLearningGate()});
     expect(body.messages).toEqual(messages);expect(body.max_tokens).toBe(2000);expect(body).not.toHaveProperty("tools");
   }finally{await instance.dispose();}
 });
@@ -106,7 +107,7 @@ it("the host reflection purpose permits 8,000 tokens without widening ordinary e
     calls++;let raw="";request.on("data",chunk=>raw+=chunk);request.on("end",()=>{body=JSON.parse(raw);result(response,"reflection");});
   });
   const instance=await OpenAICompatDriver.create({instanceId:"reflection",displayName:"Fixture",environment:{},enabled:true,config:{url,apiKeyEnv:"P09_UNUSED_KEY",key:"fixture-key",model:"fixture-model"}});
-  const dispatch={policyRevision:"host-cycle",purpose:"reflection" as const,messages:[{role:"system",content:"Reflect on the admitted synthetic examples"},{role:"user",content:"Fixture"}]};
+  const dispatch={policyRevision:"host-cycle",purpose:"reflection" as const,fence:openLearningGate("reflection"),messages:[{role:"system",content:"Reflect on the admitted synthetic examples"},{role:"user",content:"Fixture"}]};
   try{
     await expect(instance.extractMemory!("Fixture",8000,new AbortController().signal)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");
     await expect(instance.extractMemory!("Fixture",8001,new AbortController().signal,dispatch)).rejects.toThrow("MEMORY_EXTRACTION_LIMIT");

@@ -60,6 +60,7 @@ import com.murage.mobile.shell.NavigationFailure;
 import com.murage.mobile.shell.NavigationPolicy;
 import com.murage.mobile.shell.OriginReturn;
 import com.murage.mobile.shell.OpenHash;
+import com.murage.mobile.shell.PairRefusal;
 import com.murage.mobile.shell.PairingLink;
 import com.murage.mobile.shell.PendingOpen;
 import com.murage.mobile.shell.ProbeVerdict;
@@ -116,6 +117,8 @@ public class WorkspaceActivity extends AppCompatActivity {
         });
     }
     private final Runnable readyDeadline = this::readyDeadlinePassed;
+    /** Holds the splash over a pairing /enter, so a refused code never flashes the desktop's own page. */
+    private final Runnable enterHold = this::reveal;
     private Shell shell;
     private String mode;
     /** SEC-006: a device approval is waiting on the prompt. */
@@ -135,6 +138,8 @@ public class WorkspaceActivity extends AppCompatActivity {
     /** The splash is covering the page and waiting for ready() (or a reveal). */
     private boolean splashUp;
     private boolean closing;
+    /** Closing is decided here once: a closing workspace's page is turned away and hears nothing. */
+    private final com.murage.mobile.shell.BridgeGate bridge = new com.murage.mobile.shell.BridgeGate();
     private boolean resumedOnce;
     private boolean mainDocumentFailed;
     /**
@@ -162,13 +167,12 @@ public class WorkspaceActivity extends AppCompatActivity {
      * this stuck true until the activity is recreated (callbar-rereview2.md
      * G4). */
     private boolean callSessionOpen;
-    private ValueCallback<Uri[]> fileCallback;
     private PermissionRequest pendingPermission;
     private ActivityResultLauncher<Intent> filePicker;
     private ActivityResultLauncher<String[]> permissionAsk;
     private ActivityResultLauncher<String> pushPermissionAsk;
     /** registerPush calls waiting on the notification prompt; granted or denied, each then registers (the plan answers "denied"). */
-    private final List<Runnable> pendingPushRegistrations = new ArrayList<>();
+    private final PendingResults pending = new PendingResults();
 
     private final OnBackPressedCallback back = new OnBackPressedCallback(true) {
         @Override public void handleOnBackPressed() {
@@ -243,22 +247,21 @@ public class WorkspaceActivity extends AppCompatActivity {
         applyAppearance(getResources().getConfiguration());
 
         filePicker = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
-            if (fileCallback == null) return;
-            fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(result.getResultCode(), result.getData()));
-            fileCallback = null;
+            // R4-01: a result after the workspace closed delivers no files.
+            pending.deliverFiles(bridge.allowsNativeAction(), WebChromeClient.FileChooserParams.parseResult(result.getResultCode(), result.getData()));
         });
         permissionAsk = registerForActivityResult(new ActivityResultContracts.RequestMultiplePermissions(), granted -> {
             PermissionRequest request = pendingPermission;
             pendingPermission = null;
             if (request == null) return;
+            if (!bridge.allowsNativeAction()) { request.deny(); return; }
             if (!granted.containsValue(false)) request.grant(request.getResources());
             else request.deny();
         });
 
         pushPermissionAsk = registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
-            List<Runnable> waiting = new ArrayList<>(pendingPushRegistrations);
-            pendingPushRegistrations.clear();
-            for (Runnable go : waiting) go.run();
+            // R4-01: a result after the workspace closed starts no registration.
+            pending.runPushes(bridge.allowsNativeAction());
         });
 
         overlay = new LoadingOverlay(this, this::reloadRoute, () -> close(CloseReason.LAUNCHER));
@@ -476,10 +479,21 @@ public class WorkspaceActivity extends AppCompatActivity {
         overlay.showSlow();
     }
 
+    /**
+     * A pairing page answers by itself within moments: a refused code closes
+     * the workspace (pairRefused), an accepted one lands on "/". Anything else
+     * (a full computer, an older door) shows the page after five seconds.
+     */
+    private void holdEnter() {
+        main.removeCallbacks(enterHold);
+        main.postDelayed(enterHold, 5000);
+    }
+
     /** Takes the splash down without ready(): the door's /enter page, basic mode. */
     private void reveal() {
         splashUp = false;
         main.removeCallbacks(readyDeadline);
+        main.removeCallbacks(enterHold);
         overlay.hide();
     }
 
@@ -554,13 +568,22 @@ public class WorkspaceActivity extends AppCompatActivity {
     // ---- closing, events, deep links ----
 
     void close(CloseReason reason) {
+        close(reason, null);
+    }
+
+    void close(CloseReason reason, String message) {
         if (closing) return;
         if (reason == CloseReason.LAUNCHER) stillInUse();
         closing = true;
+        bridge.close();
+        denyPendingCapture();
+        pending.settle(); // R4-01: the chooser is answered with nothing, queued registrations dropped
         main.removeCallbacks(readyDeadline);
+        main.removeCallbacks(enterHold);
         if (saves != null) saves.cancelAll(); // every save in flight stops; the page hears unavailable
+        if (phoneAskSetup != null) phoneAskSetup.close(); // no dialog window is left behind finish()
         ShellLog.i("workspace closed reason=" + reason.wire);
-        shell.closed(this, reason);
+        shell.closed(this, reason, message);
         finish();
         overridePendingTransition(0, 0);
         // B6: this workspace is gone for any reason -- a cross-computer
@@ -568,6 +591,14 @@ public class WorkspaceActivity extends AppCompatActivity {
         // blocked by anything.
         if (LaunchPolicy.deliversHeldOpenAfter(reason)) shell.deliverPendingCrossComputerOpen(this);
         else shell.takePendingCrossComputerOpen(); // N-7: a deliberate return to the launcher drops it
+    }
+
+    /** A capture request the page is still waiting on is refused when closing begins. */
+    private void denyPendingCapture() {
+        if (pendingPermission != null) {
+            pendingPermission.deny();
+            pendingPermission = null;
+        }
     }
 
     /** True while the page says a call is live (B6: the same question
@@ -582,6 +613,9 @@ public class WorkspaceActivity extends AppCompatActivity {
     void closeFromShell() {
         if (closing) return;
         closing = true;
+        bridge.close();
+        denyPendingCapture();
+        pending.settle(); // R4-01: the chooser is answered with nothing, queued registrations dropped
         main.removeCallbacks(readyDeadline);
         if (saves != null) saves.cancelAll();
         ShellLog.i("workspace replaced");
@@ -592,7 +626,7 @@ public class WorkspaceActivity extends AppCompatActivity {
 
     /** window.__murageNativeEmit in the main frame, only while the page is on the saved origin: checked here and inside the script (M6). */
     void emit(String name, JSONObject detail, ValueCallback<Boolean> done) {
-        if (webView == null || !origin.contains(webView.getUrl())) {
+        if (!bridge.admitsEvent() || webView == null || !origin.contains(webView.getUrl())) {
             if (done != null) done.onReceiveValue(false);
             return;
         }
@@ -672,6 +706,7 @@ public class WorkspaceActivity extends AppCompatActivity {
     }
 
     void openExternal(Uri uri) {
+        if (!bridge.allowsNativeAction()) return;
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE));
         } catch (ActivityNotFoundException none) {
@@ -683,6 +718,11 @@ public class WorkspaceActivity extends AppCompatActivity {
 
     /** Every branch replies exactly once, including saveFile, whose controller owns the reply. */
     private void onChannel(ChannelGate.Request request, ChannelBridge.Reply reply) {
+        // The one gate: a closing workspace answers every method the same way.
+        if (!bridge.admitsRequest()) {
+            reply.error("unavailable");
+            return;
+        }
         switch (request.method) {
             case "openPhoneForBots":
                 runOnUiThread(() -> {
@@ -746,6 +786,20 @@ public class WorkspaceActivity extends AppCompatActivity {
                 reply.ok(true);
                 close(CloseReason.LAUNCHER);
                 break;
+            case "pairRefused": {
+                // Honoured only for a workspace opened with a code, before this
+                // computer was reached, and only while the page is the door's /enter.
+                String pageUrl = webView == null ? null : webView.getUrl();
+                String line = ChannelArgs.string(request.args.opt("message"), 200);
+                boolean onEnter = pageUrl != null && origin.contains(pageUrl) && "/enter".equals(Uri.parse(pageUrl).getPath());
+                if (!askSetupPairing || signedInSeen || closing || !onEnter || line == null) {
+                    reply.error("unavailable");
+                    break;
+                }
+                reply.ok(true);
+                close(CloseReason.PAIR_REFUSED, PairRefusal.message(line));
+                break;
+            }
             case "callSessionOpen":
                 callSessionOpen = true;
                 ShellLog.i("call session open");
@@ -812,10 +866,9 @@ public class WorkspaceActivity extends AppCompatActivity {
                 if (Build.VERSION.SDK_INT >= 33 && !prefs.getBoolean("asked", false)
                         && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     prefs.edit().putBoolean("asked", true).apply();
-                    pendingPushRegistrations.add(go);
-                    if (pendingPushRegistrations.size() == 1) pushPermissionAsk.launch(Manifest.permission.POST_NOTIFICATIONS);
-                } else if (!pendingPushRegistrations.isEmpty()) {
-                    pendingPushRegistrations.add(go); // the prompt is still up: answer with the rest
+                    if (pending.awaitPush(go)) pushPermissionAsk.launch(Manifest.permission.POST_NOTIFICATIONS);
+                } else if (pending.pushWaiting()) {
+                    pending.awaitPush(go); // the prompt is still up: answer with the rest
                 } else {
                     go.run();
                 }
@@ -923,15 +976,11 @@ public class WorkspaceActivity extends AppCompatActivity {
         if (shell != null) shell.detach(this);
         if (saves != null) saves.dispose();
         // Nothing the page is waiting on is left unanswered.
-        if (fileCallback != null) {
-            fileCallback.onReceiveValue(null);
-            fileCallback = null;
-        }
+        pending.settle(); // their page has gone with the WebView
         if (pendingPermission != null) {
             pendingPermission.deny();
             pendingPermission = null;
         }
-        pendingPushRegistrations.clear(); // their page has gone with the WebView
         if (webView != null && root != null) {
             root.removeView(webView);
             webView.destroy();
@@ -953,6 +1002,7 @@ public class WorkspaceActivity extends AppCompatActivity {
          * as main-frame navigations and never as NEW_WINDOW.
          */
         @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (!bridge.allowsNativeAction()) return true; // closing: nothing navigates, nothing launches
             String url = request.getUrl().toString();
             switch (NavigationPolicy.decide(url, request.isForMainFrame() ? NavigationPolicy.Target.MAIN_FRAME : NavigationPolicy.Target.SUBFRAME, origin)) {
                 case ALLOW:
@@ -973,6 +1023,7 @@ public class WorkspaceActivity extends AppCompatActivity {
          * allowed, as there; an about: page no longer is (final review M7).
          */
         @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            if (!bridge.allowsNativeAction()) { view.stopLoading(); return; }
             mainDocumentFailed = false;
             mainDocumentStatus = 200;
             pageFinishedOnOrigin = false;
@@ -1103,7 +1154,8 @@ public class WorkspaceActivity extends AppCompatActivity {
             if (mainDocumentFailed || !origin.contains(url)) return;
             String path = Uri.parse(url).getPath();
             if ("/enter".equals(path)) { // the door's pairing page never calls ready()
-                reveal();
+                if (askSetupPairing && !signedInSeen) holdEnter();
+                else reveal();
                 return;
             }
             pageFinishedOnOrigin = true;
@@ -1135,7 +1187,7 @@ public class WorkspaceActivity extends AppCompatActivity {
             // for a page-initiated reload).
             boolean wasOpen = callSessionOpen;
             callSessionOpen = false;
-            if (wasOpen) shell.deliverPendingCrossComputerOpen(WorkspaceActivity.this); // B6
+            if (wasOpen && bridge.allowsNativeAction()) shell.deliverPendingCrossComputerOpen(WorkspaceActivity.this); // B6
             root.removeView(view);
             view.destroy();
             if (view == webView) {
@@ -1169,6 +1221,7 @@ public class WorkspaceActivity extends AppCompatActivity {
 
     private final class Chrome extends WebChromeClient {
         @Override public void onPermissionRequest(PermissionRequest request) {
+            if (!bridge.allowsNativeAction()) { request.deny(); return; }
             // Android names no frame here, so the origin decides alone (M8, Plan 3).
             if (!NavigationPolicy.mayCapture(request.getOrigin().toString(), null, origin)) {
                 request.deny();
@@ -1201,13 +1254,13 @@ public class WorkspaceActivity extends AppCompatActivity {
         }
 
         @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-            if (fileCallback != null) fileCallback.onReceiveValue(null);
-            fileCallback = callback;
+            if (!bridge.allowsNativeAction()) { callback.onReceiveValue(null); return true; }
+            pending.awaitFiles(callback);
             try {
                 filePicker.launch(params.createIntent());
                 return true;
             } catch (ActivityNotFoundException none) {
-                fileCallback = null;
+                pending.dropFiles();
                 return false;
             }
         }
@@ -1216,7 +1269,7 @@ public class WorkspaceActivity extends AppCompatActivity {
         // dismissive answer without a word (iOS fromPage). Android gives no frame, so the
         // page URL's origin is the check.
         @Override public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
-            if (!origin.contains(url)) {
+            if (!bridge.allowsNativeAction() || !origin.contains(url)) {
                 result.cancel();
                 return true;
             }
@@ -1224,7 +1277,7 @@ public class WorkspaceActivity extends AppCompatActivity {
         }
 
         @Override public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
-            if (!origin.contains(url)) {
+            if (!bridge.allowsNativeAction() || !origin.contains(url)) {
                 result.cancel();
                 return true;
             }
@@ -1232,7 +1285,7 @@ public class WorkspaceActivity extends AppCompatActivity {
         }
 
         @Override public boolean onJsPrompt(WebView view, String url, String message, String defaultValue, JsPromptResult result) {
-            if (!origin.contains(url)) {
+            if (!bridge.allowsNativeAction() || !origin.contains(url)) {
                 result.cancel();
                 return true;
             }

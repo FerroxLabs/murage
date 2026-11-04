@@ -12,6 +12,7 @@ import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
 import { extractCandidates, reportMemoryUsage, type TextOnlyExtractor } from "../memory/extract.ts";
 import { EXTRACTION_CATALOGUE_MODELS, EXTRACTION_SUMMARY_MS, extractionOutcomes, FLUX_PINNED_LEARNING_MODEL } from "../memory/extraction-outcomes.ts";
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 const signal = () => new AbortController().signal;
-const run = (extractor: TextOnlyExtractor | null, abort = signal()) => extractCandidates(SOURCE, extractor, abort);
+const run = (extractor: TextOnlyExtractor | null, abort = signal()) => extractCandidates(SOURCE, extractor, abort, undefined, undefined, { fence: openLearningGate() });
 const envelope = (content: unknown = "[]", extra: Record<string, unknown> = {}) => ({
   usage: { prompt_tokens: 10, completion_tokens: 20 },
   choices: [{ finish_reason: "stop", message: { content }, ...extra }],

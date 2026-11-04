@@ -48,11 +48,11 @@ export function browserExtensionListingStatus(listing: BrowserExtensionListing) 
 
 /** The truthful next step while no browser profile is connected. */
 export function browserExtensionSetupReason(listing: BrowserExtensionListing): string {
-  if (listing.storeUrl) return "Add Murage for Chrome from the Chrome Web Store, then open its side panel and connect.";
+  if (listing.storeUrl) return "If Murage for Chrome is not in your browser, add it from the Chrome Web Store. Then press Set up my browser below and open its side panel.";
   // A release build without a trusted store item still connects an extension
   // that is already installed; it just has no link to offer.
-  if (listing.build === "release") return "Open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.";
-  if (listing.build === "development") return "Install the development extension and register its helper to connect.";
+  if (listing.build === "release") return "Press Set up my browser below, then open Murage for Chrome's side panel to connect. You can keep using the bot's own browser.";
+  if (listing.build === "development") return "Install the development extension, then press Set up my browser below to register its helper.";
   // Resources-only builds (qualification before the store item exists) ship
   // the helper but no extension identity, so nothing can connect yet.
   return "This copy of Murage is not set up for Murage for Chrome yet. You can keep using the bot's own browser.";

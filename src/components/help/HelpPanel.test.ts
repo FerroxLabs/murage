@@ -54,6 +54,13 @@ describe("the shell's new screens", () => {
       expect(resolveHelpScreen({ activeView, bot: { id: "b1", name: "Nova" }, connected: true }).key).toBe("help");
     });
   }
+  // FEEDBACK-SCREEN-UNKNOWN: the report names the screen the owner was on, not the help page it shows.
+  for (const [activeView, screen, title] of [["today", "today", "Today"], ["needs-you", "needs-you", "Needs you"], ["health", "help", "Help"]] as const) {
+    it(`feedback from ${activeView} names ${screen}`, () => {
+      const envelope = feedbackEnvelopeForScreen(resolveHelpScreen({ activeView, bot: { id: "b1", name: "Nova" }, connected: true }));
+      expect(envelope).toMatchObject({ screen, title });
+    });
+  }
 });
 
 describe("help panel", () => {

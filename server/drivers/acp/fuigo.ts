@@ -160,7 +160,35 @@ export const FUIGO_ASK_CLOCK_OFF = { FUIGO_ASK_USER_QUESTION_TIMEOUT_ENABLED: "f
  *  over any value the owner's shell sets: a non-zero one left in place would turn evaluation back on. */
 export const FUIGO_ENVRC_OFF = { FUIGO_ENVRC_TIMEOUT_SECS: "0" } as const;
 
-export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF, ...FUIGO_ENVRC_OFF } as const;
+/** Fuigo's request retries and connect limit, fixed for every bot turn so an unreachable Router ends in a bounded time
+ *  (FUIGO-NO-SILENT-HANG). fuigo-sampler retry.rs reads FUIGO_MAX_RETRIES, shared_http.rs FUIGO_CONNECT_TIMEOUT_SECS.
+ *  An owner's shell value of 10 retries or a 120 s connect limit would stretch one dead request past every watch.
+ *  The Cloud launcher pins the same values (deploy/cloud-home/murage-turn-launch.py ENGINE_ENV_PIN fuigoAgent). */
+export const FUIGO_RETRY_PINS = { FUIGO_MAX_RETRIES: "3", FUIGO_CONNECT_TIMEOUT_SECS: "15" } as const;
+
+/** Fuigo's per-attempt compaction wall clock, fixed at Fuigo's own default (fuigo-shell resolve/compaction.rs:100 at
+ *  1.0.32 and 1.0.38: env FUIGO_COMPACTION_WALL_CLOCK_SECS, then the remote setting, then 300; 0 disables it). Pinned so
+ *  neither a remote setting nor an owner's shell (0, 900) moves it past Murage's 20 minute compaction deadline
+ *  (fuigo-silence.ts). The Cloud launcher pins the same value (ENGINE_ENV_PIN fuigoAgent). */
+export const FUIGO_COMPACTION_PINS = { FUIGO_COMPACTION_WALL_CLOCK_SECS: "300" } as const;
+
+export const FUIGO_TURN_PINS = { ...FUIGO_MODEL_REFRESH_OFF, ...FUIGO_SUBAGENTS_OFF, ...FUIGO_AGENT_SPAWNS_OFF, ...FUIGO_ASK_CLOCK_OFF, ...FUIGO_ENVRC_OFF, ...FUIGO_RETRY_PINS, ...FUIGO_COMPACTION_PINS } as const;
+
+/** Fuigo parks a turn on an uncharged 401 and waits for a credential to heal itself (fuigo-shell flags.rs, env "0" forces
+ *  it off; sampler_turn.rs park eligibility). With Murage's Flux key on the turn nothing heals while the turn waits, so
+ *  the park only holds the chat silent: it is off. A `fuigo login` (auth.json) turn keeps it, since a sign-in can renew. */
+export const FUIGO_PARK_ENV = "FUIGO_UNCHARGED_401_PARK";
+
+/** The park pin for a turn that presents `key` (presentedFuigoKey of the child env): "0" with a Flux key, else nothing. */
+export function fuigoParkPin(key: string | null): Record<string, string> {
+  return key ? { [FUIGO_PARK_ENV]: "0" } : {};
+}
+
+/** Every casing of the park name goes, then the pin for `key` is set: no inherited value is ever left in place. */
+export function applyFuigoParkPin(env: Record<string, string | undefined>, key: string | null, platform: NodeJS.Platform = process.platform): void {
+  deleteEnvNames(env, [FUIGO_PARK_ENV], platform);
+  Object.assign(env, fuigoParkPin(key));
+}
 
 /**
  * Names a Fuigo bot turn never inherits, in any casing. `FUIGO_AGENT` starts
@@ -200,13 +228,22 @@ export function scrubFuigoHandedEnv(
     const kept = Object.entries(child).find(([childName]) => (platform === "win32" ? childName.toUpperCase() === name.toUpperCase() : childName === name));
     if (!kept || kept[1] !== map[name]) delete map[name];
   }
+  // The child's own key reaches the engine through the map too: a key equal to this process's value is not a driver
+  // name (core.ts driverNames), so without this an owner map with a different or no key would hand the engine none.
+  for (const [name, value] of Object.entries(child)) {
+    if (!isFuigoKeyName(name, platform) || typeof value !== "string") continue;
+    deleteEnvNames(map, [name], platform);
+    map[name] = value;
+  }
+  // after the key mirror, from the child's finished env: the map and the child carry the same park decision
+  applyFuigoParkPin(map, presentedFuigoKey(child, platform), platform);
 }
 
 /** The Flux key the child will present, after the scrub, or null. */
-function presentedFuigoKey(env: Record<string, string | undefined>): string | null {
+export function presentedFuigoKey(env: Readonly<Record<string, string | undefined>>, platform: NodeJS.Platform = process.platform): string | null {
   for (const wanted of FUIGO_KEY_ENV) {
     for (const [name, value] of Object.entries(env)) {
-      if (isFuigoKeyName(name, process.platform) && name.toUpperCase() === wanted && value && isFluxKeyShape(value)) return value.trim();
+      if (isFuigoKeyName(name, platform) && name.toUpperCase() === wanted && value && isFluxKeyShape(value)) return value.trim();
     }
   }
   return null;
@@ -873,7 +910,10 @@ const support: AcpSupport = {
     scrubFuigoCredentialEnv(env, fluxKey());
     // 1.0.32: no other provider's key, no startup model refresh, no agent Fuigo starts on its own.
     withholdFuigoProviderEnv(env);
+    applyFuigoParkPin(env, presentedFuigoKey(env));
   },
+  // a provider route replaces the Flux key after transformEnv: the park follows the key the turn finally presents
+  finishTurnEnv: (env) => applyFuigoParkPin(env, presentedFuigoKey(env)),
   scrubHandedEnv: (map, child) => scrubFuigoHandedEnv(map, child),
 
   /**

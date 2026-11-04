@@ -37,7 +37,7 @@ function writes(table: string, events: readonly string[] = ALL_EVENTS, when?: st
 /** Rows of memory_scope_bindings that background work rewrites all the time and that grant or remove nothing:
  * counters, cursors, intents of queued jobs. Every other binding (a person, a human thread, an exclusion, the
  * roster, a bot grant, the owner's settings) moves the epoch when it is written. */
-const NOISY_SYSTEM_SUBJECTS = [
+export const NOISY_SYSTEM_SUBJECTS: readonly string[] = [
   "observability", "reveal-capture", "reveal-scan", "procedure-review", "procedure-review-pending", "pip-stance", "pip-render",
   "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "consolidation-skip-due", "consolidation-skip-cursor", "parked-sweep", "parked-reconcile", "origin-backfill",
   "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
@@ -144,7 +144,12 @@ function install(db: DatabaseSync): boolean {
 export function authorityEpochInstalled(): boolean { return install(database()); }
 /** A hard move of the epoch for a withdrawal no trigger can see (a thread leaving the roster whose receipts are already gone): every session
  * hold and checked stamp is dropped. A no-op where the triggers could not be installed (every write moves the stamp there). */
-export function bumpAuthorityHard(db: DatabaseSync): void { if (install(db)) db.exec(BUMP); }
+export function bumpAuthorityHard(db: DatabaseSync): void { bumpLearningFence(db); if (install(db)) db.exec(BUMP); }
+/** The learning send counter (learning-send.ts) for the same withdrawals: the roster is a quiet binding there too, so its removals move the
+ * counter here, first and whether or not the authority triggers are installed. A no-op where the counter is missing (its check fails closed). */
+export function bumpLearningFence(db: DatabaseSync): void {
+  try { db.exec("UPDATE temp.memory_learning_fence SET epoch=epoch+1 WHERE id=1"); } catch { /* no counter on this connection */ }
+}
 
 /** A stamp that is equal at two moments only if nothing revocation-relevant was written in between by this
  * connection or committed by another. Undefined inside a transaction (a verdict may rest on writes that roll back). */

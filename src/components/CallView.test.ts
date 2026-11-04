@@ -684,11 +684,11 @@ describe("instant acknowledgement in the 1:1 call (speed plan task 15)", () => {
     expect(hostReply).toMatch(/finally \{[\s\S]{0,200}gate\.cancel\(\)/);
   });
 
-  it("plays one cue per turn: the spoken cue is skipped when the instant cue already played", () => {
-    expect(fireAck).toMatch(/cueMayPlay\(\{[\s\S]{0,600}instantCued: instantCued\.current/);
+  it("says nothing the moment a turn is sent: no instant sound, only the inhale", () => {
     const effect = slice("if (phase === \"sending\" && was === \"listening\") {", "}, [phase, bot.id]);");
-    expect(effect).toMatch(/instantCued\.current = cued/);
-    expect(effect).toMatch(/else if \(phase === "listening"\) \{[\s\S]{0,120}instantCued\.current = false/);
+    expect(effect).toContain("inhaleRef.current?.start()");
+    expect(effect).not.toMatch(/\.play\(|\.cue\(|speak\(/);
+    expect(source).not.toMatch(/\bAckCues\b|\backCues\b|instantCued/);
   });
 
   it("plays the cue through the speaker's cue(), only when cueMayPlay says so", () => {
