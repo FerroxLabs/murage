@@ -444,6 +444,30 @@ describe("T8: the read-move budget", () => {
     expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "read-moved" });
     expect(state().cooldownUntil).toBe(r.clock.now + COOLDOWN_MS);
   });
+  // MurageMain 11-03 (drop-rate ruling): a refused reflection is never lost. A moved read keeps the run pending for the next pass; a run
+  // refused unstable keeps the thread's cursor, so once the cooldown ends the same turns are reflected with no new message or other trigger.
+  it("a reflection refused for moving reads is retried after the cooldown with no new turn, and its turns are sent then", async () => {
+    seedConversation(); const r = rig();
+    let n = 0;
+    pipReadHooks.between = () => { if (!state().run) return; database().prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.touch',?) WHERE source_id=?").run(++n, sourceIdOf("b1")); };
+    for (let move = 0; move <= READ_MOVE_BUDGET; move++) await run(r);
+    expect(state().run).toBeUndefined();
+    expect(state().refusals[0]).toMatchObject({ state: "refused:unstable", reason: "read-moved" });
+    expect(r.calls).toHaveLength(0);
+    // the thread stops moving; still inside the cooldown nothing starts
+    pipReadHooks.between = undefined;
+    r.clock.now += COOLDOWN_MS - MIN;
+    expect(pipReflectPending(r.deps)).toBeUndefined();
+    await run(r);
+    expect(r.calls).toHaveLength(0);
+    // past the cooldown, no message was added: the pending check finds the bot and the run sends the same turns
+    r.clock.now += 2 * MIN;
+    expect(pipReflectPending(r.deps)).toBe("moss");
+    await run(r);
+    expect(r.calls.length).toBeGreaterThanOrEqual(1);
+    const sent = JSON.stringify(r.calls[0]);
+    for (const text of TEXTS) expect(sent).toContain(text);
+  });
   it("a run whose first attempt keeps moving is refused run-bound once its deadline passes", async () => {
     seedConversation(); const r = rig();
     pipReadHooks.between = () => { if (!state().run) return; database().prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.touch',?) WHERE source_id=?").run(Math.random(), sourceIdOf("b1")); };

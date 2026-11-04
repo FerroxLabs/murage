@@ -195,6 +195,13 @@ describe("redactSecretsInText", () => {
       [`gh token ${"gh" + "p_"}${alpha}`, /ghp_/],
       [`fine-grained ${"github_" + "pat_"}11ABCDEFG0${alpha}`, /github_pat_/],
       [`slack ${"xox" + "b-"}${"123456789012"}-${"1234567890123"}-${alpha.slice(0, 24)}`, /xoxb-/],
+      // Slack app-level (Socket Mode) and GitLab tokens (OpenMausBot 0fdb32dfb, 3a5af9486)
+      [`slack app ${"xa" + "pp-"}1-A0123456789-${"1234567890123"}-${alpha.slice(0, 24)}`, /xapp-|A0123456789/],
+      [`gitlab ${"glp" + "at-"}${alpha.slice(0, 20)}`, /glpat-[a-z]/],
+      [`gitlab routable ${"glp" + "at-"}${alpha.slice(0, 27)}.01.0r03gxo7a`, /glpat-[a-z]|r03gxo7a/],
+      [`gitlab deploy ${"gld" + "t-"}${alpha.slice(0, 20)}`, /gldt-[a-z]/],
+      [`gitlab runner ${"glr" + "t-"}${alpha.slice(0, 20)}`, /glrt-[a-z]/],
+      [`gitlab registered runner ${"glr" + "tr-"}${alpha.slice(0, 20)}`, /glrtr-[a-z]/],
       [`aws ${"AKIA" + "IOSFODNN7EXAMPLE"} and more`, /IOSFODNN7EXAMPLE/],
       [`google ${"AIza" + "SyA-"}${alpha.slice(0, 32)}`, /AIza/],
       [`npm ${"npm" + "_"}${alpha}`, /npm_[a-z]/],
@@ -214,6 +221,12 @@ describe("redactSecretsInText", () => {
     expect(out).not.toContain("b3BlbnNzaC1r");
     expect(out).toMatch(/BEGIN OPENSSH PRIVATE KEY[\s\S]*«redacted \d+ chars»[\s\S]*END OPENSSH PRIVATE KEY/);
     expect(redactSecretsInText('curl -H "Authorization: Bearer abc.def-ghi_jkl123456789"')).toBe('curl -H "Authorization: Bearer «redacted 24 chars»"');
+  });
+
+  it("leaves GitLab and Slack look-alikes in prose readable", () => {
+    for (const s of ["a glpat-short value", "the glpat- prefix names a personal token", "xapp-1-short"]) {
+      expect(redactSecretsInText(s), s).toBe(s);
+    }
   });
 
   it("is byte-for-byte idempotent for PEM blocks", () => {
@@ -409,6 +422,8 @@ describe("redactSecretsInText is linear in its input", () => {
     ["a host and path, then a run of question marks", (n) => `host.com/${"?".repeat(n)}`],
     ["query keys with no value", (n) => "?key=".repeat(n / 5)],
     ["bearer words", (n) => "Bearer ".repeat(n / 7)],
+    ["GitLab prefixes with short values", (n) => "glpat-a.".repeat(n / 8)],
+    ["Slack app prefixes", (n) => "xapp-1-".repeat(Math.ceil(n / 7)).slice(0, n)],
     ["colon-separated words", (n) => "a:b:".repeat(n / 4)],
     ["one unbroken word", (n) => "x".repeat(n)],
   ];

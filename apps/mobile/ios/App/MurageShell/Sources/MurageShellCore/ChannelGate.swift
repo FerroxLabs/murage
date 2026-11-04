@@ -24,6 +24,10 @@ public enum ChannelMethod: String, CaseIterable, Sendable {
     // never learns these names, so an Android page sending one gets
     // unknown_method, same as any other name it does not recognise.
     case callAudioOpen, callAudioClose, callAudioPlay, callAudioControl
+    // 1.0.16: sent only by the wrapper script itself, on the desktop's own
+    // /enter page, when /session refuses a pairing code. Not advertised by
+    // hello() and not on the murageNative object, so a page has no API for it.
+    case pairRefused
 }
 
 /// Reply error codes. The page sees them as the rejected promise's message.
@@ -68,6 +72,7 @@ public enum ChannelGate {
         guard let raw = object["args"], !(raw is NSNull) else { return .success(ChannelRequest(method: method, args: [:])) }
         guard let args = raw as? [String: Any] else { return .failure(.badArgs) }
         if method == .openPhoneForBots && !args.isEmpty { return .failure(.badArgs) }
+        if method == .pairRefused && ChannelArgs.string(args["message"], max: 200) == nil { return .failure(.badArgs) }
         return .success(ChannelRequest(method: method, args: args))
     }
 

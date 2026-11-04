@@ -7,8 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { ApprovalCard } from "./ApprovalCard";
-import { PendingApprovalPanel, spokenToolAction, type Pending } from "./PendingApproval";
+import { PendingApprovalPanel, pendingOf, spokenToolAction, type Pending } from "./PendingApproval";
 import type { Bot, Message } from "@/state/store";
 import { loadPlainApproval } from "@/lib/plain-approval";
 
@@ -22,6 +21,10 @@ function card(tool: string, subtitle: string): Message {
   return { id: `m-${tool}`, role: "bot", kind: "options", at: 1,
     card: { title: "Approval needed", subtitle, options: ["Allow", "Deny"], tool, requestId: "r1" } };
 }
+
+/** APPROVAL-ONE-CARD: a waiting card is read and answered in the composer
+ * panel; the chat keeps one line. */
+const waiting = (message: Message) => renderToStaticMarkup(createElement(PendingApprovalPanel, { pending: pendingOf(message), who: bot.name, bot, threadId: "t1" }));
 
 /** The visible text before the folded details, with tags removed. */
 function visible(markup: string): string {
@@ -41,7 +44,7 @@ describe("approval cards in plain words", () => {
     ["a shell command", "shell", "rm -rf /home/ana/build", "Ember wants to delete build", []],
     ["a delegation", "other", DELEGATE, "Ember wants to hand a task to another bot", ["Message: Write and edit the launch post"]],
   ])("%s", (_name, tool, subtitle, headline, lines) => {
-    const markup = renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card(tool, subtitle) }));
+    const markup = waiting(card(tool, subtitle));
     const shown = visible(markup);
     expect(shown).toContain(headline);
     for (const line of lines) expect(shown).toContain(line);
@@ -49,11 +52,11 @@ describe("approval cards in plain words", () => {
     expect(shown).not.toMatch(/[{}]|"\w+":|composio|COMPOSIO|rm -rf|mcp__|—/);
     // the original request is still there, folded
     expect(markup).toContain("<details");
-    expect(markup).toContain("Show details");
+    expect(markup).toMatch(tool === "shell" ? />Show command</ : />Show details</);
   });
 
   it("a read of a saved tool result that still reached a card is said in words", () => {
-    const shown = visible(renderToStaticMarkup(createElement(ApprovalCard, { bot, message: card("shell", OWN_READ) })));
+    const shown = visible(waiting(card("shell", OWN_READ)));
     expect(shown).toContain("Ember wants to look through call_00_Ugx02hBzWG21yy4QOx9K5297.json");
     expect(shown).not.toMatch(/python3|cat \//);
   });

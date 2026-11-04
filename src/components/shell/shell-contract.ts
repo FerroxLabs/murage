@@ -72,6 +72,8 @@ export interface NeedsYouPageProps {
 
 export interface HealthPageProps {
   onOpenNeedsYou: () => void;
+  /** Back, the close button and Esc: to the view the person came from, or Today. */
+  onLeave: () => void;
 }
 
 export interface FirstRunTodayCardProps {
@@ -108,10 +110,23 @@ export interface EngineHealthRow {
   label: string;
   state: EngineHealthState;
   line: string;
+  /** How many bots run on this engine (absent from an older server: read as 0). */
+  usedBy?: number;
+  /** The bundled Fuigo: Flux Router speaks for it. */
+  fuigo?: true;
+}
+/** The Flux Router figures from a valid key check only (server/engine-health-routes.ts). */
+export interface FluxHealthInfo {
+  spendPct: number | null;
+  expires: string | null;
 }
 export interface EngineHealthAnswer {
   engines: EngineHealthRow[];
   primary: EngineHealthRow | null;
+  /** The engine chosen as the default (absent from an older server, null when none is set or it is gone). */
+  defaultId?: string | null;
   flux: FluxHealthState;
+  /** Absent from an older server, null while the key has not been read as valid. */
+  fluxInfo?: FluxHealthInfo | null;
   checkedAt: number;
 }

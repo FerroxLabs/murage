@@ -17,6 +17,7 @@ final class MobileViewController: CAPBridgeViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        ShellCoordinator.shared.launcherDidAppear()
         guard !launched else { return }
         launched = true
         ShellCoordinator.shared.launchIfNeeded()

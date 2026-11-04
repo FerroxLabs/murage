@@ -21,9 +21,12 @@ describe("plain words after the first paint", () => {
   it("before they load: the earlier wording and the whole request, nothing softer", () => {
     expect(plainApproval("shell", "rm -rf /home/ana/build")).toBeUndefined();
     const markup = panel();
-    expect(markup).toContain("Command approval requested");
+    // APPROVAL-ONE-CARD: the panel's one title says the tool's own action;
+    // the whole request sits behind Show command, as sent
+    expect(markup).toContain("Wants to run a command");
+    expect(markup).not.toContain("delete build");
+    expect(markup).toContain("Show command");
     expect(markup).toContain("rm -rf /home/ana/build");
-    expect(markup).not.toContain("<details");
   });
 
   it("once loaded: the same card in plain words, the request folded under the details", async () => {

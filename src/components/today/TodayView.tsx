@@ -11,7 +11,7 @@
 // Everything shown is decided in src/lib/today-model.ts. During first run the
 // page is the greeting, one "Getting set up" tag and the first-run card only
 // (FIRSTRUN 1.2).
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { useStore } from "@/state/store";
 import { botRole } from "@/lib/bot-role";
@@ -32,6 +32,11 @@ import { NeedsCard, RoutineRows, TeamRow, TodayCard, TryNextCard } from "./Today
 import { WorkingNowCard } from "./WorkingNowCard";
 import { OpenBotListButton } from "@/components/OpenBotListButton";
 import { BOX_FRAME, BoxBody, BoxHead } from "@/components/ui/BoxShell";
+import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
+import { useSetupView } from "@/components/FirstRunChrome";
+
+// UX-L6A part 2: Hire a bot is the one-sentence sheet, loaded on first use.
+const HireBotDialog = retryableLazy(() => import("@/components/hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 
 export const TRY_NEXT_HIDDEN_KEY = "murage.today.tryNextHidden";
 
@@ -81,6 +86,8 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
   const [apps, setApps] = useState<number | null>(connectedCount);
   const [tryHidden, setTryHidden] = useState(readTryHidden);
   const [stopped, setStopped] = useState("");
+  const [hireOpen, setHireOpen] = useState(false);
+  const { view: setup } = useSetupView();
 
   useEffect(() => {
     if (firstRun || !state.connected) return;
@@ -102,6 +109,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
     now: new Date(now),
     ownerName: state.config?.profile?.name ?? "",
     firstRun,
+    firstRunBare: firstRun && setup?.nothingCanAnswer === true,
     connectivity,
     engine: reading.engine,
     flux: reading.flux,
@@ -209,7 +217,7 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
               </TodayCard>
               <TodayCard id="today-team" title={t("ux.l2a.today.teamTitle")}>
                 <MonthCard onOpenUsage={nav.openUsage} />
-                <TeamRow names={names} meta={teamMeta} onHire={() => dispatch({ type: "newBot" })} />
+                <TeamRow names={names} meta={teamMeta} onHire={() => setHireOpen(true)} />
               </TodayCard>
             </div>
             {!tryHidden && (
@@ -221,6 +229,11 @@ export function TodayView({ needs, health, firstRun, chiefBotId, remote }: Today
         )}
       </div>
       </BoxBody>
+      {hireOpen && (
+        <LazyBoundary onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}>
+          <Suspense fallback={null}><HireBotDialog.Component onClose={() => setHireOpen(false)} /></Suspense>
+        </LazyBoundary>
+      )}
     </main>
   );
 }

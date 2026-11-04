@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { DEFAULT_HOUSE_RULES } from "./house-rules.ts";
+import { REPLY_HABITS } from "./bot-shapes.ts";
 
 const RULES = "HOUSE_RULES_CANARY Always sign off with the word Cheers.";
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -88,14 +89,15 @@ posixOnly("house rules", () => {
   it("opens every direct and room turn when on, and is absent when off", async () => {
     await api("PUT", "/api/house-rules", { text: RULES, enabled: true });
     const direct = await directTurn();
-    expect(direct.startsWith(`<house-rules>\n${RULES}\n</house-rules>\n\nYou are Moss`)).toBe(true);
+    expect(direct.startsWith(`<house-rules>\n${RULES}\n</house-rules>\n\n${REPLY_HABITS}\n\nYou are Moss`)).toBe(true);
     const member = await roomTurn();
-    expect(member.startsWith(`<house-rules>\n${RULES}\n</house-rules>\n\nYou are Moss, a bot in the room`)).toBe(true);
+    expect(member.startsWith(`<house-rules>\n${RULES}\n</house-rules>\n\n${REPLY_HABITS}\n\nYou are Moss, a bot in the room`)).toBe(true);
 
     expect(await api("PUT", "/api/house-rules", { enabled: false })).toMatchObject({ status: 200, body: { enabled: false, text: RULES } });
     const off = await directTurn();
     expect(off).not.toContain("<house-rules>");
     expect(off).not.toContain("HOUSE_RULES_CANARY");
-    expect(off.startsWith("You are Moss")).toBe(true);
+    // U24 S1: the reply habits stay when House Rules are off.
+    expect(off.startsWith(`${REPLY_HABITS}\n\nYou are Moss`)).toBe(true);
   }, 120000);
 });

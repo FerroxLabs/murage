@@ -30,7 +30,8 @@ beforeAll(async()=>{
 },30000);
 afterAll(async()=>{await fixture?.close();});
 
-it.each([false,true])("human approval includes stable identity with autoApprove=%s",async autoApprove=>{
+// autoApprove=true: the fixture engine answers the automatic Allow with `unavailable`, so it no longer holds the ask and no card is raised (u1, #1170; tested below).
+it.each([false])("human approval includes stable identity with autoApprove=%s",async autoApprove=>{
   const {bot}=await api<BotResponse>("POST","/api/bots",{name:"Approval fixture",modelSelection:{instanceId:"alert",model:"late-1"}});
   await api("PATCH",`/api/bots/${bot.id}`,{notifications:true,autoApprove,autoReview:"off",computer:"off"});
   const stream=await openSse(fixture.info.url+"/api/events");
@@ -45,6 +46,22 @@ it.each([false,true])("human approval includes stable identity with autoApprove=
     expect(frame.notification.requestTurnId).toMatch(/^late-turn-/);
     expect(card.card.answered).toBeUndefined();
     if(autoApprove)expect(card.card.held).toBe("Auto mode couldn't answer this one.");
+    await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.threadId});
+  }finally{stream.close();}
+},20000);
+
+it("an automatic Allow the engine no longer holds raises no card and no notification (#1170)",async()=>{
+  const {bot}=await api<BotResponse>("POST","/api/bots",{name:"Closed ask",modelSelection:{instanceId:"alert",model:"late-1"}});
+  await api("PATCH",`/api/bots/${bot.id}`,{notifications:true,autoApprove:true,autoReview:"off",computer:"off"});
+  const stream=await openSse(fixture.info.url+"/api/events");
+  try{
+    await stream.until(frame=>frame.kind==="hello");
+    await api("POST",`/api/bots/${bot.id}/messages`,{text:"Approval fixture",threadId:bot.threadId});
+    await stream.until(frame=>frame.kind==="runtime"&&frame.event?.type==="request.opened"&&frame.event?.threadId===bot.threadId);
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    expect(stream.frames.filter(frame=>frame.kind==="notify"&&frame.notification?.botId===bot.id)).toEqual([]);
+    const {messages}=await api<{ messages: Array<{ card?: { requestId?: string; answered?: string } }> }>("GET",`/api/threads/${bot.threadId}/messages`);
+    expect(messages.filter(message=>message.card?.requestId&&!message.card.answered)).toEqual([]);
     await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.threadId});
   }finally{stream.close();}
 },20000);

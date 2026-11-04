@@ -201,3 +201,50 @@ it("validates acceptance once and does not stop an unchanged provider",async()=>
     .resolves.toEqual({value:{turnId:"valid"},cancelled:false});
   expect(accept).toHaveBeenCalledExactlyOnceWith({turnId:"valid"});expect(stop).not.toHaveBeenCalled();
 });
+
+// DELETE-REVOKE-SCOPE (a): a refusal at acceptance is proof that nothing was submitted only on an adapter that declares fencedWrites
+// and released no write; the boundary is then sealed so the stopped adapter can never write later.
+describe("sealUnwritten", () => {
+  const revoked = () => new Error("MEMORY_CONTEXT_REVOKED");
+  it("seals an invoked, fenced boundary with no released write: retryable, and every later write refuses before it validates", () => {
+    const boundary = new TurnSubmissionBoundary();
+    const notWritten = vi.fn(); boundary.onNotWritten(notWritten);
+    boundary.started();
+    const error = revoked();
+    expect(boundary.sealUnwritten(error, true)).toBe(true);
+    expect(boundary.canRetry).toBe(true);
+    expect(() => boundary.assertNotRefused()).toThrow(error);
+    const validate = vi.fn(), passed = vi.fn(); boundary.onPassed(passed);
+    expect(() => boundary.beforeSubmit(validate)).toThrow(error);
+    expect(validate).not.toHaveBeenCalled(); expect(passed).not.toHaveBeenCalled();
+    expect(notWritten).toHaveBeenCalledTimes(1);
+  });
+  it("proves nothing without the flag, after a released write, before the adapter call, or once accepted", () => {
+    for (const flag of [undefined, false]) {
+      const boundary = new TurnSubmissionBoundary(); boundary.started();
+      expect(boundary.sealUnwritten(revoked(), flag)).toBe(false);
+      expect(boundary.canRetry).toBe(false);
+      expect(() => boundary.beforeSubmit(() => {})).not.toThrow();
+    }
+    const released = new TurnSubmissionBoundary(); released.started();
+    released.beforeSubmit(() => {});
+    expect(released.sealUnwritten(revoked(), true)).toBe(false);
+    expect(released.canRetry).toBe(false);
+    // a released write whose adapter later said it did not happen still counts: it may have
+    const unwritten = new TurnSubmissionBoundary(); unwritten.started();
+    unwritten.beforeSubmit(() => {}); unwritten.notWritten();
+    expect(unwritten.sealUnwritten(revoked(), true)).toBe(false);
+    const fresh = new TurnSubmissionBoundary();
+    expect(fresh.sealUnwritten(revoked(), true)).toBe(false);
+    const accepted = new TurnSubmissionBoundary(); accepted.started(); accepted.acceptedBy(() => {});
+    expect(accepted.sealUnwritten(revoked(), true)).toBe(false);
+    expect(accepted.canRetry).toBe(false);
+  });
+  it("leaves an already refused boundary as it was", () => {
+    const boundary = new TurnSubmissionBoundary(); boundary.started();
+    const first = revoked();
+    expect(() => boundary.beforeSubmit(() => { throw first; })).toThrow(first);
+    expect(boundary.sealUnwritten(revoked(), true)).toBe(false);
+    expect(() => boundary.assertNotRefused()).toThrow(first);
+  });
+});

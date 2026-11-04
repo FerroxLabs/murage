@@ -85,7 +85,13 @@ function findButton(node: ReactNode): ReactElement<{ onClick?: () => void; type?
 describe("navigation wiring (audit)", () => {
   it("the replying-to button runs the jump", () => {
     const onJump = vi.fn();
-    const button = findButton(RoomSpeakerLabel({ name: "Dax", color: "blue", replyTo: sean, onJump }));
+    // called inside a render: the label reads its quote through a hook (webhook-message-lazy.ts)
+    let label: ReactNode = null;
+    renderToStaticMarkup(createElement(() => {
+      label = RoomSpeakerLabel({ name: "Dax", color: "blue", replyTo: sean, onJump });
+      return null;
+    }));
+    const button = findButton(label);
     expect(button?.props.type).toBe("button");
     button?.props.onClick?.();
     expect(onJump).toHaveBeenCalledOnce();
