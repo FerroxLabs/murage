@@ -491,6 +491,70 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(outboundCommands(threadId)).toEqual(["new_session"]);
   });
 
+  // E24 (upstream 4e6688954): a prompt sent before pi answers new_session runs on a session pi then replaces, and that turn
+  // never ends. The turn waits for the answer however long it takes, says so after 20 s, and Stop still ends it.
+  const slowSessionTurn = async (threadId: string) => {
+    const dir = mkdtempSync(join(tmpdir(), "pi-session-slow-"));
+    const gate = join(dir, "gate");
+    const dump = join(dir, "dump.jsonl");
+    await create(undefined, { FAKE_PI_SESSION_GATE: gate, FAKE_PI_DUMP: dump });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const sent = instance.adapter.sendTurn({ threadId, text: "hi" });
+    await recorder.until((e) => e.type === "turn.started" && e.threadId === threadId);
+    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(25_000);
+    const notice = recorder.events.find((e) => e.type === "item.started" && e.threadId === threadId) as
+      | { itemId: string; title: string; spoken?: string; origin: string; toolKind?: string; turnId: string }
+      | undefined;
+    return { dir, gate, dump, sent, notice };
+  };
+
+  it("E24: waits past 20 s for a slow session answer, says so, then prompts on the session pi gave", async () => {
+    const threadId = `t-session-slow-${newId()}`;
+    const run = await slowSessionTurn(threadId);
+    try {
+      expect(recorder.events.filter((e) => e.threadId === threadId && (e.type === "runtime.error" || e.type === "turn.completed"))).toEqual([]);
+      expect(run.notice).toMatchObject({ origin: "murage", toolKind: "notice", title: "pi Test is taking longer than usual to start this chat. The reply carries on when pi Test is ready; press Stop to cancel it." });
+      expect(run.notice?.spoken).toBe(run.notice?.title);
+      expect(dumpRows(run.dump).filter((row) => row.prompt)).toEqual([]);
+      vi.useRealTimers();
+      writeFileSync(run.gate, "");
+      const { turnId } = await run.sent;
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: true });
+      expect(recorder.events.find((e) => e.type === "item.completed" && (e as { itemId?: string }).itemId === run.notice?.itemId)).toMatchObject({ ok: true });
+      expect(outboundCommands(threadId)).toEqual(["new_session", "prompt"]);
+    } finally {
+      vi.useRealTimers();
+      removeTempDirSync(run.dir);
+    }
+  });
+
+  it("E24: Stop during a slow session answer ends the turn as stopped and sends no prompt", async () => {
+    const threadId = `t-session-slow-stop-${newId()}`;
+    const run = await slowSessionTurn(threadId);
+    try {
+      expect(run.notice).toBeDefined();
+      vi.useRealTimers();
+      await instance.adapter.interruptTurn(threadId);
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId);
+      expect(done).toMatchObject({ ok: true, stopReason: "cancelled" });
+      // the waiting sendTurn settles with the turn, without waiting for pi to answer or close
+      await run.sent;
+      expect(recorder.events.some((e) => e.type === "session.started" && e.threadId === threadId)).toBe(false);
+      expect(recorder.events.find((e) => e.type === "item.completed" && (e as { itemId?: string }).itemId === run.notice?.itemId)).toMatchObject({ ok: false });
+      writeFileSync(run.gate, "");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(recorder.events.some((e) => e.type === "session.started" && e.threadId === threadId)).toBe(false);
+      expect(outboundCommands(threadId)).not.toContain("prompt");
+      expect(dumpRows(run.dump).filter((row) => row.prompt)).toEqual([]);
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.threadId === threadId)).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+      removeTempDirSync(run.dir);
+    }
+  });
+
   // Thread recall, design S5: a sealed thread is dispatched with no cursor, every turn. Each opens a new pi session
   // (new_session) and never switches to a saved one.
   it("a sealed thread's turns carry no cursor: each starts a new_session and never a switch_session", async () => {

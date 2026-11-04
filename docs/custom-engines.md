@@ -143,6 +143,40 @@ instance at it:
   asks, the request becomes a normal approval card in chat.
 - Multiple instances are fine, one per agent.
 
+### Example: Mistral Vibe
+
+[Mistral Vibe](https://github.com/mistralai/mistral-vibe) ships an ACP entry
+point, `vibe-acp`, so it runs as a custom ACP engine on your own Mistral
+sign-in, not a Mistral API key saved in Murage.
+
+1. Install it: `uv tool install mistral-vibe` (or `pipx install mistral-vibe`).
+   This puts `vibe` and `vibe-acp` in `~/.local/bin`.
+2. Sign in once from a terminal: run `vibe --setup` and sign in with your
+   Mistral account (a browser sign-in through Mistral AI Studio, or an API
+   key). `vibe-acp` uses the same sign-in.
+3. Add the instance and restart Murage:
+
+   ```json
+   {
+     "instances": {
+       "mistral-vibe": {
+         "driver": "customAcp",
+         "displayName": "Mistral Vibe",
+         "config": { "cli": "/home/you/.local/bin/vibe-acp" }
+       }
+     }
+   }
+   ```
+
+   Use the full path when `~/.local/bin` is not on the app's `PATH` (an app
+   started from the dock often does not have it).
+4. Pick **Mistral Vibe** for a bot. Its model menu shows **Agent default**,
+   which runs the model Vibe itself is set to.
+
+Murage never hands its own `MISTRAL_API_KEY` to the CLI, so turns use the Vibe
+sign-in from step 2. If the chat shows `Missing API key for mistral provider`,
+sign in again from a terminal (step 2).
+
 ### Cline
 
 Cline has its own engine (`"driver": "clineAgent"`), so you do not need a

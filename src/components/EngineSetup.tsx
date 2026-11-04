@@ -186,6 +186,7 @@ export function EngineSetup({
   intent = "cloud",
   authRequired = false,
   setUp = false,
+  signInSecondary = false,
   onReady,
 }: {
   instance: InstanceInfo;
@@ -196,6 +197,8 @@ export function EngineSetup({
   authRequired?: boolean;
   /** A set-up link opened this card: it picks install, sign-in or the one real reply by state. */
   setUp?: boolean;
+  /** 1.0.14 F0: "Use Fuigo instead" is the primary action above this card, so the sign-in button is the secondary one. */
+  signInSecondary?: boolean;
   onReady?: () => void;
 }) {
   const { dispatch } = useStore();
@@ -313,7 +316,7 @@ export function EngineSetup({
       </div>
 
       {signInOnly ? (
-        <EngineSignInButton className="mt-3" instanceId={instance.instanceId} name={instance.displayName} command={signInCommand} onDone={() => void checkAgain()} />
+        <EngineSignInButton className="mt-3" quiet={signInSecondary} instanceId={instance.instanceId} name={instance.displayName} command={signInCommand} onDone={() => void checkAgain()} />
       ) : install.native ? (
         desktop ? <EngineManagement instance={instance} /> : <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">{t("projects.work.needsApp")}</p>
       ) : installCommand ? (

@@ -13,10 +13,10 @@
 //   L6C  export { ClientsCard, useClientsTag } from "@/components/agency/ClientsCard";
 //        export { OtherWorkspacesStrip } from "@/components/agency/OtherWorkspacesStrip";
 //   L7   export { PhoneTabs } from "@/components/phone/PhoneTabs";
-export { NeedsYouPage, useNeedsSummary } from "./stubs/needs-stub";
+export { NeedsYouPage, useNeedsSummary } from "@/components/needs/NeedsYouPage";
 export { HealthPage } from "@/components/health/HealthPage";
 export { useHealthStatus } from "@/components/health/health-status";
-export { FirstRunTodayCard } from "./stubs/cards-stub";
+export { FirstRunTodayCard } from "@/components/today/FirstRunTodayCard";
 export { MonthCard, useMonthTag } from "./stubs/cards-stub";
 export { ClientsCard, useClientsTag } from "./stubs/cards-stub";
 export { OtherWorkspacesStrip } from "./stubs/cards-stub";

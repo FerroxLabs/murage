@@ -219,7 +219,7 @@ describe("P15: the iOS workspace screen", () => {
     expect(vc()).toContain("if let reason = MainDocument.closeReason(status: http.statusCode) { decisionHandler(.cancel); close(reason); return }");
     // Budget wide enough for callSessionOpen's own reset in between
     // (callbar-rereview2.md G4) without pinning the exact body.
-    expect(vc()).toMatch(/webViewWebContentProcessDidTerminate[\s\S]{0,320}reloadRoute\(\)/);
+    expect(vc()).toMatch(/webViewWebContentProcessDidTerminate[\s\S]{0,480}reloadRoute\(\)/);
   });
 
   it("is inspectable in debug builds only", () => {
@@ -257,7 +257,7 @@ describe("P15: the iOS workspace screen", () => {
     const crash = vc().slice(vc().indexOf("func mayReloadAfterCrash"));
     // Budget wide enough for callSessionOpen's own reset in between
     // (callbar-rereview2.md G4) without pinning the exact body.
-    expect(vc()).toMatch(/webViewWebContentProcessDidTerminate[\s\S]{0,200}guard mayReloadAfterCrash\(\) else \{ return \}/);
+    expect(vc()).toMatch(/webViewWebContentProcessDidTerminate[\s\S]{0,360}guard mayReloadAfterCrash\(\) else \{ return \}/);
     expect(crash).toMatch(/timeIntervalSince\(\$0\) < 60/);
     expect(crash).toMatch(/guard crashes\.count < 2 else \{[\s\S]*?overlay\.showSlow\(\)[\s\S]*?return\s*\}/);
   });
@@ -279,9 +279,9 @@ describe("P15: the iOS workspace screen", () => {
 
   it("shows native panels only for the workspace page itself (P15 review)", () => {
     const source = vc();
-    expect(source).toContain("guard fromPage(frame) else { completionHandler(); return }");
-    expect(source).toContain("guard fromPage(frame) else { completionHandler(false); return }");
-    expect(source).toContain("guard fromPage(frame) else { completionHandler(nil); return }");
+    expect(source).toContain("guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(); return }");
+    expect(source).toContain("guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(false); return }");
+    expect(source).toContain("guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(nil); return }");
   });
 
   it("logs through typed, content-free calls only", () => {
@@ -651,7 +651,7 @@ describe("P19 fix round 1: threading, sign-out, foreign pages and dialogs", () =
     const activity = java("WorkspaceActivity.java");
     for (const name of ["onJsAlert", "onJsConfirm", "onJsPrompt"]) {
       const body = between(activity, `public boolean ${name}(`, "@Override");
-      expect(body, name).toContain("if (!origin.contains(url))");
+      expect(body, name).toContain("!origin.contains(url)");
       expect(body, name).toContain("result.cancel();");
     }
   });
@@ -1835,5 +1835,414 @@ describe("1.0.9 share and ask: iOS entitlements, plists and targets", () => {
       expect(text, path).not.toContain("keychain-access-groups");
       expect(text, path).not.toContain("com.apple.security.application-groups");
     }
+  });
+});
+
+describe("1.0.16 F2: a closing iOS workspace always leaves the screen", () => {
+  const swift = (name: string) => read(`ios/App/MurageShell/Sources/MurageShell/${name}`);
+  const closedBody = () => {
+    const text = swift("ShellCoordinator.swift");
+    const start = text.indexOf("private func closed(");
+    return text.slice(start, text.indexOf("private func deliver(", start));
+  };
+  const closeBody = () => {
+    const text = swift("WorkspaceViewController.swift");
+    const start = text.indexOf("private func close(_ reason: CloseReason");
+    return text.slice(start, text.indexOf("func closeFromShell", start));
+  };
+
+  it("the coordinator dismisses from the presenter, not from the workspace", () => {
+    const body = closedBody();
+    expect(body).toContain("workspace.presentingViewController ?? launcher");
+    expect(body).toContain("presenter.dismiss(animated: false");
+    expect(body).not.toContain("workspace.dismiss(");
+    expect(body).toContain("transitionCoordinator");
+  });
+
+  it("the coordinator hands the ordering to CloseDismissal (behaviour is tested in CloseDismissalTests) and a new open supersedes it", () => {
+    const body = closedBody();
+    expect(body).toContain("CloseDismissal(");
+    expect(body).toContain("presenter.presentedViewController === workspace");
+    expect(body).toContain("close.start()");
+    expect(body).not.toContain("DeliverOnce");
+    const text = swift("ShellCoordinator.swift");
+    expect(text).toMatch(/closingWork\?\.dismissal\.supersede\(\)\s*closingWork = nil\s*current = workspace/);
+  });
+
+  it("closing clears the workspace's own modals before the coordinator is told", () => {
+    const body = closeBody();
+    for (const call of ["phoneAskSetup.close()", "phoneForBots.close()", "PhoneJobServices.shared.detach(self)", "presentedViewController?.dismiss(animated: false)"]) {
+      expect(body, call).toContain(call);
+      expect(body.indexOf(call), call).toBeLessThan(body.indexOf("self.onClose?(reason"));
+    }
+    expect(body).toContain("CloseDismissal.showsRecovery(whileClosing: reason)");
+    const overlay = swift("LoadingOverlay.swift");
+    const showClosing = overlay.slice(overlay.indexOf("func showClosing()"), overlay.indexOf("func hide()"));
+    expect(showClosing).toContain("reveal.isHidden = false");
+    expect(showClosing).toContain("reveal.isEnabled = true");
+  });
+
+  it("Ask setup is not offered before the computer was reached, nor while closing", () => {
+    const text = swift("WorkspaceViewController.swift");
+    expect(text).not.toMatch(/\|\|\s*(self\.)?pairedAtOpen/);
+    expect(text).not.toContain("pairedAtOpen");
+    expect(text).toContain("if signedInSeen && !closing { phoneAskSetup.foreground(in: self) }");
+    expect(text).toContain("if self.signedInSeen && !self.closing { self.phoneAskSetup.foreground(in: self) }");
+  });
+
+  it('"Your computers" on a closing splash takes the screen off without a second close', () => {
+    const text = swift("WorkspaceViewController.swift");
+    expect(text).toMatch(/overlay\.onChoose = \{[\s\S]*?if self\.closing \{ self\.onForceLeave\?\(\) \} else \{ self\.close\(\.launcher\) \}/s);
+    const coordinator = swift("ShellCoordinator.swift");
+    expect(coordinator).toContain("workspace.onForceLeave");
+    const force = coordinator.slice(coordinator.indexOf("private func forceLeave"), coordinator.indexOf("private func deliver("));
+    expect(force).toContain("presenter.presentedViewController === workspace");
+    expect(force).toContain("forceLeave()");
+    expect(force).not.toContain("deliver(");
+  });
+});
+
+describe("1.0.16 F2: Android closes the Ask setup dialog with the workspace", () => {
+  it("close() closes phoneAskSetup before finish()", () => {
+    const text = read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+    const start = text.indexOf("void close(CloseReason reason)");
+    const body = text.slice(start, text.indexOf("finish();", start));
+    expect(body).toContain("phoneAskSetup.close()");
+  });
+});
+
+describe("1.0.16 F1: pairRefused is honoured only for a pairing workspace still on /enter", () => {
+  const swiftVc = () => read("ios/App/MurageShell/Sources/MurageShell/WorkspaceViewController.swift");
+  const javaActivity = () => read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+  const swiftCase = () => {
+    const text = swiftVc();
+    const start = text.indexOf("case .pairRefused:");
+    return text.slice(start, text.indexOf("case .registerPush:", start));
+  };
+  const javaCase = () => {
+    const text = javaActivity();
+    const start = text.indexOf('case "pairRefused"');
+    return text.slice(start, text.indexOf('case "callSessionOpen"', start));
+  };
+
+  it("iOS checks the credential, not-yet-signed-in and /enter before closing", () => {
+    const body = swiftCase();
+    expect(body).toContain("guard openedWithCredential, !signedInSeen, !closing");
+    expect(body).toContain('url.path == "/enter"');
+    expect(body).toContain("origin.contains(url)");
+    expect(body).toContain("close(.pairRefused, message: PairRefusal.message(message))");
+    expect(body).toContain("ChannelError.unavailable.rawValue");
+  });
+
+  it("Android checks the credential, not-yet-signed-in and /enter before closing", () => {
+    const body = javaCase();
+    expect(body).toContain("!askSetupPairing || signedInSeen || closing || !onEnter");
+    expect(body).toContain('"/enter".equals(Uri.parse(pageUrl).getPath())');
+    expect(body).toContain("close(CloseReason.PAIR_REFUSED, PairRefusal.message(line))");
+    expect(body).toContain('reply.error("unavailable")');
+  });
+
+  it("the iOS workspace is told it was opened with a code", () => {
+    expect(read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift")).toContain("workspace.openedWithCredential = credential != nil");
+  });
+
+  it("a refused code never forgets the computer or removes an approval key", () => {
+    const swift = read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift");
+    const closed = swift.slice(swift.indexOf("private func closed("), swift.indexOf("private func deliver("));
+    expect(closed).not.toContain("pairRefused");
+    expect(closed).toContain("if reason == .signOut { forget(origin) }");
+    expect(closed).toContain("if reason == .signOut || reason == .signedOut { ApprovalKeys.remove(origin: origin) }");
+    const java = read("android/app/src/main/java/com/murage/mobile/Shell.java");
+    const javaClosed = java.slice(java.indexOf("synchronized void closed(WorkspaceActivity workspace, CloseReason reason, String message)"), java.indexOf("synchronized String[] takePendingClose"));
+    expect(javaClosed).not.toContain("PAIR_REFUSED");
+    expect(javaClosed).toContain("reason == CloseReason.SIGN_OUT");
+  });
+
+  it("the message reaches the launcher on both platforms, live and from state()", () => {
+    expect(read("ios/App/App/ShellPlugin.swift")).toContain("data: closed.dictionary");
+    expect(read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift")).toContain('state["closed"] = closed.dictionary');
+    expect(read("android/app/src/main/java/com/murage/mobile/ShellPlugin.java")).toContain('event.put("message", message)');
+    expect(read("android/app/src/main/java/com/murage/mobile/Shell.java")).toContain('Json.put(close, "message", closed[2])');
+  });
+
+  it("both platforms hold the splash over a pairing /enter instead of flashing the desktop page", () => {
+    const vc = swiftVc();
+    expect(vc).toContain("if openedWithCredential && !signedInSeen && !closing { holdEnter() } else { reveal() }");
+    expect(vc).toContain("withTimeInterval: 5");
+    const activity = javaActivity();
+    expect(activity).toContain("if (askSetupPairing && !signedInSeen) holdEnter();");
+    expect(activity).toContain("main.postDelayed(enterHold, 5000)");
+  });
+
+  it("the sanitiser exists on both platforms and the launcher renders the line as text", () => {
+    expect(existsSync(join(ROOT, "ios/App/MurageShell/Sources/MurageShellCore/PairRefusal.swift"))).toBe(true);
+    expect(existsSync(join(ROOT, "android/app/src/main/java/com/murage/mobile/shell/PairRefusal.java"))).toBe(true);
+    expect(read("src/render.ts")).toMatch(/el\("p", "error", view\.error\)/);
+  });
+});
+
+describe("1.0.16 R2: a closed workspace's page reaches nothing native", () => {
+  const vc = () => read("ios/App/MurageShell/Sources/MurageShell/WorkspaceViewController.swift");
+  const handler = () => {
+    const text = vc();
+    const start = text.indexOf("public func userContentController(");
+    return text.slice(start, text.indexOf("private func dispatch(", start));
+  };
+  const functionBody = (name: string) => {
+    const text = vc();
+    const start = text.indexOf(name);
+    expect(start, name).toBeGreaterThan(-1);
+    return text.slice(start, start + 1400);
+  };
+
+  it("iOS: the message handler asks the gate before anything else, in one place", () => {
+    const body = handler();
+    const gate = body.indexOf("bridge.allowsNativeAction()");
+    expect(gate).toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(body.indexOf("ChannelGate.admit("));
+    expect(gate).toBeLessThan(body.indexOf("ChannelGate.parse("));
+    // One gate, not one check per method.
+    const dispatch = vc().slice(vc().indexOf("private func dispatch("), vc().indexOf("nonisolated private static func answer"));
+    expect(dispatch).not.toContain("bridge.");
+  });
+
+  it("iOS: no event reaches the page and no capture is granted once the gate is shut", () => {
+    expect(functionBody("func emit(_ name: String")).toContain("bridge.admitsEvent()");
+    expect(functionBody("requestMediaCapturePermissionFor")).toContain("bridge.allowsNativeAction()");
+  });
+
+  it("iOS: close() shuts the bridge and removes the WebView's handlers and scripts", () => {
+    const close = functionBody("private func close(_ reason: CloseReason");
+    expect(close).toContain("shutBridge()");
+    expect(close.indexOf("callAudio.close(.controllerClosed)")).toBeLessThan(close.indexOf("shutBridge()"));
+    const shut = functionBody("private func shutBridge()");
+    for (const call of ["bridge.close()", "webView.stopLoading()", "removeScriptMessageHandler(forName: ChannelScript.iosHandlerName", "removeAllUserScripts()", "setMicrophoneCaptureState(.none"]) {
+      expect(shut, call).toContain(call);
+    }
+    // A dismissal that did not come through close() shuts it too.
+    const disappear = functionBody("public override func viewDidDisappear");
+    expect(disappear).toContain("shutBridge()");
+  });
+
+  it("iOS: no reveal or navigation-finish work once closing", () => {
+    expect(functionBody("private func reveal()")).toContain("guard !closing");
+    expect(functionBody("public func webView(_ webView: WKWebView, didFinish")).toContain("guard !closing");
+    expect(functionBody("private func revealBasic()")).toContain("!closing");
+  });
+
+  it("iOS: the overlay's hide completion is tied to the generation shown last", () => {
+    const overlay = read("ios/App/MurageShell/Sources/MurageShell/LoadingOverlay.swift");
+    const closing = overlay.slice(overlay.indexOf("func showClosing()"), overlay.indexOf("func hide()"));
+    expect(closing).toContain("fade.showClosing()");
+    expect(closing).toContain("layer.removeAllAnimations()");
+    const hide = overlay.slice(overlay.indexOf("func hide()"));
+    expect(hide).toContain("fade.beginHide()");
+    expect(hide).toContain("fade.finishHide(token: token, finished: finished)");
+  });
+
+  it("iOS: the coordinator keeps a dismissed workspace only weakly; CloseDismissal holds it until delivery", () => {
+    const text = read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift");
+    expect(text).toContain("workspace: Weak<WorkspaceViewController>");
+    expect(text).toContain("closingWork = (Weak(workspace), close)");
+    expect(text).toContain("retaining: workspace");
+    expect(text).not.toMatch(/closingWork = \(workspace,/);
+  });
+
+  it("Android: the channel handler and emit() ask one gate, and every close path shuts it", () => {
+    const text = read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+    const start = text.indexOf("private void onChannel(");
+    const channel = text.slice(start, start + 400);
+    expect(channel).toContain("if (!bridge.admitsRequest())");
+    expect(channel.indexOf("bridge.admitsRequest()")).toBeLessThan(channel.indexOf("switch (request.method)"));
+    expect(channel).toContain('reply.error("unavailable")');
+    const emit = text.slice(text.indexOf("void emit(String name"), text.indexOf("webView.evaluateJavascript(ChannelScript.emit"));
+    expect(emit).toContain("!bridge.admitsEvent()");
+    const shut = text.match(/closing = true;\s*bridge\.close\(\);/g) ?? [];
+    expect(shut.length).toBe(2); // close() and closeFromShell()
+    expect((text.match(/closing = true;/g) ?? []).length).toBe(2);
+  });
+});
+
+/**
+ * Android result launchers: every `name = registerForActivityResult(...)` (any whitespace or newlines
+ * around `=` and `(`) must be listed, and its OWN call (balanced parentheses, comments removed) must
+ * contain its gate. Returns the problems found; empty means the source passes.
+ */
+export const androidLauncherProblems = (java: string, gates: Record<string, string>): string[] => {
+  const code = java.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const m of code.matchAll(/(\w+)\s*=\s*registerForActivityResult\s*\(/g)) {
+    const name = m[1];
+    seen.add(name);
+    let depth = 1;
+    let i = m.index + m[0].length;
+    for (; i < code.length && depth > 0; i++) {
+      if (code[i] === "(") depth++;
+      else if (code[i] === ")") depth--;
+    }
+    const body = code.slice(m.index, i);
+    if (!(name in gates)) problems.push(`unlisted result launcher: ${name}`);
+    else if (!body.includes(gates[name])) problems.push(`ungated result launcher: ${name}`);
+  }
+  for (const name of Object.keys(gates)) if (!seen.has(name)) problems.push(`missing result launcher: ${name}`);
+  return problems;
+};
+
+/** Every `public func webView...(_ webView: WKWebView` declaration line, formatting-independent about the comma. */
+export const iosDelegateEntries = (source: string): string[] =>
+  [...source.matchAll(/public (func webView\w*\(\s*_ webView:\s*WKWebView\s*,?[^\n]*)/g)].map((m) => m[1]);
+
+describe("1.0.16 R3: one gate at every delegate entry; one place delivers held opens", () => {
+  const swiftVc = () => read("ios/App/MurageShell/Sources/MurageShell/WorkspaceViewController.swift");
+  const coordinator = () => read("ios/App/MurageShell/Sources/MurageShell/ShellCoordinator.swift");
+  const java = () => read("android/app/src/main/java/com/murage/mobile/WorkspaceActivity.java");
+
+  /** Every entry WebKit or the channel can call into native code from the page, with the reason when it needs no gate. */
+  const iosGated = [
+    "public func userContentController(",
+    "decidePolicyFor action: WKNavigationAction",
+    "decidePolicyFor response: WKNavigationResponse",
+    "navigationAction: WKNavigationAction, didBecome download",
+    "navigationResponse: WKNavigationResponse, didBecome download",
+    "createWebViewWith configuration",
+    "requestMediaCapturePermissionFor",
+    "runJavaScriptAlertPanelWithMessage",
+    "runJavaScriptConfirmPanelWithMessage",
+    "runJavaScriptTextInputPanelWithPrompt",
+    "func webViewWebContentProcessDidTerminate(",
+  ];
+  // Entries that need no gate of their own, each for its real reason:
+  //  didFinish: opens with `guard !closing`; didFailProvisionalNavigation: close() is idempotent;
+  //  didFail: only re-arms the deadline; didCommit: ends the call audio and endCallSession(), which is gated.
+  //  webViewWebContentProcessDidTerminate is GATED (it reloads the route and shows the splash).
+  const iosExempt = [
+    "didFinish navigation",
+    "didFailProvisionalNavigation",
+    "didFail navigation",
+    "didCommit navigation",
+  ];
+  const iosBodyAt = (signature: string) => {
+    const text = swiftVc();
+    const at = text.indexOf(signature);
+    expect(at, signature).toBeGreaterThan(-1);
+    const next = text.slice(at + signature.length).search(/\n    (public |private |nonisolated |@objc )?func /);
+    return text.slice(at, at + signature.length + (next < 0 ? 2000 : next));
+  };
+
+  it("iOS: every delegate entry asks bridge.allowsNativeAction() before acting", () => {
+    for (const signature of iosGated) expect(iosBodyAt(signature), signature).toContain("bridge.allowsNativeAction()");
+  });
+
+  it("iOS: the enumeration is complete (a new webView delegate must be gated or listed as exempt)", () => {
+    // with or without a comma after `WKWebView` (webViewWebContentProcessDidTerminate(_ webView: WKWebView) has none)
+    const entries = iosDelegateEntries(swiftVc());
+    const listed = [...iosGated, ...iosExempt];
+    for (const entry of entries) {
+      expect(listed.some((name) => entry.includes(name.split(": ")[0]) || entry.includes(name)), `unlisted delegate entry: ${entry}`).toBe(true);
+    }
+    expect(swiftVc()).toContain("func userContentController(");
+    // WKNavigationDelegate entries without the `public func webView(_ webView: WKWebView, ` shape
+    const declared = [...swiftVc().matchAll(/func (webView\w*)\(/g)].map((m) => m[1]).filter((n) => n !== "webView");
+    for (const name of declared) expect([...iosGated, ...iosExempt].some((l) => l.includes(name)), `unlisted webView* entry: ${name}`).toBe(true);
+  });
+
+  it("iOS: a closing workspace's call-ended callbacks release nothing; the coordinator checks the barrier", () => {
+    const end = iosBodyAt("private func endCallSession()");
+    expect(end).toContain("bridge.allowsNativeAction()");
+    const text = coordinator();
+    expect(text).toContain("guard let self, let workspace, self.current === workspace else { return }");
+    const release = text.slice(text.indexOf("private func releaseHeldOpens()"), text.indexOf("private func deliverHeldOpens()"));
+    expect(release).toContain("!work.dismissal.isGone");
+  });
+
+  it("iOS: held opens are delivered in one place, reached only from the barrier and releaseHeldOpens", () => {
+    const text = coordinator();
+    expect(text.match(/deliverHeldOpens\(\)/g)?.length).toBe(4); // two doc/definition mentions + afterGone + releaseHeldOpens
+    expect(text).not.toContain("deliverPendingCrossComputerOpen");
+    expect(text).toContain("afterGone: { [weak self] in MainActor.assumeIsolated { self?.deliverHeldOpens() } }");
+  });
+
+  it("iOS: recovery and the screen's disappearance feed the once-only gone() path", () => {
+    expect(swiftVc()).toContain("onDisappeared?()");
+    expect(coordinator()).toContain("work.dismissal.disappeared()");
+    const core = read("ios/App/MurageShell/Sources/MurageShellCore/CloseDismissal.swift");
+    const leave = core.slice(core.indexOf("public func forceLeave()"), core.indexOf("public func disappeared()"));
+    expect(leave).not.toContain("dismiss(nil)");
+    expect(leave).toContain("recoveryEnded()");
+  });
+
+  it("Android: every WebView client entry asks bridge.allowsNativeAction()", () => {
+    const text = java();
+    const body = (marker: string, length = 500) => {
+      const at = text.indexOf(marker);
+      expect(at, marker).toBeGreaterThan(-1);
+      return text.slice(at, at + length);
+    };
+    for (const marker of [
+      "public boolean shouldOverrideUrlLoading(",
+      "public void onPageStarted(",
+      "public void onPermissionRequest(",
+      "public boolean onShowFileChooser(",
+      "public boolean onJsAlert(",
+      "public boolean onJsConfirm(",
+      "public boolean onJsPrompt(",
+      "void openExternal(Uri uri)",
+      "permissionAsk = registerForActivityResult(",
+    ]) {
+      expect(body(marker, 700), marker).toContain("bridge.allowsNativeAction()");
+    }
+    expect(body("public boolean onRenderProcessGone(", 900)).toContain("bridge.allowsNativeAction()");
+    expect(body("private void onChannel(")).toContain("bridge.admitsRequest()");
+  });
+
+  it("Android: closing denies the capture request the page is still waiting on", () => {
+    const text = java();
+    expect(text).toContain("private void denyPendingCapture()");
+    expect((text.match(/bridge\.close\(\);\s*denyPendingCapture\(\);/g) ?? []).length).toBe(2);
+  });
+
+  it("Android: the enumeration is complete (every WebViewClient/WebChromeClient override is gated or listed as exempt)", () => {
+    const text = java();
+    const clients = text.slice(text.indexOf("private final class Client extends WebViewClient"));
+    const overrides = [...clients.matchAll(/@Override public \w+ (\w+)\(/g)].map((m) => m[1]);
+    const exempt = ["doUpdateVisitedHistory", "onReceivedHttpError", "onReceivedError", "onReceivedSslError", "onPageFinished", "onPermissionRequestCanceled", "onConsoleMessage", "shouldInterceptRequest"];
+    const gated = ["shouldOverrideUrlLoading", "onPageStarted", "onRenderProcessGone", "onPermissionRequest", "onShowFileChooser", "onJsAlert", "onJsConfirm", "onJsPrompt"];
+    for (const name of overrides) expect([...gated, ...exempt], `unlisted client override: ${name}`).toContain(name);
+  });
+
+  it("Android: the launcher checker fails multiline ungated registrations and an ungated callback next to a gated one", () => {
+    const gates = { a: "bridge.allowsNativeAction()", b: "bridge.allowsNativeAction()" };
+    const gated = "a = registerForActivityResult(C, r -> { if (!bridge.allowsNativeAction()) return; use(r); });";
+    expect(androidLauncherProblems(`${gated}\n b = registerForActivityResult(C, r -> { if (!bridge.allowsNativeAction()) return; });`, gates)).toEqual([]);
+    // formatting-independent discovery: newline after `=` and before `(`
+    const multiline = `${gated}\n b =\n   registerForActivityResult\n(C, r -> { use(r); });`;
+    expect(androidLauncherProblems(multiline, gates)).toEqual(["ungated result launcher: b"]);
+    // an ungated callback directly after a gated one: the gate in a's body must not count for b
+    const adjacent = `${gated} b = registerForActivityResult(C, r -> { use(r); });`;
+    expect(androidLauncherProblems(adjacent, gates)).toEqual(["ungated result launcher: b"]);
+    // the gate only in a comment, an unlisted launcher, and a vanished one
+    expect(androidLauncherProblems(`${gated} b = registerForActivityResult(C, r -> { /* bridge.allowsNativeAction() */ use(r); });`, gates)).toEqual(["ungated result launcher: b"]);
+    expect(androidLauncherProblems(`${gated}\n c =\n registerForActivityResult(C, r -> { });`, { a: gates.a })).toEqual(["unlisted result launcher: c"]);
+    expect(androidLauncherProblems(gated, gates)).toEqual(["missing result launcher: b"]);
+  });
+
+  it("Android: activity-result and permission-result callbacks are enumerated; each is gated or settled on close", () => {
+    const text = java();
+    // every system-result entry: registerForActivityResult lambdas, onActivityResult, onRequestPermissionsResult
+    const gatedLaunchers: Record<string, string> = {
+      filePicker: "pending.deliverFiles(bridge.allowsNativeAction()",
+      permissionAsk: "bridge.allowsNativeAction()",
+      pushPermissionAsk: "pending.runPushes(bridge.allowsNativeAction())",
+    };
+    expect(androidLauncherProblems(text, gatedLaunchers)).toEqual([]);
+    expect(text).not.toContain("void onActivityResult(");
+    expect(text).not.toContain("void onRequestPermissionsResult(");
+    // both close paths settle the pending chooser and queued registrations
+    expect((text.match(/bridge\.close\(\);\s*denyPendingCapture\(\);\s*pending\.settle\(\);/g) ?? []).length).toBe(2);
+    expect(text).not.toMatch(/fileCallback|pendingPushRegistrations/);
+    const helper = read("android/app/src/main/java/com/murage/mobile/PendingResults.java");
+    expect(helper).toContain("callback.onReceiveValue(open ? picked : null)");
+    expect(helper).toContain("if (open) for (Runnable go : waiting) go.run();");
   });
 });

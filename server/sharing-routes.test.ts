@@ -117,6 +117,8 @@ it("Make a copy for this team: a new bot in that team with the profile allowlist
   const copy = f.store.bot((made.body as any).bot.id)!;
   expect(copy).toMatchObject({ name: "Iris for Sales", title: "Designer", description: "Makes things", persona: "dry", notifications: false, section: "Sales", color: f.iris.color });
   expect(copy.modelSelection).toEqual(f.iris.modelSelection);
+  // 1.0.15 BIRTH-FUIGO K1: a copy for a team keeps the source bot's engine, unmarked (an owner pick, never the birth rule).
+  expect(copy.engineAutoPicked).toBeUndefined();
   expect(copy.sharedWith).toBeUndefined();
   expect(copy.partitionedAt).toBeUndefined();
   expect(copy.tasks).toHaveLength(1);

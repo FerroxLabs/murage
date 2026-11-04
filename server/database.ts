@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { DATA_DIR } from "./config.ts";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_PRE_V3_SNAPSHOT, MEMORY_PRE_V4_SNAPSHOT, MEMORY_SCHEMA_VERSION, lineageRepairPending, migrateMemorySchema, repairOutputRootBackfill } from "./memory/schema.ts";
 import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
-import { buildEagerIndexesBeforeListen } from "./memory/optional-index.ts";
+import { buildEagerIndexesBeforeListen, buildPreListenIndexes } from "./memory/optional-index.ts";
 import { createProgressBoard, preListenHealthPort, setActivePreListenHealth, startPreListenHealth, type PreListenHealth, type ProgressBoard } from "./memory/upgrade-health.ts";
 import { UpgradeProgressTracker, nextUpgradeSeq, restampedUpgrade, upgradeCounts } from "./memory/upgrade-progress.ts";
 import { unknownUpgradeState } from "../shared/upgrade-contract.mjs";
@@ -374,6 +374,9 @@ export function database(): DatabaseSync {
         try { beat = upgrade.blocking("backfill", undefined, undefined, "indexing"); } catch { /* a status write never stops an upgrade */ }
         try { buildEagerIndexesBeforeListen(db, { log: firstOpen }); } finally { try { beat?.end(); } catch { /* as above */ } }
       }
+      // The owner-pin index on every launch where it is missing (one scan, once per install): without it the first turn walked every active
+      // record of its scopes for its pins (MEM-PIN-INDEX-BOOT, 1.3 to 2.0 s on the owner's data).
+      buildPreListenIndexes(db, { log: firstOpen });
       upgrade.done();
     } catch (error) { upgrade.blocked(error); void responder?.close(); setActivePreListenHealth(null); throw error; } if (firstOpen) startupMark("database.noteDone");
     initializeInbox(db);
