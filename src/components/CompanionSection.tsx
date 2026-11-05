@@ -637,6 +637,7 @@ export function CompanionSection({ profileEmail = "" }: { profileEmail?: string 
           </div>
           <Switch
             checked={state.enabled}
+            data-setting-control="companion-heading"
             aria-label={`${TURN_ON_LABEL}: ${COMPANION_PAGE_TITLE}`}
             disabled={c.busy}
             onClick={() => {

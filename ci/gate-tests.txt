@@ -116,6 +116,7 @@ scripts/cloudflared-pins.test.mjs	all	packaging, upgrade and release integrity
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
 server/capability-facts.test.ts	all	a bot with no help tool (OpenClaw, a tool-less or draft-only chat) answers a product question from the checked facts, platforms and limits included
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
+server/drivers/acp/u2-replies.test.ts	all	a reply shown twice
 server/folder-trust-v2-api.test.ts	all	forgetting a folder decision reaches a new process
 server/folder-trust-v2-seeds.test.ts	linux+mac	a routed turn keeps every earlier folder answer
 server/folder-trust-v2-seeds-cloud.test.ts	linux+mac	a Cloud turn with no route starts with its folder answers
@@ -182,6 +183,7 @@ scripts/cua-linux-release.test.mjs	all	packaging, upgrade and release integrity
 scripts/dependency-floors.test.mjs	all	patched dependencies ship (supply chain)
 scripts/linux-after-install.test.mjs	linux	packaging, upgrade and release integrity
 scripts/linux-floor.test.mjs	linux	the Linux app starts on older supported distros
+scripts/mac-staple-retry.test.mjs	linux+mac	a Mac release fails on one dropped stapler connection, or ships a feed after stapling failed
 scripts/packaged-prod-pin.test.mjs	all	packaged app refused without the live production Cloud signing pin
 scripts/power-seccomp.test.mjs	linux	engines cannot shut down or restart the computer
 scripts/prepare-browser.test.mjs	all	packaging, upgrade and release integrity
@@ -548,6 +550,7 @@ server/cloud-request-auth.test.ts	linux	Cloud sensitive routes need signed devic
 server/cloud-session-streams.test.ts	linux	device and account revocation cut live streams
 server/cloud-sessions.test.ts	all	cloud recovery and resume keep access safe
 server/codex-async-question-api.test.ts	all	Codex questions asked mid-run reach the owner and the answer runs once
+server/comms-recall-skip.test.ts	all	bots answering each other when memory recall runs late on a slow machine
 server/comms-visibility.test.ts	all	Bot-to-bot channel context visibility
 server/comms.test.ts	all	mention routing and delivery of messages to bots
 server/companion-authority.test.ts	all	companion proof and token stripping
@@ -1448,11 +1451,13 @@ server/stop-line.test.ts	all	stop-line commands always stop; grants not reused
 server/store-create-bot-atomic.test.ts	all	a bot that fails to create leaves no half-made bot in the roster or bots.json
 server/store.test.ts	all	core store data behaviour
 server/tasks.test.ts	all	Task creation per bot and project
+server/team-founding.test.ts	all	team lead files bots only in its own or a new team
 server/team-identities.test.ts	all	team identity DDL frozen and journal blocks lookup
 server/team-incidents.test.ts	all	broken run reaches right person
 server/team-library.local.test.ts	all	shipped catalog passes download gate
 server/team-lifecycle.test.ts	all	team rename/delete journal recovers on boot
 server/team-manifest.test.ts	all	team export/import manifests
+server/team-section-create.test.ts	all	client team lands in its own new team, never scattered into the lead's
 server/teams-import-guard.test.ts	all	imported teams start at Ask, blocked files refused
 server/telegram-approvals.test.ts	all	Telegram approval buttons authorize once
 server/telegram-channel.test.ts	all	Telegram pairing and persisted delivery
@@ -1478,6 +1483,7 @@ server/tool-results.test.ts	all	tool result cache refuses other bot's reads
 server/transcript-backfill.test.ts	all	Backfill resumable, damaged rows skipped
 server/transcript-seq.server.test.ts	all	transcript sequence column and migration
 server/tray-summary.test.ts	all	secrets and destructive commands stay on the full card (approval)
+server/tts/elevenlabs-library.test.ts	all	an own ElevenLabs key stays in a header, follows no redirect, and adds Voice Library voices only with an own key
 server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
 server/turn-attribution-engines.e2e.test.ts	all	Each sentence names answering turn on every engine
 server/turn-dispatch-guard.test.ts	all	turn retried only when safe
@@ -1547,6 +1553,9 @@ src/components/FolderTrustRecords.test.ts	all	every folder decision listed with 
 src/components/help/FeedbackForm.test.ts	all	tester feedback sends only a fixed screen envelope and one fixed sentence, stamped when Send is pressed, never owner text
 src/components/help/HelpHost.lazy.test.ts	all	help's panel chunk is fetched only when help opens, never in the background, so a closed help can never reload the app
 src/components/help/HelpPanel.test.ts	all	the help panel opens on every screen and over every window, owns Esc and Tab inside it, and a help chunk that fails to load shows its retry line inside help
+src/components/help/HelpAskChief.test.ts	all	the help panel's ask opens the Chief's chat with the screen named and the question in the composer, never sent
+src/components/ui/Tip.test.ts	all	tooltips show on hover and keyboard focus, are spoken, and stay inside the window
+src/lib/hints-seen.test.ts	all	a hint shows once on this device and never at launch, on a small window, in first run or twice at once
 src/components/FirstRunNoPrivacyPromise.test.ts	all	first run promises nothing about where typed text goes
 src/components/approval/l1a-card.test.ts	all	The approval card shows the verb and the fold the owner agrees to
 src/components/approval/l1a-settings.test.ts	all	The list of things said yes to for good is complete and removable
@@ -1703,6 +1712,7 @@ src/lib/stream-uplink.test.ts	all	voice ticket request refuses redirects
 src/lib/team-import.test.ts	all	team import preview rejects bad files
 src/lib/terms.test.ts	all	terms accepted once, reprompt on version change
 src/lib/trusted-html.test.ts	all	Trusted Types policy restricts script URLs
+src/lib/tts/no-filler.test.ts	all	a call reply opens with a drawn-out "Hmmm" every turn, or a short wait speaks a filler instead of staying quiet
 src/lib/undo.test.ts	all	Undo is local to the window and holds survive a newer offer
 src/lib/webhook-message-lazy.test.ts	all	a webhook run never shows its raw event text while the bubble's parser loads or fails
 src/lib/webhook-message.test.ts	all	untrusted webhook data cannot forge task markers
@@ -1828,6 +1838,8 @@ src/copy-jargon.test.ts	all	plain words: no jargon reaches the owner's screens
 src/copy-frozen-names.test.ts	all	the frozen names (Ask, Auto, Full access, No limits, Today, Chats, Routines, Needs you) never drift
 src/a11y-styles.test.ts	all	reduced motion, focus ring and contrast for keyboard and low-vision owners
 src/lib/update-card.test.ts	all	the update pop-up comes up for a download, stays closed when closed, and clears the toast and composer
+src/lib/settings-landing.test.ts	all	a Settings search lands on a card wrapper instead of its control, leaves a closed fold shut, or dead-ends on no results
+src/lib/settings-card-registry.test.ts	all	a Settings search lands on a guessed control because a card marks none or two
 src/lib/settings-index.test.ts	all	every Settings row can be found
 src/lib/settings-search.test.ts	all	searching Settings finds the right row first
 server/feedback-relay.test.ts	all	tester feedback leaves with no secrets and is bounded
@@ -1856,6 +1868,8 @@ shared/mac-folder-prompt-plist.test.ts	all	MAC-FOLDER-PROMPT: the Mac folder pro
 server/nolimits-means-it.test.ts	all	No limits on owner turns runs key rules and unread calls; reader failures, found wipes, depth stops, elevated https text and gate files keep their card, every form code rounds 1 and 2 blocked is a must-hold
 server/owner-started.test.ts	all	Only a turn the owner started reads as owner-started, by the bound turn; the terms and a failover line stay proven
 server/nolimits-owner-started-api.test.ts	linux+mac	Real starts: owner lines run, a redispatch and a memory rebuild stay the owner's turn; gate files, webhooks, routines, rooms and unproven sends keep their cards
+server/nolimits-revert-parity.test.ts	all	NOLIMITS-1017-FINAL: every shell -c shape, PowerShell payload and heredoc body carrying a wipe keeps its card on an owner No limits turn, as on 1.0.16
+server/nolimits-walk-crit.test.ts	all	NOLIMITS-WALK-CRIT: a shell -c form the reader does not follow (-oc, -xo x -c, -cs, -cO, +x -c, a second -c, fish -o, busybox, toybox, csh, tcsh) keeps its card on an owner No limits turn; -c, -lc, -cl, -lic, -xc, -ec, -o errexit -c read as before
 src/components/NoLimitsTermsPrompt.test.ts	all	The No limits terms dialog opens only for a desktop owner who has a bot at No limits
 server/room-open-tool-limit-api.test.ts	linux+mac	a room reply with a quiet tool running on Codex or an ACP engine is not stopped at 20 minutes, a silent engine with no tool still is, and a saved limit above 60 is kept
 server/room-turn-timeout.test.ts	all	a room counts its open engine tools and picks 20 or 60 from them, and Settings says what the server does
@@ -1889,3 +1903,15 @@ src/components/FirstRunBackupsStart.test.ts	all	the first-run backup step starts
 server/memory/delegation-hold.test.ts	all	a bot-to-bot ask leaves the pair room where it is and ends no memory receipt (every ask held every reply)
 src/components/WithoutMemoryNote.test.ts	all	a reply that ran without remembered context says so in the chat with Tool calls off
 server/memory/learning-send-boundary.test.ts	all	Every engine write in server/ goes through a learning gate or is pinned at its call site
+server/drivers/codex-unsupported-calls.test.ts	all	a Codex tool call the provider sent without its app name is named in the chat instead of vanishing
+src/lib/needs-keys.test.ts	all	Needs you keeps the oldest first, keys move and open the right card, and a snooze lands at 17:00 or tomorrow 9:00
+src/components/needs/NeedsRow.test.ts	all	a collapsed Needs you row shows no answer buttons, the door renders owed rows through it, and a snooze can be undone before it is written
+server/needs-door-flow.test.ts	linux+mac	an approval or a question opened from a Needs you row on Fuigo, Claude or Codex reaches the engine and the row leaves the list
+src/components/health/health-findings.test.ts	all	Health paints an engine nobody uses red, hides a real problem, claims all clear before every check answered, or Switch on ends a running answer
+src/lib/phone-launcher.test.ts	all	the phone app shows no way back to Your computers from the workspace menu, or a desktop or browser shows a dead Your computers button
+server/approve-all.test.ts	all	Approve all never approves a card the owner would have to look at, and answers only through the one respond path
+server/approve-all-http.test.ts	linux+mac	Approve all approves only previewed ordinary cards, once, and the phone signs the exact set
+server/owner-prefs.test.ts	all	The Approve all caution choice is one owner pref on the server, shared by the desktop and the phone
+src/lib/approve-all.test.ts	all	Approve all words every reason, shows only where the server says, and the phone signs exactly the ticked set
+server/owner-app.test.ts	all	Only the desktop app or the paired phone app with an attested key counts as the owner app; every browser and bare device headers are refused
+server/browser-extension-activity-site.test.ts	all	SABLE-LIVE: the browser activity row for an open from a blank tab names the real destination host, never "null"

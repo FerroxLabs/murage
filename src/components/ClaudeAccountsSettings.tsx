@@ -137,7 +137,7 @@ export function ClaudeAccountsSettings({ onChanged }: { onChanged?: () => Promis
   return <section aria-label="Claude accounts" className="space-y-3 rounded-xl bg-card p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="claude-accounts-heading" tabIndex={-1} className="text-[15px] font-medium text-ink outline-none">Claude accounts</h3><div className="flex gap-2">
       <button type="button" className={button} disabled={busy} onClick={() => { setError(""); void load().catch(cause => setError(cause.message)); }}>{t("claudeAccounts.refresh")}</button>
-      <button type="button" className={button} disabled={busy} onClick={() => edit()}>{t("claudeAccounts.add")}</button>
+      <button type="button" data-setting-control="claude-accounts-heading" className={button} disabled={busy} onClick={() => edit()}>{t("claudeAccounts.add")}</button>
     </div></div>
     <p className="text-xs leading-relaxed text-ink-secondary">{t("claudeAccounts.keepsLogin")}</p>
     {error && <p role="alert" className="text-xs text-danger">{error}</p>}

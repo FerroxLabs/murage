@@ -10,10 +10,11 @@ const SUMMARY_KEY = {
   checked: "browserUnavailable.checked",
   unfinished: "browserUnavailable.unfinished",
   "check-failed": "browserUnavailable.checkFailed",
+  paused: "browserUnavailable.paused",
   "timed-out": "browserUnavailable.timedOut",
   failed: "browserUnavailable.failed",
 } as const;
-const NO_DETAILS = new Set<string>(["user-chrome", "user-chrome-allow", "held", "checking", "checked", "unfinished", "check-failed"]);
+const NO_DETAILS = new Set<string>(["user-chrome", "user-chrome-allow", "held", "checking", "checked", "unfinished", "check-failed", "paused"]);
 
 /** A turn that ran without the built-in browser, said in plain words, with
  * the engine's own reason one click away. Neutral, like FolderTrustRow: not a
@@ -23,7 +24,7 @@ const NO_DETAILS = new Set<string>(["user-chrome", "user-chrome-allow", "held", 
  * Wrapping is ordinary word wrapping; `overflow-wrap: anywhere` breaks only a
  * token too long for the line (a URL, an error code). The tool chips' shared
  * `break-all` split plain words mid-word on a 390px phone. */
-export function BrowserUnavailableRow({ reason }: { reason: string }) {
+export function BrowserUnavailableRow({ reason, botName }: { reason: string; botName?: string }) {
   const kind = browserUnavailableKind(reason);
   return (
     <div className="flex justify-start">
@@ -34,7 +35,7 @@ export function BrowserUnavailableRow({ reason }: { reason: string }) {
       >
         <span className="mt-[3px] shrink-0" aria-hidden="true"><GlobeLock size={12} className="opacity-70" /></span>
         <div className="min-w-0 [overflow-wrap:anywhere]">
-          <span>{t(SUMMARY_KEY[kind])}</span>
+          <span>{t(SUMMARY_KEY[kind], { bot: botName || t("browserUnavailable.thisBot") })}</span>
           {!NO_DETAILS.has(kind) && (
             <details className="mt-0.5 text-[12px]">
               <summary className="cursor-pointer select-none">{t("browserUnavailable.details")}</summary>

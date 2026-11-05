@@ -177,6 +177,11 @@ export function awaitHostComputerConsent(
   });
 }
 
+/** APPROVE-ALL (design 6.2 step 12): read only, whether this request is a waiting consent card. Settles nothing. */
+export function hostComputerConsentPending(requestId: string): boolean {
+  return [...pendingByBot.values()].some((entry) => entry.requestId === requestId);
+}
+
 /** Called by the respond routes BEFORE forwarding to a provider. True when
  *  the requestId was a consent card; `remember` persists the owner's answer. */
 export function resolveHostComputerConsent(

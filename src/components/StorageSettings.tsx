@@ -35,7 +35,7 @@ export function StorageSettings() {
           </dl>
           <p className={summary.low ? "text-warning" : "text-ink-secondary"}>{summary.next}</p>
           <div>
-            <button type="button" onClick={load} className="rounded-md border border-hairline/60 px-2.5 py-1 text-[12.5px] text-ink">
+            <button type="button" data-setting-control="storage-heading" onClick={load} className="rounded-md border border-hairline/60 px-2.5 py-1 text-[12.5px] text-ink">
               Check again
             </button>
           </div>

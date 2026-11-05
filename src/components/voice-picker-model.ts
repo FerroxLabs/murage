@@ -22,6 +22,31 @@ export interface PickerVoice {
   /** Where a list says it outright; otherwise read from the description. */
   accent?: string;
   provider?: "openai" | "grok" | "elevenlabs";
+  /** A Voice Library voice not yet in the owner's own ElevenLabs account:
+   *  picking it adds it there first (POST /api/tts/voices/add). */
+  publicOwnerId?: string;
+}
+
+/** GET /api/tts/voices for a bot's service. Only an own ElevenLabs key
+ *  searches on the server (its account and the Voice Library); every other
+ *  list, Flux's included, is filtered here and never sends the search. */
+export function voicesUrl(provider: string, opts: { recheck?: boolean; query?: string } = {}): string {
+  const params = new URLSearchParams({ provider });
+  if (opts.recheck) params.set("recheck", "1");
+  const query = opts.query?.trim().slice(0, 200);
+  if (provider === "elevenlabs" && query) params.set("q", query);
+  return `/api/tts/voices?${params.toString()}`;
+}
+
+/** The words the list is filtered by here: none when the server already
+ *  searched, since a pasted share link or voice id matches no row's text. */
+export function localQuery(query: string, searchedOnServer: boolean): string {
+  return searchedOnServer ? "" : query;
+}
+
+/** Whether picking this row adds it to the owner's ElevenLabs account first. */
+export function needsAdding(voice: PickerVoice | undefined): voice is PickerVoice & { publicOwnerId: string } {
+  return Boolean(voice?.publicOwnerId);
 }
 
 /** How each voice source is named where one list mixes them. */

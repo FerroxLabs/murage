@@ -18,6 +18,7 @@ import type { BindingContext } from "./browser-extension-policy.ts";
 import { browserActivityStore } from "./browser-extension-activity.ts";
 import { botColorHex } from "../shared/ember-colors.ts";
 import { resolveCheckerConnection } from "./browser-action-checker-connection.ts";
+import { BROWSER_EXTENSION_PAUSED_REASON } from "../shared/browser-unavailable.ts";
 
 const HUMAN_WAIT_MS = HUMAN_DECISION_MS;
 /** The name the extension shows for a bot: the bot's own name. The side panel adds the conversation's title itself. */
@@ -97,6 +98,8 @@ export class BrowserExtensionIntegration {
   isRoutineThread(threadId: string): boolean { try { return this.options.routine?.(threadId) === true; } catch { return true; } }
   /** The owner answers a card. A card whose call already returned WAITING (or that survived a restart) needs the saved state loaded
    * first, so its binding can be looked at again before anything runs. */
+  /** APPROVE-ALL (design 6.2 step 11): read only, whether this request is one of the extension's cards. Settles nothing. */
+  knowsCard(requestId: string): boolean { return this.approvals.knows(requestId); }
   async answerCard(threadId: string, requestId: string, behavior: string | undefined): Promise<boolean> {
     if (!this.approvals.knows(requestId)) return false;
     if (!this.service) { try { await this.start(); } catch { /* the binding cannot be checked: the answer closes the card and runs nothing */ } }
@@ -300,7 +303,7 @@ export class BrowserExtensionIntegration {
     if (state !== "active") throw Object.assign(new Error(state === "stopped" ? "Browser control is stopped for this conversation. The owner stopped it, so do not use the browser here unless the owner starts it again."
       : state === "paused" && status?.pausedReason === "handoff" ? "YOUR TURN: this step needs the owner. Murage has asked them. Ask the owner to press Continue in Murage for Chrome so you can carry on. Do not try another way to do the step."
       : state === "paused" && status?.pausedReason === "uncertain" ? "Browser control is paused because the owner's browser restarted during the last step, so that step may not have finished. Ask the owner to check the page and resume it in Murage for Chrome before you carry on."
-      : state === "paused" ? "Browser control is paused; the owner can check the page and resume it in Murage for Chrome."
+      : state === "paused" ? BROWSER_EXTENSION_PAUSED_REASON
       : "The owner's browser is not connected right now."), { code: "browser_extension_not_ready" });
     return binding;
   }

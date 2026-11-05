@@ -77,6 +77,7 @@ export function NewsSignupSettings() {
           <input
             type="email"
             inputMode="email"
+            data-setting-control="news-heading"
             aria-label={NEWS_COPY.emailLabel}
             placeholder="you@example.com"
             value={email}

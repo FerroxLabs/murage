@@ -22,6 +22,17 @@ type ViewProps = { botName: string; sites: ApprovedSite[]; phone: boolean; pendi
   offers?: string[]; onDismissOffer?: (origin: string) => void;
   /** A failed save turned the Allow always sites back to Ask: said once, in plain words, until the owner dismisses it. */
   loweredNote?: boolean; onDismissLowered?: () => void };
+/** The origin an end-of-task offer names, or null for a line with no site
+ * (a blank tab logs "null", or nothing): an offer to always allow https://null
+ * is noise. Every other host stays, IPv6 and one-word intranet names too. */
+export function offerOrigin(site: string): string | null {
+  const raw = site.trim();
+  if (!raw || raw === "null") return null;
+  try {
+    const url = new URL(/^https?:\/\//.test(raw) ? raw : `https://${raw}`);
+    return url.hostname && url.hostname !== "null" ? url.origin : null;
+  } catch { return null; }
+}
 export function BrowserApprovedSitesView({ botName, sites, phone, pending, error, lowering, onSet, onLowerAsk, onLowerKeep, liftTarget = null, onLiftAsk, onLiftKeep, offers = [], onDismissOffer, loweredNote = false, onDismissLowered }: ViewProps) {
   const ruleOf = (origin: string) => sites.find(site => site.origin === origin)?.rule;
   const offered = phone ? [] : offers.filter(origin => { const rule = ruleOf(origin); return (rule === undefined || rule === "ask") && siteCategory(origin) === "normal"; });
@@ -79,7 +90,7 @@ export function BrowserApprovedSites({ bot, profileId, phone = isPhoneClient(), 
     if (!ended || phone) { setUsed([]); return; }
     let alive = true; const ids = new Set(ended.split(","));
     api(`/api/bots/${encodeURIComponent(bot.id)}/browser-extension/activity`).then((result: { activity?: { bindingId: string; site: string }[] }) => {
-      if (alive) setUsed([...new Set((result.activity ?? []).filter(line => ids.has(line.bindingId)).map(line => /^https?:\/\//.test(line.site) ? line.site : `https://${line.site}`))]);
+      if (alive) setUsed([...new Set((result.activity ?? []).filter(line => ids.has(line.bindingId)).map(line => offerOrigin(line.site)).filter((origin): origin is string => !!origin))]);
     }).catch(() => {});
     return () => { alive = false; };
   }, [bot.id, ended, phone]);

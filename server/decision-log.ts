@@ -35,6 +35,11 @@ export type DecisionKind =
   | "card-shown"
   | "user-approved"
   | "user-denied"
+  /** APPROVE-ALL (design 6.4): the owner's Allow once given through Approve all. Kept apart from "user-approved", so
+   * bot learning, which reads only user-approved and user-denied, never takes a bulk yes as a lesson. */
+  | "user-approved-bulk"
+  /** APPROVE-ALL: a card in an Approve all batch that was not approved; nothing was answered. Not an approval. */
+  | "bulk-skipped"
   | "review-would-approve"
   | "review-would-deny"
   /** 0.1.52 ASK2: a question the engine stopped waiting on with no answer
@@ -87,6 +92,9 @@ export interface DecisionRow {
   unattended?: boolean;
   /** Diagnostic rows unavailable because of overload, oversize or write failure. */
   omitted?: number;
+  /** APPROVE-ALL: the batch this row was answered or skipped in, and how many cards it held */
+  batchId?: string;
+  batchSize?: number;
 }
 
 const FILE_NAME = "decisions.ndjson";
@@ -272,8 +280,10 @@ export async function redactDecisionsForThreads(dataDir: string, threadIds: read
         if (!isDecisionRow(value) || !gone.has(value.threadId)) return line;
         touched = true;
         changed++;
-        const { at, botId, botName, tool, decision, source, unattended } = value;
-        return JSON.stringify({ at, threadId: DELETED_CONVERSATION, ...(botId ? { botId } : {}), ...(botName ? { botName } : {}), ...(tool ? { tool } : {}), decision, source, ...(unattended ? { unattended } : {}) });
+        const { at, botId, botName, tool, decision, source, unattended, batchId, batchSize } = value;
+        return JSON.stringify({ at, threadId: DELETED_CONVERSATION, ...(botId ? { botId } : {}), ...(botName ? { botName } : {}), ...(tool ? { tool } : {}), decision, source, ...(unattended ? { unattended } : {}),
+          // an Approve all row keeps that it was one, and of how many (APPROVE-ALL 6.4)
+          ...(typeof batchId === "string" ? { batchId } : {}), ...(typeof batchSize === "number" ? { batchSize } : {}) });
       } catch {
         return line;
       }

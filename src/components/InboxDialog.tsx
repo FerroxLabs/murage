@@ -28,7 +28,7 @@ export function InboxDialog({ onClose, initialView }: { onClose: () => void; ini
     {error && <p role="alert" className="shrink-0 px-4 pt-3 text-[13px] text-danger">{error}</p>}
     <Inbox initialView={initialView} onOpen={link => { void openSource(link); }} onClose={onClose} refreshKey={state.routineRuns.length}
       onOpenBackups={() => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section: "backups" }); }}
-      onOpenSettingsPage={section => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section }); }}
+      onOpenSettingsPage={(section, anchor) => { onClose(); dispatch({ type: "toggleAppSettings", open: true, section, ...(anchor ? { anchor } : {}) }); }}
       onOpenLearning={botId => { onClose(); dispatch({ type: "select", id: botId }); dispatch({ type: "toggleSettings", open: true, intent: { section: "learning" } }); }}
       onOpenMemory={subject => {
         onClose();

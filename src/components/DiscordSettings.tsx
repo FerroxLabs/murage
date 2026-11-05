@@ -137,12 +137,12 @@ export function DiscordSettings() {
     <InAdvanced><div id="discord-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Discord app setup</h4>
       <p>Use your own Discord application bot. Choose an installation you control and open a direct message with the bot. Murage reads only direct messages from the owner below; guild messages and Discord approval buttons are not supported.</p>
-      <a className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Open Discord app settings</a>
+      <a data-setting-control="discord-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://discord.com/developers/applications" target="_blank" rel="noreferrer">Open Discord app settings</a>
     </div></InAdvanced>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token {status?.botConfigured && <span>(saved)</span>}
-      <input name="discord-bot-token" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={botToken} disabled={disabled || !secure} onChange={event => setBotToken(event.target.value)} className={inputClass} />
+      <input name="discord-bot-token" data-setting-control="discord-settings-title" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={botToken} disabled={disabled || !secure} onChange={event => setBotToken(event.target.value)} className={inputClass} />
     </label>
     <button type="button" className={`${buttonClass} mt-3 bg-control`} disabled={disabled || !secure || !botToken.trim()} onClick={() => void saveCredentials()}>{busy === "credentials" ? "Saving credentials…" : "Save credentials"}</button>
     {!secure && <p role="status" className="mt-2 text-[12px] text-warning">Secure storage is unavailable in this window. Open Channels in Murage Desktop to save credentials.</p>}

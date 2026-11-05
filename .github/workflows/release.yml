@@ -491,10 +491,24 @@ jobs:
           sudo pfctl -E
       - name: Staple, re-zip, regenerate blockmaps and the feed
         run: |
-          xcrun stapler staple release/Murage-*-arm64.dmg
-          xcrun stapler staple release/Murage-*-x64.dmg
-          xcrun stapler staple release/mac-arm64/Murage.app
-          xcrun stapler staple release/mac/Murage.app
+          # stapler fetches the ticket from Apple: the connection drops now and then (error 68), and a
+          # ticket can lag notarytool's Accepted verdict by a minute (error 65). Six tries, 30 s apart.
+          # If every try fails the step stops here, before any re-zip, blockmap or feed change.
+          staple() {
+            local attempt
+            for attempt in 1 2 3 4 5 6; do
+              if xcrun stapler staple "$1"; then return 0; fi
+              if [ "$attempt" -lt 6 ]; then
+                echo "stapling $1 failed (try $attempt of 6); trying again in 30 s"
+                sleep 30
+              fi
+            done
+            echo "::error::could not staple $1 after 6 tries"
+            return 1
+          }
+          for f in release/Murage-*-arm64.dmg release/Murage-*-x64.dmg release/mac-arm64/Murage.app release/mac/Murage.app; do
+            staple "$f" || exit 1
+          done
           v=$(node -p "require('./package.json').version")
           rm -f "release/Murage-$v-arm64.zip" "release/Murage-$v-x64.zip"
           ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/Murage.app "release/Murage-$v-arm64.zip"
