@@ -13,6 +13,7 @@ import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS } from "./data-dir-inventory.ts";
 import { DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
+import { readOwnerPrefs } from "./owner-prefs.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 /** output_publications as 1.0.2 creates it (afbf549ba server/artifacts.ts initializeArtifacts). */
@@ -69,6 +70,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     mkdirSync(join(DATA_DIR, "draft-only-cwd", "thread-1"), { recursive: true });
     // the one-time chat model cleanup's marker (1.0.4 SL-IK)
     writeFileSync(join(DATA_DIR, ".threads-follow-model-v1"), "");
+    // the owner's cross-device prefs (1.0.17 owner-prefs.ts: the Approve all caution's "Don't show this again"; 1.0.2 has no Approve all)
+    writeFileSync(join(DATA_DIR, "owner-prefs.json"), `${JSON.stringify({ approveAllCautionDismissed: true }, null, 2)}\n`, { mode: 0o600 });
     // the cloud computer prompt record and its set-aside unreadable copy (1.0.6 cloud-computer-turns.ts; 1.0.2 has no such record)
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json"), JSON.stringify({ version: 1, entries: [] }));
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
@@ -92,6 +95,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
 
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name))).toEqual([]);
     expect(readFileSync(join(DATA_DIR, "about-me.md"), "utf8")).toBe("owner words");
+    // a later upgrade reads the removed prefs as the defaults: the caution shows again, nothing throws
+    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false });
     expect(existsSync(join(DATA_DIR, "messages.db"))).toBe(true);
     // a second run (already v10) finds nothing more to remove and still succeeds
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });

@@ -139,11 +139,28 @@ function lexPwsh(s: string, legacy = false): Lexed {
   let words: Word[] = [];
   let parts: Part[] = [];
   let i = 0;
+  // The last character of the lit part `lit` last wrote to. `lit` grows a
+  // part one character at a time, and reading the end of that text
+  // (`endsWith`) makes the engine copy all of it each time: a 20k-character
+  // word took ~25 ms. `endsWithChar` answers from here for that part.
+  let tailPart: Part | undefined;
+  let tailChar = "";
   const lit = (text: string, quote: Quote) => {
     const last = parts[parts.length - 1];
-    if (last && last.kind === "lit" && last.quote === quote) last.text += text;
-    else parts.push({ kind: "lit", text, quote });
+    if (last && last.kind === "lit" && last.quote === quote) {
+      if (last !== tailPart) tailChar = last.text.slice(-1);
+      last.text += text;
+      tailPart = last;
+    } else {
+      tailPart = { kind: "lit", text, quote };
+      parts.push(tailPart);
+      tailChar = "";
+    }
+    if (text) tailChar = text.slice(-1);
   };
+  /** Does this lit part's text end with `ch` (one character)? */
+  const endsWithChar = (part: Extract<Part, { kind: "lit" }>, ch: string): boolean =>
+    part === tailPart ? tailChar === ch : part.text.endsWith(ch);
   const endWord = () => {
     if (parts.length) words.push(quotedHome({ parts }));
     parts = [];
@@ -243,7 +260,7 @@ function lexPwsh(s: string, legacy = false): Lexed {
     if (c === "&") {
       // `2>&1`: a redirect's duplicate, part of its word
       const last = parts[parts.length - 1];
-      if (last?.kind === "lit" && last.quote === "none" && last.text.endsWith(">") && /\d/.test(s[i + 1] ?? "")) { lit("&", "none"); i++; continue; }
+      if (last?.kind === "lit" && last.quote === "none" && endsWithChar(last, ">") && /\d/.test(s[i + 1] ?? "")) { lit("&", "none"); i++; continue; }
       if (s[i + 1] === "&") { endStatement(); i += 2; continue; }
       // at the start of a statement `&` calls what follows; anywhere else it
       // ends the statement (cmd's separator, PowerShell's background job)
@@ -265,7 +282,7 @@ function lexPwsh(s: string, legacy = false): Lexed {
       i = end + 2;
       continue;
     }
-    const afterEquals = parts.length > 0 && (() => { const last = parts[parts.length - 1]!; return last.kind === "lit" && last.quote === "none" && last.text.endsWith("="); })();
+    const afterEquals = parts.length > 0 && (() => { const last = parts[parts.length - 1]!; return last.kind === "lit" && last.quote === "none" && endsWithChar(last, "="); })();
     // a here-string opened with a typographic quote: not modelled
     if (c === "@" && (parts.length === 0 || afterEquals) && /[\u2018\u2019\u201A\u201B\u201C\u201D\u201E]/.test(s[i + 1] ?? "")) throw new Unreadable("quote", "@ with a typographic quote");
     if ((s.startsWith("@'", i) || s.startsWith('@"', i)) && (parts.length === 0 || afterEquals)) {
@@ -347,7 +364,7 @@ function lexPwsh(s: string, legacy = false): Lexed {
       const last = parts[parts.length - 1];
       // `@{a = Remove-Item …}`: a hashtable's values are statements; its
       // keys are walked away so each value is read as the statement it is
-      const hashtable = c === "{" && last?.kind === "lit" && last.quote === "none" && last.text.endsWith("@");
+      const hashtable = c === "{" && last?.kind === "lit" && last.quote === "none" && endsWithChar(last, "@");
       nested.push(hashtable ? body.replace(/(^|[;\n])\s*('[^']*'|"[^"]*"|[\w.-]+)\s*=(?!=)/g, "$1") : body);
       if (parts.length === 0) {
         parts.push(c === "{" ? { kind: "subst", text: body, quote: "none", block: true } : { kind: "subst", text: body, quote: "none" });

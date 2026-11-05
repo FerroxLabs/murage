@@ -462,7 +462,7 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
           },
           table({ children }: { children?: ReactNode }) {
             return (
-              <div className="overflow-x-auto">
+              <div className="chat-table overflow-x-auto">
                 <table className="w-full border-collapse text-[13.5px]">{children}</table>
               </div>
             );

@@ -2688,6 +2688,20 @@
   "count": 2
  },
  {
+  "file": "server/owner-prefs.ts",
+  "function": "readOwnerPrefs",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/owner-prefs.ts",
+  "function": "writeOwnerPrefs",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/package-export-files.ts",
   "function": "copy",
   "callee": "openSync",

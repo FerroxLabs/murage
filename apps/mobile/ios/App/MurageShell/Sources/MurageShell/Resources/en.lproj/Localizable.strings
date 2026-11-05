@@ -25,7 +25,7 @@
 "phone_provider_fallback" = "another AI service";
 "phone_no_key" = "Set a passcode on this phone, then pair again";
 "phone_update" = "Turn this on, or update Murage, on your computer.";
-"phone_turned_off" = "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.";
+"phone_turned_off" = "This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Phone tools. If it's already on, the line under it says why it can't be used.";
 "phone_failed" = "Could not update phone tools. Try again.";
 "phone_refused" = "Phone sign-in was refused. Pair this phone again.";
 "phone_rate_limited" = "Too many sign-in attempts. Try again shortly.";
@@ -68,8 +68,9 @@
 "ask_setup_body" = "Send things to your bots from any app, and ask them a question without opening Murage first. Confirm once for this computer.";
 "ask_turn_on" = "Turn on";
 "ask_not_now" = "Not now";
+"ask_ok" = "OK";
 "ask_update" = "Turn this on, or update Murage, on your computer.";
-"ask_turned_off" = "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.";
+"ask_turned_off" = "This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Share and ask. If it's already on, the line under it says why it can't be used.";
 "ask_no_key" = "Set a passcode on this phone, then open Murage.";
 "ask_computer_off" = "Sharing and asking are off for this phone.";
 "ask_setup_again" = "Open Murage to set up sharing again.";

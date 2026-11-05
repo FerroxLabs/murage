@@ -23,6 +23,7 @@ import { BotAvatar } from "./Avatar";
 import { botChips, createSnoozeReturns, groupNeeds, needsKeyAction, nextAfterAnswer, cameBack, doorOrder, isHeldActivation, snoozeTarget, waitingSinceTime } from "@/lib/needs-keys";
 import { isEditableTarget, undoHost } from "@/lib/undo";
 import { showSnoozeReturn } from "@/lib/notify";
+import { ApproveAllButton } from "./ApproveAll";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // One timer per row snoozed from the door, kept while the app is open (not while this page is), so the
@@ -620,6 +621,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     </BoxHead>
     <BoxBody className="flex flex-col p-4 sm:p-6">
     <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
+    {/* Approve all (APPROVE-ALL-1016): the Approvals tab only; the server says whether this surface shows it */}
+    {view === "approvals" && <ApproveAllButton eligibleHint={result?.approvals ?? 0} onApplied={() => setRevision(current => current + 1)} />}
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot

@@ -806,6 +806,34 @@ describe("approvalDeviceHeaders", () => {
   });
 });
 
+// APPROVE-ALL-1016 7.1: the phone app reaches Approve all through the device door only, with the launch proof and the
+// registry's approval device headers; the browser door never forwards it, so no browser can press it.
+describe("Approve all through the doors", () => {
+  const token = "a".repeat(64);
+  const id = { id: "4b7a3f6c-1a52-4d1e-9c2e-5a0d7e41b9f3", cls: "app" as const, key: "B".repeat(87) };
+  const routes = ["/api/inbox/approve-all/preview", "/api/inbox/approve-all/apply", "/api/inbox/approve-all/surface", "/api/inbox/approve-all/caution"];
+  it("the device door admits both routes and stamps the launch proof and the registry device", () => {
+    for (const path of routes) {
+      expect(ask("POST", path), path).toBeNull();
+      expect(deviceProofHeaders("POST", path, token), path).toEqual({ "x-murage-companion-token": token });
+      expect(approvalDeviceHeaders("POST", path, id), path).toEqual({ "x-murage-approval-device": id.id, "x-murage-approval-class": "app", "x-murage-approval-key": id.key });
+    }
+  });
+  it("the browser door refuses both routes and its shared proof list does not carry them", () => {
+    for (const path of routes) {
+      expect(askBrowser("POST", path), path).not.toBeNull();
+      expect(launchProofHeaders("POST", path, token), path).toEqual({});
+    }
+  });
+  it("only POST, and no proof without a usable token", () => {
+    for (const path of routes) {
+      expect(ask("GET", path), path).not.toBeNull();
+      expect(deviceProofHeaders("POST", path, undefined), path).toEqual({});
+      expect(deviceProofHeaders("POST", path, "short"), path).toEqual({});
+    }
+  });
+});
+
 // rc12 review: Settings on the phone reads one bot's whole record (GET /api/bots/:id) when the fleet carried a cut description. Both doors let
 // that read through for a signed-in caller, exactly as they let the fleet through, and nothing else on the same path.
 describe("one bot's whole record reaches the harness from both doors", () => {

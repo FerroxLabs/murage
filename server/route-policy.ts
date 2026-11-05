@@ -224,6 +224,10 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/threads/${ID}/messages/${ID}/reactions`), class: "conversation", cloudWrite: "ordinary", why: "react to a message" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/export`), class: "conversation", why: "export one conversation" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "answer a card in the bot's own thread, same rule as the thread route (mayApprove)" },
+  { methods: ["POST"], path: "/api/inbox/approve-all/preview", class: "conversation", cloudWrite: "ordinary", why: "Approve all: freeze the Approvals list and say which cards it may answer; the desktop app or the paired phone app only (approveAllSurface)" },
+  { methods: ["POST"], path: "/api/inbox/approve-all/surface", class: "conversation", cloudWrite: "ordinary", why: "Approve all: whether this surface shows the button, from the one owner-app check (ownerAppSurface); read only" },
+  { methods: ["POST"], path: "/api/inbox/approve-all/caution", class: "conversation", cloudWrite: "ordinary", why: "Approve all: the owner's shared choice to hide or show the first-use caution again (owner-prefs.ts); the desktop app or the paired phone app only" },
+  { methods: ["POST"], path: "/api/inbox/approve-all/apply", class: "conversation", cloudWrite: "ordinary", why: "Approve all: Allow once on each ticked card through the respond function; the phone signs the ticked set once (fresh-auth gate)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "answer a card: anyone may decline or skip, only the desktop or the paired phone may allow or answer (mayApprove)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/widgets/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "press a bot's widget: only the desktop or the paired phone (mayApprove); one owner send per widget" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/widgets/${ID}/reopen`), class: "conversation", cloudWrite: "ordinary", why: "reopen a settled widget's answers in a new widget (mayApprove)" },
@@ -231,6 +235,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: re(String.raw`/api/attachments/[\w.-]+`), class: "conversation", why: "an app-owned image by its generated name, never a path" },
   { methods: ["POST"], path: "/api/files", class: "conversation", cloudWrite: "ordinary", why: "a share-sheet document, stored under a generated name" },
   { methods: ["GET"], path: "/api/tts/voices", class: "conversation", why: "voice labels; the voice key never leaves" },
+  { methods: ["POST"], path: "/api/tts/voices/add", class: "desktop", cloudWrite: "step-up", why: "the owner adds a Voice Library voice to their own ElevenLabs account (a voice slot there); the key never leaves; cloudRouteDecision denies it on every Cloud scope but owner-desktop" },
   { methods: ["POST"], path: "/api/tts/speak", class: "conversation", cloudWrite: "ordinary", why: "speak a reply; audio out, no key" },
   { methods: ["POST"], path: "/api/tts/prepare", class: "conversation", cloudWrite: "ordinary", why: "split a reply into utterances and say whether a voice is set up; reads no key, writes nothing" },
   { methods: ["POST"], path: "/api/voice/transcribe", class: "conversation", cloudWrite: "ordinary", why: "voice in: audio in, text out, the Flux key stays here" },
@@ -474,6 +479,9 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   if (SENTINEL_OWNER_ROUTE.test(targetRoute)) return sentinelCloudDecision(method, scope);
   // Remove deletes files for good: local desktop only, never a Cloud home (1.0.4 SL-H)
   if (targetRoute === "/api/storage/attachments/remove") return "deny";
+  // A Voice Library add takes a voice slot on the owner's own ElevenLabs account: the paired owner desktop only,
+  // never a phone or a browser, stepped up or not (C31, GrokBuild r1)
+  if (targetRoute === "/api/tts/voices/add" && scope !== "owner-desktop") return "deny";
   const credential = write && entry?.cloudWrite === "credential";
   const serialized = body !== null && typeof body === "object" ? JSON.stringify(body) : "";
   const elevated = write && (/"(?:fullAccess|noLimits|acknowledgeFullAccess|acknowledgeNoLimits|fullAccessChannelMessages|fullAccessSetupRequests|autoApprove|acknowledgeLocalAuto)"\s*:\s*true/.test(serialized)

@@ -50,8 +50,11 @@ describe("help keys", () => {
 
 describe("the shell's new screens", () => {
   for (const activeView of ["today", "needs-you", "health"] as const) {
-    it(`${activeView} opens the general help page, never the chat behind it`, () => {
-      expect(resolveHelpScreen({ activeView, bot: { id: "b1", name: "Nova" }, connected: true }).key).toBe("help");
+    it(`${activeView} opens its own help page, never the chat behind it`, () => {
+      const screen = resolveHelpScreen({ activeView, bot: { id: "b1", name: "Nova" }, connected: true });
+      expect(screen.key).toBe(activeView);
+      expect(screen.entry?.key).toBe(activeView);
+      expect(screen.entry?.tips.length).toBeGreaterThan(0);
     });
   }
   // FEEDBACK-SCREEN-UNKNOWN: the report names the screen the owner was on, not the help page it shows.
@@ -93,11 +96,30 @@ describe("help panel", () => {
   });
 
   it("with no engine, tips and search still work, plus how to get one", () => {
-    const html = render({ noEngine: true });
-    expect(html).toContain("Connect an engine to ask questions here.");
+    const html = render({ noEngine: true, chiefName: "Nova", onAskChief: vi.fn() });
+    expect(html).toContain("Connect an engine, then your Chief of Staff can answer questions about this screen.");
     expect(html).toContain("Open Engines");
     expect(html).toContain("Search help");
-    expect(render()).not.toContain("Connect an engine to ask questions here.");
+    expect(html).not.toContain("Ask about this screen");
+    expect(render()).not.toContain("Connect an engine");
+  });
+
+  // L4B fallback (1.0.17): the panel's ask is real now. It opens the Chief's chat (help-ask-chief.test.ts), and the
+  // panel says so; no line promises an ask that comes in a later version.
+  it("asks about this screen through the Chief's chat, above search and the feedback form", () => {
+    const html = render({ chiefName: "Nova", onAskChief: vi.fn(), initialFeedbackOpen: true });
+    expect(html).toContain("Ask about this screen");
+    expect(html).toContain("Nova answers in your chat.");
+    expect(html).toContain(">Ask Nova<");
+    expect(html).toContain('aria-label="Your question about this screen"');
+    expect(html.indexOf("Ask about this screen")).toBeLessThan(html.indexOf("Search help"));
+    expect(html.indexOf("Ask about this screen")).toBeLessThan(html.indexOf("Tell us what to make easier"));
+  });
+
+  it("promises no ask that is not there", () => {
+    const words = readFileSync(fileURLToPath(new URL("../../locales/en-ux/l4a.json", import.meta.url)), "utf8");
+    expect(words).not.toContain("Connect an engine to ask questions here.");
+    expect(words).not.toMatch(/1\.0\.1[4-9]|lands in|coming soon|later version/i);
   });
 
   it("puts the ask slot above the feedback form", () => {

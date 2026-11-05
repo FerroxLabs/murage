@@ -291,10 +291,18 @@ public class PhoneAskMintTest {
             http.answers.add(response(new JSONObject().put("mobile", 1).put("phoneFlags", flags).put("phoneJobs", 1)));
             client(key, writer, http).mint(WorkspaceOrigin.parse(v.getString("origin")), done);
             assertEquals(PhoneJobsMintClient.Failure.TURNED_OFF, done.failure);
-            assertEquals("Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.", done.failure.message);
+            assertEquals("This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Phone tools. If it's already on, the line under it says why it can't be used.", done.failure.message);
             assertEquals(R.string.ask_turned_off, PhoneAskSetup.errorResource(done.failure));
             assertEquals(1, done.failures); assertEquals(0, done.successes);
             assertEquals(1, http.calls.size()); assertEquals(0, key.prompts); assertEquals(0, writer.writes);
+        }
+    }
+
+    @Test public void afterATurnedOffAnswerTheSetupDialogOffersOnlyOk() {
+        // TURN ON would only re-run the mint and show the same refusal, so the dialog keeps just OK (which records "asked" like NOT NOW).
+        assertTrue(PhoneAskSetup.offersOnlyOk(PhoneJobsMintClient.Failure.TURNED_OFF));
+        for (PhoneJobsMintClient.Failure f : PhoneJobsMintClient.Failure.values()) {
+            if (f != PhoneJobsMintClient.Failure.TURNED_OFF) assertFalse(f.name(), PhoneAskSetup.offersOnlyOk(f));
         }
     }
 

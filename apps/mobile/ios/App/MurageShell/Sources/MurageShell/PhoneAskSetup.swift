@@ -38,23 +38,25 @@ final class PhoneAskSetup {
         show(in: presenter)
     }
 
-    private func show(in presenter: UIViewController, problem: String? = nil) {
+    private func show(in presenter: UIViewController, problem: String? = nil, onlyOk: Bool = false) {
         guard !closed, UIApplication.shared.applicationState == .active,
               presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else { return }
         let body = PhoneJobStrings.text("ask_setup_body") + (problem.map { "\n\n" + $0 } ?? "")
         let alert = UIAlertController(title: PhoneJobStrings.text("ask_setup_title"), message: body, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: PhoneJobStrings.text("ask_not_now"), style: .cancel) { [weak self] _ in
+        alert.addAction(UIAlertAction(title: PhoneJobStrings.text(onlyOk ? "ask_ok" : "ask_not_now"), style: .cancel) { [weak self] _ in
             guard let self else { return }
             self.defaults.set(PhoneAskSetupChoice.marker(turnOn: false, pairing: self.pairing), forKey: self.marker)
         })
-        alert.addAction(UIAlertAction(title: PhoneJobStrings.text("ask_turn_on"), style: .default) { [weak self, weak presenter, weak alert] _ in
-            // Wait for dismissal before a synchronous no-key failure can
-            // present its explanation, or before device authentication starts.
-            alert?.dismiss(animated: true) { [weak self, weak presenter] in
-                guard let self, let presenter else { return }
-                self.turnOn(in: presenter)
-            }
-        })
+        if !onlyOk {
+            alert.addAction(UIAlertAction(title: PhoneJobStrings.text("ask_turn_on"), style: .default) { [weak self, weak presenter, weak alert] _ in
+                // Wait for dismissal before a synchronous no-key failure can
+                // present its explanation, or before device authentication starts.
+                alert?.dismiss(animated: true) { [weak self, weak presenter] in
+                    guard let self, let presenter else { return }
+                    self.turnOn(in: presenter)
+                }
+            })
+        }
         screen = alert
         presenter.present(alert, animated: true)
     }
@@ -64,16 +66,23 @@ final class PhoneAskSetup {
         task = Task { @MainActor [weak self, weak presenter] in
             guard let self else { return }
             var problem: String?
+            var failure: Error?
             do {
                 try await self.mint.mint(origin: self.origin)
                 PhoneShareTargets.refresh(self.origin, force: true)
                 self.defaults.set(PhoneAskSetupChoice.marker(turnOn: true, pairing: self.pairing), forKey: self.marker)
             } catch {
-                if !Task.isCancelled { problem = PhoneJobStrings.text(Self.errorKey(error)) }
+                if !Task.isCancelled { problem = PhoneJobStrings.text(Self.errorKey(error)); failure = error }
             }
             self.task = nil
-            if let problem, let presenter { self.show(in: presenter, problem: problem) }
+            if let problem, let presenter { self.show(in: presenter, problem: problem, onlyOk: failure.map(Self.offersOnlyOk) ?? false) }
         }
+    }
+
+    /// After a "turned off" answer the dialog offers only OK: TURN ON would re-run the mint and show the same refusal.
+    static func offersOnlyOk(_ error: Error) -> Bool {
+        if case .turnedOff? = error as? PhoneJobsMintError { return true }
+        return false
     }
 
     static func errorKey(_ error: Error) -> String {

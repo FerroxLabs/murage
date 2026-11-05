@@ -99,7 +99,7 @@ export function AboutMeSettings() {
   return (
     <section aria-labelledby="about-me-heading" className="space-y-4">
       <div>
-        <h3 id="about-me-heading" className="text-[15px] font-medium text-ink">About me</h3>
+        <h3 id="about-me-heading" data-setting-control="about-me-heading" className="text-[15px] font-medium text-ink">About me</h3>
         <p className="mt-1 text-[12.5px] text-ink-secondary">{ABOUT_ME_COPY.intro}</p>
       </div>
       <p role="note" className="rounded-lg bg-control px-3 py-2 text-[12.5px] text-ink">{ABOUT_ME_COPY.audience}</p>

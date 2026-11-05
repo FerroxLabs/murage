@@ -165,6 +165,17 @@ export const WHATS_NEW_MORE_1016: string[] = [
   "In a call, the transcript matches the words that were spoken",
 ];
 
+/** 1.0.17, from release-notes/1.0.17.md: a hero and the list, no tiles. */
+export const WHATS_NEW_MORE_1017: string[] = [
+  "Settings search takes you straight to the setting",
+  "Ask about this screen puts your question into your Chief of Staff's chat",
+  "Choose the font Murage uses in Settings",
+  "A reply with a wide table uses the full width of the chat",
+  "With your own ElevenLabs key, search the Voice Library and add a voice",
+  "If a bot paused your browser, Murage shows how to resume",
+  "Commands that run PowerShell are checked faster",
+];
+
 const PAGE_0161: WhatsNewPageContent = {
   hero: { art: "team-hero", alt: "A constellation of orange orbs of light, each joined to every other by fine threads", fit: "object-cover", title: "Your team, in step.", body: "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.", action: "teams", button: "Open Teams" },
   tiles: WHATS_NEW_TILES,
@@ -202,6 +213,11 @@ export const WHATS_NEW_PAGES: Readonly<Record<string, WhatsNewPageContent>> = {
     hero: { art: "tile-longwork", alt: "One unbroken line of white light crossing a dark plain", fit: SQUARE_HERO, title: "Health shows what to fix first", body: "Health lists what needs your attention in order, Flux and Fuigo first, with one button to fix each and a way to check again.", action: "health", button: "Open Health" },
     tiles: [],
     more: WHATS_NEW_MORE_1016,
+  },
+  "1.0.17": {
+    hero: { art: "tile-blocks", alt: "A stack of gold glass slabs with one slid forward", fit: SQUARE_HERO, title: "Approve all", body: "Answer a stack of waiting requests in one go from Needs you. Payments, email, deleting and other big steps still wait for you one by one.", action: "needsYou", button: "Open Needs you" },
+    tiles: [],
+    more: WHATS_NEW_MORE_1017,
   },
 };
 

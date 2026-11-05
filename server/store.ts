@@ -59,7 +59,7 @@ import { fuigoBirthModel, fuigoUsable } from "./default-engine.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
-import { botAvatarProfile, type BotAvatarCrop } from "../shared/bot-avatar.ts";
+import { AVATAR_FOCUS_CENTER, AVATAR_ZOOM_MIN, botAvatarProfile, clampAvatarFocus, clampAvatarZoom, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import type { MascotBodyId } from "../shared/mascot-bodies.ts";
 import type { AutomationRequestCardData } from "../shared/routine-request.ts";
@@ -1066,6 +1066,10 @@ export interface BotRecord {
   avatarUrl?: string;
   /** Mascot, or the crop applied to avatarUrl. */
   avatarCrop?: BotAvatarCrop;
+  /** Framing of avatarUrl: zoom 1-3, and the point kept centred (0-1 each). Absent: cover crop, centred. */
+  avatarZoom?: number;
+  avatarFocusX?: number;
+  avatarFocusY?: number;
   unread: boolean;
   modelSelection: ModelSelection;
   /** 1.0.4 SL-I I4: the engine the owner chose to take over when this bot's
@@ -1920,6 +1924,15 @@ export class Store {
       }
       if (b.avatarCrop !== undefined && avatar.avatarCrop !== b.avatarCrop) {
         delete b.avatarCrop;
+        botsMigrated = true;
+      }
+      // a hand-edited framing is clamped; the default is not stored
+      for (const [key, clamp, unset] of [["avatarZoom", clampAvatarZoom, AVATAR_ZOOM_MIN], ["avatarFocusX", clampAvatarFocus, AVATAR_FOCUS_CENTER], ["avatarFocusY", clampAvatarFocus, AVATAR_FOCUS_CENTER]] as const) {
+        if (b[key] === undefined) continue;
+        const value = clamp(b[key]);
+        if (value === unset) delete b[key];
+        else if (value !== b[key]) b[key] = value;
+        else continue;
         botsMigrated = true;
       }
     }

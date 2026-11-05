@@ -100,7 +100,7 @@ export function TelegramSettings() {
     <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">{status?.configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
-      <input ref={tokenInput} type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
+      <input ref={tokenInput} data-setting-control="telegram-settings-title" type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
         className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50" />
     </label>
     {tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>}

@@ -135,13 +135,16 @@ describe("the settings wiring", () => {
   it("uses the picker, not a native select, and stores the provider's id", () => {
     expect(source).toContain("<VoicePicker");
     expect(source).not.toContain("<select");
-    expect(source).toContain("onChange={(voice) => onPatch({ voice })}");
+    expect(source).toContain("onChange={pickVoice}");
+    expect(source).toContain("return onPatch({ voice: voiceId });");
   });
   it("plays each row as its own preview through the one speaker, and stops it", () => {
     expect(source).toContain("previewMessageId(bot.id, voiceId)");
     expect(source).toContain("speaker.stop()");
-    // no network on render: the list is fetched once per engine, audio only on play
-    expect(source.match(/api\(/g)).toHaveLength(2);
+    // no network on render: the list is fetched once per engine (and per
+    // search on an own ElevenLabs key), a library voice is added only on a pick,
+    // audio only on play
+    expect(source.match(/api\(/g)).toHaveLength(3);
   });
 });
 

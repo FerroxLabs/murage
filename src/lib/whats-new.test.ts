@@ -79,7 +79,7 @@ describe("what the menu item opens", () => {
     expect(whatsNewTarget("1.0.5")).toMatchObject({ kind: "page", version: "1.0.2" });
     expect(whatsNewTarget("1.0.7")).toMatchObject({ kind: "page", version: "1.0.6" });
     expect(whatsNewTarget("1.0.13")).toMatchObject({ kind: "page", version: "1.0.6" });
-    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.16" });
+    expect(whatsNewTarget("1.1.0")).toMatchObject({ kind: "page", version: "1.0.17" });
     expect(whatsNewTarget("0.1.62")).toMatchObject({ kind: "page", version: "0.1.61" });
   });
 

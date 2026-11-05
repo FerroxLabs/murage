@@ -1,1 +1,7 @@
-{}
+{
+  "ux.l3a.empty.line": "No setting matches “{query}”.",
+  "ux.l3a.empty.label": "Other ways to find it",
+  "ux.l3a.empty.ask": "Ask {name}: “{query}”",
+  "ux.l3a.empty.askAction": "Ask",
+  "ux.l3a.empty.help": "Look in the help"
+}

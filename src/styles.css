@@ -301,6 +301,22 @@ html[data-keyboard="open"] #root {
   top: var(--vvt, 0px);
 }
 
+/* Interface font (B86, src/lib/fonts.ts), apart from the skin. `:root[data-font]`
+   outranks `[data-skin]` on <html>, and the second selector reaches a nested
+   `[data-skin]` subtree, which redeclares --font-sans. No attribute = the skin's font. */
+:root[data-font="system"],
+:root[data-font="system"] [data-skin] {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+:root[data-font="serif"],
+:root[data-font="serif"] [data-skin] {
+  --font-sans: "Iowan Old Style", "Charter", Georgia, "Times New Roman", serif;
+}
+:root[data-font="rounded"],
+:root[data-font="rounded"] [data-skin] {
+  --font-sans: ui-rounded, "SF Pro Rounded", "Nunito", "Varela Round", system-ui, sans-serif;
+}
+
 body {
   background-color: var(--color-app);
   color: var(--color-ink);
@@ -507,10 +523,22 @@ label:has(> input.sr-only:focus-visible) {
    Chromium treats a pointer click as :focus-visible on inputs, so the
    global ring above becomes a sharp blue rectangle inside the rounded
    chrome. Fields keep their own focus:border-*; buttons still use the
-   :focus-visible ring. */
-:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"])):focus,
-:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"])):focus-visible {
+   :focus-visible ring.
+   Checkboxes, radios, sliders, colour wells and file pickers are not text
+   fields: they have no border to repaint, so they keep the ring (B100). */
+:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])):focus,
+:is(input, textarea, select):not(:where([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])):focus-visible {
   outline: none;
+}
+
+/* In its place a field shows keyboard focus on its own border, in the ring's
+   colour (B100, upstream 6830ec2f2). Unlayered, so it wins over the resting
+   hairline border every field carries and over a faint per-file
+   focus:border-*. A borderless field has no border to paint; its wrapper
+   takes focus-within. A field reporting an error (aria-invalid) keeps its
+   danger border while the owner fixes it. */
+:is(input, textarea, select):focus-visible:not([aria-invalid="true"]) {
+  border-color: var(--color-focus);
 }
 
 select.procedure-history-audience:focus-visible,
@@ -1197,6 +1225,12 @@ button:disabled.bg-danger {
    ───────────────────────────────────────────────────────────────────────── */
 .chat-md {
   overflow-wrap: anywhere;
+}
+
+/* E35 (src/lib/reply-width.ts): a reply with a table runs as wide as the
+   message column; its prose keeps the reading width. */
+.chat-wide .chat-md > :not(.chat-table) {
+  max-width: var(--chat-bubble-max);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────

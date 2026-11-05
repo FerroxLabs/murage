@@ -40,7 +40,7 @@ import { whatsNewCards, whatsNewContent, type WhatsNewAction, type WhatsNewArt, 
 export type { WhatsNewAction } from "./whats-new-pages";
 export {
   WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106,
-  WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, whatsNewCards, whatsNewContent,
+  WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, WHATS_NEW_MORE_1017, whatsNewCards, whatsNewContent,
 } from "./whats-new-pages";
 
 /** Each picture name to its file. */

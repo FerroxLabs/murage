@@ -107,12 +107,17 @@ import {
   AUTO_RAIL_QUERY,
   chooseAutoRail,
   chooseSidebarDensity,
+  clampSidebarWidth,
   DEFAULT_SIDEBAR_DENSITY,
   effectiveSidebarDensity,
   loadCollapsedSections,
   loadSectionOrder,
+  loadSidebarWidth,
   saveCollapsedSections,
   saveSectionOrder,
+  saveSidebarWidth,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_WIDTH_STEP,
   sidebarDensityState,
   subscribeSidebarDensity,
   toggleCollapsedSection,
@@ -191,6 +196,7 @@ import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-t
 import { hiddenPatchFrom } from "@/lib/record-numbers";
 import { isUnseenRoutineProblem } from "../../shared/routine-problems";
 import { copyOrReport } from "@/lib/copy-text";
+import { preloadGroupView } from "@/lib/group-view-preload";
 import { raiseTransientError } from "@/state/chat-error";
 
 /** Shown when a dragged section order was kept on this device but did not reach the computer. */
@@ -652,6 +658,9 @@ function GroupListItem({
     <div className="group relative">
     <button
       onClick={() => { dispatch({ type: "select", id: group.id }); onNavigate(); }}
+      // the room view is its own chunk: start it on the way to the click
+      onPointerEnter={preloadGroupView}
+      onFocus={preloadGroupView}
       onContextMenu={(e) => {
         e.preventDefault();
         onMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
@@ -2280,6 +2289,26 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const density = narrow
     ? densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY : densityPrefs.density
     : effectiveSidebarDensity(densityPrefs.density, { narrowWindow, autoRail: densityPrefs.autoRail, pinned: densityPrefs.pinned });
+  // B92: on a desktop window the sidebar's edge drags (240 to 480px, the chat keeps 320px). The width lives in a ref and
+  // a CSS variable while dragging, so a drag never re-renders the whole sidebar; it is kept on this computer when it ends.
+  const resizable = !narrow && density !== "icons";
+  const densityWidth = density === "compact" ? 280 : 320;
+  const [sidebarWidth, setSidebarWidth] = useState<number | null>(() => loadSidebarWidth());
+  const widthRef = useRef<number | null>(sidebarWidth);
+  const [resizing, setResizing] = useState(false);
+  const resizeTo = (width: number): number => {
+    const next = clampSidebarWidth(width, window.innerWidth);
+    widthRef.current = next;
+    asideRef.current?.style.setProperty("--sidebar-width", `${next}px`);
+    return next;
+  };
+  const keepWidth = (width: number | null) => {
+    widthRef.current = width;
+    asideRef.current?.style.setProperty("--sidebar-width", `${width ?? densityWidth}px`);
+    setSidebarWidth(width);
+    saveSidebarWidth(width);
+  };
+  const shownWidth = clampSidebarWidth(sidebarWidth ?? densityWidth, typeof window === "undefined" ? 1280 : window.innerWidth);
   const lastExpandedDensity = useRef<Exclude<SidebarDensity, "icons">>(densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY as Exclude<SidebarDensity, "icons"> : densityPrefs.density);
   if (densityPrefs.density !== "icons") lastExpandedDensity.current = densityPrefs.density;
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() => loadCollapsedSections());
@@ -2808,10 +2837,14 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
       aria-label="Bots and navigation"
       inert={closedDrawerInert(narrow, open) || undefined}
       data-native-view-overlay
+      style={resizable ? ({ "--sidebar-width": `${widthRef.current ?? densityWidth}px` } as React.CSSProperties) : undefined}
       className={cn(
-        "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
+        "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel md:relative",
+        resizing ? "transition-none" : "transition-[width] duration-200",
         // Rail 64px, Standard 280px, Roomy 320px (0.1.62; was 80, 272, 320).
         density === "icons" ? "w-[64px]" : density === "compact" ? "w-[280px]" : "w-[320px]",
+        // B92: a dragged width, never wider than leaves the chat its 320px.
+        resizable && "md:w-[var(--sidebar-width)] md:max-w-[calc(100vw-320px)]",
         // A 320px drawer on a 390px screen left 70px of chat behind it, not
         // enough of an edge to aim at. Cap the drawer at 86vw below md so there
         // is always a strip of conversation to tap back to. The phone never
@@ -2832,6 +2865,47 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
         open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
       )}
     >
+      {resizable && (
+        <div
+          role="separator"
+          aria-label="Resize sidebar"
+          aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={clampSidebarWidth(Number.MAX_SAFE_INTEGER, typeof window === "undefined" ? 1280 : window.innerWidth)}
+          aria-valuenow={shownWidth}
+          tabIndex={0}
+          data-sidebar-resize
+          className="absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none hover:bg-accent/20 focus-visible:bg-accent/30 max-md:hidden"
+          style={windowNoDragStyle}
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setResizing(true);
+          }}
+          onPointerMove={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            const next = resizeTo(event.clientX - (asideRef.current?.getBoundingClientRect().left ?? 0));
+            event.currentTarget.setAttribute("aria-valuenow", String(next));
+          }}
+          onPointerUp={(event) => {
+            if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+            setResizing(false);
+            if (widthRef.current !== null) keepWidth(widthRef.current);
+          }}
+          onPointerCancel={() => {
+            setResizing(false);
+            keepWidth(sidebarWidth);
+          }}
+          // a double click puts back the density's own width
+          onDoubleClick={() => keepWidth(null)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            keepWidth(clampSidebarWidth(shownWidth + (event.key === "ArrowRight" ? SIDEBAR_WIDTH_STEP : -SIDEBAR_WIDTH_STEP), window.innerWidth));
+          }}
+        />
+      )}
       {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
       <div
         className={cn("flex items-center pt-3.5 pb-1", density === "icons" ? "flex-col gap-1 px-2" : "justify-between px-4")}
