@@ -2022,6 +2022,7 @@
   "browserExt.yourTurn.credentials": "{site} benötigt dein Passwort, einen Code oder persönliche Angaben. Gib diese selbst im Murage-Tab ein und drücke dann auf Fortfahren. {bot} kann den Tab dabei nicht sehen.",
   "browserExt.yourTurn.payment": "{bot} hat auf {site} den letzten Schritt der Bestellung erreicht. Prüfe ihn und bezahle selbst, wenn du möchtest, und drücke dann auf Fortfahren.",
   "browserExt.yourTurn.account": "{bot} hat auf {site} bei einer Konto- oder Sicherheitsänderung angehalten: Passwort, Anmeldeweg, Wiederherstellung, Berechtigung, Freigabe oder Konto schließen. Erledige das selbst im Murage-Tab und drücke dann auf Fortfahren.",
+  "browserExt.yourTurn.siteNotSet": "{bot} hat vor der Nutzung von {site} angehalten. Murage for Chrome hat die neue Website nicht bestätigt, deshalb wurde der Schritt nicht ausgeführt. Drücke auf Fortfahren, um es noch einmal zu versuchen, oder auf Aufgabe beenden, um sie zu beenden.",
   "browserExt.yourTurn.generic": "{bot} hat bei {site} an einem Schritt angehalten, der dich braucht. Tu das selbst im Murage-Tab, wenn du möchtest, und drücke dann auf Fortfahren.",
   "browserExt.yourTurn.continue": "Fortfahren",
   "browserExt.yourTurn.stopTask": "Aufgabe beenden",
