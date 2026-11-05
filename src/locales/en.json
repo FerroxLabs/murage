@@ -2022,6 +2022,7 @@
   "browserExt.yourTurn.credentials": "{site} needs your password, a code or personal details. Enter them yourself in the Murage tab, then press Continue. {bot} cannot see the tab while you do.",
   "browserExt.yourTurn.payment": "{bot} reached the last step of the order on {site}. Check it and pay yourself if you want to, then press Continue.",
   "browserExt.yourTurn.account": "{bot} stopped at an account or security change on {site}: a password, sign-in method, recovery option, permission, sharing setting or closing the account. Do it yourself in the Murage tab, then press Continue.",
+  "browserExt.yourTurn.siteNotSet": "{bot} paused before using {site}. Murage for Chrome did not confirm the new site, so the step did not run. Press Continue to try again, or Stop task to end it.",
   "browserExt.yourTurn.generic": "{bot} stopped at a step that needs you on {site}. Do it yourself in the Murage tab if you want to, then press Continue.",
   "browserExt.yourTurn.continue": "Continue",
   "browserExt.yourTurn.stopTask": "Stop task",

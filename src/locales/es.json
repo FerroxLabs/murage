@@ -1991,6 +1991,7 @@
   "browserExt.yourTurn.credentials": "{site} necesita tu contraseña, un código o datos personales. Introdúcelos tú mismo en la pestaña de Murage y luego pulsa Continuar. {bot} no puede ver la pestaña mientras lo haces.",
   "browserExt.yourTurn.payment": "{bot} llegó al último paso del pedido en {site}. Revísalo y paga tú mismo si quieres, y luego pulsa Continuar.",
   "browserExt.yourTurn.account": "{bot} se detuvo en {site} en un cambio de cuenta o de seguridad: contraseña, forma de iniciar sesión, recuperación, permisos, uso compartido o cierre de la cuenta. Hazlo tú mismo en la pestaña de Murage y luego pulsa Continuar.",
+  "browserExt.yourTurn.siteNotSet": "{bot} se detuvo antes de usar {site}. Murage for Chrome no confirmó el nuevo sitio, así que el paso no se ejecutó. Pulsa Continuar para intentarlo de nuevo o Detener tarea para terminarla.",
   "browserExt.yourTurn.generic": "{bot} se detuvo en {site} en un paso que te necesita. Hazlo tú mismo en la pestaña de Murage si quieres y luego pulsa Continuar.",
   "browserExt.yourTurn.continue": "Continuar",
   "browserExt.yourTurn.stopTask": "Detener tarea",

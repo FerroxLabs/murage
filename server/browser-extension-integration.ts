@@ -111,7 +111,9 @@ export class BrowserExtensionIntegration {
   private async open(): Promise<Service> {
     const directory = join(this.options.dataDir, "browser-extension");
     prepareStateDirectory(directory);
-    const broker = await startBrowserExtensionBroker({ stateDir: this.options.socketDir, configAlias: "native-host.json", onMessage: (profileId, message) => this.handleBrokerMessage(profileId, message) });
+    const broker = await startBrowserExtensionBroker({ stateDir: this.options.socketDir, configAlias: "native-host.json", onMessage: (profileId, message) => this.handleBrokerMessage(profileId, message),
+      // SABLE-B 5.7: a reconnected profile gets the server's per-binding hello steps (the fail-closed re-send). Nobody waits on them.
+      onHello: profileId => { this.service?.onHello(profileId); } });
     try {
       const service = await createBrowserExtensionService({ broker, workspaceId: this.options.workspaceId, stateFile: join(directory, "state.json"), createEngine: this.options.createEngine, collectFacts: this.options.collectFacts, protectedOrigins: this.options.protectedOrigins,
         // The side panel shows the bot's name and the conversation, never the ids.
