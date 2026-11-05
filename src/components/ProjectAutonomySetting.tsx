@@ -23,7 +23,7 @@ export function ProjectAutonomySetting() {
   return <section className="rounded-xl border border-hairline/40 p-4">
     <div className="flex min-h-11 items-center justify-between gap-3 text-[14px] text-ink">
       <span id="projects-autonomy-label">{t("projects.autonomy.label")}</span>
-      <Switch aria-labelledby="projects-autonomy-label" checked={enabled} disabled={saving} onClick={() => void toggle()} className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" />
+      <Switch data-setting-control="project-autonomy-heading" aria-labelledby="projects-autonomy-label" checked={enabled} disabled={saving} onClick={() => void toggle()} className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" />
     </div>
     <p className="text-[12px] text-ink-secondary">{t("projects.autonomy.hint")}</p>
     <div className="flex min-h-11 items-center justify-between gap-3 text-[14px] text-ink">

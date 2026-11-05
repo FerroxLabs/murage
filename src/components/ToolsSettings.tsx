@@ -79,7 +79,7 @@ export function ToolsSettings({ advanced, cloudImagesOnly = false }: { advanced:
       {!cloudImagesOnly && <Anchor id="search-settings-heading"><SearchSettings /></Anchor>}
       <ImagesSettings />
       {!cloudImagesOnly && (
-        <Anchor id="voice-settings-heading">
+        <Anchor id="voice-settings-heading" settingControl="voice-settings-heading">
           <Card title={t("settings.voice.title")} subtitle={t("settings.voice.note")}>
             <TranscriptionSettings />
           </Card>

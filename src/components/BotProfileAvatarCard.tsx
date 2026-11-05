@@ -15,7 +15,12 @@ import {
   type EmberState,
 } from "@/lib/mascot";
 import {
+  AVATAR_FOCUS_CENTER,
+  AVATAR_ZOOM_MAX,
+  AVATAR_ZOOM_MIN,
   BOT_AVATAR_CROPS,
+  clampAvatarFocus,
+  clampAvatarZoom,
   botAvatarUrlFromStoredPath,
   type BotAvatarCrop,
 } from "../../shared/bot-avatar";
@@ -24,8 +29,11 @@ import { ViewableBotAvatar } from "./BotAvatarViewer";
 import { MASCOT_BODY_IDS, MASCOT_BODY_NAMES, botMascotBody } from "../../shared/mascot-bodies";
 
 type AvatarPatch = Partial<
-  Pick<Bot, "avatarCrop" | "avatarUrl" | "color" | "mascotExpression" | "mascotBody">
+  Pick<Bot, "avatarCrop" | "avatarUrl" | "avatarZoom" | "avatarFocusX" | "avatarFocusY" | "color" | "mascotExpression" | "mascotBody">
 >;
+
+/** A new picture starts unzoomed and centred. */
+export const AVATAR_FRAMING_RESET = { avatarZoom: AVATAR_ZOOM_MIN, avatarFocusX: AVATAR_FOCUS_CENTER, avatarFocusY: AVATAR_FOCUS_CENTER } as const;
 
 const CROP_LABEL = {
   mascot: "Mascot",
@@ -79,7 +87,7 @@ export function BotProfileAvatarCard({
       const avatarUrl = botAvatarUrlFromStoredPath(saved.path);
       if (!avatarUrl) throw new Error("The uploaded image could not be used as an avatar");
       const latestCrop = cropRef.current;
-      onPatch({ avatarUrl, avatarCrop: latestCrop === "mascot" ? "circle" : latestCrop });
+      onPatch({ avatarUrl, avatarCrop: latestCrop === "mascot" ? "circle" : latestCrop, ...AVATAR_FRAMING_RESET });
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : String(uploadError));
     } finally {
@@ -137,6 +145,7 @@ export function BotProfileAvatarCard({
       const latestCrop = cropRef.current;
       onPatch({
         avatarUrl: result.avatarUrl,
+        ...AVATAR_FRAMING_RESET,
         avatarCrop:
           latestCrop === cropAtStart
             ? (result.bot.avatarCrop ?? "circle")
@@ -229,6 +238,39 @@ export function BotProfileAvatarCard({
             </button>
           ))}
         </div>
+
+        {crop !== "mascot" && bot.avatarUrl && (
+          <div data-testid="avatar-framing">
+            <div className="mb-2 mt-4 flex items-center text-[12px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
+              <span className="flex-1">Framing</span>
+              <button
+                type="button"
+                className="rounded px-1 text-[12px] font-normal normal-case tracking-normal underline hover:no-underline"
+                onClick={() => onPatch({ ...AVATAR_FRAMING_RESET })}
+              >
+                Reset
+              </button>
+            </div>
+            {([
+              ["avatarZoom", "Zoom", AVATAR_ZOOM_MIN, AVATAR_ZOOM_MAX, 0.05, clampAvatarZoom(bot.avatarZoom ?? AVATAR_ZOOM_MIN)],
+              ["avatarFocusX", "Left to right", 0, 1, 0.01, clampAvatarFocus(bot.avatarFocusX ?? AVATAR_FOCUS_CENTER)],
+              ["avatarFocusY", "Top to bottom", 0, 1, 0.01, clampAvatarFocus(bot.avatarFocusY ?? AVATAR_FOCUS_CENTER)],
+            ] as const).map(([field, name, min, max, step, value]) => (
+              <label key={field} className="mt-1.5 flex items-center gap-3 text-[12.5px] text-ink-secondary">
+                <span className="w-24 shrink-0">{name}</span>
+                <input
+                  type="range"
+                  min={min}
+                  max={max}
+                  step={step}
+                  value={value}
+                  onChange={(event) => onPatch({ [field]: Number(event.target.value) })}
+                  className="min-w-0 flex-1 accent-[var(--color-accent)]"
+                />
+              </label>
+            ))}
+          </div>
+        )}
 
         {/* A shaped tile with no image still shows the mascot, so its
             expression and colour stay choosable until an image replaces it. */}

@@ -26,6 +26,11 @@ import { createHarness, promoteFixtureChief, ROOT, waitFor, type Harness } from 
 // absent or empty: the journey refuses to mix its evidence with an earlier run's.
 // A retry runs in a new worker, so it writes beside the failed attempt's
 // evidence instead of being refused by it.
+async function openNeedsRow(page: Page, id?: string) { // UX L2B: a Needs you row is one line; Open expands its card in place
+  const button = page.locator(id ? `[data-needs-open="${id}"]` : "[data-needs-open]").first();
+  await button.waitFor();
+  if ((await button.getAttribute("aria-expanded")) !== "true") await button.click();
+}
 test.describe.configure({ mode: "serial" });
 
 const CHIEF = "B35 Delegation Chief";
@@ -225,8 +230,9 @@ async function delegatedApproval(page: Page, testInfo: TestInfo, behavior: "allo
   await expect(page.getByRole("group", { name: "Approval" })).toHaveCount(0);
   await expectApprovalsOnlyOnChild("child request pending after reload");
   await openPendingApprovals(page);
-  await expect(page.locator("[data-inbox-id]")).toHaveCount(1, { timeout: 15_000 });
-  const entry = page.locator(`[data-inbox-id="${item.id}"]`);
+  await expect(page.locator("[data-needs-row]")).toHaveCount(1, { timeout: 15_000 });
+  await openNeedsRow(page, item.id);
+  const entry = page.locator(`[data-needs-row="${item.id}"]`);
   await expect(entry).toContainText(CHILD);
   await expect(entry).toContainText("Approval requested");
   await entry.getByRole("button", { name: "Open request", exact: true }).click();

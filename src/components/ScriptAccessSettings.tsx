@@ -63,6 +63,7 @@ export function ScriptAccessSettings({ bots }: { bots: ReadonlyArray<{ id: strin
           <p className="mt-1 text-[12.5px] text-ink-secondary">Let a script or an outside agent talk to one bot of your choice. It reaches that bot and nothing else.</p>
         </div>
         <button
+          data-setting-control="script-access-heading"
           type="button"
           role="switch"
           aria-checked={on}

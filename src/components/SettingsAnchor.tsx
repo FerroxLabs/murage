@@ -5,6 +5,7 @@
 // Models and engines, Tools, Devices) share this one.
 import type { ReactNode } from "react";
 
-export function Anchor({ id, children }: { id: string; children: ReactNode }) {
-  return <div id={id} tabIndex={-1} className="space-y-4 outline-none">{children}</div>;
+/** `settingControl` marks the anchor element itself as the card's control, for a card with no control of its own. */
+export function Anchor({ id, children, settingControl }: { id: string; children: ReactNode; settingControl?: string }) {
+  return <div id={id} data-setting-control={settingControl} tabIndex={-1} className="space-y-4 outline-none">{children}</div>;
 }

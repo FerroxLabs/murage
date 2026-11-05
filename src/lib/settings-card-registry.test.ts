@@ -57,6 +57,25 @@ describe("the card registry", () => {
     for (const anchor of Object.keys(ANCHORS_OWED)) expect(cardForAnchor(SETTINGS_CARDS, anchor), anchor).toBeDefined();
   });
 
+  it("marks exactly one control per card for the landing (designs/UX-L3A2-LANDING-1017.md)", () => {
+    // A mark is the literal attribute or the explicit primitive prop: ="<anchor>", or {<one-item guard> ? "<anchor>" :
+    // undefined | "<other anchor>"}. A primitive forwards with data-setting-control={settingControl}. Nothing else.
+    const counts = new Map<string, number>();
+    for (const [, literal, expression] of SOURCE.matchAll(/(?:data-setting-control|settingControl)=(?:"([^"]*)"|\{([^{}]*)\})/g)) {
+      if (expression?.trim() === "settingControl") continue;
+      const named = literal !== undefined ? [literal] : [...expression!.slice(expression!.lastIndexOf("?") + 1).matchAll(/"([^"]*)"/g)].map((match) => match[1]);
+      expect(named.length, `a mark spelled without a plain anchor id: ${expression}`).toBeGreaterThan(0);
+      if (expression !== undefined) expect(expression, "a guarded mark is a ternary on one item").toMatch(/^\s*(?:"[\w-]+"|[^?]+\?\s*"[\w-]+"\s*:\s*(?:undefined|"[\w-]+"))\s*$/);
+      for (const anchor of named) counts.set(anchor, (counts.get(anchor) ?? 0) + 1);
+    }
+    const anchors = new Set(SETTINGS_CARDS.map((card) => card.anchor));
+    for (const anchor of counts.keys()) expect(anchors.has(anchor), `${anchor} is marked but is not a registered card`).toBe(true);
+    for (const card of SETTINGS_CARDS) {
+      if (ANCHORS_OWED[card.anchor]) continue;
+      expect(counts.get(card.anchor) ?? 0, `${card.anchor} (${card.id}) must mark its own control once with data-setting-control="${card.anchor}"`).toBe(1);
+    }
+  });
+
   it("keeps a desktop card off a phone or browser door, and off an unanswered surface", () => {
     for (const desktop of [false, undefined]) {
       const visible = cardsForSurface(SETTINGS_CARDS, desktop);

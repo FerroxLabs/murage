@@ -1196,6 +1196,10 @@ export interface AcpSupport {
   /** The engine reads its MCP servers only when it starts: a pooled process is
    * not reused once the servers handed to the turn change. */
   restartOnMcpChange?: boolean;
+  /** U2 C7: the engine re-sends a reply it already streamed, whole, under the same
+   * messageId, as its reasoning block, a blank line, then the reply (Hermes with
+   * reasoning on). That one chunk is dropped instead of appended (upstream 40deb33ce). */
+  resendsReasoningReply?: boolean;
   /** With authFailure "fail" and no auth method to call: skip the authenticate
    * step while isAuthenticated says yes (Cline's saved key). Left unset, no
    * method fails the turn with the sign-in note, as before (Grok). */
@@ -1210,6 +1214,8 @@ export interface AcpSupport {
   /** isAuthenticated asks a real sign-in check, so its undefined means the check did not answer: the snapshot says
    *  unverified, never signed in. Left unset, undefined means the harness has no sign-in to report. */
   authUnknownIsUnverified?: boolean;
+  /** Where a one-off session's folder goes (set-up check, learning). Unset: the OS temp folder. */
+  oneShotFolder?(): Promise<string>;
   /** Refuse a first-party cloud turn before spawning when snapshot auth is
    * false. Local injected models deliberately bypass this subscription gate. */
   requireAuthenticationBeforeSpawn?: boolean;
@@ -1567,13 +1573,23 @@ export function acpRequestTimeoutMessage(engine: string, method: string): string
     : "";
   return `${engine} timed out${step}.`;
 }
-/** A turn the engine ended itself for a reason other than finishing. */
+/** U2 C7: a chunk that is the reply streamed so far, re-sent whole after the
+ * engine's reasoning block (optionally quoted with `> ` or `-# `) and a blank
+ * line (`\n\n` or `\r\n\r\n`). A chunk that only ends with the text so far is an ordinary delta. */
+export function isReasoningReplay(chunk: string, streamed: string): boolean {
+  const reply = streamed.trim();
+  const replay = chunk.trim();
+  return reply !== "" && replay.length > reply.length && /^(?:> |-# )?\u{1F4AD}/u.test(replay) && replay.endsWith(reply)
+    && /\r?\n\r?\n[ \t]*$/.test(replay.slice(0, -reply.length));
+}
+/** A turn the engine ended itself for a reason other than finishing: why, then
+ * the one next step that fits that reason (upstream d1502c648, 0bbd9d4c5). */
 export function acpStopReasonMessage(engine: string, reason: string | null | undefined): string {
-  const why = reason === "max_tokens" ? "reached its reply length limit"
-    : reason === "max_turn_requests" ? "reached its limit of steps for one turn"
-    : reason === "refusal" ? "declined to continue"
-    : "stopped before it finished";
-  return `${engine} ${why}, so this turn ended early.`;
+  const [why, next] = reason === "max_tokens" ? ["reached its reply length limit", "Ask it to continue, or ask for a shorter answer."]
+    : reason === "max_turn_requests" ? ["reached its limit of steps for one turn", "Ask it to carry on from where it stopped, or split the task."]
+    : reason === "refusal" ? ["declined to continue", "Reword the request, or switch this bot to another AI."]
+    : ["stopped before it finished", "Send the message again."];
+  return `${engine} ${why}, so this turn ended early. ${next}`;
 }
 /** How long a pooled engine process may sit idle before it is closed. Read
  * lazily so a fixture can shorten it; a non-positive or non-numeric value
@@ -2616,7 +2632,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
           /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
            *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
           deniedBy: undefined as "user" | "timeout" | "system" | undefined };
@@ -4095,6 +4111,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   alt: "Generated image",
                 });
               } else if (typeof delta === "string" && delta) {
+                const messageId = typeof u.messageId === "string" ? u.messageId : null;
+                if (support.resendsReasoningReply && messageId !== null && messageId === state.textMessageId
+                    && isReasoningReplay(delta, state.text)) break;
+                state.textMessageId = messageId;
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 state.text += delta;
@@ -5958,7 +5978,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (!result.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, result);
           listeners.clear();
         },
-      });
+      }, { oneShotFolder: support.oneShotFolder });
     },
   };
 }

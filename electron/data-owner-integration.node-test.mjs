@@ -478,6 +478,22 @@ test("actual companion startup cannot fork after shutdown during HTTPS observati
   assert.equal(forks,0);assert.equal(scope.companionStarts.size,0);
 });
 
+test("an automatic companion start gives way to a Stop pressed during HTTPS observation",async()=>{
+  const text=between("async function startDesktopCompanion(","/** Re-probe Tailscale");
+  const gate=deferred();let forks=0;
+  const scope={
+    companionStarts:new Set(),assertDesktopStartupActive:()=>{},
+    refreshRemoteAccessObservation:()=>gate.promise,startCompanion:async()=>{forks++;return {enabled:true};},
+    companionLaunchOptions:()=>({}),rememberCompanionEnabled:()=>{},startManagedCompanionConnection:async()=>{},desktopCompanionState:async()=>({enabled:false}),
+  };
+  const f=new Function(...Object.keys(scope),`let companionDesiredThisLaunch=false,companionLaunchGeneration=0;${text};
+    return {start:startDesktopCompanion,stop:()=>{companionDesiredThisLaunch=false;companionLaunchGeneration+=1;}};`)(...Object.values(scope));
+  const automatic=f.start({waitForHosted:false,remember:false,automatic:true});f.stop();gate.resolve();
+  assert.deepEqual(await automatic,{enabled:false,superseded:true});assert.equal(forks,0);
+  // A start the person asked for is unchanged.
+  await f.start({waitForHosted:false});assert.equal(forks,1);
+});
+
 test("actual startup rejection is handled visibly without echoing arbitrary private details",async()=>{
   const text=between("void desktopStartup.catch((error) => {",'app.on("window-all-closed"');
   const visible=[],logs=[];let quits=0;
