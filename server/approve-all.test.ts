@@ -247,6 +247,21 @@ describe("source: one responder, refusals before every resolver", () => {
     expect(applyFn).toContain('{ requestId: card.requestId, behavior: "allow" }');
   });
 
+  it("the bot respond route names its bot's own thread and answers only through respondToCard (BOT-RESPOND-ROUTE-UNIFY)", () => {
+    const route = between("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond$/);", "\n    }\n");
+    expect(route).toContain("const bot = requestedDirectBot(m[1], ");
+    expect(route).toContain("return await respondToCard({ req, url, res }, bot.threadId, body, undefined, { botId: bot.id });");
+    // no second copy of the card rules is left in the route
+    for (const name of ["answerRequest", "answerLimitCard", "answerEmailCard", "answerAsSendReply", "questionReply", "resolveSkillRequest", "resolveAndSendRoutine", "resolvePeerComms", "answerCard", "resolveHostComputerConsent", "freshAuthRefusal", "taskGrantRefusal", "mayApprove", "publishAnswerAllowed", "json(res"]) {
+      expect(route.includes(name), name).toBe(false);
+    }
+    // and the one copy is never called in bulk from this route
+    expect(route).not.toContain("bulk");
+    // undo, skill and routine answers are decided for the route's own bot, as before the move (Astra r1 Medium)
+    expect(respond).toContain("route ? route.botId : cardBotId ?? store.botByThread(threadId)?.id");
+    for (const kind of ["undo", "skill", "routine"]) expect(respond, kind).toMatch(new RegExp(`const ${kind}BotId = cardOwner\\(`));
+  });
+
   it("a card's origin is owner only in the owner's own typed turn: a peer ask, delegation, wake or continuation reads other (Astra R1 H2)", () => {
     expect(index).toContain("...(permission ? { origin: approveAllTurnOrigin(event.threadId) } : {}),");
     expect(index).not.toContain("origin: fullAccessTurnOrigin(event.threadId)");

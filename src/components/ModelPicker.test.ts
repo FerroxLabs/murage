@@ -324,6 +324,20 @@ describe("the price-band note", () => {
     expect(renderToStaticMarkup(createElement(PickerPriceNote, { shown: false }))).toBe("");
   });
 
+  it("ends with a row for your own account that opens Settings, Engines", async () => {
+    const { OwnAccountRow } = await import("./ModelPicker");
+    let opened = 0;
+    const html = renderToStaticMarkup(createElement(OwnAccountRow, { onOpen: () => { opened++; } }));
+    expect(html).toContain("data-own-account-row");
+    expect(html).toContain("Use your own account");
+    expect(opened).toBe(0);
+    const manage = pickerSource.indexOf("Manage models and providers");
+    const row = pickerSource.indexOf("<OwnAccountRow onOpen={openOwnAccount}/>");
+    expect(row).toBeGreaterThan(manage);
+    expect(pickerSource.slice(row).indexOf("</div>}")).toBeLessThan(80);
+    expect(pickerSource).toMatch(/const openOwnAccount=\(\)=>navigate\(\(\)=>\{setOpen\(false\);dispatch\(\{type:'toggleAppSettings',open:true,section:'models',anchor:'engines-heading'\}\);\}\);/);
+  });
+
   it("sits outside the scrolling list, so it cannot scroll away", () => {
     // The list is `<div className="min-h-0 flex-1 overflow-y-auto p-2">…</div>`;
     // the note must come after its close and before the Manage footer.

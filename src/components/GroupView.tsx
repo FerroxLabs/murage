@@ -1,4 +1,7 @@
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
+import { DoneWhenLine } from "./DoneWhenLine";
+import { hasDoneWhenLine } from "@/lib/done-when-line";
+import { venuePostNote } from "../lib/venue-post-note";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { bubbleWidth } from "@/lib/reply-width";
 import { loopNoticeLabel } from "@/lib/loop-notice";
@@ -227,7 +230,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
     </div>
   );
   return (
-    <div className="flex justify-start">
+    <div className="flex flex-col items-start gap-1">
       {/* Same shape, and the same trap, as ChatView's ActivityChip: a nowrap
           `max-w-[480px]` span is the chip's min-content width, so the pill
           could not shrink below 480px and ran off a phone. See the note there
@@ -238,6 +241,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
       >
         <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (loopNoticeLabel(tool.name) ?? tool.name)}</span>
       </div>
+      <DoneWhenLine text={tool.doneWhen} />
     </div>
   );
 }
@@ -521,7 +525,7 @@ const Transcript = memo(function Transcript({
                     : undefined;
                 })()}
               />
-            ) : m.tool.name.startsWith("error:") || showToolCalls ? (
+            ) : m.tool.name.startsWith("error:") || showToolCalls || hasDoneWhenLine(m.tool.doneWhen) ? (
               /* A failed step is a tool call: with Tool calls off it stays hidden, as in a 1:1 chat; a failed turn still shows. */
               <RoomToolChip message={m} botName={memberOf(m.from?.botId)?.name ?? m.from?.name} />
             ) : null
@@ -623,6 +627,9 @@ const Transcript = memo(function Transcript({
                         <ChatMarkdown text={m.text} scope={m.from?.botId ? { botId: m.from.botId, threadId: group.threadId } : undefined} />
                       ) : null}
                       {m.kind === "text" && <ServedModelNote served={m.servedModel} />}
+                      {m.postedFrom && (
+                        <div className="mt-1 text-[11px] text-ink-secondary/70">{venuePostNote(m.postedFrom, state.bots)}</div>
+                      )}
                       {m.withheldFromBots && (
                         <div className="mt-1 text-[11px] text-ink-secondary/70">{m.withheldFromBots === "forgotten" ? "Bots no longer see this reply: you chose to forget it." : m.withheldFromBots === "checking" ? "Bots will see this reply once earlier memory is checked." : "Bots no longer see this reply: it used something you deleted or changed."}</div>
                       )}
@@ -1564,7 +1571,7 @@ export function GroupView({ group }: { group: Group }) {
 
   // Mascot stays while a member works; the finished reply pops in above it.
   const lastGroupMessage = roomMessages.at(-1);
-  const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined;
+  const toolInFlight = lastGroupMessage?.kind === "activity" && lastGroupMessage.tool?.ok === undefined && lastGroupMessage.tool?.unrecorded !== true;
   const activityLabel = liveActivityLabel(lastGroupMessage);
   // The mascot stays for the speaker's whole turn; only its end hides it (upstream #3374).
   const turnLiveState = useTurnLive(group.threadId);

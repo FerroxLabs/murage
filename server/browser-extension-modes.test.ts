@@ -95,11 +95,23 @@ describe('T21 the 2.2 table at service level', () => {
     expect(f.siteAsked).toEqual([]); expect(f.cards).toEqual([]); expect(f.inputs()).toBe(1);
     expect(f.service.taskInfo(f.id)?.sites.map(site => site.origin)).toEqual([A]);
   });
-  it('Full permissive: Level 3 passes only on the checker allow, and a flag brings the card back', async () => {
+  // SABLE-LIVE-B: under attended Full an unsure check is advice (no card) and a judged block refuses with no card.
+  // The flag still brings the card back in Allow for this task (the next test).
+  it('Full permissive: Level 3 passes on the checker allow, an unsure check is advice, and a judged block refuses without a card', async () => {
     const f = await withMode('full');
     f.setFacts(SEND);
     await f.run('agent_browser_click', { selector: 'button' });
     expect(f.cards).toEqual([]); expect(f.inputs()).toBe(2);
+    f.setVerdict('ask');
+    await f.run('agent_browser_click', { selector: 'button' });
+    expect(f.cards).toEqual([]); expect(f.inputs()).toBe(4);
+    f.setVerdict('block');
+    await expect(f.run('agent_browser_click', { selector: 'button' })).rejects.toThrow(/NOT DONE/);
+    expect(f.cards).toEqual([]); expect(f.inputs()).toBe(4);
+  });
+  it('Allow for this task: a flag on Level 3 brings the card back', async () => {
+    const f = await withMode('task');
+    f.setFacts(SEND);
     f.setVerdict('ask');
     await f.run('agent_browser_click', { selector: 'button' });
     expect(f.cards).toHaveLength(1);
