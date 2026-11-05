@@ -9,7 +9,9 @@ public enum CloseReason {
     LAUNCHER("launcher"),
     UPDATE_REQUIRED("updateRequired"),
     ACCESSOFF("accessoff"),
-    HOSTERROR("hosterror");
+    HOSTERROR("hosterror"),
+    /** 1.0.16: the computer refused the pairing code on its own /enter page. */
+    PAIR_REFUSED("pairRefused");
 
     public final String wire;
 

@@ -12,6 +12,11 @@ import { createHarness, fakeClaudeCliSource, linkChannelOwner, promoteFixtureChi
 // the real source server and permission broker, a fake Claude engine that asks
 // for one exact tool permission, the scripted Telegram Bot API stand-in and the
 // real renderer. Not native notification, sound or packaged-app proof.
+async function openNeedsRow(page: Page, id?: string) { // UX L2B: a Needs you row is one line; Open expands its card in place
+  const button = page.locator(id ? `[data-needs-open="${id}"]` : "[data-needs-open]").first();
+  await button.waitFor();
+  if ((await button.getAttribute("aria-expanded")) !== "true") await button.click();
+}
 test.describe.configure({ mode: "serial" });
 
 const TOKEN = "123:rehearsal_token_not_real_abcdefghij";
@@ -116,7 +121,8 @@ test("a Telegram-originated request is attention, opens its exact card, and the 
   const sidebar = await openApp(page);
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("1", { timeout: 15_000 });
   await openPendingApprovals(page);
-  const entry = page.locator(`[data-inbox-id="${item.id}"]`);
+  await openNeedsRow(page, item.id);
+  const entry = page.locator(`[data-needs-row="${item.id}"]`);
   await expect(entry).toContainText("Approval requested");
   await entry.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${item.link.messageId}"]`)).toBeVisible({ timeout: 15_000 });
@@ -159,7 +165,8 @@ test("an off-screen bot's request and a burst across bots count, survive reload,
   sidebar = await openSidebar(page);
   await expect(sidebar.locator("[data-needs-you-count]")).toHaveText("2", { timeout: 15_000 });
   await openPendingApprovals(page);
-  const entry = page.locator(`[data-inbox-id="${offscreenItem.id}"]`);
+  await openNeedsRow(page, offscreenItem.id);
+  const entry = page.locator(`[data-needs-row="${offscreenItem.id}"]`);
   await expect(entry).toContainText("Offscreen Researcher");
   await entry.getByRole("button", { name: "Open request", exact: true }).click();
   await expect(page.locator(`[data-mid="${offscreenItem.link.messageId}"]`)).toBeVisible({ timeout: 15_000 });

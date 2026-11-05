@@ -56,6 +56,7 @@ export const WHATS_NEW_BY_VERSION: Readonly<Record<string, WhatsNewEntry>> = {
   // From 1.0.14 on, every release has its own page (src/components/whats-new-pages.ts).
   "1.0.14": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.14" },
   "1.0.15": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.15" },
+  "1.0.16": { kind: "page", releaseNotesUrl: "https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.16" },
 };
 
 /** The page for `version`, or null when it has none. */

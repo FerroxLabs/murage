@@ -10,8 +10,10 @@ if [[ ! -f "$HERE/host.env" ]]; then
   [[ -f "$HERE/host.lock/pid" && "$(cat "$HERE/host.lock/pid")" == "${E2E_LOCK_OWNER:-$PPID}" ]] && SAFE_WIPE_WITHIN="$HERE" safe_wipe "$HERE/host.lock"
   exit 0
 fi
+# Everything below asks lsof (the lock release above does not).
 source "$HERE/host.env"
 source "$HERE/own-pid.sh"
+require_lsof
 "$HERE/door.sh" stop
 [[ -n "${SERVER_PID:-}" ]] && kill_own "$SERVER_PID" 28799 server/index.ts
 for _ in $(seq 1 40); do lsof -nP -iTCP:28799 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.25; done

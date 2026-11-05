@@ -46,3 +46,206 @@ test("a restart that does not come up is retried, within the cap", async () => {
   for (let i = 0; i < 10 && timers.length; i++) { timers.shift()(); await new Promise((r) => setImmediate(r)); }
   assert.equal(starts, MAX_CRASHES_IN_WINDOW);
 });
+
+// Launch start retries (G17): one owner for every automatic start.
+const up = { enabled: true };
+const timedOut = { enabled: false, error: "the companion did not come up in time" };
+
+function launchRig(states, { wanted = () => true, shutting = () => false } = {}) {
+  const box = { gen: 0, starts: 0, timers: [], lines: [] };
+  box.r = createCompanionRestarter({
+    start: async () => {
+      box.starts++;
+      box.gen++;
+      const next = states.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    shuttingDown: shutting,
+    wanted,
+    generation: () => box.gen,
+    schedule: (fn, ms) => box.timers.push({ fn, ms }),
+    log: (line) => box.lines.push(line),
+  });
+  box.settle = () => new Promise((r) => setImmediate(r));
+  box.fire = async () => { const t = box.timers.shift(); t.fn(); await box.settle(); return t.ms; };
+  return box;
+}
+
+test("a launch start that fails twice is retried at 5 s and 15 s and comes up", async () => {
+  const x = launchRig([timedOut, timedOut, up]);
+  const done = x.r.launchStart();
+  await x.settle();
+  assert.equal(await x.fire(), 5_000);
+  assert.equal(await x.fire(), 15_000);
+  assert.deepEqual(await done, up);
+  assert.equal(x.starts, 3);
+  assert.equal(x.timers.length, 0);
+});
+
+test("a launch start that never comes up stops after 5, 15 and 30 s", async () => {
+  const x = launchRig([timedOut, timedOut, timedOut, timedOut, up]);
+  const done = x.r.launchStart();
+  await x.settle();
+  const gaps = [await x.fire(), await x.fire(), await x.fire()];
+  assert.deepEqual(gaps, [5_000, 15_000, 30_000]);
+  assert.deepEqual(await done, timedOut);
+  assert.equal(x.starts, 4);
+  assert.match(x.lines.at(-1), /giving up until the app restarts/);
+});
+
+test("turning the phone off during a wait cancels the retry", async () => {
+  let on = true;
+  const x = launchRig([timedOut, up], { wanted: () => on });
+  const done = x.r.launchStart();
+  await x.settle();
+  on = false;
+  await x.fire();
+  assert.deepEqual(await done, timedOut);
+  assert.equal(x.starts, 1);
+});
+
+test("a manual start during a wait takes over and the retry does not start again", async () => {
+  const x = launchRig([timedOut, up]);
+  const done = x.r.launchStart();
+  await x.settle();
+  x.gen++; // the person pressed start (or stop) meanwhile
+  await x.fire();
+  assert.deepEqual(await done, timedOut);
+  assert.equal(x.starts, 1);
+});
+
+test("quitting during a wait cancels the retry", async () => {
+  let quitting = false;
+  const x = launchRig([timedOut, up], { shutting: () => quitting });
+  const done = x.r.launchStart();
+  await x.settle();
+  quitting = true;
+  await x.fire();
+  assert.deepEqual(await done, timedOut);
+  assert.equal(x.starts, 1);
+});
+
+test("a thrown launch start (policy refusal) is never retried and never rejects", async () => {
+  const x = launchRig([new Error("remote access is turned off by your organisation"), up]);
+  assert.equal(await x.r.launchStart(), null);
+  assert.equal(x.starts, 1);
+  assert.equal(x.timers.length, 0);
+});
+
+test("an unasked exit during a launch start hands over to the exit restarter, never both", async () => {
+  const x = launchRig([]);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const order = [];
+  x.r = createCompanionRestarter({
+    start: async () => {
+      x.gen++;
+      order.push("start");
+      if (order.length === 1) {
+        // The child dies while the launch start probes it: the listener moves
+        // the generation and calls onExit before this start resolves.
+        x.gen++;
+        x.r.onExit({ expected: false, wasEnabled: true });
+        await gate;
+        return timedOut;
+      }
+      return up;
+    },
+    shuttingDown: () => false,
+    wanted: () => true,
+    generation: () => x.gen,
+    schedule: (fn, ms) => x.timers.push({ fn, ms }),
+  });
+  const done = x.r.launchStart();
+  await x.settle();
+  // The exit restarter's timer fires while the launch start is still blocked:
+  // its start must wait for the launch start to settle.
+  assert.equal(x.timers.length, 1);
+  await x.fire();
+  assert.deepEqual(order, ["start"]);
+  release();
+  assert.deepEqual(await done, timedOut);
+  await x.settle();
+  assert.deepEqual(order, ["start", "start"]);
+  // The launch run scheduled no retry of its own.
+  assert.equal(x.timers.length, 0);
+});
+
+test("an automatic start that gave way to a stop or a newer start is not retried by either path", async () => {
+  const gaveWay = { enabled: false, superseded: true };
+  const x = launchRig([gaveWay]);
+  assert.deepEqual(await x.r.launchStart(), gaveWay);
+  assert.equal(x.timers.length, 0);
+  const y = launchRig([gaveWay, up]);
+  y.r.onExit({ expected: false, wasEnabled: true });
+  await y.fire();
+  assert.equal(y.starts, 1);
+  assert.equal(y.timers.length, 0);
+});
+
+test("an exit restart that is pending stops a launch retry from starting", async () => {
+  const x = launchRig([timedOut, up, up]);
+  const done = x.r.launchStart();
+  await x.settle();
+  x.r.onExit({ expected: false, wasEnabled: true });
+  // Fire the launch run's 5 s wait first: it must stand down.
+  await x.fire();
+  assert.deepEqual(await done, timedOut);
+  assert.equal(x.starts, 1);
+  await x.fire(); // the exit restarter's own start
+  assert.equal(x.starts, 2);
+});
+
+test("a Stop pressed while an exit restart waits behind a launch start keeps the companion off", async () => {
+  const x = launchRig([]);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  let starts = 0;
+  x.r = createCompanionRestarter({
+    start: async () => {
+      x.gen++;
+      starts++;
+      if (starts === 1) {
+        x.gen++;
+        x.r.onExit({ expected: false, wasEnabled: true });
+        await gate;
+        return timedOut;
+      }
+      return up;
+    },
+    shuttingDown: () => false,
+    wanted: () => true,
+    generation: () => x.gen,
+    schedule: (fn, ms) => x.timers.push({ fn, ms }),
+  });
+  const done = x.r.launchStart();
+  await x.settle();
+  await x.fire(); // the exit restart queues behind the blocked launch start
+  x.gen++; // the person presses Stop
+  release();
+  assert.deepEqual(await done, timedOut);
+  await x.settle();
+  assert.equal(starts, 1);
+  assert.equal(x.timers.length, 0);
+});
+
+test("a Stop pressed during an exit restart's delay keeps the companion off", async () => {
+  const x = launchRig([up]);
+  x.r.onExit({ expected: false, wasEnabled: true });
+  x.gen++; // Stop
+  await x.fire();
+  assert.equal(x.starts, 0);
+});
+
+test("a crash of a manually started companion replaces a stale pending restart", async () => {
+  const x = launchRig([up]);
+  x.gen++; x.r.onExit({ expected: false, wasEnabled: true }); // first crash
+  x.gen++; // manual start before the restart timer fired
+  x.gen++; x.r.onExit({ expected: false, wasEnabled: true }); // that companion crashes too
+  assert.equal(x.timers.length, 2);
+  await x.fire(); // the stale restart stands down
+  assert.equal(x.starts, 0);
+  await x.fire(); // the newer one starts
+  assert.equal(x.starts, 1);
+});

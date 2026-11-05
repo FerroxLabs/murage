@@ -10,7 +10,7 @@ import v8 from "node:v8";
 import vm from "node:vm";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
@@ -20,7 +20,7 @@ import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, ty
 import { readableMemoryRecord } from "./readable.ts";
 import { recentMemoryHits } from "./recent.ts";
 import { setMemoryMode } from "./repository.ts";
-import { clearMemorySearchCache, searchMemory, type MemorySearchBridge } from "./search.ts";
+import { clearMemorySearchCache, searchMemory, TOOL_SEARCH_BUDGET_MS, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -105,13 +105,13 @@ function expectLoopFree(run: { longest: number; p99: number }): void {
 describe("P1: a population no reader can read decides nothing the reader sees", () => {
   /** 10 readable records, and (with `denied`) 99,990 records refused by state, by a forgotten record, or by scope. Each denied
    * record is still in the word index (the index lags the authoritative tables, as it does after a forget). */
-  function fixture(denied: boolean) {
+  function fixture(denied: boolean, count = 99_990) {
     const scope = ensureScope("bot", "a"), foreign = ensureScope("bot", "b");
     const records: IndexedMemory[] = [];
     for (let n = 0; n < 10; n++) { const id = `z-kept-${n}`; readable(id, scope); records.push(entry(id, scope, TEXT)); }
     if (denied) {
       bulk(() => {
-        for (let n = 0; n < 99_990; n++) {
+        for (let n = 0; n < count; n++) {
           const id = `a-denied-${String(n).padStart(6, "0")}`;
           switch (n % 4) {
             case 0: addRecord(id, scope, TEXT, "owner-statement", "indexed", "deleted"); break;
@@ -125,6 +125,48 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     }
     world(records).close();
   }
+  const KEPT = Array.from({ length: 10 }, (_, n) => `z-kept-${n}`);
+  /** What the crowded search must answer. Stepping 75,000 denied matches newest first takes 0.3 s on a Linux runner and 2.3-2.5 s on
+   * the shared 3-core macOS runner, so there the search deadline (TOOL_SEARCH_BUDGET_MS) can end the scan before it reaches the ten
+   * (nightly 41762613336, 41803666934). A cut answer must say so: partial, never complete, and only readable records in it. An
+   * uncut answer is all ten, with nothing degraded. Returns whether the answer was cut. */
+  function expectCrowdedAnswer(answer: Awaited<ReturnType<typeof searchMemory>>): boolean {
+    expect(JSON.stringify(answer)).not.toContain("denied");
+    if (answer.partial === true) {
+      expect(answer.coverageComplete).toBe(false);
+      for (const hit of answer.hits) expect(KEPT).toContain(hit.id);
+      return true;
+    }
+    expect(answer.hits.map(hit => hit.id).sort()).toEqual(KEPT);
+    expect(answer).not.toHaveProperty("degradedReason");
+    return false;
+  }
+
+  it("a search the deadline cuts (a fake clock past TOOL_SEARCH_BUDGET_MS) says partial and incomplete; with no deadline the scan keeps exactly the ten", async () => {
+    fixture(true, 2_000);
+    const access = accessOf();
+    // The search reads its deadline from Date.now() once, then the scan checks it before every chunk: every later reading is past it.
+    const realNow = Date.now.bind(Date);
+    let readings = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => realNow() + (readings++ === 0 ? 0 : TOOL_SEARCH_BUDGET_MS + 1));
+    let cut: Awaited<ReturnType<typeof searchMemory>>;
+    try {
+      cut = await searchMemory(QUERY, access, emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
+    } finally { clock.mockRestore(); }
+    expect(readings).toBeGreaterThan(1);
+    expect(cut.partial).toBe(true);
+    expect(cut.coverageComplete).toBe(false);
+    expect(cut.degradedReason).toMatch(/^MEMORY_RECALL_(PARTIAL|UNAVAILABLE)$/);
+    expect(expectCrowdedAnswer(cut)).toBe(true);
+    // No deadline: the same scan reads every match and keeps exactly the ten readable records, complete; so does an uncut search.
+    clearMemorySearchCache();
+    const unhurried = await lexicalPageSliced(QUERY, [ensureScope("bot", "a")], 50, 0, undefined, { eligible: true });
+    expect(unhurried?.hits.map(hit => hit.id).sort()).toEqual(KEPT);
+    expect(unhurried).not.toHaveProperty("partial");
+    clearMemorySearchCache();
+    const whole = await searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
+    expect(expectCrowdedAnswer(whole)).toBe(false);
+  }, 120_000);
 
   it("99,990 records denied by state, forgetting, scope and a forgotten parent leave all ten readable hits, identical to the corpus without them, with the loop free", { tags: ["nightly"], timeout: 300_000 }, async () => {
     (() => fixture(true))();
@@ -132,10 +174,12 @@ describe("P1: a population no reader can read decides nothing the reader sees", 
     const crowded = await measured(() => searchMemory(QUERY, accessOf(), emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     console.log(`R6-100K-STATE max event-loop stall ${Math.round(crowded.longest * 10) / 10} ms (p99 ${Math.round(crowded.p99 * 10) / 10}), ${Math.round(crowded.ms)} ms, hits ${crowded.value.hits.length}, partial ${String(crowded.value.partial ?? false)}`);
     expectLoopFree(crowded);
-    expect(crowded.value.hits.map(hit => hit.id).sort()).toEqual(Array.from({ length: 10 }, (_, n) => `z-kept-${n}`));
-    expect(crowded.value).not.toHaveProperty("partial");
-    expect(crowded.value).not.toHaveProperty("degradedReason");
-    expect(JSON.stringify(crowded.value)).not.toContain("denied");
+    // What the denied population decides is fixed by work, not by the clock: the same scan with no deadline reads every match and
+    // keeps exactly the ten readable records, complete. It runs after the search so its cached window cannot answer the search.
+    const unhurried = await lexicalPageSliced(QUERY, [ensureScope("bot", "a")], 50, 0, undefined, { eligible: true });
+    expect(unhurried?.hits.map(hit => hit.id).sort()).toEqual(KEPT);
+    expect(unhurried).not.toHaveProperty("partial");
+    if (expectCrowdedAnswer(crowded.value)) return;
     closeMemoryIndexReader(); closeDatabase(); clearMemorySearchCache();
     removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     reconcileMemoryRoster(ROSTER); setMemoryMode("active");

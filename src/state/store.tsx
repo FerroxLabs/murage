@@ -1,4 +1,5 @@
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
+import { createNewTaskOnce } from "./new-task-once";
 import { requestMemoryWake } from "@/lib/memory-integrity-wake";
 import { probeInstances } from "@/lib/instances-probe";
 import { projectEvents, type ProjectFrame } from "@/lib/project-events";
@@ -4935,6 +4936,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     // The latest task switch per bot: an answer to an earlier one is not applied.
     const switchSeq: Record<string, number> = {};
+    const newTaskOnce = createNewTaskOnce();
 
     // ── A bot Delete the person asked for (BOTADDED-DESIGN-V3 r6 §2.7) ──
     // Sent with its attempt id; an answer carrying the server's own JSON error is a refusal (shown, the bot fetched again); no answer
@@ -5609,10 +5611,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const leaving = stateRef.current.bots.find((candidate) => candidate.id === action.botId);
           // never an unloaded thread, nor rows that predate a rehydrate: the cache holds only pages this client fetched and kept current
           if (leaving && !leaving.awaitingThreadSnapshot && !leaving.messagesUnloaded && !leaving.pageStale && !leaving.firstPageEvents) conversationCache()?.put(cachedPage(leaving));
-          const intent = requestPage(rawDispatch, stateRef.current, action.botId);
-          api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
-            .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
-            .catch(showError);
+          newTaskOnce(action.botId, action.cwd, () => requestPage(rawDispatch, stateRef.current, action.botId), (intent) => {
+            return api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
+              .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
+              .catch(showError);
+          });
           break;
         }
         // A switch answers with the newest page and `hasMore` (upstream

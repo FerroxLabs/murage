@@ -55,3 +55,21 @@ export function telegramHealthLabel(status: TelegramStatus | null, expired: bool
   if (waiting) return "Waiting for pairing";
   return status.configured ? "Token saved · not paired" : "No token saved";
 }
+
+/** A saved pairing code is expired by its saved flag or by its saved time. Never expired once paired. */
+export function telegramPairingExpired(status: TelegramStatus | null | undefined, now: number) {
+  if (!status || status.paired) return false;
+  return Boolean(status.pairingExpired || (status.pairingExpiresAt && status.pairingExpiresAt <= now));
+}
+
+/**
+ * Ten jobs (job 7): after the first token is saved, decide whether the pairing code follows on its own.
+ * It does when nothing is linked yet and either nothing is pending or the pending code has expired; an
+ * expired code is revoked first, as Pair with Chief does. A valid pending code is left alone.
+ */
+export function telegramAutoPairPlan(saved: TelegramStatus, now: number): { pair: boolean; revokeFirst: boolean } {
+  const unlinked = saved.configured && !saved.paired && !saved.enabled && !saved.connecting && !saved.requiresRevoke;
+  const expired = telegramPairingExpired(saved, now);
+  if (!unlinked || (saved.pending > 0 && !expired)) return { pair: false, revokeFirst: false };
+  return { pair: true, revokeFirst: expired };
+}

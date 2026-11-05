@@ -13,6 +13,7 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { Check, Clock, CornerDownLeft, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { imeComposing } from "@/lib/composer-enter";
 import { t } from "@/lib/i18n";
 import { formatTime, useStore, type Message, type OptionCardData } from "@/state/store";
 import {
@@ -91,8 +92,11 @@ export function draftsComplete(questions: readonly QuestionSpec[], drafts: Draft
 export type QuestionKeyAction = { type: "toggle"; index: number } | { type: "submit" } | { type: "skip" } | null;
 
 /** What a key means inside one question. Digits pick options (never while
- * typing in "Other"); Enter sends; Esc starts a skip. */
-export function questionKeyAction(key: string, optionCount: number, inTextField: boolean): QuestionKeyAction {
+ * typing in "Other"); Enter sends; Esc starts a skip. While an input method
+ * is composing (Japanese, Chinese, Korean...), Enter picks the candidate and
+ * Esc drops it, so neither key means anything to the card. */
+export function questionKeyAction(key: string, optionCount: number, inTextField: boolean, composing = false): QuestionKeyAction {
+  if (composing) return null;
   if (key === "Escape") return { type: "skip" };
   if (key === "Enter") return { type: "submit" };
   if (inTextField) return null;
@@ -171,7 +175,7 @@ export function QuestionCardView({
 
   const onQuestionKey = (event: KeyboardEvent<HTMLElement>, question: QuestionSpec) => {
     const inTextField = event.target instanceof HTMLInputElement;
-    const action = questionKeyAction(event.key, question.options.length, inTextField);
+    const action = questionKeyAction(event.key, question.options.length, inTextField, imeComposing({ isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode }));
     if (!action) return;
     if (action.type === "skip") {
       if (state !== "open") return;
