@@ -19,5 +19,5 @@
 "share_passcode" = "请先在此手机上设置锁屏密码，然后打开 Murage。";
 "share_again" = "请打开 Murage 重新设置共享。";
 "share_update" = "请在电脑上开启此功能，或更新 Murage。";
-"share_turned_off" = "电脑上尚未开启此功能。请在电脑上的 Murage 中，前往设置 → 手机和其他设备将其开启。";
+"share_turned_off" = "此电脑上尚未开启此功能。请在电脑上打开 Murage，前往设置 → 手机和其他设备，开启 Share and ask。如果已经开启，其下方的一行会说明为何无法使用。";
 "share_done" = "完成";

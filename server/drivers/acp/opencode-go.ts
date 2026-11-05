@@ -3,8 +3,9 @@
 // models discovered from that harness rather than separate Murage drivers.
 import { memoDeps, pathExists, readText } from "../isolation-cache.ts";
 import { currentScopeHome, engineConfigInvalid, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
-import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { decodeInjectId, hostApiKey, localHost, mergeLocalInject, type LocalHost } from "../local-inject.ts";
@@ -45,9 +46,16 @@ let lastSuccessfulCatalog: ModelCatalog | null = null;
 const MODEL_PROBE_TTL_MS = 30_000;
 const modelProbeCache = new Map<string, { expiresAt: number; result: Promise<boolean> }>();
 
+/** Bumped when a person's Refresh changed the model list, so the next turn starts a fresh `opencode acp`. */
+const catalogRevisions = new Map<string, number>();
+/** One `opencode models --refresh` per binary per window: opening the picker counts as a manual refresh too. */
+const CACHE_REFRESH_WINDOW_MS = 60_000;
+const cacheRefreshedAt = new Map<string, number>();
+
 export type OpenCodeCatalogLoader = (
   environment: Record<string, string | undefined>,
   cli: string,
+  options?: { refresh?: boolean },
 ) => Promise<ModelCatalog>;
 
 function labelForModel(id: string): string {
@@ -176,10 +184,15 @@ function runOpenCodeModels(
 export async function discoverOpenCodeModels(
   environment: Record<string, string | undefined>,
   cli = "opencode",
+  options: { refresh?: boolean } = {},
 ): Promise<ModelCatalog> {
+  if (options.refresh) await refreshOpenCodeModelCache(cli, environment);
   try {
     const catalog = parseOpenCodeModelsOutput(await runOpenCodeModels(cli, environment, true));
     if (!catalog) throw new Error("OpenCode returned no usable models");
+    if (options.refresh && lastSuccessfulCatalog && !sameModelIds(lastSuccessfulCatalog, catalog)) {
+      catalogRevisions.set(cli, (catalogRevisions.get(cli) ?? 0) + 1);
+    }
     lastSuccessfulCatalog = catalog;
     return { ...catalog, source: "live" };
   } catch {
@@ -191,6 +204,29 @@ export async function discoverOpenCodeModels(
 export function resetOpenCodeModelCache() {
   lastSuccessfulCatalog = null;
   modelProbeCache.clear();
+  catalogRevisions.clear();
+  cacheRefreshedAt.clear();
+}
+
+/** OpenCode lists models from its models.dev cache (or the snapshot built into it) and neither `opencode models` nor
+ * `opencode acp` refetches that cache; `models --refresh` does. A failed refetch leaves the cache as it was. */
+function refreshOpenCodeModelCache(cli: string, environment: Record<string, string | undefined>): Promise<void> {
+  const now = Date.now();
+  if (now - (cacheRefreshedAt.get(cli) ?? -Infinity) < CACHE_REFRESH_WINDOW_MS) return Promise.resolve();
+  cacheRefreshedAt.set(cli, now);
+  return new Promise((resolve) => {
+    execCli(cli, ["models", "--refresh"], { timeout: 15_000, maxBuffer: 8 * 1024 * 1024, env: environment }, () => resolve());
+  });
+}
+
+function sameModelIds(left: ModelCatalog, right: ModelCatalog): boolean {
+  const ids = new Set(left.options.map((option) => option.id));
+  return ids.size === right.options.length && right.options.every((option) => ids.has(option.id));
+}
+
+/** A running `opencode acp` keeps the catalog it started with, so a Refresh that changed the list needs a new process. */
+export function openCodeCatalogRevision(cli: string): number {
+  return catalogRevisions.get(cli) ?? 0;
 }
 
 /** Compatibility export for older tests/imports while the product migrates
@@ -658,6 +694,45 @@ export function isolateOpenCodeGlobalInstructions(env: Record<string, string | u
   }
 }
 
+/** Git bound to `folder` alone: no inherited GIT_* variable (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, injected config) can point
+ * it at another repository, and neither the system nor the person's global config is read. */
+function runGit(folder: string, args: string[]): Promise<void> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(process.env)) if (value !== undefined && !/^GIT_/i.test(name)) env[name] = value;
+  env.GIT_CONFIG_NOSYSTEM = "1";
+  env.GIT_CONFIG_GLOBAL = join(folder, ".no-global-config");
+  env.GIT_CEILING_DIRECTORIES = dirname(folder);
+  return new Promise((resolveGit, rejectGit) => {
+    execFile("git", ["-C", folder, ...args], { cwd: folder, env, timeout: 10_000, windowsHide: true }, (error) => (error ? rejectGit(error) : resolveGit()));
+  });
+}
+
+let oneShotProject: Promise<string> | null = null;
+
+export function resetOpenCodeOneShotFolderForTests(): void {
+  oneShotProject = null;
+}
+
+/** OpenCode files a session from a folder outside git under its global project, which every non-git folder of the
+ * person's shares, so a set-up check or a learning step showed up in their OpenCode history there. One-off sessions run
+ * inside a git folder of Murage's own instead (one per server run, in the OS temp folder, where the one-off's own folder
+ * is wiped again), so OpenCode files them under that project. With no git, it is a plain temp folder, as before. */
+export function openCodeOneShotFolder(): Promise<string> {
+  oneShotProject ??= (async () => {
+    const folder = mkdtempSync(join(tmpdir(), "murage-opencode-oneshots-"));
+    // No hook of the person's global template runs here: hooks point at a folder that does not exist.
+    const quiet = ["-c", `core.hooksPath=${join(folder, ".no-hooks")}`, "-c", "commit.gpgsign=false"];
+    try {
+      await runGit(folder, [...quiet, "init", "-q", "--template="]);
+      await runGit(folder, [...quiet, "-c", "user.name=Murage", "-c", "user.email=murage@localhost", "commit", "-q", "--allow-empty", "--no-verify", "-m", "Murage one-off sessions"]);
+    } catch {
+      // OpenCode then files it like any temp folder.
+    }
+    return folder;
+  })();
+  return oneShotProject;
+}
+
 const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   driverKind: "opencodeGo",
   // OpenCode starts every ACP mount it is handed, even one its config disables
@@ -682,6 +757,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     needsNode: true,
   },
   spawnArgs: () => ["acp"],
+  // Set-up checks and learning steps stay out of the person's own OpenCode history.
+  oneShotFolder: openCodeOneShotFolder,
   credentialEnv: ["OPENCODE_API_KEY"],
   selectModel: { configId: "model" },
   /**
@@ -763,8 +840,8 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
   // dev-mode key), overlaid with `environment` so an instance-specific HOME /
   // XDG_CONFIG_HOME / OPENCODE_CONFIG_DIR still decides WHICH opencode.json
   // the connector gate inspects.
-  resolveModels: async (environment, config) => {
-    const listed = await loadCatalog(environment, config.cli);
+  resolveModels: async (environment, config, options) => {
+    const listed = await loadCatalog(environment, config.cli, { refresh: options?.manual === true });
     const merged = await mergeFluxCatalog(
       await mergeLocalInject(listed, environment),
       "opencodeGo",
@@ -773,6 +850,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => ({
     // The merges build new catalogs; the source of the CLI list is carried over.
     return listed.source ? { ...merged, source: listed.source } : merged;
   },
+  spawnFingerprint: (_env, config) => `opencode-catalog#${openCodeCatalogRevision(config.cli)}`,
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 

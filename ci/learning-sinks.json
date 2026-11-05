@@ -1572,6 +1572,13 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/acp/opencode-go.ts",
+   "fn": "runGit",
+   "anchor": "execFile(\"git\",[\"-C\",folder,...args],{cwd:folder,env,timeout:10_000,windowsHide:true},(error)=>(error?rejectGit(error):resolveGit()))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/checkpoints.ts",
    "fn": "hasStagedChanges",
    "anchor": "execFile(\"git\",[\"diff\",\"--cached\",\"--quiet\",\"--ignore-submodules=dirty\"],{cwd,env,windowsHide:true,encoding:\"utf8\",timeout:120_000,maxBuffer:16*1024*1024},(err,",

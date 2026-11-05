@@ -16,6 +16,7 @@ import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { closedDrawerInert, focusLeavesClosedDrawer } from "@/lib/drawer-close";
+import { showYourComputers, usePhoneLauncher } from "@/lib/phone-launcher";
 import { useMediaQuery, useNarrowViewport } from "@/lib/media-query";
 import {
   Archive,
@@ -38,6 +39,7 @@ import {
   FolderPlus,
   Info,
   Keyboard,
+  Laptop,
   LayoutTemplate,
   Loader2,
   Megaphone,
@@ -166,6 +168,8 @@ const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").
 // Opened from a menu, never on the first paint: each loads on first use.
 const TeamExportDialog = retryableLazy(() => import("./TeamExportDialog").then((module) => ({ default: module.TeamExportDialog })));
 const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialog").then((module) => ({ default: module.NewFromTemplateDialog })));
+// UX-L6A part 2: New bot is hire in one sentence; Browse templates opens the chooser above.
+const HireBotDialog = retryableLazy(() => import("./hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 // The team library (explore, import, scout) opens on a tap: its chunk loads then.
 const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
@@ -2221,6 +2225,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   /** The New Bot / New Team chooser that is open, if any. */
   const [chooser, setChooser] = useState<TemplateKind | null>(null);
+  const [hireOpen, setHireOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2775,7 +2780,10 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const openSettings = (section?: AppSettingsSection) => {
     dispatch(section ? { type: "toggleAppSettings", open: true, section } : { type: "toggleAppSettings", open: true });
   };
+  // 1.0.16 F3: inside the phone app only, the way back to the app's own list of computers.
+  const phoneLauncher = usePhoneLauncher();
   const youItems: YouMenuItem[] = [
+    ...(phoneLauncher ? [{ key: "your-computers", label: t("nav.yourComputers"), icon: <Laptop size={17} />, onSelect: () => { void showYourComputers(); } }] : []),
     // Sean 10-30: Health has its own page off this menu, with a status dot.
     { key: "health", label: health.level === "act" || health.level === "watch" ? t("ux.l2a.you.healthLevel", { level: healthLevelWords(health.level) }) : t("ux.l2a.you.health"), icon: <span className="relative inline-flex"><HeartPulse size={17} aria-hidden="true" /><StatusDot level={health.level} className="absolute -right-1 -top-1" /></span>, onSelect: () => { dispatch({ type: "showHealth" }); onNavigate(); } },
     ...(desktop === true ? [
@@ -2906,7 +2914,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                   archivedCount={archivedBots.length}
                   onNewBot={() => {
                     setPlusOpen(false);
-                    setChooser("bot");
+                    setHireOpen(true);
                   }}
                   onNewTeam={() => {
                     setPlusOpen(false);
@@ -3335,6 +3343,12 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           onRestored={(message) => setTeamFeedback({ error: false, text: message })}
           onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
+      )}
+      {hireOpen && (
+        <LazyBoundary onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}><Suspense fallback={null}><HireBotDialog.Component
+          onClose={() => setHireOpen(false)}
+          onBrowseTemplates={() => { setHireOpen(false); setChooser("bot"); }}
+        /></Suspense></LazyBoundary>
       )}
       {chooser && (
         <LazyBoundary onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}><Suspense fallback={null}><NewFromTemplateDialog.Component

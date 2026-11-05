@@ -1,0 +1,25 @@
+#!/bin/bash
+# Copyright 2026 Ferrox Labs
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Stand-in Tailscale CLI for the ten-jobs gate (job 9, Pair the phone). No tailnet, no account, no network:
+# it answers the four commands Murage runs (version, status --json, serve status --json, serve --bg / off)
+# the way Tailscale 1.98 does on a signed-in node with MagicDNS and HTTPS on. linux.sh copies it into the
+# run's own bin dir, first on PATH; its serve state lives next to that copy, so each run starts empty.
+set -u
+ST="$(dirname "$0")/ts-serve.json"
+HOST=gate-box.tenjobs-stand-in.ts.net
+case "${1:-} ${2:-}" in
+  "version "*) echo "1.98.0-tenjobs-stand-in" ;;
+  "status --json")
+    printf '{"Version":"1.98.0","BackendState":"Running","Self":{"DNSName":"%s.","HostName":"gate-box","TailscaleIPs":["100.100.100.100"],"UserID":1,"Online":true},"User":{"1":{"ID":1,"LoginName":"gate-owner@tenjobs.invalid"}},"CurrentTailnet":{"Name":"tenjobs-stand-in","MagicDNSSuffix":"tenjobs-stand-in.ts.net","MagicDNSEnabled":true}}\n' "$HOST" ;;
+  "serve status") if [ -s "$ST" ]; then cat "$ST"; else echo '{}'; fi ;;
+  "serve --bg")
+    port=${3#--https=}; target=${4:?proxy target}
+    case "$port" in ''|*[!0-9]*) echo "tailscale stand-in: bad port" >&2; exit 1 ;; esac
+    case "$target" in http://127.0.0.1:[0-9]*) ;; *) echo "tailscale stand-in: target must be http://127.0.0.1:<port>" >&2; exit 1 ;; esac
+    printf '{"TCP":{"%s":{"HTTPS":true}},"Web":{"%s:%s":{"Handlers":{"/":{"Proxy":"%s"}}}}}\n' "$port" "$HOST" "$port" "$target" > "$ST"
+    echo "Available within your tailnet:"; echo "https://$HOST/"; echo "|-- proxy $target" ;;
+  "serve --https="*) if [ "${3:-}" = off ]; then echo '{}' > "$ST"; else echo "tailscale stand-in: unsupported" >&2; exit 1; fi ;;
+  *) echo "tailscale stand-in: unsupported command" >&2; exit 1 ;;
+esac
