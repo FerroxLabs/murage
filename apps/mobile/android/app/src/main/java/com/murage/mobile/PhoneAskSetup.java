@@ -93,12 +93,19 @@ final class PhoneAskSetup {
                     working = false;
                     if (closed || dialog == null) return;
                     dialog.setMessage(activity.getString(R.string.ask_setup_body) + "\n\n" + activity.getString(errorResource(failure)));
-                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                     dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
+                    if (offersOnlyOk(failure)) {
+                        // The computer said no: another TURN ON would only show the same refusal. OK closes it and records "asked", like NOT NOW.
+                        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setText(R.string.ask_ok);
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setVisibility(android.view.View.GONE);
+                    } else dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                 }
             });
         });
     }
+
+    /** After these refusals the dialog offers only OK: asking again cannot change the computer's answer. */
+    static boolean offersOnlyOk(PhoneJobsMintClient.Failure failure) { return failure == PhoneJobsMintClient.Failure.TURNED_OFF; }
 
     static int errorResource(PhoneJobsMintClient.Failure failure) {
         switch (failure) {

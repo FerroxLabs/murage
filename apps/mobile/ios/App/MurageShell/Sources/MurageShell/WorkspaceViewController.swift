@@ -39,7 +39,10 @@ private struct ChannelReply: @unchecked Sendable {
 /// Murage origin, never Capacitor's, with the natively checked channel.
 public final class WorkspaceViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
     public let origin: WorkspaceOrigin
-    var onClose: ((CloseReason) -> Void)?
+    var onClose: ((CloseReason, String?) -> Void)?
+    /// "Your computers" tapped on a splash that is already closing: the
+    /// coordinator takes the screen off without a second close.
+    var onForceLeave: (() -> Void)?
     var onSignedIn: (() -> Void)?
     /// Still in use after signing in (going to the background, "Switch
     /// computer"): the "Last connected" time moves on, and nothing is added.
@@ -50,6 +53,8 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     /// genuinely ends, the same signal `deliverKeptRoute()` uses for a
     /// same-origin held route.
     var onCallEnded: (() -> Void)?
+    /// The screen is really off (viewDidDisappear by dismissal): the coordinator's second signal that a close is gone.
+    var onDisappeared: (() -> Void)?
     /// Push state for the four push methods (I2); nil answers `unavailable`.
     public weak var push: PushChannel?
 
@@ -63,10 +68,19 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private var isReady = false
     /// A page on the origin loaded or called ready(): this computer was reached.
     private var signedInSeen = false
-    var pairedAtOpen = false
+    /// This workspace was opened with a pairing code, so its first page is the
+    /// door's /enter and a refused code is reported by the wrapper script.
+    var openedWithCredential = false
+    /// Holds the splash over a pairing /enter for a moment, so a refused code
+    /// never flashes the desktop's own page before the phone's code screen.
+    private var enterHold: Timer?
     /// The splash is covering the page and waiting for ready() (or a reveal).
     private var splashUp = false
     private var closing = false
+    /// Where a closing workspace stops being reachable (MurageShellCore.BridgeGate).
+    /// Asked once at the top of the message handler, of emit() and of the
+    /// capture-permission delegate, never per method.
+    private let bridge = BridgeGate()
     private var loadStarted = Date()
     /// Answers to load()'s same-document reload: the first for the newest load wins.
     private var inPlace = InPlaceReload()
@@ -127,7 +141,10 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         overlay.frame = view.bounds
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         overlay.onRetry = { [weak self] in self?.reloadRoute() }
-        overlay.onChoose = { [weak self] in self?.close(.launcher) }
+        overlay.onChoose = { [weak self] in
+            guard let self else { return }
+            if self.closing { self.onForceLeave?() } else { self.close(.launcher) }
+        }
         view.addSubview(overlay)
         callAudio.sink = { [weak self] event, done in
             guard let self else { done(false); return }
@@ -142,7 +159,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     public override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         PhoneJobServices.shared.attach(self)
-        if signedInSeen || pairedAtOpen { phoneAskSetup.foreground(in: self) }
+        if signedInSeen && !closing { phoneAskSetup.foreground(in: self) }
     }
 
     /// Presented only inside this native workspace hierarchy, above its WebView.
@@ -158,16 +175,33 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     public override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
         guard isBeingDismissed || isMovingFromParent else { return }
+        onDisappeared?()
         PhoneJobServices.shared.detach(self)
         phoneForBots.close()
         phoneAskSetup.close()
         callAudio.close(.controllerClosed)
+        shutBridge()
         observers.forEach(NotificationCenter.default.removeObserver)
         observers.removeAll()
         readyTimer?.invalidate()
         let unanswered = openPanels.values
         openPanels.removeAll()
         unanswered.forEach { $0() }
+    }
+
+    /// The page can no longer reach native code or the microphone through this
+    /// controller, even if something keeps the controller alive: the gate shuts,
+    /// loading stops, the message handler and injected scripts are removed from
+    /// the WebView's content controller, and any capture in progress is stopped.
+    private func shutBridge() {
+        bridge.close()
+        guard isViewLoaded, let webView else { return }
+        webView.stopLoading()
+        let controller = webView.configuration.userContentController
+        controller.removeScriptMessageHandler(forName: ChannelScript.iosHandlerName, contentWorld: .page)
+        controller.removeAllUserScripts()
+        webView.setMicrophoneCaptureState(.none, completionHandler: {})
+        webView.setCameraCaptureState(.none, completionHandler: {})
     }
 
     private func makeWebView() -> WKWebView {
@@ -268,9 +302,24 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     /// Takes the splash down without ready(): the door's
     /// /enter page, basic mode.
     private func reveal() {
+        guard !closing else { return } // a late finish must not take the closing screen down
         splashUp = false
         readyTimer?.invalidate()
+        enterHold?.invalidate()
         overlay.hide()
+    }
+
+    /// A pairing page answers by itself within moments: a refused code closes
+    /// the workspace (`pairRefused`), an accepted one lands on "/". Anything
+    /// else (a full computer, an older door) shows the page after five seconds.
+    private func holdEnter() {
+        enterHold?.invalidate()
+        enterHold = Timer.scheduledTimer(withTimeInterval: 5, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.closing else { return }
+                self.reveal()
+            }
+        }
     }
 
     private func markReady() {
@@ -320,7 +369,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     /// Kept for a lowered gate: with mobileFeatures >= 1 required, only a lowered gate reaches basic here.
     private func revealBasic() {
-        guard splashUp else { return }
+        guard splashUp, !closing else { return }
         reveal()
         Toast.show("Update Murage on your computer to get notifications on this phone.", in: view)
     }
@@ -345,14 +394,24 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     // MARK: closing, events, deep links
 
-    private func close(_ reason: CloseReason) {
+    private func close(_ reason: CloseReason, message: String? = nil) {
         guard !closing else { return }
         if reason == .launcher { stillInUse() }
         closing = true
         readyTimer?.invalidate()
+        enterHold?.invalidate()
         saves.cancelAll()
         callAudio.close(.controllerClosed)
-        DispatchQueue.main.async { self.onClose?(reason) }
+        shutBridge()
+        // Nothing of this workspace may stay on screen over its own dismissal
+        // (an Ask setup alert, job cards, Phone for bots): closing is true, so
+        // none of them can come back.
+        phoneAskSetup.close()
+        phoneForBots.close()
+        PhoneJobServices.shared.detach(self)
+        presentedViewController?.dismiss(animated: false)
+        if CloseDismissal.showsRecovery(whileClosing: reason) { overlay.showClosing() }
+        DispatchQueue.main.async { self.onClose?(reason, message) }
     }
 
     func closeFromShell(_ reason: CloseReason) {
@@ -363,7 +422,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     /// while the page is on the saved origin: checked here and again inside
     /// the script (M6). `done(true)` if a listener handled it.
     func emit(_ name: String, detail: [String: Any]? = nil, done: ((Bool) -> Void)? = nil) {
-        guard isViewLoaded, let url = webView?.url, origin.contains(url) else { done?(false); return }
+        guard bridge.admitsEvent(), isViewLoaded, let url = webView?.url, origin.contains(url) else { done?(false); return }
         webView.callAsyncJavaScript(
             ChannelScript.iosEmit,
             arguments: ["name": name, "detail": detail ?? NSNull(), "origin": origin.serialized], in: nil, in: .page
@@ -446,7 +505,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
             MainActor.assumeIsolated {
                 guard let self, !self.closing else { return }
                 if self.signedInSeen { self.phoneForBots.refresh() }
-                if self.signedInSeen || self.pairedAtOpen { self.phoneAskSetup.foreground(in: self) }
+                if self.signedInSeen && !self.closing { self.phoneAskSetup.foreground(in: self) }
             }
         })
         observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -464,6 +523,11 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     // MARK: the channel
 
     public func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
+        // The one gate: a closing workspace answers every method the same way.
+        guard bridge.allowsNativeAction() else {
+            replyHandler(nil, ChannelError.unavailable.rawValue)
+            return
+        }
         let security = message.frameInfo.securityOrigin
         let frameOrigin = WorkspaceOrigin(scheme: security.protocol, host: security.host, port: security.port)
         guard ChannelGate.admit(isMainFrame: message.frameInfo.isMainFrame, frameOrigin: frameOrigin, saved: origin) else {
@@ -518,6 +582,16 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
         case .showLauncher:
             reply(true, nil)
             close(.launcher)
+        case .pairRefused:
+            // Honoured only for a workspace opened with a code, before this
+            // computer was reached, and only while the page is the door's /enter.
+            guard openedWithCredential, !signedInSeen, !closing, let url = webView.url, origin.contains(url), url.path == "/enter",
+                  let message = ChannelArgs.string(request.args["message"], max: 200) else {
+                reply(nil, ChannelError.unavailable.rawValue)
+                return
+            }
+            reply(true, nil)
+            close(.pairRefused, message: PairRefusal.message(message))
         case .registerPush:
             guard let push else { reply(nil, ChannelError.unavailable.rawValue); return }
             guard pushWhilePresent("push register deferred") else { reply(nil, ChannelError.unavailable.rawValue); return }
@@ -644,7 +718,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     // MARK: navigation
 
     public func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = action.request.url else { decisionHandler(.cancel); return }
+        guard bridge.allowsNativeAction(), let url = action.request.url else { decisionHandler(.cancel); return }
         // A download (a[download]) only from the workspace page itself: a foreign
         // frame's blob: or data: file never reaches the share sheet (M2).
         if action.shouldPerformDownload { decisionHandler(fromPage(action.sourceFrame) ? .download : .cancel); return }
@@ -661,6 +735,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     public func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard bridge.allowsNativeAction() else { decisionHandler(.cancel); return }
         if let http = response.response as? HTTPURLResponse {
             if response.isForMainFrame, let url = http.url, origin.contains(url) {
                 let path = url.path
@@ -687,16 +762,21 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     public func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        guard bridge.allowsNativeAction() else { download.cancel(nil); return }
         saves.adopt(download)
     }
 
     public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        guard bridge.allowsNativeAction() else { download.cancel(nil); return }
         saves.adopt(download)
     }
 
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        guard let url = webView.url, origin.contains(url) else { return }
-        if url.path == "/enter" { reveal(); return } // the door's pairing page never calls ready()
+        guard !closing, let url = webView.url, origin.contains(url) else { return }
+        if url.path == "/enter" { // the door's pairing page never calls ready()
+            if openedWithCredential && !signedInSeen && !closing { holdEnter() } else { reveal() }
+            return
+        }
         if verdict?.kind == .basic { revealBasic(); return }
         armDeadline() // keep the original progress deadline
     }
@@ -739,7 +819,9 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     private func endCallSession() {
         let wasOpen = callSessionOpen
         callSessionOpen = false
-        if wasOpen { onCallEnded?() }
+        // A closing workspace never releases a held open: the coordinator does
+        // that, once, behind the dismissal (R3-02).
+        if wasOpen && bridge.allowsNativeAction() { onCallEnded?() }
     }
 
     /// Reloads the route behind the splash, which re-arms the deadline.
@@ -749,6 +831,8 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     public func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         callAudio.close(.webContentTerminated)
         endCallSession()
+        // A closing workspace keeps its closing splash: no reload, no "Connecting" over it.
+        guard bridge.allowsNativeAction() else { return }
         guard mayReloadAfterCrash() else { return }
         ShellLog.event("webcontent terminated; reloading route")
         reloadRoute()
@@ -773,7 +857,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     // MARK: UI delegate
 
     public func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        guard let url = action.request.url else { return nil }
+        guard bridge.allowsNativeAction(), let url = action.request.url else { return nil }
         switch NavigationPolicy.decide(url.absoluteString, target: .newWindow, saved: origin) {
         case .openHere: webView.load(action.request) // the system browser has no session (Plan 1 note 9)
         case .sendOut: openOutside(url)
@@ -784,6 +868,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
 
     public func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
         let requester = WorkspaceOrigin(scheme: origin.protocol, host: origin.host, port: origin.port)
+        guard bridge.allowsNativeAction() else { decisionHandler(.deny); return }
         decisionHandler(NavigationPolicy.mayCapture(requester: requester, isMainFrame: frame.isMainFrame, saved: self.origin) ? .grant : .deny)
     }
 
@@ -797,7 +882,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     public func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        guard fromPage(frame) else { completionHandler(); return }
+        guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(); return }
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         let answer = panel(dismissed: completionHandler)
         alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in answer(completionHandler) })
@@ -805,7 +890,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     public func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        guard fromPage(frame) else { completionHandler(false); return }
+        guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(false); return }
         let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
         let answer = panel { completionHandler(false) }
         alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in answer { completionHandler(false) } })
@@ -814,7 +899,7 @@ public final class WorkspaceViewController: UIViewController, WKNavigationDelega
     }
 
     public func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-        guard fromPage(frame) else { completionHandler(nil); return }
+        guard bridge.allowsNativeAction(), fromPage(frame) else { completionHandler(nil); return }
         let alert = UIAlertController(title: nil, message: prompt, preferredStyle: .alert)
         alert.addTextField { $0.text = defaultText }
         let answer = panel { completionHandler(nil) }

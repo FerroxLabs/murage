@@ -19,5 +19,5 @@
 "share_passcode" = "Defina um código neste celular e depois abra o Murage.";
 "share_again" = "Abra o Murage para configurar o compartilhamento novamente.";
 "share_update" = "Ative este recurso ou atualize o Murage no seu computador.";
-"share_turned_off" = "Este recurso ainda não foi ativado no seu computador. Ative-o no Murage do computador, em Ajustes → Telefone e outros dispositivos.";
+"share_turned_off" = "Isto ainda não está ativado para este computador. No computador, abra o Murage, depois Ajustes → Telefone e outros dispositivos, e ative Share and ask. Se já estiver ativado, a linha abaixo explica por que não pode ser usado.";
 "share_done" = "Concluído";

@@ -29,6 +29,7 @@ let desktopHeaders: Record<string, string>;
 let child: ChildProcess;
 let home: string;
 let stderr = "";
+let stdout = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
@@ -90,6 +91,7 @@ async function startServer() {
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stderr!.on("data", (c) => (stderr += c));
+  child.stdout!.on("data", (c) => (stdout += c));
   const deadline = Date.now() + 25_000;
   for (;;) {
     try {
@@ -134,6 +136,10 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(await cards(bot.threadId)).toHaveLength(0);
     expect(await chip(bot.threadId)).not.toBeNull();
+    // SABLE-LIVE: the log says Murage answered, never that the owner did.
+    const id8 = bot.id.slice(0, 8);
+    expect(stdout).toMatch(new RegExp(`approvals: resolved bot=${id8}\\S* request=\\S+ behavior=allow source=auto`));
+    expect(stdout).not.toMatch(new RegExp(`approvals: resolved bot=${id8}\\S* request=\\S+ behavior=allow source=user`));
   }, 60_000);
 
   it("a gate file still cards on the owner's own line", async () => {

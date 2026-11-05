@@ -65,6 +65,9 @@ export type MemorySessionRunner = (prompt: string, signal: AbortSignal, limits: 
 export interface CliMemoryLearningOptions {
   /** How one session runs. Default: a hidden tool-free turn on the instance's adapter in an empty folder. */
   run?: (instance: ProviderInstance) => MemorySessionRunner;
+  /** The default session's parent folder, inside the OS temp folder (OpenCode: a git folder of Murage's own, so the engine never
+   * files a one-off under the person's own history). Unset or failing: the OS temp folder itself. */
+  oneShotFolder?: () => Promise<string>;
 }
 
 type Message = Readonly<{ role: string; content: string }>;
@@ -89,7 +92,7 @@ export function withCliMemoryLearning<T extends ProviderInstance>(live: T, optio
     if (event.type === "turn.started") interactive.add(event.threadId);
     else if (event.type === "turn.completed" || event.type === "session.exited") { interactive.delete(event.threadId); wake(); }
   });
-  const runner = (options.run ?? hiddenTurnRunner)(live);
+  const runner = options.run ? options.run(live) : hiddenTurnRunner(live, options.oneShotFolder);
 
   const untilIdle = async (signal: AbortSignal): Promise<void> => {
     while (interactive.size > 0) {
@@ -152,10 +155,11 @@ const ANSWER_TEXT_LIMIT = MAX_ANSWER_BYTES * 2;
 /** The default session for engines that only offer a turn (Codex, ACP): one hidden turn on a thread that exists nowhere else, in an
  * empty temporary folder, with no integrations mounted, the most restrictive mode the engine offers, every ask denied, and the
  * engine's retained session for the thread retired when it ends. */
-export const hiddenTurnRunner = (live: ProviderInstance): MemorySessionRunner => async (prompt, signal, { maxBytes, gate }) => {
+export const hiddenTurnRunner = (live: ProviderInstance, oneShotFolder?: () => Promise<string>): MemorySessionRunner => async (prompt, signal, { maxBytes, gate }) => {
   const adapter = live.adapter;
   const threadId = `${MEMORY_LEARNING_THREAD_PREFIX}${randomUUID()}`;
-  const cwd = mkdtempSync(join(tmpdir(), "murage-learning-"));
+  const parent = (oneShotFolder ? await oneShotFolder().catch(() => undefined) : undefined) ?? tmpdir();
+  const cwd = mkdtempSync(join(parent, "murage-learning-"));
   const items: string[] = [];
   let pending = "", size = 0;
   const state: { failure: Error | null; fenced: Error | null } = { failure: null, fenced: null };

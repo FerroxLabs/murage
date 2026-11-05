@@ -69,7 +69,7 @@ for (const scenario of [{ width: 1440, skin: "light" }, { width: 390, skin: "dar
     await expect(needsYou).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`inbox-tools-${scenario.width}-${scenario.skin}.png`), fullPage: true });
     await needsYou.click();
-    await expect(page.getByRole("heading", { name: "Inbox", exact: true })).toBeVisible();
+    await expect(page.getByRole("main", { name: "Needs you", exact: true })).toBeVisible();
     // Routines counts runs that worked in the routine's own conversation too
     // the Inbox's own Routines view, not the sidebar place of the same name
     await page.getByRole("navigation", { name: "Inbox views" }).getByRole("button", { name: "Routines", exact: true }).click();

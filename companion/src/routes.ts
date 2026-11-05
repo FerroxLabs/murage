@@ -179,7 +179,7 @@ export function launchProofHeaders(method: string, path: string, token: string |
   return {};
 }
 
-const RESPOND_ROUTES = [/^\/api\/threads\/[\w-]+\/respond$/, /^\/api\/bots\/[\w-]+\/respond$/];
+const RESPOND_ROUTES = [/^\/api\/threads\/[\w-]+\/respond$/, /^\/api\/bots\/[\w-]+\/respond$/, /^\/api\/inbox\/approve-all\/(?:preview|apply|surface|caution)$/];
 
 /** True when the door holds a usable launch credential. The approval headers
  *  below mean something to the harness only beside that proof, so a door
@@ -217,6 +217,16 @@ export const DEVICE_OWNER_READS = [
   { method: "GET", path: /^\/api\/events$/ },
 ] as const;
 
+/** Approve all from the paired phone app (APPROVE-ALL-1016 7.1). The harness takes it only from the desktop app or a
+ * phone app with an attested approval key (server/owner-app.ts), so the device door alone vouches for it, beside the
+ * registry's approval device headers. The browser door never forwards these: every browser answers one by one. */
+export const DEVICE_APPROVE_ALL_ROUTES = [
+  { method: "POST", path: /^\/api\/inbox\/approve-all\/preview$/ },
+  { method: "POST", path: /^\/api\/inbox\/approve-all\/apply$/ },
+  { method: "POST", path: /^\/api\/inbox\/approve-all\/surface$/ },
+  { method: "POST", path: /^\/api\/inbox\/approve-all\/caution$/ },
+] as const;
+
 /** Script access (server/mcp-grants.ts), for a headless install that has no
  * desktop to make a grant on (S1b review R2). The owner's OWN browser door is
  * the only door that forwards these, and only with the launch proof. A paired
@@ -251,7 +261,7 @@ export function deviceProofHeaders(method: string, path: string, token: string |
   const shared = launchProofHeaders(method, path, token);
   if (Object.keys(shared).length) return shared;
   const usable = typeof token === "string" && /^[a-f0-9]{64}$/.test(token);
-  return usable && DEVICE_OWNER_READS.some((route) => route.method === method && route.path.test(path)) ? { "x-murage-companion-token": token } : {};
+  return usable && [...DEVICE_OWNER_READS, ...DEVICE_APPROVE_ALL_ROUTES].some((route) => route.method === method && route.path.test(path)) ? { "x-murage-companion-token": token } : {};
 }
 
 /** The two routine routes that can carry a `runOn` field.
@@ -363,6 +373,8 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/respond$/ },
+  // Approve all: the phone app only; the harness re-checks the device class and key (server/owner-app.ts)
+  ...DEVICE_APPROVE_ALL_ROUTES,
   // Chat search is admitted separately below, with its query bounds checked.
 
   // App-owned profile images. Upload is image-only and capped at 10 MB by

@@ -18,6 +18,11 @@ export const USER_CHROME_UNREACHABLE_REASON = "your Chrome is not reachable";
  * failing: the call goes on once they click Allow. */
 export const USER_CHROME_ALLOW_REASON = "your Chrome is asking you to allow the connection";
 
+/** The reason a Murage for Chrome turn records when the owner's browser is
+ * connected but its control is paused (an owner or extension pause, not a
+ * hand-off). It is also what the bot reads, so it names the one step. */
+export const BROWSER_EXTENSION_PAUSED_REASON = "Browser control is paused in Murage for Chrome. Ask the owner to open Murage for Chrome and press Resume, then ask again.";
+
 export const BROWSER_HELD_FOR_ANSWER_REASON = "another conversation is using the browser while it waits for your answer";
 
 /** Progress, not failure: the packaged browser's signature check is still running and the turn is waiting on it for a short while. */
@@ -45,7 +50,7 @@ export function browserUnavailableReason(name: string | undefined | null): strin
 
 /** Which plain-words sentence a reason gets: the owner's Chrome was not
  * reachable, the engine did not start in time, or it did not start at all. */
-export type BrowserUnavailableKind = "user-chrome" | "user-chrome-allow" | "held" | "checking" | "checked" | "unfinished" | "check-failed" | "timed-out" | "failed";
+export type BrowserUnavailableKind = "user-chrome" | "user-chrome-allow" | "held" | "checking" | "checked" | "unfinished" | "check-failed" | "paused" | "timed-out" | "failed";
 export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
   if (reason === USER_CHROME_UNREACHABLE_REASON) return "user-chrome";
   if (reason === USER_CHROME_ALLOW_REASON) return "user-chrome-allow";
@@ -54,6 +59,7 @@ export function browserUnavailableKind(reason: string): BrowserUnavailableKind {
   if (reason === BROWSER_CHECKED_REASON) return "checked";
   if (reason === BROWSER_CHECK_UNFINISHED_REASON) return "unfinished";
   if (reason === BROWSER_CHECK_FAILED_REASON) return "check-failed";
+  if (reason === BROWSER_EXTENSION_PAUSED_REASON) return "paused";
   return /timed out|timeout/i.test(reason) ? "timed-out" : "failed";
 }
 
@@ -67,6 +73,7 @@ export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string>
   checked: "The browser check finished, and this turn has its browser.",
   unfinished: "The browser check hadn't finished, so this turn didn't use the browser. It'll try again next turn.",
   "check-failed": "The browser check didn't finish. Try again in a moment.",
+  paused: "This bot paused your browser. Open Murage for Chrome and press Resume, then ask again.",
   "timed-out": "The browser didn't start in time, so this turn ran without it. It'll try again next turn.",
   failed: "The browser couldn't start, so this turn ran without it. It'll try again next turn.",
 };

@@ -8,6 +8,7 @@ APP=$(cd "$HERE/../../../.." && pwd)
 source "$APP/scripts/safe-wipe.sh"   # the only recursive delete scripts may use
 source "$HERE/host.env"
 source "$HERE/own-pid.sh"
+require_lsof
 
 # The control page's token, derived from this host's own throwaway secret so
 # mint.sh can present the same one without a second file.

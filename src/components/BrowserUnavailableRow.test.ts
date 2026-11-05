@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { BrowserUnavailableRow } from "./BrowserUnavailableRow";
 import { timelineEvents } from "@/lib/taskTimeline";
-import { BROWSER_CHECK_FAILED_REASON, BROWSER_CHECKING_REASON, browserUnavailableActivityName, USER_CHROME_UNREACHABLE_REASON } from "../../shared/browser-unavailable";
+import { BROWSER_EXTENSION_PAUSED_REASON, BROWSER_CHECK_FAILED_REASON, BROWSER_CHECKING_REASON, browserUnavailableActivityName, USER_CHROME_UNREACHABLE_REASON } from "../../shared/browser-unavailable";
 
 describe("browser unavailable note", () => {
   it("says what happened in plain words, with the technical reason tucked into details", () => {
@@ -48,4 +48,11 @@ describe("browser unavailable note", () => {
     expect(markup).not.toContain("<details");
     expect(markup).not.toMatch(/next turn|didn&#x27;t use the browser/);
   });
+});
+
+it("SABLE-LIVE: a paused browser names the bot and the Resume step, with no details or couldn't start", () => {
+  const markup = renderToStaticMarkup(createElement(BrowserUnavailableRow, { reason: BROWSER_EXTENSION_PAUSED_REASON, botName: "Sable" }));
+  expect(markup).toContain("Sable paused your browser. Open Murage for Chrome and press Resume, then ask again.");
+  expect(markup).not.toContain("couldn");
+  expect(markup).not.toContain("<details");
 });

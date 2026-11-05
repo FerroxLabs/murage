@@ -93,6 +93,44 @@ export function saveSidebarDensity(
   }
 }
 
+/** B92 (upstream #2067): the sidebar edge drags between these widths on a
+ * desktop window. The chat always keeps at least SIDEBAR_CHAT_ROOM px. */
+export const SIDEBAR_WIDTH_KEY = "murage.sidebarWidth";
+export const SIDEBAR_MIN_WIDTH = 240;
+export const SIDEBAR_MAX_WIDTH = 480;
+export const SIDEBAR_CHAT_ROOM = 320;
+export const SIDEBAR_WIDTH_STEP = 16;
+
+/** The width the sidebar may take in a window this wide. */
+export function clampSidebarWidth(width: number, viewportWidth: number): number {
+  const most = Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, viewportWidth - SIDEBAR_CHAT_ROOM));
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(most, Math.round(Number.isFinite(width) ? width : SIDEBAR_MIN_WIDTH)));
+}
+
+/** The width the owner dragged to, or null for the density's own width. */
+export function loadSidebarWidth(storage?: Pick<Storage, "getItem"> | null): number | null {
+  try {
+    const target = storage === undefined ? (globalThis.localStorage ?? null) : storage;
+    const raw = target?.getItem(SIDEBAR_WIDTH_KEY);
+    if (raw === null || raw === undefined || !/^\d+$/.test(raw)) return null;
+    const width = Number(raw);
+    return width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH ? width : null;
+  } catch {
+    return null;
+  }
+}
+
+/** null forgets the width, so the density's own width applies again. */
+export function saveSidebarWidth(width: number | null, storage?: Pick<Storage, "setItem" | "removeItem"> | null): void {
+  try {
+    const target = storage === undefined ? (globalThis.localStorage ?? null) : storage;
+    if (width === null) target?.removeItem(SIDEBAR_WIDTH_KEY);
+    else target?.setItem(SIDEBAR_WIDTH_KEY, String(width));
+  } catch {
+    // a blocked store still resizes this session
+  }
+}
+
 export function loadAutoRail(storage?: Pick<Storage, "getItem"> | null): boolean {
   try {
     const target = storage === undefined ? (globalThis.localStorage ?? null) : storage;

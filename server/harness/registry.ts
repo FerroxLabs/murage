@@ -6,6 +6,7 @@
 // touching its siblings.
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
 import { findCliCandidates } from "../env-path.ts";
+import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
@@ -365,10 +366,12 @@ export class ProviderRegistry {
           };
         }
         const inst = entry.live;
+        // read before any await, so a reload that swaps the live instance meanwhile cannot hand this row another one's command
+        const cli = this.cliByInstance.get(inst.instanceId);
         let snapshot: ProviderSnapshot;
         try {
           await this.refreshCatalog(inst, dueOnly);
-          snapshot = withInstanceMark(inst.instanceId, await inst.snapshot());
+          snapshot = withWslNote(withInstanceMark(inst.instanceId, await inst.snapshot()), cli);
         } catch (e) {
           snapshot = { state: "unavailable", reason: e instanceof Error ? e.message : String(e) };
         }
@@ -399,7 +402,7 @@ export class ProviderRegistry {
           },
           access: driver?.metadata.access ?? "subscription",
           install: withServerPlatform(driver?.install),
-          cli: this.cliByInstance.get(inst.instanceId),
+          cli,
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —
           // the dropdown's "detected" entries. Snapshotted per describe() so a

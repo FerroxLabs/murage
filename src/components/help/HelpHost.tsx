@@ -116,7 +116,7 @@ export function installHelpKeys(target: EventTarget): void {
 }
 if (typeof window !== "undefined") installHelpKeys(window);
 
-// ── Show hints again (L4C registers it in 1.0.13) ────────────────────────
+// ── Show hints again (L4C's CoachMarks registers it) ─────────────────────
 
 let hintsReset: (() => void) | null = null;
 const hintsListeners = new Set<() => void>();
@@ -258,7 +258,7 @@ export interface HelpHostProps {
   noEngines: boolean;
   enginesOff: boolean;
   firstRun: HelpScreenInput["firstRun"];
-  /** L4B's ask (1.0.14). */
+  /** Replaces the panel's Ask about this screen (the full in-panel answer, a later version). */
   askSlot?: ReactNode;
 }
 

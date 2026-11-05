@@ -1572,6 +1572,13 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/acp/opencode-go.ts",
+   "fn": "runGit",
+   "anchor": "execFile(\"git\",[\"-C\",folder,...args],{cwd:folder,env,timeout:10_000,windowsHide:true},(error)=>(error?rejectGit(error):resolveGit()))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/checkpoints.ts",
    "fn": "hasStagedChanges",
    "anchor": "execFile(\"git\",[\"diff\",\"--cached\",\"--quiet\",\"--ignore-submodules=dirty\"],{cwd,env,windowsHide:true,encoding:\"utf8\",timeout:120_000,maxBuffer:16*1024*1024},(err,",
@@ -3019,8 +3026,15 @@
   },
   {
    "file": "server/tts/elevenlabs.ts",
-   "fn": "listVoices",
-   "anchor": "fetch(`${API}/voices`,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
+   "fn": "getJson",
+   "anchor": "fetch(url,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/tts/elevenlabs.ts",
+   "fn": "addSharedVoice",
+   "anchor": "fetch(`${API}/voices/add/${encodeURIComponent(publicOwnerId)}/${encodeURIComponent(voiceId)}`,{method:\"POST\",headers:{\"xi-api-key\":key,\"content-type\":\"applicati",
    "kind": "fetch",
    "reason": "not-learning"
   },

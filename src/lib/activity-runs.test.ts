@@ -132,21 +132,47 @@ describe("groupTranscript", () => {
     turnTerminal,
   });
 
-  it("folds settled progress messages and leaves the terminal answer visible", () => {
-    const user: Message = { id: "u1", at: 1_000, role: "user", kind: "text", text: "check todoist" };
-    const first = assistant("I'm checking connected apps.", "turn-1", false, 2_000);
-    const second = assistant("I'm reading your tasks.", "turn-1", false, 3_000);
-    const final = assistant("You have three tasks.", "turn-1", true, 5_000);
+  const step = (name: string, turnId: string, at = ++seq * 1_000, ok = true): Message =>
+    ({ id: `t${++seq}`, at, role: "bot", kind: "activity", tool: { name, ok }, turnId });
 
-    const items = groupTranscript([user, first, second, final]);
+  // E34 (upstream f807c761a): the bot's progress lines stay; only finished tool steps fold.
+  it("keeps the bot's progress lines above the answer and folds only the settled turn's tool steps", () => {
+    const user: Message = { id: "u1", at: 1_000, role: "user", kind: "text", text: "compare note-takers" };
+    const ack = assistant("I'll check current pricing since this changes often.", "turn-1", false, 2_000);
+    const search = step("WebSearch", "turn-1", 2_500);
+    const read = step("WebFetch", "turn-1", 3_000);
+    const helper = assistant("I'll ask a research helper for the details.", "turn-1", false, 3_500);
+    const fetch = step("WebFetch", "turn-1", 4_000);
+    const final = assistant("Here are the three best.", "turn-1", true, 30_000);
+
+    const items = groupTranscript([user, ack, search, read, helper, fetch, final]);
+    expect(items.map((item) => item.kind === "message" ? item.message.id : item.kind)).toEqual([user.id, ack.id, "turn", helper.id, final.id]);
+    expect(items[2]).toMatchObject({ kind: "turn", id: "turn:turn-1", label: "Worked for 29s", messages: [search, read, fetch] });
+  });
+
+  it("never folds a line the bot said, so a turn with only lines makes no fold", () => {
+    const user: Message = { id: "u0", at: 1_000, role: "user", kind: "text", text: "check todoist" };
+    const first = assistant("I'm checking connected apps.", "turn-0", false, 2_000);
+    const second = assistant("I'm reading your tasks.", "turn-0", false, 3_000);
+    const final = assistant("You have three tasks.", "turn-0", true, 5_000);
+    expect(groupTranscript([user, first, second, final])).toEqual([user, first, second, final].map((message) => ({ kind: "message", message })));
+  });
+
+  it("shows just the answer for a turn with nothing to say: its steps fold", () => {
+    const user: Message = { id: "u2", at: 1_000, role: "user", kind: "text", text: "what time is it in Tokyo?" };
+    const lookup = step("Bash", "turn-2", 1_500);
+    const final = assistant("It's 9:30 PM in Tokyo.", "turn-2", true, 5_000);
+    const items = groupTranscript([user, lookup, final]);
     expect(items.map((item) => item.kind)).toEqual(["message", "turn", "message"]);
-    expect(items[1]).toMatchObject({
-      kind: "turn",
-      id: "turn:turn-1",
-      label: "Worked for 4s",
-      messages: [first, second],
-    });
-    expect(items[2].kind === "message" && items[2].message).toBe(final);
+    expect(items[1]).toMatchObject({ label: "Worked for 4s", messages: [lookup] });
+  });
+
+  it("leaves a failed step where it was", () => {
+    const ok = step("Read", "turn-3");
+    const failed = step("Bash", "turn-3", ++seq * 1_000, false);
+    const final = assistant("Done.", "turn-3", true);
+    const items = groupTranscript([ok, failed, final]);
+    expect(items.map((item) => item.kind === "message" ? item.message.id : item.kind)).toEqual(["turn", failed.id, final.id]);
   });
 
   it("keeps every message visible until the turn settles", () => {
@@ -175,7 +201,7 @@ describe("groupTranscript", () => {
   it("still counts from the owner message that started the turn, across rows that belong to no turn", () => {
     const ask: Message = { id: "u-ask", at: 10_000, role: "user", kind: "text", text: "check todoist" };
     const notice: Message = { id: "n1", at: 11_000, role: "bot", kind: "options", card: { title: "Allow?", options: ["Allow", "Deny"], requestId: "r1" } } as Message;
-    const progress = assistant("Reading your tasks.", "turn-2", false, 12_000);
+    const progress = step("Read", "turn-2", 12_000);
     const final = assistant("Three tasks.", "turn-2", true, 20_000);
     expect(groupTranscript([ask, notice, progress, final]).find((item) => item.kind === "turn")).toMatchObject({ label: "Worked for 10s" });
   });
@@ -184,18 +210,18 @@ describe("groupTranscript", () => {
   it("never counts back past a host-stop notice to the owner message before it", () => {
     const ask: Message = { id: "u-ask", at: 10_000, role: "user", kind: "text", text: "make a picture" };
     const stop: Message = { id: "n-stop", at: 20_000, role: "bot", kind: "activity", tool: { name: "stopped: a request went unanswered", ok: false } };
-    const progress = assistant("Checking the schedule.", "turn-bg", false, 40_000_000);
+    const progress = step("Read", "turn-bg", 40_000_000);
     const final = assistant("Done.", "turn-bg", true, 40_010_000);
     expect(groupTranscript([ask, stop, progress, final]).find((item) => item.kind === "turn")).toMatchObject({ label: "Worked for 10s" });
   });
 
-  it("does not fold narration from a different turn", () => {
-    const older = assistant("Previous answer.", "turn-old");
-    const progress = assistant("Checking.", "turn-new");
+  it("does not fold steps from a different turn", () => {
+    const older = step("Read", "turn-old");
+    const progress = step("Edit", "turn-new");
     const final = assistant("Done.", "turn-new", true);
-    expect(groupTranscript([older, progress, final]).map((item) => item.kind)).toEqual([
+    expect(groupTranscript([older, progress, final]).map((item) => item.kind === "turn" ? item.messages.map((m) => m.id) : item.kind)).toEqual([
       "message",
-      "turn",
+      [progress.id],
       "message",
     ]);
   });
@@ -244,16 +270,17 @@ describe("groupTranscript keeps what the bot handed over out of the fold", () =>
     ["an output card for files and images", { text: "Saved 2 files", artifactIds: [ARTIFACT, "1f1e2d3c-4b5a-4968-8776-655443322110"] }],
   ];
   for (const [name, extra] of cases) {
-    it(`${name} stays visible between the fold and the reply`, () => {
+    it(`${name} stays visible with the lines around it, and only the step folds`, () => {
       const before = row("n1", 2_000, "Writing it now.");
+      const work: Message = { id: "s1", at: 2_500, role: "bot", kind: "activity", tool: { name: "tts", ok: true }, turnId: "turn-v" };
       const delivered = row("d1", 3_000, String(extra.text), extra);
       const after = row("n2", 4_000, "Sent.");
       const reply = row("r1", 5_000, "Done, it is in the chat.", { turnTerminal: true });
-      const items = groupTranscript([user, before, delivered, after, reply]);
+      const items = groupTranscript([user, before, work, delivered, after, reply]);
       const fold = items.find((item) => item.kind === "turn");
-      expect(fold && fold.kind === "turn" && fold.messages.map((message) => message.id)).toEqual(["n1", "n2"]);
+      expect(fold && fold.kind === "turn" && fold.messages.map((message) => message.id)).toEqual(["s1"]);
       const shown = items.filter((item) => item.kind === "message").map((item) => item.kind === "message" ? item.message.id : "");
-      expect(shown).toEqual(["u-v", "d1", "r1"]);
+      expect(shown).toEqual(["u-v", "n1", "d1", "n2", "r1"]);
     });
   }
 
@@ -262,12 +289,5 @@ describe("groupTranscript keeps what the bot handed over out of the fold", () =>
     const reply = row("r2", 3_000, "Sent you a voice note.", { turnTerminal: true });
     const items = groupTranscript([user, delivered, reply]);
     expect(items.map((item) => item.kind)).toEqual(["message", "message", "message"]);
-  });
-
-  it("an empty artifact list is still narration", () => {
-    const quiet = row("n3", 2_000, "Thinking.", { artifactIds: [] });
-    const reply = row("r3", 3_000, "Answer.", { turnTerminal: true });
-    const fold = groupTranscript([user, quiet, reply]).find((item) => item.kind === "turn");
-    expect(fold && fold.kind === "turn" && fold.messages.map((message) => message.id)).toEqual(["n3"]);
   });
 });

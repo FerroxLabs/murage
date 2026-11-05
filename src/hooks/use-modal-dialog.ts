@@ -33,8 +33,19 @@ export function modalKeyAction(
   return "none";
 }
 
+type FocusCandidate = Pick<Element, "hasAttribute" | "getAttribute" | "closest">;
+
+/** Whether Tab may land on `el`: not disabled, not taken out of the tab order
+ * (tabindex -1, even on a button or link), and not inside a hidden or inert
+ * part of the dialog (a collapsed section, a page behind the current step). */
+export function tabReachable(el: FocusCandidate): boolean {
+  if (el.hasAttribute("disabled") || el.getAttribute("aria-hidden") === "true") return false;
+  if (el.getAttribute("tabindex") === "-1") return false;
+  return !el.closest("[hidden], [inert]");
+}
+
 function focusables(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(tabReachable);
 }
 
 /** Trap focus in `ref`'s element while mounted and call `onClose` on Escape.

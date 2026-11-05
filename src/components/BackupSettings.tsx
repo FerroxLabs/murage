@@ -481,7 +481,7 @@ export function BackupHeadline({summary,s}:{summary:BackupSummary;s:ScheduleCont
         {s.bridge?.runNow&&(s.confirmRun
           ?<><button type="button" className={primaryButton} disabled={!s.canRunNow} onClick={s.runNow}>Continue</button><button type="button" className={scheduleButton} onClick={()=>s.setConfirmRun(false)}>Cancel</button></>
           :<button type="button" className={scheduleButton} disabled={!s.canRunNow} onClick={()=>s.setConfirmRun(true)}>Back up now</button>)}
-        {s.status?.supported&&s.status.refs&&<Switch aria-label="Backups on" checked={Boolean(s.status.enabled)} disabled={s.locked} onClick={s.status.enabled?s.disable:s.choices?s.enable:undefined} className={switchFocus}/>}
+        {s.status?.supported&&s.status.refs&&<Switch data-setting-control="backups-heading" aria-label="Backups on" checked={Boolean(s.status.enabled)} disabled={s.locked} onClick={s.status.enabled?s.disable:s.choices?s.enable:undefined} className={switchFocus}/>}
       </div>
     </div>
     {s.confirmRun&&<p className="text-[13px] text-ink">Murage will close and reopen this window to take the backup.</p>}

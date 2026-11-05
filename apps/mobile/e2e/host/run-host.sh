@@ -6,6 +6,8 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 APP=$(cd "$HERE/../../../.." && pwd)
 # shellcheck source=scripts/safe-wipe.sh
 source "$APP/scripts/safe-wipe.sh"   # the only recursive delete scripts may use
+source "$HERE/own-pid.sh"
+require_lsof
 source "$HERE/tailscale-cli.sh"
 [[ -f "$HERE/web-dist/index.html" ]] || { echo "run build-web-dist.sh first" >&2; exit 1; }
 [[ ! -f "$HERE/host.env" ]] || { echo "host.env exists: an isolated host may be running; run stop-host.sh first" >&2; exit 1; }

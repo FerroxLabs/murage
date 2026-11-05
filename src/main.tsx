@@ -16,6 +16,7 @@ import { inNativeShell, nativeHello } from "./lib/native-shell";
 import { routeNativeClicks } from "./lib/open-external";
 import { registerServiceWorker } from "./lib/register-sw";
 import { applySkin, readPreference, resolveSkin, watchSystemSkin } from "./lib/skins";
+import { applyFont, readFont } from "./lib/fonts";
 import "./styles.css";
 
 installTrustedTypes();
@@ -25,6 +26,8 @@ installTrustedTypes();
 // rewrite, and because a browser build without the inline script must still be
 // correct before the first React paint.
 applySkin(resolveSkin(readPreference()));
+// The interface font, chosen apart from the skin (B86), before the first React paint.
+applyFont(readFont());
 
 // Module scope, not a component: on "auto" the theme must keep tracking the OS
 // whether or not Settings is mounted. The handler re-reads the preference, so

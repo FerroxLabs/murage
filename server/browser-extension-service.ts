@@ -65,6 +65,17 @@ type Entry = StoredBinding & { freeNavigation?: string; runtimeState?: 'active' 
 export type TaskEndReason = 'owner' | 'stop' | 'idle' | 'limit' | 'routine' | 'takeover' | 'disconnected';
 /** A task (spec 2.4): from the first browser call after an owner message (or a routine start) until Stop, End task, 30 minutes idle,
  * 8 hours in all, or the routine's end. Its site grants live in the entry's taskL1 (the site card) and taskL2 (the Level 2 card) and end with it. */
+/** The site an activity line names. A blank tab has origin "null"; an open
+ * from it is about its destination, so the line names that site, never "null"
+ * (which the end-of-task offer would turn into https://null). */
+export function activitySite(document: Pick<ExtensionDocument, 'url' | 'origin'>, destination?: unknown): string {
+  let own: string;
+  try { own = new URL(document.url).host || document.origin; } catch { own = document.origin; }
+  if ((!own || own === 'null') && typeof destination === 'string') {
+    try { const to = new URL(destination); if (to.protocol === 'https:' || to.protocol === 'http:') return to.host; } catch { /* not a URL */ }
+  }
+  return own;
+}
 export const TASK_IDLE_MS = 30 * 60_000;
 export const TASK_LIMIT_MS = 8 * 60 * 60_000;
 type TaskState = { taskId: string; startedAt: number; lastAt: number; instructionId?: string; readOrigins: Map<string, Set<string>>; typedHistory: Map<string, string>; counters: { hits: number }; tally: CheckerTally; chats: Map<string, Set<string>>; chatIds: Map<string, { composer: string | null; send: string; composerNode: string | null; sendNode: string | null }>; lastTyped: Map<string, { id: string; composer: boolean; node: string | null }> };
@@ -714,9 +725,9 @@ export async function createBrowserExtensionService(options: {
   };
   const makeExecutor = (entry: Entry) => {
     const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document)};
-    const site=(document:ExtensionDocument)=>{try{return new URL(document.url).host||document.origin;}catch{return document.origin;}};
+    const site=activitySite;
     const record=(action:{name:string;document:ExtensionDocument;mutation:boolean;target?:string;fromPage?:boolean;textLength?:number},decision:BrowserActivityDecision,decidedBy:BrowserActivityDecider,outcome:BrowserActivityOutcome,level?:1|2|3)=>{
-      recordBrowserActivity({botId:entry.context.botId,bindingId:entry.context.bindingId,taskId:entry.context.threadId,site:site(action.document),action:action.name.replace(/^agent_browser_/,''),...(action.target?{target:action.target,fromPage:action.fromPage===true}:{}),level:level??(action.mutation?2:1),decision,decidedBy,outcome,...(action.textLength!==undefined?{textLength:action.textLength}:{})});
+      recordBrowserActivity({botId:entry.context.botId,bindingId:entry.context.bindingId,taskId:entry.context.threadId,site:site(action.document,(action as {arguments?:Record<string,unknown>}).arguments?.url),action:action.name.replace(/^agent_browser_/,''),...(action.target?{target:action.target,fromPage:action.fromPage===true}:{}),level:level??(action.mutation?2:1),decision,decidedBy,outcome,...(action.textLength!==undefined?{textLength:action.textLength}:{})});
     };
     const admitAction=async(action:ExtensionAction):Promise<boolean>=>{
         const destination=typeof action.arguments.url==='string'?action.arguments.url:undefined;

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { UI_LANGUAGE_KEY, bootLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
+import { UI_LANGUAGE_KEY, bootLanguage, documentLanguage, localeVersion, rememberLanguage, resolveLocale, setLocale, subscribeLocale, t } from "./i18n";
 import { en, loadLocalePack, localeChoices, localeCodes, localeLoaders } from "@/locales";
 import { allLocalePacks } from "@/locales/testing";
 import { allowedSentence } from "../../server/voice/voice-host";
@@ -216,5 +216,27 @@ describe("the language the first paint starts in", () => {
       else delete (globalThis as { localStorage?: unknown }).localStorage;
       vi.resetModules();
     }
+  });
+});
+
+// B100 (upstream ebd132b3b): a screen reader picks pronunciation from <html lang>, so it follows the chosen language.
+describe("the page language follows the chosen locale", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sets <html lang> and the text direction when the language changes", async () => {
+    const root = { lang: "en", dir: "" };
+    vi.stubGlobal("document", { documentElement: root });
+    await setLocale("de");
+    expect(root).toEqual({ lang: "de", dir: "ltr" });
+    await setLocale("pt-BR");
+    expect(root.lang).toBe("pt-BR");
+    await setLocale("xx-unknown");
+    expect(root.lang).toBe("en");
+  });
+
+  it("cases a tag the standard way", () => {
+    expect(documentLanguage("pt-br")).toBe("pt-BR");
+    expect(documentLanguage("zh-hant")).toBe("zh-Hant");
+    expect(documentLanguage("EN")).toBe("en");
   });
 });
