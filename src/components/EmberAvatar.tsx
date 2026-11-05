@@ -20,7 +20,7 @@
  * Made with Blob Studio.
  */
 import React, { useEffect, useId, useMemo, useRef } from 'react'
-import { avatarTicker, prefersReducedMotion as osPrefersReducedMotion } from '../lib/avatar-ticker'
+import { runAvatar, prefersReducedMotion as osPrefersReducedMotion } from '../lib/avatar-ticker'
 import { trustedSvg, useSanitizerReady } from '../lib/trusted-html'
 
 /* ------------------------------------------------------------------- shape */
@@ -2582,7 +2582,15 @@ export const EmberAvatar = React.forwardRef<EmberAvatarHandle, EmberAvatarProps>
         draw(e, performance.now(), 0)
         return
       }
-      return avatarTicker().subscribe(now => step(now))
+      return runAvatar(
+        () => {
+          const e = engine.current
+          e.morph = 1
+          e.velocity = 0
+          draw(e, performance.now(), 0)
+        },
+        now => step(now)
+      )
       // `uid` is stable for the component's life, so listing it re-runs nothing — it is
       // here because the loop genuinely reads it, and a lie in a dependency array is the
       // kind that bites later.

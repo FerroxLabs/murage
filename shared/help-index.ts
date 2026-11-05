@@ -736,6 +736,56 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "- Memories keep what you said, not tool output.\n- A message from one bot to another leaves the memory of that pair's room as it was.\n- Deleting a chat leaves work running in your other chats alone.\n- Use my Chrome offers Set up my browser first, and leaving it hands the browser back at once, even while a bot is using it.\n- On Grok Build, a question from an MCP server opens as a question card.\n- Plus stability fixes."
   },
   {
+    "id": "changelog/v1-0-16#health-in-1-0-16",
+    "title": "What changed in Murage 1.0.16",
+    "description": "Health shows what to fix first, Needs you rows open in place, and Fuigo 1.0.39 comes bundled.",
+    "heading": "Health in 1.0.16",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "url": "https://murage.ai/docs/changelog/v1-0-16#health-in-1-0-16",
+    "text": "- What to fix first. Health lists what needs your attention in order, Flux and Fuigo first, with one button to fix each and a way to check again."
+  },
+  {
+    "id": "changelog/v1-0-16#answer-right-where-you-are-in-1-0-16",
+    "title": "What changed in Murage 1.0.16",
+    "description": "Health shows what to fix first, Needs you rows open in place, and Fuigo 1.0.39 comes bundled.",
+    "heading": "Answer right where you are in 1.0.16",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "url": "https://murage.ai/docs/changelog/v1-0-16#answer-right-where-you-are-in-1-0-16",
+    "text": "- Needs you in place. Rows in Needs you open in place, so you can answer a bot without leaving the list.\n- One way of replying. Every bot replies the same way: the answer first, one question at a time, in plain words and your language.\n- New client sections. A team lead bot can now set up a new section for a client."
+  },
+  {
+    "id": "changelog/v1-0-16#engines-in-1-0-16",
+    "title": "What changed in Murage 1.0.16",
+    "description": "Health shows what to fix first, Needs you rows open in place, and Fuigo 1.0.39 comes bundled.",
+    "heading": "Engines in 1.0.16",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "url": "https://murage.ai/docs/changelog/v1-0-16#engines-in-1-0-16",
+    "text": "- Fuigo 1.0.39. Bundled Fuigo moves to 1.0.39.\n- Pi. Pi tells you when a session is slow to start, and shows what it costs.\n- Codex. When Codex turns down a call, Murage names the call.\n- WSL. An engine running under WSL on Windows gets a short note on how it works there.\n- Hermes. Hermes sends each reply once."
+  },
+  {
+    "id": "changelog/v1-0-16#phone-and-voice-in-1-0-16",
+    "title": "What changed in Murage 1.0.16",
+    "description": "Health shows what to fix first, Needs you rows open in place, and Fuigo 1.0.39 comes bundled.",
+    "heading": "Phone and voice in 1.0.16",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "url": "https://murage.ai/docs/changelog/v1-0-16#phone-and-voice-in-1-0-16",
+    "text": "- Pairing. Entering the pairing code on your phone is quicker.\n- Calls. In a call, the transcript matches the words that were spoken."
+  },
+  {
+    "id": "changelog/v1-0-16#better-in-1-0-16",
+    "title": "What changed in Murage 1.0.16",
+    "description": "Health shows what to fix first, Needs you rows open in place, and Fuigo 1.0.39 comes bundled.",
+    "heading": "Better in 1.0.16",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.16",
+    "url": "https://murage.ai/docs/changelog/v1-0-16#better-in-1-0-16",
+    "text": "- Sign-in headers are masked in diagnostics files, and feedback is cleaned before it is sent.\n- If the helper app does not start, Murage tries again on its own.\n- Avatar eyes and animation keep moving when Murage is not the window in front.\n- A New conversation you queue opens as you asked.\n- Plus stability fixes."
+  },
+  {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
     "title": "What changed in Murage 1.0.2",
     "description": "Memory stays quick on long histories and asks you about the things that need you, startup and search stay smooth, group chats pick the right bot, Murage for Chrome reads like the app, and new Ferrox Labs teams join the library.",

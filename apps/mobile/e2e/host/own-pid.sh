@@ -16,6 +16,14 @@ own_pid() {
   [[ "$cwd" == "$app" ]]
 }
 
+# Every port and process check here asks lsof. Without it each "is the port
+# busy" reads as free and no PID can be proved ours, so refuse up front.
+require_lsof() {
+  command -v lsof >/dev/null 2>&1 && return 0
+  echo "lsof is needed to check the isolated host's ports and processes; nothing was changed" >&2
+  exit 1
+}
+
 # Kill PID only when own_pid agrees; otherwise say so and leave it alone.
 kill_own() {
   local pid=$1

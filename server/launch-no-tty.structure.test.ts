@@ -45,6 +45,7 @@ const ALLOWLIST: Record<string, string> = {
   "drivers/process-identity.ts": "non-engine helper: ps start-time read of a known pid",
   "drivers/warm-pool.ts": "non-engine helper: ps and vm_stat memory reads",
   "drivers/claude.ts": "git rev-parse of the session folder with stdin ignored and no network",
+  "drivers/acp/opencode-go.ts": "git of OpenCode's own one-shot scratch folder (U12/U13): GIT_* variables, system and global config cut off, 10 s timeout, hidden window; not an engine",
   "drivers/headless-text-only.ts": "macOS `security find-generic-password` attributes-only lookup (no -w, no -g: it prints no secret and opens no prompt, stdout discarded, 2 s timeout), asking whether the owner's default Keychain item exists; not an engine",
   "drivers/pi-mcp-extension.ts": "runs inside the Pi process and inherits its session",
   "drivers/headless-browser-proxy.ts": "the browser automation tool server Murage starts, not an engine",
