@@ -124,6 +124,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/feedback", class: "companion", cloudWrite: "ordinary", why: "the owner sends tester feedback (the screen's name and one of three fixed sentences) from the help panel on the desktop, the phone or the Cloud window" },
   { methods: ["GET"], path: /^\/api\/help\/search$/, class: "conversation", why: "help search over the shipped docs; no owner data" },
   { methods: ["GET"], path: "/api/engine-health", class: "conversation", why: "Today's engine tag and the Health dot; the route itself 404s anyone but the owner's surfaces" },
+  { methods: ["POST"], path: "/api/engine-health/recheck", class: "companion", cloudWrite: "ordinary", why: "Health's Check again: drops the cached Flux key answer so the next read asks Flux once; at most one fresh check per 10 s, and the route itself 404s anyone but the owner's surfaces" },
   { methods: ["POST"], path: "/api/sidebar-sections", class: "companion", cloudWrite: "ordinary", why: "filing bots into a team decides who they can reach and which team brief they read" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/work-threads`), class: "companion", cloudWrite: "ordinary", why: "open (creating on first use) the owner's work thread for a covered team, from the desktop or the paired phone (SPEC-X 12.1)" },
   { methods: ["POST"], path: re(`/api/routines/${ID}/run`), class: "companion", cloudWrite: "browser-step-up", why: "run an existing routine now, with the permissions it was given at the keyboard" },

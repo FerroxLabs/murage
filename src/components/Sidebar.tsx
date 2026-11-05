@@ -16,6 +16,7 @@ import { useAnchoredMenu, type MenuAnchor } from "@/lib/menu-placement";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { closedDrawerInert, focusLeavesClosedDrawer } from "@/lib/drawer-close";
+import { showYourComputers, usePhoneLauncher } from "@/lib/phone-launcher";
 import { useMediaQuery, useNarrowViewport } from "@/lib/media-query";
 import {
   Archive,
@@ -38,6 +39,7 @@ import {
   FolderPlus,
   Info,
   Keyboard,
+  Laptop,
   LayoutTemplate,
   Loader2,
   Megaphone,
@@ -2775,7 +2777,10 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const openSettings = (section?: AppSettingsSection) => {
     dispatch(section ? { type: "toggleAppSettings", open: true, section } : { type: "toggleAppSettings", open: true });
   };
+  // 1.0.16 F3: inside the phone app only, the way back to the app's own list of computers.
+  const phoneLauncher = usePhoneLauncher();
   const youItems: YouMenuItem[] = [
+    ...(phoneLauncher ? [{ key: "your-computers", label: t("nav.yourComputers"), icon: <Laptop size={17} />, onSelect: () => { void showYourComputers(); } }] : []),
     // Sean 10-30: Health has its own page off this menu, with a status dot.
     { key: "health", label: health.level === "act" || health.level === "watch" ? t("ux.l2a.you.healthLevel", { level: healthLevelWords(health.level) }) : t("ux.l2a.you.health"), icon: <span className="relative inline-flex"><HeartPulse size={17} aria-hidden="true" /><StatusDot level={health.level} className="absolute -right-1 -top-1" /></span>, onSelect: () => { dispatch({ type: "showHealth" }); onNavigate(); } },
     ...(desktop === true ? [

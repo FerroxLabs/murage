@@ -480,7 +480,7 @@ const TOOLS = [
   {
     name: "create_bot",
     description:
-      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the engine every new bot starts on (Fuigo when it can answer, else the Chief's engine); connected apps, peer-comms approval and computer control start disabled. It starts in Auto mode only if you are in Auto mode in this conversation (and never from an unattended turn); otherwise it asks the user before every action. Questions and credential requests always reach the user either way. A section's Chief creates into its own section. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. Create only the smallest useful team (maximum four per turn).",
+      "Create a specialist bot. Only a Chief of Staff may use this. The new bot uses model_selection when supplied, otherwise the engine every new bot starts on (Fuigo when it can answer, else the Chief's engine); connected apps, peer-comms approval and computer control start disabled. It starts in Auto mode only if you are in Auto mode in this conversation (and never from an unattended turn); otherwise it asks the user before every action. Questions and credential requests always reach the user either way. A team lead creates into its own team, or starts a NEW team (for example a client team) by naming a section no bot uses yet, and can keep adding to a team it started; it cannot add bots to any other team. The workspace Chief must name the destination team; pass lead: true to create its lead first if the team is missing. If a create into a named team is refused, do not retry without section or in another team: stop and tell the owner. Create only the smallest useful team (maximum four per turn).",
     inputSchema: {
       type: "object",
       properties: {
@@ -490,11 +490,11 @@ const TOOLS = [
         model_selection: { type: "object", properties: { instanceId: { type: "string" }, model: { type: "string" }, effort: { type: "string" }, connectionId: { type: "string" } }, required: ["instanceId", "model"], additionalProperties: false },
         section: {
           type: "string",
-          description: `The team the specialist joins, exactly as ${murageToolOnThisServer("list_bots")} spells it. Required if you are the workspace Chief of Staff; omit it otherwise. When creating a team's first lead this names the NEW team.`,
+          description: `The team the specialist joins, exactly as ${murageToolOnThisServer("list_bots")} spells it. Required if you are the workspace Chief of Staff. A team lead omits it for its own team, or names a NEW team it is starting (or one it started). When creating a team's first lead this names the NEW team.`,
         },
         lead: {
           type: "boolean",
-          description: "Make this bot the LEAD of the named team. Only the workspace Chief of Staff may do this, and only for a team that has no lead yet. Use it to stand up a new team, then create its specialists in a following call without this flag.",
+          description: "Make this bot the LEAD of the named team. Only the workspace Chief of Staff, or a team lead for a new team it started, may do this, and only for a team that has no lead yet. Use it to stand up a new team, then create its specialists in a following call without this flag.",
         },
       },
       required: ["name", "role", "instructions"],

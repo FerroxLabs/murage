@@ -50,6 +50,12 @@ function prefill(draftId: string, text: string, io: ComposeIo): void {
   else if (!existing.includes(text)) io.setDraft(draftId, `${existing.replace(/\s+$/, "")}\n\n${text}`);
 }
 
+/** A question another screen offers (Health's Ask your bot): that bot's chat draft gets the words and the composer takes focus. Never sends. */
+export function prefillBotChat(chat: { botId: string; threadId: string }, text: string, io: ComposeIo = composeIo): void {
+  prefill(`bot:${chat.botId}:${chat.threadId}`, text.trim(), io);
+  io.focus(chat.botId);
+}
+
 /** Ask again on a phone line already on screen: this chat's draft gets its words, and the composer takes focus. */
 export function askAgainFromLine(line: { text?: string }, chat: { botId: string; threadId: string }, io: ComposeIo = composeIo): void {
   prefill(`bot:${chat.botId}:${chat.threadId}`, askAgainText(line.text ?? ""), io);

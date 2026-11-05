@@ -3,7 +3,7 @@
 // so every refusal that protects Sean's live Serve config and processes is
 // exercised. Nothing here touches the real Tailscale or the 28xxx ports.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -279,6 +279,86 @@ describe("run-host.sh takes host.lock, so two E2E runs never both start a host",
     expect(stop.status, stop.stderr).toBe(0);
     expect(existsSync(file("host.lock"))).toBe(false);
     expect(existsSync(data)).toBe(false);
+  });
+});
+
+describe("without lsof every host script refuses before it changes anything", () => {
+  // The system tools minus lsof: every port check would read "free" and no PID
+  // could be proved ours, so stop-host.sh would wipe DATA under a live server.
+  let bin: string;
+  beforeEach(() => {
+    bin = join(root, "no-lsof-bin");
+    mkdirSync(bin);
+    const linked = new Set<string>();
+    for (const dir of ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]) {
+      if (!existsSync(dir)) continue;
+      for (const name of readdirSync(dir)) {
+        if (name === "lsof" || linked.has(name)) continue;
+        linked.add(name);
+        symlinkSync(join(dir, name), join(bin, name));
+      }
+    }
+  });
+  const lockedBy = (pid: number) => {
+    mkdirSync(file("host.lock"));
+    writeFileSync(file("host.lock/pid"), `${pid}\n`);
+  };
+  const runBare = (script: string, ...args: string[]) =>
+    spawnSync("bash", [join(host, script), ...args], { encoding: "utf8", env: { PATH: bin, HOME: root, TAILSCALE: join(cli, "tailscale") } });
+
+  it("stop-host.sh keeps the server, host.env and DATA", () => {
+    const app = join(root, "app");
+    const server = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", "server/index.ts"], { cwd: app, stdio: "ignore" });
+    try {
+      const data = mkdtempSync("/tmp/murage-e2e-data-test-");
+      writeFileSync(file("host.env"), `DATA=${data}\nTS_HOST=h.ts.net\nCOMPANION_TOKEN=${"0".repeat(64)}\nSERVER_PID=${server.pid}\n`, { mode: 0o600 });
+      const stop = runBare("stop-host.sh");
+      expect(stop.status).not.toBe(0);
+      expect(stop.stderr).toMatch(/lsof is needed/);
+      expect(() => process.kill(server.pid!, 0)).not.toThrow();
+      expect(existsSync(file("host.env"))).toBe(true);
+      expect(existsSync(data)).toBe(true);
+      rmSync(data, { recursive: true, force: true });
+    } finally {
+      server.kill("SIGKILL");
+    }
+  });
+
+  it("stop-host.sh without host.env still releases only its caller's own lock (no lsof needed there)", () => {
+    lockedBy(process.pid + 1_000_000); // someone else
+    expect(runBare("stop-host.sh").status).toBe(0);
+    expect(existsSync(file("host.lock"))).toBe(true);
+    rmSync(file("host.lock"), { recursive: true });
+    lockedBy(process.pid); // spawnSync's bash has this test as its parent
+    expect(runBare("stop-host.sh").status).toBe(0);
+    expect(existsSync(file("host.lock"))).toBe(false);
+  });
+
+  it("run-host.sh takes no lock, leaves a stale one alone, and door.sh starts nothing", () => {
+    mkdirSync(file("web-dist"));
+    writeFileSync(file("web-dist/index.html"), "<!doctype html>");
+    state(LIVE);
+    const start = runBare("run-host.sh");
+    expect(start.status).not.toBe(0);
+    expect(start.stderr).toMatch(/lsof is needed/);
+    expect(existsSync(file("host.lock"))).toBe(false);
+    expect(mutations()).toEqual([]);
+
+    // A guard after the lock step would take this stale lock over and remove it.
+    const dead = spawnSync("/usr/bin/true").pid!;
+    lockedBy(dead);
+    const again = runBare("run-host.sh");
+    expect(again.status).not.toBe(0);
+    expect(again.stderr).toMatch(/lsof is needed/);
+    expect(again.stderr).not.toMatch(/took over/);
+    expect(readFileSync(file("host.lock/pid"), "utf8")).toBe(`${dead}\n`);
+    rmSync(file("host.lock"), { recursive: true });
+
+    writeFileSync(file("host.env"), `DATA=/tmp/murage-e2e-data-none\nTS_HOST=h.ts.net\nCOMPANION_TOKEN=${"0".repeat(64)}\nSERVER_PID=\n`, { mode: 0o600 });
+    const door = runBare("door.sh", "start");
+    expect(door.status).not.toBe(0);
+    expect(door.stderr).toMatch(/lsof is needed/);
+    expect(existsSync(file("companion-data"))).toBe(false);
   });
 });
 

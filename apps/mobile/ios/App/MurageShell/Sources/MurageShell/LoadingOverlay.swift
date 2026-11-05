@@ -1,5 +1,6 @@
 #if os(iOS)
 import UIKit
+import MurageShellCore
 
 /// The splash that stays up until the page says ready (spec §3.1 "Splash"),
 /// and the "Still connecting…" panel (§3.2 readiness deadline).
@@ -9,8 +10,11 @@ final class LoadingOverlay: UIView {
     private let title = LoadingOverlay.label("Connecting to your computer…", style: .headline, color: ShellColors.ink)
     private let body = LoadingOverlay.label("Murage is opening your workspace.", style: .body, color: ShellColors.inkSecondary)
     private var retry: UIButton!
+    private var reveal: UIButton!
     private let mark = UIImageView(image: UIImage(named: "MurageWordmark"))
     private let panel = UIStackView()
+    /// The ordering of shows and hides, in MurageShellCore where it is tested.
+    private var fade = OverlayFade()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -24,6 +28,7 @@ final class LoadingOverlay: UIView {
         let retry = Self.button("Try again", filled: true) { [weak self] in self?.onRetry?() }
         self.retry = retry
         let reveal = Self.button("Your computers", filled: false) { [weak self] in self?.onChoose?() }
+        self.reveal = reveal
         [title, body, retry, reveal].forEach(panel.addArrangedSubview)
         panel.axis = .vertical
         panel.spacing = 12
@@ -67,15 +72,19 @@ final class LoadingOverlay: UIView {
     }
 
     func showSplash() {
+        fade.showSplash()
         layer.removeAllAnimations()
         alpha = 1
         isHidden = false
         retry.isHidden = true
+        reveal.isHidden = false
         title.text = "Connecting to your computer…"
         body.text = "Murage is opening your workspace."
     }
 
     func showSlow() {
+        fade.showSlow()
+        layer.removeAllAnimations()
         alpha = 1
         isHidden = false
         retry.isHidden = false
@@ -84,10 +93,24 @@ final class LoadingOverlay: UIView {
         UIAccessibility.post(notification: .screenChanged, argument: panel)
     }
 
+    /// The workspace is closing for a reason of its own. Try again has nothing
+    /// left to retry, but "Your computers" stays visible and enabled (the way
+    /// out if the screen is slow to go) until the workspace has actually gone.
+    func showClosing() {
+        fade.showClosing() // a fade already running can no longer hide this
+        layer.removeAllAnimations()
+        alpha = 1
+        isHidden = false
+        retry.isHidden = true
+        reveal.isHidden = false
+        reveal.isEnabled = true
+    }
+
     func hide() {
-        guard !isHidden else { return }
+        guard !isHidden, let token = fade.beginHide() else { return } // nothing to hide, or closing
         UIView.animate(withDuration: 0.2, animations: { self.alpha = 0 }, completion: { finished in
-            guard finished else { return } // showSplash() interrupted the fade
+            // Anything shown since the fade began (splash, slow, closing) wins.
+            guard self.fade.finishHide(token: token, finished: finished) else { return }
             self.isHidden = true
             self.alpha = 1
         })

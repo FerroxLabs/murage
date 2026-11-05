@@ -1281,6 +1281,20 @@
   "count": 1
  },
  {
+  "file": "server/drivers/codex-unsupported-calls.ts",
+  "function": "unsupportedCallsSince",
+  "callee": "openSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
+  "file": "server/drivers/codex-unsupported-calls.ts",
+  "function": "unsupportedCallsSince",
+  "callee": "readSync",
+  "root": "engine-home",
+  "count": 1
+ },
+ {
   "file": "server/drivers/headless-text-only.ts",
   "function": "ownerCredmanFlag",
   "callee": "readFileSync",

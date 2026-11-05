@@ -154,6 +154,17 @@ export const WHATS_NEW_MORE_1015: string[] = [
   "Murage opens faster",
 ];
 
+/** 1.0.16, from release-notes/1.0.16.md: a hero and the list, no tiles. */
+export const WHATS_NEW_MORE_1016: string[] = [
+  "Rows in Needs you open in place, so you can answer without leaving the list",
+  "Every bot replies the same way: the answer first, one question at a time",
+  "A team lead bot can now set up a new section for a client",
+  "Bundled Fuigo moves to 1.0.39",
+  "Pi tells you when a session is slow to start, and shows what it costs",
+  "Entering the pairing code on your phone is quicker",
+  "In a call, the transcript matches the words that were spoken",
+];
+
 const PAGE_0161: WhatsNewPageContent = {
   hero: { art: "team-hero", alt: "A constellation of orange orbs of light, each joined to every other by fine threads", fit: "object-cover", title: "Your team, in step.", body: "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.", action: "teams", button: "Open Teams" },
   tiles: WHATS_NEW_TILES,
@@ -186,6 +197,11 @@ export const WHATS_NEW_PAGES: Readonly<Record<string, WhatsNewPageContent>> = {
     tiles: WHATS_NEW_TILES_1015,
     tilesTitle: "Less in your way",
     more: WHATS_NEW_MORE_1015,
+  },
+  "1.0.16": {
+    hero: { art: "tile-longwork", alt: "One unbroken line of white light crossing a dark plain", fit: SQUARE_HERO, title: "Health shows what to fix first", body: "Health lists what needs your attention in order, Flux and Fuigo first, with one button to fix each and a way to check again.", action: "health", button: "Open Health" },
+    tiles: [],
+    more: WHATS_NEW_MORE_1016,
   },
 };
 
