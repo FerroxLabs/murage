@@ -730,6 +730,12 @@ describe("the owner phone's reads carry the proof on the device door only", () =
     expect(deviceProofHeaders("POST", "/api/bots/b1/work-threads", token)).toEqual({ "x-murage-companion-token": token });
     expect(deviceProofHeaders("POST", "/api/bots/b1/messages", token)).toEqual({ "x-murage-companion-token": token });
   });
+  it("device: All chats and its search carry the proof; the browser door's do not", () => {
+    for (const path of ["/api/chats", "/api/search"]) {
+      expect(deviceProofHeaders("GET", path, token), path).toEqual({ "x-murage-companion-token": token });
+      expect(launchProofHeaders("GET", path, token), path).toEqual({});
+    }
+  });
   it("browser: the same reads get no proof", () => {
     for (const path of ["/api/bots", "/api/events"]) {
       expect(askBrowser("GET", path), `${path} browser`).toBeNull();

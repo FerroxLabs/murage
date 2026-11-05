@@ -14,6 +14,8 @@
 // window unsanitized.
 import { MessageExternalLink } from "./ThreadLinkMenu";
 import { EngineChatLink } from "./EngineChatLink";
+import { SettingsAddressLink } from "./SettingsAddressLink";
+import { parseSettingsAddress } from "@/lib/settings-address";
 import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -80,6 +82,8 @@ const urlTransform: UrlTransform = (url, key, node) => {
     if (isObsidianOpenHref(url)) return url;
     // The exact engine and plan chat links survive to the anchor below, which draws a button and never an href.
     if (parseEngineChatLink(url)) return url;
+    // A Settings address (lib/settings-address.ts) survives to the anchor below, which draws a button and never an href.
+    if (parseSettingsAddress(url)) return url;
   }
   return defaultUrlTransform(url);
 };
@@ -445,6 +449,8 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
             if (href && parseEngineChatLink(href)) return <EngineChatLink href={href}>{children}</EngineChatLink>;
+            const settingsAddress = parseSettingsAddress(href);
+            if (settingsAddress) return <SettingsAddressLink address={settingsAddress}>{children}</SettingsAddressLink>;
             const localPath = localFilePath(href);
             if (localPath) return <LocalFileLink filePath={localPath} scope={scope}>{children}</LocalFileLink>;
             // A path relative to the conversation's folder is a file link

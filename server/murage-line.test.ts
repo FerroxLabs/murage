@@ -155,6 +155,9 @@ const FORWARDS: Record<string, string> = {
   "index.ts :: turnId ? { ...row, turnId } : row": "openAnswerAsSendCard (1.0.6 QW Q1, 958352223): the engine's question names the turn that asked it (card.turnId too); with no turn it is an unmarked engine row naming none, which message-db.ts unattributedRefs rests on every open turn's parents, never Murage's own line",
   "store.ts :: input":"appendAfterHead / insertMessageBefore handing their caller's row (scanned at the caller) to appendMessage",
   "store.ts :: message": "insertMessageAfter handing its caller's row (scanned at the caller) to appendMessage",
+  "index.ts :: venuePostRow(bot, record.threadId, text)": "VENUE-POST-1017 postVenueMessage: the bot's own words the owner picked a room for, posted as the bot's row (postedFrom) with the post's lineage refs, which message-db.ts unattributedRefs rests on the source turn's inputs",
+  "index.ts :: row": "VENUE-POST-1017 answerVenuePost: the host's append handing answerHeldVenuePost's venuePostRow (scanned at its caller, the entry above) to store.appendMessage with its stableId and lineage",
+  "venue-post.ts :: row": "VENUE-POST-1017: the HeldAnswerHost.append doc comment and the venuePostRow doc comment name store.appendMessage(target, row, ...); no call. The write is the index.ts entries above",
   "output-publication.ts :: imageOutputRow(row, options.turnId)": "completeImageOutput: the producing turn's engine output (turnId from the actor's capability), or murageLine when no turn made it (tested in output-publication.test.ts)",
   "output-publication.ts :: imageOutputRow(row, receipt.producer === \"assistant-image\" && receipt.runId ? receipt.runId : undefined)": "finishImageReceipt: an assistant image's receipt run id is the provider turn that sent it (index.ts publishAssistantImage)",
 };

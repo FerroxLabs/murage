@@ -213,6 +213,12 @@ export function EngineSwitchNotice({lines}:{lines:string[]}){
   if(!lines.length)return null;
   return <ul data-engine-switch-notice className="space-y-0.5 border-b border-hairline/40 px-3 py-2 text-xs text-ink-secondary">{lines.map(line=><li key={line}>{line}</li>)}</ul>;
 }
+/** FLUX-FIRST-PICKER-OWN-ACCOUNT: the menu's last row. Flux and Fuigo lead the list; somebody with their own AI account finds where
+ *  to add it here, in Settings, Engines. */
+export function OwnAccountRow({onOpen}:{onOpen:()=>void}){
+  return <button type="button" data-own-account-row onClick={onOpen} className="border-t border-hairline/40 px-4 py-3 text-left text-sm text-ink-secondary hover:bg-control/60">{t("modelPicker.ownAccount")}</button>;
+}
+
 export function ModelPickerBusyNotice({locked}:{locked:boolean}){
   if(!locked)return null;
   return <div role="status" data-thread-model-busy className="border-b border-hairline/40 px-3 py-2 text-xs text-ink-secondary">This response is in progress. You can inspect models, but wait for it to finish or stop this turn before changing the model or effort.</div>;
@@ -281,6 +287,7 @@ const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows])
   const manage=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models'});});
   // The Local rail's empty row lands on the Local models section itself, with
   // "Add a server" focused — not on the Models pane for the user to hunt through.
+  const openOwnAccount=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models',anchor:'engines-heading'});});
   const manageLocal=()=>{manage();setTimeout(()=>window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)),0);};
   // Settings → Models → Local models sends a tested model back here: the next
   // step after "Tools work" is choosing it, which only this menu can do.
@@ -313,6 +320,7 @@ const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows])
           rather than hardcoded, and never repeated per row. */}
       <PickerPriceNote shown={!!ordered.length}/>
       <button type="button" onClick={manage} className="border-t border-hairline/40 px-4 py-3 text-left text-sm text-ink hover:bg-control/60">Manage models and providers</button>
+      <OwnAccountRow onOpen={openOwnAccount}/>
     </div>}
   </div>;
 }
