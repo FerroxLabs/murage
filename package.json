@@ -1,7 +1,7 @@
 {
   "name": "murage",
   "private": true,
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "A local-first chat app for running a team of AI agents.",
   "homepage": "https://github.com/FerroxLabs/murage",
   "repository": {
@@ -156,7 +156,7 @@
     "yaml": "^2.9.0",
     "yauzl": "3.4.0",
     "yazl": "3.3.1",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@playwright/test": "1.57.0",

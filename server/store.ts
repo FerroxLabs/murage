@@ -1086,6 +1086,9 @@ export interface BotRecord {
    * this bot (server/host-computer-consent.ts). Absent = not yet evaluated;
    * set once at load from what the bot has already done. */
   hostComputerConsent?: HostComputerConsent;
+  /** The team lead that created this bot through create_bot (1.0.16 TEAM-SECTION). Set by the server only; a lead may keep
+   * filling a team only while every bot in it carries its own id here (server/team-founding.ts). */
+  createdByBotId?: string;
   /** The one chat note saying local control is off was shown; cleared once control is on. */
   localControlOffNoted?: boolean;
   /** Which cloud computer backs `computer: "cloud"`; absent means Box. */

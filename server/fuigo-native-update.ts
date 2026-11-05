@@ -40,7 +40,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.38";
+export const QUALIFIED_FUIGO_VERSION = "1.0.39";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {

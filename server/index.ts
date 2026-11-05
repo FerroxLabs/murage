@@ -50,7 +50,7 @@ import { readServerSecrets } from "./cloud-home/server-secrets.ts";
 import { criteriaClaimCorrection, createReplySpeakerTurns, replyAudienceIsOwner } from "./reply-speaker-guard.ts";
 import { readBody } from "./read-body.ts";
 import { feedbackRoute } from "./feedback-routes.ts";
-import { engineHealthRoute, type EngineHealthMemo } from "./engine-health-routes.ts";
+import { dropEngineHealthMemo, engineHealthRoute, type EngineHealthMemo } from "./engine-health-routes.ts";
 import { feedbackInstallId } from "./feedback-relay.ts";
 import { helpRoute } from "./help-routes.ts";
 import { flushCoalesced } from "./atomic.ts";
@@ -169,7 +169,7 @@ import "./bot-learning-modules.ts";
 import { readBotLearning } from "./bot-learning.ts";
 import { proposeOutcomeFromAgent, recordStopForThread } from "./memory/outcomes.ts";
 import { wireBotLearning } from "./memory/learning-wiring.ts";
-import { TURN_PROMPTS, imageToolsPrompt, botShapeRows, directPersona, directTurnLayers, peerTaskPrompt, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, learnedForTurn, lineLayers, pinLearnedForTurn, recordTurnShapes, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer, withLearned } from "./bot-shapes.ts";
+import { TURN_PROMPTS, imageToolsPrompt, botShapeRows, directPersona, directTurnLayers, peerTaskPrompt, nowPrompt, withNowLine, joinShapeLayers, lastTurnShapes, learnedForTurn, lineLayers, pinLearnedForTurn, recordTurnShapes, replyHabitsLayer, roomBulletinLine, roomMembersLine, roomPersonaLines, shapeLayer, skillLayers, speakAsLine, type ShapeLayer, withLearned } from "./bot-shapes.ts";
 import { renderLearnedBlock } from "./memory/lessons.ts";
 import { handleHouseRulesApi, houseRulesPrompt, readHouseRules } from "./house-rules.ts";
 import { aboutMePrompt, handleAboutMeApi } from "./about-me.ts";
@@ -204,6 +204,7 @@ import { checkEngineReply } from "./engine-reply-check.ts";
 import { bootSettled, firstHealthAnswered, noteHealthAnswered, readySettle, runAfterListen, startRecovery, startupWritesReady, trackBootJob } from "./after-listen.ts";
 import { invalidateCliVersions } from "./cli-version-cache.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
+import { foldTeamName, leadTeamGate } from "./team-founding.ts";
 import { TeamChangeError, changeTeamMembers, deleteTeam, describeTeam, renameTeam, type TeamDeps } from "./team-sections.ts";
 import { buildMemoryBundle } from "./memory/bundle.ts";
 import { attachContinuityCoverage, clearContinuityCoverage } from "./memory/identity.ts";
@@ -361,7 +362,7 @@ import type { ArtifactKind } from "../shared/artifacts.ts";
 import { newClaudeAccount, claudeAccountInfo, assertSeparateClaudeAccount, createClaudeAccountSchema, claudeAccountSettingsSchema, resolveClaudeConfigDir } from "./claude-accounts.ts";
 import { fluxHermesHome, HERMES_CONFIG_MODEL_ID } from "./drivers/acp/hermes.ts";
 import { openclawVersionNote } from "./drivers/acp/openclaw.ts";
-import { ApprovalDeliveryError, denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
+import { ApprovalDeliveryError, ApprovalNoLongerOpenError, denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { hermesInstanceProfiles, hermesProfileOf, listHermesProfiles, planHermesImport, planHermesProfilePins, type HermesPin } from "./hermes-profiles.ts";
 import { hermesPinNoteActivityName } from "../shared/hermes-pin-note.ts";
 import { ConversationDeletions, ENGINE_FOR_DRIVER, ENGINE_LABEL, instancesForHomes, engineHomeFor, runConversationDeletion, type DeletionEngine, type DeletionEngineHome, type DeletionInput, type DeletionReport } from "./conversation-deletion.ts";
@@ -956,7 +957,7 @@ import { readCuaConnection, type LocalComputerConnection } from "./local-compute
 import { HostComputerBroker } from "./host-computer-broker.ts";
 import { LOCAL_VM_IDLE_SHORT_MS, LocalVmIdleTimer, localVmIdleWindowMs, taskMayReturn } from "./local-vm-idle.ts";
 import { LocalVmLease, LocalVmLeasePool } from "./local-vm-lease.ts";
-import { RepeatDetector, askCallKey, askCallLabel, callKey } from "./repeat-detector.ts";
+import { RepeatDetector, askCallKey, askCallLabel, toolTitleKey } from "./repeat-detector.ts";
 import { createLoopNudge, LOOP_NUDGE_ROW } from "./loop-nudge.ts";
 import { loopNoticeName } from "../shared/loop-notice.ts";
 import { createMacFolderPromptWatch } from "./mac-folder-prompt.ts";
@@ -3464,6 +3465,11 @@ function checkedMemberIds(value: unknown): { ok: true; memberIds: string[] } | {
 }
 let bootSelection = { instanceId: "", model: "" };
 const engineHealthMemo: EngineHealthMemo = { at: 0, body: null };
+/** Work an engine reload would end: running engine turns, direct and internal turns, room turns and their slots, engine
+ * picks in flight. Health's Switch on waits while any of these is running (HEALTH-DOCTOR). */
+function engineSwitchWouldInterrupt(): boolean {
+  return engineWorkActive() || directTurnDispatchClaims.size > 0 || internalTurnOwners.size > 0 || groupTurnOperations.size > 0 || coordinationSlots.size > 0 || pendingRoomStops.size > 0 || activeProviderSelections.size > 0;
+}
 // Every new bot gets the workspace's new-bot effort where its engine offers
 // that level (triage row 23); an explicit effort wins.
 // 1.0.15 BIRTH-FUIGO: a bot with no owner pick is born by Store.birthSelection from the live registry (usable Fuigo, else a desktop
@@ -8854,7 +8860,8 @@ const foldRuntimeEvent = (event: RuntimeEvent) => {
             // network, memory or card. Over 250 ms means this thread was held.
             const answerMs = performance.now() - askReceivedAt;
             if (answerMs > 250) rateLimited("permission-auto-slow", 60_000, suppressed => `[permission] auto-answer slow ms=${Math.round(answerMs)} engine=${instance.driverKind}${suppressed ? ` more=${suppressed}` : ""}`);
-            if (outcome === "unavailable") throw new Error("the ask is no longer open");
+            // The engine no longer holds this ask: a card for it could never be answered, so none is raised (#1170).
+            if (outcome === "unavailable") throw new ApprovalNoLongerOpenError();
             stopHitByRequest.delete(`${event.threadId}:${requestId}`);
             rememberStopRecipients(asker.id, stopHit ?? undefined, event.threadId);
             // Full access answers almost every step now that engines ask it,
@@ -9949,9 +9956,10 @@ bus.subscribe((event: RuntimeEvent) => {
   let call = "";
   if (event.type === "item.started" && event.itemType === "tool") {
     // a title with more than a bare identifier is a call with arguments
-    // (ACP: "echo hi", "Read src/x.ts"); a bare "Bash" is not countable
+    // (ACP: "echo hi", "Read src/x.ts"); a bare "Bash" or Cursor's "MCP: tool" is not countable
     const title = event.title ?? "";
-    if (/\s|\//.test(title.trim())) { key = callKey("tool", title); call = askCallLabel({ tool: "tool", summary: title }); }
+    key = toolTitleKey(title);
+    if (key) call = askCallLabel({ tool: "tool", summary: title });
   } else if (event.type === "request.opened" && event.requestType === "permission") {
     // keyed on what the ask runs (its input too), named in plain words
     const ask = { tool: event.tool, summary: event.summary, toolInput: event.toolInput, toolCall: event.toolCall };
@@ -17934,6 +17942,8 @@ async function runGroupMemberTurn(
     // The owner's House Rules open every bot's prompt, rooms included
     // (house-rules.ts).
     shapeLayer("house-rules", houseRulesPrompt()),
+    // U24 S1: the same static reply habits a 1:1 turn carries (bot-shapes.ts).
+    replyHabitsLayer(),
     shapeLayer("about-me", roomStanding.aboutMe),
     ...system,
     shapeLayer("project-brief", projectMember?.brief ? `\n${projectMember.brief}` : ""),
@@ -22397,7 +22407,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
     // Help panel search (server/help-routes.ts): the docs this build shipped with, no owner data.
     if (method === "GET" && path === "/api/help/search") { const help = helpRoute({ method, url }); if (help) return json(res, help.status, help.body); }
     // Today's engine tag and the Health dot (server/engine-health-routes.ts): read only, owner only, one scan a minute.
-    if (method === "GET" && path === "/api/engine-health") { const eh = await engineHealthRoute({ method, url }, { owner: requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers), instances: () => describedInstances({ catalogs: "due" }), primaryId: () => bootSelection.instanceId || null, fluxKey: () => fluxKey() ?? null, memo: engineHealthMemo }); if (eh) return json(res, eh.status, eh.body); }
+    if ((method === "GET" && path === "/api/engine-health") || (method === "POST" && path === "/api/engine-health/recheck")) { const eh = await engineHealthRoute({ method, url, contentType: String(req.headers["content-type"] ?? "") }, { owner: requestSurface(req.headers, url.searchParams) === "desktop" || companionAuthorized(req.headers), instances: () => describedInstances({ catalogs: "due" }), primaryId: () => bootSelection.instanceId || null, fluxKey: () => fluxKey() ?? null, botEngineIds: () => store.bots.map((bot) => bot.modelSelection.instanceId), memo: engineHealthMemo }); if (eh) return json(res, eh.status, eh.body); }
     // Tester feedback from the help panel (server/feedback-routes.ts).
     if (method === "POST" && path === "/api/feedback") {
       const answered = await feedbackRoute({ method, path, readBody: (max, signal) => readBody(req, max, signal) }, { installId: () => feedbackInstallId(DATA_DIR) });
@@ -23882,6 +23892,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         const requestedSection = typeof body.section === "string" ? body.section.trim() : "";
         const wantsLead = body.lead === true;
         let targetSection: string | undefined;
+        let createdByLead = false;
+        let decideLeadTeam: (() => EventReply | undefined) | undefined;
         if (isWorkspaceChief(chief)) {
           if (!requestedSection) {
             return json(res, 400, {
@@ -23929,16 +23941,28 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           // borrow, so her requested spelling becomes the team's name.
           targetSection = lead ? lead.section : requestedSection;
         } else {
-          if (requestedSection && sectionKey(requestedSection) !== sectionKey(chief.section)) {
-            return json(res, 403, { error: "you can only create bots in your own section" });
-          }
-          // A team's lead already leads this team. Letting it create a second
-          // one would be electing its own replacement, which is a handover a
-          // person makes, not a side effect of adding a specialist.
-          if (wantsLead) {
-            return json(res, 403, { error: "only the workspace Chief of Staff can create a team lead" });
-          }
-          targetSection = chief.section;
+          // 1.0.16 TEAM-SECTION: a team lead fills its own team, or a NEW team it starts (a client team, with its own lead),
+          // never a team it did not start (server/team-founding.ts).
+          // Decided here, and decided AGAIN inside createPreflight (after the owner's card and once more with nothing awaited
+          // before createBot): while a card is open the team can gain a bot, a channel or a lead the lead did not make.
+          const gate = leadTeamGate({
+            read: () => ({ bots: store.bots, groups: store.groups }),
+            lead: () => store.bot(chief.id),
+            requested: requestedSection,
+            wantsLead,
+            markRefused: (team) => internalCapabilities.markTeamRefused(internalClaim, team),
+            refusedTeam: () => internalCapabilities.teamRefused(internalClaim),
+          });
+          const first = gate.decide();
+          if (first) return json(res, first.status, { error: first.error });
+          decideLeadTeam = () => {
+            const refused = gate.decide();
+            if (refused) return eventReply(refused.status, { error: refused.error });
+            targetSection = gate.section();
+            return undefined;
+          };
+          targetSection = gate.section();
+          createdByLead = true;
         }
         const name = String(body.name ?? "").trim();
         const role = String(body.role ?? "").trim();
@@ -23959,12 +23983,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         // The workspace size and the name are checked again after the owner's OK: the card can stay open for minutes
         // while other creates land, and a different name could otherwise take the last place.
         const createPreflight = (): EventReply | undefined => {
+          const team = decideLeadTeam?.();
+          if (team) return team;
           if (store.bots.length >= MAX_WORKSPACE_BOTS) return eventReply(409, { error: `this workspace is limited to ${MAX_WORKSPACE_BOTS} bots` });
+          // A lead can be elected in the team while the owner's card is open (by the owner, the workspace Chief or a team lead
+          // starting it): a lead create never demotes it, whoever asked.
+          const leadNow = wantsLead && store.bots.find((candidate) => candidate.chiefOfStaff === true && foldTeamName(sectionKey(candidate.section)) === foldTeamName(sectionKey(targetSection)));
+          if (leadNow) return eventReply(409, { error: `the ${sectionKey(targetSection)} team is already led by @${leadNow.name}: create this bot without lead` });
           const duplicate = store.bots.find(
             (candidate) =>
               !candidate.hidden &&
-              sectionKey(candidate.section) === sectionKey(targetSection) &&
-              candidate.name.trim().toLowerCase() === name.toLowerCase(),
+              foldTeamName(sectionKey(candidate.section)) === foldTeamName(sectionKey(targetSection)) &&
+              foldTeamName(candidate.name) === foldTeamName(name),
           );
           if (duplicate) return eventReply(409, { error: `@${duplicate.name} already exists in this section; use ${murageToolOnThisServer("list_bots")}` });
           return undefined;
@@ -24040,6 +24070,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
           autoApprove: inheritedAuto,
           approvePeerComms: false,
           computer: "off",
+          // Who started it, so this lead can keep filling a team it started and no other (server/team-founding.ts).
+          ...(createdByLead ? { createdByBotId: chief.id } : {}),
         })!;
         // Elected after the record exists, and as a SECTION lead: the scope
         // argument is what keeps this from reaching the workspace tier.
@@ -24594,8 +24626,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         ? json(res, 200, { ok: true })
         : json(res, 404, { error: "no such routine" });
     }
-    // Marking seen only clears attention dots, so like the per-run route it
-    // is open to every signed-in surface, the phone included (#1629).
+    // "Mark all as read" (upstream #1629). It stamps and returns every run,
+    // whoever's bot it is, so like the per-run route it answers the owner's
+    // own surfaces only: route-policy.ts classes it desktop, which a paired
+    // phone, a door or a bot never passes (route-policy.test.ts pins it).
     if (path === "/api/routine-runs/seen-all" && method === "POST") {
       return json(res, 200, { runs: routines!.markAllSeen() });
     }
@@ -30692,6 +30726,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
       if (!enablement && !cliOverride) return json(res, 400, { error: "Choose either a cli string or an enabled boolean" });
       if (cliOverride && /[\n\r]/.test(body.cli)) return json(res, 400, { error: "cli must not contain newlines" });
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
+      // Health's Switch on (HEALTH-DOCTOR) asks with ?whenIdle=1: it never ends a running answer. Checked here, with no
+      // await before the fence below, so no turn can start between the check and the fence.
+      if (url.searchParams.get("whenIdle") === "1" && engineSwitchWouldInterrupt()) return json(res, 409, { error: "Answers are still running. Try again in a moment.", code: "ENGINE_WORK_ACTIVE" });
       providerConfigBusy = true; void closeAllStreams();
       try {
         const result = enablement ? withInstanceEnabled(cfg, instancePatch[1], body.enabled) : withInstanceCli(cfg, instancePatch[1], body.cli);
@@ -30716,6 +30753,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise
         resetPathCache();
         return json(res, 200, { instances: await describedInstances() });
       } finally {
+        // Health's engine answer is read again after an engine changed, not served from the minute's memo.
+        dropEngineHealthMemo(engineHealthMemo);
         finishProviderConfigMutation();
       }
     }

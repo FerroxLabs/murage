@@ -1053,6 +1053,10 @@ export function inboxRunsOnCardsInScope(db: DatabaseSync, access: InboxAccess, n
 /** What the SQL half of an Inbox answer holds: everything that costs a scan. */
 interface InboxData {
   rows: Row[]; next?: string; total: number; approvals: number; questions: number; connections: number; decisions: number; toRead: number;
+  /** Owed items snoozed right now: taken off `decisions`, still owed (UX L2B, the badge counts them). */
+  snoozedOwed: number;
+  /** Connection cards snoozed right now: still the one ask for a lost connection, so no fallback restore row joins them. */
+  snoozedConnections: number;
   questionThreads: Record<string, number>;
   /** The first moment a snooze in the answer runs out, after which the answer is stale. */
   wakeAt: number; filledAt: number;
@@ -1182,6 +1186,8 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
     // snoozed one is already off), from the `v_` totals whatever its marks.
     const onCard = onCardInScope(db, access, now, cache);
     const onCardLive = onCard.sum(onCard.liveNow);
+    // A snoozed run receipt beside its card was never owed on its own (the card is the ask), so it does not come back as owed either.
+    const snoozedOnCard = onCard.sum(onCard.all.filter(group => group.live === 1 && group.snoozed_until !== null && group.snoozed_until > now));
     const correction = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => key === "questions" || key === "decisions" ? onCardLive : 0;
     const count = (key: "approvals" | "questions" | "connections" | "decisions" | "to_read") => Number(kept[key] ?? 0) - less(key) - correction(key);
     const total = search
@@ -1218,7 +1224,7 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
     const wake = (db.prepare(`SELECT MIN(snoozed_until) AS next FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>?`).get(now) as { next: number | null } | undefined)?.next;
     return { rows, ...(rows.length === pageSize ? { next: encodeCursor(rows[rows.length - 1]) } : {}), total,
       approvals: count("approvals"), questions: count("questions"), connections: count("connections"), decisions: count("decisions"), toRead: count("to_read"),
-      questionThreads, wakeAt: typeof wake === "number" ? wake : Infinity, filledAt: now };
+      snoozedOwed: Math.max(0, less("decisions") - snoozedOnCard), snoozedConnections: Math.max(0, less("connections")), questionThreads, wakeAt: typeof wake === "number" ? wake : Infinity, filledAt: now };
   };
   const data = cache ? cachedAnswer(db, JSON.stringify([view, page, pageSize, search, includeSnoozed, allowed, labels, query.after ?? ""]), now, load) : load();
   const { rows, total } = data;
@@ -1257,7 +1263,8 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
   // slug to match against the card; and this raises ONE row for every
   // connection cause anyway. Coarse evidence, coarse rule, and it errs
   // towards asking once rather than twice.
-  const restore = connectionCount === 0 ? connectionsToRestore(rollups) : [];
+  // A snoozed connection card is still that ask (UX L2B): it keeps the fallback row away, or one connection counts twice.
+  const restore = connectionCount === 0 && !(data.snoozedConnections > 0) ? connectionsToRestore(rollups) : [];
   return { items: rows.map(row => item(row, access)), total, page, pageSize, ...(data.next ? { next: data.next } : {}),
     unread: rows.filter(row => row.read_version !== version(row.json)).length,
     // IT IS ADDED TO BOTH OR IT IS ADDED TO NEITHER. The three segment counts
@@ -1267,6 +1274,9 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
     decisions: decisionCount + restore.length, toRead: toReadCount,
     approvals: approvalCount, questions: questionCount, connections: connectionCount + restore.length,
     ...(questionThreads ? { questionThreads } : {}),
+    // SNOOZED IS NOT ANSWERED (UX L2B). Owed items snoozed right now are off `decisions` and every segment, and the
+    // badge adds them back: this is the number to add. Present only when there is one, so other answers keep their shape.
+    ...(data.snoozedOwed > 0 ? { snoozedOwed: data.snoozedOwed } : {}),
     // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
     // owner's thirty six rows were four routines; the tab says "one line per
     // routine, not per run" and this is that sentence kept in data.

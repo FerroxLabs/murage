@@ -2213,6 +2213,14 @@ function handle(msg: any) {
         complete();
         return;
       }
+      if (mode === "ask-peer" && /- @\S+ (?:replied to|did not finish) the task you handed off \(task id /.test(promptText)) {
+        // RECALL-SKIP-DROP: a woken asker answers its wake and asks no one. Re-running the ask here sent a late wake
+        // from one test to whichever bot the NEXT test had just made (the first one list_bots names), so on a slow
+        // machine that test's ask found its peer busy: no card, no conversion reply.
+        out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "ASKER RESUMED: read the teammate's reply" } } } });
+        complete();
+        return;
+      }
       if ((mode === "ask-peer" || mode === "ask-peer-resume") && agentsMcp) {
         // the comms e2e: reach a peer bot through the injected agents proxy
         // and reply with whatever it said (the peer's fake runs plain happy
