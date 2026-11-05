@@ -1991,6 +1991,7 @@
   "browserExt.yourTurn.credentials": "{site} 需要你的密码、验证码或个人信息。请自己在 Murage 标签页中输入，然后点击“继续”。你输入时，{bot} 看不到该标签页。",
   "browserExt.yourTurn.payment": "{bot} 已到达 {site} 上订单的最后一步。请检查订单，如果你愿意，请自己付款，然后点击“继续”。",
   "browserExt.yourTurn.account": "{bot} 在 {site} 停在了账户或安全设置的更改前：密码、登录方式、恢复选项、权限、共享设置或关闭账户。请自己在 Murage 标签页中完成，然后点击“继续”。",
+  "browserExt.yourTurn.siteNotSet": "{bot} 在使用 {site} 之前暂停了。Murage for Chrome 没有确认这个新网站，所以这一步没有执行。点击“继续”再试一次，或点击“停止任务”结束它。",
   "browserExt.yourTurn.generic": "{bot} 在 {site} 停在了需要你的一步。如果你愿意，请自己在 Murage 标签页中完成，然后点击“继续”。",
   "browserExt.yourTurn.continue": "继续",
   "browserExt.yourTurn.stopTask": "停止任务",

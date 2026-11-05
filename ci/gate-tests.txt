@@ -108,6 +108,7 @@ scripts/browser-extension-chromereal.test.mjs	all	no input reaches a document ch
 scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 scripts/browser-extension-opus-review.test.mjs	all	screenshots never capture cross-site payment frames (security)
 scripts/browser-extension-release-config.test.mjs	all	packaging, upgrade and release integrity
+scripts/browser-extension-sable-popup.test.mjs	all	a popup never joins a paused or disconnected task (approval boundary)
 scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (approval boundary)
 scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
@@ -379,6 +380,7 @@ server/browser-extension-engine-close.test.ts	all	turning sharing off mid-start 
 server/browser-extension-engine-read.test.ts	all	denied destinations unfetchable; no browser credentials; revoke drops read
 server/browser-extension-engine.test.ts	all	no navigation when destination approval denied (approval)
 server/browser-extension-executor.test.ts	all	Executor refuses arbitrary evaluation
+server/browser-extension-failclosed.test.ts	all	a site the browser did not confirm is never used: the task pauses for the owner (approval)
 server/browser-extension-floor-flow.test.ts	all	payment and terms floor refuses without input
 server/browser-extension-integration.test.ts	all	bot uses the right browser profile
 server/browser-extension-mcp-api.test.ts	all	External client tools gated, revoke while waiting
@@ -392,6 +394,8 @@ server/browser-extension-phone.test.ts	all	paired phone cannot approve or regist
 server/browser-extension-policy.test.ts	all	site access never authorizes writes
 server/browser-extension-round3.test.ts	all	secret-named fields block value extraction (secrets)
 server/browser-extension-round4.test.ts	all	Recipient traversal cannot hide fields
+server/browser-extension-sable-hooks.test.ts	all	a lost browser connection is cut and re-told the approved sites (approval)
+server/browser-extension-sable-live.test.ts	all	Full access never cards or pauses on an unsure or failed action check
 server/browser-extension-service.test.ts	all	extension asks site before CDP observation
 server/browser-extension-setup-api.test.ts	all	extension setup needs owner consent
 server/browser-extension-setup-audience-api.test.ts	all	Non-owner turn cannot raise setup card
@@ -1862,7 +1866,6 @@ shared/mac-folder-prompt-plist.test.ts	all	MAC-FOLDER-PROMPT: the Mac folder pro
 server/nolimits-means-it.test.ts	all	No limits on owner turns runs key rules and unread calls; reader failures, found wipes, depth stops, elevated https text and gate files keep their card, every form code rounds 1 and 2 blocked is a must-hold
 server/owner-started.test.ts	all	Only a turn the owner started reads as owner-started, by the bound turn; the terms and a failover line stay proven
 server/nolimits-owner-started-api.test.ts	linux+mac	Real starts: owner lines run, a redispatch and a memory rebuild stay the owner's turn; gate files, webhooks, routines, rooms and unproven sends keep their cards
-server/nolimits-walk-crit.test.ts	all	NOLIMITS-WALK-CRIT: a shell -c form the reader does not follow (-oc, -xo x -c, -cs, -cO, +x -c, a second -c, fish -o, busybox, toybox, csh, tcsh) keeps its card on an owner No limits turn; -c, -lc, -cl, -lic, -xc, -ec, -o errexit -c read as before
 src/components/NoLimitsTermsPrompt.test.ts	all	The No limits terms dialog opens only for a desktop owner who has a bot at No limits
 server/room-open-tool-limit-api.test.ts	linux+mac	a room reply with a quiet tool running on Codex or an ACP engine is not stopped at 20 minutes, a silent engine with no tool still is, and a saved limit above 60 is kept
 server/room-turn-timeout.test.ts	all	a room counts its open engine tools and picks 20 or 60 from them, and Settings says what the server does

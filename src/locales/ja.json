@@ -1991,6 +1991,7 @@
   "browserExt.yourTurn.credentials": "{site} にはパスワード、コード、または個人情報が必要です。Murage のタブでご自身で入力し、「続ける」を押してください。入力中、{bot} はタブを見ることができません。",
   "browserExt.yourTurn.payment": "{bot} は {site} での注文の最後のステップに到達しました。内容を確認し、希望する場合はご自身で支払ってから、「続ける」を押してください。",
   "browserExt.yourTurn.account": "{bot} は {site} で、アカウントまたはセキュリティの変更（パスワード、サインイン方法、復旧、権限、共有設定、アカウントの閉鎖）の手前で止まりました。Murage のタブでご自身で操作し、「続ける」を押してください。",
+  "browserExt.yourTurn.siteNotSet": "{bot} は {site} を使う前に止まりました。Murage for Chrome が新しいサイトを確認できなかったため、この手順は実行されていません。もう一度試すには「続ける」を、終えるには「作業を止める」を押してください。",
   "browserExt.yourTurn.generic": "{bot} は {site} で、あなたの操作が必要な手順で止まりました。希望する場合は Murage のタブでご自身で操作し、「続ける」を押してください。",
   "browserExt.yourTurn.continue": "続ける",
   "browserExt.yourTurn.stopTask": "作業を止める",

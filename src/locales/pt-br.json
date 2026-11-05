@@ -1991,6 +1991,7 @@
   "browserExt.yourTurn.credentials": "{site} precisa da sua senha, de um código ou de dados pessoais. Digite-os você mesmo na aba do Murage e depois pressione Continuar. {bot} não consegue ver a aba enquanto você faz isso.",
   "browserExt.yourTurn.payment": "{bot} chegou ao último passo do pedido em {site}. Confira e pague você mesmo, se quiser, e depois pressione Continuar.",
   "browserExt.yourTurn.account": "{bot} parou em {site} em uma mudança de conta ou de segurança: senha, forma de entrar, recuperação, permissão, compartilhamento ou encerramento da conta. Faça isso você mesmo na aba do Murage e depois pressione Continuar.",
+  "browserExt.yourTurn.siteNotSet": "{bot} parou antes de usar {site}. O Murage for Chrome não confirmou o novo site, então o passo não foi executado. Pressione Continuar para tentar de novo ou Parar tarefa para encerrá-la.",
   "browserExt.yourTurn.generic": "{bot} parou em {site} em um passo que precisa de você. Faça isso você mesmo na aba do Murage, se quiser, e depois pressione Continuar.",
   "browserExt.yourTurn.continue": "Continuar",
   "browserExt.yourTurn.stopTask": "Parar tarefa",
