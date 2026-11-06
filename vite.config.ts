@@ -26,6 +26,7 @@ export default defineConfig({
       "server/**/*.test.ts",
       "electron/**/*.test.mjs",
       "src/**/*.test.ts",
+      "src/components/BotSettingsLazy.test.tsx",
       "src/components/PhoneAccessCard.test.tsx",
       "src/components/PhoneForBotsRow.test.tsx",
       "shared/**/*.test.ts",

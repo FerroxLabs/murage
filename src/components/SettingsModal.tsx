@@ -14,8 +14,11 @@ import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 // that each do one job. The section ids, their groups and their search words
 // live in lib/settings-sections.ts; this file owns the icons and the pages.
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
+import { Archive, BookOpen, Bot, Brain, ChevronRight, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
+import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
+import type { BotSettingsLeave } from "./BotSettingsPane";
+import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
+import { leaveBotPage, registerBotPageLeave, settingsOpener } from "@/lib/settings-leave";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { inNativeShell } from "@/lib/native-shell";
 import { builtInBrowserEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -39,6 +42,7 @@ import { CloudDevicesSettings } from "./cloud/CloudDevicesSettings";
 import { CloudDisconnectComputer, DISCONNECT_COPY, cloudDisconnectBridge } from "./cloud/CloudDisconnectComputer";
 import { ScriptAccessSettings } from "./ScriptAccessSettings";
 import { AboutMeSettings } from "./AboutMeSettings";
+import { BringYourAi } from "./BringYourAi";
 import { TimeZoneSettings } from "./TimeZoneSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import { CallsSettings } from "./CallsSettings";
@@ -55,6 +59,7 @@ import { WhatsAppSettings } from "./WhatsAppSettings";
 import { DiscordSettings } from "./DiscordSettings";
 import { RemoteSignOut } from "./RemoteSignOut";
 import { PhoneNotifications } from "./PhoneNotifications";
+import { PhonePayCard } from "./phone/PhonePayCard";
 import { openFirstRun } from "@/lib/first-run";
 import { cn } from "@/lib/cn";
 import { BOX_PANES, BoxBody, BoxHead } from "./ui/BoxShell";
@@ -97,6 +102,8 @@ export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sect
 export { settingsSearchResults } from "@/lib/settings-search";
 
 const MemorySection = retryableLazy(() => import("./MemorySection"));
+// A bot's page of this window (S7): loaded with the window by the bot opener (BotSettingsDialog), on first use otherwise.
+const BotPane = retryableLazy(() => loadBotSettingsPane().then((module) => ({ default: module.BotSettingsPane })));
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
   general: User,
@@ -978,12 +985,13 @@ function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advance
 
 /** Settings > Images: the setup, and the library of saved prompt blocks and
  *  reference packs as a tab of its own rather than a button inside a card. */
+const SETTINGS_NAV_STOPS = "[data-settings-section], [data-settings-bots-toggle], [data-settings-bot]";
 /** Up/Down (Left/Right on the phone strip) move between sections, Home and
  *  End jump to the ends. Group headings are not stops. */
 function moveBetweenSections(event: ReactKeyboardEvent<HTMLElement>) {
   const keys: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
-  if (!(event.target instanceof HTMLElement) || !event.target.hasAttribute("data-settings-section")) return;
-  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("[data-settings-section]"));
+  if (!(event.target instanceof HTMLElement) || !event.target.matches(SETTINGS_NAV_STOPS)) return;
+  const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(SETTINGS_NAV_STOPS));
   const at = buttons.indexOf(event.target);
   let next = -1;
   if (event.key in keys) next = (at + keys[event.key]! + buttons.length) % buttons.length;
@@ -996,15 +1004,28 @@ function moveBetweenSections(event: ReactKeyboardEvent<HTMLElement>) {
 
 /** Whether the Settings focus trap counts a control as a Tab stop. The browser skips anything under a hidden
  * ancestor (the open page a search keeps mounted) and the contents of a folded details element (but not its
- * summary), so the trap's first and last stops have to skip them too or Tab escapes the dialog. */
-export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentElement" | "tagName">): boolean {
+ * summary), so the trap's first and last stops have to skip them too or Tab escapes the dialog. It also skips what
+ * styles alone hide (the phone strip with the keyboard up): focus cannot land there, so a wrap to it would leave Tab
+ * stuck. iOS before 17.4 has no checkVisibility, so there the same answer comes from the computed styles. */
+export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentElement" | "tagName"> & Partial<Pick<Element, "checkVisibility">>): boolean {
   if (element.closest("[hidden]")) return false;
+  if (element.checkVisibility) {
+    if (!element.checkVisibility()) return false;
+  } else {
+    for (let each = element as Element | null; each; each = each.parentElement) {
+      if (getComputedStyle(each).display === "none") return false;
+    }
+  }
   const folded = element.closest("details:not([open])");
   return !folded || (element.parentElement === folded && element.tagName === "SUMMARY");
 }
 
-export function SettingsModal() {
+/** The one Settings window. With `bot` it shows that bot's page under the Bots group (the bot opener, BotSettingsDialog,
+ *  mounts it that way); without, the app's pages. Every way between them goes through the open page's unsaved-edit check. */
+export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose?: () => void } = {}) {
   const { state, dispatch } = useStore();
+  const botLeave = useRef<BotSettingsLeave | null>(null);
+  const [botsListOpen, setBotsListOpen] = useState(false);
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
   // bodies read as they always have. An alias also names a card on that page (state.appSettingsAnchor).
   const requested = state.appSettingsSection;
@@ -1033,9 +1054,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   useEffect(() => {
     const visible = sectionsForSurface(SECTIONS, desktop);
-    const next = settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed);
+    const next = bot ? null : settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed);
     if (next) dispatch({ type: "toggleAppSettings", open: true, section: next });
-  }, [dispatch, desktop, confirmed, requested]);
+  }, [dispatch, desktop, confirmed, requested, bot]);
 
   // An opener (a deep link, a What's new tile, the palette, a search result) leaves the search box.
   useEffect(() => { setQuery(""); }, [requested, anchor]);
@@ -1046,7 +1067,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   // Land on the card the opener named: its page's Advanced first when it lives there, then scroll, focus, highlight.
   useEffect(() => {
-    if (!anchor || query) return;
+    if (!anchor || query || bot) return;
     const card = cardForAnchor(SETTINGS_CARDS, anchor);
     if (card?.advanced && !advancedOpen[card.section]) {
       setAdvancedOpen((now) => ({ ...now, [card.section]: true }));
@@ -1062,7 +1083,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       onFound: (element) => { anchorWaitRef.current = null; revealAnchor(element); dispatch({ type: "appSettingsAnchorDone" }); },
       onGiveUp: () => { anchorWaitRef.current = null; paneRef.current?.scrollTo?.({ top: 0 }); dispatch({ type: "appSettingsAnchorDone" }); },
     });
-  }, [anchor, query, advancedOpen, dispatch]);
+  }, [anchor, query, advancedOpen, dispatch, bot]);
 
   const openCard = (card: SettingsCard) => dispatch({ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor });
 
@@ -1080,21 +1101,40 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   // Closing with words typed in House rules or About me and not saved asks first, the way bot settings does; a page change or a
   // search does not lose them, they are kept (lib/settings-drafts.ts) and come back when the page does.
-  const closeSettings = useCallback(() => {
+  // A bot's page asks through its own check (BotSettingsPane), which also waits for a save to finish. While one shows, the
+  // store's dispatch asks it too before any opener anywhere takes it away (lib/settings-leave.ts).
+  const showsBot = Boolean(bot);
+  useEffect(() => (showsBot ? registerBotPageLeave(() => botLeave.current) : undefined), [showsBot]);
+  const leave = useCallback((operation: () => void) => {
+    if (bot) { leaveBotPage(operation); return; }
     if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
     settingsDrafts.clear();
-    dispatch({ type: "toggleAppSettings", open: false });
-  }, [dispatch]);
+    operation();
+  }, [bot]);
+  const closeBot = useCallback(() => { if (onBotClose) onBotClose(); else dispatch({ type: "toggleSettings", open: false }); }, [dispatch, onBotClose]);
+  const closeSettings = useCallback(() => leave(bot ? closeBot : () => dispatch({ type: "toggleAppSettings", open: false })), [leave, bot, closeBot, dispatch]);
+  const openPage = (id: SettingsPage) => { setQuery(""); if (bot) leave(() => dispatch({ type: "toggleAppSettings", open: true, section: id })); else dispatch({ type: "toggleAppSettings", open: true, section: id }); };
+  const openBot = (id: string) => { if (bot?.id === id) return; leave(() => dispatch({ type: "toggleSettings", open: true, botId: id })); };
+  const Pane = loadedBotSettingsPane() ?? BotPane.Component;
 
+  // What had focus before the window opened, read before a bot page's search takes it (autoFocus runs before effects).
+  // Read through a ref: a bot page's close changes as the store updates the bot, and must not re-run the focus setup.
+  const closeSettingsRef = useRef(closeSettings); closeSettingsRef.current = closeSettings;
+  // Moving between app and bot pages mounts a new window; a button of the old one is not where focus goes back to.
+  // The opener is kept for the whole Settings session, so the new window gets the original one, not a button of the old.
+  const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? settingsOpener(document.activeElement) : null));
   useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus = opener;
     const dialog = dialogRef.current;
-    dialog?.focus();
+    if (!dialog?.contains(document.activeElement)) dialog?.focus();
 
     const onKey = (event: KeyboardEvent) => {
+      // A dialog opened over this window (a section editor) handles its own keys and its own unsaved-edit check.
+      const inner = event.target instanceof Element ? event.target.closest('dialog[open], [aria-modal="true"]') : null;
+      if (event.defaultPrevented || (inner && inner !== dialog)) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        closeSettings();
+        closeSettingsRef.current();
         return;
       }
       if (event.key !== "Tab" || !dialog) return;
@@ -1128,7 +1168,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       window.removeEventListener("keydown", onKey);
       returnFocus(previousFocus);
     };
-  }, [closeSettings, dispatch]);
+  }, [opener]);
 
   // A handful of sections (a paired phone sees three) read better as plain
   // chips on the phone strip than under headings that each hold one or two.
@@ -1146,18 +1186,23 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="app-settings-title"
+        aria-labelledby={bot ? undefined : "app-settings-title"}
+        aria-label={bot ? `Bot settings: ${bot.name}` : undefined}
         tabIndex={-1}
         className={cn(
           BOX_PANES,
-          "settings-dialog w-full max-w-[920px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          "settings-dialog w-full rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
           // overflow-clip, not overflow-hidden: a hidden box can still be
           // scrolled by focus, which slid the title and header off the top.
           // The list and the page each scroll on their own; the dialog never
           // does. 780 fits the grouped list (19 rows of 28px under 6 headings
           // of 22px, about 750px) in a 1440x900 window; a shorter window
           // scrolls the list, with the app's always-visible scrollbar.
-          "h-[min(780px,calc(100dvh-2rem))]",
+          // --vvh, not 100dvh: a bot's page shows in this window now (UX-L3B S7),
+          // and its Close must stay on screen when the visual viewport shrinks.
+          "h-[min(780px,calc(var(--vvh,100dvh)-2rem))]",
+          // A bot's page brings its own section list, so the window is wider while one shows.
+          bot ? "max-w-[1120px]" : "max-w-[920px]",
           // Below md a side list beside the content left too little of either
           // on a 390px screen. Full-bleed sheet, list folded to a horizontal
           // strip above it. --vvh rather than 100dvh so the footer buttons stay
@@ -1182,6 +1227,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             "max-md:w-full max-md:shrink-0 max-md:flex-row max-md:items-center max-md:gap-1.5 max-md:overflow-x-auto max-md:border-r-0 max-md:border-b max-md:px-4 max-md:py-2",
             // On the phone strip, the right edge fades: there is more to swipe to.
             "max-md:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]",
+            // Typing on a bot's page, the phone strip gives its height to the page. Only there: the strip of the
+            // app's own pages holds the search box, which the keyboard may be up for.
+            bot && "max-md:keyboard-open:hidden",
           )}
           ref={navRef}
           aria-label={t("settings.navAria")}
@@ -1190,7 +1238,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           <div id="app-settings-title" className="px-2 pb-1.5 pt-0.5 text-[15px] font-semibold text-ink max-md:hidden">
             {t("settings.title")}
           </div>
-          <div className="mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0">
+          {/* The bot page has its own search, over that bot's settings. The app search is the anchor for its hint (L4C). */}
+          <div data-settings-search hidden={bot ? true : undefined} className={cn("mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0", bot && "hidden")}>
             <Search size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <input
               value={query}
@@ -1201,6 +1250,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 if (query) setQuery("");
                 else closeSettings();
               }}
+              id="settings-search"
+              data-coach-anchor="settings-search"
               placeholder={t("settings.search")}
               aria-label={t("settings.searchAria")}
               className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
@@ -1208,7 +1259,11 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           </div>
           {SETTINGS_GROUPS.map((group) => {
             const entries = visiblePages.filter((entry) => entry.group === group);
-            if (entries.length === 0) return null;
+            // Archived bots are not listed, except the one this window is showing. The group stays closed until asked,
+            // so many bots never bury the groups below: only the open bot's row, and a lone bot needs no toggle.
+            const bots = group === "bots" ? state.bots.filter((each) => !each.hidden || each.id === bot?.id) : [];
+            const rows = botsListOpen || bots.length === 1 ? bots : bots.filter((each) => each.id === bot?.id);
+            if (entries.length === 0 && bots.length === 0) return null;
             return (
               <div
                 key={group}
@@ -1233,18 +1288,53 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     key={id}
                     type="button"
                     data-settings-section={id}
-                    onClick={() => { setQuery(""); dispatch({ type: "toggleAppSettings", open: true, section: id }); }}
-                    aria-current={navPage === id ? "page" : undefined}
+                    onClick={() => openPage(id)}
+                    aria-current={!bot && navPage === id ? "page" : undefined}
                     title={settingsPageLabel(id)}
                     className={cn(
                       "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
                       "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
-                      !q && navPage === id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                      !bot && !q && navPage === id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
                     )}
                   >
                     <Icon size={15} className="shrink-0" aria-hidden="true" />
                     <span className="min-w-0 truncate">{settingsPageLabel(id)}</span>
+                  </button>
+                ))}
+                {bots.length > 1 && (
+                  <button
+                    type="button"
+                    data-settings-bots-toggle
+                    aria-expanded={botsListOpen}
+                    onClick={() => setBotsListOpen((open) => !open)}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px] text-ink-secondary hover:bg-control/50 hover:text-ink",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                    )}
+                  >
+                    <ChevronRight size={15} className={cn("shrink-0 transition-transform", botsListOpen && "rotate-90")} aria-hidden="true" />
+                    <span className="min-w-0 truncate">{t("settings.botsToggle", { count: bots.length })}</span>
+                  </button>
+                )}
+                {rows.map((each) => (
+                  <button
+                    key={`bot-${each.id}`}
+                    type="button"
+                    data-settings-bot={each.id}
+                    onClick={() => openBot(each.id)}
+                    aria-current={bot?.id === each.id ? "page" : undefined}
+                    title={`${each.name}'s settings`}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      bot?.id === each.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Bot size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
               </div>
@@ -1255,7 +1345,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <BoxHead className="items-start px-5 py-3">
             <div className="min-w-0">
-              {q ? (
+              {bot ? (
+                <>
+                  <span className="block truncate text-[15px] font-semibold text-ink"><span className="font-normal text-ink-secondary">{settingsGroupLabel("bots")}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span><span>{bot.name}</span></span>
+                  <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{`What ${bot.name} knows, can use and how it works.`}</p>
+                </>
+              ) : q ? (
                 <>
                   <span className="block truncate text-[15px] font-semibold text-ink">{t("settings.l1.resultsFor", { query: q })}</span>
                   <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{t("settings.l1.resultsNote")}</p>
@@ -1273,13 +1368,20 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             </div>
             <button
               onClick={closeSettings}
-              aria-label={t("settings.close")}
+              aria-label={bot ? t("settings.bot.header.close") : t("settings.close")}
               className="flex size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               <X size={18} />
             </button>
           </BoxHead>
 
+          {bot ? (
+            <LazyBoundary inline onRetry={BotPane.retry}>
+              <Suspense fallback={<p role="status" className="px-5 text-[13px] text-ink-secondary">Loading {bot.name}'s settings</p>}>
+                <Pane bot={bot} onClose={closeBot} leaveRef={botLeave} />
+              </Suspense>
+            </LazyBoundary>
+          ) : (
           <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
             {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
@@ -1299,6 +1401,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 </Anchor>
                 {desktop === true && <Anchor id="time-zone-heading"><TimeZoneSettings /></Anchor>}
                 {desktop === true && <AboutMeSettings />}
+                {desktop === true && <Anchor id="bring-your-ai-heading"><BringYourAi /></Anchor>}
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
                     <SkinPicker />
@@ -1314,6 +1417,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                   * route lives on the browser door alone. */}
                 {desktop === false && <RemoteSignOut />}
                 {desktop === false && <PhoneNotifications />}
+                {/* UX L7 part 2: billing stays on the computer; the phone says so, with no purchase link. */}
+                {desktop === false && <PhonePayCard />}
                 {/* Headless installs have no desktop to make a script grant on; the owner's own browser door can (S1b R2). */}
                 {desktop === false && <ScriptAccessSettings bots={state.bots} />}
                 {/* The phone apps never send usage analytics and have no rail or startup, so a phone sees only what it has. */}
@@ -1388,6 +1493,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             )}
             </div>
           </BoxBody>
+          )}
         </div>
       </div>
     </div>

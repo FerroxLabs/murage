@@ -42,9 +42,12 @@ import { initializeMessageTables } from "./message-tables.ts";
 import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
-import { prepareMessageSearchBackfill } from "./message-search-index.ts";
+import { initializeRoomShares } from "./room-shares-schema.ts";
+import { applySearchMergeConfig, prepareMessageSearchBackfill, searchMergeRowExists } from "./message-search-index.ts";
+import { noteSearchMergeRowAtOpen } from "./search-merge-runner.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { upgradeRoomRequestOwed } from "./room-request-owed.ts";
@@ -155,6 +158,8 @@ function scheduleRepairSlice(db: DatabaseSync): void {
 export function retryAncestryRepair(): void { if (handle) runRepair(handle, undefined, REPAIR_SLICE_MS); }
 
 let background: BackgroundHandle | null = null;
+/** The options the server last started the background work with (requeueSearchBackfill starts it again with them). */
+let backgroundOptions: BackgroundHooks = {};
 /** The handle whose jobs are still running (null once its `done` settles, it is stopped, or the connection closes). */
 let runningBackground: BackgroundHandle | null = null;
 function trackBackground(started: BackgroundHandle): BackgroundHandle {
@@ -197,6 +202,7 @@ function backgroundHooks(db: DatabaseSync, extra: BackgroundHooks = {}): Backgro
  * milliseconds, the writer gate honoured before each, slower while an owner turn is live. Resumable; a second call replaces the first. */
 export function startBackgroundUpgrade(options: BackgroundHooks = {}): BackgroundHandle {
   const db = database();
+  backgroundOptions = options;
   // An ordinary start (nothing left over from an upgrade): no counts thread, no progress tracker, no overall writer, no calibration read. What
   // remains is the empty queue, which a later call to this function (a restore, a data-dir switch) replaces.
   if (!backgroundJobsPending(db).length) {
@@ -224,6 +230,15 @@ export function startBackgroundUpgrade(options: BackgroundHooks = {}): Backgroun
   background = trackBackground(startBackgroundUpgradeWork(db, backgroundHooks(db, { admit: awaitWriterGate, priorRates, onRates: keepRates, launch, countsSource: () => readCountsBlock(countsBlock ?? undefined), outside: () => upgradeOutside(db, ancestryUnrepaired(db)), onComplete: () => clearOverall(DATA_DIR), ...options }), () => fileBytes(handlePath ?? "")));
   if (!background.jobs.length) clearOverall(DATA_DIR);
   return background;
+}
+/** After a deletion's transaction reset the search fill (message-search-index.ts recoverSearchIndexAfterDropFailure) and committed: the
+ * queue captured its jobs when it started, so a state row alone restarts nothing. With background work started on this handle, it is
+ * started again (it picks up the search-index job, and resumes any other from its place); without (tests, offline tools) the next
+ * start's queue finds the fill. Never throws. */
+export function requeueSearchBackfill(): void {
+  if (!handle || !background) return;
+  try { startBackgroundUpgrade(backgroundOptions); }
+  catch (error) { console.warn("[message-search] the index fill could not be queued again; the next start fills it:", error instanceof Error ? error.message : error); }
 }
 /** Runs every pending background job to its end in this call (a test, or a caller that cannot go on until the work is done). */
 export function finishBackgroundUpgradeWorkNow(options: BackgroundHooks = {}): void {
@@ -342,6 +357,11 @@ export function database(): DatabaseSync {
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
       // still up, so a long checkpoint after a big migration is never silent.
       prepareMessageSearchBackfill(db); if (firstOpen) startupMark("database.search");
+      // the search index's merge settings (automerge=0, deletemerge=0, usermerge=4; literals): a deletion's COMMIT writes tombstones
+      // only and the checkpointer worker does the merging (designs/SMOOTH-FTS-MERGE-R6.md §1). The fast path is declared by the
+      // worker's readback, not here. A marker row left in either state means a merge or a WAL scrub is still owed.
+      applySearchMergeConfig(db);
+      noteSearchMergeRowAtOpen(searchMergeRowExists(db));
       if (migrating) {
         let beat: BlockingHeartbeat | undefined;
         try { beat = upgrade.blocking("committing", from ?? undefined); } catch { /* a status write never stops an upgrade */ }
@@ -382,7 +402,7 @@ export function database(): DatabaseSync {
     initializeInbox(db);
     initializeThreadSnooze(db);
     initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); if (firstOpen) startupMark("database.tablesAll");
+    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
     runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
     // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
     installWriteRevisionTriggers(db);
@@ -537,7 +557,7 @@ function startupStorage(db: DatabaseSync, file: string, log: boolean) {
 
 export function closeDatabase() {
   launchCounts = null; // a new connection counts again (or reads the cache)
-  background?.stop(); background = null; runningBackground = null;
+  background?.stop(); background = null; runningBackground = null; backgroundOptions = {};
   if (storageTimer) { clearInterval(storageTimer); storageTimer = undefined; }
   if (handle) { const state = unrepaired.get(handle); if (state?.timer) clearTimeout(state.timer); unrepaired.delete(handle); }
   for (const hook of closeHooks) { try { hook(); } catch { /* idempotent shutdown */ } }
