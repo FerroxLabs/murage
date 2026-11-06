@@ -277,6 +277,31 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
     expect((await apply({ batchId: shown.body.batchId, requestIds, freshAuth: { nonce: last.nonce, signature: signFor(APPROVE_ALL_THREAD, shown.body.batchId, last) } }, appWithKey)).body.code).toBe("batch_used");
   }, 240_000);
 
+  it("the bot respond route answers by the same rules as the thread route (BOT-RESPOND-ROUTE-UNIFY)", async () => {
+    const one = await askedBot("Bot route one", "builder");
+    const other = await askedBot("Bot route other");
+    const botRespond = (botId: string, body: object, headers: Record<string, string>) => request("POST", `/api/bots/${botId}/respond`, body, headers);
+    // another bot's thread is not this bot's to answer
+    expect((await botRespond(one.bot.id, { threadId: other.bot.threadId, requestId: other.requestId, behavior: "allow" }, desktopHeaders)).status).toBe(404);
+    expect((await cardById(other.bot.threadId, other.requestId)).answered).toBeUndefined();
+    // a request nothing is waiting on gets the thread route's own answer
+    const nothing = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: "not-a-request", behavior: "allow" }, desktopHeaders);
+    const nothingThread = await request("POST", `/api/threads/${one.bot.threadId}/respond`, { requestId: "not-a-request", behavior: "allow" }, desktopHeaders);
+    expect([nothing.status, nothing.body?.outcome, nothing.body?.error]).toEqual([nothingThread.status, nothingThread.body?.outcome, nothingThread.body?.error]);
+    // the phone app needs a fresh proof on a card that is not low, on both routes alike
+    const viaBot = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: one.requestId, behavior: "allow" }, appWithKey);
+    const viaThread = await request("POST", `/api/threads/${one.bot.threadId}/respond`, { requestId: one.requestId, behavior: "allow" }, appWithKey);
+    expect(viaBot.status, JSON.stringify(viaBot.body)).toBe(403);
+    expect(viaBot.body.code).toBe("fresh_auth");
+    expect([viaThread.status, viaThread.body?.code]).toEqual([403, "fresh_auth"]);
+    expect((await cardById(one.bot.threadId, one.requestId)).answered).toBeUndefined();
+    // the desktop's Allow lands once
+    const allowed = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: one.requestId, behavior: "allow" }, desktopHeaders);
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
+    expect((await cardById(one.bot.threadId, one.requestId)).answered).toBe("allow");
+    await desktopApi("POST", `/api/threads/${other.bot.threadId}/respond`, { requestId: other.requestId, behavior: "deny" });
+  }, 240_000);
+
   it("only the desktop app and the owner phone app show the button; the caution choice is one server pref they share", async () => {
     const surface = (headers: Record<string, string>) => request("POST", "/api/inbox/approve-all/surface", {}, headers);
     const caution = (dismissed: unknown, headers: Record<string, string>) => request("POST", "/api/inbox/approve-all/caution", { dismissed }, headers);
@@ -292,5 +317,19 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
     expect((await surface(desktopHeaders)).body.cautionDismissed).toBe(true);
     expect((await caution(false, desktopHeaders)).body).toEqual({ cautionDismissed: false });
     expect((await surface(appWithKey)).body.cautionDismissed).toBe(false);
+  }, 60_000);
+
+  it("Today's Calm | Detailed choice: the desktop and the keyed phone app save it over real HTTP; a browser and a keyless app only read it", async () => {
+    const read = (headers: Record<string, string>) => request("GET", "/api/owner-prefs/today-view", undefined, headers);
+    const save = (view: unknown, headers: Record<string, string>) => request("POST", "/api/owner-prefs/today-view", { view }, headers);
+    expect((await read(desktopHeaders)).body).toEqual({ view: "calm", canSave: true });
+    expect((await save("Detailed", desktopHeaders)).status).toBe(400);
+    expect((await save("detailed", pairedBrowser)).status).toBe(403);
+    expect((await save("detailed", appNoKey)).status).toBe(403);
+    expect((await read(pairedBrowser)).body).toEqual({ view: "calm", canSave: false });
+    expect((await save("detailed", appWithKey)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(desktopHeaders)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(appNoKey)).body).toEqual({ view: "detailed", canSave: false });
+    expect((await request("POST", "/api/inbox/approve-all/surface", {}, desktopHeaders)).body.cautionDismissed).toBe(false);
   }, 60_000);
 });

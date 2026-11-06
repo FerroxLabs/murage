@@ -215,6 +215,9 @@ export function doorForwardHeaders(token: string | undefined): Record<string, st
 export const DEVICE_OWNER_READS = [
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "GET", path: /^\/api\/events$/ },
+  // All chats and its message search answer only the owner (the device door's own allowlist above still bounds the search)
+  { method: "GET", path: /^\/api\/chats$/ },
+  { method: "GET", path: /^\/api\/search$/ },
 ] as const;
 
 /** Approve all from the paired phone app (APPROVE-ALL-1016 7.1). The harness takes it only from the desktop app or a

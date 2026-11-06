@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { en } from "@/locales";
 
 // The cards talk to the harness and to the store. Neither exists in a node
 // test, and neither is what these tests are about: what is being checked is
@@ -872,6 +873,19 @@ describe("card six: done", () => {
     // read-only probe has said what this computer can do.
     expect(markup).not.toContain(copy.phone.button);
     expect(markup).not.toContain(copy.phoneNeeds.button);
+  });
+
+  it("offers Bring what you already use last, on the desktop only, after the work and hire rows", () => {
+    const markup = render(PARKED, "next");
+    expect(markup).toContain('data-testid="bring-your-ai-row"');
+    expect(markup).toContain(asHtml(en["bringYourAi.firstRunLine"]));
+    expect(markup.indexOf('data-testid="bring-your-ai-row"')).toBeGreaterThan(markup.indexOf(asHtml(copy.hire.title)));
+    surfaceAnswer = false;
+    try {
+      expect(render(PARKED, "next")).not.toContain('data-testid="bring-your-ai-row"');
+    } finally {
+      surfaceAnswer = true;
+    }
   });
 
   // Static markup runs no effects, so the mount probe is held to its source:

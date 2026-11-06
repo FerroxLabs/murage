@@ -11,6 +11,7 @@
 // admissible, so it reads as withheld. Only a source that names no message at all (not a message source) has no anchor to check.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { isMurageVoice } from "./murage-voice.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 const positive = new WeakMap<DatabaseSync, Set<string>>();
 const seeks = new WeakMap<DatabaseSync, StatementSync>();
@@ -29,7 +30,7 @@ export function murageAnchor(db: DatabaseSync, threadId: string | null | undefin
   // not memoized: a row that arrives later (a restore) is judged on what it is then
   if (!row || typeof row.json !== "string") return true;
   let json: unknown;
-  try { json = JSON.parse(row.json); } catch { return true; }
+  try { json = rowToMessage({ json: row.json }); } catch { return true; }
   if (typeof json !== "object" || json === null || Array.isArray(json)) return true;
   if (!isMurageVoice(json)) return false;
   if (memo) memo.add(key); else positive.set(db, new Set([key]));
@@ -61,7 +62,7 @@ export function bareAnchorsWithheld(db: DatabaseSync, threads: Iterable<string>,
     if (positive.get(db)?.has(key)) return true;
     if (typeof row.json !== "string") return true;
     let json: unknown;
-    try { json = JSON.parse(row.json); } catch { return true; }
+    try { json = rowToMessage({ json: row.json }); } catch { return true; }
     if (typeof json !== "object" || json === null || Array.isArray(json)) return true;
     if (isMurageVoice(json)) {
       const memo = positive.get(db);

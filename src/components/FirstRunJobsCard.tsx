@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   connectApp,
+  connectAppStatusForLabel,
   connectLabelTaken,
   firstFreeConnectLabel,
   readConnectAppStatus,
@@ -35,6 +36,7 @@ import {
   type ConnectAppAccount,
 } from "@/lib/connect-app";
 import { ConnectLabelForm } from "./ConnectLabelForm";
+import { t } from "@/lib/i18n";
 import { opensPurchasePages } from "@/lib/native-shell";
 import { FIRST_RUN_COPY, firstRunAddress } from "@/lib/first-run-copy";
 import { enableFirstRunReview, installFirstRunCrew } from "@/lib/first-run-crew";
@@ -345,6 +347,12 @@ function Eyebrow({ children }: { children: ReactNode }) {
   return <div className="mt-3 text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-secondary">{children}</div>;
 }
 
+/** Who runs the sign-in page for an app, for the unfinished line. Both
+ *  first-run apps are Google's (SETUP_JOB_APPS). */
+export function connectProvider(need: FirstRunJobNeed): string {
+  return need === "gmail" || need === "googlecalendar" ? "Google" : need;
+}
+
 export function FirstRunConnectView({
   screen,
   busy,
@@ -358,6 +366,11 @@ export function FirstRunConnectView({
   onCancelLabel = () => {},
   onSkipToInput,
   onElsewhere,
+  unfinished = "",
+  onRetry = () => {},
+  onOtherAccount = () => {},
+  parked = false,
+  onNotNow,
 }: {
   screen: FirstRunConnectScreen;
   busy: FirstRunJobNeed | "";
@@ -376,7 +389,18 @@ export function FirstRunConnectView({
   onCancelLabel?: () => void;
   onSkipToInput: () => void;
   onElsewhere: () => void;
+  /** UX-L6A part 2 (R1-34): the app whose sign-in came back unfinished
+   *  (window closed, Google refused, or the wait ran out), or "". */
+  unfinished?: FirstRunJobNeed | "";
+  onRetry?: (need: FirstRunJobNeed) => void;
+  onOtherAccount?: (need: FirstRunJobNeed) => void;
+  /** "Not now" was pressed: the job waits on this screen. */
+  parked?: boolean;
+  /** Absent: no "Not now" (a phone, or nothing but Flux to connect). */
+  onNotNow?: () => void;
 }) {
+  const apps = screen.rows.filter((row) => row.need !== "flux").map((row) => row.bold);
+  const firstApp = apps.length > 0;
   return (
     <FirstRunBubble>
       <FirstRunLine>{screen.lead}</FirstRunLine>
@@ -405,6 +429,19 @@ export function FirstRunConnectView({
                 onConfirm={(alias) => onConfirmLabel(row.need, alias)}
                 onCancel={onCancelLabel}
               />
+            ) : unfinished === row.need && desktop === true ? (
+              // R1-34: said on the row, with both ways forward. Never a
+              // failure announced while the sign-in might still be going:
+              // connectApp only hands back unfinished after its wait ends.
+              <span className="flex flex-wrap items-center gap-2" data-connect-unfinished={row.need}>
+                <span role="status" className="text-[12.5px] text-ink-secondary">{t("ux.l6a.connect.unfinished", { provider: connectProvider(row.need) })}</span>
+                <button type="button" disabled={Boolean(busy)} onClick={() => onRetry(row.need)} className={`${FIRST_RUN_CHIP} ${FIRST_RUN_FOCUS} shrink-0`}>
+                  {t("ux.l6a.connect.again")}
+                </button>
+                <button type="button" disabled={Boolean(busy)} onClick={() => onOtherAccount(row.need)} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+                  {t("ux.l6a.connect.other")}
+                </button>
+              </span>
             ) : row.need === "flux" || desktop === true ? (
               <button
                 type="button"
@@ -422,7 +459,15 @@ export function FirstRunConnectView({
       </ul>
 
       <FirstRunFailure message={failure} />
+      <div role="status">
+        {parked && firstApp && <FirstRunLine quiet>{t("ux.l6a.connect.waiting", { app: new Intl.ListFormat(undefined, { style: "long", type: "disjunction" }).format(apps) })}</FirstRunLine>}
+      </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
+        {onNotNow && !parked && firstApp && (
+          <button type="button" disabled={Boolean(busy)} onClick={onNotNow} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
+            {t("ux.l6a.connect.notNow")}
+          </button>
+        )}
         {screen.skipToInput && (
           <button type="button" disabled={Boolean(busy)} onClick={onSkipToInput} className={`${FIRST_RUN_QUIET} ${FIRST_RUN_FOCUS}`}>
             {screen.skipToInput}
@@ -834,6 +879,16 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   const [shown, setShown] = useState(1);
   const [busyNeed, setBusyNeed] = useState<FirstRunJobNeed | "">("");
   const [labelling, setLabelling] = useState<FirstRunJobNeed | "">("");
+  /** UX-L6A part 2 (R1-34): a sign-in that came back unfinished, and its label. */
+  const [unfinished, setUnfinished] = useState<{ need: SetupJobApp; label: ConfirmedConnectLabel } | null>(null);
+  /** "Not now" on the connect screen: the job waits here. */
+  const [parked, setParked] = useState(false);
+  /** Bumped by every later connect action, so a slow account read from
+   *  "Use a different account" never reopens a form the owner moved past. */
+  const otherAccountRead = useRef(0);
+  /** The read id of a recheck still in flight, or 0. Its busy mark is
+   *  cleared when the screen is left, or the controls would stay disabled. */
+  const recheckInFlight = useRef(0);
   /** The accounts each app on the connect screen already has, so its label
    *  form fills in a label still free. */
   const [knownAccounts, setKnownAccounts] = useState<Partial<Record<FirstRunJobNeed, readonly ConnectAppAccount[]>>>({});
@@ -990,7 +1045,20 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
   /** Back to the Chief, with the job, the text and the parsed items cleared.
    *  None of the three was ever persisted; the choice was, so it is the one
    *  thing that has to be put back. */
+  /** Leaving the connect screen (or saying Not now) ends its sign-in states:
+   *  no open label form, no unfinished line, no pending account read. */
+  const leaveConnectStates = () => {
+    if (recheckInFlight.current !== 0 && recheckInFlight.current === otherAccountRead.current) setBusyNeed("");
+    recheckInFlight.current = 0;
+    otherAccountRead.current += 1;
+    setLabelling("");
+    setTaken(null);
+    setUnfinished(null);
+    setParked(false);
+  };
+
   const elsewhere = async () => {
+    leaveConnectStates();
     setTyped("");
     setItems([]);
     setStage(null);
@@ -1016,16 +1084,24 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     if (desktop !== true) return;
     // An app's Connect opens its label form; the sign-in starts only from
     // the confirmed label (confirmLabel), the same rule as Connected apps.
+    setUnfinished(null);
+    setParked(false);
+    otherAccountRead.current += 1;
     setFailure("");
     setTaken(null);
     setLabelling((current) => (current === need ? "" : need));
   };
 
-  const confirmLabel = async (need: FirstRunJobNeed, alias: ConfirmedConnectLabel) => {
-    if (!job || !world || busyNeed || need === "flux" || desktop !== true) return;
+  const confirmLabel = async (need: FirstRunJobNeed, alias: ConfirmedConnectLabel, retry = false) => {
+    // `retry`: called from recheckUnfinished's read, whose own busy mark this
+    // render's `busyNeed` may still show.
+    if (!job || !world || (busyNeed && !retry) || need === "flux" || desktop !== true) return;
     setBusyNeed(need);
     setFailure("");
     setTaken(null);
+    setUnfinished(null);
+    setParked(false);
+    otherAccountRead.current += 1;
     // The row goes back to its button, which says to finish in the browser.
     setLabelling("");
     try {
@@ -1037,13 +1113,15 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         cancelled: () => gone.current,
       });
       if (gone.current) return;
-      if (!result.connected) return;
-      // Connecting the LAST missing thing advances by itself. Making somebody
-      // press a second button to start the work they already asked for is a
-      // form.
-      const now: FirstRunJobWorld = { ...world, connected: [...world.connected, need], appsUnreadable: false };
-      setStage(afterConnect(job, now));
-      forgetSetupView();
+      // R1-34: the window was closed, Google refused, or the wait ran out.
+      // The row says so and offers both ways forward; the setup read wakes
+      // so a sign-in that finishes late is still seen.
+      if (!result.connected) {
+        setUnfinished({ need, label: alias });
+        forgetSetupView();
+        return;
+      }
+      appConnected(need);
     } catch (cause) {
       if (gone.current) return;
       if (connectLabelTaken(cause)) {
@@ -1057,6 +1135,60 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
     } finally {
       if (!gone.current) setBusyNeed("");
     }
+  };
+
+  /** One app is connected: connecting the LAST missing thing advances by
+   *  itself. Making somebody press a second button to start the work they
+   *  already asked for is a form. */
+  const appConnected = (need: SetupJobApp) => {
+    if (!job || !world) return;
+    const now: FirstRunJobWorld = { ...world, connected: [...world.connected, need], appsUnreadable: false };
+    setStage(afterConnect(job, now));
+    forgetSetupView();
+  };
+
+  /**
+   * R1-34: Try again and Use a different account, after an unfinished
+   * sign-in. Both look again at the account under the label the owner
+   * confirmed first, because the sign-in may have finished after the wait:
+   * active means the job goes on. Otherwise Try again reuses that confirmed
+   * label when its account failed or expired (the harness clears those), and
+   * anything still in flight, or Use a different account, opens the label
+   * form so the next sign-in starts only from a label the owner confirms.
+   * A read that fails says so and keeps the unfinished line. A newer connect
+   * action makes this read stale and it does nothing.
+   */
+  const recheckUnfinished = (mode: "again" | "other") => {
+    const held = unfinished;
+    if (!held || !job || !world || busyNeed || desktop !== true) return;
+    const { need, label } = held;
+    const read = ++otherAccountRead.current;
+    recheckInFlight.current = read;
+    setBusyNeed(need);
+    setFailure("");
+    void readConnectAppStatus(need, api).then((next) => {
+      if (recheckInFlight.current === read) recheckInFlight.current = 0;
+      if (gone.current || read !== otherAccountRead.current) return;
+      setBusyNeed("");
+      if (!next) {
+        setFailure(appsCopy.failure);
+        return;
+      }
+      setKnownAccounts((current) => ({ ...current, [need]: next.accounts ?? [] }));
+      const mine = connectAppStatusForLabel(next, label);
+      if (mine.connected) {
+        setUnfinished(null);
+        appConnected(need);
+        return;
+      }
+      if (mode === "again" && !mine.pending) {
+        void confirmLabel(need, label, true);
+        return;
+      }
+      setUnfinished(null);
+      setTaken(null);
+      setLabelling(need);
+    });
   };
 
   const saveKey = async () => {
@@ -1190,9 +1322,14 @@ export function FirstRunDoItCard({ bot, settled }: { bot: Bot; settled: boolean 
         takenLabel={labelling && taken?.need === labelling ? taken.label : undefined}
         onConnect={(need) => void connect(need)}
         onConfirmLabel={(need, alias) => void confirmLabel(need, alias)}
-        onCancelLabel={() => { setLabelling(""); setTaken(null); }}
-        onSkipToInput={() => setStage("input")}
+        onCancelLabel={() => { otherAccountRead.current += 1; setLabelling(""); setTaken(null); }}
+        onSkipToInput={() => { leaveConnectStates(); setStage("input"); }}
         onElsewhere={() => void elsewhere()}
+        unfinished={unfinished?.need ?? ""}
+        onRetry={() => recheckUnfinished("again")}
+        onOtherAccount={() => recheckUnfinished("other")}
+        parked={parked}
+        onNotNow={desktop === true ? () => { leaveConnectStates(); setParked(true); } : undefined}
       />
     );
   }

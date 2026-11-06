@@ -561,6 +561,7 @@ export function scopedConfig<T extends { profile?: unknown; vps?: unknown }>(con
   // until someone decides a phone should see it (Kimi round 3, L3).
   const out: Record<string, unknown> = { ...config };
   delete out.noLimitsTerms; // the desktop's to read, and its alone to accept
+  delete out.spend; // the monthly limit and the Flux key fingerprint (UX-L2C): the desktop's alone
   if (out.features && typeof out.features === "object") {
     const { botsSharedAcrossTeams: _sharing, ...features } = out.features as Record<string, unknown>;
     out.features = features;
