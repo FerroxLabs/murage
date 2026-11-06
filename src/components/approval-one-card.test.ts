@@ -203,7 +203,8 @@ describe("(6) the composer hides the textarea while a card waits", () => {
   it("hides the textarea, the controls and the plus menu, and drops the pointer placeholders", () => {
     const composer = read("./Composer.tsx");
     expect(composer).toContain("hidden={Boolean(approval)}");
-    expect(composer).toMatch(/data-composer-controls className=\{cn\([^)]*approval && "hidden"\)\}/);
+    // TODAY's compact Tell box adds a class after it (its selector holds parentheses), so match to the end of the line
+    expect(composer).toMatch(/data-composer-controls className=\{cn\([^\n]*approval && "hidden"[^\n]*\)\}>/);
     expect(composer).toContain("phoneComposer && !locked && !approval && (");
     expect(composer).not.toContain("Answer the approval above to continue");
     expect(composer).not.toContain("Answer the requests above to continue");

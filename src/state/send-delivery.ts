@@ -23,6 +23,15 @@ export interface OutboxDraft {
   replyToId?: string;
 }
 
+/** The Post in… pick a 1:1 send carries (server parsePostPick). */
+export interface VenuePostPick { venueId: string; venueThreadId?: string }
+
+/** The pick's fields for a send body: absent when there is no pick. */
+export function venuePostBody(entry: { postTo?: VenuePostPick; quoteMessageId?: string }): { postTo?: VenuePostPick; quoteMessageId?: string } {
+  if (!entry.postTo || typeof entry.postTo.venueId !== "string" || !entry.postTo.venueId) return {};
+  return { postTo: entry.postTo, ...(entry.quoteMessageId ? { quoteMessageId: entry.quoteMessageId } : {}) };
+}
+
 export interface OutboxEntry {
   sendId: string;
   kind: "bot" | "group";
@@ -32,6 +41,9 @@ export interface OutboxEntry {
   /** The exact text posted (attachment references included). */
   text: string;
   replyToId?: string;
+  /** VENUE-POST-1017: the owner's Post in… pick and the bot reply it quotes; posted with the send, never changed by a retry. */
+  postTo?: VenuePostPick;
+  quoteMessageId?: string;
   mode?: "chat" | "goal";
   responderId?: string;
   draft?: OutboxDraft;
