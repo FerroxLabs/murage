@@ -23,6 +23,7 @@ import { createCloudLiveGate } from "./cloud-live.mjs";
 import { channelClass } from "./ipc-channel-classes.mjs";
 import { writeClipboardText } from "./clipboard-write.mjs";
 import { COPY as CLOUD_COPY, createCloudHomeClient, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
+import { desktopStepUpLanguage } from "./step-up-locale.mjs";
 import { createCloudHomeStore } from "./cloud-home-store.mjs";
 import { registerCloudHomeIpc } from "./cloud-home-ipc.mjs";
 import { doorLinkFromCommandLine, doorLinkFromDeepLink, parseDoorLink, parseOpenCloudLink } from "./cloud-door-link.mjs";
@@ -264,9 +265,16 @@ const cloudHome = installCloudHome({ liveGate: cloudLive, packaged: app.isPackag
     openExternal: (url) => shell.openExternal(url),
     store: createCloudHomeStore({ safeStorage, directory: cloudHomesDirectory() }),
     confirmStepUp: createNativeStepUpConfirm({ systemPreferences, dialog, getWindow: () => mainWindow,
-      resolveBotName: async (homeId, botId) => { // best effort: a bot's display name in the step-up sentence
-        const response = await cloudHome?.client?.fetch(homeId, "/api/bots?messages=0", { headers: { accept: "application/json" } });
-        return response?.ok ? (await response.json()).bots?.find((bot) => bot?.id === botId)?.name : undefined; } }) }),
+      // Security confirmations always use THIS computer's language: its saved app language, then the system language,
+      // then English (step-up-locale.mjs). Never the home's, so a home cannot make the dialog unreadable (MurageMain
+      // 2026-11-06, handoffs/designs/STEPUP-LOOKUPS-R2-1018.md).
+      language: () => desktopStepUpLanguage({ system: systemLanguage(),
+        readDesktopConfig: () => fs.readFileSync(path.join(ownedDesktopDataDir(), "config.json"), "utf8") }),
+      // The bot-name lookup uses fetchHomeInfo, which never steps up, connects or refreshes.
+      resolveBotName: async (homeId, botId, { signal }) => { // best effort: a bot's display name in the step-up sentence
+        const list = await cloudHome?.client?.fetchHomeInfo(homeId, "/api/bots?messages=0", { signal });
+        const name = Array.isArray(list?.bots) ? list.bots.find((bot) => bot?.id === botId)?.name : undefined;
+        return typeof name === "string" ? name : undefined; } }) }),
   cloudPreload: path.join(__dirname, "preload-cloud.cjs"), onWindowClosed: () => applyUnreadBadge() });
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
@@ -3049,7 +3057,7 @@ async function prepareForPreviousVersion() {
     let failure = null;
     try { await runDesktopRecovery("memory-downgrade", {}); } catch (error) { if (error?.code !== "MEMORY_DATABASE_MISSING" && error?.message !== "MEMORY_DATABASE_MISSING") failure = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,100}$/.test(error.code) ? error.code : "RECOVERY_OPERATION_FAILED"; }
     // work that is still owed is named in plain words, with nothing to look up
-    const PREPARE_WAITING = { DOWNGRADE_WORK_PENDING: "Some messages are still waiting to send or restore. Open Murage, send or cancel them, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
+    const PREPARE_WAITING = { DOWNGRADE_WORK_PENDING: "Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", DOWNGRADE_CARD_DELIVERY_OWED: "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again." };
     if (failure && PREPARE_WAITING[failure]) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 once this is done.", detail: `Your chats and memories are as they were. ${PREPARE_WAITING[failure]}` });
     else if (failure) await dialog.showMessageBox({ type: "warning", buttons: ["Quit"], title: "Murage", message: "Murage will be ready for 1.0.2 after another start.", detail: `Your chats and memories are as they were. The next start of this version picks up where it left off. Code: ${failure}` });
     else await dialog.showMessageBox({ type: "info", buttons: ["Quit"], title: "Murage", message: "Ready for Murage 1.0.2.", detail: "Install it now; your chats and memories are kept." });

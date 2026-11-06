@@ -220,8 +220,8 @@ test('missing, throwing or indeterminate busy hook defers update reload', async 
   }
 });
 
-test('manifest excludes incognito profiles and is version 1.0.0', () => {
+test('manifest excludes incognito profiles and is version 1.0.1', () => {
   const manifest = JSON.parse(readFileSync(new URL('../extensions/murage-browser/manifest.json', import.meta.url), 'utf8'));
   assert.equal(manifest.incognito, 'not_allowed');
-  assert.equal(manifest.version, '1.0.0');
+  assert.equal(manifest.version, '1.0.1');
 });

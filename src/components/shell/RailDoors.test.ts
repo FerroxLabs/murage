@@ -45,7 +45,7 @@ describe("RailDoors", () => {
     expect(markup).toContain('aria-label="Needs you, 3 waiting"');
     expect(markup).toMatch(/<span aria-hidden="true" data-needs-you-count[^>]*>3<\/span>/);
     expect(needsDoorName(0, false)).toBe("Needs you, nothing waiting");
-    expect(needsDoorName(undefined, false)).toBe("Needs you, not known yet");
+    expect(needsDoorName(undefined, false)).toBe("Needs you: details not yet available");
     expect(needsDoorName(2, true)).toBe("Needs you, 2 waiting, may be out of date");
     expect(html({ needs: { count: 0, stale: false } })).toMatch(/<span aria-hidden="true" data-needs-you-count="true" class="sr-only">0<\/span>/);
   });
