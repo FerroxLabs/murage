@@ -46,7 +46,7 @@ describe("authorized engine read compatibility", () => {
   it("normalizes fetched URL shorthand and strips its fragment after admission", async () => {
     const f = fixture({ [ORIGIN + "/docs"]: { body: "# Docs" } });
     const result = await f.read({ url: "docs.test/docs#section" });
-    expect(f.admitUrl).toHaveBeenCalledWith(ORIGIN + "/docs#section");
+    expect(f.admitUrl).toHaveBeenCalledWith(ORIGIN + "/docs#section", expect.any(AbortSignal));
     expect(f.calls[0].url).toBe(ORIGIN + "/docs");
     expect(result.structuredContent.url).toBe(ORIGIN + "/docs");
   });

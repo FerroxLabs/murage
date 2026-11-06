@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
 import { axeScriptPath } from "./axe.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { openQuickForm } from "./routine-grid";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -71,8 +72,7 @@ async function auditDialog(page: import("@playwright/test").Page, name: string, 
 
 test("the routine editor's date and time say what they are", async ({ page }, info) => {
   await openRoutines(page);
-  await page.keyboard.press("c");
-  await expect(page.getByRole("dialog", { name: "Quick create" })).toBeVisible();
+  await openQuickForm(page);
   await page.getByRole("button", { name: "More options", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "New routine" });
   await expect(editor).toBeVisible();
@@ -89,22 +89,29 @@ test("the routine editor's date and time say what they are", async ({ page }, in
 
 test("the event dialog's controls are named, not just titled", async ({ page }, info) => {
   await openRoutines(page);
-  await page.keyboard.press("c");
-  const quick = page.getByRole("dialog", { name: "Quick create" });
-  await expect(quick).toBeVisible();
+  // A slot on the next page of dates is always in the future, so the routine has no run yet and stays enabled
+  // whatever the time of day (a slot near the current hour could already hold a run, which opens a different dialog).
+  await page.getByRole("button", { name: "Next dates", exact: true }).click();
+  const quick = await openQuickForm(page);
   await quick.getByPlaceholder("Add title").fill("Accessible briefing");
   await quick.getByPlaceholder("What should the bot do?").fill("Say what changed.");
   await quick.getByRole("button", { name: "Save", exact: true }).click();
   await expect(quick).toHaveCount(0);
 
-  const card = page.locator("[data-event-card]").filter({ hasText: "Accessible briefing" }).first();
-  await expect(card).toBeVisible();
-  await card.click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  // The routine opens through the All routines list, which always opens the routine's own sheet, and its row
+  // shows only once the routine is in the app's state (a card click can come first and open nothing).
+  await page.locator("header").getByRole("button", { name: "All routines", exact: true }).click();
+  const list = page.getByRole("dialog", { name: "All routines", exact: true });
+  await expect(list).toBeVisible();
+  const row = list.locator("[data-routine-row]").filter({ hasText: "Accessible briefing" });
+  await expect(row).toHaveCount(1);
+  await row.click();
+  await expect(list).toHaveCount(0);
+  const details = page.getByRole("dialog", { name: "Accessible briefing", exact: true });
   await expect(details).toBeVisible();
 
   await page.screenshot({ path: info.outputPath("event-dialog.png"), fullPage: true });
-  const violations = await auditDialog(page, "Routine details", info);
+  const violations = await auditDialog(page, "Accessible briefing", info);
   expect(violations.map(v => `${v.impact}:${v.id}`)).toEqual([]);
 
   // every control in it answers to a name of its own, not a `title` a screen
@@ -114,6 +121,6 @@ test("the event dialog's controls are named, not just titled", async ({ page }, 
       .filter(button => !(button.getAttribute("aria-label") || button.textContent || "").trim())
       .map(button => button.outerHTML));
   expect(unnamed).toEqual([]);
-  await expect(details.getByRole("button", { name: "Pause routine", exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 });

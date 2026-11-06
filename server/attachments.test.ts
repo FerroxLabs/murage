@@ -714,3 +714,23 @@ describe("room follows the disk", () => {
     expect(readFileSync(saved.path, "utf8")).toBe("first second");
   });
 });
+
+// SEAN-ASK-ATTACH-CAP + GrokBuild 1.0.19: picture bodies are bounded across
+// uploads, not only each one, and the refusal names the real limit.
+describe("picture uploads in flight", () => {
+  it("holds at most the bound across uploads and gives bytes back once", async () => {
+    const { ImageUploadBudget, IMAGE_UPLOADS_IN_FLIGHT_MAX_BYTES, IMAGE_UPLOADS_BUSY_MESSAGE, imageTooLargeMessage } = await import("./attachments.ts");
+    const MB = 1024 * 1024, budget = new ImageUploadBudget();
+    expect(IMAGE_UPLOADS_IN_FLIGHT_MAX_BYTES).toBe(100 * MB);
+    const held = [1, 2, 3, 4].map(() => budget.take(25 * MB));
+    expect(held.every(Boolean)).toBe(true);
+    expect(budget.take(1)).toBeNull();
+    held[0]!(); held[0]!();
+    expect(budget.inFlight).toBe(75 * MB);
+    expect(budget.take(25 * MB)).not.toBeNull();
+    expect(budget.take(-1)).toBeNull();
+    expect(budget.take(Number.NaN)).toBeNull();
+    expect(imageTooLargeMessage(25 * MB)).toBe("That image is too large. Images can be up to 25 MB.");
+    expect(IMAGE_UPLOADS_BUSY_MESSAGE).toMatch(/^[A-Z][^—]*\.$/);
+  });
+});

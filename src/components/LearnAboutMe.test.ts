@@ -26,7 +26,7 @@ describe("Learn about me panel", () => {
     const html = render({ initialReview: undefined });
     expect(html).toContain("Learn about me");
     expect(html).toContain("I am moving my notes to Murage");
-    for (const name of ["ChatGPT", "Claude", "Gemini", "Grok", "Copilot"]) expect(html).toContain(`>${name}<`);
+    for (const name of ["ChatGPT", "Claude", "Gemini", "Grok", "Copilot", "dots", "Duet"]) expect(html).toContain(`>${name}<`);
     expect(html).toContain("Review what it found");
     expect(html).not.toContain('data-testid="learn-about-me-banner"');
   });
