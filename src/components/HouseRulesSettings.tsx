@@ -53,10 +53,9 @@ export const alwaysOnRules = (): readonly string[] => [
 
 const BUTTON = "min-h-9 rounded-lg px-3 py-1.5 text-[12.5px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus disabled:cursor-not-allowed disabled:opacity-50";
 
-function Switch({ on, disabled, label, onChange, settingControl }: { on: boolean; disabled?: boolean; label: string; onChange(next: boolean): void; settingControl?: string }) {
+function Switch({ on, disabled, label, onChange }: { on: boolean; disabled?: boolean; label: string; onChange(next: boolean): void }) {
   return (
     <button
-      data-setting-control={settingControl}
       type="button"
       role="switch"
       aria-checked={on}
@@ -156,7 +155,7 @@ export function HouseRulesSettings() {
         {loaded && (
           <label className="flex shrink-0 items-center gap-2 text-[12.5px] text-ink">
             <span>{loaded.enabled ? "On" : "Off"}</span>
-            <Switch settingControl="house-rules-heading" on={loaded.enabled} disabled={busy} label="Use house rules" onChange={(next) => void toggle(next)} />
+            <Switch on={loaded.enabled} disabled={busy} label="Use house rules" onChange={(next) => void toggle(next)} />
           </label>
         )}
       </div>

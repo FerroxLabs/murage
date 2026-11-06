@@ -58,7 +58,6 @@ export function TranscriptionSettings() {
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => event.key === "Enter" && void save()}
           placeholder={configured ? "••••••••  (paste to replace)" : "Paste your AssemblyAI API key"}
-          data-setting-control="voice-key-heading"
           aria-label="AssemblyAI API key"
           autoComplete="off"
           disabled={!bridge}

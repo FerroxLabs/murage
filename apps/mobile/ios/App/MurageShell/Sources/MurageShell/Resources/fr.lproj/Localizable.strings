@@ -25,7 +25,7 @@
 "phone_provider_fallback" = "un autre service d’IA";
 "phone_no_key" = "Définissez un code sur ce téléphone, puis associez-le à nouveau";
 "phone_update" = "Activez cette fonction ou mettez à jour Murage sur votre ordinateur.";
-"phone_turned_off" = "Ce n’est pas encore activé pour cet ordinateur. Sur l’ordinateur, ouvrez Murage, puis Réglages → Téléphone et autres appareils, et activez Phone tools. Si c’est déjà activé, la ligne en dessous explique pourquoi il est inutilisable.";
+"phone_turned_off" = "Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.";
 "phone_failed" = "Impossible de mettre à jour les outils du téléphone. Réessayez.";
 "phone_refused" = "La connexion du téléphone a été refusée. Associez ce téléphone à nouveau.";
 "phone_rate_limited" = "Trop de tentatives de connexion. Réessayez dans quelques instants.";
@@ -68,9 +68,8 @@
 "ask_setup_body" = "Envoyez du contenu à vos bots depuis n’importe quelle app et posez-leur une question sans ouvrir Murage au préalable. Confirmez une fois pour cet ordinateur.";
 "ask_turn_on" = "Activer";
 "ask_not_now" = "Pas maintenant";
-"ask_ok" = "OK";
 "ask_update" = "Activez cette fonction ou mettez à jour Murage sur votre ordinateur.";
-"ask_turned_off" = "Ce n’est pas encore activé pour cet ordinateur. Sur l’ordinateur, ouvrez Murage, puis Réglages → Téléphone et autres appareils, et activez Share and ask. Si c’est déjà activé, la ligne en dessous explique pourquoi il est inutilisable.";
+"ask_turned_off" = "Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.";
 "ask_no_key" = "Définissez un code sur ce téléphone, puis ouvrez Murage.";
 "ask_computer_off" = "Le partage et les questions sont désactivés pour ce téléphone.";
 "ask_setup_again" = "Ouvrez Murage pour configurer à nouveau le partage.";

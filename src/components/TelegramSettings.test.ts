@@ -13,10 +13,7 @@ const body = (from: string, to: string) => { const a = src.indexOf(from); const 
 
 describe("job 7: Connect Telegram in four owner steps", () => {
   it("puts the cursor in the token field once, only when nothing is set up", () => {
-    // The token field stays a password field, whatever plain attributes sit between the ref and its type.
-    expect(src).toMatch(/<input ref=\{tokenInput\}(?: [\w-]+="[^"]*")* type="password"/);
-    // Settings landing lands on this same field.
-    expect(src).toMatch(/<input ref=\{tokenInput\}(?: [\w-]+="[^"]*")* data-setting-control="telegram-settings-title"/);
+    expect(src).toMatch(/<input ref=\{tokenInput\} type="password"/);
     const effect = body("const tokenFocused = useRef(false);", "}, [status, busy, linked]);");
     // Decided on the first status only, configured or not, so a later empty status never pulls focus.
     expect(effect).toMatch(/if \(tokenFocused\.current \|\| !status \|\| busy\) return;\s*tokenFocused\.current = true;\s*if \(status\.configured \|\| linked\) return;/);

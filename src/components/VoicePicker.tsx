@@ -26,7 +26,6 @@ import {
   sortVoices,
   typeAhead,
   SOURCE_LABEL,
-  localQuery,
   type GenderFilter,
   type VoiceSource,
   type PickerVoice,
@@ -51,13 +50,9 @@ export interface VoicePickerProps {
   preview: (id: string) => { state: RowPreviewState; error?: string };
   /** Play the voice, or stop it when it is the one playing. */
   onPreview: (id: string) => void;
-  /** Set where the server runs the search (an own ElevenLabs key: its
-   *  account and the Voice Library). The list is then not filtered by the
-   *  words here. */
-  onQueryChange?: (query: string) => void;
 }
 
-export function VoicePicker({ voices, pinned = [], value, onChange, label, loading, preview, onPreview, onQueryChange }: VoicePickerProps) {
+export function VoicePicker({ voices, pinned = [], value, onChange, label, loading, preview, onPreview }: VoicePickerProps) {
   const uid = useId();
   const listId = `${uid}-list`;
   const [query, setQuery] = useState("");
@@ -68,8 +63,8 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
   const filters = useMemo(() => pickerFilters(voices), [voices]);
   const filtering = Boolean(query.trim()) || gender !== "all" || accent !== "all" || source !== "all";
   const rows = useMemo(
-    () => [...(filtering ? [] : pinned), ...filterVoices(sorted, { query: localQuery(query, Boolean(onQueryChange)), gender, accent, source })],
-    [filtering, pinned, sorted, query, gender, accent, source, onQueryChange],
+    () => [...(filtering ? [] : pinned), ...filterVoices(sorted, { query, gender, accent, source })],
+    [filtering, pinned, sorted, query, gender, accent, source],
   );
   const selectedIndex = rows.findIndex((v) => v.id === value);
   const [active, setActive] = useState(-1);
@@ -133,7 +128,6 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
   const failed = rows.map((v) => ({ voice: v, ...preview(v.id) })).find((r) => r.state === "error");
   const clear = () => {
     setQuery("");
-    onQueryChange?.("");
     setGender("all");
     setAccent("all");
     setSource("all");
@@ -146,10 +140,7 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
         <input
           type="search"
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            onQueryChange?.(e.target.value);
-          }}
+          onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "ArrowDown" && rows.length) {
               e.preventDefault();
@@ -261,9 +252,6 @@ export function VoicePicker({ voices, pinned = [], value, onChange, label, loadi
                   <span className="hidden shrink-0 text-[11px] text-ink-secondary sm:inline" data-source={voice.provider}>
                     {voice.provider === "elevenlabs" ? "ElevenLabs" : SOURCE_LABEL[voice.provider]}
                   </span>
-                )}
-                {voice.publicOwnerId && (
-                  <span className="shrink-0 text-[11px] text-ink-secondary" data-testid="voice-library-row">Voice Library</span>
                 )}
                 {voice.gender && gender === "all" && (
                   <span className="hidden shrink-0 text-[11px] text-ink-secondary sm:inline">{GENDER_LABEL[voice.gender]}</span>

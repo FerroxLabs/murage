@@ -21,7 +21,7 @@ export function PreviousVersionRow() {
   if (!available) return null;
   return (
     <Card title="Go back to the previous version, chats and memories kept">
-      <ActionButton data-setting-control="previous-version-heading" action={action} className={button} />
+      <ActionButton action={action} className={button} />
     </Card>
   );
 }

@@ -111,7 +111,7 @@ export function StarterProfiles({ initialProfileId, modelSelection, onFirstTask 
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{initialProfileId ? "A small crew for your first useful task. Review the people and optional routines before creating it. Connections and permissions can wait until a task needs them." : "Choose a starting team, review it, then import a separate copy. Your current Chief stays unchanged; new bots receive no Chief role or permissions."}</p>
     {busy === "loading" && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Loading starter profiles…</p>}
     {profiles && !initialProfileId && <div aria-label="Available starter profiles" className="mt-3 grid gap-2">
-      {profiles.map((profile, index) => <button key={profile.id} type="button" data-setting-control={index === 0 ? "starter-profiles-heading" : undefined} aria-pressed={selected?.id === profile.id} disabled={Boolean(busy)}
+      {profiles.map(profile => <button key={profile.id} type="button" aria-pressed={selected?.id === profile.id} disabled={Boolean(busy)}
         onClick={() => choose(profile)} className={"rounded-lg border p-3 text-left disabled:opacity-50 " + (selected?.id === profile.id ? "border-accent bg-accent/5 " : "border-hairline/50 bg-inset ") + focus}>
         <span className="block text-[13px] font-semibold text-ink">{profile.name}</span>
         <span className="mt-1 block text-[12px] leading-relaxed text-ink-secondary">{profile.summary}</span>

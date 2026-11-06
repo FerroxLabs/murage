@@ -140,28 +140,6 @@ describe("the first paint", () => {
     expect(reached).toContain("src/lib/connected-apps-preload.ts");
   });
 
-  it("opens a group or project chat's room view and details panel on first open, not with Today (1.0.17)", () => {
-    const reached = staticallyReached(graph);
-    for (const path of ["src/components/GroupView.tsx", "src/components/ChannelDetailsPanel.tsx"]) {
-      expect(reached, path).not.toContain(path);
-      expect(graph.inputs[path], path).toBeDefined();
-    }
-    expect(importsOf("src/App.tsx").filter((edge) => edge.path === "src/components/GroupView.tsx")).toEqual([]);
-    expect(importsOf("src/lib/group-view-preload.ts").filter((edge) => edge.path === "src/components/GroupView.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
-    // The room is warm before the click: a pointer or focus on a rail room
-    // starts it, so its composer is there to take the first keystroke.
-    const sidebar = readFileSync(join(root, "src/components/Sidebar.tsx"), "utf8");
-    const row = sidebar.slice(sidebar.indexOf('onClick={() => { dispatch({ type: "select", id: group.id }); onNavigate(); }}'));
-    expect(row.slice(0, 400)).toMatch(/onPointerEnter=\{preloadGroupView\}[\s\S]*onFocus=\{preloadGroupView\}/);
-    // A one-to-one chat still paints with the first frame.
-    expect(reached).toContain("src/components/ChatView.tsx");
-    // While the room arrives it spins in the main pane, never over the rail.
-    const app = readFileSync(join(root, "src/App.tsx"), "utf8");
-    const rooms = app.match(/<Suspense fallback=\{<LazyFallback[^>]*\/>\}><GroupView /g) ?? [];
-    expect(rooms.length).toBe(2);
-    for (const room of rooms) expect(room).toContain("<LazyFallback inline />");
-  });
-
   it("loads the publish, browser-setup and app sign-in chat cards the first time a bot raises one (1.0.0)", () => {
     const reached = staticallyReached(graph);
     for (const name of ["PublishCard", "BrowserSetupCard", "McpSignInCard"]) {
@@ -180,16 +158,12 @@ describe("the first paint", () => {
     }
   });
 
-  it("keeps the strip shell with the room view's first paint and its details and project views lazy", () => {
-    // The strip draws with the group room (1.0.17: the room view itself is
-    // one chunk away from Today), so it paints with the room, never after it.
-    const room = staticallyReached(graph, "src/components/GroupView.tsx");
-    expect(room).toContain("src/components/ProjectStrip.tsx");
+  it("keeps the strip shell in first paint and its details and project views lazy", () => {
     const reached = staticallyReached(graph);
+    expect(reached).toContain("src/components/ProjectStrip.tsx");
     for (const name of ["ProjectStripDetails", "ProjectBoard", "ProjectGoalView", "ProjectActivity", "ProjectSinceYouLeft", "ProjectFilesView", "ProjectMemoryView"]) {
       const path = `src/components/${name}.tsx`;
       expect(reached).not.toContain(path);
-      expect(room).not.toContain(path);
       expect(graph.inputs[path]).toBeDefined();
     }
   });

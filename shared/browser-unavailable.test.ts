@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_EXTENSION_PAUSED_REASON, BROWSER_UNAVAILABLE_SUMMARY, browserUnavailableKind, BROWSER_HELD_FOR_ANSWER_REASON, BROWSER_UNAVAILABLE_PREFIX, browserUnavailableActivityName, browserUnavailableDisplayName, browserUnavailableReason, USER_CHROME_UNREACHABLE_REASON } from "./browser-unavailable.ts";
+import { BROWSER_HELD_FOR_ANSWER_REASON, BROWSER_UNAVAILABLE_PREFIX, browserUnavailableActivityName, browserUnavailableDisplayName, browserUnavailableReason, USER_CHROME_UNREACHABLE_REASON } from "./browser-unavailable.ts";
 
 describe("browser-unavailable notice", () => {
   it("round-trips the reason through the activity name", () => {
@@ -49,10 +49,4 @@ describe("browser check progress (1.0.2)", () => {
     expect(text).toBe("The browser check didn't finish. Try again in a moment.");
     expect(text).not.toMatch(/didn't use the browser|next turn/);
   });
-});
-
-it("SABLE-LIVE: a paused Murage for Chrome says paused and how to resume, never couldn't start", () => {
-  expect(browserUnavailableKind(BROWSER_EXTENSION_PAUSED_REASON)).toBe("paused");
-  expect(BROWSER_UNAVAILABLE_SUMMARY.paused).toContain("press Resume, then ask again");
-  expect(BROWSER_UNAVAILABLE_SUMMARY.paused).not.toMatch(/couldn't start|\u2014|safe|free/i);
 });

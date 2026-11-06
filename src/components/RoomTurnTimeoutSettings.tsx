@@ -60,7 +60,6 @@ export function RoomTurnTimeoutSettings() {
       >
         <input
           id="room-turn-timeout"
-          data-setting-control="room-turn-timeout"
           type="number"
           min={MIN_ROOM_TURN_TIMEOUT_MINUTES}
           max={MAX_ROOM_TURN_TIMEOUT_MINUTES}

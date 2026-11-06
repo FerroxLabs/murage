@@ -62,7 +62,6 @@ export function RoomRoutingSettings() {
         </div>
         <Switch
           checked={view.checked}
-          data-setting-control="room-routing-label"
           aria-labelledby="room-routing-label"
           disabled={saving || view.disabled}
           onClick={() => void toggle()}

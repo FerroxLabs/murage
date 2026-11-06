@@ -84,9 +84,6 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
   "about-me.md": ownerFile(),
-  // The owner's own choices that follow them across the desktop and the phone, such as the Approve all caution
-  // being turned off (owner-prefs.ts, APPROVE-ALL-1016 section 4). Restored, so a restore does not show it again.
-  "owner-prefs.json": ownerFile(),
   // Whether the first-run news ask happened and how it ended (news-signup.ts). An address sits in it only while
   // its one delivery is still owed, so it never travels in a backup. A restore still never re-asks in the chat:
   // the hello step's own latch is the saved name in config.json and setup.json.

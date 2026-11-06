@@ -3,7 +3,7 @@ import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe,it,expect,vi } from "vitest";
 import { BrowserApprovedSites } from "./BrowserApprovedSites";
-import { BrowserExtensionConsent, BrowserExtensionPanelView, pairedExtensionProfile, rememberedBrowser, sitesLoweredIn, startNewTaskRoute, type BrowserExtensionPanelStatus } from "./BrowserExtensionPanel";
+import { BrowserExtensionConsent, BrowserExtensionPanelView, extensionNeedsUpdate, pairedExtensionProfile, rememberedBrowser, sitesLoweredIn, startNewTaskRoute, type BrowserExtensionPanelStatus } from "./BrowserExtensionPanel";
 import { browserChoicePatch, MY_BROWSER, MY_CHROME } from "./UnifiedBrowserPanel";
 const status:BrowserExtensionPanelStatus={profiles:[{profileId:"profile_one",browser:"Chrome"}],bindings:[{bindingId:"binding",botId:"bot",threadId:"thread",profileId:"profile_one",state:"active",sites:{"https://example.com":"ask"}}],helper:{running:true},storeUrl:null};
 function props(){return {botName:"Mira",profileId:"profile_one",status, pending:false,error:"",connectBrowser:"chrome" as const,onConnectBrowser:vi.fn(),onCheck:vi.fn(),onProfile:vi.fn(),onAction:vi.fn(),onSite:vi.fn(),onOwnBrowser:vi.fn()};}
@@ -93,4 +93,10 @@ describe("a reinstalled extension makes a new profile (#20 a)",()=>{
  it("offers the picker and a confirm button when the stored profile is gone and one new one is live",()=>{const p={...props(),profileId:"profile_old",status:fresh};const markup=renderToStaticMarkup(createElement(BrowserExtensionPanelView,p));expect(markup).toContain("Connected browser profile");expect(markup).toContain("new browser profile");expect(markup).not.toContain("\u2014");const tree=BrowserExtensionPanelView(p);find(tree,item=>item["data-action"]==="use-new-profile")!.onClick();expect(p.onProfile).toHaveBeenCalledWith("profile_new");});
  it("offers only the picker when several new profiles are live",()=>{const p={...props(),profileId:"profile_old",status:{...fresh,profiles:[...fresh.profiles,{profileId:"profile_other",browser:"Chrome"}]}};const tree=BrowserExtensionPanelView(p);expect(find(tree,item=>item["data-action"]==="use-new-profile")).toBeUndefined();expect(find(tree,item=>item["aria-label"]==="Connected browser profile")).toBeDefined();});
  it("shows nothing extra while the bound profile is still live or nothing is live",()=>{expect(find(BrowserExtensionPanelView(props()),item=>item["data-rebind-profile"]!==undefined)).toBeUndefined();expect(find(BrowserExtensionPanelView({...props(),profileId:"profile_old",status:{...fresh,profiles:[]}}),item=>item["data-rebind-profile"]!==undefined)).toBeUndefined();});
+});
+describe("EXT-RESTART FU-6: an extension older than 1.0.1 is told to update",()=>{
+ it("flags 1.0.0, 0.9 and 1.0 only; 1.0.1, 1.1, 2.0 and an unknown version are not flagged",()=>{
+  for(const v of ["1.0.0","0.9","1.0","0.1.0"])expect(extensionNeedsUpdate(v)).toBe(true);
+  for(const v of ["1.0.1","1.1","2.0.0","1.0.1.5",undefined,"","x.y"])expect(extensionNeedsUpdate(v)).toBe(false);
+ });
 });

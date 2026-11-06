@@ -8,8 +8,8 @@ import { api, useStore, type Bot } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 export type ExtensionSiteAccess = "allow" | "ask" | "never";
 export type BrowserExtensionPanelStatus = {
-  profiles: { profileId: string; browser: string }[];
-  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
+  profiles: { profileId: string; browser: string; extensionVersion?: string }[];
+  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** EXT-RESTART 3.7: why the server paused it (connection_lost, uncertain, handoff). */ pausedReason?: string; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
   helper: { running: boolean; reason?: string; problem?: "repair" | "foreign"; shared?: Partial<Record<Browser, string[]>> };
   storeUrl: string | null;
   extensionBuild?: "release" | "development" | "none";
@@ -35,6 +35,14 @@ export function browserList(chosen: Browser, shared: string[] | undefined): stri
  * paired but is never chosen for the owner: the picker asks. The profile is
  * named only when it is the one Chrome profile and says "chrome". Same rule as
  * server/user-chrome.ts pairedExtensionProfile. */
+/** EXT-RESTART FU-6: an extension older than 1.0.1 sends no resumedAt, so the app takes none of its Resumes in (fail closed). The
+ * owner is told the next step instead of a silent refusal. An unknown or unparsable version is not flagged. */
+export function extensionNeedsUpdate(version: string | undefined): boolean {
+  const parts = (version ?? "").split(".").map(part => Number(part));
+  if (!version || parts.some(part => !Number.isSafeInteger(part) || part < 0)) return false;
+  const [major = 0, minor = 0, patch = 0] = parts;
+  return major < 1 || (major === 1 && minor === 0 && patch < 1);
+}
 export function pairedExtensionProfile(profiles: ReadonlyArray<{ profileId: string; browser?: string }>): { ready: boolean; profileId?: string } {
   const chrome = profiles.filter(profile => ["chrome", "chromium"].includes((profile.browser ?? "").toLowerCase()));
   const named = chrome.length === 1 && (chrome[0]!.browser ?? "").toLowerCase() === "chrome" ? chrome[0]!.profileId : undefined;
@@ -80,7 +88,8 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
       {!status?.bindings.length && <p>No browser task is active. Ask {botName} to use a shared tab.</p>}
       {status?.bindings.map(binding => <div key={binding.bindingId} className="flex flex-col gap-3 rounded-lg border border-hairline p-3">
         {binding.handoff && binding.state === "paused" && <div role="status" data-your-turn className="rounded-lg border-2 border-warning p-3"><p className="font-medium">{t("browserExt.yourTurn.title")}</p><p className="text-ink-secondary">{t("browserExt.yourTurn.chatReminder", { bot: botName })}</p></div>}
-        <p role="status">{binding.state === "active" ? "Ready to work in shared tabs" : binding.state === "paused" ? "Paused by you" : "Stopped by you"}</p>
+        <p role="status">{binding.state !== "stopped" && !status?.profiles.some(profile => profile.profileId === binding.profileId) ? t("browserExt.state.offline") : binding.state === "active" ? "Ready to work in shared tabs" : binding.state === "paused" && (binding.pausedReason === "connection_lost" || binding.pausedReason === "uncertain") ? t("browserExt.state.connectionLost") : binding.state === "paused" ? "Paused by you" : "Stopped by you"}</p>
+        {binding.state === "paused" && extensionNeedsUpdate(status?.profiles.find(profile => profile.profileId === binding.profileId)?.extensionVersion) && <p role="status" data-extension-update className="text-ink-secondary">{t("browserExt.updateToResume")}</p>}
         <div className="flex flex-wrap gap-2"><button className={control} disabled={pending || binding.state === "stopped"} onClick={() => onAction("stop", binding.bindingId)}>Stop</button><button className={control} disabled={pending || binding.state !== "active"} onClick={() => onAction("pause", binding.bindingId)}>Pause</button>{binding.state === "stopped" && onStartNew && startNewTaskRoute(status) && <button className={control} data-action="start-new-task" disabled={pending} onClick={() => onStartNew(binding.bindingId)}>{t("browserExt.task.startNew")}</button>}</div>
         {Object.entries(binding.sites).map(([origin, access]) => <label key={origin} className="flex min-w-0 flex-col gap-2"><span className="break-all">{origin}</span><select aria-label={`Site access for ${origin}`} className={control} disabled={pending} value={access} onChange={event => onSite(binding.bindingId, origin, event.target.value as ExtensionSiteAccess)}><option value="allow">Allow site access</option><option value="ask">Ask each time</option><option value="never">Never allow</option></select></label>)}
       </div>)}

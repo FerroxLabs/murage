@@ -44,32 +44,3 @@ export function botAvatarProfile(value: BotAvatarProfileInput): BotAvatarProfile
   if (url.success) profile.avatarUrl = url.data;
   return profile;
 }
-
-/** 1 shows the picture as a cover crop; larger values zoom in. */
-export const AVATAR_ZOOM_MIN = 1;
-export const AVATAR_ZOOM_MAX = 3;
-/** Where the crop sits on the picture, from 0 to 1 on each axis: 0 the left
- *  or top edge, 0.5 the centre, 1 the right or bottom edge. Zoom keeps that
- *  point where it is in the tile. */
-export const AVATAR_FOCUS_CENTER = 0.5;
-
-export function clampAvatarZoom(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number.NaN;
-  if (!Number.isFinite(parsed)) return AVATAR_ZOOM_MIN;
-  return Math.round(Math.min(AVATAR_ZOOM_MAX, Math.max(AVATAR_ZOOM_MIN, parsed)) * 100) / 100;
-}
-
-export function clampAvatarFocus(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number.NaN;
-  if (!Number.isFinite(parsed)) return AVATAR_FOCUS_CENTER;
-  return Math.round(Math.min(1, Math.max(0, parsed)) * 1000) / 1000;
-}
-
-/** How a custom picture is framed everywhere the bot's image appears: the
- *  same zoom and point, so Settings, the sidebar and a call all match.
- *  Untrusted input is clamped; nothing set means the plain cover crop. */
-export function avatarFraming(value: { avatarZoom?: unknown; avatarFocusX?: unknown; avatarFocusY?: unknown }): { objectPosition: string; transform?: string; transformOrigin?: string } {
-  const zoom = clampAvatarZoom(value.avatarZoom ?? AVATAR_ZOOM_MIN);
-  const origin = `${clampAvatarFocus(value.avatarFocusX ?? AVATAR_FOCUS_CENTER) * 100}% ${clampAvatarFocus(value.avatarFocusY ?? AVATAR_FOCUS_CENTER) * 100}%`;
-  return zoom === AVATAR_ZOOM_MIN ? { objectPosition: origin } : { objectPosition: origin, transform: `scale(${zoom})`, transformOrigin: origin };
-}

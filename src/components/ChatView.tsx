@@ -1,7 +1,6 @@
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
-import { bubbleWidth } from "@/lib/reply-width";
 import { loopNoticeLabel } from "@/lib/loop-notice";
 import { ServedModelNote } from "@/components/ServedModelNote";
 import { isLimitOfferCard, LimitOfferCard } from "./ThreadFollowControls";
@@ -138,7 +137,7 @@ import { useFocusMessage } from "@/lib/focus-message";
 import { ExportPasteNote } from "./ExportPasteNote";
 import { FromPhoneLine } from "./FromPhoneLine";
 import { canEditLine } from "@/lib/compose-link";
-import { describeRunRaw, groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
+import { groupTranscript, itemKeyHolding, transcriptItemKey } from "@/lib/activity-runs";
 import { TranscriptTail } from "./TranscriptTail";
 import { tailOf } from "@/lib/transcript-tail";
 import { VirtualTranscript } from "./VirtualTranscript";
@@ -195,6 +194,7 @@ import { copyOrReport, useCopyFeedback } from "@/lib/copy-text";
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
+const noop = () => {};
 
 export function ErrorBanner({message,onDismiss}:{message:string;onDismiss:()=>void}){
   const plain = plainError(message);
@@ -744,8 +744,7 @@ function Bubble({
           // its drop shadow reaches past the row (styles.css .transcript-row)
           data-row-lift={user && webhookView ? "" : undefined}
           className={cn(
-            bubbleWidth(text, user),
-            "max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
+            "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl text-[15px] leading-relaxed",
             BUBBLE_TAPPABLE,
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
@@ -1180,30 +1179,32 @@ const MessagesList = memo(function MessagesList({
         const dividerText = item.kind === "message" ? dividers.get(item.message.id) : item.messages.map(message => dividers.get(message.id)).find(Boolean);
         const divider = dividerText ? <div role="separator" data-testid="engine-divider" className="px-2 py-1 text-center text-[11.5px] text-ink-secondary">{dividerText}</div> : null;
         if (item.kind === "turn") {
-          // E34: the fold holds only the settled turn's tool steps; the bot's own lines stay in the transcript
-          if (!showToolCalls) {
-            if (!item.helpers?.length) return divider ? <div key={item.id}>{divider}</div> : null;
-            return (
-              <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
-                {newDay && <DaySeparator at={first.at} />}
-                {divider}
-                <HelpersSummary label={item.label} helpers={item.helpers} />
-              </div>
-            );
-          }
           return (
             <div key={item.id} data-row={item.id} className="transcript-row flex flex-col gap-3">
               {newDay && <DaySeparator at={first.at} />}
               {divider}
               <TurnNarrationRun
                 label={item.label}
-                title={describeRunRaw(item.messages)}
                 helpers={item.helpers}
                 forceOpen={item.messages.some((message) => message.id === focusedId)}
               >
-                {item.messages.map((step) => (
-                  <div key={step.id} className="contents" data-mid={step.id}>
-                    <ActivityChip message={step} botName={bot.name} />
+                {item.messages.map((message) => (
+                  <div key={message.id} className="contents" data-mid={message.id}>
+                    <Bubble
+                      bot={bot}
+                      message={message}
+                      editing={false}
+                      isLastBotText={false}
+                      onStartEdit={noop}
+                      onCancelEdit={noop}
+                      onSubmitEdit={noop}
+                      replyTarget={message.replyToId
+                        ? bot.messages.find((candidate) => candidate.id === message.replyToId)
+                        : undefined}
+                      onReply={() => onReply(message)}
+                      narrow={narrow}
+                      questionCards={fenceCards.get(message.id)}
+                    />
                   </div>
                 ))}
               </TurnNarrationRun>
@@ -1346,7 +1347,7 @@ const MessagesList = memo(function MessagesList({
               if (trustNotice) return <FolderTrustRow kind={trustNotice.kind} sources={trustNotice.sources} forgetKey={trustNotice.key} botId={bot.id} threadId={bot.threadId} />;
               // a turn that ran without its browser: a quiet note, not a card
               const browserReason = browserUnavailableReason(m.tool?.name);
-              if (browserReason) return <BrowserUnavailableRow reason={browserReason} botName={bot.name} />;
+              if (browserReason) return <BrowserUnavailableRow reason={browserReason} />;
               // a picture this bot's model cannot see, left out of the turn
               const imagesLeftOut = imagesLeftOutCount(m.tool?.name);
               if (imagesLeftOut) return <ImagesLeftOutRow botName={bot.name} count={imagesLeftOut} />;

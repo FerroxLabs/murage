@@ -188,9 +188,7 @@ function CredentialHelp({ section }: { section: ConfigSection }) {
 export function ApiKeyRow({
   section,
   onSaved,
-  settingControl,
 }: {
-  settingControl?: string;
   section: ConfigSection;
   /** Called after a successful save with the section's new configured flag. */
   onSaved?: (configured: boolean) => void;
@@ -250,7 +248,6 @@ export function ApiKeyRow({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && save()}
           placeholder={configured ? "••••••••  (paste to replace)" : credential.placeholder}
-          data-setting-control={settingControl}
           aria-label={credential.label}
           autoComplete="off"
           className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"

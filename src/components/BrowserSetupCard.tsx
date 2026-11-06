@@ -14,10 +14,6 @@ export function BrowserSetupCardView({ bot, subtitle, setup, profiles, profile, 
   const remembered = !!setup.profileId && setup.decision === "accepted";
   const rememberedConnected = remembered && profiles.some(item => item.profileId === setup.profileId);
   const rememberedName = setup.browser ? BROWSER_NAMES[setup.browser] : "browser";
-  // Install copy is for a browser with nothing connected yet. Once a profile
-  // is online the extension is plainly installed, so the store link would
-  // only send the owner to install it twice.
-  const anyConnected = rememberedConnected || profiles.length > 0;
   // A copy without the helper has nothing to set up: say so and keep Not now.
   // A release build without a store link can still be set up, for an
   // extension that is already installed, so it stays enabled.
@@ -36,7 +32,7 @@ export function BrowserSetupCardView({ bot, subtitle, setup, profiles, profile, 
       <div className="flex flex-wrap gap-2"><button className={control} disabled={pending || !!unavailable} onClick={()=>onAct("accept")}>Set up my browser</button><button className={control} disabled={pending} onClick={()=>onAct("decline")}>Not now</button></div>
     </>}
     {setup.decision==="accepted"&&!setup.resumed&&<>
-      {anyConnected ? null : storeUrl ? <>
+      {storeUrl ? <>
         <p>Add Murage for Chrome from the Chrome Web Store. Your browser asks you to confirm the install. Then open its side panel to connect.</p>
         <a className={`${control} text-center`} href={storeUrl} target="_blank" rel="noopener noreferrer">Open Chrome Web Store</a>
       </> : unavailable ? <p>{unavailable}</p> : extensionBuild === "development" ? <p>Open Murage for Chrome and connect its helper. This build uses an unpacked development extension.</p> : <p>Open Murage for Chrome and connect its helper.</p>}

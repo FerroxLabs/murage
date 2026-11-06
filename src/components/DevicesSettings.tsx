@@ -40,7 +40,7 @@ export function DevicesSettings({ advanced, profileEmail, bots, browserProfiles 
         <Anchor id="vps-heading">
           <Card title={t("settings.computer.remoteTitle")} subtitle={t("settings.computer.remoteNote")}>
             <div className="flex flex-col gap-4">
-              <ApiKeyRow section="box" settingControl="vps-heading" />
+              <ApiKeyRow section="box" />
               <VpsConnection />
             </div>
           </Card>

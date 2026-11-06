@@ -358,9 +358,7 @@ const RAW_READS: Record<string, number> = {
   // 1.0.4 QW (20acb3e0d): roomAnswerReceipt reads the owner's own landed answer row back for the owner's client (the room answer's receipt)
   // 1.0.14 (620ca9139): GET /api/threads/:threadId/messages/:messageId/voice-note reads that one message, after mayReadThread, to find the
   // voice note it lists; only the note's audio leaves, for a caller who may read the conversation, never the row or its words to a bot.
-  // 1.0.17 APPROVE-ALL (design 1): approveAllPreview reads each Approvals item's own card row (messageById on the item's link) to judge it
-  // for the owner's confirm sheet; the card goes to the owner's own surface, never a row or its words to a bot.
-  "inbox.ts": 6, "index.ts": 79,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  "inbox.ts": 6, "index.ts": 78,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
   "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,

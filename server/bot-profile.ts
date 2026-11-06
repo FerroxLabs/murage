@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { AVATAR_ZOOM_MAX, AVATAR_ZOOM_MIN, botAvatarCropSchema, botAvatarUrlSchema } from "../shared/bot-avatar.ts";
+import { botAvatarCropSchema, botAvatarUrlSchema } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { mascotBodySchema } from "../shared/mascot-bodies.ts";
 
@@ -14,9 +14,6 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "notifications",
   "avatarUrl",
   "avatarCrop",
-  "avatarZoom",
-  "avatarFocusX",
-  "avatarFocusY",
   "mascotBody",
   "voice",
   "voiceProvider",
@@ -54,9 +51,6 @@ const profilePatchSchema = z.object({
     })
     .optional(),
   avatarCrop: botAvatarCropSchema.optional(),
-  avatarZoom: z.number({ error: "avatarZoom must be a number from 1 to 3" }).finite().min(AVATAR_ZOOM_MIN).max(AVATAR_ZOOM_MAX).optional(),
-  avatarFocusX: z.number({ error: "avatarFocusX must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
-  avatarFocusY: z.number({ error: "avatarFocusY must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
   mascotBody: mascotBodySchema.optional(),
   voice: z
     .string({ error: "voice must be a string" })
@@ -82,9 +76,6 @@ export type BotProfilePatch = Partial<
     | "notifications"
     | "avatarUrl"
     | "avatarCrop"
-    | "avatarZoom"
-    | "avatarFocusX"
-    | "avatarFocusY"
     | "mascotBody"
     | "voice"
     | "voiceProvider"

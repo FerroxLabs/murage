@@ -119,10 +119,8 @@ export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answer
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
- * bot's model and keeps every different pick. The owner's cross-device prefs (owner-prefs.json, 1.0.17 owner-prefs.ts) hold only the
- * Approve all caution's "Don't show this again"; 1.0.2 has no Approve all and never reads it. Removing it lets 1.0.2 take a backup, and
- * a later upgrade reads the missing file as the defaults, so the caution shows once more and nothing else changes. */
-export const DATA_DIR_OWNER_NOTES_AFTER_102 = [".threads-follow-model-v1", "owner-prefs.json"] as const;
+ * bot's model and keeps every different pick. */
+export const DATA_DIR_OWNER_NOTES_AFTER_102 = [".threads-follow-model-v1"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string): string[] {
   const removed: string[] = [];

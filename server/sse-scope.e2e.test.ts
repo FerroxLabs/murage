@@ -231,16 +231,12 @@ posixOnly("the events stream is scoped per client", () => {
       const hello = await first.until((frame) => frame.kind === "hello");
       first.close();
 
-      // The hidden text is a word no uuid, timestamp or cursor can contain (hex digits only reach "f"): the bare
-      // "4815" it used to be matched random digits in visible frames (SSE-SCOPE-TEST-FLAKE).
-      const HIDDEN = "zqvault-wexlor";
-      // Open the unscoped witness BEFORE the hidden turn is sent, so the bot's reply cannot land before the stream
-      // exists and leave it waiting for a frame it never sees; it proves the hidden turn is in the replay buffer
-      // before the scoped client asks for the gap.
+      expect((await desktopApi("POST", `/api/bots/${secret.id}/messages`, { text: "and the vault code is 4815" })).status)
+        .toBe(202);
+      // Wait on an unscoped stream so the hidden turn is known to be in the
+      // replay buffer before the scoped client asks for the gap.
       const witness = await openSse(`${BASE}${await desktopTicketed("/api/events")}`);
       try {
-        expect((await desktopApi("POST", `/api/bots/${secret.id}/messages`, { text: `and the vault code is ${HIDDEN}` })).status)
-          .toBe(202);
         await witness.until(
           (frame) => frame.kind === "message" && frame.threadId === secret.threadId && frame.message?.role === "bot",
           20_000,
@@ -259,7 +255,7 @@ posixOnly("the events stream is scoped per client", () => {
         // Replay is synchronous with the hello frame that precedes it.
         const leaked = resumed.frames.filter((frame) => JSON.stringify(frame).includes(secret.threadId));
         expect(leaked, `resume replayed ${leaked.length} hidden frame(s)`).toEqual([]);
-        expect(resumed.frames.some((frame) => JSON.stringify(frame).includes(HIDDEN))).toBe(false);
+        expect(resumed.frames.some((frame) => JSON.stringify(frame).includes("4815"))).toBe(false);
       } finally {
         resumed.close();
       }

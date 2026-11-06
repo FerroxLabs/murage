@@ -107,8 +107,6 @@ export const STEP_UP_LABELS = Object.freeze([
   // 1.0.4 SL-H: route-policy denies this on every Cloud home; the label is here so the sentence is never the fallback.
   { methods: ["POST"], path: rx("/api/storage/attachments/remove"), label: "Remove attachment files for good" },
   { methods: ["POST"], path: rx("/api/publish/netlify/check"), label: "Check a Netlify connection", summary: "none" },
-  // 1.0.17 C31: route-policy allows this on the paired owner desktop only, after step-up.
-  { methods: ["POST"], path: rx("/api/tts/voices/add"), label: "Add a Voice Library voice to your ElevenLabs account", summary: "none" },
   { methods: ["GET", "POST"], path: rx("/api/mcp-grants"), label: "Create script access for a bot", summary: "settings" },
   { methods: ["DELETE"], path: rx(`/api/mcp-grants/${ID}`), label: "Switch off a script access" },
   // 1.0.9 bot calls: the owner's call settings, from a chat-only Cloud browser.

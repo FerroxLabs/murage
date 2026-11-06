@@ -126,7 +126,6 @@ export function TimeZoneSettings() {
         <div className="flex flex-col gap-2">
           <input
             type="search"
-            data-setting-control="time-zone-heading"
             list="owner-time-zones"
             aria-label={t("settings.timeZone.label")}
             placeholder={t("settings.timeZone.placeholder")}
