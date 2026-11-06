@@ -12,6 +12,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { cancelProjectCard, createProjectCard, enqueueCardRun, type ProjectActor } from "./project-cards.ts";
 import { createDefaultGoalBudget, DEFAULT_GOAL_REVIEW, projectsAutonomyEnabled, projectsGoalsEnabled, projectsLeadEnabled, type ProjectFeatureFlags } from "./project-defaults.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import {
   activeProjectGoal,
   inheritedRequestLineage,
@@ -580,7 +581,7 @@ export function resolveGoalEvidence(
     const reviewResult = db.prepare(`SELECT 1 FROM room_requests WHERE result_message_id=? AND verb='review' AND work_item_id=?`).get(evidence.ref, card.id);
     if (reviewResult) return { workItemId: card.id, attempt: card.attempt, at: message.at, evidence };
     try {
-      const parsed = JSON.parse(message.json) as { role?: string; kind?: string; tool?: { name?: string; ok?: boolean } };
+      const parsed = rowToMessage({ json: message.json }) as { role?: string; kind?: string; tool?: { name?: string; ok?: boolean } };
       if (parsed.role === "bot" && parsed.tool?.name && (PROJECT_CHECK_TOOLS as readonly string[]).includes(parsed.tool.name) && parsed.tool.ok === true) {
         return { workItemId: card.id, attempt: card.attempt, at: message.at, evidence };
       }

@@ -89,6 +89,47 @@ test('on the rail it clears the rail footer and the composer; narrow it hangs at
  await expect.poll(async()=>(await box(page.getByTestId('update-popup'))).y).toBeLessThan(120);
  popup=await box(page.getByTestId('update-popup'));expect(popup.x).toBeGreaterThanOrEqual(0);expect(popup.x+popup.width).toBeLessThanOrEqual(420);expect(apart(popup,await box(composer))).toBe(true);
 });
+// A full-window modal <dialog>, as What's New opens it after an update (showModal: top layer, the rest of the page inert).
+const openModal=(page:any,box=false)=>page.evaluate((box:boolean)=>{const d=document.createElement('dialog');d.dataset.fixtureModal='';d.textContent="New in 1.0.18";
+ if(box){d.className='box-dialog';d.style.cssText='width:420px;height:300px;overflow:clip';}else d.style.cssText='width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0';
+ document.body.append(d);d.showModal();},box);
+// What a person sees at the pop-up's centre: the pop-up itself, or whatever covers it.
+const onTop=(page:any)=>page.getByTestId('update-popup').evaluate((el:Element)=>{const r=el.getBoundingClientRect();const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return Boolean(top&&el.contains(top))&&r.width>0&&r.top>=0&&r.bottom<=innerHeight;});
+const settle=(page:any)=>page.getByTestId('update-popup').evaluate((el:Element)=>Promise.all(el.getAnimations().map(a=>a.finished)));
+test('a download that starts under an open What\'s New shows above it, with its percent, then Restart can be pressed',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await page.evaluate(()=>{(window as any).installs=0;(window as any).muragebox.updater.install=async()=>{(window as any).installs++;};});
+ await openModal(page);
+ await push(page,{status:'downloading',version:'1.0.18'});await push(page,{status:'downloading',version:'1.0.18',percent:37});
+ await expect(page.getByTestId('update-popup')).toContainText('Downloading 1.0.18');await expect(page.getByTestId('update-popup')).toContainText('37%');
+ await settle(page);await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloading',version:'1.0.18',percent:64});await expect(page.getByTestId('update-popup')).toContainText('64%');await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloaded',version:'1.0.18',installMode:'restart'});
+ await expect(page.getByTestId('update-popup')).toContainText('1.0.18 is ready');await expect.poll(()=>onTop(page)).toBe(true);
+ await page.getByTestId('update-popup').getByRole('button',{name:'Restart to update'}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).installs)).toBe(1);
+ // What's New stays open behind it: the pop-up never closed it.
+ await expect(page.locator('dialog[data-fixture-modal]')).toHaveJSProperty('open',true);
+});
+test('a What\'s New that opens over a running download goes under the pop-up; closing it leaves the pop-up up',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await push(page,{status:'downloading',version:'1.0.18',percent:20});await settle(page);
+ await openModal(page);await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloading',version:'1.0.18',percent:50});await expect(page.getByTestId('update-popup')).toContainText('50%');await expect.poll(()=>onTop(page)).toBe(true);
+ // Escape in the pop-up closes the pop-up only; What's New stays.
+ await page.getByTestId('update-popup').getByRole('button',{name:'Dismiss'}).focus();await page.keyboard.press('Escape');
+ await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.locator('dialog[data-fixture-modal]')).toHaveJSProperty('open',true);
+ await page.evaluate(()=>{const d=document.querySelector('dialog[data-fixture-modal]') as HTMLDialogElement;d.close();d.remove();});
+ await push(page,{status:'downloading',version:'1.0.18',percent:80});await expect(page.getByTestId('update-popup')).toHaveCount(0);
+ // Closed during the download, it comes back when the update is ready, on top.
+ await push(page,{status:'downloaded',version:'1.0.18',installMode:'restart'});await expect(page.getByTestId('update-popup')).toContainText('1.0.18 is ready');await expect.poll(()=>onTop(page)).toBe(true);
+});
+test('a centred box dialog (shifted with translate, clipped) does not hide or clip the pop-up either',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await openModal(page,true);await push(page,{status:'downloading',version:'1.0.18',percent:45});
+ await expect(page.getByTestId('update-popup')).toContainText('45%');await settle(page);await expect.poll(()=>onTop(page)).toBe(true);
+ const popup=await box(page.getByTestId('update-popup'));expect(popup.x).toBeLessThan(320);expect(popup.y+popup.height).toBeGreaterThan(600);
+});
 test('never shows in the browser or on the phone: no updater bridge',async({page})=>{
  await page.setViewportSize({width:1280,height:800});await go(page,'surface=browser');
  await push(page,{status:'downloading',version:'1.0.12',percent:10});await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.getByTestId('update-indicator')).toHaveCount(0);

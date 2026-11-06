@@ -13,6 +13,7 @@ import { downgradeMemoryIndexFile } from "./memory/age-index.ts";
 import { assertNoPendingPhoneWork, downgradeApplicationSchemaTo101, downgradePhoneObjectsTo108 } from "./installation-app-schema-downgrade.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { foldRoutineStateForDowngrade } from "./routine-runs-journal.ts";
+import { deleteFtsOrphans, expectPragma, ftsSettled, optimizeUntilSettled } from "./settle-copy.ts";
 
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 
@@ -147,8 +148,55 @@ export function removeDataDirNamesAfter102(root: string): string[] {
  * state lines are folded into routines.json first (foldRoutineStateForDowngrade),
  * also when there is no memory database yet. */
 /** The memory schema versions `memory-downgrade --to` accepts (10: 1.0.2; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6). */
+/** Where a test stops the downgrade, as a crash there would (each point is after a committed step). */
+export type DowngradeSearchPoint = "optimized" | "config-restored" | "checkpointed" | "marker-deleted";
+
+const hasTable = (db: DatabaseSync, name: string) => db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(name) !== undefined;
+
+/** The live file's search index settles before the older build sees it (SMOOTH-FTS-MERGE R6 section 4): after every
+ * `DELETE FROM messages_fts` of this command (trimUnfinishedSearchFill inside downgradeApplicationSchemaTo101, already committed).
+ * secure_delete read back; orphans out; optimize until settled (3 rounds, else fail: the earlier commit stays and rerunning the
+ * command is the recovery); one VACUUM, the one place the live file is vacuumed, offline under the lease; the probe again. The older
+ * build's merge defaults (automerge 4, deletemerge 10, literals) are written back on the success path and on the failure path. */
+function settleSearchIndexForDowngrade(db: DatabaseSync, at: (point: DowngradeSearchPoint) => void) {
+  expectPragma(db, "PRAGMA secure_delete=ON", 1);
+  const fts = hasTable(db, "messages_fts");
+  let failure: unknown;
+  try { if (fts) { deleteFtsOrphans(db); optimizeUntilSettled(db); } }
+  catch (error) { failure = error; }
+  if (failure === undefined) {
+    at("optimized");
+    try {
+      db.exec("VACUUM");
+      if (ftsSettled(db) !== "settled") fail("SEARCH_INDEX_NOT_SETTLED");
+    } catch (error) { failure = error; }
+  }
+  if (fts) {
+    try {
+      db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('automerge', 4)");
+      db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('deletemerge', 10)");
+    } catch (error) { if (failure === undefined) failure = error; }
+  }
+  if (failure !== undefined) {
+    const code = (failure as { code?: unknown }).code;
+    if (typeof code === "string" && code !== "FTS_COPY_NOT_SETTLED" && /^[A-Z][A-Z0-9_]{0,100}$/.test(code)) throw failure;
+    throw Object.assign(new Error("SEARCH_INDEX_NOT_SETTLED"), { code: "SEARCH_INDEX_NOT_SETTLED", cause: failure });
+  }
+  at("config-restored");
+}
+
+/** The WAL fold is checked (R6 section 4): busy 0 and every frame of the log checkpointed, else the downgrade fails. */
+function checkedTruncate(db: DatabaseSync) {
+  let row: { busy?: unknown; log?: unknown; checkpointed?: unknown } | undefined;
+  // a reader holding the log can surface as SQLITE_BUSY instead of busy=1: the same unfinished fold
+  try { row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as typeof row; }
+  catch (error) { throw Object.assign(new Error("WAL_CHECKPOINT_INCOMPLETE"), { code: "WAL_CHECKPOINT_INCOMPLETE", cause: error }); }
+  if (!row || Number(row.busy) !== 0 || Number(row.log) !== Number(row.checkpointed)) fail("WAL_CHECKPOINT_INCOMPLETE");
+}
+
 export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const satisfies readonly MemoryDowngradeTarget[];
-export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget = 1) {
+export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget = 1, testing: { at?: (point: DowngradeSearchPoint) => void } = {}) {
+  const at = testing.at ?? (() => {});
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const file = join(root, "messages.db");
   const stat = existsSync(file) ? lstatSync(file) : null;
@@ -195,8 +243,19 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));
       // every build before memory schema 12 resumes by the raw cursor (rule 27): a session with a later incarnation never resumes there
       if (to < 12) resetIncarnatedSessionCursors(dirname(file), db);
+      settleSearchIndexForDowngrade(db, at);
       const result = downgradeMemorySchema(db, to);
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      checkedTruncate(db);
+      at("checkpointed");
+      // The live merge marker (search-merge-runner) leaves only after that checkpoint, and only while its table is still there
+      // (to>=10 keeps it, memory/schema.ts DERIVED_TABLES_KEPT_FOR_102). A failed checkpoint keeps it, in either state, and the next
+      // start of a build that knows it pays it. By name only.
+      if (hasTable(db, "transcript_index_state") && Number(db.prepare("DELETE FROM transcript_index_state WHERE name='search_merge'").run().changes) > 0) {
+        at("marker-deleted");
+        // the file stands alone again only when that one row's frame folded: checked like the first, a held log fails the downgrade
+        // (the marker is gone and every step before it reruns as a no-op, so the rerun's first checked TRUNCATE folds it)
+        checkedTruncate(db);
+      }
       // 1.0.3 lane 2: the search index file goes back to what 1.0.2 wrote (its second word table and the lane's markers leave; a renamed
       // word table with age rowids stays, 1.0.2 reads it by rowid and by rank and is correct either way).
       downgradeMemoryIndexFile(join(root, "memory-index.db"));

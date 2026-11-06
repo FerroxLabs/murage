@@ -71,6 +71,17 @@ export const BRIEF_OVER_CHARS = 450;
  *  asking the host and let the engine take every turn, as calls did before. */
 export const HOST_OFF_FOR_CALL = new Set(["key", "auth", "premium", "unavailable"]);
 
+/** L-COPY call.budgetStop: said once when a turn on a call fails because the
+ *  key's budget or balance is used up; the call then ends (VOICE-402-STOP). */
+export const CALL_BUDGET_STOP = "This key has reached its budget, so I'm ending the call here. The chat has the details.";
+
+/** A turn that failed for money, not for anything a fresh try fixes: a 402,
+ *  a quota, a budget or an empty balance. Every next turn on the call would
+ *  fail the same way and cost a request each time. */
+export function isBudgetFailure(details: string): boolean {
+  return /\b402\b|\bquota\b|\bbudget\b|\bbilling\b|insufficient[_ ](?:balance|credits?|funds)|out of credits/i.test(details);
+}
+
 /** Wake the model when a call starts. Fire and forget. */
 export function warmHost(botId: string): void {
   void fetch(`/api/bots/${botId}/voice-host`, {
