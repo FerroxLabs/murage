@@ -29,6 +29,9 @@ export interface FailoverRowView {
   was: "following" | ModelSelection;
   resetsAt: number | null;
   at: number;
+  /** the engine at its limit, and the backup the chat moved onto (U22 G20 provenance; absent in older callers) */
+  from?: ModelSelection;
+  to?: ModelSelection;
 }
 
 export interface TurnSelectionTask { modelSelection?: ModelSelection; limitFailover?: string }
@@ -47,6 +50,8 @@ export interface TurnSelectionDeps {
   atLimit(selection: ModelSelection, now: number): boolean;
   /** May a routine continue on this backup (owner said so for routines, own plan or own key, allowed pair). */
   routineBackupAllowed(bot: TurnSelectionBot): boolean;
+  /** U22 G20: may an applied failover's chat stay on its backup (the limit-backup gate, no `now`). Refused: the chat goes back now, with the line. */
+  targetAllowed?(rowId: string): { ok: true } | { ok: false; line: string };
 }
 
 export interface TurnSelectionResult {
@@ -57,6 +62,9 @@ export interface TurnSelectionResult {
   restore?: { rowId: string; to: "following" | ModelSelection };
   /** step 1: a routine continues on the owner's backup */
   routineBackup?: true;
+  /** U22 G20: this turn runs on a limit backup standing in for this engine (a routine's backup, or a chat on an applied failover).
+   * Carried by value, so the dispatch boundary gates the backup against it whatever the chat holds by then. */
+  backupFrom?: ModelSelection;
 }
 
 export const FAILOVER_NO_RESET_MS = 60 * 60_000;
@@ -82,28 +90,34 @@ export function resolveTurnSelection(
   if (origin.routine) {
     const backup = bot.limitBackup;
     if (backup && deps.atLimit(bot.modelSelection, now) && deps.routineBackupAllowed(bot) && deps.routes(backup.selection).ok) {
-      return { selection: clone(backup.selection), routineBackup: true };
+      return { selection: clone(backup.selection), routineBackup: true, backupFrom: clone(bot.modelSelection) };
     }
     return { selection: clone(bot.modelSelection) };
   }
   let own = task?.modelSelection;
   let restore: TurnSelectionResult["restore"];
-  // 2. a failover whose reset passed returns the chat to what it was
+  let refusedLine: string | undefined;
+  let onBackup: { from: ModelSelection; to: ModelSelection } | undefined;
+  // 2. a failover whose reset passed, or whose backup the gate refuses now (hidden, removed), returns the chat to what it was
   if (task?.limitFailover) {
     const row = deps.failoverRow(task.limitFailover);
-    if (row && row.state === "applied" && failoverResetAt(row) <= now) {
+    const target = row && row.state === "applied" && failoverResetAt(row) > now ? deps.targetAllowed?.(row.rowId) : undefined;
+    if (target && !target.ok) refusedLine = target.line;
+    if (row && row.state === "applied" && (failoverResetAt(row) <= now || refusedLine !== undefined)) {
       restore = { rowId: row.rowId, to: row.was === "following" ? "following" : clone(row.was) };
       own = row.was === "following" ? undefined : row.was;
-    }
+    } else if (row && row.state === "applied" && row.from && row.to) onBackup = { from: row.from, to: row.to };
   }
+  const tail = { ...(refusedLine !== undefined ? { line: refusedLine } : {}), ...(restore ? { restore } : {}) };
   // 3. the chat's own pick, healed onto the bot's selection only for a Settings-fixable refusal
   if (own) {
     const verdict = deps.routes(own);
     if (!verdict.ok && (HEALABLE_ROUTE_CODES as readonly string[]).includes(verdict.code) && deps.routes(bot.modelSelection).ok) {
-      return { selection: clone(bot.modelSelection), line: healedLine(bot.name), ...(restore ? { restore } : {}) };
+      // a refused backup and a healed earlier pick: both explanations stay
+      return { selection: clone(bot.modelSelection), ...tail, line: refusedLine !== undefined ? `${refusedLine} ${healedLine(bot.name)}` : healedLine(bot.name) };
     }
-    return { selection: clone(own), ...(restore ? { restore } : {}) };
+    return { selection: clone(own), ...tail, ...(onBackup && own.instanceId === onBackup.to.instanceId ? { backupFrom: clone(onBackup.from) } : {}) };
   }
   // 4. the bot's selection
-  return { selection: clone(bot.modelSelection), ...(restore ? { restore } : {}) };
+  return { selection: clone(bot.modelSelection), ...tail };
 }

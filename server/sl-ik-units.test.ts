@@ -84,6 +84,43 @@ describe("K2: one resolver for every turn", () => {
     expect(resolveTurnSelection({}, withBackup, { routine: true }, NOW, deps({ atLimit: () => true })).selection).toEqual(BACKUP);
     expect(resolveTurnSelection({}, withBackup, { routine: true }, NOW, deps({ atLimit: () => true, routineBackupAllowed: () => false })).selection).toEqual(BOT);
   });
+  it("U22 G20 #10: an applied failover whose backup is now hidden goes back before its reset, and says why", () => {
+    const row = { rowId: "r1", state: "applied" as const, was: PIN, resetsAt: NOW + 3_600_000, at: NOW };
+    const task = { modelSelection: BACKUP, limitFailover: "r1" };
+    const refused = resolveTurnSelection(task, bot, { routine: false }, NOW, deps({ failoverRow: () => row, targetAllowed: () => ({ ok: false, line: "Kimi is hidden" }) }));
+    expect(refused).toEqual({ selection: PIN, line: "Kimi is hidden", restore: { rowId: "r1", to: PIN } });
+    const following = resolveTurnSelection(task, bot, { routine: false }, NOW, deps({ failoverRow: () => ({ ...row, was: "following" }), targetAllowed: () => ({ ok: false, line: "x" }) }));
+    expect(following.selection).toEqual(BOT);
+    expect(following.restore).toEqual({ rowId: "r1", to: "following" });
+    // regression: an allowed backup keeps the chat on it until the reset
+    expect(resolveTurnSelection(task, bot, { routine: false }, NOW, deps({ failoverRow: () => row, targetAllowed: () => ({ ok: true }) }))).toEqual({ selection: BACKUP });
+  });
+  it("U22 G20 r4 M1: a turn on a backup carries the engine it stands in for, so dispatch never re-reads the chat", () => {
+    const applied = { rowId: "r1", state: "applied" as const, was: PIN, resetsAt: NOW + 3_600_000, at: NOW, from: BOT, to: BACKUP };
+    const task = { modelSelection: BACKUP, limitFailover: "r1" };
+    const onBackup = resolveTurnSelection(task, bot, { routine: false }, NOW, deps({ failoverRow: () => applied, targetAllowed: () => ({ ok: true }) }));
+    expect(onBackup).toEqual({ selection: BACKUP, backupFrom: BOT });
+    // carried by value: a later change to the row or the chat (a /use-fuigo during setup) leaves what dispatch gates unchanged
+    applied.from = PIN; task.modelSelection = PIN; delete (task as { limitFailover?: string }).limitFailover;
+    expect(onBackup.backupFrom).toEqual(BOT);
+    // the chat moved off the backup by itself: nothing to carry
+    expect(resolveTurnSelection({ modelSelection: { instanceId: "gemini", model: "g" }, limitFailover: "r1" }, bot, { routine: false }, NOW, deps({ failoverRow: () => ({ ...applied, from: BOT }), targetAllowed: () => ({ ok: true }) })).backupFrom).toBeUndefined();
+    // a routine on the owner's backup carries the bot's own engine
+    const withBackup = { ...bot, limitBackup: { selection: BACKUP, routines: true, at: NOW } };
+    expect(resolveTurnSelection({}, withBackup, { routine: true }, NOW, deps({ atLimit: () => true }))).toEqual({ selection: BACKUP, routineBackup: true, backupFrom: BOT });
+    // the bot's own engine or its own pick: no backup
+    expect(resolveTurnSelection({ modelSelection: PIN }, bot, { routine: false }, NOW, deps()).backupFrom).toBeUndefined();
+  });
+  it("U22 G20 r4 Low: a refused backup whose earlier pick also heals keeps both explanations", () => {
+    const applied = { rowId: "r1", state: "applied" as const, was: PIN, resetsAt: NOW + 3_600_000, at: NOW, from: BOT, to: BACKUP };
+    const out = resolveTurnSelection({ modelSelection: BACKUP, limitFailover: "r1" }, bot, { routine: false }, NOW,
+      deps({ failoverRow: () => applied, targetAllowed: () => ({ ok: false, line: "Kimi is hidden in Settings." }), refuse: { [PIN.model]: { ok: false, code: "disabled" } } }));
+    expect(out.selection).toEqual(BOT);
+    expect(out.restore).toEqual({ rowId: "r1", to: PIN });
+    expect(out.line).toContain("Kimi is hidden in Settings.");
+    expect(out.line).toContain(healedLine("Ember"));
+    expect(out.backupFrom).toBeUndefined();
+  });
 });
 
 describe("K3: Refresh permissions", () => {

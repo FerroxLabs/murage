@@ -16,7 +16,8 @@ export interface TeamMapBot {
 
 export interface TeamMapSnapshot {
   collaborations: Array<{ groupId: string; botIds: [string, string]; lastAt: number }>;
-  queued: Array<{ sourceBotId: string; targetBotId: string; reason?: string }>;
+  /** `sourceThreadId`: the conversation the handoff was queued from (route rows since 1.0.18). */
+  queued: Array<{ sourceBotId: string; targetBotId: string; sourceThreadId?: string; reason?: string }>;
   running: Array<{ sourceBotId: string; targetBotId: string; threadId: string; groupId?: string }>;
 }
 

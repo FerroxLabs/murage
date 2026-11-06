@@ -8,7 +8,7 @@
 // null and callers fall back to the engine list the app already holds.
 import { useEffect, useSyncExternalStore } from "react";
 import { api, useStoreIfAny } from "@/state/store";
-import { primaryEngine } from "@/lib/today-model";
+import { engineState, healthEngine, primaryEngine } from "@/lib/today-model";
 import type { EngineHealthAnswer, EngineHealthRow, FluxHealthState } from "@/components/shell/shell-contract";
 
 export const ENGINE_HEALTH_PATH = "/api/engine-health";
@@ -65,17 +65,29 @@ export function useEngineHealthAnswer(): EngineHealthAnswer | null {
 }
 
 /** The engine Today names and the Flux state: the server's answer when it has one, else the app's own engine list. */
-export function useEngineReading(): { engine: EngineHealthRow | null; flux: FluxHealthState; fromServer: boolean } {
+/** `engine` is the one Today names; `health` is the one the Health level reads (healthEngine): the default and the
+ * engines bots use, never an unused fallback. */
+export interface EngineReadingAnswer { engine: EngineHealthRow | null; health: EngineHealthRow | null; flux: FluxHealthState; fromServer: boolean }
+
+/** The server's default id, or the primary's on an older server that does not send one. */
+export function answerDefaultId(server: EngineHealthAnswer): string | null {
+  return server.defaultId !== undefined ? server.defaultId : server.primary?.id ?? null;
+}
+
+export function useEngineReading(): EngineReadingAnswer {
   const server = useEngineHealthAnswer();
   // The Inbox reads this too, and it also renders with no store around it (its own page fixtures).
   const state = useStoreIfAny()?.state;
-  if (server) return { engine: server.primary, flux: server.flux, fromServer: true };
-  if (!state) return { engine: null, flux: "none", fromServer: false };
+  if (server) return { engine: server.primary, health: healthEngine(server.engines, answerDefaultId(server)), flux: server.flux, fromServer: true };
+  if (!state) return { engine: null, health: null, flux: "none", fromServer: false };
   const engines = state.instances.map((instance) => ({ instanceId: instance.instanceId, displayName: instance.displayName, enabled: instance.enabled, driverKind: instance.driverKind, snapshot: instance.snapshot }));
   const used = state.bots.filter((bot) => !bot.hidden).map((bot) => bot.modelSelection?.instanceId).filter((id): id is string => Boolean(id));
   const keyState = state.config?.flux?.keyState;
   const flux: FluxHealthState = keyState === "refused" || keyState === "not-flux" ? "key-problem" : state.config?.flux?.configured ? "ok" : "none";
-  return { engine: primaryEngine(engines, used), flux, fromServer: false };
+  const counts = new Map<string, number>();
+  for (const id of used) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const rows: EngineHealthRow[] = engines.map((e) => ({ id: e.instanceId, label: e.displayName, state: engineState(e), line: "", usedBy: counts.get(e.instanceId) ?? 0 }));
+  return { engine: primaryEngine(engines, used), health: healthEngine(rows, null), flux, fromServer: false };
 }
 
 /** Read the answer again now (Health's Check again and Switch on), for everyone showing it. A read already on its way

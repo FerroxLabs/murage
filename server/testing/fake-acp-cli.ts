@@ -447,6 +447,11 @@ const dumpEnv = Object.fromEntries(
     "ANTHROPIC_MODEL",
     "OPENAI_BASE_URL",
     "OPENAI_MODEL",
+    // GitHub Copilot (acp/copilot.ts): its allow-all switch and the tokens that would outrank its login (fixture values)
+    "COPILOT_ALLOW_ALL",
+    "COPILOT_GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
     ...dumpCredentials,
     // engine isolation switches (no secret): compat cells, memory, discovery off
     ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),

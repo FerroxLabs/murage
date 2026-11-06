@@ -39,6 +39,7 @@ const ENGINE_LABELS: Record<string, string> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  copilotAgent: "GitHub Copilot",
 };
 
 /** Drivers that can report commands. Every ACP engine goes through the
@@ -56,7 +57,7 @@ const ENGINE_LABELS: Record<string, string> = {
 const REPORTING_DRIVERS = new Set([
   "claudeAgent", "codex",
   "fuigoAgent", "grokAgent", "geminiAgent", "qwenAgent", "kimiAgent", "hermesAgent", "openclawAgent", "clineAgent",
-  "cursorAgent", "droidAgent", "opencodeGo", "customAcp",
+  "cursorAgent", "droidAgent", "opencodeGo", "copilotAgent", "customAcp",
 ]);
 
 /** Commands that are never offered, for any engine.

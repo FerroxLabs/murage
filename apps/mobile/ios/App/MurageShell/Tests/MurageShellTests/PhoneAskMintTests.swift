@@ -220,20 +220,9 @@ final class PhoneAskMintTests: XCTestCase {
         }
     }
 
-    #if os(iOS)
-    func testSetupDialogOffersOnlyOkAfterATurnedOffAnswer() {
-        // TURN ON would re-run the mint and show the same refusal, so only OK stays (it records "asked" like NOT NOW).
-        XCTAssertTrue(PhoneAskSetup.offersOnlyOk(PhoneJobsMintError.turnedOff))
-        for other in [PhoneJobsMintError.updateComputer, .noApprovalKey, .refused, .notOffered, .rateLimited, .invalidResponse, .unavailable, .storage, .cancelled, .busy] {
-            XCTAssertFalse(PhoneAskSetup.offersOnlyOk(other))
-        }
-        XCTAssertEqual(PhoneJobStrings.text("ask_ok"), "OK")
-    }
-    #endif
-
     func testPhoneFlagsWithoutFeatureShowsTurnedOffBeforeChallenge() async throws {
         let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
-        XCTAssertEqual(PhoneJobStrings.text("ask_turned_off"), "This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Share and ask. If it's already on, the line under it says why it can't be used.")
+        XCTAssertEqual(PhoneJobStrings.text("ask_turned_off"), "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.")
         #if os(iOS)
         XCTAssertEqual(PhoneAskSetup.errorKey(PhoneJobsMintError.turnedOff), "ask_turned_off")
         #endif

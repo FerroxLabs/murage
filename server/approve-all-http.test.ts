@@ -293,4 +293,18 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
     expect((await caution(false, desktopHeaders)).body).toEqual({ cautionDismissed: false });
     expect((await surface(appWithKey)).body.cautionDismissed).toBe(false);
   }, 60_000);
+
+  it("Today's Calm | Detailed choice: the desktop and the keyed phone app save it over real HTTP; a browser and a keyless app only read it", async () => {
+    const read = (headers: Record<string, string>) => request("GET", "/api/owner-prefs/today-view", undefined, headers);
+    const save = (view: unknown, headers: Record<string, string>) => request("POST", "/api/owner-prefs/today-view", { view }, headers);
+    expect((await read(desktopHeaders)).body).toEqual({ view: "calm", canSave: true });
+    expect((await save("Detailed", desktopHeaders)).status).toBe(400);
+    expect((await save("detailed", pairedBrowser)).status).toBe(403);
+    expect((await save("detailed", appNoKey)).status).toBe(403);
+    expect((await read(pairedBrowser)).body).toEqual({ view: "calm", canSave: false });
+    expect((await save("detailed", appWithKey)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(desktopHeaders)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(appNoKey)).body).toEqual({ view: "detailed", canSave: false });
+    expect((await request("POST", "/api/inbox/approve-all/surface", {}, desktopHeaders)).body.cautionDismissed).toBe(false);
+  }, 60_000);
 });

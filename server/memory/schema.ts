@@ -17,6 +17,7 @@ import { DEFAULT_MEMORY_LEARNING, DEFAULT_MEMORY_LEARNING_V2, memoryLearningSche
 import { CONSOLIDATION_V11_FIELDS, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { foldMapLost, repairFoldMap } from "./revoke-fold.ts";
+import { removeCopy, SETTLE_INTO_SUFFIX, settledCopyKept, settleFtsCopy } from "../settle-copy.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
 export const MEMORY_SCHEMA_V1 = `
@@ -2373,11 +2374,20 @@ function verifySnapshot(path: string, version: number) {
 function snapshotBeforeMigration(db: DatabaseSync, path: string, options: MigrateMemoryOptions, plan: { needBytes: number }, version: number) {
   const partial = `${path}${MEMORY_SNAPSHOT_PARTIAL_SUFFIX}`;
   removePartial(partial); // a killed earlier attempt
-  if (existsSync(path)) { verifySnapshot(path, version); return; } // an earlier attempt already preserved the older file; it is checked, not trusted
+  if (existsSync(path)) {
+    // an earlier attempt already preserved the older file; it is checked, not trusted
+    verifySnapshot(path, version);
+    // and kept only when its search index proves settled with no side file beside it (SMOOTH-FTS-MERGE R6 section 3, keep rule;
+    // no exemption for a copy an older build made): otherwise it and its side files go and the copy is made again below
+    if (settledCopyKept(path)) return;
+    removeCopy(path);
+  }
   if (db.isTransaction) throw new Error("MEMORY_SCHEMA_SNAPSHOT_FAILED: VACUUM INTO cannot run inside a transaction");
   try {
     (options.copy ?? ((handle, target) => { handle.prepare("VACUUM INTO ?").run(target); }))(db, partial);
     try { chmodSync(partial, 0o600); } catch { /* matches messages.db handling on platforms without POSIX modes */ }
+    // the copy settles itself before it is verified and named (settle-copy.ts): no deleted conversation stays in its search index
+    settleFtsCopy(partial, { check: false });
     // VACUUM INTO never fsyncs its output, and the upgrade that follows commits
     // with synchronous=FULL: flush the copy before it gets its final name, and
     // the folder after, so a power cut cannot leave a v4 messages.db beside a
@@ -2406,7 +2416,8 @@ export const memorySnapshotIo = { fsyncSync, renameSync };
  * rollback journal for its output, and a real full disk leaves
  * `<name>.partial-journal` behind (seen on a 48 MB tmpfs). */
 function removePartial(partial: string) {
-  for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${partial}${suffix}`, { force: true });
+  // and the settle's own VACUUM INTO file beside it (settle-copy.ts, SMOOTH-FTS-MERGE R6.1)
+  for (const base of [partial, `${partial}${SETTLE_INTO_SUFFIX}`]) for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${base}${suffix}`, { force: true });
 }
 function flushFile(path: string) {
   const fd = openSync(path, "r+");
@@ -2537,7 +2548,8 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
     const snapshot = from === 1 ? options.snapshotPath : from === 2 ? options.snapshotV2Path : from === 3 ? options.snapshotV3Path : undefined;
     const sizes = liveBytes(db);
     const copying = Boolean(snapshot) && !existsSync(snapshot!);
-    const needBytes = (copying ? sizes.copyBytes : 0) + migrationHeadroom(sizes.copyBytes);
+    // a copy is made once and settled once: the settle's VACUUM INTO needs about the copy's size again (settle-copy.ts, R6.1)
+    const needBytes = (copying ? 2 * sizes.copyBytes : 0) + migrationHeadroom(sizes.copyBytes);
     plan.needBytes = needBytes;
     plan.probe = () => options.freeBytes ? options.freeBytes() : snapshot ? freeBytesFor(snapshot) : null;
     const emit = (phase: MemoryMigrationPhase["phase"], free: number | null) => {
