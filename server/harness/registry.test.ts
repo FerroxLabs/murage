@@ -267,6 +267,33 @@ describe("ProviderRegistry", () => {
     await registry.disposeAll();
   });
 
+  it("an empty catalogue at boot is read again on the next due pass, a few times, then waits the 24 h age", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; } });
+    await registry.refreshModelCatalogs(); expect(calls).toBe(0); // just created: the create read counts
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1); // still empty: due again
+    for (let i = 0; i < 10; i++) { now += 2000; await registry.refreshModelCatalogs(); }
+    expect(calls).toBe(5); // capped
+    now += 24 * 60 * 60_000; await registry.refreshModelCatalogs(); expect(calls).toBe(6); // the 24 h age still applies
+    await registry.disposeAll();
+  });
+
+  it("an empty catalogue that fills stops the short retries", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; models.default = "m"; models.options = [{ id: "m", label: "M" }]; } });
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    await registry.disposeAll();
+  });
+
   // The tray re-reads the setup view every minute (SIGNED_OUT_FRESH_MS), and
   // that read describes the fleet. With a forced catalog refresh, every read
   // spawned `fuigo models` and sent Flux a GET /v1/models: the 60 s poll seen
