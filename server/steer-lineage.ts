@@ -290,6 +290,9 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
   onLate?: (delivery: SteerDelivery) => void;
   /** Run inside the write's fence, after every check passed and with no await before the write: the caller takes the receiving attempt here. */
   onFence?: () => void;
+  /** The owner's current date and time line (bot-shapes.ts nowPrompt). A steer lands mid-turn, often minutes after the turn's own
+   *  line was written, so it carries a fresh one on top of the owner's words. */
+  now?: string;
 }): Promise<"steer" | "queue" | "uncertain"> {
   // the steer's own allowance: its quote is checked when it is rendered and again at the write boundary
   const allowance = LineageAllowance.steer();
@@ -298,7 +301,8 @@ export function steerWithQuoteLineage(adapter: SteerAdapter, threadId: string, t
   const reader = opts.reader ?? doorReader();
   // the steer's engine input: the owner's words and the quote (built outside the turn, so its refs join the turn only once the fence passed;
   // a prompt built outside a turn is always looked up again at the fence)
-  const prompt = buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn"), ...refs])]);
+  const nowLine = opts.now?.trim();
+  const prompt = buildPrompt(undefined, [promptPart(nowLine ? `${nowLine}\n\n${text}` : text, [noneRef("owner-turn"), ...refs])]);
   return steerBusyDesk(adapter, threadId, prompt, allowed, () => {
     if (!opts.holds()) throw new Error("MEMORY_CONTEXT_REVOKED");
     if (quoted && outputRootsBad(allowance, quoted)) throw new Error("MEMORY_CONTEXT_REVOKED");

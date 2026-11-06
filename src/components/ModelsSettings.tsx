@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Card, InAdvanced, Switch } from "./SettingsPrimitives";
 import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { api, useStore, type ConfigStatus } from "@/state/store";
+import { configAfterFluxKeyChange } from "@/lib/spend-meter";
 import { extractKeys, modelProviderCandidates } from "../../shared/key-extract";
 import type { KeyProviderPreset, ProviderCatalog, ProviderConnectionMutation, ProviderModel, ProviderPreset, PublicProviderConnection } from "../../shared/provider-connections";
 import { t } from "@/lib/i18n";
@@ -141,6 +142,11 @@ export function ModelsSettings() {
     finally { running.current = false; setBusy(null); }
   };
   const existingSaved = (status: ConfigStatus) => { dispatch({ type: "configStatus", config: status }); notifyConnectionsChanged(); void reload(); };
+  // A Flux key change: the local copy drops the old key's fingerprint, then the server's config replaces it (UX-L2C pull).
+  const fluxKeyChanged = (configured: boolean) => {
+    if (state.config) dispatch({ type: "configStatus", config: configAfterFluxKeyChange(state.config, configured) });
+    void api("/api/config").then((config: ConfigStatus) => dispatch({ type: "configStatus", config })).catch(() => { /* the next config frame brings it */ });
+  };
   const fluxChanged = async (change: FluxConnectionMutation) => {
     let status: FluxConnectionStatus;
     if (window.muragebox) {
@@ -148,7 +154,7 @@ export function ModelsSettings() {
       status = await window.muragebox.mutateFluxConnection(change);
     } else status = await api("/api/flux-connection/mutate", { method: "POST", body: JSON.stringify(change) });
     setFlux(status);
-    if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: status.configured } } });
+    fluxKeyChanged(status.configured);
     notifyConnectionsChanged();
   };
   const fluxTest = async () => {
@@ -167,7 +173,7 @@ export function ModelsSettings() {
         const result = await window.muragebox!.fluxSignin!.start({ action: flux.configured ? "replace" : "connect", revision: flux.revision });
         if (!result.ok) throw new Error(result.message);
         setFlux(result.status);
-        if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: result.status.configured } } });
+        fluxKeyChanged(result.status.configured);
         notifyConnectionsChanged();
       } : undefined}
       onCancelSignin={() => window.muragebox?.fluxSignin?.cancel()}
