@@ -164,6 +164,9 @@ export const OWNER_DECISION_ROUTES = [
   { method: "GET", path: /^\/api\/groups\/[\w-]+\/requests$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/requests\/[\w-]+\/(?:cancel|retry)$/ },
   { method: "POST", path: /^\/api\/groups\/[\w-]+\/project\/control\/(?:stop|pause|resume|redirect)$/ },
+  // L4B-PHONE-TURNSTATE (designs/L4B-PHONE-TURNSTATE-1020.md): the help panel follows its own question. The harness answers
+  // only beside the owner proof (mayApprove), the same proof both doors already send with a card answer. GET only.
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/turn-state$/ },
 ] as const;
 
 /** The private launch proof to add when forwarding this request, if any. It
@@ -215,6 +218,9 @@ export function doorForwardHeaders(token: string | undefined): Record<string, st
 export const DEVICE_OWNER_READS = [
   { method: "GET", path: /^\/api\/bots$/ },
   { method: "GET", path: /^\/api\/events$/ },
+  // All chats and its message search answer only the owner (the device door's own allowlist above still bounds the search)
+  { method: "GET", path: /^\/api\/chats$/ },
+  { method: "GET", path: /^\/api\/search$/ },
 ] as const;
 
 /** Approve all from the paired phone app (APPROVE-ALL-1016 7.1). The harness takes it only from the desktop app or a
@@ -321,6 +327,8 @@ const DEVICE_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // open the owner's work thread for a team a bot is shared with (SPEC-X 12.1)
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/work-threads$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
+  // the help panel follows its own question (the door adds the owner proof, OWNER_DECISION_ROUTES; the harness checks mayApprove)
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/turn-state$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
   // The composer's "/" menu: names and descriptions of the bot's own engine
   // commands, a read the harness scopes to bots this surface can see. The
@@ -579,6 +587,8 @@ const BROWSER_ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   // open the owner's work thread for a team a bot is shared with (SPEC-X 12.1)
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/work-threads$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/interrupt$/ },
+  // the help panel follows its own question (the door adds the owner proof, OWNER_DECISION_ROUTES; the harness checks mayApprove)
+  { method: "GET", path: /^\/api\/bots\/[\w-]+\/turn-state$/ },
   { method: "POST", path: /^\/api\/bots\/[\w-]+\/read$/ },
   // The composer's "/" menu: names and descriptions of the bot's own engine
   // commands, a read the harness scopes to bots this surface can see. The

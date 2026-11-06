@@ -151,6 +151,10 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   eventKindDeclined: f => f.m.eventKindDeclined(f.webhook.id, "create"),
   interruptUnresolvedEventTimeouts: f => { f.m.admitEventAction(f.webhook.id, "admission-7", "handoff"); f.m.recordEventAdmissionReceipt(f.webhook.id, "admission-7", "timeout:task-9"); expect(f.m.interruptUnresolvedEventTimeouts(() => false)).toBe(1); },
   listRoutineNames: f => f.m.listRoutineNames(),
+  // 1.0.18 U6 F38 (c8ce9d59e) and E32 (221b41699), U28 B45 (1034c9dc3): read-only additions, driven so a save after each still matches disk
+  listRoutineDetails: f => expect(f.m.listRoutineDetails("bot-a").map(detail => detail.name)).toEqual(["A"]),
+  hasStartedRun: f => f.m.hasStartedRun(f.a.id),
+  roomGoalRunForThread: f => f.m.roomGoalRunForThread(f.goalThread),
   activeWebhookRunCount: f => f.m.activeWebhookRunCount("hook-1"),
   cancelQueuedWebhook: f => f.m.cancelQueuedWebhook("hook-1", "The webhook was removed"),
   cancelRun: f => f.m.cancelRun(f.running.id),

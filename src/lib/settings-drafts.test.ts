@@ -39,7 +39,8 @@ describe("the settings window", () => {
     const modal = read("../components/SettingsModal.tsx");
     expect(modal).toContain("DISCARD_SETTINGS_CHANGES");
     // Escape, the backdrop, the search box's Escape and the close button all go through the question
-    expect(modal.match(/closeSettings\(\)/g)?.length).toBeGreaterThanOrEqual(3);
+    // (Escape calls it through closeSettingsRef, so a bot page's close does not re-run the focus setup.)
+    expect(modal.match(/closeSettings(Ref\.current)?\(\)/g)?.length).toBeGreaterThanOrEqual(3);
     expect(modal).toContain("onClick={closeSettings}");
     expect(modal).toContain("e.target === e.currentTarget && closeSettings()");
     expect(DISCARD_SETTINGS_CHANGES).not.toMatch(/[–—]/);

@@ -9,5 +9,7 @@
 // (locale-copy.test.ts).
 import { en } from "@/locales";
 import screens from "@/locales/en-help/screens.json";
+// "Ask about this screen" (UX-L4B-FULL): the panel's words, help only too.
+import ask from "@/locales/en-help/ask.json";
 
-Object.assign(en, screens);
+Object.assign(en, screens, ask);

@@ -49,7 +49,15 @@ export type DirectThreadRun<T> = Readonly<TurnOwner & {
    * thread reads as working, a cancel stops it as any run, and the rebuilt turn takes the run over at its admission (admit takeOver). */
   phase: "setup" | "dispatching" | "running" | "stopping" | "settling" | "rebuilding";
   providerTurnId?: string;
+  /** A turn of its own (the help panel's question, UX-L4B-FULL 9.1): nothing steers into it. Set only by admit; a rebuild keeps it. */
+  isolated?: true;
 }>;
+/** UX-L4B-FULL 9.2: words may not join this live run. An isolated run takes nothing but the answer to its own question card (the card
+ * asked in its own provider turn): that answer is the turn's continuation. Any other run, or no run, refuses nothing here. */
+export function isolationRefuses(run: Pick<DirectThreadRun<unknown>, "isolated" | "providerTurnId"> | undefined, answerTurnId?: string): boolean {
+  if (!run?.isolated) return false;
+  return answerTurnId === undefined || run.providerTurnId === undefined || run.providerTurnId !== answerTurnId;
+}
 /** Who a waiting turn is waiting for: a holder of an overlapping claim, or an
  * earlier waiter whose overlapping set is served first. */
 export type ResourceBlocker = Readonly<{ resource: string; owner: TurnOwner; queued: boolean }>;
@@ -111,18 +119,21 @@ export class IndependentThreadRuns<T> {
    * thread slot instead of refusing; the caller must `awaitSlot` before any
    * setup. A direct send counts every admitted run, so it never overtakes a
    * queued one. */
-  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean; ownerFirst?: boolean; takeOver?: string } = {}): DirectThreadRun<T> {
+  admit(botId: string, threadId: string, snapshot: T, resources: readonly string[] = [], options: { queueForSlot?: boolean; ownerFirst?: boolean; takeOver?: string; isolated?: boolean } = {}): DirectThreadRun<T> {
     // A rebuild takes over the run its refused turn kept (holdForRebuild) in this one call: the thread is never free in between, so
     // nothing is told it was released. Only that generation, still rebuilding, can be taken over.
     let takenOver: string | undefined;
+    // the run's isolation is the held run's own on a takeover, whatever the caller passes: a rebuilt help turn stays a turn of its own
+    let isolated = options.isolated === true;
     if (options.takeOver !== undefined) {
       const held = this.runs.get(threadId);
       if (!held || held.generation !== options.takeOver || held.phase !== "rebuilding") throw new DirectRebuildCancelled();
       takenOver = held.botId;
+      isolated = held.isolated === true;
       this.drop(held);
     }
     try {
-      const run = this.admitFree(botId, threadId, snapshot, resources, options);
+      const run = this.admitFree(botId, threadId, snapshot, resources, { ...options, isolated });
       // what the dropped run held may admit a waiter the new run does not compete with
       if (takenOver !== undefined) this.pump();
       return run;
@@ -133,7 +144,7 @@ export class IndependentThreadRuns<T> {
     }
   }
 
-  private admitFree(botId: string, threadId: string, snapshot: T, resources: readonly string[], options: { queueForSlot?: boolean; ownerFirst?: boolean }): DirectThreadRun<T> {
+  private admitFree(botId: string, threadId: string, snapshot: T, resources: readonly string[], options: { queueForSlot?: boolean; ownerFirst?: boolean; isolated?: boolean }): DirectThreadRun<T> {
     if (this.runs.has(threadId)) throw conflict("thread_busy", "This thread is already running or stopping.");
     const running = this.forBot(botId);
     let needsSlot = running.length >= MAX_CONCURRENT_BOT_THREADS;
@@ -151,7 +162,7 @@ export class IndependentThreadRuns<T> {
     const copied = structuredClone(snapshot);
     const owner = { threadId, generation: randomUUID() };
     if (!this.resources.claimAll(resources, owner)) throw conflict("resource_busy", "Another thread is using this browser, computer or working folder.");
-    const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup" });
+    const run: DirectThreadRun<T> = Object.freeze({ ...owner, botId, snapshot: copied, phase: "setup", ...(options.isolated ? { isolated: true as const } : {}) });
     this.runs.set(threadId, run);
     this.stamp(owner);
     if (needsSlot) this.slotless.add(owner.generation);

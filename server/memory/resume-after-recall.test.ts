@@ -136,7 +136,10 @@ it("the image-await check and the live steer both go through the full session va
   // retained session's own (memory off), and the same gate is the steer's
   // write fence, run again right before a late write (round 3)
   const holdsAt = source.indexOf("const steerSessionHolds = (): boolean => {");
-  expect(source.slice(holdsAt, holdsAt + 800)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
+  // the whole gate, to its closing brace: 1.0.18 L4B adds the isolated-run and answer-turn checks ahead of the receipt
+  const holdsEnd = source.indexOf("\n            };", holdsAt);
+  expect(holdsEnd).toBeGreaterThan(holdsAt);
+  expect(source.slice(holdsAt, holdsEnd)).toMatch(/receipt\.steerable\(\)[\s\S]*retainedSessionInvalid\(/);
   // (1.0.2: only for an engine that can take the line mid-turn; any other
   // queues it, and that turn's own pre-submit check decides)
   const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
@@ -198,7 +201,7 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(source).toContain("function failOverThread(turn: { botId: string; threadId: string; selection: ModelSelection; sourceMessageId: string; phoneHeld?: boolean }, to: ModelSelection, resetsAt: number | null, now: number): FailoverRow | null {\n  const task = store.taskByThread(turn.botId, turn.threadId);\n  if (!task) return null;");
   // QW Q1: acceptBotSend admits through admitDirectSend, which holds the one steer (an ask_user answer shares it)
   const accept = source.indexOf("async function acceptBotSend(");
-  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend, ownerActs: ownerActsFact, ...(phoneCarry ? { phoneCarry } : {}), ...(row.queueOnly ? { queueOnly: true } : {}) });", accept);
+  const admit = source.indexOf("return admitDirectSend({ bot, threadId, row, text, replyTo, sendId, origin, unprovenSend, ownerActs: ownerActsFact, ...(phoneCarry ? { phoneCarry } : {}), ...(row.queueOnly ? { queueOnly: true } : {})", accept); // VENUE-POST appends its postTo pick after this
   const admitter = source.indexOf("function admitDirectSend(");
   const steer = source.indexOf("steerWithQuoteLineage(", admitter);
   expect(accept).toBeGreaterThan(0);

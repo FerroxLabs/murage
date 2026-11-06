@@ -66,6 +66,7 @@ describe("help's panel chunk loads only when help opens", () => {
     // The words for each screen and the tables that name them stay on the help chunk too.
     const lazyOnly = (pattern: RegExp) => files.filter((file) => pattern.test(readFileSync(file, "utf8"))).map((file) => relative(src, file).split(sep).join("/")).sort();
     expect(lazyOnly(/en-help\/screens\.json["']/)).toEqual(["lib/help-screen-copy.ts"]);
+    expect(lazyOnly(/en-help\/ask\.json["']/)).toEqual(["lib/help-screen-copy.ts"]);
     expect(lazyOnly(/from\s*["'][^"']*help-screen-copy["']|import\s*["'][^"']*help-screen-copy["']/)).toEqual(["lib/screen-envelope.ts"]);
     expect(lazyOnly(/^import\s+\{[^}]*\}\s+from\s*["'][^"']*screen-envelope["']/m)).toEqual(["components/help/FeedbackForm.tsx", "components/help/HelpPanel.tsx"]);
   });
