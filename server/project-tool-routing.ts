@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -271,13 +272,13 @@ projectToolHandlers.set("review-assign", (call, sent) => {
   if (projectCardById(call.db, body.cardId)?.groupId !== call.groupId) return { status: 404, body: { error: "No such card in this project." } };
   const cardId = body.cardId, reviewerRef = body.reviewer;
   return scopedTx(() => {
-    call.db.exec("SAVEPOINT project_review_assign");
+    beginWrite(call.db, "project_review_assign");
     try {
       const result = assignCardReview(call.db, { cardId, reviewerBotId: reviewerRef, leadBotId: call.botId, memberIds: [...call.memberIds], now: call.now });
-      call.db.exec("RELEASE project_review_assign");
+      endWrite(call.db, "project_review_assign");
       return { status: result.ok ? 200 : 409, body: result };
     } catch (error) {
-      call.db.exec("ROLLBACK TO project_review_assign; RELEASE project_review_assign");
+      undoWrite(call.db, "project_review_assign");
       throw error;
     }
   });

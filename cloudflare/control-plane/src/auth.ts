@@ -37,7 +37,9 @@ export function createAuth(
         // supplied x-forwarded-for chain for rate limits or session metadata.
         ipAddressHeaders: ["cf-connecting-ip"],
       },
-      database: { generateId: "uuid" },
+      // validateSchema: 1.7.3+ otherwise introspects D1 on the first request of every auth instance, and ours is built per request
+      // (one more D1 round trip each time). Our pinned migrations own the schema (F35: 0111 made account.issuer nullable).
+      database: { generateId: "uuid", validateSchema: false },
       backgroundTasks: {
         handler(promise) {
           ctx.waitUntil(promise);
