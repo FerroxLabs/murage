@@ -2,15 +2,20 @@
 // app, and while idle/checking. Two frames, one content (UpdateCardBody):
 // - the centred card, opened from the round button beside the account menu (UpdateIndicator);
 // - the pop-up: comes up by itself when a download starts, stays through to the restart, and never takes focus or sits over
-//   the composer. A download always shows here, so the card never holds the app while one runs.
+//   the composer. A download always shows here, so the card never holds the app while one runs. It sits above the sidebar
+//   footer, under menus; while a modal window is open (What's New after an update: canary 1.0.16 on a Mac had the pop-up
+//   behind it) it moves inside that window as a top-layer popover, so it shows above it and its buttons work.
 // All of it is the same state machine as the button: everything reads useUpdaterState, and only "is the card open" and how the
 // pop-up stands are shared (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
-import { closeUpdateCard, closeUpdatePopup, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, type UpdatePopupPlace } from "@/lib/update-card";
+import { createPortal } from "react-dom";
+import { closeUpdateCard, closeUpdatePopup, popupFocusReturn, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, useUpdatePopupAnchor, type UpdatePopupPlace } from "@/lib/update-card";
+import { watchModalWindow } from "@/lib/modal-window";
+import { focusableWithin } from "@/lib/focus-trap";
 import { useUndoToast } from "@/lib/undo";
-import { t } from "@/lib/i18n";
+import { localeVersion, subscribeLocale, t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
 import { wrapTabTarget } from "@/lib/focus-wrap";
 import { cn } from "@/lib/cn";
@@ -36,6 +41,8 @@ function friendlyError(message?: string): string {
 }
 
 export function UpdateBanner() {
+  // Mounted beside the terms gate, outside Shell, so it follows a language change itself.
+  useSyncExternalStore(subscribeLocale, localeVersion, localeVersion);
   const s = useUpdaterState();
   const cardOpen = useUpdateCardOpen();
   const popupUp = useUpdatePopup(s);
@@ -91,19 +98,53 @@ export function UpdateBanner() {
   return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
 }
 
-/** Bottom-left, no scrim, no focus. Sits under dialogs (z-50) and under the Undo toast, and moves up when one is showing. */
+/** The open modal window the pop-up lives in (the one opened last), kept current as windows open and close. The same watch as
+ * the "?" help tab (lib/modal-window.ts). */
+function useModalHost(): HTMLElement | null {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => watchModalWindow(setHost), []);
+  return host;
+}
+
+/** Bottom-left, no scrim, no focus. With no modal window open it is a fixed box under menus and overlays (z-40), as before.
+ * While a modal window is open (What's New included) it lives inside that window as a manual popover, so it is drawn in the top
+ * layer above it and is not inert there. Moves up for the Undo toast. */
 function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void }) {
   const toast = useUndoToast();
   const frame = useRef<HTMLElement>(null);
-  // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page.
+  const host = useModalHost();
+  const footer = useUpdatePopupAnchor();
+  // A new home is a new element: show it again, after any window that just opened, so it is the top of the top layer.
+  useLayoutEffect(() => {
+    if (!host) return;
+    try { frame.current?.showPopover(); } catch { /* already shown, or no popover support: it stays a fixed box */ }
+  }, [host]);
+  // Where focus was before a keyboard came in, so closing can hand it back there.
+  const origin = useRef<HTMLElement | null>(null);
+  // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page (or on an inert one).
   const close = () => {
-    const held = frame.current?.contains(document.activeElement) ?? false;
+    const popup = frame.current;
+    const held = popup?.contains(document.activeElement) ?? false;
     onDismiss();
-    if (held) document.querySelector<HTMLElement>('[data-testid="update-indicator"], [data-testid="update-button"]')?.focus();
+    if (!held) return;
+    const choices = popupFocusReturn<HTMLElement>({
+      host,
+      origin: origin.current,
+      inHost: (element) => host?.contains(element) ?? false,
+      inPopup: (element) => popup?.contains(element) ?? false,
+      hostControls: () => (host ? (focusableWithin(host) as HTMLElement[]) : []),
+      button: () => document.querySelector<HTMLElement>('[data-testid="update-indicator"], [data-testid="update-button"]'),
+    });
+    // The first that really takes focus: one that turned disabled or hidden meanwhile does not, so the next is tried.
+    for (const back of choices) {
+      if (back === host && !host.hasAttribute("tabindex")) host.tabIndex = -1;
+      back.focus();
+      if (document.activeElement === back) break;
+    }
   };
   const [place, setPlace] = useState<UpdatePopupPlace>({ left: 16, width: 300, bottom: 16 });
   useLayoutEffect(() => {
-    const anchor = document.querySelector<HTMLElement>("[data-update-popup-anchor]");
+    const anchor = footer ?? document.querySelector<HTMLElement>("[data-update-popup-anchor]");
     const measure = () => {
       const rect = anchor?.getBoundingClientRect();
       // Off to the left means the drawer is shut.
@@ -119,23 +160,31 @@ function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void 
       footerResize?.disconnect();
       window.removeEventListener("resize", measure);
     };
-  }, [toast]);
-  return (
+  }, [toast, footer]);
+  const popup = (
     <section
       ref={frame}
+      popover={host ? "manual" : undefined}
       aria-label={t("updates.title")}
+      onFocus={(event) => {
+        const from = event.relatedTarget;
+        if (from instanceof HTMLElement && !event.currentTarget.contains(from)) origin.current = from;
+      }}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
+        // Inside a dialog, Escape here closes the pop-up only, not the dialog under it.
+        event.preventDefault();
         event.stopPropagation();
         close();
       }}
       data-testid="update-popup"
       style={place}
-      className={cn(BOX_FRAME, "animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel pb-3.5 shadow-2xl shadow-black/50")}
+      className={cn(BOX_FRAME, "animate-panel-in fixed inset-auto z-40 m-0 w-auto max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel px-0 pt-0 pb-3.5 text-ink shadow-2xl shadow-black/50")}
     >
       <UpdateCardBody s={s} popup onDismiss={close} />
     </section>
   );
+  return host ? createPortal(popup, host) : popup;
 }
 
 function updateTitle(s: UpdaterState): string {
