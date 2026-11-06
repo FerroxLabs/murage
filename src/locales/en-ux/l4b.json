@@ -1,8 +1,1 @@
-{
-  "ux.l4b.ask.heading": "Ask about this screen",
-  "ux.l4b.ask.label": "Your question about this screen",
-  "ux.l4b.ask.placeholder": "Like: what does this do?",
-  "ux.l4b.ask.answers": "{name} answers in your chat.",
-  "ux.l4b.ask.button": "Ask {name}",
-  "ux.l4b.ask.prefill": "I am on the {screen} screen in Murage."
-}
+{}

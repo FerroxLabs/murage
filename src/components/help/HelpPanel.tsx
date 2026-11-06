@@ -18,7 +18,7 @@
 // that says how to get one; Search
 // help (GET /api/help/search over the shipped docs); links; and the feedback
 // form, last, so asking for help always comes first.
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { HelpCircle, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
@@ -31,6 +31,7 @@ import { askChiefAboutScreen, chiefFor } from "@/lib/help-ask-chief";
 import { AskAboutScreen } from "./HelpAskChief";
 import { Tip } from "@/components/ui/Tip";
 import type { ScreenIndexEntry } from "@/lib/screens-index";
+import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { FeedbackForm, type SendFeedback } from "./FeedbackForm";
 import { HelpTips } from "./HelpTips";
 import { hx, modWord } from "./help-copy";
@@ -251,6 +252,10 @@ export function HelpPanel(props: HelpPanelProps) {
 
 // ── the open panel, for HelpHost ─────────────────────────────────────────
 
+/** "Ask about this screen" (UX-L4B-FULL), its own chunk: fetched when the panel opens with an engine, never at first paint. */
+export const loadHelpAsk = () => import("./HelpAsk");
+export const HelpAskChunk = retryableLazy(loadHelpAsk);
+
 export interface HelpOpenProps {
   surface: FeedbackSurface;
   noEngines: boolean;
@@ -283,19 +288,31 @@ export function HelpOpen({ surface, noEngines, enginesOff, firstRun, askSlot, on
   const params = { ...screen.params, mod: modWord(shortcutPlatformIsMac()) };
   const title = screen.entry ? hx(screen.entry.title, params) : hx("ux.l4a.panel.label");
 
-  // "Ask your bot": the bot on screen, else the Chief of Staff, else the first
-  // bot; its chat, with the composer focused. The panel closes so the chat is
+  // A bot's chat, with the composer focused. The panel closes so the chat is
   // what the owner sees, on a phone above all.
-  const askBot = useCallback(() => {
-    const visible = state.bots.filter((b) => !b.hidden);
-    const target = (state.activeView === "chat" && !group ? bot : undefined) ?? visible.find((b) => botRole(b) === "chief") ?? visible[0];
+  const openChat = useCallback((targetId: string | undefined, threadId?: string) => {
     if (state.appSettingsOpen) dispatch({ type: "toggleAppSettings", open: false });
     if (state.settingsOpen) dispatch({ type: "toggleSettings", open: false });
     if (state.pluginsOpen) dispatch({ type: "togglePlugins", open: false });
-    if (target) dispatch({ type: "select", id: target.id });
+    if (targetId) dispatch({ type: "select", id: targetId, ...(threadId ? { threadId } : {}) });
     onDismiss();
     requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>("[data-composer] textarea")?.focus());
-  }, [bot, dispatch, group, state.activeView, state.appSettingsOpen, state.bots, state.pluginsOpen, state.settingsOpen, onDismiss]);
+  }, [dispatch, state.appSettingsOpen, state.pluginsOpen, state.settingsOpen, onDismiss]);
+  // "Ask your bot": the bot on screen, else the Chief of Staff, else the first bot.
+  const askBot = useCallback(() => {
+    const visible = state.bots.filter((b) => !b.hidden);
+    const target = (state.activeView === "chat" && !group ? bot : undefined) ?? visible.find((b) => botRole(b) === "chief") ?? visible[0];
+    openChat(target?.id);
+  }, [bot, group, openChat, state.activeView, state.bots]);
+  // The ask: L4B's panel when an engine can answer, else the slot's "how to get one" line (HelpPanel).
+  // Engines switched off: no ask either (1.0.18 rule; the gate line says why).
+  const ask = askSlot ?? (noEngines || enginesOff ? undefined : (
+    <LazyBoundary inline onRetry={HelpAskChunk.retry}>
+      <Suspense fallback={<p role="status" className="border-b border-hairline/40 px-5 py-4 text-[13px] text-ink-secondary">{hx("ux.l4b.loading")}</p>}>
+        <HelpAskChunk.Component screenTitle={feedbackEnvelopeForScreen(screen).title} onOpenChat={openChat} />
+      </Suspense>
+    </LazyBoundary>
+  ));
 
   // Ask about this screen: always the Chief of Staff's chat (else the first bot), with the screen named and the
   // question in its composer, not sent. The panel and any window over the chat close so the chat is what shows.
@@ -323,7 +340,7 @@ export function HelpOpen({ surface, noEngines, enginesOff, firstRun, askSlot, on
       // Engines switched off: no ask, since nothing could answer it (the gate line says why).
       chiefName={enginesOff ? undefined : chief?.name}
       onAskChief={askChief}
-      askSlot={askSlot}
+      askSlot={ask}
     />
   );
 }

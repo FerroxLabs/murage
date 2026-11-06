@@ -44,9 +44,13 @@ overrides:
   "fast-uri@>=3 <3.1.9": 3.1.9
   "js-yaml@>=4 <4.3.2": 4.3.2
   "source-map-js@<1.2.2": 1.2.2
-  "undici@>=7 <7.29.1": 7.29.1
-  # Left as is, on purpose: adm-zip 0.5.18 (fixed only in 0.6, outside the
-  # range onnxruntime-node asks for) is used only by onnxruntime-node's install
-  # script, which never runs here (not in allowBuilds); http-cache-semantics
+  "undici@>=7 <7.30.1": 7.30.1
+  # 1.0.18 DEP-AUDIT: GHSA-mrhx-c7xc-m3w5 (zod 4 below 4.6.6), the copy under
+  # @cloudflare/vitest-plugin (test only). zod 3 under jimp has no 3.x fix.
+  "zod@>=4 <4.6.6": 4.6.7
+  # Left as is, on purpose: adm-zip 0.5.18 (fixed only in 0.6.1, outside the
+  # ^0.5.16 range onnxruntime-node asks for; scripts/bundle-server.mjs refuses an
+  # out-of-range copy in the staged runtime) is used only by onnxruntime-node's
+  # install script, which never runs here (not in allowBuilds); http-cache-semantics
   # 4.2.0 has no fixed release and is reached only by electron-builder
   # downloading Electron at build time.

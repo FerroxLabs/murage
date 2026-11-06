@@ -9,7 +9,8 @@
 // chat, which already has Stop, the level chip and approval cards.
 import { botRole, type RoleBot } from "@/lib/bot-role";
 import { prefillBotChat } from "@/lib/compose-link";
-import { t } from "@/lib/i18n";
+// The words ride the help chunk (src/locales/en-help/ask.json), so they are read with hx like the panel's own.
+import { hx } from "@/components/help/help-copy";
 
 interface ChiefBot extends RoleBot { id: string; name: string; threadId: string; hidden?: boolean }
 
@@ -26,7 +27,7 @@ export const ASK_MAX_CHARS = 500;
 export function askText(screenTitle: string, question: string): string {
   const screen = screenTitle.replace(/\s+/g, " ").trim().slice(0, 120);
   const words = question.replace(/\r\n/g, "\n").trim().slice(0, ASK_MAX_CHARS);
-  const lead = t("ux.l4b.ask.prefill", { screen });
+  const lead = hx("ux.l4b.ask.prefill", { screen });
   return words ? `${lead}\n\n${words}` : lead;
 }
 

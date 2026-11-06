@@ -369,7 +369,9 @@ jobs:
       - name: First-paint payload budget
         # spec §6; one shard is enough, every shard built the same dist/
         if: matrix.human_shard == 1
-        run: pnpm check:bundle-budget
+        run: |
+          pnpm check:bundle-budget
+          node scripts/check-help-fixture-absent.mjs
       - name: Page-error guard proof
         # a throwing page must fail in seconds, not after a 120 s locator wait
         if: matrix.human_shard == 1

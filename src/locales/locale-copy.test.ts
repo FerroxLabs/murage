@@ -140,4 +140,26 @@ describe("English help screens", () => {
     for (const [key, value] of Object.entries(screens)) expect(en[key as keyof typeof en]).toBe(value);
     for (const [key, value] of Object.entries(before)) expect(en[key as keyof typeof en]).toBe(value);
   });
+
+  // UX-L4B-FULL: the Ask panel's words ride the help chunk the same way.
+  it("the Ask words are ux.l4b. strings only, never in the English pack before help loads", async () => {
+    const ask = JSON.parse(readFileSync(join(LOCALES_DIR, "en-help/ask.json"), "utf8")) as Record<string, string>;
+    const { en } = await import("./index");
+    await import("@/lib/help-screen-copy");
+    const keys = Object.keys(ask);
+    expect(keys.length).toBeGreaterThan(20);
+    expect(keys.filter((key) => !key.startsWith("ux.l4b.") || typeof ask[key] !== "string" || Object.hasOwn(screens, key))).toEqual([]);
+    // The same copy rules the en-ux fragments carried: non-empty, never already in en.json, no em or spaced dash, no "safe".
+    const catalogue = load("en");
+    const problems = Object.entries(ask).flatMap(([key, value]) => [
+      ...(typeof value === "string" && value.trim() ? [] : [`${key}: must be a non-empty string`]),
+      ...(Object.hasOwn(catalogue, key) ? [`${key}: already in en.json`] : []),
+      ...(DASH.test(String(value)) ? [`${key}: em dash or spaced dash`] : []),
+      ...(SAFE.test(String(value)) ? [`${key}: "safe" wording`] : []),
+    ]);
+    expect(problems).toEqual([]);
+    for (const [key, value] of Object.entries(ask)) expect(en[key as keyof typeof en]).toBe(value);
+    const fragment = JSON.parse(readFileSync(join(LOCALES_DIR, "en-ux/l4b.json"), "utf8")) as Record<string, string>;
+    expect(Object.keys(fragment)).toEqual([]);
+  });
 });

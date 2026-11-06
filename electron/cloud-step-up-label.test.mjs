@@ -54,6 +54,8 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
+  // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
+  ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
 ];
 
 describe("every step-up route has a human label", () => {

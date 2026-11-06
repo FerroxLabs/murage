@@ -75,9 +75,11 @@ describe("G1: only the owner's send route can ask for a typed stop (F7)", () => 
     // The route has one call: its via branch states ownerActs false and the via standing, and only its owner branch asks for a typed stop.
     const viaCalls = calls.filter((call) => call.includes("viaStanding"));
     expect(viaCalls).toHaveLength(1);
-    const viaBranch = /viaStanding \? \{([^}]*)\} : \{([^}]*)\}/.exec(viaCalls[0]!);
+    // the help panel's isolated arm (UX-L4B-FULL 9.1) only takes away: it never asks for a typed stop either.
+    const viaBranch = /viaStanding \? \{([^}]*)\} : isolated \? \{([^}]*)\} : \{([^}]*)\}/.exec(viaCalls[0]!);
     expect(viaBranch?.[1]).toBe(" ownerActs: false, ...viaStanding ");
-    expect(viaBranch?.[2]).toContain("typedStop: true");
+    expect(viaBranch?.[2]).toBe(" isolated: true, ownerActs: mayApprove(req, url) ");
+    expect(viaBranch?.[3]).toContain("typedStop: true");
     expect(viaCalls[0]!.replace(viaBranch![0], "")).not.toContain("typedStop");
     expect(calls.filter((call) => call.includes("queueOnly") && call.includes("typedStop"))).toEqual([]);
     // the card answer, the late answer and acceptBotSend's ordinary path all reach admitDirectSend, which has no typed-stop branch

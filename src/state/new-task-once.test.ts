@@ -94,4 +94,12 @@ describe("New conversation makes one conversation per action (upstream d124292a2
     const store = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
     expect(store).toContain("newTaskOnce(action.botId, action.cwd, () => requestPage(rawDispatch, stateRef.current, action.botId), (intent) =>");
   });
+
+  it("a room's New conversation goes through its own guard: a double click makes one room conversation", () => {
+    const store = readFileSync(fileURLToPath(new URL("./store.tsx", import.meta.url)), "utf8");
+    const effect = store.slice(store.indexOf('case "newGroupTask":\n          '), store.indexOf('case "switchGroupTask":\n          api('));
+    expect(effect).toContain("newGroupTaskOnce(action.groupId, undefined, () => undefined, () =>");
+    expect(effect).toContain("api(`/api/groups/${action.groupId}/tasks`");
+    expect(store).toContain("const newGroupTaskOnce = createNewTaskOnce();");
+  });
 });

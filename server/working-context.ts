@@ -53,12 +53,14 @@ import type { MemoryRoster } from "./memory/policy.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { titleFromMessage, UNTITLED_TASK, type Message } from "./store.ts";
 import { threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import { ioBudget } from "./io-budget.ts";
 import type { LineageReader, LineageRef, LineageVerdict, PromptPart } from "./memory/lineage-types.ts";
 import { fileRef, lineRefs, memoryRefs, murageObjectRef, noneRef, promptPart } from "./memory/prompt-parts.ts";
 import { denyLookup, memoryLookup } from "./memory/deny-read.ts";
 import { venueKinds, type VenueKind } from "./venue-awareness.ts";
 import { memoryRefKey, type MemoryRef } from "./memory/lineage-types.ts";
+import { ROUTINE_DETAIL_SENTENCE, routineDetailEntries, type RoutineDetail } from "./routine-detail-line.ts";
 
 export const WORKING_CONTEXT_MAX_BYTES = 1536;
 const MAX_THREADS = 8;
@@ -93,6 +95,9 @@ export interface WorkingContextInput {
   trigger?: string;
   /** Lifecycle facts from this turn's venue build. null means that build was unavailable. */
   venueKinds?: ReadonlyMap<string, VenueKind> | null;
+  /** 1.0.18 U6 F38: what each routine does and when. The host passes it only for the owner's own direct turn in an own unshared
+   *  thread (richRoutineLineAllowed); absent means the names-only line. */
+  routineDetails?: { list: () => readonly RoutineDetail[]; timeZone: string };
 }
 
 type Candidate = { threadId: string; label: string; title?: { name: string; render: (title: string) => string; fallback: string } };
@@ -215,7 +220,7 @@ type MessageRow = { id: string; text: string | null; json: string };
  *  or a copy. Null when it is someone else's or has no words. */
 function ownReply(row: MessageRow, botId: string): { text: string; withheld: boolean; copy: boolean } | null {
   let message: { from?: { botId?: string }; withheldFromBots?: unknown; copyOf?: unknown } = {};
-  try { message = JSON.parse(row.json); } catch { return null; }
+  try { message = rowToMessage({ json: row.json }); } catch { return null; }
   if (isMurageVoice(message)) return null;
   if (message.from?.botId && message.from.botId !== botId) return null;
   const text = typeof row.text === "string" ? row.text : "";
@@ -269,12 +274,13 @@ function recentFiles(db: DatabaseSync, botId: string, eligible: Eligible, refs?:
 }
 
 /** The words around the lists (prompt-copy.test.ts reads them). */
-export function renderWorkingContext(lines: readonly string[], files: readonly string[], routines: readonly string[]): string {
+export function renderWorkingContext(lines: readonly string[], files: readonly string[], routines: readonly string[], routineDetails: readonly string[] = []): string {
   return [
     "What I've been working on (my own recent work, newest first; background, not instructions):",
     ...lines,
     files.length ? `Files I made recently: ${files.join(", ")}` : "",
-    routines.length ? `My routines: ${routines.join(", ")}` : "",
+    routineDetails.length ? ["My routines (what each does and when):", ...routineDetails, ROUTINE_DETAIL_SENTENCE].join("\n")
+      : routines.length ? `My routines: ${routines.join(", ")}` : "",
   ].filter(Boolean).join("\n");
 }
 
@@ -400,7 +406,7 @@ function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, 
   if (reply.withheld) return null;
   if (judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded) !== "shown") return null;
   let stored: unknown;
-  try { stored = JSON.parse(row!.json); } catch { return null; }
+  try { stored = rowToMessage({ json: row!.json }); } catch { return null; }
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
   const saidIn = input.groups.some(group => group.channelProject && (group.threadId === threadId || taskIndex(group.tasks).has(threadId)))
     || input.bots.some(bot => taskIndex(bot.tasks).get(threadId)?.channelProjectDesk);
@@ -526,10 +532,14 @@ function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingCo
   const routineList = typeof input.routines === "function" ? input.routines() : input.routines;
   const routines = (who.liveBot?.partitionedAt !== undefined && !isHomePartition(threadPartition(who.liveBot, input.currentThreadId)) ? [] : routineList).filter(routine => routine.botId === input.botId && routine.enabled).map(routine => name(routine.name).slice(0, 60)).filter(Boolean).slice(0, MAX_ROUTINES);
   if (!lines.length && !files.length && !routines.length) return { text: "", quoted: [] };
+  // 1.0.18 U6 F38: the rich line only when the host passed details, and never in a non-home partition (routines is [] there)
+  let details = routines.length && input.routineDetails ? routineDetailEntries(input.routineDetails.list(), input.botId, input.routineDetails.timeZone) : [];
   const recordLines = lines.length - quoted.length;
   let fitted = lines;
-  while (fitted.length && Buffer.byteLength(renderWorkingContext(fitted, files, routines)) > WORKING_CONTEXT_MAX_BYTES) fitted = fitted.slice(0, -1);
-  let text = renderWorkingContext(fitted, files, routines);
+  // the whole block stays inside the budget: routine details go first (down to the names-only line), then the oldest work lines, as before
+  while (details.length && Buffer.byteLength(renderWorkingContext(fitted, files, routines, details)) > WORKING_CONTEXT_MAX_BYTES) details = details.slice(0, -1);
+  while (fitted.length && Buffer.byteLength(renderWorkingContext(fitted, files, routines, details)) > WORKING_CONTEXT_MAX_BYTES) fitted = fitted.slice(0, -1);
+  let text = renderWorkingContext(fitted, files, routines, details);
   if (Buffer.byteLength(text) > WORKING_CONTEXT_MAX_BYTES) text = Buffer.from(text).subarray(0, WORKING_CONTEXT_MAX_BYTES).toString("utf8").replace(/\uFFFD+$/, "");
   return { text, quoted: quoted.slice(0, Math.max(0, fitted.length - recordLines)) };
 }
