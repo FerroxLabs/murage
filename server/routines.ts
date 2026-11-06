@@ -22,6 +22,7 @@ import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import type { RoutineRequestOperation } from "../shared/routine-request.ts";
 import { channelOriginSchema, routineEventForRun, type ChannelOrigin, type RoutineEvent } from "../shared/routine-event.ts";
 import type { RoutineWatchBinding, RoutineWatchInput, RoutineWatchObservation, RoutineWatchRun, RoutineWatchSource } from "../shared/routine-watch.ts";
+import type { RoutineDetail } from "./routine-detail-line.ts";
 import { completeRoutineWatchCheck, createRoutineWatchState, pauseRoutineWatch, reserveRoutineWatchCheck } from "./routine-watch-state.ts";
 import { readRoutineWatchBinding, routineWatchInputSchema } from "./routine-watch-integration.ts";
 import { turnAskStopped, turnStopped, turnSucceeded } from "./turn-outcome.ts";
@@ -1346,6 +1347,15 @@ export class RoutineManager {
     return this.routines.map((routine) => ({ name: routine.name, botId: routine.botId, enabled: routine.enabled }));
   }
 
+  /** 1.0.18 U6 F38: what each routine of one bot does and when, for the owner's own direct chat (routine-detail-line.ts). No run history is read. */
+  listRoutineDetails(botId: string): RoutineDetail[] {
+    return this.routines.filter((routine) => routine.botId === botId).map((routine) => ({
+      name: routine.name, botId: routine.botId, enabled: routine.enabled, schedule: { ...routine.schedule } as RoutineSchedule,
+      nextRunAt: routine.nextRunAt, prompt: routine.prompt, createdAt: routine.createdAt,
+      ...(typeof routine.watch?.state.definition.expiresAt === "number" ? { expiresAt: routine.watch.state.definition.expiresAt } : {}),
+    }));
+  }
+
   /** A copy with the derived failure streak. Only failed and completed runs
    * are attempts: a cancelled run was stopped on purpose and a missed one
    * never started. */
@@ -1356,6 +1366,11 @@ export class RoutineManager {
     const success = outcomes.findIndex((run) => run.status === "completed");
     const failures = success < 0 ? outcomes.length : success;
     return { ...cloneRoutine(routine), ...(failures ? { failureStreak: failures } : {}) };
+  }
+
+  /** 1.0.18 U6 E32: true once any run of this routine has started. A routine with none reads "First run". */
+  hasStartedRun(routineId: string): boolean {
+    return this.runs.some((run) => run.routineId === routineId && run.startedAt !== undefined);
   }
 
   listRuns(from?: number, to?: number): RoutineRun[] {

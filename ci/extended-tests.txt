@@ -282,6 +282,7 @@ server/drivers/headless-text-only.windows.test.ts	extended
 server/drivers/http-text-only.audit2.test.ts	extended
 server/drivers/http-text-only.test.ts	extended
 server/drivers/isolation-cache.test.ts	extended
+server/drivers/lmstudio-native-catalog.test.ts	extended
 server/drivers/local-inject-probe.test.ts	extended
 server/drivers/memory-proxy.test.ts	extended
 server/drivers/minimax.test.ts	extended
@@ -892,6 +893,7 @@ shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
+shared/plain-time-zone.test.ts	extended
 shared/provider-error.test.ts	extended
 shared/publish-card.test.ts	extended
 shared/reply-markers.test.ts	extended
@@ -975,6 +977,7 @@ src/components/DesktopStopControl.test.ts	extended
 src/components/DiagnosticDetails.test.ts	extended
 src/components/EngineFolderFailureCard.test.ts	extended
 src/components/EngineLoginTerminal.test.ts	extended
+src/components/EnginesSettings.hidden.test.ts	extended
 src/components/EnginesSettings.test.ts	extended
 src/components/Files.test.ts	extended
 src/components/FirstRunBackups.test.ts	extended
@@ -1003,6 +1006,7 @@ src/components/LearnedChip.test.ts	extended
 src/components/LearningOverviewLine.test.ts	extended
 src/components/LearningPausedCard.test.ts	extended
 src/components/LearningSettings.test.ts	extended
+src/components/LimitBackupModel.test.ts	extended
 src/components/LivePlanCard.test.ts	extended
 src/components/LiveThinking.test.ts	extended
 src/components/LocalComputerAutoWarning.test.ts	extended
@@ -1038,10 +1042,12 @@ src/components/ProjectInboxRows.test.ts	extended
 src/components/ProjectLifecycle.test.ts	extended
 src/components/ProjectParallelSetting.test.ts	extended
 src/components/ProjectWorkSettings.test.ts	extended
+src/components/ProviderIcons.instance.test.ts	extended
 src/components/ProviderIcons.test.ts	extended
 src/components/PublishCard.test.ts	extended
 src/components/PushToTalk.test.ts	extended
 src/components/QuestionCard.onetap.test.ts	extended
+src/components/RailBotList.test.ts	extended
 src/components/RemoteConnectionBanner.test.ts	extended
 src/components/RemoteSignOut.test.ts	extended
 src/components/RemoteSurface.test.ts	extended
@@ -1264,6 +1270,7 @@ src/lib/mentions.test.ts	extended
 src/lib/menu-placement.test.ts	extended
 src/lib/model-metadata-failure.test.ts	extended
 src/lib/model-metadata-lazy.test.ts	extended
+src/lib/model-metadata-pending.test.ts	extended
 src/lib/model-metadata.test.ts	extended
 src/lib/native-action-error.test.ts	extended
 src/lib/native-contract.test.ts	extended
@@ -1464,9 +1471,15 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/components/routines/RoutineSheet.test.ts	extended
 src/lib/clock-format.test.ts	extended
 src/components/ChatReadingPolish.test.ts	extended
 src/components/RoomsA11yPolish.test.ts	extended
 src/lib/calendar-card-layout.test.ts	extended
 src/state/new-task-once.test.ts	extended
-src/components/BrowserApprovedSites.activity-label.test.ts	extended
+server/search-merge-r6-103k-t2.test.ts	extended
+server/search-merge-r6-103k-t5.test.ts	extended
+server/search-merge-r6-t7-wall.test.ts	extended
+src/lib/routine-sheet-model.test.ts	extended
+src/lib/schedule-words.test.ts	extended
+server/routine-sheet-run-now.e2e.test.ts	extended

@@ -19,5 +19,5 @@
 "share_passcode" = "Définissez un code sur ce téléphone, puis ouvrez Murage.";
 "share_again" = "Ouvrez Murage pour configurer à nouveau le partage.";
 "share_update" = "Activez cette fonction ou mettez à jour Murage sur votre ordinateur.";
-"share_turned_off" = "Ce n’est pas encore activé pour cet ordinateur. Sur l’ordinateur, ouvrez Murage, puis Réglages → Téléphone et autres appareils, et activez Share and ask. Si c’est déjà activé, la ligne en dessous explique pourquoi il est inutilisable.";
+"share_turned_off" = "Cette fonction n’est pas encore activée sur votre ordinateur. Activez-la dans Murage sur l’ordinateur, dans Réglages → Téléphone et autres appareils.";
 "share_done" = "Terminé";
