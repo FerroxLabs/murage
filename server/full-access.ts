@@ -34,7 +34,7 @@ export const NO_LIMITS_ACK_REQUIRED =
 
 /** The No limits warning the owner has to have confirmed before a turn he starts runs with no cards. Raised whenever
  * that warning's promise changes. It is one install-wide value, and a value below this keeps today's cards. */
-export const NO_LIMITS_TERMS = 2;
+export const NO_LIMITS_TERMS = 3;
 export function noLimitsTermsAccepted(version: number | undefined): boolean {
   return version !== undefined && version >= NO_LIMITS_TERMS;
 }

@@ -14,7 +14,7 @@ import { EngineManagement } from "./EngineManagement";
 import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
-import { ProviderMark } from "./ProviderIcons";
+import { InstanceProviderMark } from "./ProviderIcons";
 import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker";
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
@@ -254,7 +254,7 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
     <div>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className={cn("size-1.5 shrink-0 rounded-full", instance.cli ? "bg-accent" : "bg-raised-hover")} />
-        <ProviderMark driverKind={instance.driverKind} size={14} />
+        <InstanceProviderMark instance={instance} size={14} />
         <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
         {instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>
@@ -291,6 +291,10 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
       {/* A line about the detected version (OpenClaw below its Ask floor), the same one a refused Ask turn shows. */}
       {instance.enabled !== false && instance.snapshot.state === "available" && instance.snapshot.versionNote && (
         <p role="status" className="mt-1 text-[12px] text-warning">{instance.snapshot.versionNote}</p>
+      )}
+      {/* The person's own Copilot CLI and plan; GitHub's ACP mode is a public preview. */}
+      {instance.driverKind === "copilotAgent" && (
+        <p className="mt-1 text-[12px] text-ink-secondary">{t("engines.copilot.preview")}</p>
       )}
       {instance.snapshot.renewSignIn === true && (
         <p role="status" className="mt-1 text-[12px] text-ink">{ENGINE_RENEW_COPY}</p>
@@ -359,7 +363,7 @@ function EngineCommandLine({ instance, settingControl }: { instance: InstanceInf
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
-        <ProviderMark driverKind={instance.driverKind} size={14} />
+        <InstanceProviderMark instance={instance} size={14} />
         <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
         {instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>{instance.cli}</span>

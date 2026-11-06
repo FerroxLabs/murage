@@ -25,8 +25,14 @@
       }
     },
     "server/auto-approve.ts": {
-      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing",
+      "reason": "recognizer: the command-tool names ('powershell', 'pwsh') and the PowerShell dialect of a remembered approval key; classifies a proposed command, starts nothing (1.0.16 int9: nolimits r3d lines re-fingerprinted on the int tree; five of the added lines compare the 'pwsh' dialect so PowerShell text skips decodedForm (l.1025, 1087, 1105) and the unplainScan/narrowHold/runnerShapeIn/reachScan pass (l.1030, 1097), which leaves the 1.0.15 owner No limits waiver in force for PowerShell (wipeWordHold still runs for 'pwsh' and can clear the reader-failed card); the sixth is the wipeWordHold signature, which gained the dialect type and the inner, commandTool, summary and context parameters and compares nothing; no launch)",
       "lines": {
+        "af395cc4dc42d021": "function wipeWordHold(hit: AlwaysAskHit, dialect: \"pwsh\" | undefined, text: string | undefined, inn",
+        "d7679d80a5cbf1a7": "for (const form of scan.resolved) { reachResolved.push(form); if (shell !== \"pwsh\") { const plain",
+        "db48e26c48ef6b74": "if (shell !== \"pwsh\" && (!catastrophe || unseenCovered) && commandTool && ownerNoLimits(bot, contex",
+        "64b9ea7252d5acb9": "try { plain = dialect === \"pwsh\" ? part : decodedForm(part); } catch { return { hit: { ...hit, hidde",
+        "0149e0f443fbb185": "for (const part of dialect === \"pwsh\" ? [] : parts) {",
+        "e0c297b0ac55404d": "try { plain = dialect === \"pwsh\" ? form : decodedForm(form); } catch { return { hit: { ...hit, hidde",
         "9ed9cfeb637eb026": "type KeyWhy = \"path\" | \"value\" | \"field\" | \"mcp\" | \"summary\" | \"unmodeled\" | \"pwsh\" | \"local-hold\";",
         "8c31ac12b45b7d5f": "const commandData: CommandDataRead | \"plain\" | \"unmodeled\" | \"summary\" | undefined = covered && pinShell !== \"pwsh\"",
         "09b9146350fd9b8f": ": pinShell === \"pwsh\" ? \"pwsh\"",
@@ -205,6 +211,34 @@
       "reason": "recognizer: a read of a bot's own saved tool result is placed only for a POSIX shell's line; a command the engine marks as run under PowerShell (commandShell 'pwsh') is not placed and asks (fix/1011-own-tool-results); compares a field, starts nothing",
       "lines": {
         "a5c8f28c6a53bf75": "if ((request.platform ?? process.platform) === \"win32\" || request.commandShell === \"pwsh\" || !PO"
+      }
+    },
+    "server/shell/hiding.ts": {
+      "reason": "recognizer: No limits r3 (1.0.16) reads a proposed command text for hiding, reach and runner shapes; 'pwsh' is the dialect tag that switches POSIX-only checks off (runnerShapeIn) and makes unplainCore and narrowHold parse with PowerShell rules, which can return pwsh-call (r3d: PowerShell text is read as in the release base); imports homedir (node:os) and the POWERSHELLS and CMDS name sets (./pwsh.ts, string sets only), reads text, starts nothing",
+      "lines": {
+        "d54b35acb0d1d7b1": "export function hidingIn(text: string, dialect?: \"pwsh\"): Hiding | null {",
+        "3cb6e1c9f40c98cc": "if (dialect !== \"pwsh\" && ESCAPE.test(j)) return \"escape\";",
+        "3cf8ae75ab5fc5e4": "if (dialect !== \"pwsh\" && DYNAMIC_AT_START.test(scanned)) return \"dynamic-command\";",
+        "894c5d34b8f439fa": "const unquoted = dialect === \"pwsh\" ? scanned.replace(/[\"'`]/g, \"\") : scanned.replace(/(?<!\\\\)[",
+        "66f228d8e4553291": "if (dialect !== \"pwsh\" && /^(?:\\$|\"\\$|'\\$|\\u0001)/.test(first)) return \"dynamic-command\";",
+        "7aff2e89309ab47a": "if (dialect !== \"pwsh\" && first !== \"[\" && first !== \"[[\" && /[[?*]/.test(first)) return \"dynami",
+        "47b005519d2a64ed": "function innerReach(code: string, dialect: \"pwsh\" | undefined): Hiding | null {",
+        "29b56a00fa83f6ba": "export function runnerShapeIn(text: string, dialect?: \"pwsh\"): Hiding | null {",
+        "fc1c3a6e2384febb": "if (dialect === \"pwsh\") return null;",
+        "a50eebd0d626155b": "export function unplainIn(text: string, dialect?: \"pwsh\"): Hiding | null {",
+        "884df2b798361ffe": "export function unplainScan(text: string, dialect?: \"pwsh\", resolve = true): { hit: Hiding | null; r",
+        "fa7d8fe6665f6684": "export function reachScan(text: string, dialect?: \"pwsh\"): { hit: Hiding | null; resolved: string[",
+        "c4480d4c6fc871f4": "function unplainCore(text: string, dialect: \"pwsh\" | undefined, resolve: boolean, reach = false): H",
+        "119d0f6d7baff0e6": "const pwsh = dialect === \"pwsh\";",
+        "ac4106fded48915d": "const d = POWERSHELLS.has(name) ? \"pwsh\" : undefined;",
+        "298c035d23cb39ca": "export function narrowHold(text: string, dialect?: \"pwsh\"): Hiding | null {"
+      }
+    },
+    "server/shell/wipe-words.ts": {
+      "reason": "recognizer: NOLIMITS-WIPE-WORD (1.0.14) reads a text the reader could not follow for a delete, disk or mirror word, in the PowerShell dialect when the tool is one; reads text, starts nothing",
+      "lines": {
+        "40dbc5417a3040b6": "export function wipeWordIn(text: string, dialect?: \"pwsh\"): WipeWord | null {",
+        "83f9092d7b87ce55": "const windows = dialect === \"pwsh\" || tokens.some((ts) => ts.some((t) => POWERSHELLS.has(t"
       }
     },
     "server/shell/walk.ts": {

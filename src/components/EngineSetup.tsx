@@ -321,6 +321,12 @@ export function EngineSetup({
         desktop ? <EngineManagement instance={instance} /> : <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">{t("projects.work.needsApp")}</p>
       ) : installCommand ? (
         <CommandRow key={installCommand} command={installCommand} instanceId={instance.instanceId} action="install" onTerminalOpened={() => { installStarted.current = true; }} actionLabel={t("setup.openInstall")} />
+      ) : instance.driverKind === "copilotAgent" ? (
+        // The person's own Copilot CLI: Murage never installs it, only links GitHub's instructions.
+        <div className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
+          <p>{t("engines.copilot.install")}</p>
+          <p className="mt-1">{t("engines.copilot.preview")}</p>
+        </div>
       ) : (
         <p className="mt-3 rounded-lg bg-inset px-2.5 py-2 text-[12px] leading-relaxed text-ink-secondary">
           There isn’t a one-line installer for this platform. Use the setup guide below.

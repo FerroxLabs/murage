@@ -6,7 +6,7 @@ import { allInstanceConfigs, instanceConfigs, type AppConfig } from "../config.t
 import type { InstanceConfigMap } from "../contracts.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { ENGINE_LOGIN_ENGINES } from "./engine-login.ts";
-import { CLOUD_HIDDEN_ENGINES, CLOUD_RUNNABLE_ENGINES, cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./runnable-engines.ts";
+import { CLOUD_HIDDEN_ENGINES, CLOUD_LOCAL_ONLY_ENGINES, CLOUD_RUNNABLE_ENGINES, cloudEngineChoiceRefusal, cloudLocalOnlyEngineNames, isCloudHiddenEngine } from "./runnable-engines.ts";
 import { CLOUD_ENGINES } from "./turn-process.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -95,5 +95,47 @@ describe("the line the picker shows", () => {
   it("keeps the Pi and Hermes refusals as backstops", () => {
     expect(cloudHomeCopy.piOnHome).toBeTruthy();
     expect(cloudHomeCopy.hermesOnHome).toBeTruthy();
+  });
+});
+
+describe("Cline and Copilot run only on the person's computer", () => {
+  const LOCAL_ONLY = Object.keys(CLOUD_LOCAL_ONLY_ENGINES);
+  const product = { instances: { claude: { driver: "claudeAgent" }, codex: { driver: "codex" } } } as unknown as AppConfig;
+  it("are exactly Cline and Copilot, and no cloud engine", () => {
+    expect(sorted(LOCAL_ONLY)).toEqual(["clineAgent", "copilotAgent"]);
+    for (const engine of LOCAL_ONLY) {
+      expect(CLOUD_ENGINES.map(driverKind)).not.toContain(engine);
+      expect(CLOUD_RUNNABLE_ENGINES as readonly string[]).not.toContain(engine);
+      expect(CLOUD_HIDDEN_ENGINES as readonly string[]).not.toContain(engine);
+    }
+  });
+  it("a home never puts them in its engine list, so no turn can start on either", () => {
+    expect(drivers(allInstanceConfigs(product))).toEqual(expect.arrayContaining(LOCAL_ONLY));
+    for (const config of [product, {} as AppConfig, { instances: { ...fleet, cline: { driver: "clineAgent" }, githubCopilot: { driver: "copilotAgent" } } } as unknown as AppConfig]) {
+      const offered = drivers(instanceConfigs(config, { MURAGE_CLOUD_ROLE: "home" }));
+      for (const engine of LOCAL_ONLY) expect(offered).not.toContain(engine);
+      expect(offered).toContain("claudeAgent");
+    }
+  });
+  it("a home refuses a new bot on, or a switch to, either one", () => {
+    for (const engine of LOCAL_ONLY) {
+      expect(isCloudHiddenEngine(engine)).toBe(true);
+      expect(cloudEngineChoiceRefusal(true, engine, true)).toBe(cloudHomeCopy.engineNotOnCloud);
+    }
+  });
+  it("the desktop is unchanged: both stay offered and are never refused", () => {
+    expect(instanceConfigs(product, {})).toEqual(allInstanceConfigs(product));
+    expect(drivers(instanceConfigs(product, {}))).toEqual(expect.arrayContaining(LOCAL_ONLY));
+    for (const engine of LOCAL_ONLY) expect(cloudEngineChoiceRefusal(false, engine, true)).toBeUndefined();
+  });
+  it("names each once, in fleet order, for the picker's line", () => {
+    expect(cloudLocalOnlyEngineNames(["claudeAgent", "copilotAgent", undefined, "clineAgent", "copilotAgent"])).toEqual(["GitHub Copilot", "Cline"]);
+    expect(cloudLocalOnlyEngineNames(drivers(allInstanceConfigs(product)))).toEqual(expect.arrayContaining(["Cline", "GitHub Copilot"]));
+    expect(cloudLocalOnlyEngineNames(["claudeAgent", "toString", "hasOwnProperty"])).toEqual([]);
+  });
+  it("the home sends the names with its engine list, and leaves out ones the person hid", () => {
+    const index = read("../index.ts");
+    expect(index).toContain("const localOnlyEngines = cloudHome ? cloudLocalOnlyEngineNames(Object.values(allInstanceConfigs(cfg)).map(entry => entry.driver)) : [];");
+    expect(index).toContain("...(localOnlyEngines.length ? { localOnlyEngines } : {})");
   });
 });

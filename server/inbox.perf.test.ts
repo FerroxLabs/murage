@@ -16,10 +16,8 @@ import { bumpMessagesVersion } from "./inbox-version.ts";
 import type { InboxPage } from "../shared/inbox.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-/** The answer without the cursor and the snoozed-owed count the old code never
- *  had. `snoozedOwed` is new over the old queries (UX L2B, the Needs you badge
- *  adds it back) and is held by its own assertions in the row-shape test. */
-const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined });
+/** The answer without the cursor the old code never had. */
+const plain = (page: InboxPage) => ({ ...page, next: undefined });
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
 afterEach(() => { for (const db of databases.splice(0)) { try { db.close(); } catch {} } for (const root of roots.splice(0)) removeTempDirSync(root); });
@@ -214,12 +212,6 @@ it("the rewritten queries match the old ones on every row shape, mark and search
   for (const view of views) expect(plain(listInbox(db, { view }, narrow, 9_000_000)), `narrow ${view}`).toEqual(legacy.listInbox(db, { view }, narrow, 9_000_000));
   expect([...owedThreads(db, access)].sort()).toEqual([...legacy.owedThreads(db, access)].sort());
   expect([...owedThreads(db, narrow)].sort()).toEqual([...legacy.owedThreads(db, narrow)].sort());
-  // SNOOZED IS NOT ANSWERED (UX L2B). Owed rows snoozed past the first clock are off `decisions` and come back as
-  // `snoozedOwed`; once their snooze runs out they are plain `decisions` again, so the sum holds across both clocks.
-  const during = listInbox(db, { view: "decisions" }, access, 9_000_000), later = listInbox(db, { view: "decisions" }, access, 9_600_000);
-  expect(during.snoozedOwed ?? 0).toBeGreaterThan(0);
-  expect(later.snoozedOwed).toBeUndefined();
-  expect(during.decisions + (during.snoozedOwed ?? 0)).toBe(legacy.listInbox(db, { view: "decisions" }, access, 9_600_000).decisions);
   const sample = listInbox(db, { view: "all", pageSize: 100 }, access, 9_000_000);
   expect(sample.decisions).toBeGreaterThan(0); expect(sample.toRead).toBeGreaterThan(0); expect(sample.unread).toBeLessThan(sample.items.length);
   expect(compared).toBe(160);

@@ -79,7 +79,7 @@ describe("the confirm card's words (3.3)", () => {
 
   it("No limits: its own text, the level and bot as parameters", () => {
     const shown = text(renderCard({ target: "unlimited", keep: "full", bot: "Ember" }));
-    expect(shown).toContain("In conversations you start, No limits lets Ember run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full. A script file can still run unread. Routines and channel messages keep their own rules.");
+    expect(shown).toContain("In conversations you start, No limits lets Ember run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before a command it cannot read that names a delete, disk or mirror tool, and before a call that did not arrive whole. A script file can still run unread. Routines and channel messages keep their own rules.");
     expect(shown).toContain("Keep Full access");
     expect(shown).not.toContain("Nova");
   });
