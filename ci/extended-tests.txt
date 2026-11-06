@@ -892,6 +892,7 @@ shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
+shared/plain-time-zone.test.ts	extended
 shared/provider-error.test.ts	extended
 shared/publish-card.test.ts	extended
 shared/reply-markers.test.ts	extended
@@ -1042,6 +1043,7 @@ src/components/ProviderIcons.test.ts	extended
 src/components/PublishCard.test.ts	extended
 src/components/PushToTalk.test.ts	extended
 src/components/QuestionCard.onetap.test.ts	extended
+src/components/RailBotList.test.ts	extended
 src/components/RemoteConnectionBanner.test.ts	extended
 src/components/RemoteSignOut.test.ts	extended
 src/components/RemoteSurface.test.ts	extended
@@ -1464,9 +1466,15 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/components/routines/RoutineSheet.test.ts	extended
 src/lib/clock-format.test.ts	extended
 src/components/ChatReadingPolish.test.ts	extended
 src/components/RoomsA11yPolish.test.ts	extended
 src/lib/calendar-card-layout.test.ts	extended
 src/state/new-task-once.test.ts	extended
-src/components/BrowserApprovedSites.activity-label.test.ts	extended
+server/search-merge-r6-103k-t2.test.ts	extended
+server/search-merge-r6-103k-t5.test.ts	extended
+server/search-merge-r6-t7-wall.test.ts	extended
+src/lib/routine-sheet-model.test.ts	extended
+src/lib/schedule-words.test.ts	extended
+server/routine-sheet-run-now.e2e.test.ts	extended

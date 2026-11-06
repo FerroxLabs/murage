@@ -13,6 +13,7 @@ import { useAction } from "@/lib/use-action";
 import { learningConnectionLabel } from "@/lib/memory-learning";
 import { LEARNING_LIMIT_ANCHOR, ceilingPercent, readLine, writtenLine } from "@/lib/learning-limit";
 import { formatTokens, monthCountingStart, monthUsageRows, usageCsv } from "@/lib/usage";
+import { SpendLimitCard } from "./SpendLimitCard";
 
 export { usageCsv };
 import type { LearningCeilingStatus } from "../../shared/memory-learning-contract";
@@ -80,6 +81,7 @@ export function UsageSection() {
 
   return (
     <>
+      <SpendLimitCard />
       <Card title={t("settings.l6.usage.byBot")} subtitle={t("settings.l6.usage.byBotHint")}>
         {rows.length === 0 ? (
           <div className="text-[13px] text-ink-secondary">{t("settings.l6.usage.empty")}</div>
