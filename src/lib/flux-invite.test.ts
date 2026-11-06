@@ -193,6 +193,9 @@ describe("nothing in the app is gated on a Flux key", () => {
     "components/FluxKeyCard.tsx",
     // Displays saved-key status only; native engines remain usable without it.
     "components/ModelsSettings.tsx",
+    // UX-L2C spend meter: shows Flux spend, so with no Flux key and no monthly limit there is no figure to draw. It gates
+    // only its own display; no feature, engine or pointer goes away with the key.
+    "components/today/MonthCard.tsx",
     // FluxInvite.tsx was the floating offer. 0.1.58 deleted it: the key is
     // now asked for once, in the Chief's own thread, by the card below.
     "components/FirstRunFluxCard.tsx",

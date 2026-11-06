@@ -395,8 +395,10 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   // only on a turn the email mount admitted for sending. Their handler applies the bot's email setting and holds on Murage's own card.
   const agents = turn.integrations?.agents as { serverName?: string; env?: Record<string, string | undefined> } | undefined;
   if (agents?.env?.[EMAIL_TOOLS_ENV] === "send") {
-    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
+    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && !row.mountEnv) allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
   }
+  // VENUE-POST-1017: a handler-carded tool with its own mount key is allowed only on a turn whose agents mount carries that key
+  for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && row.mountEnv && agents?.env?.[row.mountEnv] === "1") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
   return allow;
 }
 

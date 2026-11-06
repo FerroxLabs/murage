@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { synthesize, synthesizeClip, FLUX_ELEVEN_VOICES, FLUX_GROK_MODEL, FLUX_VOICES, SpeechUnavailable } from "./flux-speech.ts";
+import { synthesize, synthesizeClip, FLUX_ELEVEN_VOICES, FLUX_GROK_MODEL, FLUX_VOICES, SpeechBudgetReached, SpeechUnavailable } from "./flux-speech.ts";
 import { availableProviders, describeVoice, listVoices, speak, useVoiceRoutes, voiceProvider } from "./index.ts";
 import type { AppConfig } from "../config.ts";
 import type { VoiceEndpoint } from "../voice/voice-routes.ts";
@@ -73,7 +73,8 @@ describe("Flux speech", () => {
   it("tells a plan without voices apart from an empty balance (Flux 402 codes)", async () => {
     const refuse = (code: string) => (async () => new Response(JSON.stringify({ error: { code, message: code === "premium_locked" ? "Premium" : "Insufficient balance" } }), { status: 402 })) as unknown as typeof fetch;
     await expect(synthesize("Hi.", "marin", FLUX, refuse("premium_locked"))).rejects.toThrow("need a paid plan");
-    await expect(synthesize("Hi.", "marin", FLUX, refuse("insufficient_balance"))).rejects.toThrow("Check the account's balance");
+    await expect(synthesize("Hi.", "marin", FLUX, refuse("insufficient_balance"))).rejects.toThrow(SpeechBudgetReached);
+    await expect(synthesize("Hi.", "marin", FLUX, refuse("budget_exceeded"))).rejects.toThrow("Voice is paused: this Flux key has reached its budget.");
   });
 
   it("never hands a reply that is not audio to the player", async () => {

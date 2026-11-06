@@ -212,6 +212,21 @@ describe("rule 3: one cause, one row", () => {
     expect(raised[0]?.routines, "only the one that is still broken").toEqual(["Gmail triage"]);
   });
 
+  it("names each stopped routine by its key as well as its name, so two routines with one name stay two (Today 1.0.18)", () => {
+    const rollups = rollUpRoutineRuns([
+      run({ routineKey: "routine:r-a", routineName: "Morning brief", botLabel: "Moss (Secretary)", at: T0, failed: true, detail: DEAD_TOKEN }),
+      run({ routineKey: "routine:r-b", routineName: "Morning brief", botLabel: "Dax (Closer)", at: T0 + HOUR, failed: true, detail: DEAD_TOKEN }),
+      run({ routineKey: "routine:r-c", routineName: "Morning brief", botLabel: "Dax (Closer)", at: T0, failed: true, detail: DEAD_TOKEN }),
+      run({ routineKey: "routine:r-c", routineName: "Morning brief", botLabel: "Dax (Closer)", at: T0 + 2 * HOUR }),
+    ], T0 + 3 * HOUR);
+
+    const raised = connectionsToRestore(rollups);
+    expect(raised).toHaveLength(1);
+    expect(raised[0]?.routines, "the names repeat").toEqual(["Morning brief", "Morning brief"]);
+    expect(raised[0]?.routineKeys, "the keys do not, most recently affected first, and the healed one is left out").toEqual(["routine:r-b", "routine:r-a"]);
+    expect(raised[0]?.routineKeys).toHaveLength(raised[0]!.routines.length);
+  });
+
   it("says nothing at all when nothing is broken", () => {
     const rollups = rollUpRoutineRuns([run({ at: T0 }), run({ at: T0 + HOUR })], T0 + 2 * HOUR);
     expect(rollups[0]?.verdict).toBe("ok");

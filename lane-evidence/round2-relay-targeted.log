@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/push-relay
+
+
+ Test Files  4 passed (4)
+      Tests  36 passed (36)
+   Start at  16:24:55
+   Duration  224ms (transform 248ms, setup 0ms, import 301ms, tests 59ms, environment 0ms)
+
