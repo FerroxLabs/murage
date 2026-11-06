@@ -101,7 +101,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     // choosing saves, and the server keeps it
     await group.getByRole("radio", { name: "Make images without asking" }).click();
     await expect.poll(async () => (await bot()).imageApproval, { timeout: 15_000 }).toBe("allow");
-    await expect(dialog.getByText("Contacts and anyone else still get the card.")).toBeVisible();
+    await expect(dialog.getByText("Requests from contacts and anyone else still need your approval.")).toBeVisible();
     await expect(card.getByText(/always allow/i)).toHaveCount(0);
     // the guard: blank is no limit, a number saves, nonsense is refused
     const field = dialog.getByLabel("Ask again after this many images in one turn");

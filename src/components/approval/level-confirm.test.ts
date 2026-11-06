@@ -67,8 +67,8 @@ describe("the confirm card's words (3.3)", () => {
     const shown = text(renderCard());
     expect(shown).toContain("Use Full access for Nova?");
     expect(shown).toContain("Full access lets Nova run commands, edit files and work with other bots without asking.");
-    expect(shown).toContain("It still asks before paying, emailing someone new, deleting outside its folder, or reading your keys and passwords.");
-    expect(shown).toContain("This also raises 3 open conversations, and the routine Morning brief (its level is set to Full access).");
+    expect(shown).toContain("It still asks before paying, emailing someone new, posting in public, deleting outside its folder, or reading your keys and passwords.");
+    expect(shown).toContain("This also raises 3 open conversations and the routine Morning brief (its level is set to Full access).");
     expect(shown).toContain("Keep Auto");
     expect(shown).toContain("Use Full access");
     expect(shown).toContain("Only new conversations");
@@ -86,7 +86,7 @@ describe("the confirm card's words (3.3)", () => {
 
   it("names every routine, and says routines keep their level only when none rises", () => {
     const two = [...PREVIEW.routines, { id: "r2", name: "Weekly", ceiling: "auto", from: "ask", to: "auto" }];
-    expect(confirmEffectLine(1, two)).toBe("This also raises 1 open conversation, and the routine Morning brief (its level is set to Full access) and the routine Weekly (its level is set to Auto).");
+    expect(confirmEffectLine(1, two)).toBe("This also raises 1 open conversation and the routine Morning brief (its level is set to Full access) and the routine Weekly (its level is set to Auto).");
     expect(confirmEffectLine(0, PREVIEW.routines)).toBe("This also raises the routine Morning brief (its level is set to Full access).");
     expect(confirmEffectLine(2, [])).toBe("This also raises 2 open conversations. Routines keep their own level.");
     expect(confirmEffectLine(0, [])).toBe("Routines keep their own level.");
@@ -243,7 +243,7 @@ describe("F14: the default saved, the apply refused", () => {
   it("names the level in the body, and takes Undo away once the revision moved", async () => {
     const { deps } = harness([saved, fails(stale("no-limits", 9))]);
     const { line } = await use(deps);
-    expect(line?.text).toBe("Nova's default is No limits. The conversation update was not applied. Nova was changed since.");
+    expect(line?.text).toBe("Nova's default is No limits. The conversation update was not applied. Nova has changed since.");
     expect(line?.undo).toBeNull();
     expect(line?.review).toBe(true);
     const markup = renderToStaticMarkup(createElement(LevelStatusLine, { line: line!, onUndo: () => {}, onReview: () => {} }));
@@ -333,29 +333,29 @@ describe("Undo (2.5, F15)", () => {
   it("one conversation changed since: the rest come back and the line reports both", async () => {
     const { deps } = harness([ok, ok, fails(stale()), ok]);
     const result = await undoLevelChange(deps, "b1", raise);
-    expect(undoneLine("Nova", result, NOW).text).toBe("Undone for Nova and 2 conversations. 1 conversation changed since and kept its level.");
+    expect(undoneLine("Nova", result, NOW).text).toBe("Undone for Nova and 2 conversations. 1 conversation has changed since and kept its level.");
   });
 
   it("two conversations changed since, one came back", async () => {
     const { deps } = harness([ok, ok, fails(stale()), fails(stale())]);
-    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", raise), NOW).text).toBe("Undone for Nova and 1 conversation. 2 conversations changed since and kept their level.");
+    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", raise), NOW).text).toBe("Undone for Nova and 1 conversation. 2 conversations have changed since and kept their level.");
   });
 
   it("the bot refused, conversations restored (the handoff's partial line)", async () => {
     const { deps } = harness([fails(stale()), ok, ok, ok]);
-    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise }), NOW).text).toBe("Undone for 3 conversations. Nova was changed since and kept its level.");
+    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise }), NOW).text).toBe("Undone for 3 conversations. Nova has changed since and kept its level.");
     const two = harness([fails(stale()), ok, ok]);
-    expect(undoneLine("Nova", await undoLevelChange(two.deps, "b1", { ...raise, conversations: conversations.slice(0, 2) }), NOW).text).toBe("Undone for 2 conversations. Nova was changed since and kept its level.");
+    expect(undoneLine("Nova", await undoLevelChange(two.deps, "b1", { ...raise, conversations: conversations.slice(0, 2) }), NOW).text).toBe("Undone for 2 conversations. Nova has changed since and kept its level.");
   });
 
   it("the bot back, every conversation changed since", async () => {
     const { deps } = harness([ok, fails(stale())]);
-    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise, conversations: conversations.slice(0, 1) }), NOW).text).toBe("Undone for Nova. 1 conversation changed since and kept its level.");
+    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise, conversations: conversations.slice(0, 1) }), NOW).text).toBe("Undone for Nova. 1 conversation has changed since and kept its level.");
   });
 
   it("all refused: nothing was undone", async () => {
     const { deps } = harness([fails(stale()), fails(stale())]);
-    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise, conversations: conversations.slice(0, 1) }), NOW).text).toBe("Nova was changed since. Nothing was undone.");
+    expect(undoneLine("Nova", await undoLevelChange(deps, "b1", { ...raise, conversations: conversations.slice(0, 1) }), NOW).text).toBe("Nova has changed since. Nothing was undone.");
   });
 
   it("a lowering: ifRev and no previewId, a raise back with the routine count from the answer", async () => {
@@ -368,7 +368,7 @@ describe("Undo (2.5, F15)", () => {
   it("a lowering refused by the server: nothing was undone", async () => {
     const { deps } = harness([fails(stale())]);
     const result = await undoLevelChange(deps, "b1", { bot: { previous: "full", rev: 9, from: "auto", drivesComputer: false }, conversations: [] });
-    expect(undoneLine("Nova", result, NOW).text).toBe("Nova was changed since. Nothing was undone.");
+    expect(undoneLine("Nova", result, NOW).text).toBe("Nova has changed since. Nothing was undone.");
   });
 
   it("back up to Auto on this computer repeats the owner's yes, only from Ask", async () => {

@@ -124,7 +124,7 @@ for (const skin of ["light", "dark"] as const) for (const width of [390, 820, 14
   const { errors, calls } = await open(page, width);
   const strip = page.getByRole("region", { name: "Project progress" });
   await expect(strip).toBeVisible();
-  await expect(strip.getByText("2 needs you")).toBeVisible();
+  await expect(strip.getByText("Needs you: 2")).toBeVisible();
   const toggle = strip.getByRole("button").first();
   expect((await toggle.boundingBox())!.height).toBeLessThanOrEqual(48);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

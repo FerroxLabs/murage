@@ -5,7 +5,7 @@ import type { Store, Message } from "./store.ts";
 import type { SendTurnInput } from "./contracts.ts";
 import { sniffMedia } from "./media-assets.ts";
 import { ATTACHMENT_READ_CEILING, attachmentNameOf, attachmentRemoved, attachmentsHomeOf, readAttachmentFile } from "./attachment-read.ts";
-import { IMAGE_REFERENCE_MIMES, TURN_IMAGE_LIMITS } from "../shared/media-assets.ts";
+import { IMAGE_REFERENCE_MIMES, IMAGE_UPLOAD_MAX_BYTES, TURN_IMAGE_LIMITS } from "../shared/media-assets.ts";
 import { splitTranscriptAttachments, withoutImageTags } from "../src/lib/composer-attachments.ts";
 
 export { withoutImageTags };
@@ -40,6 +40,15 @@ export interface TurnImageFit { hardMaxBytes: number; targetBytes: number; maxEd
 const ANTHROPIC_IMAGE_MAX_RAW_BYTES = 5 * 1024 * 1024 * 3 / 4;
 export const DEFAULT_TURN_IMAGE_FIT: TurnImageFit = { hardMaxBytes: TURN_IMAGE_LIMITS.maxBytesEach, targetBytes: ANTHROPIC_IMAGE_MAX_RAW_BYTES, maxEdge: 2000 };
 export const CLAUDE_TURN_IMAGE_FIT: TurnImageFit = { hardMaxBytes: ANTHROPIC_IMAGE_MAX_RAW_BYTES, targetBytes: ANTHROPIC_IMAGE_MAX_RAW_BYTES, maxEdge: 2000 };
+/** The largest picture an upload may be for an engine (SEAN-ASK-ATTACH-CAP):
+ * with a resizer, what collect() reads to shrink one (every engine then gets
+ * it at its own fit); without one, what the engine takes as it is. Never more
+ * than the attachment read ceiling, so nothing is stored that a turn could
+ * not read. */
+export function imageUploadMaxBytes(fit: TurnImageFit, canShrink: boolean): number {
+  const readable = Math.min(TURN_IMAGE_LIMITS.maxReadBytes, ATTACHMENT_READ_CEILING, IMAGE_UPLOAD_MAX_BYTES);
+  return canShrink ? readable : Math.min(fit.hardMaxBytes, readable);
+}
 /** Below this much budget no picture is worth shrinking into it. */
 const MIN_IMAGE_BUDGET = 64 * 1024;
 
@@ -95,6 +104,8 @@ export class TurnImages {
   private readonly now: () => number;
   private readonly shrink: () => Promise<Shrink | null>;
   constructor(store: Store, dataDir: string, now = Date.now, shrink: () => Promise<Shrink | null> = async () => null) { this.store = store; this.dataDir = dataDir; this.now = now; this.shrink = shrink; }
+  /** Whether a resizer is there for collect() to shrink pictures with. */
+  async canShrink(): Promise<boolean> { return Boolean(await this.shrink().catch(() => null)); }
   private canonical(path: string): boolean {
     return /^[A-Za-z0-9-]{1,160}\.(png|jpe?g|webp)$/i.test(basename(path)) && path === join(this.dataDir, "attachments", basename(path));
   }

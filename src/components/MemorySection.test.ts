@@ -59,7 +59,7 @@ describe("the Memory page, first screen", () => {
     const p = props(); p.status.semantic = { state: "indexing", done: 10, total: 25 };
     expect(html(p)).toContain("Indexing for smart search, 10 of 25.");
     const q = props(); q.status.semantic = { state: "keyword-only", done: 0, total: 0 };
-    expect(html(q)).toContain("Keyword memory until smart search is ready.");
+    expect(html(q)).toContain("Memory search uses keywords until smart search is ready.");
   });
 
   it("explains a paused month with a Raise it action, and an off limit with a way to Advanced", () => {
@@ -210,7 +210,7 @@ describe("history", () => {
 describe("Advanced", () => {
   it("holds mode, the monthly limit and the learning connection, with the limit's usage", () => {
     const out = html();
-    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "Resets on the 1st.", "Change limit", "Learning connection"]) expect(out).toContain(text);
+    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "The limit resets on the 1st of each month.", "Change limit", "Learning connection"]) expect(out).toContain(text);
     expect(out).toContain("Flux Fast (default)");
     expect(out).toContain('value="native" disabled=""');
     expect(out).toContain("Native sign-in: This connection does not provide text-only learning.");
