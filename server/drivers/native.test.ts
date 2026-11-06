@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
-const { appendNative, withholdNativeThread } = await import(process.env.MURAGE_NATIVE_LOG_CONTROL_ENTRY ?? "./native.ts") as typeof import("./native.ts");
+const nativeModule = await import(process.env.MURAGE_NATIVE_LOG_CONTROL_ENTRY ?? "./native.ts") as typeof import("./native.ts");
+const { appendNative, withholdNativeThread } = nativeModule;
 import { renderDriverReplay } from "../turn-context.ts";
 
 beforeAll(() => ensureDirs());
@@ -216,5 +217,105 @@ describe("appendNative", () => {
       for (const canary of ["CANARY-ONE", "CANARY-TWO", "CANARY-THREE"]) expect(log).not.toContain(canary);
       expect(log).toContain("ordinary text after the block closed");
     });
+  });
+});
+
+// 1.0.18 ALL.eld250: Codex answers thread/resume with the whole conversation. The tee used to run the deep redaction walk
+// over that answer and then drop it for size, so each turn's resume held the event loop a little longer than the last.
+describe("an oversized frame is dropped before any redaction", () => {
+  const { jsonLongerThan } = nativeModule;
+
+  it("jsonLongerThan is a lower bound: it never calls a frame longer than its JSON text", () => {
+    const samples: unknown[] = [
+      "", "x".repeat(100), 0, null, true, [], {}, [1, "two", null, [3]], { a: undefined, b: () => 1, c: "c" },
+      { nested: { deeper: { list: Array.from({ length: 50 }, (_, i) => ({ i, text: "é".repeat(i) })) } } },
+    ];
+    for (const sample of samples) {
+      const bytes = Buffer.byteLength(JSON.stringify(sample) ?? "");
+      expect(jsonLongerThan(sample, bytes)).toBe(false);
+    }
+    expect(jsonLongerThan({ text: "x".repeat(70_000) }, 64 * 1024)).toBe(true);
+    expect(jsonLongerThan(Array.from({ length: 40_000 }, () => 1), 64 * 1024)).toBe(true);
+  });
+
+  it("stops counting once past the limit: the rest of a huge resume answer is never read", () => {
+    const turns: unknown[] = Array.from({ length: 200_000 }, () => ({ id: "turn", items: [{ type: "userMessage", text: "y".repeat(1_000) }] }));
+    let touched = false;
+    Object.defineProperty(turns, 150_000, { enumerable: true, get: () => { touched = true; return {}; } });
+    expect(jsonLongerThan({ id: 7, result: { thread: { id: "t", turns } } }, 64 * 1024)).toBe(true);
+    expect(touched).toBe(false);
+  });
+
+  it("a thread/resume answer with the whole history writes only the omitted marker, quickly, and no secret from it", () => {
+    const thread = "t-resume-history";
+    const key = `${"sk-" + "ant-"}api03-${"Q".repeat(40)}`;
+    const turn = { id: "turn", items: [{ type: "userMessage", content: [{ type: "text", text: `token=${key} ${"word ".repeat(200)}` }] }] };
+    const turns: unknown[] = Array.from({ length: 200_000 }, () => turn);
+    // nothing past the limit is read, by the size check or by the phone check that used to walk the whole answer first
+    let touched = false;
+    Object.defineProperty(turns, 150_000, { enumerable: true, get: () => { touched = true; return {}; } });
+    appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 4, result: { thread: { id: "c-1", path: "/x/rollout.jsonl", turns } } } });
+    expect(touched).toBe(false);
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    const rows = log.trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].msg).toMatchObject({ type: "native_trace_record_omitted", reason: "frame exceeds byte limit before redaction", limitBytes: 64 * 1024 });
+    expect(log).not.toContain("QQQQ");
+  });
+
+  it("answers not sure, and reads nothing it should not, for anything but plain parsed JSON", () => {
+    const limit = 64 * 1024;
+    // JSON of these is short or unknown: the full path decides
+    expect(jsonLongerThan({ payload: "x".repeat(70_000), toJSON() { return {}; } }, limit)).toBe(false);
+    expect(jsonLongerThan(Buffer.alloc(100_000), limit)).toBe(false);
+    expect(jsonLongerThan(new (class Frame { text = "x".repeat(70_000); })(), limit)).toBe(false);
+    let ran = false;
+    expect(jsonLongerThan({ get text() { ran = true; return "x".repeat(70_000); } }, limit)).toBe(false);
+    expect(ran).toBe(false);
+    // values JSON leaves out add nothing to the count and cannot run the walk past its budget
+    expect(jsonLongerThan(Object.fromEntries(Array.from({ length: 200_000 }, (_, i) => [`k${i}`, undefined])), limit)).toBe(false);
+    const cycle: Record<string, unknown> = { a: 1 };
+    cycle.self = cycle;
+    expect(jsonLongerThan(cycle, limit)).toBe(true);
+  });
+
+  it("frames that carry stream state keep the full path even when oversized", () => {
+    const big = "x".repeat(70_000);
+    // a user frame ends a latch: the stream after it is written again
+    const thread = "t-user-reset";
+    const delta = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("**API key:** ") });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("still secret\n") });
+    appendNative(thread, { dir: "out", source: "fixture", msg: { type: "user", text: big } });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("after the prompt") });
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).not.toContain("still secret");
+    expect(log).toContain("after the prompt");
+    expect(log).not.toContain("frame exceeds byte limit before redaction");
+    // an oversized phone block start still opens the block, so its fragments are withheld
+    const phone = "t-phone-oversized";
+    appendNative(phone, { dir: "in", source: "fixture", msg: { type: "stream_event", event: { type: "content_block_start", index: 3, content_block: { type: "tool_use", name: "phone_location_get", input: { note: big } } } } });
+    appendNative(phone, { dir: "in", source: "fixture", msg: { type: "stream_event", event: { type: "content_block_delta", index: 3, delta: { type: "input_json_delta", partial_json: "CANARY-PHONE" } } } });
+    expect(readFileSync(join(NATIVE_DIR, `${phone}.ndjson`), "utf8")).not.toContain("CANARY-PHONE");
+  });
+
+  it("an oversized frame on a withheld thread writes only the marker", () => {
+    const thread = "t-withheld-oversized";
+    withholdNativeThread((id) => id === thread);
+    try {
+      appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 9, result: { text: `WITHHELD-CANARY ${"x".repeat(70_000)}` } } });
+    } finally { withholdNativeThread(() => false); }
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).toContain("native_trace_record_omitted");
+    expect(log).not.toContain("WITHHELD-CANARY");
+  });
+
+  it("a frame that fits is still redacted and written as before", () => {
+    const thread = "t-resume-small";
+    const key = `${"sk-" + "ant-"}api03-${"R".repeat(40)}`;
+    appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 5, result: { thread: { id: "c-2", turns: [{ text: `token=${key}` }] } } } });
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).toContain("c-2");
+    expect(log).not.toContain("RRRR");
   });
 });

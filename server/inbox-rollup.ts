@@ -249,6 +249,10 @@ export interface ConnectionToRestore {
    *  It used to say "in the order they broke", which is the opposite end of
    *  the same list and was never what the code did. */
   routines: string[];
+  /** The `routineKey` of each routine in `routines`, in the same order (`routine:<id>` for a stored routine). Names
+   *  repeat; these do not, so a client that has to tell WHICH routine is stopped behind this row matches on these
+   *  and never on the names (Today skips its own "did not finish" row for a routine listed here). */
+  routineKeys?: string[];
   /** Distinct bots affected, so the row can say "three bots" honestly. */
   bots: string[];
   /** When the earliest still-failing routine started failing. */
@@ -283,6 +287,7 @@ export interface ConnectionToRestore {
 // connector, so one row is the most honest answer the evidence supports.
 export function connectionsToRestore(rollups: readonly RoutineRollup[]): ConnectionToRestore[] {
   const routines: string[] = [];
+  const routineKeys: string[] = [];
   const bots = new Set<string>();
   let since = Number.POSITIVE_INFINITY;
   let link: { threadId: string; messageId: string } | undefined;
@@ -292,6 +297,7 @@ export function connectionsToRestore(rollups: readonly RoutineRollup[]): Connect
     // `unknown`, which is news rather than a request.
     if (rollup.verdict !== "stuck" || rollup.cause !== "connection") continue;
     routines.push(rollup.routineName);
+    routineKeys.push(rollup.routineKey);
     bots.add(rollup.botLabel);
     since = Math.min(since, rollup.failingSince ?? rollup.lastAt);
     // The first one wins: rollups arrive most recent first, so this is the
@@ -303,6 +309,7 @@ export function connectionsToRestore(rollups: readonly RoutineRollup[]): Connect
   return [{
     id: "connection:restore",
     routines,
+    routineKeys,
     bots: [...bots],
     since,
     detail: routines.length === 1

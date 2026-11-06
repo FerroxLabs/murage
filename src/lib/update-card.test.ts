@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 
-import { closePopupLatch, indicatorLabelKey, indicatorShows, nextPopupLatch, popupVisible, updatePopupPlace, type UpdatePopupLatch } from "./update-card";
+import { closePopupLatch, indicatorLabelKey, indicatorShows, nextPopupLatch, popupFocusReturn, popupVisible, subscribeUpdatePopupAnchor, updatePopupAnchor, updatePopupAnchorRef, updatePopupPlace, type UpdatePopupLatch } from "./update-card";
 import type { UpdaterState } from "@/types/muragebox";
 
 describe("update indicator state table", () => {
@@ -106,5 +106,55 @@ describe("update pop-up place", () => {
   });
   it("falls back to the corner when there is no sidebar", () => {
     expect(updatePopupPlace({ ...screen, footer: null })).toEqual({ left: 16, width: 300, bottom: 16, maxHeight: 868 });
+  });
+});
+
+describe("the footer the pop-up sits above", () => {
+  it("registers when the sidebar mounts (after the terms), and a replaced footer does not clear the new one", () => {
+    const first = { id: "first" } as unknown as HTMLElement;
+    const second = { id: "second" } as unknown as HTMLElement;
+    const changes: unknown[] = [];
+    const stop = subscribeUpdatePopupAnchor(() => changes.push(updatePopupAnchor()));
+    expect(updatePopupAnchor()).toBeNull(); // the terms screen: no sidebar yet
+    const dropFirst = updatePopupAnchorRef(first);
+    expect(changes).toEqual([first]); // the pop-up hears it and measures again
+    const dropSecond = updatePopupAnchorRef(second);
+    dropFirst?.();
+    expect(updatePopupAnchor()).toBe(second);
+    expect(updatePopupAnchorRef(null)).toBeUndefined();
+    dropSecond?.();
+    expect(updatePopupAnchor()).toBeNull();
+    expect(changes).toEqual([first, second, null]);
+    stop();
+  });
+});
+
+describe("focus after a keyboard closes the pop-up", () => {
+  type El = { name: string; isConnected: boolean };
+  const el = (name: string, isConnected = true): El => ({ name, isConnected });
+  const popupButton = el("dismiss");
+  const button = el("round button");
+  const base = { inPopup: (e: El) => e === popupButton, button: () => button };
+
+  it("inside an open window it never offers the inert sidebar: where it came from, then the window's controls, then the window", () => {
+    const win = el("what's new");
+    const close = el("close");
+    const next = el("next");
+    const outside = el("composer");
+    const inHost = (e: El) => e === close || e === next || e === popupButton;
+    // The origin first; if it turned disabled or hidden meanwhile, the caller's focus check moves on to the next.
+    expect(popupFocusReturn({ ...base, host: win, origin: close, inHost, hostControls: () => [popupButton, close, next] })).toEqual([close, next, win]);
+    expect(popupFocusReturn({ ...base, host: win, origin: outside, inHost, hostControls: () => [popupButton, close] })).toEqual([close, win]);
+    expect(popupFocusReturn({ ...base, host: win, origin: null, inHost, hostControls: () => [popupButton] })).toEqual([win]);
+    expect(popupFocusReturn({ ...base, host: win, origin: el("gone", false), inHost: () => true, hostControls: () => [] })).toEqual([win]);
+    expect(popupFocusReturn({ ...base, host: win, origin: null, inHost, hostControls: () => [] })).not.toContain(button);
+  });
+  it("with no window open: where focus came from, then the round button", () => {
+    const composer = el("composer");
+    const none = { host: null, inHost: () => false, hostControls: () => [] };
+    expect(popupFocusReturn({ ...base, ...none, origin: composer })).toEqual([composer, button]);
+    expect(popupFocusReturn({ ...base, ...none, origin: null })).toEqual([button]);
+    expect(popupFocusReturn({ ...base, ...none, origin: popupButton })).toEqual([button]);
+    expect(popupFocusReturn({ ...base, ...none, origin: null, button: () => el("gone", false) })).toEqual([]);
   });
 });
