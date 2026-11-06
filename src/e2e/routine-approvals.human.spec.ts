@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { NO_LIMITS_NOT_NOW_KEY } from "../components/no-limits-terms-key.ts";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -70,7 +71,8 @@ async function start(page: import("@playwright/test").Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
   // the release notes dialog and the No limits terms are other surfaces'; keep them out of the way
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
-  await page.addInitScript(() => { localStorage.setItem("murage.noLimitsTerms.notNow.2", "1"); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
+  // the Not now key names the terms version, so it comes from the app, never a copy here
+  await page.addInitScript((notNowKey) => { localStorage.setItem(notNowKey, "1"); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); }, NO_LIMITS_NOT_NOW_KEY);
   await page.goto(origin);
 }
 

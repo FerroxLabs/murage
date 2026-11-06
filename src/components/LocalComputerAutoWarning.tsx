@@ -13,7 +13,7 @@ export const LOCAL_COMPUTER_FULL_ACCESS_WARNING =
   "Full access will let this bot click, type, and run tools on this computer without asking first. It still asks before deleting outside its folder, paying, messaging someone new, and reading your keys. Continue only if you are watching.";
 
 export const LOCAL_COMPUTER_NO_LIMITS_WARNING =
-  "In conversations you start, No limits will let this bot click, type and run commands on this computer without asking first, including reading and sending your keys. It still asks before a wipe it can read and before a command it cannot read in full, and browser, email and publishing keep their own approvals. A script file can still run unread. Continue only if you are watching.";
+  "In conversations you start, No limits will let this bot click, type and run commands on this computer without asking first, including reading and sending your keys. It still asks before a wipe it can read, before a command it cannot read that names a delete, disk or mirror tool, and before a call that did not arrive whole, and browser, email and publishing keep their own approvals. A script file can still run unread. Continue only if you are watching.";
 
 export function LocalComputerAutoWarning({
   open,

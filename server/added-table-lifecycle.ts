@@ -62,6 +62,7 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   shared_drain_sweep: { kind: "marker", reason: "one row: where the sweep of waiting teams goes on from" },
   // bot email (server/email/email-store.ts), 1.0.9: created only when email is in use
   email_bindings: { kind: "marker", reason: "one row per bot with an email address; replaced by a tombstone when the address is removed" },
+  venue_posts: { kind: "marker", reason: "one row per held Post in… post a bot made at Ask or Auto; the card is a view of it, a few small rows per owner answer" },
   email_sends: { kind: "marker", reason: "one row per email a bot wrote; settled rows are pruned by EmailStore.pruneSettledSends, open rows never" },
   email_payloads: { kind: "marker", reason: "the frozen bytes of an email, removed by EmailStore.pruneSettledSends 30 days after the send settles" },
   email_events: { kind: "marker", reason: "a cache of Flux email events for dedupe and reconcile, pruned by EmailStore.pruneEvents" },

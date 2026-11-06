@@ -268,6 +268,8 @@ const DISPATCH: Record<string, Dispatch> = {
   openclawAgent: acp("openclawAgent"),
   // Signed in by a key in the environment (the settings file is never opened then).
   clineAgent: acp("clineAgent", {}, scratch => ({ HOME: scratch, CLINE_API_KEY: "cline-fixture-key" })),
+  // U22 F9: the person's own Copilot CLI over ACP; its login is never checked offline, so the fake answers.
+  copilotAgent: acp("copilotAgent"),
   opencodeGo: { ...acp("opencodeGo", {}, scratch => ({ HOME: scratch, XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "opencode-fixture-key", FAKE_ACP_MODELS: "opencode/fixture-model" })),
     turn: { model: "opencode/fixture-model" } },
   antigravityAgent: {

@@ -14,6 +14,7 @@ import { t } from "@/lib/i18n";
 import { OpenBotListButton } from "@/components/OpenBotListButton";
 import { StatusDot, healthLevelWords } from "@/components/shell/StatusDot";
 import { OtherWorkspacesStrip } from "@/components/shell/lane-slots";
+import { MonthNeedsRow } from "@/components/today/MonthCardView";
 import type { NeedsYouPageProps } from "@/components/shell/shell-contract";
 
 export function NeedsYouPageBody({ tab, onTabChange, health }: NeedsYouPageProps) {
@@ -31,6 +32,8 @@ export function NeedsYouPageBody({ tab, onTabChange, health }: NeedsYouPageProps
       {/* An agency's other owned homes, above the tabs (L6C); nothing for a solo owner. */}
       <div className="mx-auto w-full max-w-4xl px-4 sm:px-6">
         <OtherWorkspacesStrip onOpenWorkspace={() => onTabChange("decisions")} />
+        {/* The monthly limit heads-up (UX-L2C): a notice only, with Raise limit and Leave it, as on Today. */}
+        <div className="pt-2 empty:hidden"><MonthNeedsRow onOpenUsage={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })} /></div>
       </div>
       {error && <p role="alert" className="px-4 pt-3 text-[13px] text-danger">{error}</p>}
       <Inbox

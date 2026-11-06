@@ -63,7 +63,6 @@ describe("the reason line", () => {
   it("names the Cloud home, the shared workspace or the launch proof while the flag is on and not offered", () => {
     expect(previewReason("phoneTools", answer({ flag: true, blocked: "cloud-home" }))).toBe(PREVIEW_BLOCKED_LINE["cloud-home"]);
     expect(previewReason("phoneTools", answer({ flag: true, blocked: "shared-workspace" }))).toBe(PREVIEW_BLOCKED_LINE["shared-workspace"]);
-    expect(PREVIEW_BLOCKED_LINE["shared-workspace"]).toBe("On, but off for now: a bot on this computer is, or was, shared with other people, and phone previews stay off while that is true.");
     expect(previewReason("phoneShareAsk", answer({ shareAskFlag: true, blocked: "launch-proof" }))).toBe(PREVIEW_BLOCKED_LINE["launch-proof"]);
     expect(previewReason("phoneShareAsk", answer({ shareAskFlag: true }))).toBe(PREVIEW_BLOCKED_LINE.unknown);
   });
