@@ -84,7 +84,7 @@ describe("saying why, rather than going quiet", () => {
     const messages = [1, 2, 3, 4].map(mediaErrorMessage);
     expect(new Set(messages).size).toBe(4);
     for (const message of messages) expect(message.length).toBeGreaterThan(10);
-    expect(mediaErrorMessage(3)).toMatch(/decoded/i);
+    expect(mediaErrorMessage(3)).toMatch(/could not read this media file/i);
     expect(mediaErrorMessage(2)).toMatch(/could not be read/i);
   });
 

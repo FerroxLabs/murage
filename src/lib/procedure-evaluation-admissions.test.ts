@@ -16,7 +16,7 @@ it("retained evidence never opts in automatically and unsupported/already-author
   for(const value of [preview({eventEvidenceIncluded:true}),preview({eligible:false}),preview({model:null}),preview({reusableGrant:true})]){
     const request=vi.fn().mockResolvedValue(value),store=createProcedureAdmissionStore(request);await store.select("review-one");expect(canAuthorizeProcedurePreview(value)).toBe(false);expect(await store.authorize()).toBe(false);expect(request).toHaveBeenCalledTimes(1);
   }
-  expect(procedurePreviewReason(preview({eventEvidenceIncluded:true}))).toContain("separate data review");expect(procedurePreviewReason(preview({reusableGrant:true}))).toContain("Already allowed");
+  expect(procedurePreviewReason(preview({eventEvidenceIncluded:true}))).toContain("separate review of that data");expect(procedurePreviewReason(preview({reusableGrant:true}))).toContain("Already allowed");
 });
 it("a slow prior selection cannot replace the currently selected review's instructions",async()=>{
   let finish!:(value:ProcedureEvaluationPreview)=>void;

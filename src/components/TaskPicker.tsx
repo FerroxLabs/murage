@@ -1,3 +1,6 @@
+import { ChatPickerSearch } from "./ChatPickerSearch";
+import type { SearchHit } from "@/lib/search-hit";
+import { landOnSearchHit } from "@/lib/focus-message";
 import { t } from "@/lib/i18n";
 import { threadLinkLabel } from "../../shared/thread-link";
 import { unreadTaskLabel } from "@/lib/project-presentation";
@@ -244,10 +247,14 @@ export function ConversationTaskPicker({
   total,
   heading,
   onExpand,
+  onOpenHit,
+  archived = false,
   shortcuts = false,
 }: {
   /** The list's title ("Chats with Ember"). */
   heading?: string;
+  onOpenHit?: (hit: SearchHit) => void;
+  archived?: boolean;
   /** Open All chats filtered to this bot or channel. */
   onExpand?: () => void;
   /** Answer Mod+J and Mod+Shift+N: the one list of the conversation on screen. */
@@ -292,6 +299,7 @@ export function ConversationTaskPicker({
   onPrefetch?: (threadId: string) => () => void;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  const previewScope = { ...deleteScope, archived };
   const [snoozing, setSnoozing] = useState<string | null>(null);
   // Unsnooze runs from a row, and rows are not components, so its pending and failure live here.
   const [unsnoozing, setUnsnoozing] = useState<string | null>(null);
@@ -925,6 +933,8 @@ export function ConversationTaskPicker({
             role="group"
             aria-label={looking ? `${view.navigable.length} matching ${view.navigable.length === 1 ? "chat" : "chats"}` : "Chats"}
           >
+            {query.trim().length >= 3 && onOpenHit && (deleteScope?.botId || deleteScope?.groupId) &&
+              <ChatPickerSearch query={query} scope={previewScope} onOpen={hit => { closeMenu(); onOpenHit(hit); }} />}
             {view.sections.length === 0 ? (
               <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
                 {looking ? `Nothing matches “${looking}”` : filter === "all" ? "No chats yet" : "No chats in this view"}
@@ -1086,6 +1096,8 @@ export function TaskPicker({ bot }: { bot: Bot }) {
       onRename={(threadId, title) => dispatch({ type: "renameTask", botId: bot.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
       deleteScope={{ botId: bot.id }}
+      archived={bot.hidden}
+      onOpenHit={hit => { void landOnSearchHit(hit, state, dispatch).catch(error => dispatch({ type: "error", message: String(error) })); }}
       onPrefetch={(threadId) => startConversationPrefetch(api, { ownerId: bot.id, threadId, pageSize: MESSAGE_PAGE_SIZE })}
       onTogglePin={(threadId, pinned) => dispatch({ type: "pinTask", botId: bot.id, threadId, pinned })}
       onRemoveLink={(threadId) => dispatch({ type: "updateTask", botId: bot.id, threadId, patch: { link: null } })}
@@ -1129,6 +1141,8 @@ export function GroupTaskPicker({ group }: { group: Group }) {
       onRename={(threadId, title) => dispatch({ type: "renameGroupTask", groupId: group.id, threadId, title })}
       onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
       deleteScope={{ groupId: group.id }}
+      archived={group.hidden}
+      onOpenHit={hit => { void landOnSearchHit(hit, state, dispatch).catch(error => dispatch({ type: "error", message: String(error) })); }}
       heading={`Chats in ${group.name}`}
       onExpand={() => dispatch({ type: "showAllChats", groupId: group.id })}
       shortcuts
