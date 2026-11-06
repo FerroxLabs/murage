@@ -498,7 +498,19 @@ export function deviceInWord(text: string): string | undefined {
     // a device name starts a word, follows `=`, a quote, a bracket or a
     // blank, ends a glued short option (`-o/dev/sda`) or a URL scheme
     // (`file:///dev/sda`); `~/dev/x` and `/home/me/dev/x` are folders
-    if (i > 0 && /[A-Za-z0-9_.~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) continue;
+    if (i > 0 && /[A-Za-z0-9_.~$}\-\/\\]/.test(plain[i - 1]!) && !/^-[A-Za-z]+$/.test(plain.slice(0, i)) && !plain.slice(0, i).endsWith("://")) {
+      // 1.0.16 (GrokBuild r1 H3): `//dev/sda`, `/./dev/sda` and `/x/../dev/sda` are the disk once the path is
+      // normalized; `~/dev/x` and `/home/me/dev/x` are not
+      if ((plain[i - 1] === "/" || plain[i - 1] === ".") && plain.startsWith("/dev/", i)) {
+        let start = i;
+        while (start > 0 && !/[\s"'=<>(){}[\];,|&`]/.test(plain[start - 1]!)) start--;
+        let stop = i;
+        while (stop < plain.length && /[A-Za-z0-9_.+\-/:@%~]/.test(plain[stop]!)) stop++;
+        const word = plain.slice(start, stop).replace(/[.:@%~+\-]+$/, "");
+        if (word.startsWith("/") && normalizePath(word).startsWith("/dev/") && isDeviceWrite(normalizePath(word))) return normalizePath(word);
+      }
+      continue;
+    }
     let end = i;
     // a `/dev/` name is made of name characters: it ends at a quote, a
     // bracket, `#` or anything else around it (`open('/dev/null')`,
@@ -900,11 +912,6 @@ function isShadowed(name: string): boolean {
 }
 
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "ash", "mksh"]);
-/** NOLIMITS-WALK-CRIT: launchers the reader does not follow; any call to one
- * asks. busybox and toybox run any applet (`busybox sh -c`); csh and tcsh
- * read options after `-c` and run the last `-c`; the rest are shells whose
- * options the reader does not model. */
-const UNMODELED_LAUNCHERS = new Set(["busybox", "toybox", "csh", "tcsh", "rbash", "yash", "posh", "oksh", "loksh", "pdksh", "nu", "elvish", "xonsh"]);
 const BINDERS = new Set(["export", "local", "declare", "typeset", "readonly"]);
 /** builtins that assign names the text does not spell out */
 const OPAQUE = new Set(["eval", "source", ".", "let", "mapfile", "readarray", "getopts"]);
@@ -1691,76 +1698,12 @@ function startupFile(word: Word | undefined, ctx: WalkContext, option: string): 
 /** Long options of the shells that take no value and run nothing (1.0.5 r3). */
 const SHELL_LONG_OPTIONS = new Set(["--norc", "--noprofile", "--posix", "--noediting", "--restricted", "--verbose", "--login", "--interactive", "--version", "--help", "--no-rcs", "--no-globalrcs", "--no-config", "--no-execute", "--private"]);
 
-/** NOLIMITS-WALK-CRIT r1b: the short options the reader follows before a
- * `-c` script. Each of `l i x e v u` takes no value and runs no code in sh,
- * bash, zsh, dash, ksh, mksh, ash and fish (login, interactive, xtrace,
- * errexit, verbose, nounset). fish reads only `-c`/`-lc` (see `shellCScript`).
- * A cluster holds exactly one `c`; any other letter (o O p d D C s R T…) asks. */
-const SHELL_C_CLUSTER = /^-[lixevu]*c[lixevu]*$/;
-const SHELL_PLAIN_CLUSTER = /^-[lixevu]+$/;
-/** NOLIMITS-WALK-CRIT r1b: `-o <name>` names that only set a flag. fish's `-o`
- * takes a file, so fish never reads this pair. */
-const SHELL_O_NAMES = new Set(["errexit", "nounset", "pipefail", "xtrace", "verbose", "noglob"]);
-/** NOLIMITS-WALK-CRIT: the most words read in a shell's `-c` form, and the
- * most option words read before its operand; past them the call asks. */
-const SHELL_C_WORD_CAP = 128;
-const SHELL_OPTION_CAP = 64;
-
-/** NOLIMITS-WALK-CRIT r1b: the index of the script word when `args` open with
- * the `-c` form the reader follows (`-c`, `-lc`, `-cl`, `-lic`, `-xc`, `-x -c`,
- * `-o errexit -c`…), else undefined. Every word before the script is a
- * `SHELL_PLAIN_CLUSTER` or a `-o <SHELL_O_NAMES>` pair, and the last is one
- * `SHELL_C_CLUSTER`; anything else falls to the option loop, which asks for
- * any option word holding `c`. */
-function shellCScript(args: Word[], shell: string): number | undefined {
-  // fish's getopt reads `c` as taking the rest of its word (`-cvi x` runs `vi`)
-  // and keeps reading options after the script: only `-c`/`-lc` first
-  if (shell === "fish") {
-    const first = args.length > 0 ? literalText(args[0]!) : undefined;
-    return first === "-c" || first === "-lc" ? 1 : undefined;
-  }
-  for (let k = 0; k < args.length; k++) {
-    if (k >= SHELL_OPTION_CAP) throw new Unreadable("opaque", "a shell given more options than the reader reads");
-    const text = literalText(args[k]!);
-    if (text === undefined) return undefined;
-    if (SHELL_C_CLUSTER.test(text)) return k + 1;
-    if (SHELL_PLAIN_CLUSTER.test(text)) continue;
-    if (text === "-o" && shell !== "fish" && k + 1 < args.length) {
-      const name = literalText(args[k + 1]!);
-      if (name !== undefined && SHELL_O_NAMES.has(name)) { k++; continue; }
-    }
-    return undefined;
-  }
-  return undefined;
-}
-
-function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkContext, elevated: boolean, startup: Array<Provenance | undefined> = [], shell = ""): ShellProgram | undefined {
-  // NOLIMITS-WALK-CRIT (fail closed): the reader follows a script given with
-  // `-c` only in the shape `shellCScript` accepts. Any other spelling
-  // (`-oc errexit`, `-xo errexit -c`, `-cs`, `+x -c`, `-c -x`, a second `-c`) asks.
-  const s = shellCScript(args, shell);
-  if (s !== undefined) {
-    if (args.length > SHELL_C_WORD_CAP) throw new Unreadable("opaque", "a shell given more words than the reader reads");
-    const word = args[s];
-    if (!word) throw new Unreadable("syntax", "-c without a script");
-    // the script and the arguments it reads as `$0`, `$1`… have to be fixed by the text
-    plainWords(args, "a script a shell runs");
-    const script = literalText(word);
-    if (script === undefined || script.startsWith("-") || script.startsWith("+")) throw new Unreadable("opaque", "a shell option after -c");
-    for (let k = s + 1; k < args.length; k++) {
-      const later = literalText(args[k]!);
-      if (later === "-c") throw new Unreadable("opaque", "a shell given -c twice");
-      // fish reads `--command=…`, `-C …` after the script as more code
-      if (shell === "fish" && later !== undefined && later.startsWith("-")) throw new Unreadable("opaque", "a fish option after the script");
-    }
-    const zero = args[s + 1];
-    return { kind: "text", texts: [renderWord(word)], ...(zero ? { zero } : {}), positionals: args.slice(s + 2) };
-  }
+function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkContext, elevated: boolean, startup: Array<Provenance | undefined> = []): ShellProgram | undefined {
   let i = 0;
+  let hasC = false;
   // `bash -s`: the script is stdin, and every operand is a positional (1.0.5 r2)
   let hasS = false;
   for (; i < args.length; i++) {
-    if (i >= SHELL_OPTION_CAP) throw new Unreadable("opaque", "a shell given more options than the reader reads");
     const text = literalText(args[i]!);
     if (text === undefined) break;
     if (text === "--") { i++; break; }
@@ -1772,19 +1715,21 @@ function shellScript(args: Word[], stdin: Provenance | undefined, ctx: WalkConte
     // fish's `-C`/`--init-command` runs its value as code before anything
     // else (1.0.5 r3): code the reader is not shown in the shell's own words
     if (/^--init-command(=|$)/.test(text) || /^-[A-Za-z]*C/.test(text)) throw new Unreadable("opaque", `a shell runs an init command (${text.split("=")[0]})`);
-    if (/^[-+][A-Za-z]+$/.test(text)) {
-      // NOLIMITS-WALK-CRIT: a `-c` outside the shape `shellCScript` reads asks
-      if (text.includes("c")) throw new Unreadable("opaque", "a shell -c the reader does not follow");
-      if (text.startsWith("-") && text.includes("s")) hasS = true;
-      continue;
-    }
+    if (/^[-+][A-Za-z]+$/.test(text)) { if (text.startsWith("-") && text.includes("c")) hasC = true; if (text.startsWith("-") && text.includes("s")) hasS = true; continue; }
     // a long option the reader does not know may take a value or run code
     if (text.startsWith("--")) { if (SHELL_LONG_OPTIONS.has(text)) continue; throw new Unreadable("opaque", `a shell option the reader does not know (${text.split("=")[0]})`); }
     break;
   }
+  if (hasC) {
+    const word = args[i];
+    if (!word) throw new Unreadable("syntax", "-c without a script");
+    // the script and the arguments it reads as `$0`, `$1`… have to be fixed by the text
+    plainWords(args, "a script a shell runs");
+    const zero = args[i + 1];
+    return { kind: "text", texts: [renderWord(word)], ...(zero ? { zero } : {}), positionals: args.slice(i + 2) };
+  }
   const operand = args[i];
   const operandText = operand ? literalText(operand) : undefined;
-  if (operandText === "-c") throw new Unreadable("opaque", "a shell -c the reader does not follow");
   if (operand && !hasS && operandText !== "-s" && operandText !== "-") {
     // `bash script.sh`: a file; one this text wrote is read as it was written
     const candidates = candidatesOf(operand, ctx);
@@ -3484,12 +3429,10 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
     if (written) { runnerStarts(ctx, direct); return runWritten(written, args, ctx, visitor, elevated, true, 0, stdin); }
   }
   if (name === "wsl" || name === "wsl.exe") return walkWsl(args, ctx, visitor, stdin);
-  // NOLIMITS-WALK-CRIT: a multi-call wrapper or a shell the reader does not model runs code it does not follow
-  if (UNMODELED_LAUNCHERS.has(name)) throw new Unreadable("opaque", `${name} runs code the reader does not follow`);
   if (SHELLS.has(name)) {
     runnerStarts(ctx, name);
     const startup: Array<Provenance | undefined> = [];
-    const program = shellScript(args, stdin, ctx, elevated, startup, name);
+    const program = shellScript(args, stdin, ctx, elevated, startup);
     // a startup file this text wrote runs before the shell's own program
     for (const written of startup) {
       if (!written) continue;

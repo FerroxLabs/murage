@@ -89,6 +89,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
   { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
+  { methods: ["GET"], path: "/api/spend", class: "desktop", why: "UX-L2C: the owner's Flux spend figure for Today, Usage and Needs you; the owner's own computer only, a Cloud home answers 404." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
   { methods: ["POST"], path: "/api/projects/proposal", class: "desktop", cloudWrite: "ordinary", why: "The owner asks the Chief for a project proposal." },
   { methods: ["POST"], path: "/api/projects", class: "desktop", cloudWrite: "ordinary", why: "The owner creates project authority and members." },
@@ -181,6 +182,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/bots/${ID}/typing`), class: "conversation", cloudWrite: "ordinary", why: "the owner is typing: background work holds back a few seconds (owner-first)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/active-branch`), class: "conversation", cloudWrite: "ordinary", why: "switch between a conversation's branches" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/engine-commands`), class: "conversation", why: "names of the bot's own engine commands for the composer menu" },
+  { methods: ["GET"], path: re(`/api/bots/${ID}/postable-venues`), class: "conversation", why: "the Post in… picker's list of projects and channels the bot may post in (VENUE-POST-1017); the route's own isOwnerOrigin check keeps venue names from door guests, and the send re-checks every pick" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/avatar/generate`), class: "conversation", cloudWrite: "ordinary", why: "draw a new avatar for a bot" },
   { methods: ["GET"], path: re(`/api/bots/${ID}/skills`), class: "conversation", why: "the list of a bot's skills the new-bot intake counts; installing stays on the desktop" },
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
@@ -227,6 +229,8 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/inbox/approve-all/preview", class: "conversation", cloudWrite: "ordinary", why: "Approve all: freeze the Approvals list and say which cards it may answer; the desktop app or the paired phone app only (approveAllSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/surface", class: "conversation", cloudWrite: "ordinary", why: "Approve all: whether this surface shows the button, from the one owner-app check (ownerAppSurface); read only" },
   { methods: ["POST"], path: "/api/inbox/approve-all/caution", class: "conversation", cloudWrite: "ordinary", why: "Approve all: the owner's shared choice to hide or show the first-use caution again (owner-prefs.ts); the desktop app or the paired phone app only" },
+  { methods: ["GET"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: the owner's shared Calm | Detailed choice (owner-prefs.ts) and whether this surface may save it (ownerAppSurface); read only" },
+  { methods: ["POST"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: save the Calm | Detailed choice (owner-prefs.ts); the desktop app or the keyed paired phone app only (ownerAppSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/apply", class: "conversation", cloudWrite: "ordinary", why: "Approve all: Allow once on each ticked card through the respond function; the phone signs the ticked set once (fresh-auth gate)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "answer a card: anyone may decline or skip, only the desktop or the paired phone may allow or answer (mayApprove)" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/widgets/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "press a bot's widget: only the desktop or the paired phone (mayApprove); one owner send per widget" },
@@ -321,6 +325,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/engine-signin-recipe", class: "desktop", cloudWrite: "step-up", why: "the fixed sign-in recipe a desktop runs for an engine" },
   { methods: ["POST"], path: "/api/engine-signin-probe", class: "desktop", cloudWrite: "step-up", why: "whether one engine reads signed in, while its sign-in runs" },
   { methods: ["GET", "POST"], path: re(String.raw`/api/engine-management/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "inspect and install managed engines" },
+  { methods: ["GET"], path: "/api/instances/hidden", class: "desktop", why: "U22 G20: the engines the owner hid, for the folded Hidden list in Engines settings" },
   { methods: ["PATCH"], path: re(String.raw`/api/instances/[\w.-]+`), class: "desktop", cloudWrite: "step-up", why: "change engine launch configuration" },
   { methods: ["POST"], path: re(String.raw`/api/instances/[\w.-]+/claude-update`), class: "desktop", cloudWrite: "step-up", why: "run Claude Code's own updater for a Claude engine" },
   { methods: ["GET"], path: "/api/hermes/profiles", class: "desktop", why: "the Hermes profiles on this computer, read from its files" },
@@ -394,7 +399,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|postable-venues|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
   const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };

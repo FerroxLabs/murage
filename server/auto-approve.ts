@@ -22,6 +22,8 @@ import { gateHit, ruleRowId } from "../shared/gate-files.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { fileToolRead, splitCommand, isReadPassHold, keyRowId, keyValueShapeIn, PATH_RULES, readKindRules, TEXT_RULES, type CommandDataRead, type FileToolRead } from "./key-text.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
+import { wipeWordIn } from "./shell/wipe-words.ts";
+import { decodedForm, hidingIn, narrowHold, reachScan, runnerShapeIn, unplainScan } from "./shell/hiding.ts";
 import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
 import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
@@ -179,7 +181,8 @@ function homeGlobIn(word: Word): string | undefined {
 }
 
 /** 1.0.10 (NOLIMITS-CARDS fix round): `$'...'` (ANSI-C quoting) written out as bash reads it: `\xHH`, `\NNN`,
- * `\uHHHH`, `\UHHHHHHHH`, `\cX` and the one-letter escapes. An escape it does not know is kept as its letter. */
+ * `\uHHHH`, `\UHHHHHHHH`, `\cX` and the one-letter escapes. An escape it does not know is kept as its letter.
+ * 1.0.16 (Astra r1 H2): bash ends the quoted text at a NUL, so `~/$'.ss\0pad'h/config` is `~/.ssh/config`. */
 function decodeAnsiC(text: string): string {
   const ONE: Record<string, string> = { n: "\n", t: "\t", r: "\r", a: "\x07", b: "\b", e: "\x1b", E: "\x1b", f: "\f", v: "\v" };
   return text.replace(/\$'((?:[^'\\]|\\[\s\S])*)'/g, (_whole, body: string) => body.replace(/\\(x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{1,4}|U[0-9a-fA-F]{1,8}|[0-7]{1,3}|c[\s\S]|[\s\S])/g, (_esc, esc: string) => {
@@ -191,7 +194,7 @@ function decodeAnsiC(text: string): string {
     if (/[0-7]/.test(lead)) return String.fromCharCode(parseInt(esc, 8) & 0xff);
     if (lead === "c" && esc.length === 2) return String.fromCharCode(esc.charCodeAt(1) & 0x1f);
     return ONE[lead] ?? lead;
-  }));
+  }).split("\0")[0]!);
 }
 
 /** 1.0.10 (NOLIMITS-CARDS): the key guard's copy of a command the lexer could not read. Quotes and backslashes are taken out and each `{a,b}` is
@@ -829,6 +832,8 @@ const askedWindows = new Map<string, { at: number; suppressed: number }>();
 /** NOLIMITS-KEY-TEXT 3.7: why the key guard held a verdict, by fixed name, for the asked line only. */
 type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pwsh" | "local-hold";
 const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
+/** 1.0.16 (NOLIMITS-UNREADABLE R6): what kept an owner No limits reader failure's card, value-free, for the asked line. */
+const unreadLogOf = new WeakMap<AutoVerdict, { hide: string; why: string }>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
 
@@ -842,7 +847,9 @@ function askLevel(bot: AutoApprover): "ask" | "auto" | "full" | "no-limits" {
 }
 
 /** What held the call at the key guard or the reader, by fixed name only; undefined for every other card. */
-function askHeldClass(verdict: AutoVerdict): "key-row" | "home-glob" | "local-hold" | "real-path" | "unread" | undefined {
+function askHeldClass(verdict: AutoVerdict): "key-row" | "home-glob" | "local-hold" | "real-path" | "unread" | "wipe-word" | "hides" | undefined {
+  if (verdict.source === "always-ask" && verdict.reader === "wipe-word") return "wipe-word";
+  if (verdict.source === "always-ask" && verdict.reader === "hides") return "hides";
   if (verdict.source === "unread-call" || (verdict.source === "always-ask" && verdict.rule === "unreadable")) return "unread";
   if (verdict.source !== "sensitive-guard") return undefined;
   const rule = verdict.rule ?? "";
@@ -890,7 +897,9 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const keyRow = held === "key-row" || held === "local-hold" ? keyRowId(verdict.rule) : undefined;
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
   const why = keyWhyOf.get(verdict);
-  const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
+  // 1.0.16 (NOLIMITS-UNREADABLE R6): on an owner No limits reader failure, what kept the card, by fixed name only
+  const unread = unreadLogOf.get(verdict);
+  const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}${unread ? ` hide=${unread.hide}${why ? "" : ` why=${unread.why}`}` : ""}`;
   console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}`);
 }
 
@@ -963,6 +972,9 @@ function autoVerdictOf(
         ? unreadableHit()
         : alwaysAskCommand(summary, cwd, commandTool ? "command" : "text", shell, windowsBash, home, unseen);
   }
+  // the outer text's own hit, before the inner read can replace it (NOLIMITS-WIPE-WORD: the waiver needs both marked)
+  const outer = catastrophe;
+  let innerRead: string | undefined;
   if (!catastrophe || catastrophe.unseenScript === true || catastrophe.rule === "unreadable") {
     // A command a wrapper or an MCP tool carries (Fuigo's `use_tool` around the cloud computer's exec) is judged like
     // the engine's own shell tool asking: the card title is the model's, the command inside is what runs.
@@ -970,6 +982,7 @@ function autoVerdictOf(
     // unless it too is only an unseen script.
     const innerCommand = commandArgument(resolvedCall.kind === "engine" || resolvedCall.kind === "mcp" ? resolvedCall.input : context?.call?.toolCall?.input);
     if (innerCommand !== undefined && innerCommand !== text) {
+      innerRead = innerCommand;
       const inner = alwaysAskCommand(innerCommand, cwd, "command", shell, windowsBash, home, unseen);
       if (inner && (!catastrophe || inner.unseenScript !== true)) catastrophe = inner;
     }
@@ -985,16 +998,122 @@ function autoVerdictOf(
   const unseenCovered = catastrophe?.unseenScript === true && fullAccessCovers(bot, fullAccessOriginOf(context));
   // 1.0.13 (NOLIMITS-MEANS-IT, design section 14): a text the reader could not follow holds at every level, owner
   // No limits included. Hits it holds on carry `readerFailed`.
-  // HOOK (NOLIMITS-WIPE-WORD, design R3 and R11): any waiver of such a hit is one check on that mark, here and only here,
-  // ahead of this return. It needs `outer` from before the inner read. `inputTruncated` already keeps a cut call's card.
-  if (catastrophe && !unseenCovered) {
-    const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
-    return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+  // 1.0.14 (NOLIMITS-WIPE-WORD, design R3 and R11): on an owner-started No limits turn, and only there, a marked
+  // failure is waived when one plain check over every part the verdict holds finds no delete, disk or mirror word, no
+  // disk and no fork-bomb shape. The check is the only waiver of the mark, here and only here.
+  // 1.0.16 (NOLIMITS-UNREADABLE): a text written in a way that hides what it runs keeps its card (hiding.ts), and the
+  // checks after this one read every part decoded as bash reads it; a decode that fails keeps the card.
+  let waived = false;
+  let decoded: string[] = [];
+  let unreadLog: { hide: string; why: string } | undefined;
+  if (catastrophe && !unseenCovered && catastrophe.readerFailed === true && (!outer || outer.readerFailed === true) && ownerNoLimits(bot, context)) {
+    const held = wipeWordHold(catastrophe, shell, text, innerRead, commandTool, summary, context);
+    unreadLog = { hide: held.hit?.hidden ?? "none", why: held.hit?.wipeWord?.kind ?? (held.hit?.hidden ? "hides" : held.hit ? "uncheckable" : "none") };
+    if (held.hit) catastrophe = held.hit;
+    else { catastrophe = null; waived = true; decoded = held.decoded; }
+  }
+  // MurageMain ruling, 1.0.16 r3: on an owner No limits turn a command runner fed from data, a process substitution or a
+  // name built from a variable asks on the readable path too (the waived path checks it in unplainScan)
+  // MurageMain ruling (c): on the same readable path, a command word that is not a plain literal asks, and a path with a
+  // glob, a brace or a variable asks when it could reach a protected place; fully known values are substituted and the
+  // resolved texts join the key, startup-file and deny checks below
+  let shaped = false;
+  const reachResolved: string[] = [];
+  let reachHit: string | null = null;
+  const reachOf = (part: string) => {
+    const scan = reachScan(part, shell);
+    for (const form of scan.resolved) { reachResolved.push(form); if (shell !== "pwsh") { const plain = decodedForm(form); if (plain !== form) reachResolved.push(plain); } }
+    return scan.hit;
+  };
+  // MurageMain ruling (1.0.16 r3d): these asks are POSIX only; a PowerShell text is read exactly as in 1.0.15 until the
+  // PowerShell design pass (1.0.17)
+  if (shell !== "pwsh" && (!catastrophe || unseenCovered) && commandTool && ownerNoLimits(bot, context)) {
+    const base = unreadableHit();
+    try {
+      for (const part of [text ?? summary, innerRead]) {
+        const shape = part === undefined ? null : runnerShapeIn(part, shell) ?? (waived ? null : (reachHit = reachOf(part)));
+        if (shape) { catastrophe = { rule: base.rule, what: base.what, hidden: shape }; shaped = true; break; }
+      }
+    } catch {
+      catastrophe = { rule: base.rule, what: base.what, hidden: "decode" }; shaped = true;
+    }
+  }
+  // a reach hit defers to a key, startup-file or deny card on the same text, which names what it holds
+  if (shaped && catastrophe?.hidden !== undefined && reachHit) {
+    const whole = windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined;
+    const keyed = verdictPastAlwaysAsk(bot, tool, summary, context, reachResolved.length ? [whole ?? text ?? summary, ...reachResolved].join("\n") : whole, windowsBash);
+    if (keyed.approve === null) return keyed;
+  }
+  if (catastrophe && (!unseenCovered || shaped)) {
+    const reader = catastrophe.rule === "unreadable" ? catastrophe.hidden ? "hides" : catastrophe.wipeWord ? "wipe-word" : "held" : undefined;
+    const verdict: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+    if (unreadLog) unreadLogOf.set(verdict, unreadLog);
+    return verdict;
   }
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
-  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
+  // a waived text's deny, stop-line and key checks read it as written and decoded (NOLIMITS-UNREADABLE R3)
+  const wholeText = windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined;
+  const extra = waived ? decoded : reachResolved;
+  const verdict = verdictPastAlwaysAsk(bot, tool, summary, context, extra.length ? [wholeText ?? text ?? summary, ...extra].join("\n") : wholeText, windowsBash);
+  // a waived reader failure that runs is recorded as unread, unless a key rule already named what it held
+  if (waived && verdict.approve && verdict.rule === undefined) return { ...verdict, rule: "held=unread" };
   return valueTarget !== undefined && verdict.approve ? { ...verdict, valueTarget } : verdict;
+}
+
+/** NOLIMITS-WIPE-WORD (design R3 "Where it runs", "Provenance must be complete", R11) and NOLIMITS-UNREADABLE (1.0.16
+ * R2, R3): the hit to keep, or null when every check clears it, with each part decoded for the checks that follow. It
+ * runs only when the verdict holds the whole call: no driver cut, nothing missing, and when a command tool has only its
+ * summary, a summary the card did not cut. It reads the engine's whole text as it arrived, the inner command a wrapper
+ * carries, and the summary only when there is no text. A hiding construct in any part keeps the card, then a delete,
+ * disk or mirror word, a disk or a fork-bomb shape in any part as written or decoded; no part to read keeps it, and a
+ * check or a decode that throws keeps it. A command word or a file argument that is not a plain literal keeps it too
+ * (unplainScan), unless it is a variable whose every value the text gives: each resolved text then gets the same delete,
+ * disk and fork checks here, and the key, startup-file and deny checks after this through `decoded`. */
+function wipeWordHold(hit: AlwaysAskHit, dialect: "pwsh" | undefined, text: string | undefined, inner: string | undefined, commandTool: boolean, summary: string, context: AutoContext | undefined): { hit: AlwaysAskHit | null; decoded: string[] } {
+  const kept = { hit, decoded: [] };
+  if (context?.inputTruncated === true || context?.call?.inputMissing !== undefined) return kept;
+  if (text === undefined && commandTool && approvalSummaryIsCut(summary)) return kept;
+  const parts = [text, inner, text === undefined ? summary : undefined].filter((part): part is string => typeof part === "string" && part.trim() !== "");
+  if (!parts.length) return kept;
+  const decoded: string[] = [];
+  try {
+    for (const part of parts) {
+      const hidden = hidingIn(part, dialect);
+      if (hidden) return { hit: { ...hit, hidden }, decoded: [] };
+    }
+    for (const part of parts) {
+      let plain: string;
+      try { plain = dialect === "pwsh" ? part : decodedForm(part); } catch { return { hit: { ...hit, hidden: "decode" }, decoded: [] }; }
+      for (const form of plain === part ? [part] : [part, plain]) {
+        const found = wipeWordIn(form, dialect);
+        if (found) return { hit: { ...hit, wipeWord: found }, decoded: [] };
+      }
+      if (plain !== part) decoded.push(plain);
+    }
+    // the structural rule (1.0.16 r3): a command word or a file argument that is not a plain literal keeps the card,
+    // unless it is a variable whose every value the same text gives; then every resolved text is checked as written.
+    // POSIX only (MurageMain ruling 1.0.16 r3d): a PowerShell text keeps the 1.0.15 waiver until the 1.0.17 design pass
+    for (const part of dialect === "pwsh" ? [] : parts) {
+      const unplain = unplainScan(part, dialect);
+      if (unplain.hit) return { hit: { ...hit, hidden: unplain.hit }, decoded: [] };
+      // MurageMain re-scope (B): the waiver holds only for the narrow shape; anything else keeps the card as before it
+      const narrow = narrowHold(part, dialect);
+      if (narrow) return { hit: { ...hit, hidden: narrow }, decoded: [] };
+      for (const form of unplain.resolved) {
+        let plain: string;
+        try { plain = dialect === "pwsh" ? form : decodedForm(form); } catch { return { hit: { ...hit, hidden: "decode" }, decoded: [] }; }
+        for (const each of plain === form ? [form] : [form, plain]) {
+          const found = wipeWordIn(each, dialect);
+          if (found) return { hit: { ...hit, wipeWord: found }, decoded: [] };
+          decoded.push(each);
+        }
+      }
+    }
+  } catch {
+    return kept;
+  }
+  return { hit: null, decoded };
 }
 
 /** The card sources a held OWN_ALWAYS_ASK tool is re-named from: those that

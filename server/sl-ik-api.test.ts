@@ -43,6 +43,9 @@ beforeAll(async () => {
     const v=cfg.instances.verification;
     cfg.instances.limited={...v,displayName:'Limited fixture',environment:{...(v.environment||{}),FAKE_CLAUDE_MODE:'api-error',FAKE_CLAUDE_API_ERROR:'Claude AI usage limit reached|'+(Math.floor(Date.now()/1000)+7200)}};
     cfg.instances.codex={driver:'codex',displayName:'Codex fixture',environment:{FAKE_CODEX_MODE:'resume',FAKE_CODEX_DUMP:path.join(process.env.MURAGE_DATA_DIR,'codex-dump.json'),FAKE_CODEX_CALL_LOG:path.join(process.env.MURAGE_DATA_DIR,'codex-calls.log')},config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true}};
+    // the spare is rebuilt on every launch; a hide written into config before a restart (the #3 #9 crash remnant) is kept
+    const spareHidden=cfg.instances.spare?.hidden===true;
+    cfg.instances.spare={...cfg.instances.codex,displayName:'Spare fixture',environment:{...cfg.instances.codex.environment,FAKE_CODEX_CALL_LOG:path.join(process.env.MURAGE_DATA_DIR,'spare-calls.log')},...(spareHidden?{hidden:true}:{})};
     fs.writeFileSync(file,JSON.stringify(cfg));
   ` });
   await proof();
@@ -172,4 +175,74 @@ it("a Codex chat from before 1.0.4 (a session with no effort on record) starts f
   }
   expect(codexCalls("thread/start")).toBe(starts + 1);
   expect((await lines(b.threadId)).filter(line => line === "Codex is back on Default for this chat")).toHaveLength(1);
+}, 120000);
+
+// U22 G20: the one limit-backup gate (designs/U22-HIDDEN-BACKUP-CHOKEPOINT.md); the site-by-site placement is in limit-backup-gate.test.ts.
+const spareCalls = () => { const file = join(fixture.info.dataDir, "spare-calls.log"); return existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(line => line.endsWith(" turn/start")).length : 0; };
+const spare = { instanceId: "spare", model: "gpt-fake-default" };
+const hide = async (hidden: boolean) => expect((await api("PATCH", "/api/instances/spare", { hidden })).status).toBe(200);
+
+it("#1 the backup PUT refuses a hidden or removed engine with its reason, and still saves a usable one", async () => {
+  const b = await bot({ instanceId: "limited", model: claudeModel });
+  await hide(true);
+  const hidden = await api("PUT", `/api/bots/${b.id}/limit-backup`, { selection: spare });
+  expect(hidden).toMatchObject({ status: 409, body: { code: "hidden" } });
+  expect(hidden.body.error).toContain("is hidden in Settings");
+  expect((await api("GET", `/api/bots/${b.id}`)).body.bot.limitBackup).toBeFalsy();
+  expect(await api("PUT", `/api/bots/${b.id}/limit-backup`, { selection: { instanceId: "nobody", model: "x" } })).toMatchObject({ status: 409, body: { code: "removed" } });
+  // #13: the picker's list never shows the hidden engine
+  expect((await api("GET", "/api/instances")).body.instances.some((engine: any) => engine.instanceId === "spare")).toBe(false);
+  await hide(false);
+  expect((await api("PUT", `/api/bots/${b.id}/limit-backup`, { selection: spare })).status).toBe(200);
+  expect((await api("GET", `/api/bots/${b.id}`)).body.bot.limitBackup).toMatchObject({ selection: { instanceId: "spare" } });
+  expect((await api("DELETE", `/api/bots/${b.id}/limit-backup`)).status).toBe(200);
+}, 60000);
+
+it("#3 #9 a saved backup hidden behind the hide check (a stale save, a crash remnant) never takes over, and the chat says why", async () => {
+  const b = await bot({ instanceId: "limited", model: claudeModel });
+  // the source turn runs before any backup is saved (it gets the card, not a failover); the crash remnant row is written below
+  const resumed = (await api("POST", `/api/bots/${b.id}/tasks`, { title: "Pending at the crash" })).body.task;
+  expect((await api("POST", `/api/bots/${b.id}/messages`, { threadId: resumed.threadId, text: "u22-pending-source" })).status).toBe(202);
+  await expect.poll(async () => (await messages(resumed.threadId)).some(m => m.card?.tool === "murage_limit_offer"), { timeout: 30000 }).toBe(true);
+  await idle(b.id);
+  expect((await api("PUT", `/api/bots/${b.id}/limit-backup`, { selection: spare })).status).toBe(200);
+  const source = (await messages(resumed.threadId)).find(m => m.role === "user" && m.text === "u22-pending-source");
+  await fixture.stop();
+  // the engine is hidden in config directly (the hide route would refuse while a bot keeps it), and a pending failover onto it waits
+  const configFile = join(fixture.info.dataDir, "config.json");
+  const config = JSON.parse(readFileSync(configFile, "utf8"));
+  config.instances.spare.hidden = true;
+  writeFileSync(configFile, JSON.stringify(config));
+  const now = Date.now();
+  const row = { rowId: "u22-row-pending", state: "pending", botId: b.id, threadId: resumed.threadId, from: { instanceId: "limited", model: claudeModel }, was: "following", to: spare,
+    resetsAt: now + 3_600_000, at: now, sourceMessageId: source.id, resendSendId: "u".repeat(32), hop: 1, updatedAt: now };
+  writeFileSync(join(fixture.info.dataDir, "limit-failovers.json"), JSON.stringify([row]));
+  const turnsBefore = spareCalls();
+  await fixture.restart(); await proof();
+  // the restart kept the hide (the fixture rebuilds the spare on launch): the engine really is hidden for recovery
+  expect(JSON.parse(readFileSync(configFile, "utf8")).instances.spare.hidden).toBe(true);
+  expect((await api("GET", "/api/instances")).body.instances.some((engine: any) => engine.instanceId === "spare")).toBe(false);
+  // #9 restart recovery: the row is cancelled, the chat stays where it was, one line, nothing resent
+  const rows = JSON.parse(readFileSync(join(fixture.info.dataDir, "limit-failovers.json"), "utf8"));
+  expect(rows.find((r: any) => r.rowId === row.rowId).state).toBe("cancelled");
+  expect((await task(b.id, resumed.threadId)).modelSelection?.instanceId).not.toBe("spare");
+  expect((await lines(resumed.threadId)).filter(line => /Spare fixture is hidden in Settings, so it did not take over/.test(line))).toHaveLength(1);
+  // #3 the limit hits with the stale save: no failover, the reason, the plain line, a card without the hidden engine
+  expect((await api("POST", `/api/bots/${b.id}/messages`, { threadId: b.threadId, text: "u22-stale-hidden" })).status).toBe(202);
+  await expect.poll(async () => (await messages(b.threadId)).some(m => m.card?.tool === "murage_limit_offer"), { timeout: 30000 }).toBe(true);
+  const said = await lines(b.threadId);
+  const why = said.findIndex(line => /Spare fixture is hidden in Settings, so it did not take over/.test(line));
+  expect(why).toBeGreaterThan(-1);
+  // the plain line can replace the engine's own limit text in place (putLimitLine), so only presence is claimed, the reason once
+  expect(said.findIndex(line => /is at its limit until about/.test(line))).toBeGreaterThan(-1);
+  expect(said.filter(line => /Spare fixture is hidden in Settings, so it did not take over/.test(line))).toHaveLength(1);
+  const card = (await messages(b.threadId)).find(m => m.card?.tool === "murage_limit_offer")!.card;
+  expect(card.options.some((option: string) => option.startsWith("Spare fixture"))).toBe(false);
+  await idle(b.id);
+  expect(spareCalls(), "the hidden backup never started").toBe(turnsBefore);
+  // #2 answering the card with the hidden engine (a stale client) is refused with its reason, the card stays open, nothing saved
+  const refused = await api("POST", `/api/threads/${b.threadId}/respond`, { requestId: card.requestId, behavior: "answer", message: "Spare fixture (your plan)", limitNextTime: true });
+  expect(refused.status).not.toBe(200);
+  expect((await messages(b.threadId)).find(m => m.card?.requestId === card.requestId)!.card.answered).toBeFalsy();
+  expect(spareCalls()).toBe(turnsBefore);
 }, 120000);

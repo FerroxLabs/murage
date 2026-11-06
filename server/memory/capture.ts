@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { memoryCaptures } from "./capture-gate.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { turnFirstRowid } from "../transcript-backfill.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 import type { Message } from "../store.ts";
 import { isMurageVoice } from "../murage-voice.ts";
 import { redactSecretsInText } from "../redact.ts";
@@ -130,7 +131,7 @@ function turnPath(db: DatabaseSync, threadId: string, message: Message): Message
     const row = read.get(threadId, at);
     if (!row) return null;
     if (first !== null && Number(row.position) < first) break;
-    const parsed = JSON.parse(String(row.json)) as Message;
+    const parsed = rowToMessage({ json: String(row.json) });
     if (parsed.turnId && parsed.turnId !== message.turnId) break;
     seen.add(at); rows.push(parsed);
     at = parsed.parentId;
@@ -148,7 +149,7 @@ function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message)
     SELECT id,json_extract(json,'$.parentId'),json,0 FROM messages WHERE thread_id=? AND id=(SELECT active_leaf_id FROM thread_state WHERE thread_id=?)
     UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=? AND m.rowid>=? AND p.depth<10000
   ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId,first.first ?? 0);
-  const path = rows.map(row => JSON.parse(String(row.json)) as Message);
+  const path = rows.map(row => rowToMessage({ json: String(row.json) }));
   return path;
 }
 

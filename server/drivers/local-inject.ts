@@ -59,7 +59,8 @@ export const LOCAL_HOSTS: LocalHost[] = [
 export const INJECT_SEP = "::";
 
 const HOST_BY_ID = new Map(LOCAL_HOSTS.map((host) => [host.id, host]));
-const MODEL_ID = /^[\w][\w./:+-]*$/;
+// `@` carries LM Studio's quant variant ("publisher/model@q4_k_m").
+const MODEL_ID = /^[\w][\w./:+@-]*$/;
 
 function hostFromStored(server: StoredLocalServer): LocalHost {
   return {
@@ -524,6 +525,58 @@ export function contextWindowsFromLmStudio(payload: unknown): Map<string, LocalC
   return out;
 }
 
+export interface LmStudioNativeCatalog {
+  ids: string[];
+  loaded: Set<string>;
+  contexts: Map<string, LocalContextReading>;
+}
+
+/**
+ * LM Studio 0.4 (the Bionic app) lists every downloaded model at
+ * GET /api/v1/models; the chat id is `key`. A loaded model reports the
+ * context it was loaded with; one on disk reports only its maximum, which is
+ * not the window LM Studio will give it, so that stays a maximum. Embedding
+ * and other non-chat rows are left out. Null = not this API.
+ */
+export function lmStudioNativeCatalog(payload: unknown): LmStudioNativeCatalog | null {
+  const rec = record(payload);
+  if (!rec || !Array.isArray(rec.models)) return null;
+  const ids: string[] = [];
+  const loaded = new Set<string>();
+  const contexts = new Map<string, LocalContextReading>();
+  for (const value of rec.models) {
+    const row = record(value);
+    if (!row || row.type !== "llm" || typeof row.key !== "string" || !MODEL_ID.test(row.key)) continue;
+    const key = row.key;
+    if (ids.includes(key)) continue;
+    const instances = Array.isArray(row.loaded_instances) ? row.loaded_instances : [];
+    let window: number | undefined;
+    for (const instance of instances) {
+      const length = positiveInt(record(record(instance)?.config)?.context_length);
+      if (length !== undefined) window = window === undefined ? length : Math.min(window, length);
+    }
+    const max = positiveInt(row.max_context_length);
+    const isLoaded = instances.length > 0;
+    ids.push(key);
+    if (isLoaded) loaded.add(key);
+    if (window || max) {
+      contexts.set(key, {
+        ...(window ? { contextWindow: window } : {}),
+        ...(max ? { maxContextWindow: max } : {}),
+        source: "lmstudio",
+        loaded: isLoaded,
+      });
+    }
+  }
+  return { ids, loaded, contexts };
+}
+
+/** At least one chat row: enough to tell LM Studio's native API from an
+ *  unrelated server that happens to answer the path. */
+export function isLmStudioNativeCatalog(payload: unknown): boolean {
+  return (lmStudioNativeCatalog(payload)?.ids.length ?? 0) > 0;
+}
+
 /** llama-server single-model mode serves exactly its loaded model; router mode
  *  marks each row `status.value`. vLLM / SGLang serve what they loaded. */
 function servedModelIds(host: LocalHost, catalog: unknown): Set<string> {
@@ -568,6 +621,7 @@ async function probeHostGroup(
   const omlx = group.find((row) => row.kind === "omlx");
   let catalog: unknown | null;
   let extra: unknown | null;
+  let native: LmStudioNativeCatalog | null = null;
   if (llama && omlx) {
     const [listed, props, status] = await Promise.all([
       timedJson(catalogUrl, env, host, fetchImpl),
@@ -580,19 +634,32 @@ async function probeHostGroup(
     else [host, extra] = [llama, null];
   } else {
     const extraUrl = loadedProbeUrl(host);
-    [catalog, extra] = await Promise.all([
+    // Only a server known as LM Studio is asked for its native catalog: any
+    // other local server would get a request it never serves.
+    const nativeUrl = host.kind === "lmstudio" ? `${root}/api/v1/models` : null;
+    let nativePayload: unknown | null;
+    [catalog, extra, nativePayload] = await Promise.all([
       timedJson(catalogUrl, env, host, fetchImpl),
       extraUrl ? timedJson(extraUrl, env, host, fetchImpl) : Promise.resolve(null),
+      nativeUrl ? timedJson(nativeUrl, env, host, fetchImpl) : Promise.resolve(null),
     ]);
+    const parsed = nativeUrl ? lmStudioNativeCatalog(nativePayload) : null;
+    // A parsed native list is the answer even with no chat model in it (only embeddings downloaded): falling back
+    // to /v1/models would bring the embeddings back as chat models (Astra r1 Medium).
+    if (parsed) native = parsed;
     // Ollama older than the /v1 surface, or one with it disabled, still lists
     // its models on the native API.
     if (catalog === null && host.kind === "ollama") catalog = await timedJson(`${root}/api/tags`, env, host, fetchImpl);
   }
-  const catalogIds = catalog ? idsFromModelsPayload(catalog) : [];
-  const extraIds = extra && host.kind !== "llamacpp" ? idsFromModelsPayload(extra) : [];
-  const loaded = host.kind === "llamacpp" || host.kind === "vllm" || host.kind === "sglang"
-    ? servedModelIds(host, catalog)
-    : loadedIdsFromPayloads(host, catalog ?? extra, extra);
+  // LM Studio 0.4: the native list is the downloaded chat models by the id
+  // chat accepts; /v1/models there names quant variants and embeddings too.
+  const catalogIds = native ? native.ids : catalog ? idsFromModelsPayload(catalog) : [];
+  const extraIds = !native && extra && host.kind !== "llamacpp" ? idsFromModelsPayload(extra) : [];
+  const loaded = native
+    ? new Set(native.loaded)
+    : host.kind === "llamacpp" || host.kind === "vllm" || host.kind === "sglang"
+      ? servedModelIds(host, catalog)
+      : loadedIdsFromPayloads(host, catalog ?? extra, extra);
   const ids = [...new Set([...catalogIds, ...extraIds, ...loaded])];
   // A single-model llama-server names its model by the path it was given, so
   // on Windows every id it reports is rejected by MODEL_ID and the card ends up
@@ -613,13 +680,14 @@ async function probeHostGroup(
     for (const [id, window] of contextWindowsFromPs(extra)) contexts.set(id, { contextWindow: window, source: "ollama-ps", loaded: true });
   } else if (host.kind === "lmstudio") {
     for (const [id, reading] of contextWindowsFromLmStudio(extra)) contexts.set(id, reading);
+    if (native) for (const [id, reading] of native.contexts) contexts.set(id, reading);
   } else if (host.kind === "llamacpp") {
     const window = contextFromLlamaProps(extra);
     if (window) for (const id of loaded) contexts.set(id, { contextWindow: window, source: "llamacpp-props", loaded: true });
   }
   const aliases = group.filter((row) => row.kind === host.kind).map((row) => row.id);
   for (const [id, reading] of contexts) for (const alias of aliases) rememberLocalContext(alias, id, reading);
-  const page: LocalHostPage = { host, aliases, reachable: catalog !== null || extra !== null, ids, loaded, contexts };
+  const page: LocalHostPage = { host, aliases, reachable: catalog !== null || extra !== null || native !== null, ids, loaded, contexts };
   if (group.some((row) => row.source === "added")) lastPages.set(catalogUrl.replace(/\/models$/, ""), page);
   return page;
 }

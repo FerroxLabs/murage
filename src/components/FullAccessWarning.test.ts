@@ -46,7 +46,10 @@ describe("FullAccessWarning", () => {
     expect(markup).toContain("Give @Vega no limits?");
     expect(markup).toContain("In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking");
     expect(markup).toContain("That includes reading and sending your keys and passwords");
-    expect(markup).toContain("before text downloaded from an https address goes to an administrator run");
+    // 1.0.16 (GrokBuild r1 H1, Astra r1 H1): the warning promises only what the code does
+    expect(markup).toContain("It still asks before a wipe, before touching protected key or startup files, before disk tools, and before a command written in a way that hides what it runs, such as encoded text, eval, or code sent straight into a shell or a script runner.");
+    expect(markup).not.toContain("https address");
+    expect(markup).not.toContain("cannot read in full");
     expect(markup).toContain("your own Telegram, Slack and Discord messages keep the cards they have now");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");

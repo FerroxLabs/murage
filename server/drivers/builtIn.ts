@@ -21,6 +21,7 @@ import { ClineAgentDriver } from "./acp/cline.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 import { PiDriver } from "./pi.ts";
 import { MinimaxDriver } from "./minimax.ts";
+import { CopilotAgentDriver } from "./acp/copilot.ts";
 
 export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   // Fuigo leads: it is the engine Murage ships a binary for, so it is the one
@@ -45,4 +46,6 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   AntigravityDriver,
   BoxAgentDriver,
   MinimaxDriver,
+  // The person's own GitHub Copilot CLI: after every existing engine, never a default.
+  CopilotAgentDriver,
 ];

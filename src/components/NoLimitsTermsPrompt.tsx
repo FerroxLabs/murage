@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { api, useStore, type Bot } from "@/state/store";
 import { FullAccessWarning } from "./FullAccessWarning";
+import { NO_LIMITS_NOT_NOW_KEY } from "./no-limits-terms-key";
 
 /** NOLIMITS-MEANS-IT section 6. One Accept on the desktop, for every bot. Until it is pressed every turn reads as today. */
-const NOT_NOW_KEY = "murage.noLimitsTerms.notNow.2";
+const NOT_NOW_KEY = NO_LIMITS_NOT_NOW_KEY;
 
 function saidNotNow(): boolean {
   try { return localStorage.getItem(NOT_NOW_KEY) !== null; } catch { return false; }

@@ -171,6 +171,8 @@ function Shell() {
   const healthOriginRef = useRef<HealthOrigin | undefined>(undefined);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
+  // The Settings window can show any bot from its Bots group without changing the chat behind it.
+  const settingsBot = (state.settingsBotId ? state.bots.find((b) => b.id === state.settingsBotId) : undefined) ?? bot;
   // UX 1.0.13 (L2A): the rail shows on every view, Routines included, so a door is always one click away.
   const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(true);
   // One read of each for the whole shell: the rail's door, Today and the phone tabs show the same numbers.
@@ -184,6 +186,7 @@ function Shell() {
     else if (door === "needs-you") dispatch({ type: "showNeedsYou" });
     else dispatch({ type: "showRoutines" });
   }, [dispatch]);
+  const phoneTab = state.activeView === "chat" ? null : doorForView(state.activeView);
   // A workspace panel (LocalVm/Browser) covers the call's own bot/room's
   // screen the same way another selection does, with nothing to return to
   // otherwise (callbar-rereview.md N4). CallOverlaySlot (CallControls.tsx)
@@ -541,10 +544,10 @@ function Shell() {
           </div>
         </main>
       )}
-      {state.settingsOpen && bot && (
+      {state.settingsOpen && settingsBot && (
         <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
           <Suspense fallback={<LazyFallback />}>
-            {LoadedBotSettings ? <LoadedBotSettings key={bot.id} bot={bot} /> : <BotSettingsDialog key={bot.id} bot={bot} />}
+            {LoadedBotSettings ? <LoadedBotSettings key={settingsBot.id} bot={settingsBot} /> : <BotSettingsDialog key={settingsBot.id} bot={settingsBot} />}
           </Suspense>
         </LazyBoundary>
       )}
@@ -600,10 +603,13 @@ function Shell() {
       <CoachMarks firstRun={Boolean(setupOwnsView && setupView)} />
       </BotListDrawerProvider>
       </div>
-      {/* UX 1.0.13 phoneTabs slot (L7): below md only. */}
-      <div className="md:hidden">
-        <PhoneTabs active={doorForView(state.activeView) ?? "chats"} needsCount={needs.count} onSelect={openDoor} />
-      </div>
+      {/* UX 1.0.13 phoneTabs slot (L7): below md only, on the four door pages. An open chat is a screen pushed
+          over Chats (its header's bot-list button is the way back), so the composer keeps the bottom of the screen. */}
+      {phoneTab && (
+        <div className="md:hidden">
+          <PhoneTabs active={phoneTab} needsCount={needs.count} onSelect={openDoor} />
+        </div>
+      )}
     </div>
   );
 }

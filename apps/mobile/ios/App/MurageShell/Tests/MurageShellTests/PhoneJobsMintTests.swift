@@ -121,7 +121,7 @@ final class PhoneJobsMintTests: XCTestCase {
 
     func testPhoneFlagsWithoutFeatureShowsTurnedOffBeforeChallenge() async throws {
         let v = try vector(), origin = try XCTUnwrap(WorkspaceOrigin(string: v["origin"] as! String))
-        XCTAssertEqual(PhoneJobsMintError.turnedOff.errorDescription, "This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Phone tools. If it's already on, the line under it says why it can't be used.")
+        XCTAssertEqual(PhoneJobsMintError.turnedOff.errorDescription, "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.")
         for flags in [1, 2] {
             let writer = Writer()
             var calls = 0

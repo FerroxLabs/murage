@@ -413,6 +413,7 @@ const ENGINE_LABELS: Readonly<Record<string, string>> = {
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
   opencodeGo: "OpenCode",
+  copilotAgent: "GitHub Copilot",
   customAcp: "a custom ACP engine",
   boxAgent: "the cloud computer agent",
 };
