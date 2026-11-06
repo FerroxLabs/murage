@@ -104,6 +104,7 @@ const TOOLS: SettingsCard[] = [
 const REACH: SettingsCard[] = [
   card("apps", "connections", "connections-heading", { keywords: ["connected apps", "apps", "connections", "integrations", "gmail", "notion", "keys", "api"] }),
   card("bot-email", "connections", "bot-email-heading", { keywords: ["bot email", "email", "mail", "inbox", "address", "agentmail", "send email", "flux"] }),
+  card("highlevel", "connections", "highlevel-heading", { keywords: ["highlevel", "high level", "gohighlevel", "crm", "private integration", "location", "contacts", "opportunities"] }),
   card("mcp", "connections", "mcp-servers-heading", { keywords: ["mcp", "mcp servers", "servers"], advanced: true }),
   card("telegram", "channels", "telegram-settings-title", { keywords: ["telegram", "botfather", "pair", "messaging", "channels"] }),
   card("slack", "channels", "slack-settings-title", { keywords: ["slack", "messaging", "channels"] }),
@@ -161,6 +162,7 @@ export const ANCHORS_OWED: Readonly<Record<string, string>> = {};
 /** Cards whose name already lives with the card's own copy (SETTINGS-UX-1011 S2), read from there so the two never drift. */
 const CARD_NAMES: Readonly<Record<string, () => string>> = {
   "connections.bot-email": () => EMAIL_OWNER_COPY.sectionTitle,
+  "connections.highlevel": () => t("highlevel.title"),
   "general.send-key": () => t("settings.sendKey.title"),
   "about.news": () => NEWS_COPY.title,
   "about.health": () => HEALTH_COPY.title,

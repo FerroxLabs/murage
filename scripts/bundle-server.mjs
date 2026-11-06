@@ -78,6 +78,7 @@ const ENTRY_POINTS = [
   "drivers/dweb-proxy.ts",
   "drivers/phone-proxy.ts",
   "drivers/phone-jobs-proxy.ts",
+  "drivers/highlevel-proxy.ts",
   "drivers/browser-proxy.ts",
   "drivers/headless-browser-proxy.ts",
   "drivers/unified-browser-proxy.ts",

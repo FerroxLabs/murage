@@ -2,13 +2,15 @@
 // app, and while idle/checking. Two frames, one content (UpdateCardBody):
 // - the centred card, opened from the round button beside the account menu (UpdateIndicator);
 // - the pop-up: comes up by itself when a download starts, stays through to the restart, and never takes focus or sits over
-//   the composer. A download always shows here, so the card never holds the app while one runs.
+//   the composer. A download always shows here, so the card never holds the app while one runs. It is a top-layer popover,
+//   so no screen covers it, not even a modal What's New (canary 1.0.16 on a Mac: the pop-up was behind it).
 // All of it is the same state machine as the button: everything reads useUpdaterState, and only "is the card open" and how the
 // pop-up stands are shared (lib/update-card.ts). The install path (hand-off, deferred backup) is untouched.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { ArrowDownToLine, Loader2, PackageOpen, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
-import { closeUpdateCard, closeUpdatePopup, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, type UpdatePopupPlace } from "@/lib/update-card";
+import { createPortal } from "react-dom";
+import { closeUpdateCard, closeUpdatePopup, topModalDialog, updatePopupPlace, useUpdateCardOpen, useUpdatePopup, type UpdatePopupPlace } from "@/lib/update-card";
 import { useUndoToast } from "@/lib/undo";
 import { t } from "@/lib/i18n";
 import { releaseHighlights } from "@/lib/release-highlights";
@@ -91,10 +93,29 @@ export function UpdateBanner() {
   return popupUp ? <UpdatePopup s={s} onDismiss={dismiss} /> : null;
 }
 
-/** Bottom-left, no scrim, no focus. Sits under dialogs (z-50) and under the Undo toast, and moves up when one is showing. */
+/** The open modal dialog the pop-up lives in, kept current as dialogs open and close. Watched only while the pop-up is up. */
+function useModalHost(): HTMLDialogElement | null {
+  const [host, setHost] = useState<HTMLDialogElement | null>(null);
+  useEffect(() => {
+    const find = () => setHost(topModalDialog());
+    find();
+    const watch = new MutationObserver(find);
+    watch.observe(document.body, { subtree: true, childList: true, attributeFilter: ["open"] });
+    return () => watch.disconnect();
+  }, []);
+  return host;
+}
+
+/** Bottom-left, no scrim, no focus. A manual popover, so it is drawn in the top layer, above every screen and dialog, What's
+ * New included; while a modal dialog is open it lives inside that dialog, so it is not inert there. Moves up for the Undo toast. */
 function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void }) {
   const toast = useUndoToast();
   const frame = useRef<HTMLElement>(null);
+  const host = useModalHost();
+  // A new home is a new element: show it again, after any dialog that just opened, so it is the top of the top layer.
+  useLayoutEffect(() => {
+    try { frame.current?.showPopover(); } catch { /* already shown, or no popover support: it stays a fixed box */ }
+  }, [host]);
   // It never reaches for focus, but a keyboard that came in and closed it must not be dropped on the page.
   const close = () => {
     const held = frame.current?.contains(document.activeElement) ?? false;
@@ -120,22 +141,26 @@ function UpdatePopup({ s, onDismiss }: { s: UpdaterState; onDismiss: () => void 
       window.removeEventListener("resize", measure);
     };
   }, [toast]);
-  return (
+  const popup = (
     <section
       ref={frame}
+      popover="manual"
       aria-label={t("updates.title")}
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
+        // Inside a dialog, Escape here closes the pop-up only, not the dialog under it.
+        event.preventDefault();
         event.stopPropagation();
         close();
       }}
       data-testid="update-popup"
       style={place}
-      className={cn(BOX_FRAME, "animate-panel-in fixed z-40 max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel pb-3.5 shadow-2xl shadow-black/50")}
+      className={cn(BOX_FRAME, "animate-panel-in fixed inset-auto z-40 m-0 w-auto max-h-[calc(var(--vvh,100dvh)-1.5rem)] rounded-xl border border-hairline/40 bg-panel px-0 pt-0 pb-3.5 text-ink shadow-2xl shadow-black/50")}
     >
       <UpdateCardBody s={s} popup onDismiss={close} />
     </section>
   );
+  return host ? createPortal(popup, host) : popup;
 }
 
 function updateTitle(s: UpdaterState): string {

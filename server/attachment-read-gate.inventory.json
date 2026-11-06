@@ -813,7 +813,7 @@
  },
  {
   "file": "server/config.ts",
-  "function": "saveConfig",
+  "function": "writeConfigPatch",
   "callee": "readFileSync",
   "root": "config",
   "count": 1
@@ -1890,6 +1890,34 @@
   "count": 1
  },
  {
+  "file": "server/highlevel/journal-file.ts",
+  "function": "#append",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/highlevel/journal-file.ts",
+  "function": "#compactIfLong",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/highlevel/journal-file.ts",
+  "function": "FileActionJournal",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/highlevel/private-token.ts",
+  "function": "stored",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/host-power.ts",
   "function": "cageDigests",
   "callee": "openSync",
@@ -2109,6 +2137,20 @@
  {
   "file": "server/installation-damaged-export.ts",
   "function": "copy",
+  "callee": "readSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "settleDatabase",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/installation-damaged-export.ts",
+  "function": "settleDatabase",
   "callee": "readSync",
   "root": "data-dir",
   "count": 1
@@ -2800,6 +2842,13 @@
   "count": 1
  },
  {
+  "file": "server/project-migration.ts",
+  "function": "snapshotProjectRows",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
   "file": "server/project-scout.ts",
   "function": "readText",
   "callee": "readFileSync",
@@ -3029,6 +3078,20 @@
   "callee": "readFileSync",
   "root": "system-tool-output",
   "count": 1
+ },
+ {
+  "file": "server/settle-copy.ts",
+  "function": "scratchIsStale",
+  "callee": "readFileSync",
+  "root": "data-dir",
+  "count": 1
+ },
+ {
+  "file": "server/settle-copy.ts",
+  "function": "settleFtsCopy",
+  "callee": "openSync",
+  "root": "data-dir",
+  "count": 2
  },
  {
   "file": "server/setup-backup.ts",

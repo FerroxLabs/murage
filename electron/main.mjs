@@ -4188,6 +4188,7 @@ const CREDENTIAL_PATCH = {
   tavilySearchApiKey: (value) => ({ webSearch: { tavilyApiKey: value } }),
   exaSearchApiKey: (value) => ({ webSearch: { exaApiKey: value } }),
   firecrawlSearchApiKey: (value) => ({ webSearch: { firecrawlApiKey: value } }),
+  highlevelPrivateToken: (value) => ({ highlevel: { privateToken: value } }),
   telegramBotToken: (value) => ({ telegram: { botToken: value } }),
   slackAppToken: (value) => ({ slack: { appToken: value } }),
   slackBotToken: (value) => ({ slack: { botToken: value } }),

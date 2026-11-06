@@ -15,7 +15,10 @@ import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 // live in lib/settings-sections.ts; this file owns the icons and the pages.
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Archive, BookOpen, Bot, Brain, Coins, Globe, LifeBuoy, MessageCircle, Puzzle, Search, Smartphone, Trash2, User, Wrench, X } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
+import { api, useStore, type AppSettingsSection, type Bot as BotRecord, type ConfigStatus } from "@/state/store";
+import type { BotSettingsLeave } from "./BotSettingsPane";
+import { loadBotSettingsPane, loadedBotSettingsPane } from "@/lib/bot-settings-pane-load";
+import { leaveBotPage, registerBotPageLeave, settingsOpener } from "@/lib/settings-leave";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { inNativeShell } from "@/lib/native-shell";
 import { builtInBrowserEnabled, skillRecorderEnabled } from "@/lib/feature-flags";
@@ -48,6 +51,7 @@ import { StartupSettings } from "./StartupSettings";
 import { AnnouncementsSettings } from "./AnnouncementsSettings";
 import { NewsSignupSettings } from "./NewsSignupSettings";
 import { BotEmailAccountCard } from "./BotEmailSettings";
+import { HighLevelSettings } from "./HighLevelSettings";
 import { ComputerOnlyStub, SETTINGS_STUB_COPY } from "./SettingsStub";
 import { TelegramSettings } from "./TelegramSettings";
 import { SlackSettings } from "./SlackSettings";
@@ -97,6 +101,8 @@ export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sect
 export { settingsSearchResults } from "@/lib/settings-search";
 
 const MemorySection = retryableLazy(() => import("./MemorySection"));
+// A bot's page of this window (S7): loaded with the window by the bot opener (BotSettingsDialog), on first use otherwise.
+const BotPane = retryableLazy(() => loadBotSettingsPane().then((module) => ({ default: module.BotSettingsPane })));
 
 const PAGE_ICONS: Record<SettingsPage, typeof User> = {
   general: User,
@@ -1003,8 +1009,11 @@ export function inSettingsTabOrder(element: Pick<Element, "closest" | "parentEle
   return !folded || (element.parentElement === folded && element.tagName === "SUMMARY");
 }
 
-export function SettingsModal() {
+/** The one Settings window. With `bot` it shows that bot's page under the Bots group (the bot opener, BotSettingsDialog,
+ *  mounts it that way); without, the app's pages. Every way between them goes through the open page's unsaved-edit check. */
+export function SettingsModal({ bot, onBotClose }: { bot?: BotRecord; onBotClose?: () => void } = {}) {
   const { state, dispatch } = useStore();
+  const botLeave = useRef<BotSettingsLeave | null>(null);
   // The store keeps the id it was asked for (any of the 19); the page it lands on is `section` below, so the page
   // bodies read as they always have. An alias also names a card on that page (state.appSettingsAnchor).
   const requested = state.appSettingsSection;
@@ -1033,9 +1042,9 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   useEffect(() => {
     const visible = sectionsForSurface(SECTIONS, desktop);
-    const next = settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed);
+    const next = bot ? null : settingsSectionRedirect(SECTIONS, requested, desktop, visible, confirmed);
     if (next) dispatch({ type: "toggleAppSettings", open: true, section: next });
-  }, [dispatch, desktop, confirmed, requested]);
+  }, [dispatch, desktop, confirmed, requested, bot]);
 
   // An opener (a deep link, a What's new tile, the palette, a search result) leaves the search box.
   useEffect(() => { setQuery(""); }, [requested, anchor]);
@@ -1046,7 +1055,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   // Land on the card the opener named: its page's Advanced first when it lives there, then scroll, focus, highlight.
   useEffect(() => {
-    if (!anchor || query) return;
+    if (!anchor || query || bot) return;
     const card = cardForAnchor(SETTINGS_CARDS, anchor);
     if (card?.advanced && !advancedOpen[card.section]) {
       setAdvancedOpen((now) => ({ ...now, [card.section]: true }));
@@ -1062,7 +1071,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       onFound: (element) => { anchorWaitRef.current = null; revealAnchor(element); dispatch({ type: "appSettingsAnchorDone" }); },
       onGiveUp: () => { anchorWaitRef.current = null; paneRef.current?.scrollTo?.({ top: 0 }); dispatch({ type: "appSettingsAnchorDone" }); },
     });
-  }, [anchor, query, advancedOpen, dispatch]);
+  }, [anchor, query, advancedOpen, dispatch, bot]);
 
   const openCard = (card: SettingsCard) => dispatch({ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor });
 
@@ -1080,21 +1089,40 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
 
   // Closing with words typed in House rules or About me and not saved asks first, the way bot settings does; a page change or a
   // search does not lose them, they are kept (lib/settings-drafts.ts) and come back when the page does.
-  const closeSettings = useCallback(() => {
+  // A bot's page asks through its own check (BotSettingsPane), which also waits for a save to finish. While one shows, the
+  // store's dispatch asks it too before any opener anywhere takes it away (lib/settings-leave.ts).
+  const showsBot = Boolean(bot);
+  useEffect(() => (showsBot ? registerBotPageLeave(() => botLeave.current) : undefined), [showsBot]);
+  const leave = useCallback((operation: () => void) => {
+    if (bot) { leaveBotPage(operation); return; }
     if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
     settingsDrafts.clear();
-    dispatch({ type: "toggleAppSettings", open: false });
-  }, [dispatch]);
+    operation();
+  }, [bot]);
+  const closeBot = useCallback(() => { if (onBotClose) onBotClose(); else dispatch({ type: "toggleSettings", open: false }); }, [dispatch, onBotClose]);
+  const closeSettings = useCallback(() => leave(bot ? closeBot : () => dispatch({ type: "toggleAppSettings", open: false })), [leave, bot, closeBot, dispatch]);
+  const openPage = (id: SettingsPage) => { setQuery(""); if (bot) leave(() => dispatch({ type: "toggleAppSettings", open: true, section: id })); else dispatch({ type: "toggleAppSettings", open: true, section: id }); };
+  const openBot = (id: string) => { if (bot?.id === id) return; leave(() => dispatch({ type: "toggleSettings", open: true, botId: id })); };
+  const Pane = loadedBotSettingsPane() ?? BotPane.Component;
 
+  // What had focus before the window opened, read before a bot page's search takes it (autoFocus runs before effects).
+  // Read through a ref: a bot page's close changes as the store updates the bot, and must not re-run the focus setup.
+  const closeSettingsRef = useRef(closeSettings); closeSettingsRef.current = closeSettings;
+  // Moving between app and bot pages mounts a new window; a button of the old one is not where focus goes back to.
+  // The opener is kept for the whole Settings session, so the new window gets the original one, not a button of the old.
+  const [opener] = useState(() => (typeof document !== "undefined" && document.activeElement instanceof HTMLElement ? settingsOpener(document.activeElement) : null));
   useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousFocus = opener;
     const dialog = dialogRef.current;
-    dialog?.focus();
+    if (!dialog?.contains(document.activeElement)) dialog?.focus();
 
     const onKey = (event: KeyboardEvent) => {
+      // A dialog opened over this window (a section editor) handles its own keys and its own unsaved-edit check.
+      const inner = event.target instanceof Element ? event.target.closest('dialog[open], [aria-modal="true"]') : null;
+      if (event.defaultPrevented || (inner && inner !== dialog)) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        closeSettings();
+        closeSettingsRef.current();
         return;
       }
       if (event.key !== "Tab" || !dialog) return;
@@ -1128,7 +1156,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
       window.removeEventListener("keydown", onKey);
       returnFocus(previousFocus);
     };
-  }, [closeSettings, dispatch]);
+  }, [opener]);
 
   // A handful of sections (a paired phone sees three) read better as plain
   // chips on the phone strip than under headings that each hold one or two.
@@ -1146,11 +1174,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="app-settings-title"
+        aria-labelledby={bot ? undefined : "app-settings-title"}
+        aria-label={bot ? `Bot settings: ${bot.name}` : undefined}
         tabIndex={-1}
         className={cn(
           BOX_PANES,
-          "settings-dialog w-full max-w-[920px] rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
+          "settings-dialog w-full rounded-2xl border border-hairline/50 bg-panel shadow-2xl outline-none",
           // overflow-clip, not overflow-hidden: a hidden box can still be
           // scrolled by focus, which slid the title and header off the top.
           // The list and the page each scroll on their own; the dialog never
@@ -1158,6 +1187,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           // of 22px, about 750px) in a 1440x900 window; a shorter window
           // scrolls the list, with the app's always-visible scrollbar.
           "h-[min(780px,calc(100dvh-2rem))]",
+          // A bot's page brings its own section list, so the window is wider while one shows.
+          bot ? "max-w-[1120px]" : "max-w-[920px]",
           // Below md a side list beside the content left too little of either
           // on a 390px screen. Full-bleed sheet, list folded to a horizontal
           // strip above it. --vvh rather than 100dvh so the footer buttons stay
@@ -1190,7 +1221,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           <div id="app-settings-title" className="px-2 pb-1.5 pt-0.5 text-[15px] font-semibold text-ink max-md:hidden">
             {t("settings.title")}
           </div>
-          <div className="mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0">
+          {/* The bot page has its own search, over that bot's settings. The app search is the anchor for its hint (L4C). */}
+          <div data-settings-search hidden={bot ? true : undefined} className={cn("mb-1 flex min-h-8 items-center gap-2 rounded-lg bg-control/70 px-2.5 max-md:mb-0 max-md:min-h-11 max-md:w-[9rem] max-md:shrink-0", bot && "hidden")}>
             <Search size={14} className="shrink-0 text-ink-secondary" aria-hidden="true" />
             <input
               value={query}
@@ -1201,6 +1233,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 if (query) setQuery("");
                 else closeSettings();
               }}
+              id="settings-search"
+              data-coach-anchor="settings-search"
               placeholder={t("settings.search")}
               aria-label={t("settings.searchAria")}
               className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
@@ -1208,7 +1242,8 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
           </div>
           {SETTINGS_GROUPS.map((group) => {
             const entries = visiblePages.filter((entry) => entry.group === group);
-            if (entries.length === 0) return null;
+            const bots = group === "bots" ? state.bots : [];
+            if (entries.length === 0 && bots.length === 0) return null;
             return (
               <div
                 key={group}
@@ -1233,18 +1268,37 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                     key={id}
                     type="button"
                     data-settings-section={id}
-                    onClick={() => { setQuery(""); dispatch({ type: "toggleAppSettings", open: true, section: id }); }}
-                    aria-current={navPage === id ? "page" : undefined}
+                    onClick={() => openPage(id)}
+                    aria-current={!bot && navPage === id ? "page" : undefined}
                     title={settingsPageLabel(id)}
                     className={cn(
                       "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
                       "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
-                      !q && navPage === id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                      !bot && !q && navPage === id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
                     )}
                   >
                     <Icon size={15} className="shrink-0" aria-hidden="true" />
                     <span className="min-w-0 truncate">{settingsPageLabel(id)}</span>
+                  </button>
+                ))}
+                {bots.map((each) => (
+                  <button
+                    key={`bot-${each.id}`}
+                    type="button"
+                    data-settings-bot={each.id}
+                    onClick={() => openBot(each.id)}
+                    aria-current={bot?.id === each.id ? "page" : undefined}
+                    title={`${each.name}'s settings`}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus",
+                      "max-md:h-11 max-md:whitespace-nowrap max-md:rounded-full max-md:px-3.5",
+                      bot?.id === each.id ? "bg-control font-medium text-ink" : "text-ink-secondary hover:bg-control/50 hover:text-ink",
+                    )}
+                  >
+                    <Bot size={15} className="shrink-0" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{each.name}</span>
                   </button>
                 ))}
               </div>
@@ -1255,7 +1309,12 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <BoxHead className="items-start px-5 py-3">
             <div className="min-w-0">
-              {q ? (
+              {bot ? (
+                <>
+                  <span className="block truncate text-[15px] font-semibold text-ink"><span className="font-normal text-ink-secondary">{settingsGroupLabel("bots")}</span><span aria-hidden="true" className="px-1.5 font-normal text-ink-secondary">/</span><span>{bot.name}</span></span>
+                  <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{`What ${bot.name} knows, can use and how it works.`}</p>
+                </>
+              ) : q ? (
                 <>
                   <span className="block truncate text-[15px] font-semibold text-ink">{t("settings.l1.resultsFor", { query: q })}</span>
                   <p data-settings-page-note className="mt-0.5 text-[12.5px] leading-snug text-ink-secondary">{t("settings.l1.resultsNote")}</p>
@@ -1273,13 +1332,20 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             </div>
             <button
               onClick={closeSettings}
-              aria-label={t("settings.close")}
+              aria-label={bot ? t("settings.bot.header.close") : t("settings.close")}
               className="flex size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-control hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
             >
               <X size={18} />
             </button>
           </BoxHead>
 
+          {bot ? (
+            <LazyBoundary inline onRetry={BotPane.retry}>
+              <Suspense fallback={<p role="status" className="px-5 text-[13px] text-ink-secondary">Loading {bot.name}'s settings</p>}>
+                <Pane bot={bot} onClose={closeBot} leaveRef={botLeave} />
+              </Suspense>
+            </LazyBoundary>
+          ) : (
           <BoxBody ref={paneRef} className="flex flex-1 flex-col gap-4 px-5 pb-5 [--box-pad:1.25rem]">
             {q && <SettingsSearchResults query={q} desktop={desktop} onOpen={openCard} />}
             {/* A search hides the open page instead of unmounting it, so words typed and not yet
@@ -1352,6 +1418,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             {desktop === true && section === "connections" && <ConnectedAppsSettings advancedOpen={advancedOpen.connections} onAdvancedOpenChange={advancedFor("connections").onOpenChange} />}
             {/* Settings > Bot email (1.0.9): always rendered; while the server does not say email is on, the card is its stub (SETTINGS-UX-1011 S1) */}
             {desktop === true && section === "connections" && <Anchor id="bot-email-heading"><BotEmailAccountCard /></Anchor>}
+            {desktop === true && section === "connections" && <Anchor id="highlevel-heading"><HighLevelSettings /></Anchor>}
 
             {desktop === true && section === "channels" && (
               <AdvancedHost>
@@ -1388,6 +1455,7 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
             )}
             </div>
           </BoxBody>
+          )}
         </div>
       </div>
     </div>

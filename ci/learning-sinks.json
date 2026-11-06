@@ -291,6 +291,13 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/codex-hook.ts",
+   "fn": "warmHookRunner",
+   "anchor": "spawn(runtime,[\"-e\",\"\"],{env,stdio:\"ignore\",windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/container-computer.ts",
    "fn": "<module>",
    "anchor": "promisify(execFile)",
@@ -946,6 +953,20 @@
    "fn": "checkFluxKey",
    "anchor": "fetch",
    "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/flux-limits.ts",
+   "fn": "fetchFluxLimits",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/settle-copy.ts",
+   "fn": "claimCopyScratch",
+   "anchor": "writeFileSync(join(dir,SCRATCH_OWNER_FILE),JSON.stringify({pid:process.pid,host:scratchTestHooks.host(),at:Date.now()}),{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -3891,6 +3912,41 @@
    "file": "server/sentinel/scan-fixtures.ts",
    "fn": "writeStats",
    "anchor": "writeFileSync(file(\"dbStatsManifest\"),JSON.stringify(manifest),{mode:0o600})",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/highlevel/journal-file.ts",
+   "fn": "#append",
+   "anchor": "writeSync(fd,`${JSON.stringify(line)}\\n`)",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/highlevel/journal-file.ts",
+   "fn": "#compactIfLong",
+   "anchor": "writeSync(fd,body?`${body}\\n`:\"\")",
+   "kind": "fs-write",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/highlevel-proxy.ts",
+   "fn": "post",
+   "anchor": "httpRequest(url,{method:\"POST\",signal,agent:false,headers:{authorization:`Bearer${token}`,\"content-type\":\"application/json\",\"content-length\":Buffer.byteLength(b",
+   "kind": "alias-call",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/highlevel/private-token.ts",
+   "fn": "<module>",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/highlevel/private-token.ts",
+   "fn": "writeAtomic",
+   "anchor": "writeFileSync(temp,text,{mode:0o600})",
    "kind": "fs-write",
    "reason": "not-learning"
   }

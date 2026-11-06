@@ -3858,6 +3858,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
+      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
+      // lists no change tool.
+      if (turn.integrations?.highlevel) {
+        mcpServers.highlevel = { ...turn.integrations.highlevel };
+        allowed.push(...claudeOwnUnaskedTools("highlevel"));
+      }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));

@@ -732,6 +732,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/highlevel",
+    "term": "HighLevel",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/house-rules",
     "term": "house rules",
     "source": "server/index.ts"

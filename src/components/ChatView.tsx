@@ -1,4 +1,6 @@
 import { ThreadLinkProvider } from "@/components/ThreadLinkMenu";
+import { DoneWhenLine } from "./DoneWhenLine";
+import { hasDoneWhenLine } from "@/lib/done-when-line";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
 import { BrowserSetupCard, McpEnableCard, McpSignInCard, PublishCard } from "./LazyChatCards";
 import { bubbleWidth } from "@/lib/reply-width";
@@ -19,6 +21,7 @@ import {
   Copy,
   ListTree,
   MessageSquareReply,
+  Minus,
   Pencil,
   Pin,
   PinOff,
@@ -228,6 +231,8 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
   const events = useMemo(() => timelineEvents(messages), [messages]);
   if (events.length === 0) return null;
   const recent = events.slice(-8);
+  // 1.0.18 U6 E15: steps whose turn ended with no recorded end, counted over the whole log
+  const noResult = events.filter((event) => event.state === "unrecorded").length;
   return (
     <div className="w-full px-5 pt-1">
       <button
@@ -236,7 +241,7 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
         aria-expanded={open}
         className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12.5px] text-ink-secondary hover:bg-raised/50 hover:text-ink"
       >
-        <span className="flex items-center gap-1.5"><ListTree size={14} /> Execution timeline{busy ? " · running" : ""}</span>
+        <span className="flex items-center gap-1.5"><ListTree size={14} /> Execution timeline{busy ? " · running" : ""}{noResult > 0 ? ` · ${t("timeline.noResultCount", { count: noResult })}` : ""}</span>
         <ChevronDown size={14} className={cn("transition-transform", open && "rotate-180")} />
       </button>
       {open && (
@@ -253,11 +258,14 @@ function TaskTimeline({ messages, busy }: { messages: Message[]; busy: boolean }
                       ? "bg-success"
                       : event.state === "running"
                         ? "animate-status-pulse bg-accent"
-                        : "bg-ink-secondary",
+                        : event.state === "unrecorded"
+                          ? "bg-ink-secondary/50"
+                          : "bg-ink-secondary",
                 )}
               />
-              <span className="sr-only">{event.state}: </span>
+              <span className="sr-only">{event.state === "unrecorded" ? t("toolChip.noResult") : event.state}: </span>
               <span className="truncate">{event.label}</span>
+              {event.state === "unrecorded" && <span data-testid="timeline-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}
               <time className="ml-auto shrink-0 text-[11px] text-ink-secondary/70">{formatTime(event.at)}</time>
             </li>
           ))}
@@ -987,6 +995,9 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
     );
   }
   const failed = tool.ok === false;
+  // 1.0.18 U6 E15: the turn ended with this step still open. A static icon and plain words, never the spinner; only the
+  // server's mark says so, so a live step (no mark) keeps its dots.
+  const noResult = tool.ok === undefined && tool.unrecorded === true;
   // The engine's own reason for the failure. Its first line reads as the
   // explanation; anything longer goes in Technical details, the same place
   // every other failure in the transcript keeps it.
@@ -1000,7 +1011,9 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
           className={cn(CHIP, failed ? "text-danger" : "text-ink-secondary")}
         >
           <span className="shrink-0">
-            {tool.ok === undefined ? (
+            {noResult ? (
+              <Minus size={13} aria-hidden="true" data-testid="tool-chip-no-result-icon" />
+            ) : tool.ok === undefined ? (
               <WorkingDots size={3.5} />
             ) : failed ? (
               <X size={13} />
@@ -1009,6 +1022,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
             )}
           </span>
           <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{loopNoticeLabel(tool.name) ?? tool.name}</span>
+          {noResult && <span data-testid="tool-chip-no-result" className="shrink-0">{t("toolChip.noResult")}</span>}
           {/* not mono: the argument reads as prose beside the tool's name, and
               inherits the chip's colour so a failed call stays one piece */}
           {tool.summary && (
@@ -1017,6 +1031,7 @@ function ActivityChip({ message, botName }: { message: Message; botName: string 
             </span>
           )}
         </div>
+        <DoneWhenLine text={tool.doneWhen} />
         {reason && (
           <div className="min-w-0 max-w-full px-1 text-[12px] leading-relaxed text-ink-secondary">
             <p data-testid="tool-chip-reason" className="whitespace-pre-wrap break-words">{reason}</p>
@@ -1375,7 +1390,7 @@ const MessagesList = memo(function MessagesList({
                   />
                 );
               }
-              if (!showToolCalls && !m.comm) return null;
+              if (!showToolCalls && !m.comm && !hasDoneWhenLine(m.tool?.doneWhen)) return null;
               return <ActivityChip message={m} botName={bot.name} />;
             }
             case "screen":
@@ -1658,7 +1673,7 @@ export function ChatView({ bot:profile }: { bot: Bot }) {
   // shown: lib/stream-paint.ts); the stored message replaces it in place.
   const liveReply = useStreamPaint(streamPaintText(streaming, { busy: Boolean(bot.busy) }));
   const lastMessage = messages.at(-1);
-  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined;
+  const toolInFlight = lastMessage?.kind === "activity" && lastMessage.tool?.ok === undefined && lastMessage.tool?.unrecorded !== true;
   // A turn queued behind another thread's folder, computer or browser says
   // what it is waiting for instead of "Thinking".
   const resourceWait = findTask(profile, bot.threadId)?.waitingFor;

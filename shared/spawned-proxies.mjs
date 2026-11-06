@@ -30,6 +30,8 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   phone: "drivers/phone-proxy",
   // The owner's-phone tools (calendar, reminders, ...) reached through the harness, not ADB (1.0.9 phone tools). Not the "phone" proxy above.
   phoneJobs: "drivers/phone-jobs-proxy",
+  // The native HighLevel CRM tools (GAP-HIGHLEVEL-109 section 8): forwards to the harness host, holds no credential.
+  highlevel: "drivers/highlevel-proxy",
   browser: "drivers/browser-proxy",
   headlessBrowser: "drivers/headless-browser-proxy",
   unifiedBrowser: "drivers/unified-browser-proxy",

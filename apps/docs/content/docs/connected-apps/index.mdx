@@ -36,6 +36,10 @@ Each bot checks the connected-apps service again before every reply, so your bot
 
 Connect more than one account for the same app and give each a clear alias such as `work`, `personal`, or `client-acme`. When several accounts could perform an action, Murage requires explicit selection instead of silently replacing the first connection.
 
+## HighLevel
+
+Your bots can look things up in your HighLevel CRM. They can read it and cannot change anything in it. On this computer, open **Settings → Connected apps → HighLevel** and paste a private integration token (make one in HighLevel under Settings, Private Integrations). Enter your Location ID, select **Check location**, then **Confirm**. Then choose which bots can read that location. The token stays on this computer and is never shown again. HighLevel opens only for a message you send a bot directly in its chat.
+
 ## Disconnecting
 
 Disconnecting an account takes back the permission you gave that service. It does not only hide the account in Murage. Other accounts for the same app stay connected.

@@ -104,6 +104,13 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx(`/api/email/other-setups/${ID}/remove`), label: "Remove an email address from another setup", summary: "none" },
   { methods: ["POST"], path: rx(`/api/email/bots/${ID}/[a-z-]+`), label: "Change a bot's email address or who can email it", summary: "none" },
   { methods: ANY, path: /^\/api\/email(?:\/.*)?$/, label: "Change bot email", summary: "none" },
+  // 1.0.18 HighLevel owner routes (server/index.ts, read only); route-policy marks every write under /api/highlevel credential.
+  // summary "none": the body is never described, so no location id or token detail reaches the confirmation.
+  { methods: ["POST"], path: rx("/api/highlevel/token/check"), label: "Check a HighLevel location", summary: "none" },
+  { methods: ["POST"], path: rx("/api/highlevel/token/[0-9a-f-]{36}/confirm"), label: "Connect a HighLevel location", summary: "none" },
+  { methods: ["PUT"], path: rx(`/api/highlevel/bots/${ID}/access`), label: "Change what a bot can read in HighLevel", summary: "none" },
+  { methods: ["DELETE"], path: rx("/api/highlevel/connections/hl_[A-Za-z0-9]{4,64}"), label: "Disconnect your HighLevel location", summary: "none" },
+  { methods: ANY, path: /^\/api\/highlevel(?:\/.*)?$/, label: "Change your HighLevel connection", summary: "none" },
   // 1.0.4 SL-H: route-policy denies this on every Cloud home; the label is here so the sentence is never the fallback.
   { methods: ["POST"], path: rx("/api/storage/attachments/remove"), label: "Remove attachment files for good" },
   { methods: ["POST"], path: rx("/api/publish/netlify/check"), label: "Check a Netlify connection", summary: "none" },

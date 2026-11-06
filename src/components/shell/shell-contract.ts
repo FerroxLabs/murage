@@ -5,7 +5,7 @@
 // renders into the shell (L2B Needs you and Health, L6A first run, L2C This
 // month, L6C agency, L7 phone) imports its types from here, so there is one
 // definition of each. Types only: nothing in this file runs.
-import type { InboxView } from "../../../shared/inbox";
+import type { ConnectionToRestore, InboxSegment, InboxView } from "../../../shared/inbox";
 import type { HealthIssueLevel } from "../../../shared/health-levels";
 
 /** The views the main column shows. Mirrors AppState["activeView"]. */
@@ -34,6 +34,8 @@ export interface NeedsSummaryRow {
   line: string;
   meta: string;
   open: () => void;
+  /** Which Needs you list the item is in (approval, question, connection). Set on `rows`; `top` leaves it out. */
+  segment?: InboxSegment;
 }
 
 /** The one Needs you count (actionable cards only; snoozed rows still count) and the oldest rows. */
@@ -44,6 +46,13 @@ export interface NeedsSummary {
   stale: boolean;
   /** oldest first, at most three */
   top: NeedsSummaryRow[];
+  /** Every owed item the one Inbox read returned (up to 25), oldest first, each with its `segment`, so a caller
+   *  filters by segment BEFORE it cuts (Today 1.0.18). Absent until a read answers; `count` stays the truth. */
+  rows?: NeedsSummaryRow[];
+  /** The badge total broken down by segment, from the same read. */
+  split?: { approvals: number; questions: number; connections: number };
+  /** Connections only failing routines know are dead (`InboxPage.restore`), from the same read. */
+  restore?: ConnectionToRestore[];
   /** The strongest open Health level from the owner's Inbox read; absent on any other read. */
   healthLevel?: HealthIssueLevel | null;
 }
@@ -128,5 +137,7 @@ export interface EngineHealthAnswer {
   flux: FluxHealthState;
   /** Absent from an older server, null while the key has not been read as valid. */
   fluxInfo?: FluxHealthInfo | null;
+  /** The installed Fuigo's version from its install receipt (absent from an older server, null when unknown). */
+  fuigoVersion?: string | null;
   checkedAt: number;
 }

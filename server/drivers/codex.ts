@@ -32,7 +32,7 @@ import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withS
 import {
   CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
-  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv, hookRuntime, warmHookRunner,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -847,6 +847,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phoneJobs) {
           mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
         }
+        // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
+        if (turn.integrations?.highlevel) {
+          mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
+        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -858,7 +862,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs") || (Boolean(turn.integrations?.highlevel) && name === "highlevel"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.
@@ -1166,12 +1170,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
         if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
+        // HOOK-LIVENESS-COLD-START: the runtime's first start runs beside Codex's own start and handshake; turn/start waits for it
+        if (hookFiles) void warmHookRunner();
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
         if (hookFiles && !reuse && process.platform === "win32") {
           env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(hookFiles.launcher);
-          env[CODEX_HOOK_EXE_ENV] = process.execPath;
+          env[CODEX_HOOK_EXE_ENV] = hookRuntime();
         }
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
@@ -2531,6 +2537,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           try { conn.baseline = await descendantPids(enginePid); } catch { /* stays null: fails closed at settle */ }
         }
         if (cancelledBeforeStart()) return;
+        // HOOK-LIVENESS-COLD-START: the hook's runtime has started once before the bound starts (codex-hook.ts warmHookRunner), so the
+        // bound measures the hook, not the operating system's first launch of the runtime. Started when the process launched; usually done.
+        if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) {
+          await warmHookRunner();
+          // an attempt the close path retired (or a turn that settled) during the wait writes nothing (Astra r1 #1)
+          if (abandoned || state.settled || cancelledBeforeStart()) return;
+        }
         // The submission fence (SendTurnInput.beforeSubmit), on every
         // attempt: no await separates it from the turn/start write below. A
         // refusal writes nothing. Before sendTurn resolved the harness stops

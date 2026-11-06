@@ -12,8 +12,9 @@
 // read retry or the owner's review ends at once, nothing more is sent, and a change waiting to be sent is recorded
 // not_applied with reason stopped_before_send. A change already sent is not recalled.
 //
-// Not in this slice: the /api/internal/highlevel/ route, engine mounts and the owner review route. The capability
-// kind and the Stop hook are wired so those can attach without new authority paths.
+// HL-S2: index.ts builds this host and serves it at /api/internal/highlevel/mcp (drivers/highlevel-proxy.ts), read
+// only: runtime.ts hands it every bot as readOnlyHighLevelAccess, so no change is listed or proposed and no review card
+// exists in 1.0.17 (row HL-S2-WRITES-DESIGN). With no connection source the host answers "not connected".
 import { isHighLevelHelperName, isHighLevelToolName, type HighLevelToolName } from "../../shared/highlevel.ts";
 import type { InternalCapability } from "../internal-capabilities.ts";
 import { authorizeHighLevelCall, nativeAccessFor, visibleHighLevelTools, type HighLevelAccessBot, type HighLevelDecision } from "./access.ts";
@@ -87,6 +88,8 @@ export interface HighLevelHostDeps {
   actions: HighLevelActions;
   /** A change is waiting for the owner (the card and notification attach here later). */
   onReview?: (claim: InternalCapability, review: ActionReview) => void;
+  /** The review ended (decided, Stop, expiry or a refusal): its card closes and can approve nothing. */
+  onReviewClosed?: (actionId: string) => void;
   /** A change ran: ids and field names only. */
   onReceipt?: (claim: InternalCapability, receipt: HighLevelWriteRecord & { actionId: string; connectionId: string }) => void;
 }
@@ -219,11 +222,13 @@ export class HighLevelHost {
     try {
       decided = await this.#deps.actions.awaitDecision(actionId, signal);
     } catch (error) {
+      this.#deps.onReviewClosed?.(actionId);
       if (error instanceof ActionRefused) return highlevelErrorResult(`${error.message} The change was not made.`, { actionId, outcome: "not_applied", code: error.code });
       if (!(error instanceof HighLevelStopped)) throw error;
       this.#deps.actions.notApplied(actionId, "stopped_before_send");
       return highlevelErrorResult(`${STOPPED_TEXT} The change was not made.`, { actionId, stopped: true, outcome: "not_applied" });
     }
+    this.#deps.onReviewClosed?.(actionId);
     if (decided === "denied") return highlevelErrorResult("The owner declined this change. It was not made.", { actionId, outcome: "not_applied" });
     if (decided === "expired") return highlevelErrorResult("The review expired before the owner decided. The change was not made.", { actionId, outcome: "stale" });
     const current = await this.#stillAuthorized(claim, tool, args, decision);

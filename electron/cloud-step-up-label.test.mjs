@@ -54,6 +54,9 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
+  // 1.0.18 HighLevel owner routes (read only): check, confirm, per-bot read access, disconnect, and the catch-all.
+  ["POST", "/api/highlevel/token/check"], ["POST", "/api/highlevel/token/0f8fad5b-d9cb-469f-a165-70867728950e/confirm"],
+  ["PUT", "/api/highlevel/bots/b1/access"], ["DELETE", "/api/highlevel/connections/hl_abcd1234"], ["PATCH", "/api/highlevel/other"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -90,6 +93,15 @@ describe("every step-up route has a human label", () => {
     const described = describeStepUp({ method: "POST", path: "/api/email/bots/ember-1/pause", body: {}, botName: "Ember" });
     expect(JSON.stringify(described)).toContain("Change a bot's email address or who can email it");
     expect(JSON.stringify(described)).toContain("Ember (ember-1)");
+  });
+
+  it("each HighLevel owner route gets its own sentence, and a pasted token in the body is never shown (1.0.18)", () => {
+    expect(findStepUpLabel("POST", "/api/highlevel/token/check")?.label).toBe("Check a HighLevel location");
+    expect(findStepUpLabel("PUT", "/api/highlevel/bots/b1/access")?.label).toBe("Change what a bot can read in HighLevel");
+    expect(findStepUpLabel("DELETE", "/api/highlevel/connections/hl_abcd1234")?.label).toBe("Disconnect your HighLevel location");
+    const described = describeStepUp({ method: "POST", path: "/api/highlevel/token/check", body: { token: "pit-SECRET-1", locationId: "loc1" } });
+    expect(JSON.stringify(described)).not.toContain("SECRET-1");
+    expect(JSON.stringify(described)).not.toContain("loc1");
   });
 
   it("no two table entries disagree about a sample (first match wins, and it is the intended one)", () => {
