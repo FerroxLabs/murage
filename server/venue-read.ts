@@ -78,6 +78,33 @@ export function venueThreads(db: DatabaseSync, roster: NamedRoster, venueId: str
   return new Set([group.threadId, ...(group.tasks ?? []).map(task => task.threadId)]);
 }
 
+/** Q4 of VENUE-POST-1017 and R4 to R8 here, shared: the venue the bot may reach from its own direct thread, now. A venue the bot is a member
+ * of (not a pair room, not archived), the target thread among the venue's readable threads, not memory-off, no channel-person thread in the
+ * venue, the same partition, the bot not isolated. Null for every refusal (one line for every reason). */
+export function venueAccess(db: DatabaseSync, roster: { bots: BotRecord[]; groups: GroupRecord[] }, bot: BotRecord, threadId: string,
+  venueId: unknown, venueThreadId: unknown): { group: GroupRecord; threads: Set<string>; target: string } | null {
+  // R4: a venue the bot is a member of now (pair rooms and archived rooms are not venues)
+  const group = typeof venueId === "string" ? roster.groups.find(entry => entry.id === venueId) : undefined;
+  if (!group || group.dm || group.hidden || !group.memberIds.includes(bot.id)) return null;
+  // R5 and R9: the readable threads (an ended project reads as a channel: no desks)
+  const threads = venueThreads(db, roster, group.id);
+  const target = venueThreadId === undefined ? group.threadId : venueThreadId;
+  if (typeof target !== "string" || !threads.has(target)) return null;
+  // R6: memory-off threads, the exact query of policy.ts recallThreads (never excludedThreads(), which fails open)
+  const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row => String(row.value)));
+  if (excluded.has(target)) return null;
+  // R7: channel-person threads (a binding whose person is not exactly the workspace owner, null included); desks always close the room
+  const bound = new Set<string>();
+  for (const row of db.prepare("SELECT subject_id, json_extract(intent,'$.personId') AS person FROM memory_scope_bindings WHERE subject_type='human-thread'").all())
+    if (row.person !== WORKSPACE_OWNER) bound.add(String(row.subject_id));
+  for (const thread of new Set([...projectThreads(roster, group.id), ...threads])) if (bound.has(thread)) return null;
+  // R8: partitions
+  const stored = executionStore()?.bot(bot.id) ?? bot;
+  if (threadPartition(stored, threadId).kind === "isolated") return null;
+  if (!sameThreadPartition(stored, threadId, target)) return null;
+  return { group, threads, target };
+}
+
 type Refusal = { ok: false; status: number; body: { error: string } };
 export type VenueReadVerdict = { ok: true; record: VenueReadRecord; venueId: string; input: { threadId: string; before?: unknown; limit?: unknown }; options: VenuePageOptions } | Refusal;
 const refuse = (status: number, error: string): Refusal => ({ ok: false, status, body: { error } });
@@ -113,25 +140,9 @@ export function authorizeVenueRead(db: DatabaseSync, claim: { botId: string; thr
     if (foreign) return L1();
     const unknown = Object.keys(body).find(key => !BODY_KEYS.has(key));
     if (unknown) return L2();
-    // R4: a venue the bot is a member of now (pair rooms and archived rooms are not venues)
-    const group = typeof body.venueId === "string" ? roster.groups.find(entry => entry.id === body.venueId) : undefined;
-    if (!group || group.dm || group.hidden || !group.memberIds.includes(botId)) return L2();
-    // R5 and R9: the readable threads (an ended project reads as a channel: no desks)
-    const threads = venueThreads(db, roster, group.id);
-    const target = body.venueThreadId === undefined ? group.threadId : body.venueThreadId;
-    if (typeof target !== "string" || !threads.has(target)) return L2();
-    // R6: memory-off threads, the exact query of policy.ts recallThreads (never excludedThreads(), which fails open)
-    const excluded = new Set(db.prepare("SELECT e.value FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings'").all().map(row => String(row.value)));
-    if (excluded.has(target)) return L2();
-    // R7: channel-person threads (a binding whose person is not exactly the workspace owner, null included); desks always close the room
-    const bound = new Set<string>();
-    for (const row of db.prepare("SELECT subject_id, json_extract(intent,'$.personId') AS person FROM memory_scope_bindings WHERE subject_type='human-thread'").all())
-      if (row.person !== WORKSPACE_OWNER) bound.add(String(row.subject_id));
-    for (const thread of new Set([...projectThreads(roster, group.id), ...threads])) if (bound.has(thread)) return L2();
-    // R8: partitions
-    const stored = executionStore()?.bot(botId) ?? bot;
-    if (threadPartition(stored, threadId).kind === "isolated") return L2();
-    if (!sameThreadPartition(stored, threadId, target)) return L2();
+    const access = venueAccess(db, roster, bot, threadId, body.venueId, body.venueThreadId);
+    if (!access) return L2();
+    const { group, threads, target } = access;
     return { ok: true, record, venueId: group.id, input: { threadId: target, before: body.before, limit: body.limit }, options: { venue: true, threads, members: new Set(group.memberIds) } };
   } catch {
     return L1();

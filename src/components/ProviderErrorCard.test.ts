@@ -22,12 +22,12 @@ it("a monthly spending limit names the limit and offers no way to buy past it",a
   // The credits card's billing link and button would both be dead ends here.
   expect(html).not.toContain("Add Flux credits");
   expect(html).not.toContain("<a ");
-  expect(html).not.toContain("fluxrouter.ai/home/billing");
+  expect(html).not.toContain("return_to=%2Fhome%2Fbilling");
   // Falls back to English copy, never to the "unknown" card, in every language.
   for(const{code}of localeChoices){await setLocale(code);const localized=renderToStaticMarkup(createElement(ProviderErrorCard,{info:{kind:"spend-cap",httpStatus:402},onOpenProviderSettings:()=>{}}));expect(localized).not.toContain(locales.en["providerError.unknown.title"]);expect(localized).toContain("402");}
 });
 it("the existing exact-credit Flux billing action remains unchanged",async()=>{
-  await setLocale("en");const html=renderToStaticMarkup(createElement(ProviderErrorCard,{info:{kind:"credits",httpStatus:402,provider:"flux-router"},onOpenProviderSettings:()=>{}}));expect(html).toContain("Flux Router needs credits");expect(html).toContain('href="https://fluxrouter.ai/home/billing"');expect(html).toContain("Add Flux credits");
+  await setLocale("en");const html=renderToStaticMarkup(createElement(ProviderErrorCard,{info:{kind:"credits",httpStatus:402,provider:"flux-router"},onOpenProviderSettings:()=>{}}));expect(html).toContain("Flux Router needs credits");expect(html).toContain('href="https://fluxrouter.ai/auth/sign-in?return_to=%2Fhome%2Fbilling"');expect(html).toContain("Add Flux credits");
 });
 it("inside the phone app the Flux credits card keeps its words but offers no billing link", async () => {
   await setLocale("en");
@@ -36,7 +36,7 @@ it("inside the phone app the Flux credits card keeps its words but offers no bil
   try {
     const html = renderToStaticMarkup(createElement(ProviderErrorCard, { info: { kind: "credits", httpStatus: 402, provider: "flux-router" }, onOpenProviderSettings: () => {} }));
     expect(html).toContain("Flux Router needs credits");
-    expect(html).not.toContain("fluxrouter.ai/home/billing");
+    expect(html).not.toContain("return_to=%2Fhome%2Fbilling");
     expect(html).not.toContain("Add Flux credits");
   } finally {
     Object.defineProperty(globalThis, "navigator", { value: nav, configurable: true });

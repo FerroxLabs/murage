@@ -4818,7 +4818,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           session.startupTimer = null;
           if (!session.turn) dropStartFiles();
         }
-        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o }, { rawChars: line.length });
         // A retired session (closing, or replaced in the thread's slot) with
         // no open turn can no longer speak for the thread: its system/init must
         // not become session.started, which writes the thread's resume cursor.

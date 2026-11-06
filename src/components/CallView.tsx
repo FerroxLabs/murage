@@ -43,7 +43,7 @@ import { speaker } from "@/lib/tts";
 import { CueCache } from "@/lib/tts/cue-cache";
 import { ACK_KEYS, AckGate, cueMayPlay, phaseAfterCue, pickAck, type AckKey } from "@/lib/call-ack";
 import { languageCode, t } from "@/lib/i18n";
-import { BRIEF_OVER_CHARS, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
+import { BRIEF_OVER_CHARS, CALL_BUDGET_STOP, callRouteHeaders, HOST_OFF_FOR_CALL, hostTurn, isBudgetFailure, openingOf, plainFailure, warmHost, type CallHandDown, type HostTurnInput } from "@/lib/voice-host";
 import { WorkingPulse } from "@/lib/working-pulse";
 import { callMicKind, createFallbackMic, type CallMic, type MicLine } from "@/lib/call-mic";
 import { CallAudio, micFor, offerResumeWhenHeld, type CallAudioPath } from "@/lib/call-audio";
@@ -663,6 +663,8 @@ export function Call({
   sayThenListenRef.current = sayThenListen;
   const sayRef = useRef(say);
   sayRef.current = say;
+  /** A turn failed for the key's budget: the call is ending (VOICE-402-STOP). */
+  const budgetStopped = useRef(false);
   // The call's server session (bot-call-session.ts), and an answered call's opener ("Hi Sean, it's Scout. ..."): the
   // microphone is attached once the opener has been said (begin, below), so the owner's turn never comes first.
   const opener = useRef<Promise<string | null> | null>(null);
@@ -913,6 +915,8 @@ export function Call({
    *  quietly while the call went on saying it was on it. */
   const sendFromCall = useCallback(
     (text: string, said: string, handDownId?: string) => {
+      // the key's budget is used up and the call is ending: no fresh turn
+      if (budgetStopped.current) return;
       const record = handDownId ? handDowns.current.find((h) => h.id === handDownId) : undefined;
       dispatch({
         type: "send",
@@ -2140,6 +2144,18 @@ export function Call({
     // written by work the owner cancelled on this call: in the chat, not said
     const lastSent = handDowns.current.at(-1)?.at ?? 0;
     if (reply && cancelledAt.current > lastSent && reply.at >= cancelledAt.current - 1_000) return;
+    if (!reply?.text && failure?.tool && isBudgetFailure(`${failure.tool.errorDetails ?? ""} ${failure.tool.name ?? ""}`)) {
+      // out of budget: every next turn fails the same way and costs a request.
+      // One plain line, then the call ends, instead of a fresh turn each time.
+      if (budgetStopped.current) return;
+      budgetStopped.current = true;
+      deferredReplies.current = [];
+      owed.current = [];
+      void sayRef.current(CALL_BUDGET_STOP).finally(() => {
+        if (currentCall() === bot.id) endCall(bot.id);
+      });
+      return;
+    }
     if (!reply?.text && failure?.tool) {
       const why = plainFailure(failure.tool.errorDetails || failure.tool.name);
       const line = `That didn't work. ${why}${/[.!?]$/.test(why) ? "" : "."}`;

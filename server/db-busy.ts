@@ -61,14 +61,18 @@ export function awaitWriterGate(): Promise<void> { return writerGate ? writerGat
 export const FOREGROUND_GATE_MAX_MS = 3000;
 /** Called by every foreground path that is about to write messages.db (an authenticated request, a turn start, a room turn,
  * a channel delivery, Stop/Cancel). Waits (bounded) while a writer hold is in force; with none it costs nothing. */
-export async function awaitWriterGateForeground(): Promise<void> {
+export async function awaitWriterGateForeground(site?: string): Promise<void> {
   if (!writerGate) return;
   const gate = writerGate.promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const ceiling = new Promise<void>(resolve => { timer = setTimeout(resolve, FOREGROUND_GATE_MAX_MS); timer.unref?.(); });
+  if (site) namedGateWaits.add(site);
   try { await Promise.race([gate, ceiling]); }
-  finally { if (timer) clearTimeout(timer); }
+  finally { if (site) namedGateWaits.delete(site); if (timer) clearTimeout(timer); }
 }
+const namedGateWaits = new Set<string>();
+/** True while the named gate is waiting out a hold: what a test reads to know a route has reached that gate and no other. */
+export function waitingAtWriterGate(site: string): boolean { return namedGateWaits.has(site); }
 /** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files) never wait. */
 export function gateWriteRequest(method: string | undefined): Promise<void> {
   return method === "GET" || method === "HEAD" || method === "OPTIONS" ? Promise.resolve() : awaitWriterGateForeground();
