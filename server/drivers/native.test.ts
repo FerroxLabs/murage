@@ -218,3 +218,85 @@ describe("appendNative", () => {
     });
   });
 });
+
+// 1.0.18 ALL.eld250: Codex answers thread/resume with the whole conversation. The tee used to run the deep redaction walk
+// over that answer and then drop it for size, so each turn's resume held the event loop a little longer than the last.
+describe("an oversized frame is dropped before any redaction", () => {
+  it("a thread/resume answer with the whole history writes only the omitted marker, and no secret from it", () => {
+    const thread = "t-resume-history";
+    const key = `${"sk-" + "ant-"}api03-${"Q".repeat(40)}`;
+    const turn = { id: "turn", items: [{ type: "userMessage", content: [{ type: "text", text: `token=${key} ${"word ".repeat(200)}` }] }] };
+    const turns: unknown[] = Array.from({ length: 200_000 }, () => turn);
+    // nothing inside the answer is read: the raw line's length decides, before the phone check that used to walk it all
+    let touched = false;
+    Object.defineProperty(turns, 0, { enumerable: true, get: () => { touched = true; return {}; } });
+    appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 4, result: { thread: { id: "c-1", path: "/x/rollout.jsonl", turns } } } }, { rawChars: 200_000_000 });
+    expect(touched).toBe(false);
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    const rows = log.trimEnd().split("\n").map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].msg).toMatchObject({ type: "native_trace_record_omitted", reason: "frame exceeds byte limit before redaction", limitBytes: 64 * 1024 });
+    expect(log).not.toContain("QQQQ");
+  });
+
+  it("with no raw length, or one at the limit, the full path decides: a frame the redaction shrinks to fit is still written", () => {
+    const limit = 64 * 1024;
+    const unmeasured = "t-no-raw";
+    appendNative(unmeasured, { dir: "in", source: "fixture", msg: { text: "keep-unmeasured" } });
+    expect(readFileSync(join(NATIVE_DIR, `${unmeasured}.ndjson`), "utf8")).toContain("keep-unmeasured");
+    const atLimit = "t-raw-at-limit";
+    appendNative(atLimit, { dir: "in", source: "fixture", msg: { text: "keep-at-limit" } }, { rawChars: limit });
+    expect(readFileSync(join(NATIVE_DIR, `${atLimit}.ndjson`), "utf8")).toContain("keep-at-limit");
+    const over = "t-raw-over";
+    appendNative(over, { dir: "in", source: "fixture", msg: { text: "gone-over" } }, { rawChars: limit + 1 });
+    const log = readFileSync(join(NATIVE_DIR, `${over}.ndjson`), "utf8");
+    expect(log).toContain("frame exceeds byte limit before redaction");
+    expect(log).not.toContain("gone-over");
+  });
+
+  it("a lifecycle entry is never dropped by the raw length", () => {
+    const thread = "t-raw-lifecycle";
+    appendNative(thread, { dir: "lifecycle", source: "fixture", msg: { event: "keep-lifecycle" } }, { rawChars: 1_000_000 });
+    expect(readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8")).toContain("keep-lifecycle");
+  });
+
+  it("frames that carry stream state keep the full path even when oversized", () => {
+    const big = "x".repeat(70_000);
+    // a user frame ends a latch: the stream after it is written again
+    const thread = "t-user-reset";
+    const delta = (text: string) => ({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("**API key:** ") });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("still secret\n") });
+    appendNative(thread, { dir: "out", source: "fixture", msg: { type: "user", text: big } }, { rawChars: big.length });
+    appendNative(thread, { dir: "in", source: "fixture", msg: delta("after the prompt") });
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).not.toContain("still secret");
+    expect(log).toContain("after the prompt");
+    expect(log).not.toContain("frame exceeds byte limit before redaction");
+    // an oversized phone block start still opens the block, so its fragments are withheld
+    const phone = "t-phone-oversized";
+    appendNative(phone, { dir: "in", source: "fixture", msg: { type: "stream_event", event: { type: "content_block_start", index: 3, content_block: { type: "tool_use", name: "phone_location_get", input: { note: big } } } } }, { rawChars: big.length });
+    appendNative(phone, { dir: "in", source: "fixture", msg: { type: "stream_event", event: { type: "content_block_delta", index: 3, delta: { type: "input_json_delta", partial_json: "CANARY-PHONE" } } } });
+    expect(readFileSync(join(NATIVE_DIR, `${phone}.ndjson`), "utf8")).not.toContain("CANARY-PHONE");
+  });
+
+  it("an oversized frame on a withheld thread writes only the marker", () => {
+    const thread = "t-withheld-oversized";
+    withholdNativeThread((id) => id === thread);
+    try {
+      appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 9, result: { text: `WITHHELD-CANARY ${"x".repeat(70_000)}` } } }, { rawChars: 70_100 });
+    } finally { withholdNativeThread(() => false); }
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).toContain("native_trace_record_omitted");
+    expect(log).not.toContain("WITHHELD-CANARY");
+  });
+
+  it("a frame that fits is still redacted and written as before", () => {
+    const thread = "t-resume-small";
+    const key = `${"sk-" + "ant-"}api03-${"R".repeat(40)}`;
+    appendNative(thread, { dir: "in", source: "codex.app-server", msg: { id: 5, result: { thread: { id: "c-2", turns: [{ text: `token=${key}` }] } } } });
+    const log = readFileSync(join(NATIVE_DIR, `${thread}.ndjson`), "utf8");
+    expect(log).toContain("c-2");
+    expect(log).not.toContain("RRRR");
+  });
+});

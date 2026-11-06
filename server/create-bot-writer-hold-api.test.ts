@@ -67,3 +67,45 @@ it("a bot asked for just before a writer hold begins is created once the hold en
   const { bots } = await (await fetch(`${fixture.info.url}/api/bots`, { headers })).json() as { bots: { name: string }[] };
   expect(bots.filter(bot => bot.name === "Held fixture")).toHaveLength(1);
 });
+
+it("a team imported just before a writer hold begins is created once the hold ends", { timeout: 60_000 }, async () => {
+  const { existsSync, rmSync } = await import("node:fs");
+  rmSync(join(fixture.info.dataDir, "hold-held"), { force: true });
+  const url = new URL("/api/teams/import", fixture.info.url);
+  const body = JSON.stringify({ format: "murage.team", version: 2, team: { name: "Field Team", members: [{ key: "mira", name: "Imported fixture", title: "Lead", description: "Keeps the crew on track.", appearance: { color: "purple" } }] } });
+  const answered = new Promise<number>((resolve, reject) => {
+    const post = request(url, { method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(body)) } }, response => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    });
+    post.on("error", reject);
+    post.flushHeaders();
+    setTimeout(() => {
+      writeFileSync(join(fixture.info.dataDir, "hold-now"), "1");
+      void until(() => existsSync(join(fixture.info.dataDir, "hold-held"))).then(() => post.end(body), reject);
+    }, 150);
+  });
+  expect(await answered).toBe(201);
+  const { bots } = await (await fetch(`${fixture.info.url}/api/bots`, { headers })).json() as { bots: { name: string }[] };
+  expect(bots.filter(bot => bot.name === "Imported fixture")).toHaveLength(1);
+});
+
+it("a team import whose caller leaves during the hold creates nothing", { timeout: 60_000 }, async () => {
+  const { existsSync, rmSync } = await import("node:fs");
+  rmSync(join(fixture.info.dataDir, "hold-held"), { force: true });
+  const url = new URL("/api/teams/import", fixture.info.url);
+  const body = JSON.stringify({ format: "murage.team", version: 2, team: { name: "Field Team", members: [{ key: "gone", name: "Left fixture", title: "Lead", description: "Keeps the crew on track.", appearance: { color: "purple" } }] } });
+  const post = request(url, { method: "POST", headers: { ...headers, "content-length": String(Buffer.byteLength(body)) } });
+  post.on("error", () => undefined);
+  post.flushHeaders();
+  await new Promise(done => setTimeout(done, 150));
+  writeFileSync(join(fixture.info.dataDir, "hold-now"), "1");
+  await until(() => existsSync(join(fixture.info.dataDir, "hold-held")));
+  post.end(body);
+  // Inside the 1.2 s hold, once the scan of this small file is done: the route is waiting at the gate when the caller leaves.
+  await new Promise(done => setTimeout(done, 700));
+  post.destroy();
+  await new Promise(done => setTimeout(done, 1500));
+  const { bots } = await (await fetch(`${fixture.info.url}/api/bots`, { headers })).json() as { bots: { name: string }[] };
+  expect(bots.filter(bot => bot.name === "Left fixture")).toEqual([]);
+});

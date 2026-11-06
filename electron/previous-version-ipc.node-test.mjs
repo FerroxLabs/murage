@@ -59,6 +59,37 @@ test("accepts no arguments", () => {
   assert.equal(state.calls, 0);
 });
 
+// 1.0.18: the REAL prepareForPreviousVersion lifted out of main.mjs. A held bot Post refuses the step back with
+// DOWNGRADE_WORK_PENDING (the downgrade's own refusal, server/downgrade-102-schema.test.ts), and the dialog detail names
+// bot posts and how to clear them.
+async function prepareDialogs(refusal) {
+  const source = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
+  const tree = ts.createSourceFile("main.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const node = tree.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === "prepareForPreviousVersion");
+  assert.ok(node, "prepareForPreviousVersion present");
+  const shown = []; let quit = 0;
+  const sandbox = vm.createContext({
+    app: { isPackaged: true, quit: () => { quit += 1; } },
+    mainWindow: undefined,
+    dialog: { showMessageBox: async (...args) => { const box = args.at(-1); shown.push(box); return { response: 0 }; } },
+    runDesktopRecovery: async () => { throw refusal; },
+  });
+  vm.runInContext("var desktopRecoveryMode=false; var desktopShutdownStarted=false; var desktopDataOwner=true; var desktopDataDir='/data';", sandbox);
+  vm.runInContext(node.getText(tree), sandbox);
+  await vm.runInContext("prepareForPreviousVersion()", sandbox);
+  return { shown, quit };
+}
+
+test("a held bot Post refusing the step back names bot posts in the dialog", async () => {
+  const held = Object.assign(new Error("You have 1 post from a bot still waiting for your answer. Post or decline it, then try again."), { code: "DOWNGRADE_WORK_PENDING" });
+  const { shown, quit } = await prepareDialogs(held);
+  assert.equal(shown.length, 2);
+  assert.equal(shown[1].message, "Murage will be ready for 1.0.2 once this is done.");
+  assert.equal(shown[1].detail, "Your chats and memories are as they were. Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.");
+  assert.doesNotMatch(shown[1].detail, /send or cancel|Code:/);
+  assert.equal(quit, 1);
+});
+
 test("the preload exposes it as a call with no arguments", () => {
   const preload = readFileSync(new URL("./preload.cjs", import.meta.url), "utf8");
   assert.match(preload, /preparePreviousVersion: \(\) => ipcRenderer\.invoke\("update:prepare-previous-version"\)/);

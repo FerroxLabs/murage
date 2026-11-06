@@ -837,6 +837,7 @@ const playTurn = (prompt: JsonValue) => {
     const timer = setInterval(() => { if (!existsSync(holdGate)) return; clearInterval(timer); playTurn(prompt); }, 10);
     return;
   }
+  if (mode === "big-frame") out({ type: "system", subtype: "fake_big_frame", text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` });
   if (mode === "exit-early") {
     process.stderr.write("fake-claude: simulated crash before result\n");
     process.exit(3);

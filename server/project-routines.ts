@@ -7,7 +7,7 @@ import type { AutoApprover } from "./auto-approve.ts";
 import { effectiveRoutinePermissionMode, ROUTINE_PERMISSION_MODES, type RoutinePeerSource, type RoutinePermissionMode } from "./routine-permissions.ts";
 
 /** Caller owns the transaction; E1 dispatches the queued request. */
-export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string; threadId: string; memberIds: string[]; runId: string; botId: string; name: string; prompt: string; now: number; authority?: { routineId: string; ceiling: RoutinePeerSource; ownerBinding: string; audienceBinding: string } }): { requestId: string; created: boolean } {
+export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string; threadId: string; memberIds: string[]; runId: string; botId: string; name: string; prompt: string; now: number; routineId?: string; trigger?: string; authority?: { routineId: string; ceiling: RoutinePeerSource; ownerBinding: string; audienceBinding: string } }): { requestId: string; created: boolean } {
   if (input.authority && !db.isTransaction) throw new Error("Routine authority requires the request transaction");
   const admissionKey = `routine:${input.runId}`;
   const existing = roomRequestByAdmissionKey(db, admissionKey);
@@ -31,8 +31,21 @@ export function recordProjectRoutine(db: DatabaseSync, input: { groupId: string;
       goal ? settings.leadBotId! : input.botId, admissionKey, a.ownerBinding, a.audienceBinding,
       a.ceiling.triggerSource!, a.ceiling.permissionMode);
   }
-  insertProjectActivity(db, { groupId: input.groupId, kind: "routine_run", actor: "server", workItemId: cardId, goalId: goal?.id, requestId, at: input.now, detail: { runId: input.runId, threadId: input.threadId } });
+  // RESIDUALS-1018-B row 7 (U28b M1): the routine rides with the request, so the room turn's Usage share survives the run
+  // record being deleted or pruned from history before the turn runs (projectRoutineUsageRun)
+  const usage = input.routineId ? { routineId: input.routineId.slice(0, 100), routineName: input.name.slice(0, 200), ...(input.trigger ? { trigger: input.trigger.slice(0, 20) } : {}) } : {};
+  insertProjectActivity(db, { groupId: input.groupId, kind: "routine_run", actor: "server", workItemId: cardId, goalId: goal?.id, requestId, at: input.now, detail: { runId: input.runId, threadId: input.threadId, ...usage } });
   return { requestId, created: true };
+}
+
+/** RESIDUALS-1018-B row 7 (U28b M1): the routine a project routine request was queued for, as recorded with it, for Usage's
+ *  routine share when the run record itself is gone. Read only when the run is not found (a rare path). */
+export function projectRoutineUsageRun(db: DatabaseSync, groupId: string, requestId: string): { routineId: string; routineName: string; channel: boolean } | null {
+  const row = db.prepare("SELECT detail FROM project_activity WHERE group_id=? AND request_id=? AND kind='routine_run' LIMIT 1").get(groupId, requestId);
+  let detail: { routineId?: unknown; routineName?: unknown; trigger?: unknown } = {};
+  try { detail = row ? JSON.parse(String(row.detail)) : {}; } catch { return null; }
+  if (typeof detail.routineId !== "string" || !detail.routineId || typeof detail.routineName !== "string") return null;
+  return { routineId: detail.routineId, routineName: detail.routineName, channel: detail.trigger === "channel" };
 }
 
 /** Preserve pre-upgrade routine threads as Activity links, without moving them. */

@@ -22,7 +22,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpFailedPromptLine, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
@@ -531,6 +531,17 @@ describe("ACP turns (fake CLI)", () => {
     expect(log).not.toContain("iVBOR");
   });
 
+  // ALL.eld250: Fuigo runs on ACP. A frame over the record limit is dropped by its raw length, never walked; an image the log cuts down is kept.
+  it("a frame over the record limit is dropped by its raw length; an image frame the log cuts down is still kept", async () => {
+    await create(GeminiAgentDriver, "big-frame");
+    await instance.adapter.sendTurn({ threadId: "t-big-frame", text: "go" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const log = readFileSync(join(NATIVE_DIR, "t-big-frame.ndjson"), "utf8");
+    expect(log).toContain("frame exceeds byte limit before redaction");
+    expect(log).not.toContain("BIGFRAME-CANARY");
+    expect(log).toContain("[image data: 70000 base64 chars]");
+  });
+
   it.each(["root", "fuigo"])("banks two prompt totals once (%s), never Fuigo last-call counts", async (shape) => {
     process.env.FAKE_ACP_USAGE_ROOT = shape;
     await create(shape === "fuigo" ? createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: FuigoAgentDriver.driverKind, selectModel: undefined }) as typeof GrokAgentDriver : GrokAgentDriver);
@@ -541,9 +552,36 @@ describe("ACP turns (fake CLI)", () => {
       }
       const completed = recorder.events.filter(e => e.type === "turn.completed");
       expect(completed).toHaveLength(2);
-      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5, ...(shape === "fuigo" ? { cachedInput: 30 } : {}) } });
       if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
     } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  // upstream #1993: OpenCode keeps cache reads out of inputTokens. Counting
+  // only inputTokens as the whole prompt, with the cache reads named as its
+  // cached part, made the fresh figure zero on a cached turn.
+  it.each([
+    ["cache-beside", { input: 100, output: 5, cachedInput: 90 }],
+    ["cache-inside", { input: 100, output: 5, cachedInput: 90 }],
+  ] as const)("counts cache reads as part of the whole prompt (%s)", async (shape, want) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create();
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-cache-${shape}`, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject(want);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ usage: want });
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  it("splits cache reads: no total means beside, absent or bad is not zero, Fuigo counts inside", () => {
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 90 }, false)).toEqual({ input: 100, cachedInput: 90 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 0 }, false)).toEqual({ input: 10, cachedInput: 0 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: -1 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 2.5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 100, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 100, cachedInput: 30 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 10, cachedInput: 10 });
   });
 
   it("reads token usage from the root of the prompt result", async () => {
@@ -3189,6 +3227,81 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect(recorder.events.filter(event => event.type === "runtime.error"))
       .toEqual([expect.objectContaining({ message: "fixture provider rejected the request" })]);
+  });
+
+  describe("a failed session/prompt leaves its code and text in Murage's own log (1.0.18 S10)", () => {
+    const failedLines = async (mode: string, threadId: string): Promise<string[]> => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await create(GrokAgentDriver, mode);
+        await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+        expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+        return warn.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("acp turn failed"));
+      } finally {
+        warn.mockRestore();
+      }
+    };
+
+    it("logs an ordinary failure without a turn trace", async () => {
+      const lines = await failedLines("engine-error-message:plain", "t-failed-log-plain");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^acp turn failed thread=t-failed-log-plain turn=\S+ method=session\/prompt code=-32603 message="fixture provider rejected the request"$/);
+    });
+
+    it("keeps the engine's error data and typed kind", async () => {
+      const lines = await failedLines("engine-error-data:object", "t-failed-log-data");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("code=-32603 kind=empty_response");
+      expect(lines[0]).toContain("empty response from model (reasoning_only)");
+    });
+
+    it.each(["engine-error-message:hostile", "engine-error-data:hostile"])("keeps no secret-shaped value from %s", async (mode) => {
+      const lines = await failedLines(mode, `t-failed-log-${mode.slice(13, 20)}`);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("code=-32603");
+      expect(lines[0]).toContain("upstream");
+      expect(lines[0]).not.toMatch(/fake-secret-canary|billing\.invalid|proxy\.invalid|proxyuser|SYNTHETICKEYCANARY|\u001b|\r|\n/);
+    });
+
+    it.skipIf(process.platform === "win32")("leaves no failed-turn line when Stop All closes the engine under a waiting prompt", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await create(GrokAgentDriver, "error-on-term");
+        await instance.adapter.sendTurn({ threadId: "t-failed-log-stop-all", text: "fixture only" });
+        await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+        await instance.adapter.stopAll();
+        await recorder.until(event => event.type === "turn.completed");
+        expect(warn.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("acp turn failed"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    // Every platform: Windows force-kills the engine tree, so it dies with no answer to the prompt (the row above needs an engine that answers as it goes down).
+    // The turn settles first here, so this holds with either stop check: it is a preservation check, red only with the whole guard gone.
+    it("leaves no failed-turn line when Stop All kills the engine with no answer to the prompt", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await create(GrokAgentDriver, "exit-on-cancel");
+        await instance.adapter.sendTurn({ threadId: "t-failed-log-stop-all-kill", text: "fixture only" });
+        await recorder.until(event => event.type === "content.delta" && event.delta === "fixture cancellation ready");
+        await instance.adapter.stopAll();
+        await recorder.until(event => event.type === "turn.completed");
+        expect(warn.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("acp turn failed"))).toEqual([]);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it("reads every failure shape as one line of named facts", () => {
+      const key = `sk-ant-api03-${"SYNTHETICKEYCANARY".repeat(3)}`;
+      const line = acpFailedPromptLine("t", "u", Object.assign(new Error(`refused with ${key}\nFORGED line`), { code: "not-a-number", data: { token: key, http_status: 429, message: `over limit ${key}` } }));
+      expect(line).not.toContain("SYNTHETICKEYCANARY");
+      expect(line).not.toContain("\n");
+      expect(line).toContain("code=none http=429");
+      expect(acpFailedPromptLine("t", "u", undefined)).toBe(`acp turn failed thread=t turn=u method=session/prompt code=none message="none"`);
+      expect(acpFailedPromptLine("t", "u", new Error("engine stopped"))).toContain(`message="engine stopped"`);
+    });
   });
 
   it.each(["initialize", "session/new", "session/prompt"])("correlates failed %s through the CLI without exposing provider data", async (method) => {

@@ -310,6 +310,7 @@ function hookDenial(name: string, args: unknown = {}, stepIdx = 0, always = fals
   return null;
 }
 out({ event: "init", conversation_id: CONV, init: { cwd: process.cwd(), tools: ["run_command", "write_to_file", ...(mode === "ask-peer" ? ["list_bots", "ask_bot"] : [])], permission_mode: "accept-edits" } });
+if (mode === "big-frame") out({ event: "fake_big_frame", conversation_id: CONV, fake_big_frame: { text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` } });
 // A relayed ask-peer turn's tools are its MCP calls (call_mcp_tool steps, below): no step of its own.
 const toolCalls: Array<{ name: string; args: Record<string, unknown> }> | null = process.env.FAKE_AGY_TOOL_CALLS
   ? JSON.parse(process.env.FAKE_AGY_TOOL_CALLS)

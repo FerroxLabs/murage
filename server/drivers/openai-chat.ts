@@ -17,7 +17,7 @@ import type {
 import { validateProviderTurnRoute, type ProviderTurnRoute } from "../provider-routing.ts";
 import type { AgentPlanEntry } from "../../shared/agent-plan.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { appendNative } from "./native.ts";
+import { appendNative, NATIVE_RECORD_BYTES } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, neverConnected, unreachableEndpointMessage } from "../../shared/provider-error.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
@@ -102,10 +102,31 @@ interface CompletionJson {
   error?: unknown;
 }
 
-interface NativeLog {
+/** A driver's outgoing record: either it keeps the scrubbed messages, or it keeps only their count and no scrub runs for it. */
+type NativeLog = {
   source: string;
-  outgoing(turn: SendTurnInput, messages: OpenAIChatMessage[], model: string): unknown;
   incoming(completion: Completion): unknown;
+} & (
+  | { outgoing(turn: SendTurnInput, messages: OpenAIChatMessage[], model: string): unknown; outgoingCount?: never }
+  | { outgoingCount(turn: SendTurnInput, messageCount: number, model: string): unknown; outgoing?: never }
+);
+
+/** ALL.eld250: at least how many characters the outgoing record's message list holds, read from string lengths only (no stringify,
+ * no copy, no scrub) and stopping as soon as it passes `limit`. Every message adds at least its JSON shell, so the walk is bounded by
+ * `limit` however long the thread is. A tool result counts at most its cap, which is all the record keeps of it. A call's arguments
+ * count nothing: the record parses and rewrites them, so their length here proves nothing. A thread's stored history carries none; only this turn's own rounds do, so what the floor leaves out grows with the turn, never the thread. */
+export function outgoingRecordFloor(messages: readonly OpenAIChatMessage[], limit: number): number {
+  const MESSAGE_SHELL = '{"role":"tool","content":""}'.length, CALL_SHELL = '{"id":"","type":"function","function":{"name":"","arguments":""}}'.length;
+  let chars = 0;
+  for (const message of messages) {
+    chars += MESSAGE_SHELL + (message.role === "tool" ? Math.min(message.content?.length ?? 0, NATIVE_TOOL_RESULT_MAX_BYTES) : message.content?.length ?? 0) + (message.reasoning_content?.length ?? 0);
+    for (const call of message.tool_calls ?? []) {
+      chars += CALL_SHELL + call.function.name.length;
+      if (chars > limit) return chars;
+    }
+    if (chars > limit) return chars;
+  }
+  return chars;
 }
 
 interface RuntimeOptions<Config> {
@@ -1092,13 +1113,19 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       try { return JSON.stringify(scrub(JSON.parse(text))); } catch { return "[unreadable arguments omitted]"; }
     };
     const nativeOut = (tools: string[]) => {
+      const withTools = (record: unknown) => tools.length && record && typeof record === "object" && !Array.isArray(record) ? { ...record as object, tools } : record;
+      // ALL.eld250: per-round work must not grow with the thread. A count-only record reads nothing from the messages, so none
+      // of them is scrubbed for it; `native` still scrubs what is written.
+      if (options.nativeLog.outgoingCount) { native("out", withTools(options.nativeLog.outgoingCount(turn, messages.length, model))); return; }
+      // A list too long for the record gets the omitted marker. Nothing of it reaches the log (msg is null), so skipping the scrub is safe.
+      const floor = outgoingRecordFloor(messages, NATIVE_RECORD_BYTES);
+      if (floor > NATIVE_RECORD_BYTES) { appendNative(threadId, { dir: "out", source: options.nativeLog.source, msg: null }, { rawChars: floor }); return; }
       const view = messages.map((message) => message.role === "tool"
         ? { ...message, content: capUtf8(scrub(message.content ?? ""), NATIVE_TOOL_RESULT_MAX_BYTES) }
         : message.tool_calls
         ? { ...scrub(message), tool_calls: message.tool_calls.map((call) => ({ ...call, function: { ...call.function, arguments: scrubArguments(call.function.arguments) } })) }
         : scrub(message));
-      const record = options.nativeLog.outgoing(turn, view, model);
-      native("out", tools.length && record && typeof record === "object" && !Array.isArray(record) ? { ...record as object, tools } : record);
+      native("out", withTools(options.nativeLog.outgoing(turn, view, model)));
     };
     emit({ ...base(threadId, turnId), type: "turn.started" });
     emit({ ...base(threadId, turnId), type: "session.started", sessionId: null, model });

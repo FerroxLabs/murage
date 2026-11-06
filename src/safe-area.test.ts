@@ -92,14 +92,12 @@ describe("the chat column's own controls", () => {
 });
 
 describe("full-screen sheets on a phone", () => {
-  it("starts Bot settings' header below the status bar and ends its footer above the home indicator", () => {
-    const source = read("components/BotSettingsDialog.tsx");
-    const header = elementAt(source, '<BoxHead className=');
-    expect(header).toContain("max-sm:pt-[calc(0.75rem+var(--inset-top))]");
-    // The desktop's centred layout keeps its own padding.
-    expect(header).toContain("py-3");
-    expect(header).toContain("sm:px-5");
-    expect(source.slice(source.indexOf("<BoxFoot"), source.indexOf("<BoxFoot") + 200)).toContain("max-sm:pb-[calc(0.5rem+var(--inset-bottom))]");
+  it("Bot settings is a page of the Settings window, whose sheet keeps clear of the status bar and home indicator", () => {
+    // One Settings window (S7): the bot page has no frame of its own, so it cannot pad the insets twice.
+    const pane = read("components/BotSettingsPane.tsx");
+    expect(pane).not.toContain("<BoxHead");
+    expect(pane).not.toContain("--inset-");
+    expect(read("components/SettingsModal.tsx")).toContain("max-md:pt-[var(--inset-top)] max-md:pb-[var(--inset-bottom)]");
   });
 
   it("pads Settings' full-bleed sheet by both insets, below md only", () => {
