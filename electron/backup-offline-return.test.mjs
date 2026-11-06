@@ -185,7 +185,7 @@ it("Return to workspace pressed again and again on a page whose cleanup keeps fa
   expect(d.reopened()).toBe(true);
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
   const retry = main.slice(main.indexOf("    retry: async () => {"), main.indexOf("    openDiagnostics: async () =>"));
-  expect(retry).toContain("await returnToWorkspaceAfterBackup();");
+  expect(retry).toContain("await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);");
   expect(retry).not.toContain("relaunchDesktop(");
 });
 
@@ -220,4 +220,19 @@ it("main.mjs routes every backup-mode ending through the bounded return", () => 
   expect(main).not.toContain(`if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");}finally{backupProgress?.close()`);
   // The failure notice still follows the reopen.
   expect(main).toContain("void desktopStartup.then(announceLastBackupFailure)");
+});
+
+it('BF-3: automatic returns share a rejected post-shutdown attempt, while explicit Return retries once',async()=>{
+ let shutdown=false,fail=true,cleanups=0,relaunches=0,release;
+ const back=createBackupReturn({app:{quit(){},exit(){}},shutdownStarted:()=>shutdown,
+   cleanup:async()=>{cleanups++;shutdown=true;if(fail)throw Error('cleanup');await new Promise(resolve=>{release=resolve;});},
+   relaunch:()=>{relaunches++;},takeProgress:()=>null,setTimer:()=>0});
+ const first=back();await expect(first).rejects.toThrow('cleanup');expect(back()).toBe(first);await expect(back()).rejects.toThrow('cleanup');expect(cleanups).toBe(1);
+ fail=false;const retry=back.retry();expect(back.retry()).toBe(retry);expect(back()).toBe(retry);release();await retry;
+ await back.retry();expect(cleanups).toBe(2);expect(relaunches).toBe(1);
+});
+
+it('BF-3: a pre-shutdown retry that is still pending remains shared with explicit Return',async()=>{
+ let count=0,release;const back=createBackupReturn({app:{quit(){},exit(){}},cleanup:async()=>{if(++count===1)throw Error('early');await new Promise(resolve=>{release=resolve;});},relaunch(){},takeProgress:()=>null,setTimer:()=>0});
+ await expect(back()).rejects.toThrow('early');const second=back();expect(back.retry()).toBe(second);expect(count).toBe(2);release();await second;
 });

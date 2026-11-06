@@ -2,6 +2,7 @@ import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
 // 1.0.9 Sentinel: right after the guard module (which only defines the guard), so a Windows Sentinel task launch runs
 // its one scan and exits before any other module of the app evaluates.
 import "./sentinel-trampoline-entry.mjs";
+import {backupStartupDispatch, explicitBackupReturn} from "./backup-startup.mjs";
 import { createSentinelHost } from "./sentinel-host.mjs";
 import { FluxSigninError, assertFluxDesktopSigninEnabled, cancelFluxDesktopSignin, readEmailOwnerToken, runFluxDesktopSignin } from "./flux-desktop-signin.mjs";
 import { writeCallTrace } from "./call-trace.mjs";
@@ -389,9 +390,12 @@ let backupRemoteHost=null;
 let backupProgress=null; // the "Backing up your workspace" window while the offline capture runs
 // The one way back from a backup-mode capture (backup-offline-return.mjs). Defined
 // here because the host's relaunch and the run's own ending both use it.
+let internalBackupQuit=false;
+function quitAfterBackup(){internalBackupQuit=true;try{app.quit();}finally{internalBackupQuit=false;}}
 const returnToWorkspaceAfterBackup=createBackupReturn({
-  app,
-  cleanup:()=>{serverStopReason.note("backup");return cleanupDesktopForExit();},
+  app:{quit:quitAfterBackup,exit:code=>app.exit(code)},
+  cleanup:()=>{serverStopReason.note("backup");return cleanupDesktopForExit("internal");},
+  shutdownStarted:()=>desktopShutdownStarted,
   relaunch:()=>relaunchDesktop({app,args:withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT)}),
   takeProgress:()=>{const progress=backupProgress;backupProgress=null;return progress;},
   log:line=>slog(line),
@@ -428,7 +432,7 @@ function finishClosedBackup(result){
   closedBackupFinish=(async()=>{
     closedTrace("finishing");
     serverStopReason.note("backup");
-    try{await cleanupDesktopForExit();closedTrace("cleaned up");}
+    try{await cleanupDesktopForExit("internal");closedTrace("cleaned up");}
     catch{
       closedTrace(`cleanup unconfirmed at ${String(desktopCleanupStage??"").replace(/[^\w -]/g,"").slice(0,60)}`);
       // Retain ownership if child shutdown is unconfirmed. Never claim a clean
@@ -450,7 +454,7 @@ function ensureDesktopUpdater(scheduleChecks=true){
         const response=await fetch(`http://127.0.0.1:${SERVER_PORT}/api/bots?messages=0`,{
           headers:{"x-murage-surface":"desktop","x-murage-surface-secret":desktopSurfaceSecret},signal:AbortSignal.timeout(5000),redirect:"error"});
         if(!response.ok)throw Error("Updater activity check unavailable");return response.json();
-      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();},
+      },cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit("internal");},
     }),
   })});
   return desktopUpdater;
@@ -487,9 +491,9 @@ function backupUnavailableReason() {
 }
 /** The close before a backup's restart. When it can't finish, this window can
  * no longer back up: say so, instead of every later click just failing. */
-async function cleanupForBackupRestart() {
+async function cleanupForBackupRestart(token) {
   serverStopReason.note("backup");
-  try { await cleanupDesktopForExit(); }
+  try { await cleanupDesktopForExit("internal",token); }
   catch (error) {
     desktopBackupCleanupFailed = true;
     slog(`backup restart cleanup incomplete (${desktopCleanupStage}); installation ownership retained`);
@@ -3106,11 +3110,7 @@ function showDesktopRecovery(reasonCode = "STARTUP_FAILED") {
     encryptedAvailable: () => Boolean(desktopDataOwner && desktopBackupTool.currentTool()),
     verifyEncrypted: requireDesktopBackupTool,
     retry: async () => {
-      backupScheduleHost?.prepareWorkspaceReturn();
-      if(backupScheduleHost?.pendingUpgrade())await backupScheduleHost.returnUpgradeToWorkspace();
-      // The same single attempt as a backup's own return: cleanup first, one
-      // relaunch however often this is pressed, then a bounded quit.
-      await returnToWorkspaceAfterBackup();
+      await explicitBackupReturn(backupScheduleHost,returnToWorkspaceAfterBackup);
     },
     openDiagnostics: async () => { const error = await shell.openPath(LOG_DIR); if (error) throw new Error("DIAGNOSTICS_UNAVAILABLE"); },
     onClosed: () => { recoveryWindow = null; },
@@ -4704,7 +4704,8 @@ async function initializeBackupScheduleHost(){
   }
   const choose=async(properties,title,defaultPath)=>{const answer=await dialog.showOpenDialog(mainWindow??undefined,{title,properties,...(defaultPath?{defaultPath}:{})});return answer.canceled?null:answer.filePaths[0]??null;};
   backupScheduleHost=createBackupScheduleHost({
-    coordinator,installation:()=>installation,
+    coordinator,installation:()=>installation,shutdownStarted:()=>desktopShutdownStarted,
+    publishCommitted:()=>sentinelHost?.backupCommitted(coordinator.committedState()),
     assertUpgradeAllowed:()=>{
       if(!app.isPackaged||hasCustomUpdaterProfile(process.env)||desktopSelectionActive||!desktopUpdater?.supportsInstallContinuation)throw Error("BACKUP_PREUPGRADE_UNAVAILABLE");
     },
@@ -4782,7 +4783,7 @@ async function initializeBackupScheduleHost(){
     capture:parameters=>runDesktopRecovery("backup-encrypted",parameters),
     argv:()=>process.argv,
     noteBudget:budget=>sentinelHost?.backupBudget(budget),
-    relaunch:async(mode,budgetArgument)=>{
+    relaunch:async(mode,budgetArgument,token)=>{
       // Back to the workspace after a backup-mode capture, whatever its
       // outcome: one relaunch, the progress window destroyed before the quit,
       // and a bounded exit if the quit is still held (backup-offline-return.mjs).
@@ -4790,12 +4791,18 @@ async function initializeBackupScheduleHost(){
       const args=withoutBackupBudgetArgument(process.argv.slice(1)).filter(arg=>arg!==BACKUP_MODE_ARGUMENT);
       serverStopReason.note(mode==="backup"?"backup":"restart");
       if(mode==="backup"){args.push(BACKUP_MODE_ARGUMENT);if(budgetArgument)args.push(budgetArgument);}
-      relaunchDesktop({app,args});app.quit();
+      await new Promise((resolve,reject)=>{
+        const queued=setImmediate(()=>{
+          if(token?.cancelled){reject(Error("BACKUP_ADMISSION_STOPPED"));return;}
+          try{relaunchDesktop({app,args});quitAfterBackup();resolve();}catch(error){reject(error);}
+        });
+        if(token)token.cancelQueued=()=>{clearImmediate(queued);reject(Error("BACKUP_ADMISSION_STOPPED"));};
+      });
     },
   });
   // 1.0.9 Sentinel: publish the committed backup state once, now that the folder/key check exists, so a restart or an
   // upgrade states it again (before the first backup: on or off and when one is due, never a verification).
-  try{sentinelHost?.backupCommitted(coordinator.committedState());}catch{/* Health metadata never changes a backup. */}
+  // Publication occurs only after backupStartupDispatch reconciles the raw state.
 }
 // The OS ending the session is heard from the first moment, before any window (session-end.mjs): Linux/macOS through powerMonitor,
 // Windows through a hidden stand-in window until the first real one. Queued ahead of the boot block, like the sleep hook below.
@@ -4816,6 +4823,8 @@ const desktopStartup = app.whenReady().then(async () => {
   assertDesktopStartupActive();
   if(closedBackupRequested){
     closedTrace("ready");acquireDesktopDataOwner();closedTrace("owner");await initializeSentinelHost({closed:true});await initializeBackupScheduleHost();closedTrace("host");desktopRecoveryMode=true;
+    const dispatch=backupStartupDispatch({host:backupScheduleHost,closed:true,publish:()=>backupScheduleHost?.publishCommitted()});
+    if(dispatch.route==="closed-blocked"){void finishClosedBackup({status:"unavailable",reason:"state-unavailable"});return;}
     // The worker waits for desktopStartup; never await it from this callback.
     void desktopStartup.then(()=>desktopBackupTool.waitReady().catch(()=>{})).then(()=>{closedTrace("run");return backupScheduleHost.runClosedDue();}).then(result=>{closedTrace(`result ${result?.status}${result?.reason?" "+result.reason:""}`);return finishClosedBackup(result);}).catch(()=>{closedTrace("failed");return finishClosedBackup({status:"unavailable"});});
     return;
@@ -4846,7 +4855,9 @@ const desktopStartup = app.whenReady().then(async () => {
   if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }
   await initializeBackupScheduleHost();
   desktopMark("backup-host.ready");
-  if(backupScheduleHost?.internalStatus().phase==="handoff-armed"){
+  const backupDispatch=backupStartupDispatch({host:backupScheduleHost,backupMode:process.argv.includes(BACKUP_MODE_ARGUMENT),publish:()=>backupScheduleHost?.publishCommitted()});
+  if(backupDispatch.blocked){showDesktopRecovery("BACKUP_REQUESTED");return;}
+  if(backupDispatch.route==="offline"){
     // No normal writers or credential migrations start before this private claim.
     desktopRecoveryMode=true;
     // A slow first check of the backup tool (macOS still assessing the app)
@@ -4882,7 +4893,7 @@ const desktopStartup = app.whenReady().then(async () => {
     }else{
       desktopRecoveryMode=true;
       // Wait for this startup promise to settle before cleanup can await it.
-      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit();}})).catch(()=>{
+      void desktopStartup.then(()=>resumeBackedUpInstall({backup:backupScheduleHost,updater,currentVersion:app.getVersion(),cleanup:()=>{serverStopReason.note("update");return cleanupDesktopForExit("internal");}})).catch(()=>{
         if(!desktopShutdownStarted){
           showDesktopRecovery("BACKUP_REQUESTED");
           dialog.showErrorBox("Update paused","Murage couldn't confirm the update could carry on after the backup, so it stopped and will not try again by itself. Your data is unchanged. Open the diagnostics folder and contact support before returning to your workspace.");
@@ -4892,7 +4903,7 @@ const desktopStartup = app.whenReady().then(async () => {
     }
   }
   if(!process.argv.includes(BACKUP_MODE_ARGUMENT))backupScheduleHost?.completeReturn();
-  if (app.isPackaged && process.argv.includes(BACKUP_MODE_ARGUMENT)) {
+  if (app.isPackaged && backupDispatch.route==="recovery") {
     await backupToolCheck; // the recovery page reads the tool once on load, so it must be settled first
     showDesktopRecovery("BACKUP_REQUESTED");
     return;
@@ -5233,7 +5244,9 @@ function startDeskPresenceReporting(){
   });
 }
 
-function cleanupDesktopForExit() {
+function cleanupDesktopForExit(reason="user-stop",token) {
+  if(reason==="user-stop")backupScheduleHost?.noteStop?.();
+  if(token?.cancelled)throw Error("BACKUP_ADMISSION_STOPPED");
   serverStopReason.logOnce();
   stopDeskPresence();stopDeskPresence=()=>{};
   // 1.0.9 Sentinel: flush the desktop producer. Quitting never unregisters Sentinel or stops its scanner.
@@ -5398,12 +5411,13 @@ function replaceMainWindow(reason) {
 }
 
 app.on("before-quit", (e) => {
+  if(!internalBackupQuit)backupScheduleHost?.noteStop?.();
   quitRequested = true;
   backgroundLifecycle?.beginQuit();
   if (cuaCleanedUp) return;
   e.preventDefault();
   const alreadyClosing = Boolean(desktopCleanup);
-  const operation = cleanupDesktopForExit();
+  const operation = cleanupDesktopForExit(internalBackupQuit?"internal":"user-stop");
   if (alreadyClosing) return;
   // Let the prevented native quit unwind before re-entering Electron's quit.
   void operation.then(() => { setImmediate(() => app.quit()); }).catch((err) => {

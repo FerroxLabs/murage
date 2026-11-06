@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from 'node:sqlite';
 import { activeProjectGoal, closeRecordCache, currentProjectClose, insertProjectActivity, projectCardsForGroup, projectSettingsFor } from './project-records.ts';
@@ -47,9 +48,9 @@ function readSteps(db: DatabaseSync, groupId: string): CloseStep[] {
 }
 function tx<T>(db: DatabaseSync, run: () => T): T {
   return scopedTx(() => {
-    db.exec('SAVEPOINT project_close');
-    try { const result = run(); db.exec('RELEASE project_close'); return result; }
-    catch (error) { db.exec('ROLLBACK TO project_close; RELEASE project_close'); throw error; }
+    beginWrite(db, "project_close");
+    try { const result = run(); endWrite(db, "project_close"); return result; }
+    catch (error) { undoWrite(db, "project_close"); throw error; }
   });
 }
 function record(db: DatabaseSync, deps: ProjectCloseDeps, step: CloseStep) {
@@ -93,9 +94,9 @@ export function startProjectClose(db: DatabaseSync, deps: ProjectCloseDeps): {su
 export async function startProjectCloseWithInterrupt(db: DatabaseSync, deps: ProjectCloseDeps, interrupt: () => Promise<unknown>) {
   const current = currentProjectClose(db,deps.groupId);
   if (current && current.step < 3) { if (!deps.lineage.notOwnerAudience) releaseHeldCloseForClose(db,deps.groupId); return {summaryRequestId:current.summaryRequestId}; }
-  db.exec('SAVEPOINT close_preflight');
+  beginWrite(db, "close_preflight");
   try { startProjectClose(db,{...deps,completionHooks:undefined}); }
-  finally { db.exec('ROLLBACK TO close_preflight; RELEASE close_preflight'); }
+  finally { undoWrite(db, "close_preflight"); }
   await interrupt();
   try { return startProjectClose(db,deps); }
   catch (error) {

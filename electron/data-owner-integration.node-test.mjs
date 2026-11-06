@@ -1,3 +1,4 @@
+import {backupStartupDispatch} from "./backup-startup.mjs";
 // Node runner: included by package.json test:electron, not Vitest discovery.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -52,7 +53,7 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
   // about their ordering override the host initializer.
   const inert = () => { throw new Error("backup branch must stay inert in an ordinary launch"); };
   return {
-    createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
+    backupStartupDispatch, createServerConnections, openServerPrompt, dialog: { showErrorBox() {} }, BrowserWindow: null, session: null, Menu, mainWindow: null, desktopSelectionActive: selectionActive,
     createStartupSplash: () => ({ close() {} }), desktopMark: () => {}, firstStartOfVersion: () => false, FIRST_AFTER_UPDATE_NOTE: "", noteVersionStarted: () => {},  nativeTheme: { shouldUseDarkColors: false }, closedBackupRequested: false, initializeBackupScheduleHost: async () => {}, backupScheduleHost: null,
     // The Sentinel host (sentinel-host.mjs) starts right after ownership; tests that care about its order override it.
     initializeSentinelHost: async () => {}, sentinelHost: null, desktopRecoveryMode: false, desktopShutdownStarted: false,
@@ -279,7 +280,7 @@ test("actual canonical root resolver rejects empty override without acquiring or
 });
 
 function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{},deadlineMs=25}={}) {
-  const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
+  const text=source.slice(source.indexOf("function cleanupDesktopForExit("));
   const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger;
   const scope={
     app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{quit++;}},
@@ -301,7 +302,7 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     // attestation work is invalidated, and in-flight remote backup operations
     // are drained before the lease is released. None are private barriers of
     // these tests except backupOperations, which is exercised below.
-    stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,
+    stopAutomaticRemoteBackups:()=>{},backupScheduleHost:null,closedBackupRequested:false,internalBackupQuit:false,
     // The Sentinel host flushes its desktop producer on exit; it is never a release barrier.
     sentinelHost:{shutdown:async()=>{}},
     notificationAuthorization:{invalidate(){}},showApprovalNotification:{dispose(){}},modelSignIn:{dispose(){}},localEngineLogin:{shutdown:async()=>{}},mcpServers:{dispose(){}},

@@ -836,7 +836,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
     "request_browser_connection", "project_done", "add_mcp_server",
     "create_bot", "update_bot", "archive_bot", "restore_bot", "move_bot", "set_team_lead",
-    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "save_prompt_block", "save_reference_pack",
+    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "venue_post", "save_prompt_block", "save_reference_pack",
   ]],
   ["own:dweb", ["dweb_status", "dweb_repo_status", "dweb_opencode_models"]],
   // the gate imports nothing of Murage's, so the names are spelled here (a test pins them to PHONE_TOOL_NAMES through OWN_UNASKED)

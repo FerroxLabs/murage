@@ -29,5 +29,5 @@ test("requested install completes only observed target version and never replays
 });
 test("unknown backup phases cannot resume and startup dispatch precedes normal writers",async()=>{
   for(const phase of ["capturing","needs-review","handoff-prepared"])await assert.rejects(resumeBackedUpInstall({backup:{pendingUpgrade:()=>({candidate,phase})},updater:{resumeInstall:()=>{throw Error("must not call");}}}));
-  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");const start=main.slice(main.indexOf("const desktopStartup ="));assert.ok(start.indexOf("const upgrade=backupScheduleHost?.pendingUpgrade()")<start.indexOf("migrateLegacyDataDirectory"));assert.ok(start.includes("void desktopStartup.then(()=>resumeBackedUpInstall"));assert.ok(main.includes("await backupScheduleHost.returnUpgradeToWorkspace()"));
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");const start=main.slice(main.indexOf("const desktopStartup ="));assert.ok(start.indexOf("const upgrade=backupScheduleHost?.pendingUpgrade()")<start.indexOf("migrateLegacyDataDirectory"));assert.ok(start.includes("void desktopStartup.then(()=>resumeBackedUpInstall"));assert.ok(readFileSync(new URL("./backup-startup.mjs",import.meta.url),"utf8").includes("await host.returnUpgradeToWorkspace()"));
 });

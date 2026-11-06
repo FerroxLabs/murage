@@ -152,6 +152,16 @@ export function useUpdatePopup(state: UpdaterState | null): boolean {
   return popupVisible(latch, state?.status);
 }
 
+/** The open modal dialog on top (What's New, an announcement, Files...), or null. A modal dialog makes the rest of the page
+ * inert, so the pop-up goes inside it: there it is above the dialog and its buttons still work. The last one in the document
+ * is taken as the top. An engine that does not know :modal counts any open dialog. */
+export function topModalDialog(root: ParentNode = document): HTMLDialogElement | null {
+  const open = [...root.querySelectorAll<HTMLDialogElement>("dialog[open]")].filter((dialog) => {
+    try { return dialog.matches(":modal"); } catch { return true; }
+  });
+  return open[open.length - 1] ?? null;
+}
+
 /** States that give the round button a reason to be on screen: something to do, something under way, or something wrong. */
 export function indicatorShows(status: UpdaterState["status"] | undefined): boolean {
   return status === "available" || status === "downloading" || status === "downloaded" || status === "installing" || status === "deferred" || status === "handed-off" || status === "error";

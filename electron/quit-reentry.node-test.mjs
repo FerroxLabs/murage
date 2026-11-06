@@ -6,7 +6,7 @@ const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
 const handler=source.slice(source.indexOf('app.on("before-quit", (e) => {'));
 function fixture(cleanup){
   let trigger;const events=[],queue=[];
-  const scope={app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")}};
+  const scope={internalBackupQuit:false,backupScheduleHost:null,app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")}};
   new Function(...Object.keys(scope),handler)(...Object.values(scope));
   return {events,queue,trigger:()=>trigger({preventDefault:()=>events.push("prevented")})};
 }

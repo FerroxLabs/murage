@@ -43,19 +43,25 @@ export function quitForRelaunch({ app, progress, graceMs = BACKUP_QUIT_GRACE_MS,
  * arm the relaunch, then quitForRelaunch. Repeated calls share the attempt, so
  * a success and a failure (or a ceiling) never start two copies; a failed
  * cleanup can be tried again. */
-export function createBackupReturn({ app, cleanup, relaunch, takeProgress, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
-  let attempt = null;
-  return function returnToWorkspace() {
+export function createBackupReturn({ app, cleanup, relaunch, takeProgress, shutdownStarted = () => false, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
+  let attempt = null, rejected = false;
+  function returnToWorkspace() {
     if (attempt) return attempt;
+    rejected = false;
     const current = (async () => {
       await cleanup();
       relaunch();
       quitForRelaunch({ app, progress: takeProgress(), graceMs, setTimer, log });
     })();
     attempt = current;
-    current.catch(() => { if (attempt === current) attempt = null; });
+    current.catch(() => { if (attempt === current) { rejected = true; if (!shutdownStarted()) attempt = null; } });
     return current;
+  }
+  returnToWorkspace.retry = () => {
+    if (rejected) { attempt = null; rejected = false; }
+    return returnToWorkspace();
   };
+  return returnToWorkspace;
 }
 
 /** Run the backup-mode capture and always finish it one of two ways: Murage

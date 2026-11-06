@@ -1,3 +1,4 @@
+import {explicitBackupReturn} from "./backup-startup.mjs";
 import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
@@ -112,7 +113,7 @@ function recoveryReturn(host,onReturn){
   const recovery=main.slice(main.indexOf("function showDesktopRecovery("));
   const callback=/retry: (async \(\) => \{[\s\S]*?\n    \}),/.exec(recovery);
   assert.ok(callback,"the recovery window must supply its Return callback");
-  const retry=vm.runInNewContext(`(${callback[1]})`,{backupScheduleHost:host,returnToWorkspaceAfterBackup:onReturn});
+  const retry=vm.runInNewContext(`(${callback[1]})`,{backupScheduleHost:host,explicitBackupReturn,returnToWorkspaceAfterBackup:Object.assign(onReturn,{retry:onReturn})});
   const controller=createInstallationRecoveryController({isTrustedSender:()=>true,isAvailable:()=>true,retry});
   const elements=new Map();
   const context={document:{documentElement:{dataset:{}},querySelectorAll:()=>[],getElementById:id=>{
@@ -503,7 +504,7 @@ test("closed owner, locked store, missing key and changed destination refuse cap
     await f.enable(false,true);f.setNow(Date.parse("2026-09-13T09:01:00Z"));
     if(mode==="key")rmSync(f.keyFile);if(mode==="destination"){renameSync(f.destination,f.destination+"-original");mkdirSync(f.destination);}
     const closed=f.create({assertClosedStartup:mode==="unproven"?undefined:async()=>{if(mode==="owner")throw Object.assign(Error("owner busy"),{code:"BACKUP_CLOSED_BUSY"});},...(mode==="locked"?{readProtected:async()=>{throw Error("private locked store diagnostic");}}:{})});
-    const result=await closed.runClosedDue();assert.equal(result.status,mode==="owner"?"busy":"unavailable");assert.equal(f.calls.includes("capture"),false);
+    const result=await closed.runClosedDue();assert.equal(result.status,mode==="owner"?"busy":["key","destination"].includes(mode)?"needs-review":"unavailable");assert.equal(f.calls.includes("capture"),false);
     assert.deepEqual(f.coordinator().status().lastClosedResult,result);assert.equal(JSON.stringify(result).includes("private"),false);
   }finally{f.cleanup();}}
 });
@@ -746,7 +747,7 @@ test("the log alone gets the redacted cause behind a failed capture (W-D1)",asyn
   const f=fixture(()=>({capture:async()=>{throw Object.assign(Error("BACKUP_FILE_IN_USE"),{code:"BACKUP_FILE_IN_USE",captureCause:cause});}}));
   try{
     await f.arm();
-    const next=f.create({reportCaptureFailure:failure=>reported.push(failure)});
+    const next=f.create({shutdownStarted:()=>true,reportCaptureFailure:failure=>reported.push(failure)});
     await assert.rejects(next.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
     assert.equal(reported.length,1);
     assert.deepEqual(reported[0],{stage:"capture",code:"BACKUP_FILE_IN_USE",cause:{step:"offline-open",errno:"EBUSY",syscall:"link",innerCode:"LEASE_IO",message:"EBUSY: resource busy or locked, link '<path>' -> '<path>'"}});
@@ -796,6 +797,8 @@ test("a closed-app capture failure records the reason without reopening a window
     f.setNow(Date.parse("2026-09-13T09:01:00Z"));
     const result=await f.create({assertClosedStartup:async()=>{}}).runClosedDue();
     assert.equal(result.status,"needs-review");
+    assert.equal(result.reason,"capture-unconfirmed");
+    assert.equal(f.coordinator().status().lastClosedResult.reason,"capture-unconfirmed");
     assert.deepEqual(f.coordinator().status().captureFailure,{stage:"capture",code:"SOURCE_CHANGED"});
     assert.equal(f.calls.includes("normal"),false);
   }finally{f.cleanup();}
@@ -935,8 +938,15 @@ for(const [what,code] of [["folder","BACKUP_FOLDER_MISSING"],["key","BACKUP_RECO
       for(let attempt=0;attempt<100&&controller.isPreparing();attempt++)await new Promise(resolve=>setImmediate(resolve));f.calls.length=0;
       const moved=`${what==="folder"?f.destination:f.keyFile}.moved`;renameSync(what==="folder"?f.destination:f.keyFile,moved);
       if(occasion==="daily"){f.setNow(Date.parse("2026-09-13T09:01:00Z"));await controller.tick();}
+      else if(what==="folder")await controller.runNow(f.coordinator().status().revision);
       else await assert.rejects(controller.runNow(f.coordinator().status().revision),new RegExp(`^Error: ${code}$`));
       const s=f.coordinator().status();
+      if(what==="folder"){
+        assert.equal(s.phase,"waiting",occasion);assert.equal(s.reviewReason,undefined);
+        assert.equal(s.captureFailure,undefined);assert.equal(s.waiting.code,code);
+        assert.equal(announced,0,occasion);assert.deepEqual(f.calls,[],"nothing was prepared or relaunched");
+        assert.equal((await controller.status()).waiting.cause,"drive");continue;
+      }
       assert.equal(s.phase,"needs-review",occasion);assert.equal(s.reviewReason,"references-unavailable");
       assert.deepEqual(s.captureFailure,{stage:"references",code});
       assert.equal(announced,1,occasion);assert.deepEqual(f.calls,[],"nothing was prepared or relaunched");
@@ -1422,3 +1432,37 @@ test("BACKUP-SILENT-STOP: a failed reopen after a verified backup is not a stopp
     assert.equal(status.retainedFailure,undefined);
   }finally{f.cleanup();}
 });
+
+for(const action of ["quit","return"])for(const boundary of ["preflight","committed","space","prepare","cleanup","armed","queued"]){
+ test(`T-stop-admission BF-5: ${action} at upgrade ${boundary}`,async()=>{
+  const f=fixture();try{
+   await f.enable(true);await f.controller.runNow(f.coordinator().status().revision);
+   await assert.rejects(f.create({freeBytes:()=>1,capture:async()=>{throw Error("BACKUP_DISK_FULL");}}).resumeOffline(),/BACKUP_WAITING/);
+   const old=f.coordinator().status();f.calls.length=0;
+   const c=f.coordinator();let h,token,shutdown=false,returned;
+   c.cancelManual=()=>assert.fail("Upgrade never owns a manual cancellation");
+   const stop=()=>{if(action==="return")returned=explicitBackupReturn(h,{retry:async()=>{}});else h.noteStop();shutdown=true;};
+   const hooks={coordinator:c,shutdownStarted:()=>shutdown};
+   if(boundary==="preflight")hooks.assertUpgradeAllowed=async()=>stop();
+   const prepare=c.prepareUpgrade.bind(c);let commits=0;
+   c.prepareUpgrade=(...args)=>{commits++;const result=prepare(...args);if(boundary==="committed")stop();return result;};
+   if(boundary==="space")hooks.freeBytes=async()=>{stop();return 100*1024**3;};
+   hooks.prepare=async(_occasion,t)=>{token=t;if(boundary==="prepare")stop();return Object.assign(async()=>assert.fail("Stop must cancel preparation"),{cancel:async()=>{assert.equal(h.isPreparing(),true);f.calls.push("release");}});};
+   hooks.cleanupIdle=async t=>{assert.equal(t,token);shutdown=true;if(boundary==="cleanup")stop();};
+   const arm=c.armHandoff.bind(c);let arms=0;c.armHandoff=id=>{arms++;const result=arm(id);if(boundary==="armed")stop();return result;};
+   hooks.relaunch=async(_mode,_budget,t)=>{assert.equal(t,token);assert.equal(boundary,"queued");await new Promise((resolve,reject)=>{t.cancelQueued=()=>reject(Error("BACKUP_ADMISSION_STOPPED"));stop();});};
+   h=f.create(hooks);await assert.rejects(h.requestUpgrade(updateCandidate()),/STOPPED/);await returned;
+   assert.equal(commits,boundary==="preflight"?0:1);assert.equal(arms,["armed","queued"].includes(boundary)?1:0);
+   assert.equal(f.calls.includes("backup"),false);assert.equal(f.calls.includes("capture"),false);
+   assert.deepEqual(c.status().room,old.room);
+   if(boundary==="preflight")assert.equal(c.status().job.id,old.job.id);
+   if(boundary!=="preflight"){
+    assert.notEqual(c.status().job.id,old.job.id);assert.equal(c.status().waiting,undefined);
+    const state=c.status();assert.equal(state.phase,"needs-review");
+    const marker=JSON.parse(readFileSync(path.join(f.root,"control","backup-handoff-failure.json"),"utf8"));
+    assert.equal(marker.handoff,state.job.handoff.id);assert.equal(marker.code,"SNAPSHOT_CANCELLED");
+    assert.equal(f.create().reconcileStartup().phase,"needs-review");
+   }
+  }finally{f.cleanup();}
+ });
+}

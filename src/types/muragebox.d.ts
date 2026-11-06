@@ -126,6 +126,8 @@ type SkillRecordingPayload = {
 
   interface BackupScheduleStatus {
     supported:boolean; pending:boolean; enabled:boolean; revision:number; phase:string;
+    /** 1.0.18: a backup waiting for space, its drive, or a busy file; it starts by itself. */
+    waiting?:{drive:"backup"|"data"|null;volumes:{kind:"backup"|"data"|"shared";requiredBytes:number;freeBytes?:number;neededBytes?:number}[];cause:"space"|"drive"|"busy"|"interrupted";code:string;requiredBytes?:number;neededBytes?:number;since:number;nextAt:number;attempts:number};
     /** Unsupported only for now: the backup tool is still being checked. */
     checking?:boolean;
     /** Unsupported, and why, when it is not just the check: the backup tool
