@@ -10,6 +10,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSyn
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { redactPageOutput } from "./browser-output-redaction.ts";
+import { recipientScanReasonOf, type RecipientScanReason } from "./browser-floor.ts";
 
 export const ACTIVITY_MAX_LINES = 2000;
 export const ACTIVITY_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -24,6 +25,14 @@ export const ACTIVITY_OUTCOMES = ["done", "failed", "denied", "waiting", "handed
 export type BrowserActivityDecision = typeof ACTIVITY_DECISIONS[number];
 export type BrowserActivityDecider = typeof ACTIVITY_DECIDERS[number];
 export type BrowserActivityOutcome = typeof ACTIVITY_OUTCOMES[number];
+/** B5: the checker's verdict on a step it judged. Logging only: no decision reads it. */
+export const ACTIVITY_CHECKER_DECISIONS = ["allow", "ask", "block"] as const;
+export const ACTIVITY_STEP_OUTCOMES = ["floor", "refuse", "skip", "site-card", "card", "pass", "pause"] as const;
+export const ACTIVITY_CHECKER_REASON_MAX = 300;
+export type BrowserActivityChecker = {
+  decision: typeof ACTIVITY_CHECKER_DECISIONS[number]; original: typeof ACTIVITY_CHECKER_DECISIONS[number]; code: string; reason: string;
+  advisory: boolean; outcome: typeof ACTIVITY_STEP_OUTCOMES[number];
+};
 
 /** What a caller hands over. Extra keys are ignored, so a typed value passed by mistake is never written. */
 export type BrowserActivityInput = {
@@ -38,11 +47,15 @@ export type BrowserActivityInput = {
   /** Length of text typed, never the text. */
   textLength?: number;
   routine?: boolean;
+  /** B1: why the recipients scan was not usable, fixed words and counts only. */
+  recipientScanReason?: RecipientScanReason;
+  /** B5: the checker's verdict on this step, when it judged it. */
+  checker?: BrowserActivityChecker;
 };
 export type BrowserActivityLine = {
   at: number; botId: string; bindingId: string; taskId: string; site: string; action: string; target: string; fromPage: boolean;
   level: 1 | 2 | 3; decision: BrowserActivityDecision; decidedBy: BrowserActivityDecider; outcome: BrowserActivityOutcome;
-  textLength?: number; routine?: true;
+  textLength?: number; routine?: true; recipientScanReason?: RecipientScanReason; checker?: BrowserActivityChecker;
 };
 
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -71,10 +84,20 @@ function build(input: BrowserActivityInput, at: number): BrowserActivityLine | u
   };
   if (Number.isSafeInteger(input.textLength) && input.textLength! >= 0) line.textLength = Math.min(input.textLength!, 1_000_000);
   if (input.routine === true) line.routine = true;
+  const scanReason = input.recipientScanReason ? recipientScanReasonOf(input.recipientScanReason.counts) : undefined;
+  if (scanReason) line.recipientScanReason = scanReason;
+  const checker = input.checker;
+  if (checker && typeof checker === "object" && oneOf(ACTIVITY_CHECKER_DECISIONS, checker.decision) && oneOf(ACTIVITY_CHECKER_DECISIONS, checker.original) && oneOf(ACTIVITY_STEP_OUTCOMES, checker.outcome)) {
+    line.checker = { decision: checker.decision, original: checker.original, code: clean(checker.code, 60), reason: clean(redactPageOutput(typeof checker.reason === "string" ? checker.reason : ""), ACTIVITY_CHECKER_REASON_MAX), advisory: checker.advisory === true, outcome: checker.outcome };
+  }
   // Fit the line budget (the newline counts): shorten the free-text fields, never the ids.
   const size = () => Buffer.byteLength(JSON.stringify(line)) + 1;
+  while (size() > ACTIVITY_MAX_LINE_BYTES && line.checker && line.checker.reason.length > 0) line.checker.reason = [...line.checker.reason].slice(0, Math.max(0, [...line.checker.reason].length - 8)).join("");
   while (size() > ACTIVITY_MAX_LINE_BYTES && line.target.length > 0) line.target = [...line.target].slice(0, Math.max(0, [...line.target].length - 8)).join("");
   while (size() > ACTIVITY_MAX_LINE_BYTES && line.site.length > 0) line.site = [...line.site].slice(0, Math.max(0, [...line.site].length - 8)).join("");
+  // The diagnostic fields go before the line does.
+  if (size() > ACTIVITY_MAX_LINE_BYTES) delete line.recipientScanReason;
+  if (size() > ACTIVITY_MAX_LINE_BYTES) delete line.checker;
   return size() <= ACTIVITY_MAX_LINE_BYTES ? line : undefined;
 }
 

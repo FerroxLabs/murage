@@ -8,6 +8,7 @@ import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PA
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
+import { claimCopyScratch } from "./settle-copy.ts";
 import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry } from "./data-dir-inventory.ts";
@@ -255,6 +256,8 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BACKUP_BYTES || !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_BACKUP_FILES) fail("INVALID_SNAPSHOT_LIMITS");
     if (!lstatSync(root).isDirectory()) fail("INSTALLATION_MISSING");
     const stage = mkdtempSync(join(parent, ".murage-state-snapshot-"));
+    // the stage lives on in the caller until the archive is written: claimed, so that write's own scratch sweep leaves it alone
+    claimCopyScratch(stage);
     let published = false;
     let bytes = 0;
     /** Restorable items: files, stored shortcuts and extra names. One place

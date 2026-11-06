@@ -49,6 +49,25 @@ import {
   foldText,
 } from "./browser-floor-lexicon.ts";
 
+/** B1: the fixed words a recipients scan may give for not being usable. Nothing else ever enters the reason. */
+export const RECIPIENT_SCAN_REASONS = ["frame", "unclassified-field", "unresolved-name", "select-unread", "text-node", "cap", "composer-only", "throw"] as const;
+export type RecipientScanReasonWord = typeof RECIPIENT_SCAN_REASONS[number];
+export type RecipientScanReason = { reasons: RecipientScanReasonWord[]; counts: Partial<Record<RecipientScanReasonWord, number>> };
+/** Copies only the fixed words and whole positive counts from a page's answer; anything else is dropped. Undefined when nothing is left. */
+export function recipientScanReasonOf(value: unknown): RecipientScanReason | undefined {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const counts: Partial<Record<RecipientScanReasonWord, number>> = {};
+    for (const word of RECIPIENT_SCAN_REASONS) {
+      if (!Object.prototype.hasOwnProperty.call(value, word)) continue;
+      const count = (value as Record<string, unknown>)[word];
+      if (typeof count === "number" && Number.isSafeInteger(count) && count > 0) counts[word] = Math.min(count, 1_000_000);
+    }
+    const reasons = RECIPIENT_SCAN_REASONS.filter(word => counts[word] !== undefined);
+    return reasons.length ? { reasons, counts } : undefined;
+  } catch { return undefined; }
+}
+
 export type { FloorKind, FrameRef };
 
 export interface FloorFacts {
@@ -139,6 +158,8 @@ export interface FloorFacts {
   /** T22: the recipients scan ran on a send or submit and could not read the page (it threw, or answered with something unusable). The
    * recipients are then unknown, and intent rule I2 treats unknown as a reason to ask. Absent when the scan worked or did not apply. */
   recipientScanFailed?: boolean;
+  /** B1: why the recipients scan was not usable, as fixed words with counts only (diagnostic; no decision reads it). */
+  recipientScanReason?: RecipientScanReason;
   /** Native action-kind classification, independent of the action level. */
   sendCapable?: boolean;
   /** The recipient scan hit its cap: who this goes to cannot be bound, so the owner takes over. */
