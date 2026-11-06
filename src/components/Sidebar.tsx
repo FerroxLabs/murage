@@ -164,15 +164,20 @@ import type { HealthStatus, NeedsSummary, ShellDoor } from "./shell/shell-contra
 import { railWorkingTip, workingNow } from "@/lib/working-now";
 import { SidebarYouMenu, type YouMenuItem } from "./SidebarYouMenu";
 import { t } from "@/lib/i18n";
+import { railFold, loadOpenRailFolds, saveOpenRailFolds, railSearchEscape, railRecency, railBotsLimit, RAIL_VISIBLE_BOTS } from "@/lib/rail-fold";
 import { existingTeams, projectSection } from "@/lib/project-team";
 import { modShortcut } from "@/lib/mod-shortcut";
 import { OPEN_SHORTCUTS_EVENT, OPEN_WHATS_NEW_EVENT, openCommandPalette } from "@/lib/app-events";
 import { openFirstRun } from "@/lib/first-run";
 // The shortcut list loads when someone asks for it, not with the first paint.
+// Only a section past eight bots draws the fold row, so it loads on first use (first-paint budget).
+const RailFoldRowLazy = retryableLazy(() => import("./RailBotList").then((module) => ({ default: module.RailFoldRow })));
 const ShortcutsDialog = retryableLazy(() => import("./KeyboardShortcutsDialog").then((module) => ({ default: module.KeyboardShortcutsDialog })));
 // Opened from a menu, never on the first paint: each loads on first use.
 const TeamExportDialog = retryableLazy(() => import("./TeamExportDialog").then((module) => ({ default: module.TeamExportDialog })));
 const NewFromTemplateDialog = retryableLazy(() => import("./NewFromTemplateDialog").then((module) => ({ default: module.NewFromTemplateDialog })));
+// UX-L6A part 2: hire in one sentence has its own entry in the New Bot chooser; New Bot itself opens the chooser.
+const HireBotDialog = retryableLazy(() => import("./hire/HireBotDialog").then((module) => ({ default: module.HireBotDialog })));
 // The team library (explore, import, scout) opens on a tap: its chunk loads then.
 const TeamLibraryPanel = retryableLazy(() => import("./TeamLibraryPanel").then((module) => ({ default: module.TeamLibraryPanel })));
 import { WhatsNewHost } from "./WhatsNewHost";
@@ -194,7 +199,7 @@ import { NewTeamDialog } from "./NewTeamDialog";
 import { taskCount } from "@/lib/task-window";
 import { LEADERSHIP_BLOCKED_HINT, leadershipPromotionBlocked } from "@/lib/new-team";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
-import { isUnseenRoutineProblem } from "../../shared/routine-problems";
+import { hasRoutineAttention } from "@/lib/routine-attention";
 import { copyOrReport } from "@/lib/copy-text";
 import { preloadGroupView } from "@/lib/group-view-preload";
 import { raiseTransientError } from "@/state/chat-error";
@@ -1272,9 +1277,11 @@ export function sidebarBotVisible(bot: Pick<Bot, "hidden" | "sidebarHidden">, sh
  * it drags, collapses and saves its position like every other one. */
 export const PROJECTS_SECTION_ID = "builtin:projects";
 
-/** Section headings, with the one this file adds. Everything else comes
- * from the shared layout module unchanged. */
+/** Section headings, with the one this file adds. The rail calls the bots
+ * section "Your team" (spec 2.1 item 2: "Your team · 18" when folded).
+ * Everything else comes from the shared layout module unchanged. */
 export function sectionLabel(id: string): string {
+  if (id === BOTS_SECTION_ID) return "Your team";
   return id === PROJECTS_SECTION_ID ? "Projects" : sidebarSectionLabel(id);
 }
 
@@ -2189,7 +2196,8 @@ function ArchivedChannelsPanel({
 const NO_NEEDS: Pick<NeedsSummary, "count" | "stale"> = { count: undefined, stale: false };
 const NO_HEALTH: HealthStatus = { level: "unknown", line: "" };
 
-export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health = NO_HEALTH }: {
+export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health = NO_HEALTH, onLayoutChange }: {
+  onLayoutChange?: (layout: { sectionOrder: string[]; showHidden: boolean }) => void;
   open: boolean;
   onClose: () => void;
   onReturnFocus?: () => void;
@@ -2232,6 +2240,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const [newTeamOpen, setNewTeamOpen] = useState(false);
   /** The New Bot / New Team chooser that is open, if any. */
   const [chooser, setChooser] = useState<TemplateKind | null>(null);
+  const [hireOpen, setHireOpen] = useState(false);
   const [teamInstallUrl, setTeamInstallUrl] = useState<string | null>(null);
   const [archivedBotsOpen, setArchivedBotsOpen] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
@@ -2312,10 +2321,30 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   const lastExpandedDensity = useRef<Exclude<SidebarDensity, "icons">>(densityPrefs.density === "icons" ? DEFAULT_SIDEBAR_DENSITY as Exclude<SidebarDensity, "icons"> : densityPrefs.density);
   if (densityPrefs.density !== "icons") lastExpandedDensity.current = densityPrefs.density;
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() => loadCollapsedSections());
+  // Past eight bots a section folds (UX L6B); which folds are open is kept on this device.
+  const [openRailFolds, setOpenRailFolds] = useState<string[]>(() => loadOpenRailFolds());
+  // Opening a fold puts keyboard focus in the search box (the spec's filter at
+  // the top of the opened list); Esc there folds it again.
+  const railSearchRef = useRef<HTMLInputElement>(null);
+  const setRailFolds = (next: string[]) => {
+    setOpenRailFolds(next);
+    saveOpenRailFolds(next);
+  };
+  const toggleRailFold = (id: string) => {
+    const opening = !openRailFolds.includes(id);
+    setRailFolds(opening ? [...openRailFolds, id] : openRailFolds.filter((open) => open !== id));
+    // Icons density hides the box, so focus stays on the fold row there.
+    if (opening && density !== "icons") railSearchRef.current?.focus();
+  };
   // The section order is the computer's, the same on every device
   // (lib/sidebar-order-sync.ts); localStorage is this device's cache of it.
   // Collapsed sections stay per device on purpose.
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => loadSectionOrder());
+  // Publish before keyboard events can observe a newly painted rail. Persistence
+  // may still be pending or fail; neither changes the layout shown here.
+  useLayoutEffect(() => {
+    onLayoutChange?.({ sectionOrder, showHidden });
+  }, [onLayoutChange, sectionOrder, showHidden]);
   const initialOrderUploaded = useRef(false);
   useEffect(() => {
     const shown = shownSectionOrder(state.sidebarSectionOrder, sectionOrder);
@@ -2604,7 +2633,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
   // User sections keep first-appearance order. The saved layout keeps an
   // empty section's former slot so it returns there when content comes back.
   const sectionNames: string[] = [];
-  for (const bot of sectionedBots) {
+  for (const bot of matchingBots.filter((bot) => !bot.chiefOfStaff && bot.section && !bot.pinned)) {
     if (!sectionNames.includes(bot.section!)) sectionNames.push(bot.section!);
   }
   for (const bot of sectionChiefs) {
@@ -2893,16 +2922,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
             setResizing(false);
             if (widthRef.current !== null) keepWidth(widthRef.current);
           }}
-          onPointerCancel={() => {
+          onPointerCancel={(event) => {
             setResizing(false);
             keepWidth(sidebarWidth);
+            // the drag wrote the value by hand; React still holds the committed one and would not write it again
+            event.currentTarget.setAttribute("aria-valuenow", String(shownWidth));
           }}
           // a double click puts back the density's own width
           onDoubleClick={() => keepWidth(null)}
           onKeyDown={(event) => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
-            keepWidth(clampSidebarWidth(shownWidth + (event.key === "ArrowRight" ? SIDEBAR_WIDTH_STEP : -SIDEBAR_WIDTH_STEP), window.innerWidth));
+            // from the width on screen, which mid-drag is the dragged one, not the last kept one
+            keepWidth(clampSidebarWidth((resizing && widthRef.current !== null ? widthRef.current : shownWidth) + (event.key === "ArrowRight" ? SIDEBAR_WIDTH_STEP : -SIDEBAR_WIDTH_STEP), window.innerWidth));
           }}
         />
       )}
@@ -3043,9 +3075,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
         <div className="flex items-center gap-2 rounded-lg bg-raised/70 px-3 py-1.5">
           <Search size={16} className="shrink-0 text-ink-secondary" aria-hidden="true" />
           <input
+            ref={railSearchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+            onKeyDown={(e) => {
+              if (e.key !== "Escape" || e.nativeEvent.isComposing) return;
+              const next = railSearchEscape(query, openRailFolds);
+              if (!next) return;
+              // Handled here: the phone drawer's Esc must not also close the drawer.
+              e.preventDefault();
+              e.stopPropagation();
+              if (next.query !== query) setQuery(next.query);
+              else setRailFolds(next.folds);
+            }}
             placeholder={t("settings.search")}
             aria-label={t("nav.searchAria")}
             className="min-h-7 w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
@@ -3074,7 +3116,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           lit={doorForView(state.activeView)}
           needs={needs}
           iconsOnly={density === "icons"}
-          routinesAttention={state.routineRuns.some(isUnseenRoutineProblem)}
+          routinesAttention={hasRoutineAttention(state.routineRuns, state.routines, state.bots, state.groups)}
           onOpen={(door) => { openDoor(door); onNavigate(); }}
         />
       </div>
@@ -3129,6 +3171,11 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                     ? sectionedBots.filter((bot) => bot.section === sectionName)
                     : [];
             const collapsed = sectionCollapsed(id);
+            const foldOpen = openRailFolds.includes(id);
+            const pins = id === PINNED_SECTION_ID;
+            const foldLimit = id === BOTS_SECTION_ID ? railBotsLimit(sectionCollapsed(PINNED_SECTION_ID) ? 0 : pinnedBots.length) : RAIL_VISIBLE_BOTS;
+            const fold = railFold(sectionBotItems, { open: Boolean(q) || foldOpen, keep: (bot) => rowSelected(bot.id), weigh: (bot) => sidebarBotAttention(bot, threadAttention, Date.now()), limit: foldLimit, rank: pins ? undefined : railRecency });
+            const showFoldRow = !q && (fold.hidden.length > 0 || (foldOpen && sectionBotItems.length > foldLimit));
             const attention = collapsed
               ? sidebarSectionAttention(
                   [...sectionChiefItems, ...sectionBotItems].map((bot) => sidebarBotAttention(bot, threadAttention, Date.now()).bot),
@@ -3165,6 +3212,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                   <SidebarSectionHeader
                     name={sectionLabel(id)}
                     collapsed={collapsed}
+                    count={(collapsed || fold.hidden.length > 0) && sectionBotItems.length ? sectionChiefItems.length + sectionBotItems.length : undefined}
                     attention={attention}
                     onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
                     reorderable={layoutInteractive && sectionIds.length > 1}
@@ -3210,7 +3258,7 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                         onMenu={setRoomMenu}
                       />
                     ))}
-                    {sectionBotItems.map((bot) => (
+                    {fold.visible.map((bot) => (
                       <BotListItem
                         key={bot.id}
                         onNavigate={navigateRow}
@@ -3225,6 +3273,19 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
                         onBotDragEnd={dragEndRow}
                       />
                     ))}
+                    {showFoldRow && (
+                      <LazyBoundary inline onRetry={RailFoldRowLazy.retry}>
+                        <Suspense fallback={null}>
+                          <RailFoldRowLazy.Component
+                            hidden={fold.hidden.length}
+                            attention={fold.attention}
+                            open={foldOpen}
+                            iconsOnly={density === "icons"}
+                            onToggle={() => toggleRailFold(id)}
+                          />
+                        </Suspense>
+                      </LazyBoundary>
+                    )}
                     {sectionName && density !== "icons" && <SidebarSharedRows section={sectionName} onNavigate={onNavigate} />}
                   </>
                 )}
@@ -3415,10 +3476,17 @@ export function Sidebar({ open, onClose, onReturnFocus, needs = NO_NEEDS, health
           onDeleted={(message) => setTeamFeedback({ error: false, text: message })}
         />
       )}
+      {hireOpen && (
+        <LazyBoundary onRetry={HireBotDialog.retry} onDismiss={() => setHireOpen(false)}><Suspense fallback={null}><HireBotDialog.Component
+          onClose={() => setHireOpen(false)}
+          onBrowseTemplates={() => { setHireOpen(false); setChooser("bot"); }}
+        /></Suspense></LazyBoundary>
+      )}
       {chooser && (
         <LazyBoundary onRetry={NewFromTemplateDialog.retry} onDismiss={() => setChooser(null)}><Suspense fallback={null}><NewFromTemplateDialog.Component
           kind={chooser}
           onClose={() => setChooser(null)}
+          onHire={() => { setChooser(null); setHireOpen(true); }}
           onBlank={() => {
             const kind = chooser;
             setChooser(null);

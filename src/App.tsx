@@ -1,4 +1,7 @@
 import { EngineChatLinkHost } from "@/components/EngineChatLink";
+import { adjacentSidebarBot, sidebarBotOrder, sidebarCycleDirection } from "@/lib/sidebar-layout";
+import { loadSectionOrder } from "@/lib/sidebar-preferences";
+import { imeComposing } from "@/lib/composer-enter";
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
@@ -107,6 +110,11 @@ const GroupView = GroupViewLazy.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
+  // Sidebar publishes the layout it actually renders, including unsaved drags.
+  const sidebarLayout = useRef({ sectionOrder: loadSectionOrder(), showHidden: false });
+  const onSidebarLayout = useCallback((layout: typeof sidebarLayout.current) => {
+    sidebarLayout.current = layout;
+  }, []);
   // #open=<thread>&msg=<message> and the phone app's notificationOpened.
   useDeepLinks();
   usePushEnrol();
@@ -171,6 +179,8 @@ function Shell() {
   const healthOriginRef = useRef<HealthOrigin | undefined>(undefined);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
+  // The Settings window can show any bot from its Bots group without changing the chat behind it.
+  const settingsBot = (state.settingsBotId ? state.bots.find((b) => b.id === state.settingsBotId) : undefined) ?? bot;
   // UX 1.0.13 (L2A): the rail shows on every view, Routines included, so a door is always one click away.
   const { drawerOpen, setDrawerOpen, closeDrawer, returnDrawerFocus, control: drawerControl } = useBotListDrawer(true);
   // One read of each for the whole shell: the rail's door, Today and the phone tabs show the same numbers.
@@ -184,6 +194,7 @@ function Shell() {
     else if (door === "needs-you") dispatch({ type: "showNeedsYou" });
     else dispatch({ type: "showRoutines" });
   }, [dispatch]);
+  const phoneTab = state.activeView === "chat" ? null : doorForView(state.activeView);
   // A workspace panel (LocalVm/Browser) covers the call's own bot/room's
   // screen the same way another selection does, with nothing to return to
   // otherwise (callbar-rereview.md N4). CallOverlaySlot (CallControls.tsx)
@@ -261,8 +272,9 @@ function Shell() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.defaultPrevented || e.isComposing) return;
-      const bots = state.bots.filter((b) => !b.hidden);
+      if (!mod || e.defaultPrevented || imeComposing(e)) return;
+      const bots = sidebarBotOrder(state.bots, state.groups.filter((group) => !group.hidden), sidebarLayout.current.sectionOrder, sidebarLayout.current.showHidden);
+      const cycleDirection = sidebarCycleDirection(e);
       if (e.key === "n" && !e.shiftKey) {
         e.preventDefault();
         dispatch({ type: "newBot" });
@@ -280,9 +292,8 @@ function Shell() {
         // All chats; again (or Escape) goes back to the chat
         e.preventDefault();
         dispatch(state.activeView === "all-chats" ? { type: "closeAllChats" } : { type: "showAllChats" });
-      } else if (e.shiftKey && (e.key === "[" || e.key === "]")) {
-        const idx = bots.findIndex((b) => b.id === state.selectedId);
-        const next = bots[(idx + (e.key === "]" ? 1 : -1) + bots.length) % bots.length];
+      } else if (cycleDirection !== null) {
+        const next = adjacentSidebarBot(bots, state.selectedId, cycleDirection);
         if (next) {
           e.preventDefault();
           dispatch({ type: "select", id: next.id });
@@ -291,7 +302,7 @@ function Shell() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [state.bots, state.selectedId, state.activeView, dispatch]);
+  }, [state.bots, state.groups, state.selectedId, state.activeView, dispatch]);
 
   useEffect(() => {
     notificationBridge()?.setUnreadCount?.(unreadCount);
@@ -449,8 +460,7 @@ function Shell() {
       {state.signedOut && <SignedOutCard />}
       {/* UX 1.0.13 band slot: no internet on this device. Bots on the computer keep working; it says what waits. */}
       <OfflineBand connectivity={connectivity} desktop={desktop} />
-      {/* fixed-position popup, bottom-left — outside the layout flow */}
-      <UpdateBanner />
+      {/* The update pop-up is mounted in App, beside the terms gate. */}
       <UpdateStaleNotice />
       {/* The first run's phases, as a band ABOVE whatever is in the main view
           rather than on top of it or beside it. It owns its own visibility
@@ -474,6 +484,7 @@ function Shell() {
         />
       )}
       <Sidebar
+        onLayoutChange={onSidebarLayout}
         needs={needs}
         health={health}
         open={drawerOpen}
@@ -541,10 +552,10 @@ function Shell() {
           </div>
         </main>
       )}
-      {state.settingsOpen && bot && (
+      {state.settingsOpen && settingsBot && (
         <LazyBoundary onRetry={BotSettings.retry} onDismiss={() => dispatch({ type: "toggleSettings", open: false })}>
           <Suspense fallback={<LazyFallback />}>
-            {LoadedBotSettings ? <LoadedBotSettings key={bot.id} bot={bot} /> : <BotSettingsDialog key={bot.id} bot={bot} />}
+            {LoadedBotSettings ? <LoadedBotSettings key={settingsBot.id} bot={settingsBot} /> : <BotSettingsDialog key={settingsBot.id} bot={settingsBot} />}
           </Suspense>
         </LazyBoundary>
       )}
@@ -600,10 +611,13 @@ function Shell() {
       <CoachMarks firstRun={Boolean(setupOwnsView && setupView)} />
       </BotListDrawerProvider>
       </div>
-      {/* UX 1.0.13 phoneTabs slot (L7): below md only. */}
-      <div className="md:hidden">
-        <PhoneTabs active={doorForView(state.activeView) ?? "chats"} needsCount={needs.count} onSelect={openDoor} />
-      </div>
+      {/* UX 1.0.13 phoneTabs slot (L7): below md only, on the four door pages. An open chat is a screen pushed
+          over Chats (its header's bot-list button is the way back), so the composer keeps the bottom of the screen. */}
+      {phoneTab && (
+        <div className="md:hidden">
+          <PhoneTabs active={phoneTab} needsCount={needs.count} onSelect={openDoor} />
+        </div>
+      )}
     </div>
   );
 }
@@ -645,6 +659,9 @@ export default function App() {
         <TermsGate>
           <Shell />
         </TermsGate>
+        {/* The update pop-up (a top-layer popover, bottom-left). Beside the gate, not behind it: an update that downloads
+            while the terms screen is up still shows, and it sends nothing. It renders nothing without the updater bridge. */}
+        <UpdateBanner />
         {/* A CONFIRMED remote surface only. The desktop app is already an app;
             `undefined` renders nothing, the same neutral answer the welcome
             gate above takes. */}

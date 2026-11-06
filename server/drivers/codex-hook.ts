@@ -11,6 +11,7 @@
 // This module holds everything that does not need a running turn: the version policy, the files written into the scope, the
 // owner-hook strip of the config copy, the trust handshake, the socket, the delivery mapping, the apply_patch reader and the
 // Rule 67 tripwire table. codex.ts wires them to a turn.
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
@@ -256,6 +257,54 @@ export const HOOK_RUN_AS_NODE = "ELECTRON_RUN_AS_NODE";
  *  same in sh, bash, zsh and fish, and still right if a Codex build splits the line into argv instead of handing it to a shell. */
 export const hookLaunchLine = (execPath: string, scriptPath: string): string => `/usr/bin/env ${HOOK_RUN_AS_NODE}=1 "${execPath}" "${scriptPath}"`;
 
+/** The runtime every hook runs on: Murage's own program (process.execPath). Tests point it at a stand-in to model a slow first exec. */
+let hookRuntimeForTests: string | undefined;
+export const hookRuntime = (): string => hookRuntimeForTests ?? process.execPath;
+export function setHookRuntimeForTests(path?: string): void { hookRuntimeForTests = path; hookRunnerWarm.clear(); }
+
+/** HOOK-LIVENESS-COLD-START (1.0.15 r6 gate): on a freshly unpacked Mac app the FIRST exec of Murage Helper as node (the hook's
+ *  runtime) took longer than the 10 s SessionStart bound, so the first Codex turn was refused; Linux came within 0.6 s of it. The
+ *  cost is the operating system's one-time work on a program it has not run yet (the first-launch check of a new bundle, reading
+ *  the runtime off disk into the page cache), not the hook. So the driver runs the hook's runtime once, as the hook will
+ *  (ELECTRON_RUN_AS_NODE=1, an empty script), when a gated process starts, and waits for it before turn/start, where the bound starts.
+ *  The bound itself is unchanged: it still measures a warm hook, and a hook that does not start is refused as before. The warm-up
+ *  never proves anything (only the SessionStart post does); it runs once per runtime per Murage process, and a warm-up that fails,
+ *  or runs past HOOK_WARM_CAP_MS, only lets the turn go on to the bound. */
+export const HOOK_WARM_CAP_MS = 45_000;
+const hookRunnerWarm = new Map<string, Promise<void>>();
+export function warmHookRunner(runtime: string = hookRuntime(), capMs: number = HOOK_WARM_CAP_MS): Promise<void> {
+  let warm = hookRunnerWarm.get(runtime);
+  if (!warm) {
+    warm = new Promise<void>((resolveWarm) => {
+      const startedAt = Date.now();
+      let finished = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (how: string) => {
+        if (finished) return;
+        finished = true;
+        if (timer) clearTimeout(timer);
+        // one line per runtime: how long its first start took, and how it ended
+        console.info(`codex hook-runner warm ms=${Date.now() - startedAt} end=${how}`);
+        resolveWarm();
+      };
+      let child: ChildProcess;
+      // only what a program needs to start: none of the server's credentials or routing values reach it (GrokBuild r1)
+      const env: NodeJS.ProcessEnv = { [HOOK_RUN_AS_NODE]: "1" };
+      for (const name of ["PATH", "HOME", "TMPDIR", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP"]) if (process.env[name]) env[name] = process.env[name];
+      try {
+        child = spawn(runtime, ["-e", ""], { env, stdio: "ignore", windowsHide: true });
+      } catch { finish("error"); return; }
+      // past the cap the turn goes on; the child is stopped for good and never holds the server open (Astra r1 #2)
+      timer = setTimeout(() => { child.kill("SIGKILL"); child.unref(); finish("cap"); }, capMs);
+      timer.unref?.();
+      child.once("error", () => finish("error"));
+      child.once("exit", () => finish("exit"));
+    });
+    hookRunnerWarm.set(runtime, warm);
+  }
+  return warm;
+}
+
 /** The Windows launcher written beside the script: a batch file the inner cmd runs, which sets the variable and runs Murage's runtime
  *  on the script. A batch file, not `set X=1&& ...` in the variable: when the OUTER shell is cmd (`%COMSPEC% /C`, Codex's fallback
  *  with no PowerShell) it expands the variable before it parses operators, so an `&&` in the value would split the line in the outer
@@ -314,7 +363,7 @@ export function codexHooksJson(execPath: string, scriptPath: string): string {
 export interface HookFiles { hooksJson: string; script: string; envFile: string; launcher: string }
 
 /** Rule 68c: what a SessionStart proof was given under. A kept process's proof carries to the next turn only while this is unchanged. */
-export function hookConfigOf(scopedHome: string, execPath = process.execPath): string {
+export function hookConfigOf(scopedHome: string, execPath = hookRuntime()): string {
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   return createHash("sha256").update(codexHooksJson(execPath, script)).update("\0").update(hookWindowsLauncher()).update("\0").update(CODEX_HOOK_SCRIPT).digest("hex");
 }
@@ -324,7 +373,7 @@ export const hookEnvPathOf = (scopedHome: string, gateId: string, pid = process.
 
 /** Writes hooks.json and the script (unchanged content is not rewritten) and this process's env file (0600) at `envFile`, which only
  *  this process's hooks read (its environment names it). */
-export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = process.execPath): HookFiles {
+export function writeHookFiles(scopedHome: string, socketPath: string, token: string, envFile: string, execPath = hookRuntime()): HookFiles {
   mkdirSync(join(scopedHome, HOOK_ENV_DIR), { recursive: true });
   const script = join(scopedHome, HOOK_SCRIPT_FILE);
   const hooksJson = join(scopedHome, HOOKS_JSON_FILE);

@@ -14,12 +14,15 @@
 // window unsanitized.
 import { MessageExternalLink } from "./ThreadLinkMenu";
 import { EngineChatLink } from "./EngineChatLink";
+import { SettingsAddressLink } from "./SettingsAddressLink";
+import { parseSettingsAddress } from "@/lib/settings-address";
 import { memo, useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
-import Markdown, { defaultUrlTransform, type UrlTransform } from "react-markdown";
+import Markdown, { defaultUrlTransform, type Options, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, Download, WrapText } from "lucide-react";
 import { codeFileName, codeLanguageLabel, codeLineLabel, parseFenceInfo, saveCodeSnippet } from "@/lib/code-block";
-import { t } from "@/lib/i18n";
+import { localeVersion, t } from "@/lib/i18n";
+import { createMarkdownRenderCache } from "@/lib/markdown-render-cache";
 import { isRasterDataUrl, MarkdownImage } from "./ImageMedia";
 import { LocalMedia } from "./MediaPlayer";
 import { remarkWindowsPathDestinations } from "@/lib/markdown-windows-paths";
@@ -80,6 +83,8 @@ const urlTransform: UrlTransform = (url, key, node) => {
     if (isObsidianOpenHref(url)) return url;
     // The exact engine and plan chat links survive to the anchor below, which draws a button and never an href.
     if (parseEngineChatLink(url)) return url;
+    // A Settings address (lib/settings-address.ts) survives to the anchor below, which draws a button and never an href.
+    if (parseSettingsAddress(url)) return url;
   }
   return defaultUrlTransform(url);
 };
@@ -337,6 +342,9 @@ function SaveFileLink({ filePath, children }: { filePath: string; children?: Rea
   );
 }
 
+// A spoiler is "~~text~~" only: a lone "~" in a range such as "77~82" must not hide what follows it.
+const GFM_OPTIONS = { singleTilde: false };
+
 // Spoiler spans: GFM parses ~~text~~ to <del>; in bot messages that content
 // is usually a spoiler (answers, plot points, surprises), not a deletion —
 // hide it behind a tap-to-reveal chip instead of striking it through.
@@ -379,6 +387,13 @@ function Spoiler({ children }: { children?: ReactNode }) {
   );
 }
 
+const markdownCache = createMarkdownRenderCache();
+
+/** Test seam: drops every kept message rendering. */
+export function clearChatMarkdownCache(): void {
+  markdownCache.clear();
+}
+
 function ChatMarkdownComponent({ text: written, streaming = false, scope, questionCards }: {
   text: string;
   streaming?: boolean;
@@ -395,10 +410,9 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
   const { text, preparing } = useMemo(() => questionFenceDisplay(written, streaming, questionCards), [written, streaming, questionCards]);
   const { text: source, spans } = useMemo(() => extractMath(text), [text]);
   const rehypePlugins = useMemo(() => [rehypeChatMath(spans)], [spans]);
-  return (
-    <div className="chat-md min-w-0 [&>*+*]:mt-2">
+  const element = (
       <Markdown
-        remarkPlugins={[remarkGfm, remarkWindowsPathDestinations, remarkLoneListNumbers, remarkSoftBreaks]}
+        remarkPlugins={[[remarkGfm, GFM_OPTIONS], remarkWindowsPathDestinations, remarkLoneListNumbers, remarkSoftBreaks]}
         rehypePlugins={rehypePlugins}
         urlTransform={urlTransform}
         components={{
@@ -445,6 +459,8 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
           },
           a({ href, children }: { href?: string; children?: ReactNode }) {
             if (href && parseEngineChatLink(href)) return <EngineChatLink href={href}>{children}</EngineChatLink>;
+            const settingsAddress = parseSettingsAddress(href);
+            if (settingsAddress) return <SettingsAddressLink address={settingsAddress}>{children}</SettingsAddressLink>;
             const localPath = localFilePath(href);
             if (localPath) return <LocalFileLink filePath={localPath} scope={scope}>{children}</LocalFileLink>;
             // A path relative to the conversation's folder is a file link
@@ -519,7 +535,18 @@ function ChatMarkdownComponent({ text: written, streaming = false, scope, questi
       >
         {source}
       </Markdown>
-      {preparing && <p className="text-[13px] text-ink-secondary" role="status">{t("chat.preparingQuestion")}</p>}
+  );
+  // G27 (upstream #4171): a finished message drawn again reuses its first rendering. react-markdown's `Markdown` is a
+  // plain function of its options (no hooks; MarkdownHooks is the async one), so calling it gives the element tree
+  // React would get. The tree reads the text (math spans come from it), this bubble's conversation, its question cards,
+  // `streaming` and the language, so all of them are the key; a streaming message changes every chunk and is never kept.
+  const drawn = streaming
+    ? element
+    : markdownCache.render(text, `${scope?.botId ?? ""}\u0001${scope?.threadId ?? ""}\u0001${questionCards ?? ""}\u0001${localeVersion()}`, () => Markdown(element.props as Options));
+  return (
+    <div className="chat-md min-w-0 [&>*+*]:mt-2">
+      {drawn}
+      {preparing &&<p className="text-[13px] text-ink-secondary" role="status">{t("chat.preparingQuestion")}</p>}
     </div>
   );
 }
