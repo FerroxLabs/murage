@@ -86,7 +86,7 @@ export function UsageSection() {
         ) : (
           <div className="flex flex-col">
             <div className="mb-2 flex justify-end">
-              <ActionButton data-setting-control="usage-heading" action={exportCsv} className={button}>{t("settings.l6.usage.export")}</ActionButton>
+              <ActionButton action={exportCsv} className={button}>{t("settings.l6.usage.export")}</ActionButton>
             </div>
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-5 border-b border-hairline/40 pb-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">
               <span>{t("settings.l6.usage.colBot")}</span>
@@ -132,7 +132,6 @@ export function UsageSection() {
                 <button
                   type="button"
                   className="text-[13px] text-accent underline hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
-                  data-setting-control="usage-learning-heading"
                   onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "memory", anchor: LEARNING_LIMIT_ANCHOR })}
                 >
                   {t("settings.l6.usage.changeLimit")}

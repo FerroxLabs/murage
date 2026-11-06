@@ -4,7 +4,6 @@ import { t } from "@/lib/i18n";
 import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
 import { SEND_KEYS, chooseSendKey, currentSendKey, isMacPlatform, sendKeyName, subscribeSendKey } from "@/lib/send-key";
 import { waitForAnchor } from "@/lib/anchor-wait";
-import { landOnSetting, type LandingElement } from "@/lib/settings-landing";
 // App settings, as a real modal with sections rather than one long panel.
 // Per-bot settings (persona, model, computer) stay in SettingsPanel; this is
 // the stuff shared by every bot: who you are, your keys, and the machine your
@@ -91,7 +90,6 @@ import { APP_VERSION } from "@/lib/whats-new";
 import { sourceCodeLink, sourceVersionLabel } from "@/lib/source-code";
 import { openKeyboardShortcuts, openWhatsNew } from "@/lib/app-events";
 import { copyText } from "@/lib/copy-text";
-import { FONT_IDS, FONT_LABELS, applyFont, isFontId, readFont, type FontId } from "@/lib/fonts";
 
 export { sectionsForSurface, settingsSectionRedirect } from "@/lib/settings-sections";
 export { settingsSearchResults } from "@/lib/settings-search";
@@ -119,10 +117,16 @@ const PAGES: Page[] = SECTION_PAGES.map((entry) => ({ ...entry, icon: PAGE_ICONS
 // unresolved surface by section, the sidebar and the page switch read pages.
 const SECTIONS = SETTINGS_SECTIONS;
 
-/** Land on the card or row an opener named: any closed fold around it opens, it scrolls into view, its control (the
- *  switch, field or button itself, not the card around it) takes focus, and the row is marked for two seconds. */
+/** Scroll to an anchor, focus it, and mark it for two seconds. */
 function revealAnchor(element: HTMLElement) {
-  landOnSetting(element as unknown as LandingElement);
+  element.scrollIntoView({ block: "start" });
+  if (!element.hasAttribute("tabindex") && !/^(?:BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(element.tagName)) element.setAttribute("tabindex", "-1");
+  element.focus({ preventScroll: true });
+  // Settings focuses its own dialog as it mounts; take focus back once.
+  requestAnimationFrame(() => { if (document.activeElement !== element) element.focus({ preventScroll: true }); });
+  const mark = ["rounded-xl", "ring-2", "ring-accent", "transition-shadow"];
+  element.classList.add(...mark);
+  window.setTimeout(() => element.classList.remove(...mark), 2000);
 }
 
 /** Reopens the guided first run.
@@ -140,7 +144,6 @@ export function SetupAgainRow() {
       subtitle="Your chief of staff picks it up where you left it. Everything already done stays done."
     >
       <button
-        data-setting-control="setup-heading"
         type="button"
         onClick={() => {
           dispatch({ type: "toggleAppSettings", open: false });
@@ -194,7 +197,7 @@ function ProfileFields() {
     "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none";
   return (
     <div className="flex flex-col gap-3">
-      <input data-setting-control="profile-heading" aria-label="Your name" value={name} readOnly={desktop !== true} disabled={status === "saving"} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} onBlur={() => void save()} placeholder="Your name" className={inputClass} />
+      <input aria-label="Your name" value={name} readOnly={desktop !== true} disabled={status === "saving"} onChange={(e) => { setName(e.target.value); setStatus("idle"); }} onBlur={() => void save()} placeholder="Your name" className={inputClass} />
       <input
         type="email"
         value={email}
@@ -258,7 +261,6 @@ function UpdateActionButton({ state: s }: { state: UpdaterState | null }) {
         if (s?.status === "error") return void updater.retry();
         void updater.check();
       }}
-      data-setting-control="updates-heading"
       disabled={s?.status === "checking" || s?.status === "downloading" || s?.status === "installing"}
       className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
     >
@@ -297,7 +299,7 @@ function AnalyticsRow() {
     >
       <Switch
         checked={on}
-        data-setting-control="analytics-heading" aria-label="Send usage analytics"
+        aria-label="Send usage analytics"
         onClick={() => {
           const next = !on;
           setAnalyticsEnabled(next);
@@ -339,7 +341,7 @@ function LanguageRow() {
       <select
         value={current}
         disabled={saving}
-        data-setting-control="language-heading" aria-label="App language"
+        aria-label="App language"
         onChange={(event) => void save(event.target.value)}
         className="w-full max-w-[280px] rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13.5px] text-ink disabled:cursor-wait disabled:opacity-50"
       >
@@ -375,7 +377,7 @@ function NewBotEffortRow() {
     <Card title="New bots" subtitle="The effort a new bot starts with, when its engine offers that level. You can change it on any bot later.">
       <label className="flex items-center justify-between gap-4 text-[14px] text-ink">
         Effort for new bots
-        <select data-setting-control="new-bot-effort-heading" value={current} onChange={(event) => void change(event.target.value)} className="rounded-md bg-inset px-2 py-1.5 text-[13px] text-ink">
+        <select value={current} onChange={(event) => void change(event.target.value)} className="rounded-md bg-inset px-2 py-1.5 text-[13px] text-ink">
           <option value="">Engine default</option>
           {NEW_BOT_EFFORTS.map((level) => <option key={level} value={level}>{effortLabel(level)}</option>)}
         </select>
@@ -402,7 +404,7 @@ function ToolCallsRow() {
         </div>
         <Switch
           checked={enabled}
-          data-setting-control="tool-calls-heading" aria-label="Show tool calls in chat"
+          aria-label="Show tool calls in chat"
           disabled={saving}
           onClick={() => void toggle()}
           className="disabled:cursor-wait disabled:opacity-50"
@@ -456,7 +458,6 @@ export function WorkspaceFeatureRow({ feature }: { feature: "skillRecorder" | "b
         </div>
         <Switch
           checked={enabled}
-          data-setting-control={browser ? "browser-settings-heading" : "skill-recorder-heading"}
           aria-label={t(browser ? "settings.workspaceFeature.browser.aria" : "settings.workspaceFeature.recorder.aria")}
           // Until the saved switches load, the row cannot tell on from off, so it waits instead of saving a guess.
           disabled={saving || state.config == null || (browser && !enabled && !desktopBrowser)}
@@ -633,7 +634,7 @@ function SettingsHealthRow() {
   const { dispatch } = useStore();
   return <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-hairline/50 bg-panel p-4 text-[13px]">
     <div className="min-w-0"><h2 className="text-[15px] font-semibold text-ink">{t("ux.l2a.health.title")}</h2><p className="mt-1 text-ink-secondary">{t("ux.l2b.health.settingsLine")}</p></div>
-    <button type="button" data-setting-control="health-heading" className="min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" onClick={() => dispatch({ type: "showHealth" })}>{t("ux.l2b.health.openHealth")}</button>
+    <button type="button" className="min-h-10 rounded-lg border border-hairline/50 bg-control px-3 py-2 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus" onClick={() => dispatch({ type: "showHealth" })}>{t("ux.l2b.health.openHealth")}</button>
   </div>;
 }
 
@@ -667,7 +668,7 @@ function DiagnosticsRow() {
         <button
           onClick={() => void exportDiagnostics()}
           disabled={exporting}
-          data-setting-control="diagnostics-heading" aria-label="Export diagnostics to a text file"
+          aria-label="Export diagnostics to a text file"
           className="rounded-lg border border-hairline/40 px-3 py-1.5 text-[13px] text-ink hover:bg-control disabled:opacity-40"
         >
           {exporting ? "Exporting…" : "Export Diagnostics…"}
@@ -682,34 +683,6 @@ function DiagnosticsRow() {
         ) : null}
       </div>
     </Card>
-  );
-}
-
-/** The interface font, apart from the skin (B86): this machine only, like the skin. */
-function FontRow() {
-  const [current, setCurrent] = useState<FontId>(readFont);
-  return (
-    <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline pt-4">
-      <div className="min-w-0">
-        <div id="settings-interface-font" className="text-[14px] font-medium text-ink">Interface font</div>
-        <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">The lettering across the app on this computer.</div>
-      </div>
-      <select
-        value={current}
-        aria-labelledby="settings-interface-font"
-        onChange={(event) => {
-          const id = event.target.value;
-          if (!isFontId(id)) return;
-          applyFont(id);
-          setCurrent(id);
-        }}
-        className="min-h-8 w-full max-w-[200px] rounded-lg border border-hairline bg-inset px-2.5 py-1.5 text-[13px] text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
-      >
-        {FONT_IDS.map((id) => (
-          <option key={id} value={id}>{FONT_LABELS[id]}</option>
-        ))}
-      </select>
-    </div>
   );
 }
 
@@ -744,7 +717,6 @@ function SidebarDensityRow() {
                 chooseSidebarDensity(DENSITY_OPTIONS[at].id);
                 event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
               }}
-              data-setting-control={index === 0 ? "sidebar-density-heading" : undefined}
               onClick={() => chooseSidebarDensity(id)}
               className={cn(
                 "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
@@ -806,7 +778,7 @@ function AboutVersionCard() {
             {t("settings.about.whatsNewOpen")}
           </button>
         )}
-        <button type="button" data-setting-control="about-version-heading" onClick={copy} className={secondaryButton}>
+        <button type="button" onClick={copy} className={secondaryButton}>
           {copyFailed ? t("copy.failed") : copied ? t("settings.about.versionCopied") : t("settings.about.versionCopy")}
         </button>
       </div>
@@ -824,7 +796,6 @@ function WhatsNewRow() {
   return (
     <Card title={t("settings.about.whatsNewTitle")} subtitle={t("settings.about.whatsNewNote")}>
       <button
-        data-setting-control="whats-new-heading"
         type="button"
         onClick={() => {
           dispatch({ type: "toggleAppSettings", open: false });
@@ -882,7 +853,6 @@ function SendKeyRow() {
                 chooseSendKey(SEND_KEYS[at]);
                 event.currentTarget.parentElement?.querySelectorAll("button")[at]?.focus();
               }}
-              data-setting-control={index === 0 ? "send-key-heading" : undefined}
               onClick={() => chooseSendKey(id)}
               className={cn(
                 "flex h-9 items-center justify-center px-3 text-[13px] transition-colors",
@@ -906,7 +876,6 @@ function ShortcutsRow() {
   return (
     <Card title={t("settings.about.shortcutsTitle")} subtitle={t("settings.about.shortcutsNote")}>
       <button
-        data-setting-control="shortcuts-heading"
         type="button"
         onClick={() => {
           dispatch({ type: "toggleAppSettings", open: false });
@@ -943,7 +912,7 @@ function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advance
             </div>
           ) : null}
           <div className="flex flex-wrap gap-2">
-            <button type="button" data-setting-control="connections-heading" onClick={() => openPanel("apps")} className={secondaryButton}>{t("settings.connections.openApps")}</button>
+            <button type="button" onClick={() => openPanel("apps")} className={secondaryButton}>{t("settings.connections.openApps")}</button>
           </div>
         </div>
       </Card>
@@ -967,7 +936,7 @@ function ConnectedAppsSettings({ advancedOpen, onAdvancedOpenChange }: { advance
         <div id="mcp-servers-heading" tabIndex={-1} className="outline-none">
           {cloudCardHidden("mcp-servers-heading") ? <ComputerOnlyStub anchor="mcp-servers-heading" /> : (
             <Card title={t("settings.l1.mcp.title")} subtitle={t("settings.l1.mcp.note")}>
-              <button type="button" data-setting-control="mcp-servers-heading" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
+              <button type="button" onClick={() => openPanel("mcp")} className={secondaryButton}>{t("settings.connections.openMcp")}</button>
             </Card>
           )}
         </div>
@@ -1302,7 +1271,6 @@ const anchorWaitRef = useRef<{ anchor: string; at: number } | null>(null);
                 <Anchor id="appearance-heading">
                   <Card title={t("settings.appearance.title")} subtitle={t("settings.appearance.note")}>
                     <SkinPicker />
-                    <FontRow />
                   </Card>
                 </Anchor>
                 {desktop === true && <Anchor id="language-heading"><LanguageRow /></Anchor>}

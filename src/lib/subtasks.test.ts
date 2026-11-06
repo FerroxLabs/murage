@@ -94,7 +94,7 @@ describe("fold into the Worked for summary", () => {
   it("joins the existing fold of that turn", () => {
     const messages = [
       msg("u", 1_000, { role: "user" }),
-      msg("n1", 3_000, { turnId: "T", kind: "activity", tool: { name: "Read", ok: true } }),
+      msg("n1", 3_000, { turnId: "T" }),
       msg("final", 90_000, { turnId: "T", turnTerminal: true }),
     ];
     const items = groupTranscript(messages, runs);
@@ -134,7 +134,7 @@ describe("fold into the Worked for summary", () => {
 describe("after a reload (stored with the closing message)", () => {
   const stored = [{ label: "Read logs", status: "done" as const, durationMs: 58_000, toolCount: 5 }, { label: "Check", status: "failed" as const, durationMs: 4_000, toolCount: 0 }];
   it("joins the turn's fold with no live state at all", () => {
-    const messages = [msg("u", 1_000, { role: "user" }), msg("n1", 3_000, { turnId: "T", kind: "activity", tool: { name: "Read", ok: true } }), msg("final", 90_000, { turnId: "T", turnTerminal: true, turnHelpers: stored })];
+    const messages = [msg("u", 1_000, { role: "user" }), msg("n1", 3_000, { turnId: "T" }), msg("final", 90_000, { turnId: "T", turnTerminal: true, turnHelpers: stored })];
     const fold = groupTranscript(messages).find((i) => i.kind === "turn");
     expect(fold && fold.kind === "turn" && fold.helpers?.map((h) => h.label)).toEqual(["Read logs", "Check"]);
     const out = html(createElement(HelperRows, { helpers: fold && fold.kind === "turn" ? fold.helpers! : [] }));

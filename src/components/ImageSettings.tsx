@@ -198,7 +198,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.intro")}</p>
     <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
       <span id="image-settings-allow">{t("imageSettings.allow")}</span>
-      <Switch data-setting-control="image-settings-heading" aria-labelledby="image-settings-allow" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
+      <Switch aria-labelledby="image-settings-allow" checked={snapshot?.enabled ?? false} disabled={!snapshot || Boolean(busy) || (!snapshot.enabled && !usable)}
         onClick={() => snapshot && onChange({ enabled: !snapshot.enabled })} className={focus} />
     </div>
     {snapshot?.connections.length === 0 ? <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.noConnections")}</p> : <>
@@ -229,7 +229,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       </div> : <button type="button" disabled={probing || Boolean(busy)} onClick={() => setConfirming(true)} className={`mt-2 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{probing ? t("imageSettings.check.running") : t("imageSettings.check.now")}</button>)}
       {snapshot && onProbe && <InAdvanced><div id="image-daily-check-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none"><div className="flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
         <span id="image-settings-daily">{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
-        <Switch data-setting-control="image-daily-check-heading" aria-labelledby="image-settings-daily" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onClick={() => onChange({ dailyProbe: snapshot.dailyProbe !== true })} className={focus} />
+        <Switch aria-labelledby="image-settings-daily" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onClick={() => onChange({ dailyProbe: snapshot.dailyProbe !== true })} className={focus} />
       </div></div></InAdvanced>}
       {catalog && !usable && <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.chooseAvailable")}</p>}
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}

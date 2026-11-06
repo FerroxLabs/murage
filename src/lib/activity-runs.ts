@@ -93,13 +93,10 @@ function turnStartedAt(messages: readonly Message[], closingIndex: number, turnI
   return messages[first].at;
 }
 
-/** Once a turn has its answer, its finished tool steps go behind one reversible
- * "Worked for 29s" row at the first of them (E34, upstream f807c761a). What the
- * bot SAID on the way (its progress lines, a widget, a file it handed over)
- * stays where it was: the owner just read those lines, and folding them made
- * them vanish. A step still running, a failed one or a quiet note is never
- * foldable, so it stays too. */
-function toolStepFolds(messages: Message[]): {
+/** Settled providers may emit several ordinary assistant messages around
+ * tool calls. Keep the terminal answer in the transcript and replace the
+ * earlier narration with one reversible row, matching T3 Code's turn fold. */
+function assistantTurnFolds(messages: Message[]): {
   byAnchorId: Map<string, TurnFold>;
   hiddenIds: Set<string>;
 } {
@@ -114,13 +111,32 @@ function toolStepFolds(messages: Message[]): {
       !terminal.turnId ||
       !terminal.turnTerminal
     ) return;
-    const turnId = terminal.turnId;
-    const steps = messages.slice(0, terminalIndex).filter((message) => message.turnId === turnId && foldable(message));
-    if (!steps.length) return;
 
-    const elapsed = Math.max(0, terminal.at - turnStartedAt(messages, terminalIndex, turnId));
-    byAnchorId.set(steps[0].id, { kind: "turn", id: `turn:${turnId}`, turnId, label: workedLabel(elapsed), messages: steps });
-    for (const message of steps) hiddenIds.add(message.id);
+    const narration = messages.slice(0, terminalIndex).filter((message) =>
+      message.role === "bot" &&
+      message.kind === "text" &&
+      // a widget (QW Q4) is a card the owner answers, never narration folded away
+      !message.widget &&
+      // a row carrying a file (a voice note, a saved file, an output card) is
+      // something the bot handed over, never narration folded away
+      !message.artifactIds?.length &&
+      message.turnId === terminal.turnId &&
+      !message.turnTerminal
+    );
+    if (!narration.length) return;
+
+    const anchor = narration[0];
+    const elapsed = Math.max(0, terminal.at - turnStartedAt(messages, terminalIndex, terminal.turnId));
+    const label = workedLabel(elapsed);
+    const fold: TurnFold = {
+      kind: "turn",
+      id: `turn:${terminal.turnId}`,
+      turnId: terminal.turnId,
+      label,
+      messages: narration,
+    };
+    byAnchorId.set(anchor.id, fold);
+    for (const message of narration) hiddenIds.add(message.id);
   });
 
   return { byAnchorId, hiddenIds };
@@ -129,7 +145,7 @@ function toolStepFolds(messages: Message[]): {
 function group(messages: Message[], foldAssistantTurns: boolean): TranscriptItem[] {
   const items: TranscriptItem[] = [];
   const folds = foldAssistantTurns
-    ? toolStepFolds(messages)
+    ? assistantTurnFolds(messages)
     : { byAnchorId: new Map<string, TurnFold>(), hiddenIds: new Set<string>() };
   let run: Message[] = [];
   const flush = () => {

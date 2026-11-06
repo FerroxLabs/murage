@@ -108,18 +108,6 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
     "controls": []
   },
   {
-    "key": "health",
-    "pattern": "health",
-    "title": "ux.l4a.screen.health.title",
-    "intro": "ux.l4a.screen.health.intro",
-    "tips": [
-      "ux.l4a.screen.health.tip1",
-      "ux.l4a.screen.health.tip2"
-    ],
-    "why": "ux.l4a.screen.health.why",
-    "controls": []
-  },
-  {
     "key": "routines",
     "pattern": "routines",
     "title": "ux.l4a.screen.routines.title",

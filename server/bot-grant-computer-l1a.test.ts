@@ -219,27 +219,8 @@ describe("section 4: both respond routes check the task row before any branch ca
     "m = path.match(/^\\/api\\/threads\\/([\\w-]+)\\/respond$/);",
   ];
   const ANSWERING = ["answerLimitCard(", "isEmailRequestId(", "resolveAndSendRoutine(", "answerAsSendReply(", "questionReply(", "resolvePeerComms(", "answerRequest("];
-  /** The threads route hands its body to respondToCard (APPROVE-ALL design 6.1, shared with Approve all apply): read that function. */
-  const answerer = (marker: string): string => {
-    const text = route(marker);
-    if (!text.includes("respondToCard(")) return text;
-    expect(text.replace(/\s+/g, " ")).toContain("return await respondToCard({ req, url, res }, threadId, await readBody(req));");
-    // the route itself answers nothing before (or instead of) the hand-off
-    for (const branch of [...ANSWERING, "taskGrantRefusal(", "json(res"]) expect(text, branch).not.toContain(branch);
-    const at = source.indexOf("\nasync function respondToCard(");
-    expect(at).toBeGreaterThan(-1);
-    const end = source.indexOf("\n}\n", at);
-    const body = source.slice(at, end > at ? end : at + 20000);
-    // The bulk probes are predicates the Approve all fences ask (isEmailRequestId and the like); none of them answers a card.
-    const probes = body.indexOf("const special: BulkSpecialProbes = {");
-    expect(probes).toBeGreaterThan(-1);
-    const probesEnd = body.indexOf("\n  };", probes);
-    expect(probesEnd).toBeGreaterThan(probes);
-    expect(body.slice(probes, probesEnd)).not.toMatch(/answer|resolve|sendReply|questionReply/i);
-    return body.slice(0, probes) + body.slice(probesEnd);
-  };
   it.each(ROUTES)("%s", (marker) => {
-    const text = answerer(marker);
+    const text = route(marker);
     const check = text.indexOf("taskGrantRefusal(");
     expect(check).toBeGreaterThan(-1);
     expect(text.indexOf("taskGrantRefusal(", check + 1)).toBe(-1); // the later duplicate is gone

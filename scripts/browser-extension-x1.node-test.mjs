@@ -554,3 +554,25 @@ test('C2: the app can answer a hand-over with its own Continue, and nothing else
   const b = (await f.status()).bindings[0];
   assert.equal(b.state, 'active'); assert.equal(b.generation, before + 1);
 });
+
+// ---- EXT-RESTART-AND-ALLOW r6, runtime R1 -----------------------------------------------------------------------------------------
+test('R1: the resumed event carries resumedAt, the generation ownerResume made, even when an unshare lands before the emit', async () => {
+  const f = fixture(); await f.init(); await f.navigate();
+  await f.runtime.handlePanel({ action: 'pause', bindingId: 'bot_a' });
+  const g = (await f.status()).bindings[0].generation;
+  // Hold the first badge write (inside ownerResume's indicator await); later writes answer at once.
+  let release; let armed = true; const setBadgeText = f.api.action.setBadgeText;
+  f.api.action.setBadgeText = value => { if (armed) { armed = false; return new Promise(r => { release = () => r(setBadgeText(value)); }); } return setBadgeText(value); };
+  const events = f.events.length;
+  const resuming = f.runtime.handlePanel({ action: 'resume', bindingId: 'bot_a' });
+  for (let i = 0; i < 50 && !release; i++) await settle();
+  assert.ok(release, 'ownerResume reached its indicator await');
+  await f.runtime.handlePanel({ action: 'unshare', bindingId: 'bot_a', tabId: 1 });
+  release();
+  const returned = await resuming;
+  const resumed = f.events.slice(events).find(e => e.event === 'resumed');
+  assert.ok(resumed, 'a resumed event was sent');
+  assert.equal(resumed.generation, g + 2, 'the event is stamped at emit, after the unshare');
+  assert.equal(resumed.data.resumedAt, g + 1, 'resumedAt is the generation the Resume made');
+  assert.equal(returned.resumedAt, undefined, 'the returned summary is unchanged');
+});

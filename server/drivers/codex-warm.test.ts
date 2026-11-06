@@ -104,12 +104,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     try { seen = JSON.parse(readFileSync(dump, "utf8")); } catch {}
     return { seen, pid: seen?.pid as number | undefined, cred: seen?.credFile as { path: string; content: Record<string, Record<string, string>> | null } | undefined, completed };
   };
-  // These tests prove the reuse KEY (same inputs, or only a rotated token, keep the process). The settle probe
-  // fails closed by design (an unreadable process table recycles, see process-tree.ts), and on Windows the
-  // native table read is not guaranteed in full under CI load, which recycled the process for a reason that is not
-  // the key (CODEX-WARM-WIN-CRED). Pin the probe to "nothing new under the engine" so only the key decides;
-  // the probe's own fail-closed behaviour has its own tests below (probe.override per test).
-  const pinQuietProbe = () => { probe.override = async () => new Set<number>(); };
   const exited = (pid: number) => { try { process.kill(pid, 0); return false; } catch { return true; } };
   const eventually = async (check: () => boolean, ms = 5_000) => {
     const end = Date.now() + ms;
@@ -148,7 +142,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
   });
 
   it("a second turn on the same thread reuses the app-server: one spawn, one thread/start, two turn/starts", async () => {
-    pinQuietProbe();
     await create();
     const first = await run("t-hot", "one", base);
     const second = await run("t-hot", "two", { ...base, integrations: agents("tok-2") });
@@ -271,7 +264,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       await eventually(() => exited(one.pid!));
     });
     it("recycles an engine the bridge handed only the stand-in list (it lists once), same thread; the fresh mount is then kept (reason=connector-mount-incomplete)", async () => {
-      pinQuietProbe();
       await create();
       const dir = mkdtempSync(join(tmpdir(), "murage-mount-"));
       const cacheEnv = { MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}) };
@@ -303,7 +295,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
       }
     });
     it("keeps the warm process when only the turn's token rotates under the same revision", async () => {
-      pinQuietProbe();
       await create();
       const one = await run("t-scope2", "one", { ...base, ...withScope("rev-1", "tok-1") });
       const two = await run("t-scope2", "two", { ...base, ...withScope("rev-1", "tok-2") });

@@ -31,9 +31,6 @@ export interface Voice {
   /** Whose voice it is, where one list mixes them (Flux: OpenAI, Grok and
    *  ElevenLabs). */
   provider?: "openai" | "grok" | "elevenlabs";
-  /** A Voice Library voice not yet in the owner's own ElevenLabs account:
-   *  whose it is. Picking it adds it to the account first (addSharedVoice). */
-  publicOwnerId?: string;
 }
 
 /** How long the service took, for the voice diagnostics: the harness's own
@@ -118,19 +115,14 @@ export async function verifyKey(key: string): Promise<VerifyResult> {
   }
 }
 
-async function getJson(key: string, url: string, what: string): Promise<any> {
-  const res = await fetch(url, {
+export async function listVoices(key: string): Promise<Voice[]> {
+  const res = await fetch(`${API}/voices`, {
     headers: { "xi-api-key": key },
     redirect: "error",
     signal: AbortSignal.timeout(20_000),
   });
   const body = await safeJson(res);
-  if (!res.ok) throw new Error(message(res.status, what, body));
-  return body;
-}
-
-async function accountVoices(key: string): Promise<Voice[]> {
-  const body = await getJson(key, `${API}/voices`, "listing voices");
+  if (!res.ok) throw new Error(message(res.status, "listing voices", body));
   return (body?.voices ?? [])
     .map((v: any): Voice => ({
       id: String(v.voice_id ?? ""),
@@ -138,72 +130,6 @@ async function accountVoices(key: string): Promise<Voice[]> {
       description: [v.labels?.accent, v.labels?.description].filter(Boolean).join(" · ") || undefined,
     }))
     .filter((v: Voice) => v.id);
-}
-
-/** The public Voice Library. A voice the owner already added comes back as
- *  their own (no publicOwnerId); one without an owner id cannot be added and
- *  is left out. */
-async function libraryVoices(key: string, query: string): Promise<Voice[]> {
-  const body = await getJson(key, `${API}/shared-voices?page_size=100&${query}`, "searching the Voice Library");
-  return (body?.voices ?? [])
-    .map((v: any): Voice => ({
-      id: String(v.voice_id ?? ""),
-      label: String(v.name ?? "Voice"),
-      description: [v.accent, v.description].filter(Boolean).join(" · ") || undefined,
-      ...(v.is_added_by_user ? {} : { publicOwnerId: String(v.public_owner_id ?? "") }),
-    }))
-    .filter((v: Voice) => /^[A-Za-z0-9]{1,128}$/.test(v.id) && (v.publicOwnerId === undefined || /^[A-Za-z0-9]{1,128}$/.test(v.publicOwnerId)));
-}
-
-/** What the owner pasted into the search: a Voice Library share link
- *  (`.../share/<owner>/<voice>`), a link with `voiceId=`, or a bare voice id. */
-export function pastedVoice(input: string): { id: string; owner?: string } | undefined {
-  const text = input.trim();
-  const share = /\/share\/([A-Za-z0-9]{1,128})\/([A-Za-z0-9]{1,128})(?=$|[/?#])/.exec(text);
-  if (share) return { owner: share[1], id: share[2] };
-  const param = /[?&]voiceId=([A-Za-z0-9]{1,128})(?=$|[&#])/.exec(text);
-  if (param) return { id: param[1] };
-  return /^[A-Za-z0-9]{20}$/.test(text) ? { id: text } : undefined;
-}
-
-const firstOfEachId = (voices: Voice[]) => voices.filter((voice, index) => voices.findIndex((v) => v.id === voice.id) === index);
-
-/** The owner's own voices; with a search, their matching voices first, then
- *  the Voice Library's. A pasted link or id finds that one voice. */
-export async function listVoices(key: string, { query }: { query?: string } = {}): Promise<Voice[]> {
-  const account = await accountVoices(key);
-  const trimmed = query?.trim().slice(0, 200) ?? "";
-  if (!trimmed) return account;
-  const pasted = pastedVoice(trimmed);
-  if (pasted) {
-    const mine = account.find((voice) => voice.id === pasted.id);
-    if (mine) return [mine];
-    if (pasted.owner) {
-      const owned = await libraryVoices(key, `owner_id=${encodeURIComponent(pasted.owner)}`);
-      const match = owned.find((voice) => voice.id === pasted.id);
-      if (match) return [match];
-    }
-  }
-  // the account's own voices match every word in their name, description or id, as the picker did
-  const words = trimmed.toLowerCase().split(/\s+/).filter(Boolean);
-  const mineMatching = account.filter((voice) => words.every((word) => `${voice.label} ${voice.description ?? ""} ${voice.id}`.toLowerCase().includes(word)));
-  const library = await libraryVoices(key, `search=${encodeURIComponent(pasted?.id ?? trimmed)}`);
-  return firstOfEachId([...mineMatching, ...library]);
-}
-
-/** Add a Voice Library voice to the owner's own account (it takes one of
- *  their voice slots) and return the id to speak with. */
-export async function addSharedVoice(key: string, publicOwnerId: string, voiceId: string, name: string): Promise<string> {
-  const res = await fetch(`${API}/voices/add/${encodeURIComponent(publicOwnerId)}/${encodeURIComponent(voiceId)}`, {
-    method: "POST",
-    headers: { "xi-api-key": key, "content-type": "application/json" },
-    body: JSON.stringify({ new_name: name }),
-    redirect: "error",
-    signal: AbortSignal.timeout(20_000),
-  });
-  const body = await safeJson(res);
-  if (!res.ok) throw new Error(message(res.status, "adding that voice", body));
-  return typeof body?.voice_id === "string" && /^[A-Za-z0-9]{1,128}$/.test(body.voice_id) ? body.voice_id : voiceId;
 }
 
 export async function synthesize(text: string, voiceId: string, key: string): Promise<Audio> {

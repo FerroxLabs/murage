@@ -25,12 +25,12 @@ interface SectionStatus {
 type Work = () => Promise<void> | void;
 
 /** A switch that reacts on the press, says when it is slow, and ends with a line saying what happened (or why it did not). */
-function ActionSwitch({ id, label, hint, checked, disabled = false, run, success, failure, settingControl }: { settingControl?: string; id: string; label: string; hint?: string; checked: boolean; disabled?: boolean; run: Work; success: string; failure?: string }) {
+function ActionSwitch({ id, label, hint, checked, disabled = false, run, success, failure }: { id: string; label: string; hint?: string; checked: boolean; disabled?: boolean; run: Work; success: string; failure?: string }) {
   const action = useAction(async () => { await run(); }, { pending: t("memoryPage.saving"), success, failure: failure ?? t("memoryPage.saveFailed"), slowHint: t("memoryPage.stillSaving") });
   return <div className="min-w-0">
     <div className="flex min-h-11 items-center justify-between gap-4">
       <div className="min-w-0"><span id={id}>{label}</span>{hint && <p className="text-[12px] text-ink-secondary">{hint}</p>}</div>
-      <Switch data-setting-control={settingControl} aria-labelledby={id} checked={checked} disabled={disabled || action.pending} aria-busy={action.pending} onClick={() => void action.run()} />
+      <Switch aria-labelledby={id} checked={checked} disabled={disabled || action.pending} aria-busy={action.pending} onClick={() => void action.run()} />
     </div>
     <ActionStatus action={action} />
   </div>;
@@ -43,7 +43,7 @@ function ActionBtn({ label, pending = t("memoryPage.working"), run, success, fai
 function ConnectionSelect({ value, options, run }: { value: string; options: ReactNode; run: (next: string) => Promise<void> | void }) {
   const action = useAction(async (next: string) => { await run(next); }, { pending: t("memoryPage.saving"), success: t("memoryPage.connection.saved"), failure: t("memoryPage.saveFailed"), slowHint: t("memoryPage.stillSaving") });
   return <div className="space-y-1">
-    <label className="block space-y-1">{t("memoryPage.connection.label")}<select data-setting-control="memory-connection-heading" className={`${memoryInputClass} min-h-11`} disabled={action.pending} aria-busy={action.pending} value={value} onChange={event => void action.run(event.target.value)}>{options}</select></label>
+    <label className="block space-y-1">{t("memoryPage.connection.label")}<select className={`${memoryInputClass} min-h-11`} disabled={action.pending} aria-busy={action.pending} value={value} onChange={event => void action.run(event.target.value)}>{options}</select></label>
     <ActionStatus action={action} />
   </div>;
 }
@@ -122,7 +122,7 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 id="memory-status-heading" className="text-[15px] font-medium">{t("memoryPage.title")}</h2><ActionBtn label={t("memoryPage.refresh")} pending={t("memoryPage.refreshing")} blocked={busy || historyBusy} success={t("memoryPage.upToDate")} failure={t("memoryPage.refreshFailed")} run={onRefresh} /></div>
       <p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.subtitle")}</p>
       <div className="mt-3 text-[13px]">
-        <ActionSwitch settingControl="memory-heading" id="memory-on-label" label={t("memoryPage.on.label")} hint={status.mode === "capture" ? t("memoryPage.on.captureHint") : undefined} checked={status.mode === "active"} disabled={busy}
+        <ActionSwitch id="memory-on-label" label={t("memoryPage.on.label")} hint={status.mode === "capture" ? t("memoryPage.on.captureHint") : undefined} checked={status.mode === "active"} disabled={busy}
           run={setMode(status.mode === "active" ? "paused" : "active")} success={status.mode === "active" ? t("memoryPage.on.pausedDone") : t("memoryPage.on.onDone")} />
         {!learning || !settings ? <p role="status" className="mt-3 text-[13px] text-ink-secondary">{t("memoryPage.learningUnavailable")}</p> : <div className="mt-3 space-y-2">
           <p role="status">{memoryStatusLine({ mode: status.mode, learning, memories, memoriesMore: status.recordsMore?.active, waiting, semantic: status.semantic })}</p>
@@ -134,7 +134,7 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
       </div>
     </Card></section>
     {learning && settings && composite && <section aria-label={t("memoryPage.learn.title")}><Card><h2 id="memory-how-heading" className="text-[15px] font-medium">{t("memoryPage.learn.title")}</h2><div className="mt-3 space-y-1 text-[13px]">
-      <ActionSwitch settingControl="memory-how-heading" id="memory-learn-label" label={t("memoryPage.learn.asWeTalk")} hint={composite.partial ? t("memoryPage.learn.partly", { what: composite.partial }) : t("memoryPage.learn.asWeTalkHint")} checked={composite.on} disabled={busy}
+      <ActionSwitch id="memory-learn-label" label={t("memoryPage.learn.asWeTalk")} hint={composite.partial ? t("memoryPage.learn.partly", { what: composite.partial }) : t("memoryPage.learn.asWeTalkHint")} checked={composite.on} disabled={busy}
         run={configure(learnAsWeTalkPatch(settings))} success={composite.on ? t("memoryPage.learn.asWeTalkOff") : t("memoryPage.learn.asWeTalkOn")} />
       <ActionSwitch id="memory-review-label" label={t("memoryPage.learn.review")} hint={t("memoryPage.learn.reviewHint")} checked={settings.reviewMode} disabled={busy}
         run={configure({ reviewMode: !settings.reviewMode })} success={settings.reviewMode ? t("memoryPage.learn.reviewOff") : t("memoryPage.learn.reviewOn")} />
@@ -143,12 +143,12 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
       <ActionSwitch id="memory-channels-label" label={t("memoryPage.learn.channels")} checked={settings.learnFrom.channels} disabled={busy}
         run={configure({ learnFrom: { ...settings.learnFrom, channels: !settings.learnFrom.channels } })} success={settings.learnFrom.channels ? t("memoryPage.learn.channelsOff") : t("memoryPage.learn.channelsOn")} />
     </div></Card></section>}
-    <section aria-label={t("memoryPage.bots.title")}><Card><h2 id="memory-bots-heading" className="text-[15px] font-medium">{t("memoryPage.bots.title")}</h2><p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.bots.subtitle")}</p><ul className="mt-3 divide-y divide-hairline/40">{bots.map((bot, index) => <li key={bot.id} className="min-h-16 py-2 text-[13px]">
-      <ActionSwitch settingControl={index === 0 ? "memory-bots-heading" : undefined} id={`memory-bot-${bot.id}`} label={bot.name} hint={t("memoryPage.bots.hint")} checked={Boolean(settings && !settings.botsPaused.includes(bot.id))} disabled={busy || !learning}
+    <section aria-label={t("memoryPage.bots.title")}><Card><h2 id="memory-bots-heading" className="text-[15px] font-medium">{t("memoryPage.bots.title")}</h2><p className="mt-1 text-[13px] text-ink-secondary">{t("memoryPage.bots.subtitle")}</p><ul className="mt-3 divide-y divide-hairline/40">{bots.map(bot => <li key={bot.id} className="min-h-16 py-2 text-[13px]">
+      <ActionSwitch id={`memory-bot-${bot.id}`} label={bot.name} hint={t("memoryPage.bots.hint")} checked={Boolean(settings && !settings.botsPaused.includes(bot.id))} disabled={busy || !learning}
         run={() => onAction({ action: "learning-bot", botId: bot.id, enabled: settings!.botsPaused.includes(bot.id), learningRevision: learning!.revision })} success={settings?.botsPaused.includes(bot.id) ? t("memoryPage.bots.learningAgain", { name: bot.name }) : t("memoryPage.bots.paused", { name: bot.name })} />
     </li>)}</ul>{!bots.length && <p className="mt-3 text-[13px] text-ink-secondary">{t("memoryPage.bots.empty")}</p>}</Card></section>
     <section aria-label={t("memoryPage.history.title")}><Card><h2 id="memory-learned-heading" className="text-[15px] font-medium">{t("memoryPage.history.title")}</h2><div className="mt-3 space-y-3">
-      <label className="block space-y-1 text-[13px]">{t("memoryPage.history.filter")}<select data-setting-control="memory-learned-heading" className={`${memoryInputClass} min-h-11`} value={filter} disabled={busy} onChange={event => onFilter(event.target.value)}><option value="">{t("memoryPage.history.allBots")}</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
+      <label className="block space-y-1 text-[13px]">{t("memoryPage.history.filter")}<select className={`${memoryInputClass} min-h-11`} value={filter} disabled={busy} onChange={event => onFilter(event.target.value)}><option value="">{t("memoryPage.history.allBots")}</option>{bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name}</option>)}</select></label>
       {historyBusy && <p role="status" className="text-[13px] text-ink-secondary">{t("memoryPage.history.loading")}</p>}
       <ul aria-label={t("memoryPage.history.listLabel")} className="space-y-3">{events.map(event => <EventRow key={event.id} event={event} busy={busy} refusal={refusals[event.id]} retried={retried?.has(event.id)} onRetried={() => onRetried?.(event.id)} onAction={onAction} onOpen={onOpen} />)}</ul>
       {!historyBusy && !events.length && <p className="text-[13px] text-ink-secondary">{t("memoryPage.history.empty")}</p>}
@@ -158,7 +158,7 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
       <section aria-label={t("memoryPage.mode.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
         <h3 id="memory-mode-heading" className="text-[14px] font-medium">{t("memoryPage.mode.title")}</h3>
         <div role="group" aria-label={t("memoryPage.mode.title")} className="mt-2 flex flex-wrap items-start gap-2">
-          {([["active", t("memoryPage.mode.on")], ["capture", t("memoryPage.mode.capture")], ["paused", t("memoryPage.mode.paused")]] as const).map(([mode, label], index) => <ActionBtn key={mode} data-setting-control={index === 0 ? "memory-mode-heading" : undefined} label={label} aria-pressed={status.mode === mode} blocked={busy || status.mode === mode} className={`${buttonClass} ${status.mode === mode ? "border-focus bg-inset" : ""}`} success={t("memoryPage.mode.set", { label })} run={setMode(mode)} />)}
+          {([["active", t("memoryPage.mode.on")], ["capture", t("memoryPage.mode.capture")], ["paused", t("memoryPage.mode.paused")]] as const).map(([mode, label]) => <ActionBtn key={mode} label={label} aria-pressed={status.mode === mode} blocked={busy || status.mode === mode} className={`${buttonClass} ${status.mode === mode ? "border-focus bg-inset" : ""}`} success={t("memoryPage.mode.set", { label })} run={setMode(mode)} />)}
           {status.mode === "off" && <span className="inline-flex min-h-11 items-center px-2 text-ink-secondary">{t("memoryPage.mode.offNow")}</span>}
         </div>
         <p className="mt-2 text-[12px] text-ink-secondary">{modeSentence(status.mode)}</p>
@@ -195,7 +195,7 @@ function LimitCard({ ceiling, busy, onSave }: { ceiling: NonNullable<MemoryLearn
       <progress aria-label={t("memoryPage.limit.thisMonth", { name })} className="h-2 w-full accent-accent" max={100} value={percentOf(used, limit)} />
     </div>)}</div>
     <p className="mt-2 text-[12px] text-ink-secondary">{t("memoryPage.limit.reset")}</p>
-    {!editing ? <button type="button" data-setting-control="memory-limit-heading" className={`${buttonClass} mt-2`} disabled={busy} onClick={() => setEditing(true)}>{t("memoryPage.limit.change")}</button>
+    {!editing ? <button type="button" className={`${buttonClass} mt-2`} disabled={busy} onClick={() => setEditing(true)}>{t("memoryPage.limit.change")}</button>
       : <CeilingEditor ceiling={ceiling} onCancel={() => setEditing(false)} onSave={async next => { await onSave(next); setEditing(false); }} />}
   </section>;
 }

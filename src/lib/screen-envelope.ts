@@ -217,8 +217,8 @@ export interface HelpScreen {
   botId?: string;
   section?: string;
   gates: { id: string; reasonKey: string }[];
-  /** The index key a feedback report names when it differs from the help page shown (Health shows its own page but
-   *  is reported as the help page until the feedback service knows its name). */
+  /** The index key a feedback report names when it differs from the help page shown (Today and Needs you show the
+   *  general help page but have their own names in the feedback tables). */
   feedbackKey?: string;
 }
 
@@ -251,11 +251,11 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
     case "team-map": return make("map", "map");
     case "routines": return make("routines", "routines");
     case "skill-recorder": return make("skill-recorder", "skill-recorder");
-    // The shell's own screens have their own help pages, never the chat behind them. A feedback report names Health
-    // as the help page until the feedback service's tables carry Health (shared/feedback-fixed.json, Worker first).
-    case "today": return make("today", "today");
-    case "needs-you": return make("needs-you", "needs-you");
-    case "health": return make("health", "health", { feedbackKey: "help" });
+    // The general help page, never the chat behind them. A feedback report still names Today and Needs you, which have
+    // their own names in the feedback tables; Health has none yet and is named as the help page.
+    case "today": return make("help", "help", { feedbackKey: "today" });
+    case "needs-you": return make("help", "help", { feedbackKey: "needs-you" });
+    case "health": return make("help", "help");
     default: break;
   }
   if (input.noEngines && !input.enginesOff) return make("no-engines", "no-engines");

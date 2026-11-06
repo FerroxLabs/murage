@@ -1099,7 +1099,6 @@ src/components/action-feedback-highs.test.ts	extended
 src/components/approval-compact-170.test.ts	extended
 src/components/approval-queue-83a.test.ts	extended
 src/components/approval-queue-83d.test.ts	extended
-src/components/avatar-framing.test.ts	extended
 src/components/backup-error-sentences.test.ts	extended
 src/components/backup-limits-ui.test.ts	extended
 src/components/backup-schedule-ui.test.ts	extended
@@ -1132,7 +1131,6 @@ src/components/skills/SkillReader.test.ts	extended
 src/components/skills/TopicSelect.test.ts	extended
 src/components/transcript-follow.test.ts	delete (pending review; runs here until then)
 src/components/use-reply-pop.test.ts	extended
-src/components/voice-picker-library.test.ts	extended
 src/components/voice-picker-model.test.ts	extended
 src/copy-0160.test.ts	delete (pending review; runs here until then)
 src/copy-0161.test.ts	delete (pending review; runs here until then)
@@ -1217,7 +1215,6 @@ src/lib/engine-commands-menu.test.ts	extended
 src/lib/engine-rail.test.ts	extended
 src/lib/engine-setup-check.test.ts	extended
 src/lib/feature-flags.test.ts	extended
-src/lib/field-focus.test.ts	extended
 src/lib/file-drop-zone.test.ts	extended
 src/lib/files-view.test.ts	extended
 src/lib/first-run-copy.test.ts	extended
@@ -1227,7 +1224,6 @@ src/lib/first-run-surfaces.test.ts	delete (pending review; runs here until then)
 src/lib/flux-invite.test.ts	extended
 src/lib/focus-message.test.ts	extended
 src/lib/focus-wrap.test.ts	extended
-src/lib/fonts.test.ts	extended
 src/lib/github-refs.test.ts	extended
 src/lib/group-call-stream.test.ts	extended
 src/lib/group-call-wiring.test.ts	extended
@@ -1322,7 +1318,6 @@ src/lib/remembered-grants.test.ts	extended
 src/lib/remembered-view.test.ts	extended
 src/lib/rename.test.ts	extended
 src/lib/replies.test.ts	extended
-src/lib/reply-width.test.ts	extended
 src/lib/resource-wait.test.ts	extended
 src/lib/return-focus.test.ts	extended
 src/lib/role-leaks.test.ts	delete (pending review; runs here until then)
@@ -1343,6 +1338,7 @@ src/lib/scrollback-first-page.test.ts	extended
 src/lib/scrollback.test.ts	extended
 src/lib/section-context-client.test.ts	extended
 src/lib/send-id.test.ts	extended
+src/lib/settings-card-registry.test.ts	extended
 src/lib/settings-cards.test.ts	extended
 src/lib/settings-pages.test.ts	extended
 src/lib/settings-sections.test.ts	extended
@@ -1355,7 +1351,6 @@ src/lib/sidebar-order-sync.test.ts	extended
 src/lib/sidebar-preferences.test.ts	extended
 src/lib/sidebar-row-tone.test.ts	delete (pending review; runs here until then)
 src/lib/sidebar-selection.test.ts	extended
-src/lib/sidebar-width.test.ts	extended
 src/lib/signed-out-engines.test.ts	extended
 src/lib/single-flight.test.ts	extended
 src/lib/skill-recorder.test.ts	extended
@@ -1469,4 +1464,3 @@ src/components/ChatReadingPolish.test.ts	extended
 src/components/RoomsA11yPolish.test.ts	extended
 src/lib/calendar-card-layout.test.ts	extended
 src/state/new-task-once.test.ts	extended
-src/components/BrowserApprovedSites.activity-label.test.ts	extended

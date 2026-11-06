@@ -1,6 +1,5 @@
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
 import { EmailSendCard, EmailTrustOfferCard } from "./EmailSendCard";
-import { bubbleWidth } from "@/lib/reply-width";
 import { loopNoticeLabel } from "@/lib/loop-notice";
 import { Suspense } from "react";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
@@ -495,7 +494,7 @@ const Transcript = memo(function Transcript({
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} forgetKey={folderTrustNotice(m.tool.name)!.key} />
             ) : browserUnavailableReason(m.tool.name) ? (
-              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} botName={m.from?.name} />
+              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} />
             ) : m.comm ? (
               // Same as a direct chat: the bot⇄bot chip is navigation, not
               // work, so it stays with tool calls off and opens the pair room.
@@ -571,8 +570,7 @@ const Transcript = memo(function Transcript({
                   tabIndex={narrow ? 0 : undefined}
                   aria-haspopup={narrow ? "dialog" : undefined}
                   className={cn(
-                    bubbleWidth(m.text ?? "", user),
-                    "max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
+                    "w-fit max-w-[min(var(--chat-bubble-max),var(--chat-bubble-pct))] max-md:max-w-full rounded-2xl px-4 py-2.5 text-[15px] leading-relaxed",
                     BUBBLE_TAPPABLE,
                     user ? "whitespace-pre-wrap [overflow-wrap:anywhere] bg-bubble-user text-ink" : "bg-card text-ink",
                   )}

@@ -137,12 +137,12 @@ export function SlackSettings() {
     <InAdvanced><div id="slack-app-setup-heading" className="rounded-xl bg-card p-4 text-[12px] text-ink-secondary">
       <h4 className="text-[13px] font-medium text-ink">Private Slack app setup</h4>
       <p>Use a private app with Socket Mode enabled. The app-level token needs <code>connections:write</code>. The bot token needs <code>im:history</code> and <code>chat:write</code>, with the <code>message.im</code> event enabled. Add <code>files:write</code> too if you want voice notes sent here.</p>
-      <a data-setting-control="slack-app-setup-heading" className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
+      <a className="mt-2 inline-flex min-h-11 items-center text-accent-text underline hover:text-ink" href="https://api.slack.com/apps" target="_blank" rel="noreferrer">Open Slack app settings</a>
     </div></InAdvanced>
     <h4 className="mt-4 text-[13px] font-medium text-ink">1. Save credentials securely</h4>
     <p className="mt-1 text-[12px] text-ink-secondary">Stored encrypted on this computer. Saved keys are never shown here; leave a saved key blank to keep it.</p>
     <label className="mt-3 block text-[12px] text-ink-secondary">App-level token {status?.appConfigured && <span>(saved)</span>}
-      <input name="slack-app-token" data-setting-control="slack-settings-title" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={appToken} disabled={disabled || !secure} onChange={event => setAppToken(event.target.value)} className={inputClass} />
+      <input name="slack-app-token" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={appToken} disabled={disabled || !secure} onChange={event => setAppToken(event.target.value)} className={inputClass} />
     </label>
     <label className="mt-3 block text-[12px] text-ink-secondary">Bot token {status?.botConfigured && <span>(saved)</span>}
       <input name="slack-bot-token" type="password" autoComplete="off" spellCheck={false} maxLength={512} value={botToken} disabled={disabled || !secure} onChange={event => setBotToken(event.target.value)} className={inputClass} />

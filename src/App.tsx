@@ -1,5 +1,5 @@
 import { EngineChatLinkHost } from "@/components/EngineChatLink";
-import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Loader2 } from "lucide-react";
 import { api, StoreProvider, useStore } from "@/state/store";
 import { CallOverlaySlot } from "@/components/CallControls";
@@ -7,6 +7,7 @@ import { BotCallRing } from "@/components/BotCallRing";
 import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
+import { GroupView } from "@/components/GroupView";
 import { preloadConnectedApps } from "@/lib/connected-apps-preload";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { UpdateStaleNotice } from "@/components/UpdateStaleNotice";
@@ -41,11 +42,9 @@ import { LazyFallback } from "@/components/LazyFallback";
 import { loadPlainApproval } from "@/lib/plain-approval";
 import { canPrefetchWhenIdle, loadBotSettings, loadedBotSettings, preloadBotSettings, subscribeBotSettings } from "@/lib/preload-bot-settings";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
-import { loadGroupView, preloadGroupView } from "@/lib/group-view-preload";
 import { TermsGate } from "@/components/TermsGate";
 import { NoLimitsTermsPrompt } from "@/components/NoLimitsTermsPrompt";
 import { HelpHost } from "@/components/help/HelpHost";
-import { CoachMarks } from "@/components/ui/CoachMarks";
 import { UndoToastHost } from "@/components/ui/UndoToast";
 import { feedbackSurface } from "@/lib/feedback-surface";
 import { OfflineBand } from "@/components/shell/OfflineBand";
@@ -90,20 +89,6 @@ const LocalVmWorkspace = LocalVmWorkspaceLazy.Component;
 
 const BrowserWorkspaceLazy = retryableLazy(() => import("@/components/BrowserWorkspace").then((module) => ({ default: module.BrowserWorkspace })));
 const BrowserWorkspace = BrowserWorkspaceLazy.Component;
-
-// A group or project chat opens from the rail, not on the first frame (Today
-// is the landing), so its room view, details panel and group routing load on
-// first open, a pointer or focus on a room in the rail, or once the app is
-// idle, whichever comes first (BUNDLE-HEADROOM-1017).
-const GroupViewLazy = retryableLazy(() => loadGroupView().then((module) => ({ default: module.GroupView })));
-/** A room that could not load keeps the phone's way back to the bot list. */
-const roomFrame = (alert: ReactNode) => (
-  <div className="flex h-full min-w-0 flex-1 flex-col bg-app">
-    <PhoneBotListBar />
-    <div className="flex min-h-0 flex-1 items-center justify-center">{alert}</div>
-  </div>
-);
-const GroupView = GroupViewLazy.Component;
 
 function Shell() {
   const { state, dispatch } = useStore();
@@ -150,7 +135,7 @@ function Shell() {
   // (a few KiB), so a card rarely shows its pre-plain-words wording.
   useEffect(() => {
     const idle = window.requestIdleCallback ?? ((run: () => void) => window.setTimeout(run, 1500));
-    const handle = idle(() => { void loadPlainApproval().catch(() => undefined); preloadGroupView(); });
+    const handle = idle(() => { void loadPlainApproval().catch(() => undefined); });
     return () => { if (window.cancelIdleCallback) window.cancelIdleCallback(handle as number); else window.clearTimeout(handle as number); };
   }, []);
   useEffect(() => {
@@ -515,12 +500,12 @@ function Shell() {
             <button type="button" className="min-h-9 rounded-lg border border-hairline/40 px-3 text-[13px] font-medium text-ink hover:bg-app focus-visible:ring-2 focus-visible:ring-accent-border"
               onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "engines" })}>Open Engines</button>
           </div>
-          <div className="flex min-h-0 flex-1">{group ? <LazyBoundary key={group.id} inline frame={roomFrame} onRetry={GroupViewLazy.retry}><Suspense fallback={<LazyFallback inline />}><GroupView group={group} /></Suspense></LazyBoundary> : <ChatView bot={bot!} />}</div>
+          <div className="flex min-h-0 flex-1">{group ? <GroupView key={group.id} group={group} /> : <ChatView bot={bot!} />}</div>
         </div>
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
-        <LazyBoundary key={group.id} inline frame={roomFrame} onRetry={GroupViewLazy.retry}><Suspense fallback={<LazyFallback inline />}><GroupView group={group} /></Suspense></LazyBoundary>
+        <GroupView key={group.id} group={group} />
       ) : bot ? (
         <ChatView bot={bot} />
       ) : (
@@ -596,8 +581,6 @@ function Shell() {
         enginesOff={enginesOff}
         firstRun={setupOwnsView && setupView ? { next: setupView.next, chiefBotId: setupView.chiefBotId, blocked: setupView.blocked } : null}
       />
-      {/* L4C: hints once (each coach mark shows one time on this device; "Show hints again" in help resets them). */}
-      <CoachMarks firstRun={Boolean(setupOwnsView && setupView)} />
       </BotListDrawerProvider>
       </div>
       {/* UX 1.0.13 phoneTabs slot (L7): below md only. */}

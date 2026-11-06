@@ -2,6 +2,7 @@
 // T21: modes and categories in admission. Spec 2.2, 2.3, 2.7, 9.7 (D3). The mode is read per action, never reaches the floor, and nothing a bot can send sets it.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
@@ -27,7 +28,8 @@ async function fixture(extra: Record<string, unknown> = {}) {
       calls.push(command);
       if (failBind && command.operation === 'bind') throw Error('host_offline');
       let b = bindings.get(command.bindingId);
-      if (!b) { b = { generation: 1, state: 'active', tabs: [{ tabId: 1, navigationEpoch: 1, origin: A, url: A + '/' }] }; bindings.set(command.bindingId, b); }
+      // Each binding shares its own tab (the first gets tabId 1), so a second binding on the profile is not tab_already_shared.
+      if (!b) { b = { generation: 1, state: 'active', tabs: [{ tabId: bindings.size + 1, navigationEpoch: 1, origin: A, url: A + '/' }] }; bindings.set(command.bindingId, b); }
       if (command.operation === 'stop' || command.operation === 'pause') { b.generation++; b.state = command.operation === 'stop' ? 'stopped' : 'paused'; }
       let result: any = b;
       if (command.operation === 'cdp') {
@@ -95,11 +97,23 @@ describe('T21 the 2.2 table at service level', () => {
     expect(f.siteAsked).toEqual([]); expect(f.cards).toEqual([]); expect(f.inputs()).toBe(1);
     expect(f.service.taskInfo(f.id)?.sites.map(site => site.origin)).toEqual([A]);
   });
-  it('Full permissive: Level 3 passes only on the checker allow, and a flag brings the card back', async () => {
+  // SABLE-LIVE-B: under attended Full an unsure check is advice (no card) and a judged block refuses with no card.
+  // The flag still brings the card back in Allow for this task (the next test).
+  it('Full permissive: Level 3 passes on the checker allow, an unsure check is advice, and a judged block refuses without a card', async () => {
     const f = await withMode('full');
     f.setFacts(SEND);
     await f.run('agent_browser_click', { selector: 'button' });
     expect(f.cards).toEqual([]); expect(f.inputs()).toBe(2);
+    f.setVerdict('ask');
+    await f.run('agent_browser_click', { selector: 'button' });
+    expect(f.cards).toEqual([]); expect(f.inputs()).toBe(4);
+    f.setVerdict('block');
+    await expect(f.run('agent_browser_click', { selector: 'button' })).rejects.toThrow(/NOT DONE/);
+    expect(f.cards).toEqual([]); expect(f.inputs()).toBe(4);
+  });
+  it('Allow for this task: a flag on Level 3 brings the card back', async () => {
+    const f = await withMode('task');
+    f.setFacts(SEND);
     f.setVerdict('ask');
     await f.run('agent_browser_click', { selector: 'button' });
     expect(f.cards).toHaveLength(1);
@@ -148,10 +162,12 @@ describe('T21 categories in admission (2.3)', () => {
       expect(f.inputs(), mode).toBe(0);
     }
   });
-  it('an owner-allowed Never-by-default site works, and a handover site cannot be opened by any setting', async () => {
+  // EXT-RESTART 4.1 (ruling 3) changes this test on purpose: a saved Allow no longer opens a Never-by-default site (nothing loosens from
+  // disk). The owner's per-binding Allow in this process still does (EXT-RESTART 21 below). A handover site stays closed to every setting.
+  it('a saved Allow does not open a Never-by-default site, and a handover site cannot be opened by any setting', async () => {
     const siteSetting = (_c: unknown, origin: string) => ({ rule: 'allow' as const, ...(origin === ADULT || origin === VAULT ? {} : {}) });
     const adult = await withMode('task', { siteSetting }); adult.goTo(ADULT);
-    await adult.fill(); expect(adult.inputs()).toBe(1);
+    await expect(adult.fill()).rejects.toThrow(/NOT DONE/); expect(adult.inputs()).toBe(0);
     const vault = await withMode('task', { siteSetting }); vault.goTo(VAULT);
     await expect(vault.fill()).rejects.toThrow(/NOT DONE|handover_required/); expect(vault.inputs()).toBe(0);
   });
@@ -249,6 +265,120 @@ describe('T22 I2 fail direction at service level', () => {
     f.setFacts({ ...SEND });
     await f.run('agent_browser_click', { selector: 'button' });
     expect(f.cards).toEqual([]);
+  });
+});
+
+// EXT-RESTART design section 4 (Bug 1), tests 17-22, 25-27c, 29. Labels: FAILS = red on base 2fba37df6; PIN = green on base.
+const D = 'https://d.example';
+const bindsSince = (f: { calls: BrowserExtensionCommand[] }, from: number, id?: string) => f.calls.slice(from).filter(call => call.operation === 'bind' && (id === undefined || call.bindingId === id)).map(call => (call.params as { approvedOrigins: string[] }).approvedOrigins);
+const site = (f: { service: { taskInfo(id: string): { sites: { origin: string; l1: boolean; l2: boolean }[] } | undefined } }, id: string, origin: string) => f.service.taskInfo(id)?.sites.find(item => item.origin === origin);
+const allow = (f: { service: { settingsAllowed(botId: string, change: { origin: string; profileId: string }): Promise<void> } }, origin: string, profileId = 'profile') => f.service.settingsAllowed('bot', { origin, profileId });
+
+describe('EXT-RESTART 4.2 Settings Allow always reaches only the tasks running at save', () => {
+  it('17 (FAILS): Ask mode, a running task: one bind listing the origin, no site card for it this task, taskInfo shows l1 and l2', async () => {
+    const f = await withMode('task'); await f.fill();
+    const from = f.calls.length; await allow(f, D);
+    const binds = bindsSince(f, from); expect(binds).toHaveLength(1); expect(binds[0]).toContain(D);
+    expect(site(f, f.id, D)).toEqual({ origin: D, l1: true, l2: true });
+    f.goTo(D); await f.fill(); expect(f.siteAsked).not.toContain(D);
+  });
+  it('18 (PIN): paused, active with no task, or a routine: nothing raised, no bind; the site cards when needed', async () => {
+    const paused = await withMode('task'); await paused.fill(); await paused.service.pause(paused.id);
+    let from = paused.calls.length; await allow(paused, D);
+    expect(bindsSince(paused, from)).toEqual([]); expect(site(paused, paused.id, D)).toBeUndefined();
+    const idle = await withMode('task');
+    from = idle.calls.length; await allow(idle, D);
+    expect(bindsSince(idle, from)).toEqual([]); expect(idle.service.taskInfo(idle.id)).toBeUndefined();
+    idle.goTo(D); await idle.fill(); expect(idle.siteAsked).toContain(D);
+    const box = { routine: false };
+    const routine = await withMode('task', { routine: () => box.routine }); await routine.fill(); box.routine = true;
+    from = routine.calls.length; await allow(routine, D);
+    expect(bindsSince(routine, from)).toEqual([]); expect(site(routine, routine.id, D)).toBeUndefined();
+  });
+  it('19 (FAILS first assertion): the raise is for this task only; after End task a new instruction cards the site', async () => {
+    const message = { id: 'm1' };
+    const f = await withMode('task', { ownerInstruction: () => ({ id: message.id, text: 'please type hello into the notes box' }) }); await f.fill();
+    await allow(f, D); expect(site(f, f.id, D)?.l1).toBe(true);
+    await f.service.endTask(f.id); message.id = 'm2';
+    f.goTo(D); await f.fill(); expect(f.siteAsked).toContain(D);
+  });
+  it('22 (FAILS, ruling 3): Settings Allow on a Never-by-default site opens it for the running task only; after End task it is refused', async () => {
+    const message = { id: 'm1' };
+    const f = await withMode('task', { ownerInstruction: () => ({ id: message.id, text: 'please type hello into the notes box' }) }); await f.fill();
+    await allow(f, ADULT); f.goTo(ADULT);
+    const before = f.inputs(); await f.fill(); expect(f.inputs()).toBe(before + 1);
+    await f.service.endTask(f.id); message.id = 'm2';
+    const after = f.inputs(); await expect(f.fill()).rejects.toThrow(/NOT DONE/); expect(f.inputs()).toBe(after);
+  });
+  it('27 (FAILS): an Allow for profile A binds nothing on profile B and gives B no grant', async () => {
+    const f = await withMode('task'); await f.fill();
+    const broker = (f.options as unknown as { broker: { profiles: () => BrowserExtensionHello[] } }).broker; const own = broker.profiles;
+    broker.profiles = () => [...own(), { ...own()[0], profileId: 'other' }];
+    const b = await f.service.ensureBinding({ botId: 'bot', threadId: 'thread', profileId: 'other' });
+    await f.service.dispatch(b.bindingId, 'agent_browser_fill', { selector: 'textarea', text: 'b' }, () => true);
+    const from = f.calls.length; await allow(f, D);
+    expect(bindsSince(f, from, f.id)).toHaveLength(1); expect(site(f, f.id, D)?.l1).toBe(true);
+    expect(bindsSince(f, from, b.bindingId)).toEqual([]); expect(site(f, b.bindingId, D)).toBeUndefined();
+  });
+  it('27b (FAILS): a site-card Allow without Level 2 is upgraded once; a second Allow adds nothing', async () => {
+    const f = await withMode('step'); await f.fill();
+    expect(site(f, f.id, A)).toEqual({ origin: A, l1: true, l2: false });
+    let from = f.calls.length; await allow(f, A);
+    expect(bindsSince(f, from)).toHaveLength(1); expect(site(f, f.id, A)).toEqual({ origin: A, l1: true, l2: true });
+    from = f.calls.length; await allow(f, A); expect(bindsSince(f, from)).toEqual([]);
+  });
+  it("27c (FAILS): a site Full granted on its own becomes the owner's grant", async () => {
+    const f = await withMode('full'); await f.fill();
+    expect(f.service.autoGranted(f.id)).toEqual([A]); expect(site(f, f.id, A)?.l2).toBe(false);
+    await allow(f, A); expect(f.service.autoGranted(f.id)).toEqual([]); expect(site(f, f.id, A)?.l2).toBe(true);
+  });
+});
+
+describe('EXT-RESTART 4.1 nothing loosens from disk (ruling 3)', () => {
+  it('20 (FAILS): a saved Allow on a Never-by-default site, Full mode, checker present: refused, no grant, no site card', async () => {
+    const f = await withMode('full', { siteSetting: (_c: unknown, origin: string) => origin === ADULT ? { rule: 'allow' as const } : undefined }); f.goTo(ADULT);
+    await expect(f.fill()).rejects.toThrow(/NOT DONE/);
+    expect(f.siteAsked).toEqual([]); expect(f.inputs()).toBe(0); expect(site(f, f.id, ADULT)).toBeUndefined();
+  });
+  it('21 (FAILS): the per-binding Allow opens it on that binding; another binding with only the saved row is refused', async () => {
+    const f = await withMode('task', { siteSetting: (_c: unknown, origin: string) => origin === ADULT ? { rule: 'allow' as const } : undefined });
+    await f.service.setSiteAccess(f.id, ADULT, 'allow'); f.goTo(ADULT);
+    await f.fill(); expect(f.inputs()).toBe(1);
+    const two = await f.service.ensureBinding({ botId: 'bot', threadId: 'thread-2', profileId: 'profile' });
+    const fake = f.bindings.get(two.bindingId)!; fake.tabs[0] = { ...fake.tabs[0], navigationEpoch: 2, origin: ADULT, url: ADULT + '/' };
+    await expect(f.service.dispatch(two.bindingId, 'agent_browser_fill', { selector: 'textarea', text: 'x' }, () => true)).rejects.toThrow(/NOT DONE/);
+    expect(f.inputs()).toBe(1);
+  });
+  it('25 (FAILS): a Settings Never row: a new binding refuses it with no site card; restore applies it; a row the policy refuses is skipped with one log line', async () => {
+    const logs: string[] = [];
+    const f = await withMode('task', { savedNever: () => [D, 'https://x.example/path'], log: (line: string) => { logs.push(line); } });
+    expect(f.service.status().bindings[0].sites[D]).toBe('never');
+    expect(logs.filter(line => line.includes('https://x.example/path'))).toHaveLength(1);
+    f.goTo(D); await expect(f.fill()).rejects.toThrow(/NOT DONE|denied/); expect(f.siteAsked).not.toContain(D); expect(f.inputs()).toBe(0);
+    await f.service.close();
+    const O2 = 'https://o2.example';
+    const again = track(await createBrowserExtensionService({ ...f.options, savedNever: () => [O2] } as never));
+    expect(again.status().bindings.find(item => item.bindingId === f.id)?.sites[O2]).toBe('never');
+  });
+  it('26 (FAILS): the 65th per-binding Allow on one binding is refused allow_limit (409)', async () => {
+    const f = await withMode('task');
+    for (let i = 0; i < 64; i++) await f.service.setSiteAccess(f.id, `https://s${i}.example`, 'allow');
+    await expect(f.service.setSiteAccess(f.id, 'https://s64.example', 'allow')).rejects.toMatchObject({ code: 'allow_limit', status: 409, errorKey: 'browserExt.sites.errorAllowLimit' });
+    await f.service.setSiteAccess(f.id, 'https://s3.example', 'allow');
+    const en = JSON.parse(readFileSync(new URL('../src/locales/en.json', import.meta.url), 'utf8')) as Record<string, string>;
+    expect(en['browserExt.sites.errorAllowLimit']).toBe('This task already has 64 sites allowed always. Remove one, then try again.');
+  });
+});
+
+describe('EXT-RESTART 29: the Settings route', () => {
+  it('desktop POST allow calls settingsAllowed with the profile after the phone guard (FAILS); the phone POST allow stays 403 (PIN, mode-api test)', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const start = source.indexOf('const site = browserSites().set(bot.id, profileId, origin, rule, { lowered });');
+    expect(start).toBeGreaterThan(0);
+    const guard = source.lastIndexOf('browserExt.sites.errorNeedsDesktop', start);
+    expect(guard).toBeGreaterThan(0); expect(start - guard).toBeLessThan(400);
+    const route = source.slice(start, start + 600);
+    expect(route).toMatch(/if \(rule !== "allow"\) await browserExtension\?\.settingsChanged\(bot\.id, \{ origin: site\.origin \?\? origin, rule \}\);\s*\/\/[^\n]*\n\s*else await browserExtension\?\.settingsAllowed\(bot\.id, \{ origin: site\.origin \?\? origin, profileId \}\);/);
   });
 });
 

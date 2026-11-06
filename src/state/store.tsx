@@ -612,10 +612,6 @@ export interface Bot {
   avatarUrl?: string | null;
   /** Mascot, or the crop applied to avatarUrl. */
   avatarCrop?: BotAvatarCrop;
-  /** Framing of avatarUrl (shared/bot-avatar.ts avatarFraming). Absent: cover crop, centred. */
-  avatarZoom?: number;
-  avatarFocusX?: number;
-  avatarFocusY?: number;
   unread: boolean;
   busy?: boolean;
   /** what the bot is doing, as the harness sees it; busy is derived from it */
@@ -5444,9 +5440,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             autoStartVps: source.autoStartVps,
             avatarUrl: source.avatarUrl,
             avatarCrop: source.avatarCrop,
-            avatarZoom: source.avatarZoom,
-            avatarFocusX: source.avatarFocusX,
-            avatarFocusY: source.avatarFocusY,
             mascotBody: source.mascotBody ?? undefined,
           };
           // Two gated answers (V2 §2.3): the POST answer as served (record, transcript, head; selected), then the PATCH answer as a

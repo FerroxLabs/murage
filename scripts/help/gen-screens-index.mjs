@@ -53,7 +53,6 @@ const screens = [
   ["chat", "chat:<botId>"],
   ["group", "group:<id>"],
   ["needs-you", "needs-you:<tab>"],
-  ["health", "health"],
   ["routines", "routines"],
   ["routine", "routine:<id>"],
   ["bot", "bot:<id>"],

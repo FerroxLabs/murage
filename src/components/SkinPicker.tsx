@@ -51,7 +51,6 @@ export function SkinPicker() {
             <button
               key={id}
               type="button"
-              data-setting-control={index === 0 ? "appearance-heading" : undefined}
               role="radio"
               aria-checked={selected}
               // Arrow keys move the selection and Tab enters/leaves the group as

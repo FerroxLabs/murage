@@ -201,7 +201,7 @@ export function WhatsAppSettings() {
         <input name="whatsapp-phone" type="tel" inputMode="numeric" autoComplete="off" maxLength={24} value={phone} disabled={off} onChange={e => setPhone(e.target.value)} className={inputClass} />
         <span className="mt-1 block">{t("whatsapp.link.phoneHelp")}</span></label>}
       <div className="mt-2 flex flex-wrap gap-2">
-        <button type="button" data-setting-control="whatsapp-settings-title" className={primaryClass} disabled={off} onClick={() => void link(method)}>{busy === "link" ? t("whatsapp.link.starting") : linkState === "idle" ? t("whatsapp.link.qr") : t("whatsapp.link.relink")}</button>
+        <button type="button" className={primaryClass} disabled={off} onClick={() => void link(method)}>{busy === "link" ? t("whatsapp.link.starting") : linkState === "idle" ? t("whatsapp.link.qr") : t("whatsapp.link.relink")}</button>
         <button type="button" className={buttonClass} disabled={off} onClick={() => setMethod(method === "qr" ? "code" : "qr")}>{method === "qr" ? t("whatsapp.link.code") : t("whatsapp.link.qrInstead")}</button>
       </div>
     </div>}
@@ -252,7 +252,7 @@ export function WhatsAppSettings() {
             <span>+{n}</span><button type="button" className={buttonClass} disabled={off} aria-label={t("whatsapp.allow.remove", { number: `+${n}` })}
               onClick={() => void saveSettings({ allowFrom: settings.allowFrom.filter(x => x !== n) })}>×</button></li>)}</ul>}
         <label className="mt-2 block text-[12px] text-ink-secondary">{t("whatsapp.allow.label")}
-          <input name="whatsapp-allow" data-setting-control="whatsapp-allow-heading" type="tel" inputMode="numeric" autoComplete="off" maxLength={24} value={allowInput} disabled={off} onChange={e => setAllowInput(e.target.value)} className={inputClass} /></label>
+          <input name="whatsapp-allow" type="tel" inputMode="numeric" autoComplete="off" maxLength={24} value={allowInput} disabled={off} onChange={e => setAllowInput(e.target.value)} className={inputClass} /></label>
         {allowError && <p role="alert" className="mt-1 text-[12px] text-warning">{t("whatsapp.allow.invalid")}</p>}
         <button type="button" className={`${buttonClass} mt-2`} disabled={off || !allowInput.trim() || settings.allowFrom.length >= 200} onClick={addAllow}>{t("whatsapp.allow.add")}</button>
         {settings.allowFrom.length >= 200 && <p className="mt-1 text-[12px] text-warning">{t("whatsapp.allow.full")}</p>}
@@ -284,7 +284,7 @@ export function WhatsAppSettings() {
       <InAdvanced><div id="whatsapp-groups-heading" tabIndex={-1} className="rounded-xl bg-card p-4">
       <h4 className="mt-5 text-[13px] font-medium text-ink">{t("whatsapp.groups.title")}</h4>
       <p className="mt-1 text-[12px] text-ink-secondary">{t("whatsapp.groups.help")}</p>
-      <label className={checkClass}><input type="checkbox" data-setting-control="whatsapp-groups-heading" checked={settings.groups.policy === "allowlist"} disabled={off}
+      <label className={checkClass}><input type="checkbox" checked={settings.groups.policy === "allowlist"} disabled={off}
         onChange={e => void setGroups_({ policy: e.target.checked ? "allowlist" : "disabled" })} />{t("whatsapp.groups.enable")}</label>
       {settings.groups.policy === "allowlist" && <>
         <label className="block text-[12px] text-ink-secondary">{t("whatsapp.groups.senders")}

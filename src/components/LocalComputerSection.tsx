@@ -255,7 +255,6 @@ export function LocalComputerSection() {
                     : (status?.problem ?? "Not ready")}
           </span>
           <button
-            data-setting-control="computer-settings-heading"
             onClick={() => {
               setLoading(true);
               setRefreshKey((key) => key + 1);

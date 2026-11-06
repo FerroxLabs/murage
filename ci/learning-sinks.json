@@ -3026,15 +3026,8 @@
   },
   {
    "file": "server/tts/elevenlabs.ts",
-   "fn": "getJson",
-   "anchor": "fetch(url,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
-   "kind": "fetch",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/tts/elevenlabs.ts",
-   "fn": "addSharedVoice",
-   "anchor": "fetch(`${API}/voices/add/${encodeURIComponent(publicOwnerId)}/${encodeURIComponent(voiceId)}`,{method:\"POST\",headers:{\"xi-api-key\":key,\"content-type\":\"applicati",
+   "fn": "listVoices",
+   "anchor": "fetch(`${API}/voices`,{headers:{\"xi-api-key\":key},redirect:\"error\",signal:AbortSignal.timeout(20_000),})",
    "kind": "fetch",
    "reason": "not-learning"
   },

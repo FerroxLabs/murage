@@ -35,9 +35,6 @@ export interface CardClass {
   /** a routine's or an automation's turn: the task allowance reader ignores it */
   automated: boolean;
   scope?: "local-computer";
-  /** APPROVE-ALL (design 2): who started the turn that raised the card, as Full access reads it (fullAccessTurnOrigin),
-   *  written once when the card opens. Only "owner" lets Approve all consider the card; absent never does. */
-  origin?: "owner" | "owner-channel" | "routine" | "other";
   /** which standing-key fields the server put on the card */
   keys: CardKeyField[];
 }

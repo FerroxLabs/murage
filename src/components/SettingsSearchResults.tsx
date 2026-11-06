@@ -10,9 +10,6 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { askBotTarget, askYourBot } from "@/lib/health-actions";
-import { DISCARD_SETTINGS_CHANGES, settingsDrafts } from "@/lib/settings-drafts";
-import { openHelp } from "./help/HelpHost";
 import { showToolCallsEnabled } from "@/lib/feature-flags";
 import { inNativeShell } from "@/lib/native-shell";
 import { t } from "@/lib/i18n";
@@ -75,12 +72,11 @@ export function SettingsSearchResults({ query, desktop, onOpen }: { query: strin
     ...(inNativeShell() ? {} : { "general.analytics": { checked: analytics, onToggle: () => { const next = !analytics; setAnalyticsEnabled(next); setAnalytics(next); } } }),
   };
 
+  if (hits.length === 0) {
+    return <p role="status" className="px-1 text-[13px] text-ink-secondary">{t("settings.noMatch", { query: query.trim() })}</p>;
+  }
   return (
-    <>
-    {/* One live line that only says the count (zero too), so a screen reader hears what typing found without leaving
-        the box, and hears nothing new while the count stays the same. */}
-    <p role="status" data-settings-result-count className="sr-only">{t("ux.l8.results.count", { count: String(hits.length) })}</p>
-    {hits.length === 0 ? <SettingsNoResults query={query.trim()} /> : <ul aria-label={t("settings.l1.resultsFor", { query: query.trim() })} className="flex flex-col gap-2.5">
+    <ul aria-label={t("settings.l1.resultsFor", { query: query.trim() })} className="flex flex-col gap-2.5">
       {hits.map((hit) => {
         const toggle = toggles[hit.card.id];
         const label = <div className="text-[14.5px] text-ink"><ResultLabel label={hit.label} query={query} /></div>;
@@ -100,42 +96,6 @@ export function SettingsSearchResults({ query, desktop, onOpen }: { query: strin
           </li>
         );
       })}
-    </ul>}
-    </>
-  );
-}
-
-/** No hits is never a dead end (SETTINGS-UX-1011 section 4, S5): ask the Chief in their chat with the words typed,
- *  or open the help. Both work on any engine. With no bot yet, only the help row shows. */
-export function SettingsNoResults({ query }: { query: string }) {
-  const { state, dispatch } = useStore();
-  const chief = askBotTarget(state.bots);
-  const ask = () => {
-    // Leaving Settings for the chat asks first when typed words are not saved, the way closing Settings does.
-    if (settingsDrafts.anyUnsaved() && !window.confirm(DISCARD_SETTINGS_CHANGES)) return;
-    settingsDrafts.clear();
-    dispatch({ type: "toggleAppSettings", open: false });
-    askYourBot(query, state.bots, (id) => dispatch({ type: "select", id }));
-  };
-  return (
-    <div className="flex flex-col gap-2.5">
-      <p className="px-1 text-[13px] text-ink-secondary">{t("ux.l3a.empty.line", { query })}</p>
-      <ul aria-label={t("ux.l3a.empty.label")} className="flex flex-col gap-2.5">
-        {chief && (
-          <li>
-            <button type="button" data-settings-ask-chief onClick={ask} className={`${rowClass} hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
-              <span className="min-w-0 text-[14.5px] text-ink">{t("ux.l3a.empty.ask", { name: chief.name, query })}</span>
-              <span className="shrink-0 text-[12.5px] text-ink-secondary">{t("ux.l3a.empty.askAction")}</span>
-            </button>
-          </li>
-        )}
-        <li>
-          <button type="button" data-settings-open-help onClick={() => openHelp()} className={`${rowClass} hover:border-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus`}>
-            <span className="min-w-0 text-[14.5px] text-ink">{t("ux.l3a.empty.help")}</span>
-            <span className="shrink-0 text-[12.5px] text-ink-secondary">{t("settings.l1.open")}</span>
-          </button>
-        </li>
-      </ul>
-    </div>
+    </ul>
   );
 }

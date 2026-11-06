@@ -46,7 +46,7 @@ export function AnnouncementsSettings() {
             Security notices always show, even when this is off.
           </div>
         </div>
-        <Switch data-setting-control="announcements-heading" aria-label="Show announcements" checked={show !== false} disabled={show === null || saving} onClick={() => void toggle()} />
+        <Switch aria-label="Show announcements" checked={show !== false} disabled={show === null || saving} onClick={() => void toggle()} />
       </div>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>

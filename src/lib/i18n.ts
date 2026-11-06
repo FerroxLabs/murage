@@ -13,23 +13,6 @@ export function resolveLocale(tag: string | undefined, available: ReadonlySet<st
   return available.has(base) ? base : "en";
 }
 
-// No shipped pack is right to left; listed so adding one (Arabic, Hebrew,
-// Persian, Urdu) flips the page direction with no other edit.
-const RTL_LANGUAGES = new Set(["ar", "fa", "he", "ur"]);
-
-/** A registry key as a BCP-47 tag for <html lang>, cased the standard way:
- * "pt-br" to "pt-BR", "zh-hant" to "zh-Hant". Pure, for tests. */
-export function documentLanguage(code: string): string {
-  return code
-    .split("-")
-    .map((part, index) =>
-      index === 0 ? part.toLowerCase()
-        : part.length === 2 ? part.toUpperCase()
-          : part.length === 4 ? part[0]!.toUpperCase() + part.slice(1).toLowerCase()
-            : part.toLowerCase())
-    .join("-");
-}
-
 let activePack: LocalePack = en;
 let activeCode = "en";
 let version = 0;
@@ -55,13 +38,6 @@ export async function setLocale(tag: string | undefined): Promise<string> {
   }
   if (ticket !== latest) return activeCode;
   activeCode = took;
-  // Screen readers pick pronunciation from <html lang>; index.html ships "en",
-  // so without this a German page is read out with English rules (B100).
-  const root = typeof document === "undefined" ? undefined : document?.documentElement;
-  if (root) {
-    root.lang = documentLanguage(took);
-    root.dir = RTL_LANGUAGES.has(root.lang.split("-")[0] ?? "") ? "rtl" : "ltr";
-  }
   if (pack !== activePack) {
     activePack = pack;
     version += 1;

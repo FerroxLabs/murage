@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
 import { cleanupEnabled, setCleanupEnabled } from "@/lib/dictation-cleanup";
 import { Switch } from "./SettingsPrimitives";
 import { VoicePicker } from "./VoicePicker";
-import { FLUX_ELEVEN_NOTE, needsAdding, voicesUrl, isVoicePreview, previewMessageId, markAssigned, rowPreview, type FluxElevenStatus, type PickerVoice } from "./voice-picker-model";
+import { FLUX_ELEVEN_NOTE, isVoicePreview, previewMessageId, markAssigned, rowPreview, type FluxElevenStatus, type PickerVoice } from "./voice-picker-model";
 import { useBotSettingsDraft } from "./bot-settings-drafts";
 import { systemVoiceOffer } from "../../shared/system-voices";
 import { opensPurchasePages } from "@/lib/native-shell";
@@ -46,17 +46,6 @@ export function VoiceSettings({
   const [fluxEleven, setFluxEleven] = useState<FluxElevenStatus | undefined>(undefined);
   // "Check again": the next list read asks Flux's voice list now
   const recheckNext = useRef(false);
-  // An own ElevenLabs key searches its account and the Voice Library on the
-  // server; the words wait 300 ms so typing is not a request per letter.
-  const [voiceQuery, setVoiceQuery] = useState("");
-  const [searchedQuery, setSearchedQuery] = useState("");
-  // A Voice Library voice being added to the owner's account, and why it was not
-  const [addingVoice, setAddingVoice] = useState<string | null>(null);
-  const [addError, setAddError] = useState<string | null>(null);
-  // Every pick, service change or new bot moves this on, so a slow add never
-  // overwrites a choice made after it.
-  const pickGeneration = useRef(0);
-  useEffect(() => () => { pickGeneration.current += 1; }, [bot.id]);
   useBotSettingsDraft("Voice settings", Boolean(key.trim()), saving || switching);
 
   const { capabilities } = useDesktopCapabilities();
@@ -88,19 +77,6 @@ export function VoiceSettings({
   const configured =
     provider === "flux" ? fluxAvailable : provider === "xai" ? xaiAvailable : provider === "system" ? systemVoicesAvailable : Boolean(tts?.available?.elevenlabs ?? tts?.configured);
 
-  const serverSearch = provider === "elevenlabs";
-  const voiceSearch = serverSearch ? searchedQuery : "";
-  useEffect(() => {
-    const timer = setTimeout(() => setSearchedQuery(voiceQuery.trim()), 300);
-    return () => clearTimeout(timer);
-  }, [voiceQuery]);
-  // another service's list never shows under this one while it loads
-  useEffect(() => {
-    setVoices([]);
-    setAddError(null);
-    pickGeneration.current += 1;
-  }, [provider]);
-
   useEffect(() => {
     if (!configured) {
       setVoices([]);
@@ -111,7 +87,7 @@ export function VoiceSettings({
     setVoicesFailed(false);
     const recheck = recheckNext.current;
     recheckNext.current = false;
-    api(voicesUrl(provider, { recheck, query: voiceSearch }))
+    api(`/api/tts/voices?provider=${provider}${recheck ? "&recheck=1" : ""}`)
       .then((r: { voices?: typeof voices; error?: string; fluxEleven?: FluxElevenStatus }) => {
         if (!alive) return;
         setVoices(r.voices ?? []);
@@ -123,30 +99,7 @@ export function VoiceSettings({
     return () => {
       alive = false;
     };
-  }, [configured, provider, voiceReload, voiceSearch]);
-
-  // Picking a Voice Library voice adds it to the owner's ElevenLabs account
-  // (a voice slot there), then picks the id the account gives it.
-  const pickVoice = (voiceId: string) => {
-    setAddError(null);
-    const voice = voices.find((v) => v.id === voiceId);
-    // one add at a time; the pending one stays the choice
-    if (serverSearch && needsAdding(voice) && addingVoice) return;
-    const generation = ++pickGeneration.current;
-    if (!serverSearch || !needsAdding(voice)) return onPatch({ voice: voiceId });
-    setAddingVoice(voice.id);
-    api("/api/tts/voices/add", {
-      method: "POST",
-      body: JSON.stringify({ publicOwnerId: voice.publicOwnerId, voiceId: voice.id, name: voice.label }),
-    })
-      .then((r: { voiceId: string }) => {
-        if (generation !== pickGeneration.current) return;
-        onPatch({ voice: r.voiceId });
-        setVoiceReload((n) => n + 1);
-      })
-      .catch((e: Error) => { if (generation === pickGeneration.current) setAddError(e.message); })
-      .finally(() => setAddingVoice(null));
-  };
+  }, [configured, provider, voiceReload]);
 
   const setProvider = (next: "flux" | "xai" | "elevenlabs" | "system") => {
     if (next === provider || switching || (next === "system" && !systemVoicesAvailable) || (next === "flux" && !fluxAvailable) || (next === "xai" && !xaiAvailable)) return;
@@ -318,22 +271,12 @@ export function VoiceSettings({
             voices={markAssigned(voices, assigned)}
             pinned={pinned}
             value={selectedVoice}
-            onChange={pickVoice}
-            onQueryChange={serverSearch ? setVoiceQuery : undefined}
+            onChange={(voice) => onPatch({ voice })}
             label={`${bot.name}'s voice`}
             loading={loadingVoices}
             preview={preview}
             onPreview={togglePreview}
           />
-          {addingVoice && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-[12px] text-ink-secondary" data-testid="voice-adding">
-              <Loader2 size={12} className="animate-spin" aria-hidden />
-              <span>Adding this voice to your ElevenLabs account</span>
-            </div>
-          )}
-          {addError && !addingVoice && (
-            <div role="alert" className="mt-1.5 text-[12px] text-danger" data-testid="voice-add-failed">{addError}</div>
-          )}
           {voicesFailed && !loadingVoices && (
             <div role="alert" className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-danger" data-testid="voices-load-failed">
               <span>Couldn't load the voice list.</span>

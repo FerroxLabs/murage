@@ -15,7 +15,7 @@ final class PhoneJobsMintClient {
     enum Failure {
         NOT_OFFERED("Coming to Murage Cloud", R.string.ask_cloud),
         UPDATE_COMPUTER("Turn this on, or update Murage, on your computer.", R.string.phone_update),
-        TURNED_OFF("This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Phone tools. If it's already on, the line under it says why it can't be used.", R.string.phone_turned_off),
+        TURNED_OFF("Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.", R.string.phone_turned_off),
         NO_APPROVAL_KEY("Set a passcode on this phone, then pair again", R.string.phone_no_key),
         REFUSED("Phone sign-in was refused. Pair this phone again.", R.string.phone_refused),
         RATE_LIMITED("Too many sign-in attempts. Try again shortly.", R.string.phone_rate_limited),

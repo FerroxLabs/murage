@@ -320,7 +320,7 @@ export function verifyKey(key: string) {
   return elevenlabs.verifyKey(key);
 }
 
-export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?: VoiceProvider, search: { query?: string } = {}): Promise<elevenlabs.Voice[]> {
+export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?: VoiceProvider): Promise<elevenlabs.Voice[]> {
   const provider = effectiveProvider(cfg, own);
   // One Flux list: OpenAI's voices, plus xAI's through Flux's xAI alias
   // when Flux itself is connected (an own OpenAI key cannot reach them).
@@ -343,16 +343,7 @@ export async function listVoices(cfg: AppConfig, run?: systemVoices.Runner, own?
   }
   const key = cfg.tts?.key;
   if (!key) return [];
-  // only an own ElevenLabs key searches the Voice Library; Flux has no such search
-  return elevenlabs.listVoices(key, search);
-}
-
-/** Add a Voice Library voice to the owner's own ElevenLabs account. Only for
- *  an own key: on Flux, or with no key, there is no account to add it to. */
-export async function addSharedVoice(cfg: AppConfig, publicOwnerId: string, voiceId: string, name: string): Promise<string> {
-  const key = cfg.tts?.key;
-  if (!key) throw new NoVoiceConfigured("key");
-  return elevenlabs.addSharedVoice(key, publicOwnerId, voiceId, name);
+  return elevenlabs.listVoices(key);
 }
 
 /** Synthesize one utterance. Throws NoVoiceConfigured when there is nothing

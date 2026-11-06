@@ -52,8 +52,7 @@ async function enter(page:Page,width:number,group?:string){
   await page.addInitScript(()=>localStorage.setItem('murage-email-gate','skipped'));
   await page.route('https://**/*',route=>route.abort());
   await page.goto(origin);
-  // The room view loads on first open (1.0.17), so wait for its header the way a person waits to see the room.
-  if(group){const sidebar=await openSidebar(page);await sidebar.getByText(group,{exact:true}).click();await expect(page.getByRole('main').getByRole('button',{name:`More actions for ${group}`,exact:true})).toBeVisible();}
+  if(group){const sidebar=await openSidebar(page);await sidebar.getByText(group,{exact:true}).click();}
 }
 async function openNew(page:Page){
   const sidebar=await openSidebar(page);await sidebar.getByRole('button',{name:'New or share',exact:true}).click();
