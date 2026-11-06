@@ -86,6 +86,7 @@ export const FIRST_RUN_SURFACE_MODULES: Readonly<Record<string, string>> = {
   "first-run-flow.ts": "step and screen structure; its words come from FIRST_RUN_COPY",
   "first-run-jobs.ts": "job shapes and requirements; its words come from FIRST_RUN_COPY",
   "first-run-phone.ts": "pairing state; says nothing",
+  "first-run-timing.ts": "press timing; logs numbers and step names only, holds no readable copy",
   "first-run.ts": "surface: FIRST_RUN_PHASES",
   "first-run-chief.ts": "surface: CHIEF_CONFIRMATIONS",
 };

@@ -24,6 +24,10 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
     // Program and most keys cannot run it yet -- a default that 404s is worse
     // than one that is merely a version behind.
     { id: "gpt-6-astra", label: "GPT-6 Astra" },
+    // gpt-6.1-sol: Codex 0.166.0's own default model. Listed so the offline
+    // fallback names what the bundled CLI picks; default stays below for the
+    // same release-day reason as Astra.
+    { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
     // gpt-6-sol / gpt-6-luna: released 2026-09-22 (ids per models.dev). Same
     // reasoning as Astra for not defaulting to them on release day.
     { id: "gpt-6-sol", label: "GPT-6 Sol" },

@@ -36,7 +36,7 @@ test.beforeEach(async ({ page }) => { await page.route("**/api/whats-new?*", rou
 const SIZES = [{ width: 1100, height: 800 }, { width: 1100, height: 420 }, { width: 390, height: 844 }, { width: 390, height: 500 }];
 const SURFACES: Array<{ name: string; open: string; root: string }> = [
   { name: "inbox", open: "Open inbox", root: "dialog[open]" },
-  { name: "bot-settings", open: "Open bot", root: "dialog[open]" },
+  { name: "bot-settings", open: "Open bot", root: '[role="dialog"][aria-label="Bot settings: Sticky proof bot"]' },
   { name: "settings", open: "Open settings", root: '[role="dialog"][aria-modal="true"]' },
   { name: "card", open: "Open card", root: "dialog[open]" },
   { name: "form", open: "Open form", root: "dialog[open]" },

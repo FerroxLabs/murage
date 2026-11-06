@@ -59,7 +59,8 @@ describe("one desktop-app predicate (int/104-rc1 collapse)", () => {
 describe("the handlers ask the computer, not the surface", () => {
   const source = readFileSync(join(here, "index.ts"), "utf8");
   it("gates publish Allow, Full mode, approved sites, message reach and putting a site online on isDesktopApp", () => {
-    expect(source.match(/const onComputer = isDesktopApp\(req\.headers, url\.searchParams\);/g)).toHaveLength(2);
+    // BOT-RESPOND-ROUTE-UNIFY: one copy, inside respondToCard, which both respond routes call (pinned below)
+    expect(source.match(/const onComputer = isDesktopApp\(req\.headers, url\.searchParams\);/g)).toHaveLength(1);
     expect(source).toContain('if (!isDesktopApp(req.headers, url.searchParams)) return json(res, 403, browserExtError("browserExt.full.errorDesktopOnly"));');
     expect(source).toContain('if (mode !== "full" && !isDesktopApp(req.headers, url.searchParams) && rank[mode]');
     expect(source).toContain("const ownerDesktop = isDesktopApp(req.headers, url.searchParams);");
@@ -68,16 +69,48 @@ describe("the handlers ask the computer, not the surface", () => {
     expect(source).not.toMatch(/const onComputer = requestSurface\(/);
     expect(source).not.toContain("requestFromComputer(");
   });
+
+  it("gates publish Allow on BOTH respond routes: each calls respondToCard, whose one onComputer check runs before answerRequest", () => {
+    const fnStart = source.indexOf("async function respondToCard(");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnEnd = source.indexOf("\n}\n", fnStart);
+    const fn = source.slice(fnStart, fnEnd);
+    const check = fn.indexOf("const onComputer = isDesktopApp(req.headers, url.searchParams);");
+    const gate = fn.indexOf('if (!publishAnswerAllowed(requestId, behavior, onComputer ? "desktop" : "elsewhere")) return json(res, 403, { error: PUBLISH_NEEDS_COMPUTER });');
+    const answer = fn.indexOf("await answerRequest(threadId, asked.instanceId, requestId, behavior,");
+    expect(check).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(check);
+    expect(answer).toBeGreaterThan(gate);
+    // two answerRequest calls only: the question-card branch (a question is never a publish card) and the gated one, last
+    expect(fn.match(/answerRequest\(/g)).toHaveLength(2);
+    expect(fn.indexOf('if (question.kind === "deliver") {')).toBeGreaterThan(-1);
+    expect(fn.indexOf("answerRequest(")).toBeGreaterThan(fn.indexOf('if (question.kind === "deliver") {'));
+    expect(fn.lastIndexOf("answerRequest(")).toBe(answer + "await ".length);
+    const route = (pattern: string): string => {
+      const at = source.indexOf(pattern);
+      expect(at, pattern).toBeGreaterThan(-1);
+      return source.slice(at, source.indexOf("\n    }\n", at));
+    };
+    const botRoute = route("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond$/);");
+    const threadRoute = route("m = path.match(/^\\/api\\/threads\\/([\\w-]+)\\/respond$/);");
+    expect(botRoute).toMatch(/return await respondToCard\(\{ req, url, res \}, bot\.threadId, body, undefined, \{ botId: bot\.id \}\);/);
+    expect(threadRoute).toMatch(/return await respondToCard\(\{ req, url, res \}, threadId, await readBody\(req\)\);/);
+    for (const r of [botRoute, threadRoute]) {
+      expect(r).not.toContain("answerRequest(");
+      expect(r).not.toContain("publishAnswerAllowed(");
+    }
+  });
 });
 
 describe("All chats answers a Cloud home's paired phone as the phone (chats slice 1)", () => {
   const source = readFileSync(join(here, "index.ts"), "utf8");
-  it("splits desktop from phone with isDesktopApp and admits only the desktop app or a companion-proven caller", () => {
+  it("splits desktop from phone with isDesktopApp and admits only the desktop app or the owner acting", () => {
     expect(source).toContain("const chatsDesktop = chatsView && isDesktopApp(req.headers, url.searchParams);");
-    expect(source).toContain('if (chatsView && !chatsDesktop && !companionAuthorized(req.headers)) return json(res, 404, { error: "no such route" });');
+    // ownerActs, not companionAuthorized: a Cloud browser with a remembered owner login gets no previews or owner-audience hits
+    expect(source).toContain('if (chatsView && !chatsDesktop && !ownerActs(req.headers)) return json(res, 404, { error: "no such route" });');
     expect(source).toContain("const visible = chatsDesktop ? null : new Set(store.visibleThreadIds());");
     expect(source).toContain("scope = chatSearchThreads(chatSource(chatsDesktop), chatFiltersFromQuery(url.searchParams))");
     const chats = source.slice(source.indexOf('if (method === "GET" && path === "/api/chats") {'));
-    expect(chats).toMatch(/^[^]*?const desktop = isDesktopApp\(req\.headers, url\.searchParams\);\s*if \(!desktop && !companionAuthorized\(req\.headers\)\) return json\(res, 404, \{ error: "no such route" \}\);/);
+    expect(chats).toMatch(/^[^]*?const desktop = isDesktopApp\(req\.headers, url\.searchParams\);\s*if \(!desktop && !ownerActs\(req\.headers\)\) return json\(res, 404, \{ error: "no such route" \}\);/);
   });
 });
