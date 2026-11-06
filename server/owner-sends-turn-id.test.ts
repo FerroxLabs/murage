@@ -86,7 +86,7 @@ describe("owner_sends.turn_id is additive", () => {
     db.exec("INSERT INTO thread_state VALUES ('t','m')");
     initializeOwnerSends(db);
     // a 1.0.8 build: turn_id but none of the 1.0.9 via columns
-    for (const column of ["attachments", "via_device", "queue_only", "via"]) db.exec(`ALTER TABLE owner_sends DROP COLUMN ${column}`);
+    for (const column of ["isolated", "attachments", "via_device", "queue_only", "via"]) db.exec(`ALTER TABLE owner_sends DROP COLUMN ${column}`);
     expect(await snapshotInstallationDatabase(data, join(root, "prior.db"))).toMatchObject({ status: "copied" });
     // an earlier 1.0.2 build: everything but turn_id (and the via columns)
     db.exec("ALTER TABLE owner_sends DROP COLUMN turn_id");
@@ -95,7 +95,7 @@ describe("owner_sends.turn_id is additive", () => {
     initializeOwnerSends(db);
     const columns = (db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map((column) => column.name);
     // turn_id comes back first, then the 1.0.9 via columns, all appended by ALTER in that order (an earlier archive keeps restoring)
-    expect(columns.slice(-5)).toEqual(["turn_id", "via", "queue_only", "via_device", "attachments"]);
+    expect(columns.slice(-6)).toEqual(["turn_id", "via", "queue_only", "via_device", "attachments", "isolated"]);
     expect(await snapshotInstallationDatabase(data, join(root, "current.db"))).toMatchObject({ status: "copied" });
   });
 

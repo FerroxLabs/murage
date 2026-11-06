@@ -143,6 +143,8 @@ describe("the agents proxy on a contact turn", () => {
 describe("the images line on a contact turn", () => {
   it("leaves the saved library out, and the owner's line exactly as it was", () => {
     expect(imageToolsPrompt(true)).toBe(TURN_PROMPTS.imageTools);
+    // LOCAL-IMAGE-CARD part 2: every audience is told a local picture reaches chat through register_artifact, not as a path
+    for (const audience of [true, false]) expect(imageToolsPrompt(audience)).toMatch(/register_artifact[^.]*: a file path written in your reply does not show as a picture in chat\./);
     const contact = imageToolsPrompt(false);
     expect(contact.length).toBeLessThan(TURN_PROMPTS.imageTools.length);
     expect(TURN_PROMPTS.imageTools.startsWith(contact)).toBe(true);

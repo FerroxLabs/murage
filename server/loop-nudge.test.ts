@@ -31,7 +31,7 @@ const piFail: Done = { ok: false, result: { content: [] }, detail: "ENOENT: no s
 
 type Answer = boolean | "delivered" | "rejected" | "uncertain";
 function rig(opts: { steer?: (beforeWrite?: () => void) => Promise<Answer>; steerable?: boolean } = {}) {
-  const flags = { watching: true, waiting: false, stopping: false };
+  const flags = { watching: true, waiting: false, stopping: false, isolated: false };
   const rows: string[] = [];
   const logs: string[] = [];
   const steer = vi.fn(async (_threadId: string, _text: string, beforeWrite?: () => void) => {
@@ -44,6 +44,7 @@ function rig(opts: { steer?: (beforeWrite?: () => void) => Promise<Answer>; stee
     watching: () => flags.watching,
     waitingOnHuman: () => flags.waiting,
     stopping: () => flags.stopping,
+    isolated: () => flags.isolated,
     adapter: () => adapter,
     record: (threadId) => rows.push(threadId),
     log: (line) => logs.push(line),
@@ -238,6 +239,22 @@ describe("loop nudge (SL-N GATE)", () => {
     expect(r.steer).toHaveBeenCalledTimes(1);
   });
 
+  it("an isolated run (the help turn) gets no note, also when it takes the thread before the write (UX-L4B-FULL test 13)", async () => {
+    const help = rig();
+    help.flags.isolated = true;
+    await help.fail(6, claudeBash("d"), claudeFail);
+    expect(help.steer).not.toHaveBeenCalled();
+    let write = () => {};
+    const late = rig({ steer: (beforeWrite) => new Promise<Answer>((resolve) => { write = () => { try { beforeWrite?.(); resolve(true); } catch { resolve(false); } }; }) });
+    const pending = late.fail(6, claudeBash("d"), claudeFail);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(late.steer).toHaveBeenCalledTimes(1);
+    late.flags.isolated = true;
+    write();
+    await pending;
+    expect(late.rows).toEqual([]);
+  });
+
   it("a stopping run, or a turn the watchdog is not watching, gets no note", async () => {
     const stopping = rig();
     stopping.flags.stopping = true;
@@ -301,6 +318,7 @@ describe("loop nudge (SL-N GATE)", () => {
     const index = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
     expect(index).toContain("void loopNudge.observe(event);");
     expect(index).toContain('stopping: (threadId) => directRuns.get(threadId)?.phase === "stopping",');
+    expect(index).toContain("isolated: (threadId) => directRuns.get(threadId)?.isolated === true,");
     expect(index).toContain("waitingOnHuman: (threadId) => watchdog.waitingOnHuman(threadId),");
   });
 });

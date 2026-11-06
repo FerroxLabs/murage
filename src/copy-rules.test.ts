@@ -264,9 +264,14 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/lib/usage.ts", text: "billed to your API key", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
   { file: "src/components/BrowserActivityLog.tsx", text: "free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
   { file: "src/components/BrowserActivityLog.tsx", text: "browserExt.decision.free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
+  { file: "src/components/today/MonthCard.tsx", text: "/api/spend", why: "the meter's route path, never shown" },
+  { file: "src/components/today/MonthCard.tsx", text: "spend:", why: "the Needs you row id, never shown" },
 ];
 // 1.0.12: providerError.payment.summary no longer names HTTP 402 (the code sits in the card's details fold).
 const PRICE_KNOWN_KEYS = new Set<string>([]);
+// UX-L2C monthly meter (1.0.19): the feature is Flux's own billed figure against the owner's limit, so these lines name
+// what Flux billed. Copy per designs/UX-L2C-METER-FLUX-1018.md, MurageMain 11-04. Each key is exact; a new one is caught.
+const PRICE_KNOWN_UX_KEYS = new Set<string>(["ux.l2c.month.billed", "ux.l2c.month.ofLimit", "ux.l2c.usage.subtitle"]);
 
 describe("product copy rules", () => {
   it("the desktop app's own windows and dialogs show no em dash, no safe and never the connection service's name", () => {
@@ -370,6 +375,7 @@ describe("product copy rules", () => {
       ...readdirSync(fragments).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(fragments, name), RULES)),
       // and the help panel's words for each screen, which ride the help chunk
       ...catalogueHits(join(dir, "en-help/screens.json"), RULES),
+      ...catalogueHits(join(dir, "en-help/ask.json"), RULES),
     ];
     expect(found).toEqual([]);
   });
@@ -393,8 +399,8 @@ describe("product copy rules", () => {
       !entries.some(entry => found.startsWith(`${entry.file}:`) && found.endsWith(`: ${entry.text.trim().slice(0, 120)}`));
     const found = hits(walk(join(ROOT, "src")), [PRICE, RAW_ERROR]).filter(allowText(PRICE_KNOWN));
     const dir = join(ROOT, "src/locales");
-    const fragments = readdirSync(join(dir, "en-ux")).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(dir, "en-ux", name), [PRICE, RAW_ERROR]));
-    expect([...found, ...catalogueHits(join(dir, "en.json"), [PRICE, RAW_ERROR], PRICE_KNOWN_KEYS), ...fragments, ...catalogueHits(join(dir, "en-help/screens.json"), [PRICE, RAW_ERROR])]).toEqual([]);
+    const fragments = readdirSync(join(dir, "en-ux")).filter(name => name.endsWith(".json")).flatMap(name => catalogueHits(join(dir, "en-ux", name), [PRICE, RAW_ERROR], PRICE_KNOWN_UX_KEYS));
+    expect([...found, ...catalogueHits(join(dir, "en.json"), [PRICE, RAW_ERROR], PRICE_KNOWN_KEYS), ...fragments, ...catalogueHits(join(dir, "en-help/screens.json"), [PRICE, RAW_ERROR]), ...catalogueHits(join(dir, "en-help/ask.json"), [PRICE, RAW_ERROR])]).toEqual([]);
   });
 
   it("the price and raw-error rules catch what the 0.1.60 Mac pass found, and not the other senses of free", () => {

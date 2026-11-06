@@ -96,7 +96,7 @@ describe("help panel", () => {
   });
 
   it("with no engine, tips and search still work, plus how to get one", () => {
-    const html = render({ noEngine: true, chiefName: "Nova", onAskChief: vi.fn() });
+    const html = render({ noEngine: true });
     expect(html).toContain("Connect an engine, then your Chief of Staff can answer questions about this screen.");
     expect(html).toContain("Open Engines");
     expect(html).toContain("Search help");
@@ -104,16 +104,25 @@ describe("help panel", () => {
     expect(render()).not.toContain("Connect an engine");
   });
 
-  // L4B fallback (1.0.17): the panel's ask is real now. It opens the Chief's chat (help-ask-chief.test.ts), and the
-  // panel says so; no line promises an ask that comes in a later version.
-  it("asks about this screen through the Chief's chat, above search and the feedback form", () => {
-    const html = render({ chiefName: "Nova", onAskChief: vi.fn(), initialFeedbackOpen: true });
-    expect(html).toContain("Ask about this screen");
-    expect(html).toContain("Nova answers in your chat.");
-    expect(html).toContain(">Ask Nova<");
-    expect(html).toContain('aria-label="Your question about this screen"');
-    expect(html.indexOf("Ask about this screen")).toBeLessThan(html.indexOf("Search help"));
-    expect(html.indexOf("Ask about this screen")).toBeLessThan(html.indexOf("Tell us what to make easier"));
+  // HELP-CHIEF-FALLBACK-REMOVE (1.0.18): the in-panel Ask (HelpAsk.tsx, the askSlot) replaced the 1.0.17 fallback that
+  // opened the Chief's chat with the question in its composer; that path is gone, with its words.
+  it("never draws the old Chief-chat ask: the in-panel Ask is the only ask, and engines off still draws none", () => {
+    const legacy = { chiefName: "Nova", onAskChief: vi.fn(), initialFeedbackOpen: true } as unknown as Partial<HelpPanelProps>;
+    const html = render(legacy);
+    expect(html).not.toContain("Ask about this screen");
+    expect(html).not.toContain(">Ask Nova<");
+    expect(html).not.toContain("answers in your chat.");
+    expect(html).not.toContain("Your question about this screen");
+    const panel = readFileSync(fileURLToPath(new URL("./HelpPanel.tsx", import.meta.url)), "utf8");
+    expect(panel).not.toMatch(/chiefName|onAskChief|AskAboutScreen|askChiefAboutScreen|help-ask-chief|HelpAskChief/);
+    // engines off or none: no ask (1.0.18 rule); otherwise the lazy in-panel Ask
+    expect(panel).toMatch(/const ask = askSlot \?\? \(noEngines \|\| enginesOff \? undefined : \(/);
+    expect(panel).toContain("<HelpAskChunk.Component screenTitle=");
+    for (const gone of ["../../lib/help-ask-chief.ts", "./HelpAskChief.tsx", "./HelpAskChief.test.ts"]) {
+      expect(readdirSync(fileURLToPath(new URL(gone.slice(0, gone.lastIndexOf("/") + 1), import.meta.url))), gone).not.toContain(gone.slice(gone.lastIndexOf("/") + 1));
+    }
+    const words = readFileSync(fileURLToPath(new URL("../../locales/en-help/ask.json", import.meta.url)), "utf8");
+    expect(Object.keys(JSON.parse(words) as Record<string, string>).filter((k) => k.startsWith("ux.l4b.ask."))).toEqual([]);
   });
 
   it("promises no ask that is not there", () => {

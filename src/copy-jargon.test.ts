@@ -46,7 +46,8 @@ function catalogueHits(surface: Surface, file: string): Hit[] {
 
 function fragmentFiles(): string[] {
   const dir = join(ROOT, "src/locales/en-ux");
-  return readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => join(dir, name));
+  // plus the help panel's Ask words (UX-L4B-FULL), which ride the help chunk
+  return [...readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => join(dir, name)), join(ROOT, "src/locales/en-help/ask.json")];
 }
 
 function helpHits(): Hit[] {

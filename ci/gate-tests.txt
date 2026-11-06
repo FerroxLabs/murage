@@ -48,6 +48,7 @@ companion/test/strip-types-guard.test.ts	all	the phone door failing to start bec
 companion/test/tailscale-late.test.ts	all	phone locked out when Murage starts before Tailscale
 companion/test/task-allow-routes.test.ts	all	A phone can reach the allow routes only with its own approval key
 companion/test/terms-door.test.ts	all	cloud home, enrolment and key custody
+companion/test/turn-state-door.test.ts	all	credentials, pairing and access control
 companion/test/upstream-failure.test.ts	all	phone-to-desktop door and its auth
 companion/test/wire.test.ts	all	phone-to-desktop door and its auth
 electron/assemblyai.test.mjs	all	protects user-visible behaviour in core flows
@@ -108,6 +109,7 @@ scripts/browser-extension-chromereal.test.mjs	all	no input reaches a document ch
 scripts/browser-extension-late-download.test.mjs	all	a page download saved while the bot is told it was blocked (including after a kept file, or a removal no fresh look confirms); the owner's own download deleted on a late page announcement, or told to the bot when it was idle
 scripts/browser-extension-opus-review.test.mjs	all	screenshots never capture cross-site payment frames (security)
 scripts/browser-extension-release-config.test.mjs	all	packaging, upgrade and release integrity
+scripts/browser-extension-sable-popup.test.mjs	all	a popup never joins a paused or disconnected task (approval boundary)
 scripts/browser-extension-runtime.test.mjs	all	pauses on unapproved navigation (approval boundary)
 scripts/build-murage-cage.test.mjs	linux	engines on Linux get a verified, pinned cage
 scripts/bundle-server-runtime-files.test.mjs	all	packaging, upgrade and release integrity
@@ -115,14 +117,21 @@ scripts/cage-apparmor.test.mjs	linux	Linux engines from source can launch under 
 scripts/cloudflared-pins.test.mjs	all	packaging, upgrade and release integrity
 scripts/sentinel-bundle-check.test.mjs	all	the health checker ships as a small standalone file that never loads the app, its data or the network
 server/capability-facts.test.ts	all	a bot with no help tool (OpenClaw, a tool-less or draft-only chat) answers a product question from the checked facts, platforms and limits included
+server/chat-search.test.ts	all	All chats message search pages by chat and never shows a forgotten line
 server/cloud-home/sentinel-units.test.ts	linux	the Cloud health checker runs without root, without network and sees only the health folder
 server/drivers/acp/u2-replies.test.ts	all	a reply shown twice
+server/drivers/native-md-stream.test.ts	all	native log stream masking fails closed on every lost-context path
+server/done-when.test.ts	all	a hand-off shows or passes on an unbounded or secret-bearing done-when line
+server/stored-row-check.test.ts	all	a stored row keeps a secret-bearing done-when line or foreign diagnostic, or a reader skips the one decoder
+server/stored-row-read.test.ts	all	a planted secret-bearing done-when line comes back from a replayed, inserted or pruned row
+src/lib/done-when-line.test.ts	all	a hand-off row with a done-when line shows while Tool calls is off, and paints only a bounded line
 server/folder-trust-v2-api.test.ts	all	forgetting a folder decision reaches a new process
 server/folder-trust-v2-seeds.test.ts	linux+mac	a routed turn keeps every earlier folder answer
 server/folder-trust-v2-seeds-cloud.test.ts	linux+mac	a Cloud turn with no route starts with its folder answers
 server/folder-trust-v2-settings.test.ts	all	Settings promises match what Forget does
 server/folder-trust-v2.test.ts	all	Fuigo trust replies grant only what was decided
 server/full-access-env-win-108.test.ts	windows	Bounded real PowerShell checks and process-tree cleanup before conversation approvals
+server/md-secret-label.test.ts	all	secrets after a markdown-wrapped label never reach a log sink
 server/owner-time-zone-api.test.ts	linux+mac	Only the owner can change the time zone and a bad zone is refused
 server/owner-time-zone-engines.test.ts	all	Every engine turn runs in the owner's time zone
 server/owner-time-zone.test.ts	all	The owner's time zone is saved and read back and never silently changed
@@ -136,8 +145,10 @@ server/grant-migrations-l1.test.ts	all	Existing grants survive the upgrade with 
 server/grant-state-l1.test.ts	all	Grant state is kept per holder and Undo removes exactly that grant
 server/l1-copy.test.ts	all	The grant card wording stays plain and matches what the grant does
 server/question-cards-wait.test.ts	all	a question card waits for the owner: no Murage or engine clock on any turn a person can answer, the note only on a turn nobody is at
+server/room-shares.test.ts	all	a bot asks the owner to share private lines into an owner-only room; nothing leaves until the owner shares the exact excerpts
 server/route-policy-l1a.test.ts	all	Grant routes follow the route policy for who may call them
 server/pwsh-read-only-1013.test.ts	all	ordinary PowerShell reads run, and a read never carries a wipe (approval boundary)
+server/routine-detail-line.test.ts	all	the rich routine line is shown only to the owner's own direct turn; any missing fact shows names only
 server/sentinel/types.test.ts	all	health issues group by a fixed fingerprint that carries no owner text
 server/health/counters.test.ts	all	health counters stay bounded and never publish a raw thread or message id
 server/health/publisher.test.ts	all	health metadata stays in its own owner-only folder and never appears mid-backup
@@ -379,6 +390,7 @@ server/browser-extension-engine-close.test.ts	all	turning sharing off mid-start 
 server/browser-extension-engine-read.test.ts	all	denied destinations unfetchable; no browser credentials; revoke drops read
 server/browser-extension-engine.test.ts	all	no navigation when destination approval denied (approval)
 server/browser-extension-executor.test.ts	all	Executor refuses arbitrary evaluation
+server/browser-extension-failclosed.test.ts	all	a site the browser did not confirm is never used: the task pauses for the owner (approval)
 server/browser-extension-floor-flow.test.ts	all	payment and terms floor refuses without input
 server/browser-extension-integration.test.ts	all	bot uses the right browser profile
 server/browser-extension-mcp-api.test.ts	all	External client tools gated, revoke while waiting
@@ -392,6 +404,8 @@ server/browser-extension-phone.test.ts	all	paired phone cannot approve or regist
 server/browser-extension-policy.test.ts	all	site access never authorizes writes
 server/browser-extension-round3.test.ts	all	secret-named fields block value extraction (secrets)
 server/browser-extension-round4.test.ts	all	Recipient traversal cannot hide fields
+server/browser-extension-sable-hooks.test.ts	all	a lost browser connection is cut and re-told the approved sites (approval)
+server/browser-extension-sable-live.test.ts	all	Full access never cards or pauses on an unsure or failed action check
 server/browser-extension-service.test.ts	all	extension asks site before CDP observation
 server/browser-extension-setup-api.test.ts	all	extension setup needs owner consent
 server/browser-extension-setup-audience-api.test.ts	all	Non-owner turn cannot raise setup card
@@ -605,6 +619,7 @@ server/delegation-unattended-restart-api.test.ts	linux+mac	unattended handoff ke
 server/delegations.test.ts	all	delegation queue and dispatch
 server/delete-revoke-scope-api.test.ts	linux+mac	deleting one chat never stops an unrelated turn
 server/deletion-banner-turn-end.test.ts	all	deletion note clears when Murage's own turn ends
+server/deletion-hold-yield.test.ts	all	a new turn never waits for a whole chat deletion
 server/deletion-dismiss-api.test.ts	all	dismissed deletion lines stay dismissed
 server/deletion-owed-f16.test.ts	all	deletion banner shows one line per engine, clears, and dismiss lasts
 server/desktop-action-cancel-api.test.ts	all	Stop cancels in-flight desktop action
@@ -639,6 +654,7 @@ server/drivers/acp/engine-pid-sites.test.ts	all	ACP tree probes look at the engi
 server/drivers/acp/engine-tree-stop.test.ts	linux+mac	Stop on an ACP engine ends the whole process tree, so no engine keeps running after Stop
 server/drivers/acp/fuigo-1032.test.ts	all	Fuigo 1.0.32: no acceptEdits, only the turn credential
 server/drivers/acp/fuigo-1037.test.ts	all	Fuigo 1.0.37: no ACP client terminal on offer at any permission level
+server/drivers/acp/fuigo-policy.test.ts	all	FUIGO-SCOPE: every Fuigo turn runs under Murage's launch policy; an engine that ignores it gets no prompt
 scripts/fuigo-bump.test.mjs	all	Fuigo pin bump: refusals, hunk review, pin move
 server/drivers/acp/fuigo-no-silent-hang.test.ts	all	a Fuigo that never answers or goes silent ends the turn with a plain line and one outcome, never a silent hang
 server/drivers/acp/fuigo-pins.test.ts	all	Fuigo retry, connect and park pins are the same in every env copy
@@ -797,6 +813,9 @@ server/flux-connection.http.test.ts	all	Flux key select, test, disconnect, never
 server/flux-connector.test.ts	all	connect/disconnect leaves user config byte-identical
 server/flux-image-edits.test.ts	all	Image edit routes after approval
 server/flux-key-info.test.ts	all	Flux key validity check and caching
+server/flux-limits.test.ts	all	The monthly meter shows only what Flux reports for the current key fingerprint, never $0 for unknown, owner desktop only
+src/lib/spend-meter.test.ts	all	A figure and its heads-ups show only for the current key fingerprint; a settings save never brings an old one back
+src/components/today/meter-gate.test.ts	all	Two reads in flight across a key change never bring the old figure back, in any meter; a failed read is the message, never $0
 server/flux-key-leak.test.ts	all	non-Flux values never sent as key
 server/flux-key-shape.test.ts	all	only valid Flux keys handed out
 server/flux-memory-direct-calls.test.ts	all	Direct Flux calls send memory off
@@ -882,6 +901,17 @@ server/installation-activation.test.ts	all	restored install requires hash-bound 
 server/installation-archive.test.ts	all	restore rejects malformed archives
 server/installation-backup-encryption.test.ts	all	backup encryption with pinned age
 server/installation-damaged-export.test.ts	all	Damaged data exported unchanged, safe refusals
+server/settle-copy-backup.test.ts	all	a backup never carries a deleted conversation in its search index or freed pages
+server/settle-copy-damaged-export.test.ts	all	a damaged export carries a settled conversations database or none, never a raw copy
+server/settle-copy-pre-prune.test.ts	all	the copy taken before a start-up prune never keeps a deleted conversation
+server/settle-copy-pre-memory.test.ts	all	the pre-upgrade copy never keeps a deleted conversation
+server/settle-copy-restore.test.ts	all	a restored older backup drops deleted conversations from its search index before it is opened
+server/settle-copy-crash.test.ts	all	a copy killed while it settles is never published and is removed at the next start
+server/settle-copy-downgrade.test.ts	all	going back to an older build leaves no deleted conversation in the search index
+server/settle-copy-r61.test.ts	all	a copy settles without holding twice its size in memory and never publishes on a short disk
+server/search-merge-r6.test.ts	all	a deleted conversation leaves the search index without stalling the app
+server/search-merge-crash.test.ts	all	a crash during the search-index merge never brings a deleted conversation back
+server/search-merge-t13.test.ts	all	the shipped SQLite behaves as the search-index proof needs
 server/installation-database-snapshot.test.ts	all	restore snapshot copies memory controls and forks
 server/installation-encrypted-backup-gaps.test.ts	all	encrypted backup cancel and truncation
 server/installation-encrypted-backup.test.ts	all	encrypted backup never leaves plaintext
@@ -1263,6 +1293,7 @@ server/project-card-engine-api.test.ts	all	Owner card runs and returns one resul
 server/project-card-executor.test.ts	all	project cards run once; restart parks unknown
 server/project-cards.test.ts	all	owner-only take over; owner approval parks a run (permissions)
 server/project-close.test.ts	all	project close recovers across steps
+server/project-db-busy-api.test.ts	all	project pages answer while a write runs; create and close say busy, not failed
 server/project-derived-stale.test.ts	all	forgetting message drops derived summaries
 server/project-envelope.test.ts	all	Goal envelope validation refuses bad input
 server/project-export.test.ts	all	project export stays inside selected root
@@ -1404,6 +1435,8 @@ server/server-child-crash.test.ts	all	server child records fatal cause
 server/session-audience.test.ts	all	cursor resumed only for its audience
 server/session-end-flush.test.ts	all	logging out or shutting down saves the chat in progress before Murage quits
 server/setup-api.test.ts	all	first run seats Chief on fresh install
+server/setup-answer-timing.test.ts	all	first run answer says where its time went
+server/setup-timing.test.ts	all	first run answer waits for the slower read, not the sum
 server/setup-backup.test.ts	all	Setup completes only after first backup
 server/setup-conversation.test.ts	all	first-run Chief conversation
 server/setup-signed-out.test.ts	all	signed-out engine offered with fix command
@@ -1479,10 +1512,12 @@ server/thread-recall-seal-store.test.ts	all	recall seal persisted and not cleara
 server/thread-recall-seal.test.ts	all	a session that held recall rows is never resumed; the next one is
 server/thread-recall.test.ts	all	thread recall excludes other bots and rooms
 server/ticket-recovery-f3.test.ts	all	a bot asking a teammate something that runs past the wait loses the answer and its task id when Murage restarts
+server/tool-no-result.test.ts	all	a settled turn marks only its own open tool rows No result, never another turn's live row
 server/tool-results.test.ts	all	tool result cache refuses other bot's reads
 server/transcript-backfill.test.ts	all	Backfill resumable, damaged rows skipped
 server/transcript-seq.server.test.ts	all	transcript sequence column and migration
 server/tray-summary.test.ts	all	secrets and destructive commands stay on the full card (approval)
+server/tts/budget-stop.test.ts	all	a Flux key whose budget is used up is asked again for every sentence of every message, instead of one 402 stopping the asking
 server/tts/elevenlabs-library.test.ts	all	an own ElevenLabs key stays in a header, follows no redirect, and adds Voice Library voices only with an own key
 server/tts/flux-eleven.test.ts	all	the ElevenLabs voices Flux offers show up when Flux is connected, and not where only an own OpenAI key can speak
 server/turn-attribution-engines.e2e.test.ts	all	Each sentence names answering turn on every engine
@@ -1511,6 +1546,9 @@ server/user-chrome-proxy.test.ts	all	no local program reaches the owner's Chrome
 server/user-stop-api.test.ts	all	Stop leaves stopped state, drops queued delegation
 server/venue-awareness.partition.test.ts	all	bot sees only its own team's venues
 server/venue-awareness.test.ts	all	bot knows the projects and channels it is in
+server/venue-post-picker.test.ts	all	the Post in… list is the owner's, a post rests on the owner's line, and a routine never posts
+server/venue-post-held.test.ts	all	a post held for the owner is written once, posts only on Post it, and a cut-short post never posts twice
+server/venue-post.test.ts	all	a bot posts in a project or channel only when the owner picked it, never for anyone else's words
 server/venue-read-api.test.ts	all	the venue reader mounts only for the owner's turn; revoked or forged claims are refused
 server/venue-read.test.ts	all	a bot reading a project or group never sees another partition's rows, ids or sources; linked rows stay bare
 server/voice-call-api.test.ts	all	voice call desktop-only, leaves one note
@@ -1549,18 +1587,22 @@ shared/phone-apps.test.ts	all	protects user-visible behaviour in core flows
 shared/phone-ask-contract.test.ts	all	security boundary or path/file access
 shared/phone-jobs-contract.test.ts	all	security boundary or path/file access
 shared/web-safe-imports.test.ts	all	the web app failing to load because it imports server-only code
+src/components/ChatPickerSearch.test.ts	all	the chat pop-up searches messages in its own scope only
 src/components/FolderTrustRecords.test.ts	all	every folder decision listed with its Forget
 src/components/help/FeedbackForm.test.ts	all	tester feedback sends only a fixed screen envelope and one fixed sentence, stamped when Send is pressed, never owner text
+src/components/help/HelpAsk.test.ts	all	the help panel asks the Chief as an ordinary chat turn and shows only that turn's answer, with a next step in every state
 src/components/help/HelpHost.lazy.test.ts	all	help's panel chunk is fetched only when help opens, never in the background, so a closed help can never reload the app
 src/components/help/HelpPanel.test.ts	all	the help panel opens on every screen and over every window, owns Esc and Tab inside it, and a help chunk that fails to load shows its retry line inside help
-src/components/help/HelpAskChief.test.ts	all	the help panel's ask opens the Chief's chat with the screen named and the question in the composer, never sent
 src/components/ui/Tip.test.ts	all	tooltips show on hover and keyboard focus, are spoken, and stay inside the window
 src/lib/hints-seen.test.ts	all	a hint shows once on this device and never at launch, on a small window, in first run or twice at once
 src/components/FirstRunNoPrivacyPromise.test.ts	all	first run promises nothing about where typed text goes
+src/components/agency/ClientsCard.test.ts	all	The Your clients card shows only with a paired home, names no home, and teaches the real stop and carry-on steps
 src/components/approval/l1a-card.test.ts	all	The approval card shows the verb and the fold the owner agrees to
 src/components/approval/l1a-settings.test.ts	all	The list of things said yes to for good is complete and removable
 src/components/approval/level-confirm.test.ts	all	The level confirm card shows what will change, and Undo puts back only what is still as it was
 src/components/notebook-save-gate.test.ts	all	the notebook Save waits for a loaded revision
+server/write-tx.structure.test.ts	all	owner write never starts deferred (card start busy after search merge)
+server/write-tx.test.ts	all	owner write waits for search merge instead of failing busy
 server/writer-roots.test.ts	all	one writer per work root
 server/writetime-r11c.test.ts	all	short secret copied into note withheld
 server/writetime-s2.test.ts	all	Read messages recorded for revoke tracking
@@ -1601,6 +1643,7 @@ src/components/BotPermissionDefault.offer.test.ts	all	raising the bot default of
 src/components/BrowserCards.test.ts	all	browser approval cards; never Allow always
 src/components/ChatHeader.phone.test.ts	all	on a phone the chat header keeps back, name, model, profile and the bot's computer reachable from the ... menu
 src/components/ChoiceWithOther.test.ts	all	choosing Other sends the words typed, an empty Other cannot be confirmed, and question cards still answer the same way
+src/components/BringYourAi.test.ts	all	first run and Settings open the existing Grok import and Learn about me, navigation only
 src/components/ClaudeAccountsSettings.test.ts	all	Claude account list and credential handling
 src/components/ComposerPlusMenu.test.ts	all	on a phone the composer + menu keeps Attach, Finish together and the approval level reachable
 src/components/DiscordSettings.test.ts	all	status strips undeclared secret fields
@@ -1640,6 +1683,7 @@ src/components/cloud/Door.test.ts	all	cloud door sign-in routing
 src/components/composer-key-guard.test.ts	all	pasted key stripped before message is sent
 src/components/connect-label-collisions.test.ts	all	the label form fills in a free label, says a taken one on the form, and the chat card asks for it too
 src/components/first-run-label-form.test.ts	all	first-run cards connect an app only from the confirmed label form, filled in
+src/components/first-run-part2.test.ts	all	first run part 2: Today card, hire in one sentence, connect card Not now and unfinished sign-in
 src/components/first-run-settled.test.ts	all	first run card settled state from server
 src/components/routine-grant-82.test.ts	all	grant card describes operations in plain words
 src/components/settings-panel-locale.test.ts	all	bot settings stays in English after the owner picks another language
@@ -1649,6 +1693,7 @@ src/components/widget/WidgetMessage.test.ts	all	a bot widget draws its form, sen
 src/lib/activity-runs.test.ts	all	Worked for counts the turn, not the gap back to an older message
 src/lib/all-chats.test.ts	all	All chats asks, pages, groups and matches messages correctly, at any scale
 src/lib/analytics.test.ts	all	analytics opt-in/out honoured (privacy)
+src/lib/analytics-active.test.ts	all	daily active count honours the analytics switch (privacy)
 src/lib/approval-detail.test.ts	all	approval shows true path and command being approved
 src/lib/approval-feedback-fresh-auth.test.ts	all	Face ID prompt and approval answer state
 src/lib/approval-feedback.test.ts	all	decision controller ignores double tap, one decision
@@ -1698,6 +1743,7 @@ src/lib/served-model.test.ts	all	answered-by line only when Flux served another 
 src/lib/mcp-add-flow.test.ts	all	never saves secrets when the entry was refused (secrets)
 src/lib/media-resolve.test.ts	all	only files inside conversation root resolve
 src/lib/memory-integrity-feed.test.ts	all	memory health feed shared reader
+src/lib/modal-window.test.ts	all	the update pop-up and the help tab follow the modal window opened last, so they are never left inert under it
 src/lib/open-external.test.ts	all	external links open via safe bridge
 src/lib/permission-mode.test.ts	all	refused Full access change explained
 src/lib/project-activity-handoff.test.ts	all	Activity hand-off line names the teammate
@@ -1706,12 +1752,15 @@ src/lib/random-uuid-polyfill.test.ts	all	phone page over plain http crashes when
 src/lib/remote-sign-out.test.ts	all	sign out removes this device by DELETE
 src/lib/screen-envelope.test.ts	all	the screen envelope drops drafts, keys, names and ids, and refuses any field outside its fixed tables
 src/lib/session-check.test.ts	all	only real 401 means signed out
+src/lib/settings-address.test.ts	all	a Settings link a bot gives opens the right page, card or bot row, and only a bot that is here
+src/lib/settings-concierge.test.ts	all	the every-setting Help page lists every setting with its address and is never stale
 src/lib/settings-drafts.test.ts	all	are kept while they differ from the saved text and forgotten when they match it
 src/lib/source-code.test.ts	all	AGPL source offer present on every surface
 src/lib/stream-uplink.test.ts	all	voice ticket request refuses redirects
 src/lib/team-import.test.ts	all	team import preview rejects bad files
 src/lib/terms.test.ts	all	terms accepted once, reprompt on version change
 src/lib/trusted-html.test.ts	all	Trusted Types policy restricts script URLs
+src/lib/tts/budget-hold.test.ts	all	a Flux budget 402 keeps voice asking on that key instead of holding it until the budget returns
 src/lib/tts/no-filler.test.ts	all	a call reply opens with a drawn-out "Hmmm" every turn, or a short wait speaks a filler instead of staying quiet
 src/lib/undo.test.ts	all	Undo is local to the window and holds survive a newer offer
 src/lib/webhook-message-lazy.test.ts	all	a webhook run never shows its raw event text while the bubble's parser loads or fails
@@ -1853,6 +1902,11 @@ server/drivers/warm-pool.test.ts	linux+mac	an intent-held engine lost to the poo
 server/drivers/mcp-readiness.test.ts	linux+mac	a failed optional server staying failed on a kept engine
 server/drivers/claude-mcp-ready.test.ts	linux+mac	a bot's turn on a kept engine losing a server without a reconnect or a fresh start
 src/lib/today-model.test.ts	all	Today shows the wrong engine, needs or apps state, or a first run sees the full board
+src/lib/today-needs.test.ts	all	Today's Needs you block hides a decision, says nothing needs you while the badge counts one, shows one dead connection twice, or flags quiet bots and spend too early
+src/lib/today-day.test.ts	all	Your day shows a run past midnight, misses one before it on a 23 or 25 hour day, or lists event-run or switched-off routines
+src/lib/today-detail.test.ts	all	Today's Detailed view shows $0 for runs that reported no cost, compares against too few days, totals days the held runs no longer cover, or names the wrong engine
+src/components/today/use-worth-a-look.test.ts	all	Today's reconnect and hand-off reads overlap, never come back after a change, or break on an unexpected answer
+src/components/today/TodayView.test.ts	all	Today says nothing needs you while the badge counts one, shows more than three lines folded, the Tell box writes anywhere but the Chief's current chat or says Sent before the server took it, or Today reads a model or send route on open
 src/lib/working-now.test.ts	all	a working bot missing from Today, so the owner cannot find or stop it
 src/lib/connectivity.test.ts	all	the offline band flickers or claims offline while the owner is online
 src/components/shell/RailDoors.test.ts	all	the four doors missing, mislabelled, unreachable by keyboard or below 44 px
@@ -1906,12 +1960,38 @@ server/memory/learning-send-boundary.test.ts	all	Every engine write in server/ g
 server/drivers/codex-unsupported-calls.test.ts	all	a Codex tool call the provider sent without its app name is named in the chat instead of vanishing
 src/lib/needs-keys.test.ts	all	Needs you keeps the oldest first, keys move and open the right card, and a snooze lands at 17:00 or tomorrow 9:00
 src/components/needs/NeedsRow.test.ts	all	a collapsed Needs you row shows no answer buttons, the door renders owed rows through it, and a snooze can be undone before it is written
+src/components/needs/needs-inline-approve.test.ts	all	a one-click Approve on a Needs you row approves something the owner could not see, or answers a card the open view would not settle with one press
+src/components/today/today-inline-approve.test.ts	all	Today's one-click Approve answers a different card or route than the door, or its card read lands in the first paint
 server/needs-door-flow.test.ts	linux+mac	an approval or a question opened from a Needs you row on Fuigo, Claude or Codex reaches the engine and the row leaves the list
 src/components/health/health-findings.test.ts	all	Health paints an engine nobody uses red, hides a real problem, claims all clear before every check answered, or Switch on ends a running answer
 src/lib/phone-launcher.test.ts	all	the phone app shows no way back to Your computers from the workspace menu, or a desktop or browser shows a dead Your computers button
 server/approve-all.test.ts	all	Approve all never approves a card the owner would have to look at, and answers only through the one respond path
 server/approve-all-http.test.ts	linux+mac	Approve all approves only previewed ordinary cards, once, and the phone signs the exact set
-server/owner-prefs.test.ts	all	The Approve all caution choice is one owner pref on the server, shared by the desktop and the phone
+server/approvals-simple-1018.test.ts	all	Approve all takes an unreadable card whose open-time read hit keys, a delete, a payment or hidden code, or Full access still asks for python3 -I on a script the bot wrote earlier
 src/lib/approve-all.test.ts	all	Approve all words every reason, shows only where the server says, and the phone signs exactly the ticked set
+src/lib/approval-row.test.ts	all	an approval row shows a raw command instead of what the bot wants, cuts its line, or Approve all names a count it will not approve or keeps an old sheet open after Refresh
 server/owner-app.test.ts	all	Only the desktop app or the paired phone app with an attested key counts as the owner app; every browser and bare device headers are refused
+server/steer-now-line.test.ts	all	STEER-NO-NOW-LINE: a message sent mid-turn carries the time it was sent, so the bot does not answer with the turn-start time
+server/steer-fresh-clock.test.ts	all	STEER-NO-NOW-LINE scoped: a Fuigo or Grok steer carries the fresh time as its own part; a Claude steer is the owner's words alone
+shared/flux-links.test.ts	all	FLUX-LINKS-SIGNIN: Flux keys and billing links reach the page through Flux sign-in, never a password form the owner cannot use
+src/components/phone/PhoneTabs.test.ts	all	the phone tabs missing, out of order, below 56 px, or without the Needs you count
+src/components/phone/PhoneSheet.test.ts	all	a phone sheet without its name, Close or keyboard hold, or a Needs you card opening in place on a phone
+src/components/phone/typing-focus.test.ts	all	the phone tab bar riding up over the Android keyboard while typing, or the Door bundle losing viewport-fit=cover
+src/lib/venue-post-pick.test.ts	all	Post in… is greyed while the bot works and the pick rides both send paths
+src/components/health/health-page.test.ts	all	the Health page turns red for an engine nobody uses, or names a pinned Fuigo version
+server/engine-health-fuigo-version.test.ts	all	Health names a Fuigo version other than the one installed
+server/owner-prefs.test.ts	all	The Approve all caution and Today's Calm or Detailed choice are owner prefs on the server; only the desktop or the keyed phone app saves them
+server/today-tell-flow.test.ts	linux+mac	a message from Today's Tell box on Fuigo, Claude or Codex lands once as an owner message in the Chief's current chat and the Chief answers there
+src/components/SettingsOneWindow.test.ts	all	a bot opens its settings in a second window, or leaving its page loses unsaved edits
+src/lib/settings-leave.test.ts	all	Cmd/Ctrl+, a Settings link or any page opener throws away a bot's unsaved settings without asking
+server/memory/forget-handoff-sidepath.test.ts	all	FORGET-SIDEPATH: a record captured from a delegation prompt resting on forgotten owner text never reaches a channel person
 server/browser-extension-activity-site.test.ts	all	SABLE-LIVE: the browser activity row for an open from a blank tab names the real destination host, never "null"
+server/bot-access-presets.test.ts	all	grant presets never flip the changes switch or save tools: []
+src/lib/attach-cap.test.ts	all	a picture up to the real per-engine limit is accepted; a refusal names its size and the limit; GIFs attach as files
+server/ux-l4b-isolation.test.ts	all	an owner message, a card answer for another turn or a loop note joins the help question's own turn, or a rebuild, resend or restart loses that
+server/ux-l4b-isolation-api.test.ts	all	a message sent while the help question runs is steered into it, or Remove from line answers with no state
+server/turn-span-bounded.test.ts	all	a read of one older turn (phone turn state, failed-turn line, turn end) costs more as history is written after that turn
+server/turn-last.test.ts	all	a turn's last row is lost or wrong after a downgrade and new upgrade, an earlier build's write, the walk or the fill
+server/turn-state-phone-proof.test.ts	all	a paired phone without the owner proof, or asking about another bot's chat, reads a turn state
+src/components/phone/PhoneLevelSheet.test.ts	all	a phone offering Full access or No limits as a pick, or Needs you on a phone without swipe to Not now or Next
+src/components/phone/phone-cards.test.ts	all	a phone Routines tab without its list by day, a phone New routine offering Pick a time, Hire or routine sheets not rising from the bottom on a phone, or the alerts card showing more than once

@@ -1,7 +1,9 @@
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { beginIntegrityPass } from "./integrity-state.ts";
 import { seedScrubPassDone } from "./scrub-state.ts";
 import { APP_WRITE_REVISION_TABLE, DIRECT_TURN_INFLIGHT_TABLE, LEGACY_UPGRADE_TABLES, UPGRADE_104_TABLES, UPGRADE_108_TABLES, UPGRADE_APP_TABLES } from "./upgrade-app-tables.ts";
 import { dropWriteRevisionTriggers } from "../app-write-revision.ts";
+import { dropTurnLastTriggers } from "../turn-last.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, closeSync, existsSync, fsyncSync, openSync, renameSync, rmSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
@@ -17,6 +19,7 @@ import { DEFAULT_MEMORY_LEARNING, DEFAULT_MEMORY_LEARNING_V2, memoryLearningSche
 import { CONSOLIDATION_V11_FIELDS, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { foldMapLost, repairFoldMap } from "./revoke-fold.ts";
+import { removeCopy, SETTLE_INTO_SUFFIX, settledCopyKept, settleFtsCopy } from "../settle-copy.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
 export const MEMORY_SCHEMA_V1 = `
@@ -856,15 +859,15 @@ function storeSortedRootSet(db: DatabaseSync, sorted: readonly string[], base?: 
       }
     }
   }
-  db.exec("SAVEPOINT memory_root_set");
+  beginWrite(db, "memory_root_set");
   try {
     // one statement for all members
     const pairs = delta.map(key => { const at = key.indexOf(ROOT_KEY_SEP); return [key.slice(0, at), key.slice(at + 1)]; });
     db.prepare("INSERT OR IGNORE INTO memory_root_set_members(set_id,root_thread_id,root_message_id) SELECT ?,value->>0,value->>1 FROM json_each(?)").run(id, JSON.stringify(pairs));
     if (parent) db.prepare("INSERT OR REPLACE INTO memory_root_set_parents(set_id,parent_id) VALUES(?,?)").run(id, parent);
     db.prepare("INSERT OR IGNORE INTO memory_root_sets(set_id,size) VALUES(?,?)").run(id, sorted.length);
-    db.exec("RELEASE memory_root_set");
-  } catch (error) { db.exec("ROLLBACK TO memory_root_set; RELEASE memory_root_set"); throw error; }
+    endWrite(db, "memory_root_set");
+  } catch (error) { undoWrite(db, "memory_root_set"); throw error; }
   return id;
 }
 /** The stored sets `ids` and every set their chains rest on: each set's size,
@@ -1181,13 +1184,13 @@ export function chainStore(db: DatabaseSync): (parent: string | null, parentSize
   return (parent, parentSize, added) => {
     const id = chainedRootSetId(parent, added);
     if (held.get(id)) return id;
-    db.exec("SAVEPOINT memory_root_chain");
+    beginWrite(db, "memory_root_chain");
     try {
       for (const key of added) { const at = key.indexOf(ROOT_KEY_SEP); member.run(id, key.slice(0, at), key.slice(at + 1)); }
       if (parent !== null) link.run(id, parent);
       row.run(id, parentSize + added.length);
-      db.exec("RELEASE memory_root_chain");
-    } catch (error) { db.exec("ROLLBACK TO memory_root_chain; RELEASE memory_root_chain"); throw error; }
+      endWrite(db, "memory_root_chain");
+    } catch (error) { undoWrite(db, "memory_root_chain"); throw error; }
     return id;
   };
 }
@@ -2373,11 +2376,20 @@ function verifySnapshot(path: string, version: number) {
 function snapshotBeforeMigration(db: DatabaseSync, path: string, options: MigrateMemoryOptions, plan: { needBytes: number }, version: number) {
   const partial = `${path}${MEMORY_SNAPSHOT_PARTIAL_SUFFIX}`;
   removePartial(partial); // a killed earlier attempt
-  if (existsSync(path)) { verifySnapshot(path, version); return; } // an earlier attempt already preserved the older file; it is checked, not trusted
+  if (existsSync(path)) {
+    // an earlier attempt already preserved the older file; it is checked, not trusted
+    verifySnapshot(path, version);
+    // and kept only when its search index proves settled with no side file beside it (SMOOTH-FTS-MERGE R6 section 3, keep rule;
+    // no exemption for a copy an older build made): otherwise it and its side files go and the copy is made again below
+    if (settledCopyKept(path)) return;
+    removeCopy(path);
+  }
   if (db.isTransaction) throw new Error("MEMORY_SCHEMA_SNAPSHOT_FAILED: VACUUM INTO cannot run inside a transaction");
   try {
     (options.copy ?? ((handle, target) => { handle.prepare("VACUUM INTO ?").run(target); }))(db, partial);
     try { chmodSync(partial, 0o600); } catch { /* matches messages.db handling on platforms without POSIX modes */ }
+    // the copy settles itself before it is verified and named (settle-copy.ts): no deleted conversation stays in its search index
+    settleFtsCopy(partial, { check: false });
     // VACUUM INTO never fsyncs its output, and the upgrade that follows commits
     // with synchronous=FULL: flush the copy before it gets its final name, and
     // the folder after, so a power cut cannot leave a v4 messages.db beside a
@@ -2406,7 +2418,8 @@ export const memorySnapshotIo = { fsyncSync, renameSync };
  * rollback journal for its output, and a real full disk leaves
  * `<name>.partial-journal` behind (seen on a 48 MB tmpfs). */
 function removePartial(partial: string) {
-  for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${partial}${suffix}`, { force: true });
+  // and the settle's own VACUUM INTO file beside it (settle-copy.ts, SMOOTH-FTS-MERGE R6.1)
+  for (const base of [partial, `${partial}${SETTLE_INTO_SUFFIX}`]) for (const suffix of ["", "-journal", "-wal", "-shm"]) rmSync(`${base}${suffix}`, { force: true });
 }
 function flushFile(path: string) {
   const fd = openSync(path, "r+");
@@ -2537,7 +2550,8 @@ export function migrateMemorySchema(db: DatabaseSync, initialMode: "off" | "acti
     const snapshot = from === 1 ? options.snapshotPath : from === 2 ? options.snapshotV2Path : from === 3 ? options.snapshotV3Path : undefined;
     const sizes = liveBytes(db);
     const copying = Boolean(snapshot) && !existsSync(snapshot!);
-    const needBytes = (copying ? sizes.copyBytes : 0) + migrationHeadroom(sizes.copyBytes);
+    // a copy is made once and settled once: the settle's VACUUM INTO needs about the copy's size again (settle-copy.ts, R6.1)
+    const needBytes = (copying ? 2 * sizes.copyBytes : 0) + migrationHeadroom(sizes.copyBytes);
     plan.needBytes = needBytes;
     plan.probe = () => options.freeBytes ? options.freeBytes() : snapshot ? freeBytesFor(snapshot) : null;
     const emit = (phase: MemoryMigrationPhase["phase"], free: number | null) => {
@@ -2779,6 +2793,7 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
     // whatever 1.0.1 wrote (blocked jobs left pending, parked jobs whose source it re-activated). park.ts, claim-settle.ts.
     db.exec("DELETE FROM memory_scope_bindings WHERE id IN ('memory-claim-settle-sweep','memory-parked-reconcile')");
     dropWriteRevisionTriggers(db); // this connection's counter triggers write to a table that is about to go
+    dropTurnLastTriggers(db); // the 1.0.18 triggers on messages write turn_first, which may go below; no older build knows them (turn-last.ts)
     for (const table of UPGRADE_DERIVED_TABLES) if (to < 10 || !DERIVED_TABLES_KEPT_FOR_102.has(table)) db.exec(`DROP TABLE IF EXISTS ${table};`);
     for (let version = from; version > to; version--) {
       // v13 -> v12: the source stamps leave (the trigger first); a re-upgrade makes the table again empty (memory_source_lsn)

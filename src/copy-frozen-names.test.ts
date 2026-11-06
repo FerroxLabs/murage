@@ -27,6 +27,8 @@ function englishPack(): Record<string, string> {
   const fragments = join(LOCALES, "en-ux");
   for (const file of readdirSync(fragments).filter((name) => name.endsWith(".json")))
     Object.assign(pack, JSON.parse(readFileSync(join(fragments, file), "utf8")) as Record<string, string>);
+  // the help panel's Ask words (UX-L4B-FULL) join the pack when help loads
+  Object.assign(pack, JSON.parse(readFileSync(join(LOCALES, "en-help/ask.json"), "utf8")) as Record<string, string>);
   return pack;
 }
 

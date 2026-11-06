@@ -103,8 +103,11 @@ describe("the background pass prepares every thread", () => {
   it("100 threads x 900 rows are filled in slices: the event loop turns between them and never waits long on one", async () => {
     const db = new DatabaseSync(":memory:");
     initializeMessageTables(db);
+    // One prepared statement for the seed: a statement per row would leave 90,000 for the garbage collector to finalize during the measured
+    // window, and that pause (100 to 350 ms, measured) is the seed's, not the fill's. Measured without it, a slice waits 6 to 9 ms.
+    const seed = db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, 1, 'bot', 'text', 'x', ?)");
     db.exec("BEGIN");
-    for (let t = 0; t < 100; t++) for (let i = 0; i < 900; i++) put(db, `th${t}`, `m${i}`, i ? `m${i - 1}` : null);
+    for (let t = 0; t < 100; t++) for (let i = 0; i < 900; i++) { const id = `m${i}`; seed.run(`th${t}`, id, JSON.stringify({ id, parentId: i ? `m${i - 1}` : null, role: "bot", kind: "text", at: 1 })); }
     db.exec("COMMIT");
     upgraded(db);
     initializeMessageTables(db);

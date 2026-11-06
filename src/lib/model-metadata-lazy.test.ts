@@ -4,13 +4,16 @@
 // assertion depend on test ordering, which is how a laziness test quietly
 // stops testing laziness.
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { lookupModelMetadata, modelMetadataLoads, modelMetadataUpdatedAt } from "./model-metadata.ts";
+import { lookupModelMetadata, modelMetadataLoads, modelMetadataUpdatedAt, preloadModelMetadata } from "./model-metadata.ts";
 import { priceBandNote } from "./provider-model-picker.ts";
 
+// The snapshot is its own chunk since 1.0.18; fetching it is not parsing it.
+beforeAll(() => preloadModelMetadata());
+
 describe("the snapshot is parsed once per session, on first use", () => {
-  it("is not parsed by importing the module", () => {
+  it("is not parsed by importing the module, nor by fetching its chunk", () => {
     // The whole point of the `?raw` import: module evaluation costs a string
     // literal, not a 7,842-entry object graph, so every app launch that never
     // opens the model picker pays nothing.

@@ -83,7 +83,8 @@ export const lineageRead = (sql: string) => /\bmemory_|\$\.copyOf|\brecord_versi
 /** Both spellings of it are one statement shape: the store writes `thread_id = ? AND id = ?`, a background learning/outcome read `thread_id=? AND id=?`. */
 const keyedMessageRead = (sql: string) => /^SELECT json(, rowid AS position)? FROM messages WHERE thread_id\s*=\s*\? AND id\s*=\s*\?/.test(sql)
   // the background capture of one more message of the turn reads its turn's first row by key
-  || sql.startsWith("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?");
+  || sql.startsWith("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?")
+  || sql.startsWith("SELECT first_rowid AS first, last_rowid AS last FROM turn_first WHERE thread_id = ? AND turn_id = ?");
 export const split = (counts: Counts, keyedReads = false) => {
   const exact: Counts["bySql"] = {};
   let lineage = 0;
@@ -237,8 +238,8 @@ export async function waitForMessageWalk(dbPath: string, ms = 120_000): Promise<
     try {
       const db = new DatabaseSync(dbPath, { readOnly: true });
       try {
-        const done = (db.prepare("SELECT name FROM transcript_index_state WHERE done = 1 AND name IN ('open_card','keyed_card','browser_check','turn_first')").all() as Array<{ name: string }>).length;
-        pending = done < 4;
+        const done = (db.prepare("SELECT name FROM transcript_index_state WHERE done = 1 AND name IN ('open_card','keyed_card','browser_check','turn_first','turn_last')").all() as Array<{ name: string }>).length;
+        pending = done < 5;
       } finally { db.close(); }
     } catch { /* the file is busy this moment: look again */ }
     if (!pending) return;

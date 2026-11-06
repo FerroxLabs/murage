@@ -25,7 +25,11 @@ import { isOpenCardJson } from "./message-tables.ts";
 import { prioritizeThread, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
 
 import { SEQ_INDEX, newestSeqOf, nextSeq, rowToMessage, seqOfRow, storedJson, threadNumbered } from "./transcript-seq.ts";
-import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy } from "./database.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
+import { TURN_SPAN_UPSERT, turnSpanEnd } from "./turn-last.ts";
+import { database as db, databaseGeneration, closeDatabase, transaction, withBusyBudget, BACKGROUND_BUSY_MS, isDatabaseBusy, requeueSearchBackfill } from "./database.ts";
+import { kickSearchMerge } from "./search-merge-runner.ts";
+import { afterCommit } from "./tx-scope.ts";
 import { browserCheckIndexExists, isPendingBrowserCheck } from "./message-tables.ts";
 import type { Message } from "./store.ts";
 // runtime use only (inside searchDoor): bot-read.ts imports this module, so nothing of it is read while the modules load
@@ -35,7 +39,8 @@ import { imagePathsOf, tagImagePaths } from "./message-image-paths.ts";
 import {
   MIN_INDEXED_QUERY_CODEPOINTS,
   dropThreadSearchRows,
-  mergeMessageSearchIndex,
+  oweSearchMerge,
+  recoverSearchIndexAfterDropFailure,
   disableMessageSearchIndex,
   messageSearchIndexReady,
   searchableText,
@@ -265,15 +270,24 @@ export function readThreadAfter(threadId: string, messageId: string, limit: numb
   return rows.map(rowToMessage);
 }
 
-/** The rows of one turn, oldest first, every one: from the turn's first row (turn_first, kept by the writer and filled
- * with the thread) onward, so the work is the rows written since the turn began and no cap cuts a long turn short.
+/** The rowid span that holds every row of one turn: its first row and, from turn_first.last_rowid and the floor (turn-last.ts), the
+ * highest row it can have (Number.MAX_SAFE_INTEGER only when neither is known). Null when the turn wrote nothing. */
+function turnSpan(threadId: string, turnId: string): { first: number; end: number } | null {
+  const kept = db().prepare("SELECT first_rowid AS first, last_rowid AS last FROM turn_first WHERE thread_id = ? AND turn_id = ?").get(threadId, turnId) as { first: number; last: number | null } | undefined;
+  if (!kept) return null;
+  const first = Number(kept.first);
+  return { first, end: turnSpanEnd(db(), first, kept.last === null ? null : Number(kept.last)) ?? Number.MAX_SAFE_INTEGER };
+}
+
+/** The rows of one turn, oldest first, every one: between the turn's first row and its last (turn_first, kept by the writers, the
+ * triggers and the fill), so the work is the turn's own span, never the history written after it, and no cap cuts a long turn short.
  * Empty when the turn wrote nothing. The thread is prepared first. */
 export function turnRows(threadId: string, turnId: string): Message[] {
   requirePrepared(threadId, "turnRows");
-  const kept = db().prepare("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?").get(threadId, turnId) as { first: number } | undefined;
-  if (!kept) return [];
+  const span = turnSpan(threadId, turnId);
+  if (!span) return [];
   const out: Message[] = [];
-  for (const row of db().prepare("SELECT seq, json FROM messages WHERE thread_id = ? AND rowid >= ? ORDER BY rowid").iterate(threadId, kept.first) as Iterable<{ json: string }>) {
+  for (const row of db().prepare("SELECT seq, json FROM messages WHERE thread_id = ? AND rowid BETWEEN ? AND ? ORDER BY rowid").iterate(threadId, span.first, span.end) as Iterable<{ json: string }>) {
     const message = rowToMessage(row);
     if (message.turnId === turnId) out.push(message);
   }
@@ -284,11 +298,11 @@ export function turnRows(threadId: string, turnId: string): Message[] {
  * replies are never read. */
 export function turnTextRows(threadId: string, turnId: string, classes: readonly number[] = [LINE_TEXT]): Message[] {
   requirePrepared(threadId, "turnTextRows");
-  const kept = db().prepare("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?").get(threadId, turnId) as { first: number } | undefined;
+  const span = turnSpan(threadId, turnId);
   const tk = keyOfThread(db(), threadId);
-  if (!kept || !tk) return [];
-  const read = db().prepare("SELECT l.mrow AS mrow, m.seq AS seq, m.json AS json FROM line l JOIN messages m ON m.rowid = l.mrow WHERE l.key = ? AND l.cls = ? AND l.mrow >= ? ORDER BY l.mrow");
-  const rows = classes.flatMap((cls) => read.all(tk.key, cls, kept.first) as Array<{ mrow: number; json: string }>).sort((a, b) => a.mrow - b.mrow);
+  if (!span || !tk) return [];
+  const read = db().prepare("SELECT l.mrow AS mrow, m.seq AS seq, m.json AS json FROM line l JOIN messages m ON m.rowid = l.mrow WHERE l.key = ? AND l.cls = ? AND l.mrow BETWEEN ? AND ? ORDER BY l.mrow");
+  const rows = classes.flatMap((cls) => read.all(tk.key, cls, span.first, span.end) as Array<{ mrow: number; json: string }>).sort((a, b) => a.mrow - b.mrow);
   return rows.map(rowToMessage).filter((message) => message.turnId === turnId);
 }
 
@@ -742,6 +756,8 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   // Re-sequenced: a legacy file is appended to in the order things happened, but a hand-edited or merged one may not be. Every imported line
   // takes its lsn (and its rowid) in time order, so a positional range written later (a forget of an early line) reads the thread as it was.
   // A stable sort: lines with the same time, or none, keep their place in the file.
+  // U4 S3: every line of the file passes the stored-row check before it is inserted, recorded or returned (a hand-edited or old file included)
+  messages = messages.map((message) => checkStoredRow(message));
   messages = messages.map((message, place) => ({ message, place })).sort((a, b) => (Number.isFinite(a.message.at) && Number.isFinite(b.message.at) ? a.message.at - b.message.at : 0) || a.place - b.place).map(item => item.message);
   const insert = db().prepare(
     "INSERT OR REPLACE INTO messages (thread_id, id, at, role, kind, text, json, seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -802,10 +818,11 @@ function replaceRow(insert: StatementSync, threadId: string, message: Message, s
   if (text !== null) syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
 }
 
-/** Record a turn's first row as it is written: the lowest position any row of the turn has had. The fill of a thread
- * (branch-index.ts) takes the same minimum over the rows stored before, so the two never disagree. */
+/** Record a turn's first and last rows as it is written: the lowest and highest positions any row of the turn has had. The
+ * trigger turn_last_msg (turn-last.ts) does the same in the insert itself; the fill of a thread (branch-fill.ts) takes the same
+ * minimum and maximum over the rows stored before, so they never disagree. A row already right is not written again. */
 function trackTurnFirst(threadId: string, message: Message, position: number): void {
-  db().prepare("INSERT INTO turn_first(thread_id, turn_id, first_rowid) VALUES (?, ?, ?) ON CONFLICT(thread_id, turn_id) DO UPDATE SET first_rowid = MIN(first_rowid, excluded.first_rowid)").run(threadId, message.turnId!, position);
+  db().prepare(TURN_SPAN_UPSERT).run(threadId, message.turnId!, position, position);
 }
 
 /** Keep keyed_card in step with a written row: the (family, key) pairs the row
@@ -1114,6 +1131,8 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     if (prior) { if (prior.seq === null) delete message.seq; else message.seq = Number(prior.seq); }
     database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
       .run(message.at,message.role,message.kind,message.text??null,storedJson(message),threadId,message.id);
+    // a patched row keeps its rowid; one that now names a turn stays inside that turn's span (a no-op write when it already is)
+    if (prior && typeof message.turnId === "string" && message.turnId) database.prepare(TURN_SPAN_UPSERT).run(threadId, message.turnId, prior.position, prior.position);
     // A generated line patched inside its turn (a streamed reply growing) also rests on what its turn was shown since it was first written:
     // only the refs it does not carry yet are added. A row that is not that turn's engine output (a routine card turned Completed) adds only
     // the refs of what it now quotes. A line with no lineage row keeps none (it reads "checking" until the backfill).
@@ -1455,7 +1474,15 @@ export function deleteThread(threadId: string): void {
     captureThreadDeletion(database,threadId);
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
-    const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
+    // before the rows it is keyed by go. A drop that throws empties the index in this same transaction (a delete-all that throws too
+    // rolls the deletion back): a deletion never commits with the index still holding the thread (designs/SMOOTH-FTS-MERGE-R6.md §1).
+    let indexed: boolean, recovered = false;
+    try { indexed = dropThreadSearchRows(database, threadId); }
+    catch (error) {
+      console.warn("[message-search] a conversation's index entries could not be dropped; the index is rebuilt from the messages:", error instanceof Error ? error.message : error);
+      recoverSearchIndexAfterDropFailure(database);
+      indexed = false; recovered = true;
+    }
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     lowerSweepMarks(database);
     setupFactsCache(database).forget(threadId);
@@ -1472,7 +1499,13 @@ export function deleteThread(threadId: string): void {
     database.prepare("DELETE FROM owner_sends WHERE thread_id=?").run(threadId);
     // ...and so do the words of its room requests (a request closed later must not make a chip for a conversation that is gone)
     scrubOwnerSendsOfThread(database, threadId);
-    if (indexed) mergeMessageSearchIndex(database);
+    // No inline optimize: the merge is owed in this transaction and paid by the worker's slices after COMMIT (search-merge-runner.ts).
+    if (indexed) {
+      oweSearchMerge(database);
+      afterCommit(() => kickSearchMerge({ owed: true }));
+    }
+    // the fill was reset in this transaction; startBackgroundUpgradeWork captured its jobs at start, so the backfill is queued again
+    if (recovered) afterCommit(() => requeueSearchBackfill());
     bumpMessagesVersion();
     noteThreadChanged(threadId);
   });
@@ -1480,6 +1513,7 @@ export function deleteThread(threadId: string): void {
 }
 
 export interface SearchHit {
+  cursor?: string;
   threadId: string;
   messageId: string;
   at: number;
@@ -1583,8 +1617,7 @@ export interface SearchAudience {
    * candidates. */
   judge?: "door";
   /** All chats and the bot chat pop-up (CHATS-FINDABILITY-DESIGN 3.5): a line the owner forgot is never a hit there, the owner included. A
-   * forgotten line is one stamped `withheldFromBots: "forgotten"`, or one whose message source the owner forgot (an owner-forget or
-   * forgotten-supporting-source tombstone) or whose source is deleted. Checked inside the verify, so LIMIT counts rows this view may show.
+   * forgotten line is one stamped `withheldFromBots: "forgotten"`, or one whose message source has any tombstone or is deleted. Checked inside the verify, so LIMIT counts rows this view may show.
    * Every other caller leaves it unset and is answered as before. */
   excludeForgotten?: boolean;
 }
@@ -1607,6 +1640,7 @@ export function searchMessagesWithMeta(
   threads?: string | readonly string[],
   audience: SearchAudience = {},
   before?: number,
+  beforeRowid?: number,
 ): { hits: SearchHit[]; partial: boolean } {
   let partial = false;
   const needle = query.trim().toLowerCase();
@@ -1627,8 +1661,8 @@ export function searchMessagesWithMeta(
   // (one primary-key probe of memory_sources, one range seek of memory_tombstones' target index per verified row).
   const forgotten = audience.excludeForgotten
     ? " AND COALESCE(json_extract(m.json, '$.withheldFromBots'), '') IS NOT 'forgotten'" +
-      " AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type = 'source' AND t.target_id = 'message:' || m.thread_id || ':' || m.id" +
-      " AND t.reason IN ('owner-forget', 'forgotten-supporting-source'))" +
+      // any source tombstone ends the line here, whatever its reason (as replay-lineage.ts treats it): at worst an older line is shown
+      " AND NOT EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type = 'source' AND t.target_id = 'message:' || m.thread_id || ':' || m.id)" +
       " AND NOT EXISTS (SELECT 1 FROM memory_sources s WHERE s.id = 'message:' || m.thread_id || ':' || m.id AND s.state = 'deleted')"
     : "";
   const doorOnly = audience.judge === "door";
@@ -1637,9 +1671,9 @@ export function searchMessagesWithMeta(
     : "((m.kind = 'text' AND m.text IS NOT NULL AND m.text LIKE ? ESCAPE '\\') " +
       "OR (m.kind = 'activity' AND json_extract(m.json, '$.tool.name') LIKE ? ESCAPE '\\'))";
   const verifyParams = (): string[] => (doorOnly ? [pattern] : [pattern, pattern]);
-  // `before` is a walk start and a final filter, never text in a walk's predicate: a row at exactly `before` is on no path.
-  const beforeSql = before === undefined ? "" : " AND m.at < ?";
-  const beforeParams: number[] = before === undefined ? [] : [before];
+  // `before` is a walk start and a final filter. A numeric cutoff excludes its timestamp; a page cursor also carries the rowid for ties.
+  const beforeSql = before === undefined ? "" : beforeRowid === undefined ? " AND m.at < ?" : " AND (m.at < ? OR (m.at = ? AND m.rowid < ?))";
+  const beforeParams: number[] = before === undefined ? [] : beforeRowid === undefined ? [before] : [before, before, beforeRowid];
   const handle = db();
   const scopeParams = threadIds ? [JSON.stringify([...threadIds])] : [];
   // Each chunk of candidate rowids is its own statement: the loop is held for at most one chunk, and the search stops as soon as it holds one
@@ -1701,7 +1735,7 @@ export function searchMessagesWithMeta(
           walkWindow(perThread);
         } else {
           if (capped) { examined.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before));
+          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
           all.sort((x, y) => y.at - x.at || y.rowid - x.rowid);
           for (let i = 0; i < all.length && !enough(); i += SEARCH_CHUNK) verified.push(...verifyChunk(all.slice(i, i + SEARCH_CHUNK).map((row) => row.rowid)));
         }
@@ -1719,7 +1753,7 @@ export function searchMessagesWithMeta(
   function verifyNewestCandidates(candidates: number[]): void {
     if (candidates.length <= SEARCH_CHUNK) { verified.push(...verifyChunk(candidates)); return; }
     const unseen = new Set(candidates);
-    const walk = mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before)]);
+    const walk = mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before, beforeRowid)]);
     const pending: number[] = [];
     // verify what the walk has picked out once it can fill the rest of the page, a chunk at a time
     const flush = (all: boolean) => {
@@ -1752,8 +1786,8 @@ export function searchMessagesWithMeta(
   function walkWindow(threadsToWalk: string[] | null): void {
     const next = threadsToWalk
       ? mergeNewestFirst(threadsToWalk.flatMap((threadId) => (doorOnly ? ["text"] : ["text", "activity"]).map((kind) =>
-          newestFirst(handle, "messages m", "m.kind = ? AND m.thread_id = ? AND ", [kind, threadId], WINDOW_CHUNK, before))))
-      : mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before)]);
+          newestFirst(handle, "messages m", "m.kind = ? AND m.thread_id = ? AND ", [kind, threadId], WINDOW_CHUNK, before, beforeRowid))))
+      : mergeNewestFirst([newestFirst(handle, "messages m INDEXED BY messages_at", "", [], WINDOW_CHUNK, before, beforeRowid)]);
     let looked = 0;
     for (;;) {
       const got = next.take(WINDOW_CHUNK);
@@ -1778,6 +1812,7 @@ export function searchMessagesWithMeta(
     const folded = needle.replace(/\s+/g, " ");
     const matchStart = snippet.toLowerCase().indexOf(folded);
     return {
+      cursor: `${row.at}:${row.rid}`,
       threadId: row.thread_id,
       messageId: row.id,
       at: row.at,
@@ -1806,10 +1841,10 @@ const newerFirst = (x: RowPosition, y: RowPosition) => y.at - x.at || y.rowid - 
  *  - `at = ? AND rowid < ? ORDER BY rowid DESC LIMIT n` then walks that one timestamp's rows, n at a time, backwards through the same index.
  * Each statement reads at most n index entries, so a walk's cost follows the rows it hands out, whatever the timestamps. `from` names the table
  * (and any INDEXED BY); `prefix` is the equality prefix of the index ("m.kind = ? AND m.thread_id = ? AND ", or ""). */
-function newestFirst(handle: DatabaseSync, from: string, prefix: string, prefixParams: readonly SQLInputValue[], size = WINDOW_CHUNK, below?: number): () => RowPosition[] {
+function newestFirst(handle: DatabaseSync, from: string, prefix: string, prefixParams: readonly SQLInputValue[], size = WINDOW_CHUNK, below?: number, belowRowid?: number): () => RowPosition[] {
   const older = handle.prepare(`SELECT m.rowid AS rowid, m.at AS at FROM ${from} WHERE ${prefix}m.at < ? ORDER BY m.at DESC LIMIT ?`);
   const tied = handle.prepare(`SELECT m.rowid AS rowid, m.at AS at FROM ${from} WHERE ${prefix}m.at = ? AND m.rowid < ? ORDER BY m.rowid DESC LIMIT ?`);
-  let at = below ?? Number.MAX_SAFE_INTEGER, tieBelow: number | null = null, done = false;
+  let at = below ?? Number.MAX_SAFE_INTEGER, tieBelow: number | null = belowRowid ?? null, done = false;
   return () => {
     while (!done) {
       if (tieBelow !== null) {

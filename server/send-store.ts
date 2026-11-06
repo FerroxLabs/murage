@@ -93,6 +93,7 @@
 // line's id, and the startup reconciliation (completeUnresolved) finishes any
 // "dispatched" or "unconfirmed" row that has no line yet.
 
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { murageLine } from "./murage-line.ts";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -149,6 +150,8 @@ export interface SendRow {
   via: SendVia | null;
   /** Waiting words that never run as an owner turn by themselves; re-read at the drain, not only at admission. */
   queueOnly: boolean;
+  /** An owner row that runs as a turn of its own (the help panel's question, `noSteer`): it is a batch alone and nothing joins its run. Always queueOnly. */
+  isolated: boolean;
   /** The phone that made a via row. */
   viaDevice: string | null;
   /** Files a via row carries; null when none or when the stored column is malformed (such a row is refused at the drain, never run with a guess). */
@@ -191,6 +194,8 @@ export interface AcceptInput {
   /** A share or ask-intent row. Needs `queueOnly` and origin "unproven" (a programming error otherwise); a replaced via row carries all of it forward. */
   via?: SendVia;
   queueOnly?: true;
+  /** A row that runs alone (UX-L4B-FULL 9.1). Needs `queueOnly` (a programming error otherwise); a replaced row keeps it. */
+  isolated?: true;
   viaDevice?: string;
   attachments?: SendRow["attachments"];
   now?: number;
@@ -267,7 +272,8 @@ const DDL = `CREATE TABLE IF NOT EXISTS owner_sends (
   via TEXT,
   queue_only INTEGER NOT NULL DEFAULT 0,
   via_device TEXT,
-  attachments TEXT
+  attachments TEXT,
+  isolated INTEGER NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS owner_sends_send ON owner_sends(thread_id, send_id);
 CREATE INDEX IF NOT EXISTS owner_sends_open ON owner_sends(thread_id, status, seq);
@@ -336,6 +342,8 @@ function addMissingColumns(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "queue_only")) db.exec("ALTER TABLE owner_sends ADD COLUMN queue_only INTEGER NOT NULL DEFAULT 0");
   if (!columns.some((column) => column.name === "via_device")) db.exec("ALTER TABLE owner_sends ADD COLUMN via_device TEXT");
   if (!columns.some((column) => column.name === "attachments")) db.exec("ALTER TABLE owner_sends ADD COLUMN attachments TEXT");
+  // 1.0.19, same table and same downgrade (dropped whole).
+  if (!columns.some((column) => column.name === "isolated")) db.exec("ALTER TABLE owner_sends ADD COLUMN isolated INTEGER NOT NULL DEFAULT 0");
 }
 
 /**
@@ -430,6 +438,7 @@ function toRow(r: Record<string, unknown>): SendRow {
     turnId: (r.turn_id as string | null) ?? null,
     via: r.via === "share" || r.via === "ask-intent" ? r.via : null,
     queueOnly: Number(r.queue_only) === 1,
+    isolated: Number(r.isolated) === 1,
     viaDevice: (r.via_device as string | null) ?? null,
     attachments: parseAttachments(r.attachments),
     attachmentsMalformed: typeof r.attachments === "string" && r.attachments !== "" && parseAttachments(r.attachments) === null,
@@ -519,15 +528,15 @@ export class SendStore {
   private atomically<T>(work: (db: DatabaseSync) => T): T {
     const db = this.db();
     const point = `owner_sends_${randomUUID().replace(/-/g, "")}`;
-    db.exec(`SAVEPOINT ${point}`);
+    beginWrite(db, point);
     txScopeBegin();
     try {
       const out = work(db);
-      db.exec(`RELEASE ${point}`);
+      endWrite(db, point);
       txScopeEnd(true);
       return out;
     } catch (error) {
-      try { db.exec(`ROLLBACK TO ${point}; RELEASE ${point}`); } catch { /* the handle is already gone */ }
+      try { undoWrite(db, point); } catch { /* the handle is already gone */ }
       txScopeEnd(false);
       throw error;
     }
@@ -586,7 +595,9 @@ export class SendStore {
     let typedAt = now;
     if (input.via && (input.queueOnly !== true || input.origin !== "unproven")) throw new Error("a via send is queue-only and unproven");
     let via: SendVia | null = input.via ?? null;
+    if (input.isolated && input.queueOnly !== true) throw new Error("an isolated send is queue-only");
     let queueOnly = input.queueOnly === true;
+    let isolated = input.isolated === true;
     let viaDevice: string | null = input.viaDevice ?? null;
     let attachments: SendRow["attachments"] = input.attachments ?? null;
     let origin: string | null = input.origin ?? null;
@@ -612,6 +623,8 @@ export class SendStore {
             if (input.via && input.via !== prior.via) throw new Error("a resend cannot change a send's via");
             via = prior.via; queueOnly = true; viaDevice = prior.viaDevice; attachments = prior.attachments; origin = "unproven";
           }
+          // A help question stays a turn of its own across Send again, whichever route the press came by.
+          if (prior.isolated) { isolated = true; queueOnly = true; }
           db.prepare("DELETE FROM owner_sends WHERE seq=?").run(prior.seq);
           // Send again on a chip: the message is still the one the owner typed, at the time they typed it
           typedAt = prior.createdAt;
@@ -623,13 +636,13 @@ export class SendStore {
       }
       const queueId = input.queueId ?? randomUUID();
       const heldGeneration = input.restoreHeld ? (currentRestoreGeneration(db) ?? issueRestoreGeneration(db)) : null;
-      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?)`).run(
+      db.prepare(`INSERT INTO owner_sends (kind, owner_id, thread_id, send_id, queue_id, fingerprint, text, prompt, reply_to_id, origin, mode, responder_id, status, notice, dispatched, created_at, updated_at, restore_held, restore_gen, action_id, via, queue_only, via_device, attachments, isolated)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?,?)`).run(
         input.kind, input.ownerId, input.threadId, input.sendId ?? null, queueId, fingerprint, input.text, input.prompt ?? null,
         input.replyToId ?? null, origin, input.mode ?? null, input.responderId ?? null,
         input.status ?? "sending", input.status === "refused" ? (input.notice ?? "refused") : null, typedAt, now,
         input.restoreHeld ? 1 : 0, heldGeneration, input.resend && input.actionId ? input.actionId : null,
-        via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null,
+        via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null, isolated ? 1 : 0,
       );
       return { kind: "new", row: this.one(db, "SELECT * FROM owner_sends WHERE queue_id=?", queueId)! };
     });

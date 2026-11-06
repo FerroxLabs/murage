@@ -426,6 +426,6 @@ describe("index.ts wiring", () => {
     expect(drain).toMatch(/return runQueuedStart\(\{/);
     expect(drain).toMatch(/occupied: \(\) => directThreadBusy\(botId, threadId\) \|\| Boolean\(activeGroupTurnForBot\(botId\)\)/);
     expect(drain).toMatch(/\(botId, threadId\) => directThreadBusy\(botId, threadId\),\n  \);/);
-    expect(source).toMatch(/sendStore\.blockedByEarlier\(threadId, row\.seq\) \|\| queuedStartPending\(threadId\)/);
+    expect(source).toMatch(/\(sendStore\.blockedByEarlier\(threadId, row\.seq\) && !isolatedOwnAnswer\(\)\) \|\| queuedStartPending\(threadId\)/);
   });
 });

@@ -11,8 +11,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { beginBackground } from "./db-busy.ts";
 import { isOpenCardJson, keyedCardsOf, newestRowid, readIndexState, writeIndexState, BACKFILL_CHUNK_ROWS } from "./transcript-backfill.ts";
 import { isPendingBrowserCheck } from "./message-tables.ts";
+import { rowToMessage } from "./transcript-seq.ts";
+import { TURN_SPAN_UPSERT } from "./turn-last.ts";
 
-export const WALKED = ["open_card", "keyed_card", "browser_check", "turn_first"] as const;
+// turn_last (turn-last.ts) is the same filing as turn_first: its own marker, so a file that has walked for turn_first walks once more for the last rows
+export const WALKED = ["open_card", "keyed_card", "browser_check", "turn_first", "turn_last"] as const;
 type Walked = (typeof WALKED)[number];
 
 /** The structures whose completion marker is not yet written. */
@@ -55,13 +58,14 @@ export function walkMessagesChunk(db: DatabaseSync, bounds: number | WalkBounds 
   const counting = lo === 0 || kept.done === 1;
   let rowsWalked = lo === 0 ? 0 : counting ? kept.cursor : 0;
   const upper = Math.min(newest, lo + rows);
-  const needsJson = pending.includes("turn_first");
+  const needsJson = pending.includes("turn_first") || pending.includes("turn_last");
   // rows are stepped through, not read whole: a window cut short by its deadline has not read (or parsed) the rows it did not reach
   const window = db.prepare(`SELECT rowid AS position, thread_id, id, kind, ${needsJson ? "json" : "CASE WHEN kind IN ('options','activity') THEN json END AS json"} FROM messages WHERE rowid > ? AND rowid <= ? ORDER BY rowid`);
   const addCard = db.prepare("INSERT OR IGNORE INTO open_card(thread_id, id) VALUES (?, ?)");
   const addNote = db.prepare("INSERT OR IGNORE INTO browser_check_pending(thread_id, id) VALUES (?, ?)");
   const addKeyed = db.prepare("INSERT OR IGNORE INTO keyed_card(thread_id, family, key, id) VALUES (?, ?, ?, ?)");
-  const putTurn = db.prepare("INSERT INTO turn_first(thread_id, turn_id, first_rowid) VALUES (?, ?, ?) ON CONFLICT(thread_id, turn_id) DO UPDATE SET first_rowid = MIN(first_rowid, excluded.first_rowid)");
+  // first goes down and last goes up (turn-last.ts): a turn the walk files keeps the whole of its span
+  const putTurn = db.prepare(TURN_SPAN_UPSERT);
   const completed: Walked[] = [];
   let reached = upper, handled = 0;
   beginBackground(db, "message-walk");
@@ -71,7 +75,7 @@ export function walkMessagesChunk(db: DatabaseSync, bounds: number | WalkBounds 
       handled++;
       if (row.json !== null) {
         let parsed: Record<string, unknown> | null | undefined;
-        const message = () => { if (parsed === undefined) { try { parsed = JSON.parse(row.json!) as Record<string, unknown>; } catch { parsed = null; } } return parsed; };
+        const message = () => { if (parsed === undefined) { try { parsed = rowToMessage({ json: row.json! }) as unknown as Record<string, unknown>; } catch { parsed = null; } } return parsed; };
         for (const name of pending) {
           if (row.position <= states.get(name)!.cursor) continue;
           if (name === "open_card") {
@@ -93,7 +97,7 @@ export function walkMessagesChunk(db: DatabaseSync, bounds: number | WalkBounds 
             const m = message();
             if (!m) { skipped.set(name, skipped.get(name)! + 1); continue; }
             const turnId = (m as { turnId?: unknown }).turnId;
-            if (typeof turnId === "string" && turnId) putTurn.run(row.thread_id, turnId, row.position);
+            if (typeof turnId === "string" && turnId) putTurn.run(row.thread_id, turnId, row.position, row.position);
           }
         }
       }

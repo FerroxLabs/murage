@@ -11,6 +11,7 @@ export const PENDING_BROWSER_CHECK_SQL = `'${browserUnavailableActivityName(BROW
 export const PENDING_BROWSER_CHECK_WHERE = `kind = 'activity' AND json_extract(json, '$.tool.name') = ${PENDING_BROWSER_CHECK_SQL}`;
 
 import { BRANCH_TABLES_SQL } from "./branch-index.ts";
+import { ensureTurnLast } from "./turn-last.ts";
 import { SEQ_INDEX_SQL, SEQ_STATE, seqIndexReady } from "./transcript-seq.ts";
 import { MESSAGE_ID_INDEX_SQL, messageIdIndexReady } from "./message-id-index.ts";
 import { ensureKeyedCardIndex, ensureOpenCardIndex, isOpenCardJson, newestRowid, readIndexState, writeIndexState, type EnsureIndexHooks } from "./transcript-backfill.ts";
@@ -58,6 +59,9 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS keyed_card_id ON keyed_card(thread_id, id);
       CREATE INDEX IF NOT EXISTS keyed_card_family ON keyed_card(family, thread_id);
       DROP TABLE IF EXISTS card_branch; DROP TABLE IF EXISTS branch_walk; DROP TABLE IF EXISTS branch_jump;`);
+  // Each turn's last row beside its first (turn-last.ts, 1.0.18): appended by ALTER TABLE and kept by triggers on messages, so a read of one
+  // turn is bounded by the turn's own rows and never by the history written after it, whichever build wrote them.
+  ensureTurnLast(db);
   // The Flux Memory number hold of a thread (flux-capture-hold.ts): one row per thread that holds a bank, card or id number.
   db.exec("CREATE TABLE IF NOT EXISTS flux_capture_hold(thread_id TEXT PRIMARY KEY, message_id TEXT NOT NULL, at INTEGER NOT NULL) WITHOUT ROWID");
   // The branch index and the line index (branch-index.ts): small integer-keyed tables the writers keep, filled for older threads per thread (branch-store.ts).

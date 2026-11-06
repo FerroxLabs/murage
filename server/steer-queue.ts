@@ -84,12 +84,13 @@ export function queueSteeredMessage(
 }
 
 /** What one drain runs: the leading run of plain owner rows (they join, as always), or exactly the first row when it is a
- * share or ask-intent. Third-party words never join an owner line and never ride in an owner turn; the rest waits for the next drain. */
+ * share or ask-intent. Third-party words never join an owner line and never ride in an owner turn; the rest waits for the next drain.
+ * An isolated row (the help panel's question) is a batch alone the same way: nothing rides in its turn and it rides in no other. */
 export function drainBatch(rows: SendRow[]): SendRow[] {
   const first = rows[0];
   if (!first) return [];
-  if (first.via !== null) return [first];
-  const end = rows.findIndex((row) => row.via !== null);
+  if (first.via !== null || first.isolated) return [first];
+  const end = rows.findIndex((row) => row.via !== null || row.isolated);
   return end === -1 ? rows : rows.slice(0, end);
 }
 
@@ -188,7 +189,7 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
     /** Which kind of batch this is: a share or ask-intent line runs alone, from the phone named here. */
-    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null },
+    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null; isolated?: boolean },
   ) => void | Promise<unknown>,
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
@@ -294,7 +295,8 @@ export function drainSteeredMessages(
       }
     }
     const last = appended.at(-1);
-    if (!last) return rows[0]!.via !== null;
+    // a singleton batch (via or isolated) refused whole: the rows behind it go next
+    if (!last) return rows[0]!.via !== null || rows[0]!.isolated;
     const prompt = committed.map((row) => row.prompt ?? row.text).join("\n");
     // The held lines are in the transcript before the run starts, so a run that cannot start loses nothing: the words stay visible
     // and the caller shows why. A start is async (the thread is not taken until it is admitted): until it settles nothing else drains on
@@ -308,7 +310,7 @@ export function drainSteeredMessages(
         prompt,
         last,
         appended.map((message) => message.id),
-        { via: first.via, viaDevice: first.via ? first.viaDevice : null },
+        { via: first.via, viaDevice: first.via ? first.viaDevice : null, ...(first.isolated ? { isolated: true } : {}) },
       );
     } catch { /* same: the lines are already recorded */ }
     if (started && typeof (started as PromiseLike<unknown>).then === "function") {

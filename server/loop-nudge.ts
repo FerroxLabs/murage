@@ -35,6 +35,8 @@ export interface LoopNudgeDeps {
   waitingOnHuman(threadId: string): boolean;
   /** The thread's direct run is being stopped (directRuns phase "stopping"). */
   stopping(threadId: string): boolean;
+  /** The thread's live run is isolated (the help panel's question, UX-L4B-FULL 9.2): nothing joins it, a note included. Read again at the write. */
+  isolated(threadId: string): boolean;
   /** The thread's bot engine adapter; undefined for a room or an unknown thread. */
   adapter(threadId: string): SteerAdapter;
   /** Record the activity row (LOOP_NUDGE_ROW) once the engine took the note. */
@@ -129,12 +131,14 @@ export function createLoopNudge(deps: LoopNudgeDeps) {
     if (!deps.watching(threadId)) return undefined;
     const adapter = deps.adapter(threadId);
     if (!adapter || cardSteeringMode(adapter) !== "steer") return undefined;
-    if (deps.waitingOnHuman(threadId) || deps.stopping(threadId)) return undefined;
+    if (deps.waitingOnHuman(threadId) || deps.stopping(threadId) || deps.isolated(threadId)) return undefined;
     // reserved before the first await: bus subscribers are not awaited, and Fuigo awaits its echo
     streak.noted = true;
     per.notes++;
     const onLate = (late: string) => { if (late === "delivered") delivered(threadId, digest); };
-    return steerBusyDesk(adapter, threadId, buildPrompt(undefined, [promptPart(LOOP_NUDGE_NOTE, [noneRef("murage")])]), true, undefined,
+    // the fence reads isolation again right before the write: a help turn that took the thread meanwhile refuses the note
+    const fence = () => { if (deps.isolated(threadId)) throw new Error("STEER_ISOLATED_RUN"); };
+    return steerBusyDesk(adapter, threadId, buildPrompt(undefined, [promptPart(LOOP_NUDGE_NOTE, [noneRef("murage")])]), true, fence,
       undefined, deps.waitMs ?? STEER_READY_WAIT_MS, onLate)
       .then(outcome => { if (outcome === "steer") delivered(threadId, digest); })
       .catch(() => { /* a refused note is dropped: never queued, never retried */ });

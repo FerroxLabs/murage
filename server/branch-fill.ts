@@ -11,6 +11,8 @@ import { lineClassesOfFillRow } from "./line-classes.ts";
 import { keyedCardsOf, mayBeKeyed } from "./keyed-cards.ts";
 import { imagePathsOf } from "./message-image-paths.ts";
 import { SWEEP_SLICE_MS } from "./slice-budget.ts";
+import { rowToMessage } from "./transcript-seq.ts";
+import { TURN_SPAN_UPSERT } from "./turn-last.ts";
 
 /** What the fills have cost this process: sync prepares are defects (a turn prepares first); `sliceMs` is every slice's time, newest 5,000. */
 export const prepareStats = { syncPrepares: 0, slices: 0, maxSliceMs: 0, rows: 0, sliceMs: [] as number[] };
@@ -21,19 +23,22 @@ export const SLICE_ROWS = 500;
 /** What the fill keeps for the rows it reads besides their place in the branch: the lines of their classes, the turn each began
  * (turn_first), the images they name (message_image), the keyed cards on text rows. Gathered and written once per slice. */
 export function fillExtras(database: DatabaseSync, threadId: string): FillSink {
-  const turn = database.prepare("INSERT INTO turn_first(thread_id, turn_id, first_rowid) VALUES (?, ?, ?) ON CONFLICT(thread_id, turn_id) DO UPDATE SET first_rowid = MIN(first_rowid, excluded.first_rowid)");
+  const turn = database.prepare(TURN_SPAN_UPSERT);
   const image = database.prepare("INSERT OR IGNORE INTO message_image(thread_id, path, id) VALUES (?, ?, ?)");
   const keyed = database.prepare("INSERT OR IGNORE INTO keyed_card(thread_id, family, key, id) VALUES (?, ?, ?, ?)");
   const lines: number[] = [];
-  const turns = new Map<string, number>();
+  const turns = new Map<string, { first: number; last: number }>();
   return {
     row(row, key) {
-      // rows come in rowid order, so the first row seen of a turn in a slice is its lowest
-      if (typeof row.turn === "string" && row.turn !== "" && !turns.has(row.turn)) turns.set(row.turn, Number(row.mrow));
+      // rows come in rowid order, so the first row seen of a turn in a slice is its lowest and the latest seen its highest (turn-last.ts)
+      if (typeof row.turn === "string" && row.turn !== "") {
+        const seen = turns.get(row.turn);
+        if (seen) seen.last = Number(row.mrow); else turns.set(row.turn, { first: Number(row.mrow), last: Number(row.mrow) });
+      }
       for (const cls of lineClassesOfFillRow(row)) lines.push(key, cls, Number(row.mrow));
       if (row.body !== null) {
         let parsed: { role?: unknown; text?: unknown; attachments?: unknown };
-        try { parsed = JSON.parse(row.body) as typeof parsed; } catch { return; }
+        try { parsed = rowToMessage({ json: row.body }) as typeof parsed; } catch { return; }
         for (const path of imagePathsOf(parsed)) image.run(threadId, path, row.id);
         // the families that live on text rows (a steer, a setup line, a routine run's prompt, a digest line) are filed here;
         // the older option cards were filed by the global pass
@@ -45,7 +50,7 @@ export function fillExtras(database: DatabaseSync, threadId: string): FillSink {
         const chunk = lines.slice(i, i + 900);
         database.prepare(`INSERT OR IGNORE INTO line(key, cls, mrow) VALUES ${Array.from({ length: chunk.length / 3 }, () => "(?,?,?)").join(",")}`).run(...chunk);
       }
-      for (const [turnId, mrow] of turns) turn.run(threadId, turnId, mrow);
+      for (const [turnId, { first, last }] of turns) turn.run(threadId, turnId, first, last);
       lines.length = 0; turns.clear();
     },
   };
