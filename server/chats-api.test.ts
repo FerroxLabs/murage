@@ -60,12 +60,60 @@ describe("GET /api/chats", () => {
 
   it("is not answered to a door, which gets the unknown-route answer rather than a list", async () => {
     const door = await api("GET", "/api/chats");
-    expect(door.status).toBeGreaterThanOrEqual(400);
+    expect(door.status).toBe(404);
     expect(door.body.chats).toBeUndefined();
   });
 });
 
 describe("GET /api/search?view=chats", () => {
+  it("scopes all of an owner's threads, groups with counts, pages and refuses doors before looking up scope", async () => {
+    const bot = (await desktopApi("POST", "/api/bots")).body.bot;
+    const other = (await desktopApi("POST", "/api/bots")).body.bot;
+    const extra = (await desktopApi("POST", `/api/bots/${bot.id}/tasks`, { title: "Older lease" })).body.task;
+    const group = (await desktopApi("POST", "/api/groups", { name: "Lease room", memberIds: [bot.id] })).body.group;
+    try {
+      // This handle belongs to index-harness's isolated home, never an app.
+      const db = writeDb();
+      try {
+        db.exec("BEGIN IMMEDIATE");
+        const seed = (thread: string, id: string, at: number, forgotten = false) => {
+          const text = `slice2-lease ${id}`;
+          const message = { id, at, role: "user", kind: "text", text, ...(forgotten ? { withheldFromBots: "forgotten" } : {}) };
+          const result = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,'user','text',?,?)").run(thread, id, at, text, JSON.stringify(message));
+          db.prepare("INSERT INTO messages_fts(rowid,t) VALUES(?,?)").run(result.lastInsertRowid, text);
+          db.prepare("INSERT INTO thread_state(thread_id,active_leaf_id) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id=excluded.active_leaf_id").run(thread, id);
+        };
+        seed(bot.threadId, "s2-old", 100);
+        seed(bot.threadId, "s2-best", 200);
+        seed(bot.threadId, "s2-forgotten", 300, true);
+        seed(extra.threadId, "s2-extra", 150);
+        seed(other.threadId, "s2-outside", 400);
+        seed(group.threadId, "s2-group", 500);
+        db.exec("COMMIT");
+      } finally { db.close(); }
+      const path = `/api/search?q=slice2-lease&bot=${bot.id}&group_by=thread&limit=1`;
+      const first = await desktopApi("GET", path);
+      expect(first.status).toBe(200);
+      expect(first.body.hits).toMatchObject([{ threadId: bot.threadId, messageId: "s2-best", hits: 2 }]);
+      const second = await desktopApi("GET", `${path}&before=${encodeURIComponent(first.body.next)}`);
+      expect(second.body.hits).toMatchObject([{ threadId: extra.threadId, hits: 1 }]);
+      expect(second.body.next).toBeNull();
+      const room = await desktopApi("GET", `/api/search?q=slice2-lease&group=${group.id}&group_by=thread`);
+      expect(room.body.hits.map((hit: { threadId: string }) => hit.threadId)).toEqual([group.threadId]);
+      const before = await desktopApi("GET", `/api/search?q=slice2-lease&bot=${bot.id}&before=150`);
+      expect(before.body.hits.map((hit: { messageId: string }) => hit.messageId)).toEqual(["s2-old"]);
+      expect((await desktopApi("GET", `${path}&before=nonsense`)).status).toBe(400);
+      const phone = await phoneApi("GET", path);
+      expect(phone.body.hits).toMatchObject([{ messageId: "s2-best", hits: 2 }]);
+      for (const suffix of [`bot=${bot.id}`, "bot=missing", `group=${group.id}`, "group_by=thread", `view=chats&threadId=${bot.threadId}`])
+        expect(await api("GET", `/api/search?q=slice2-lease&${suffix}`)).toEqual({ status: 404, body: { error: "no such route" } });
+      expect((await desktopApi("GET", `/api/chats?bot=${bot.id}&date_from=${Date.now() + 86400000}`)).body.chats).toEqual([]);
+    } finally {
+      await desktopApi("DELETE", `/api/groups/${group.id}`);
+      await desktopApi("DELETE", `/api/bots/${bot.id}`);
+      await desktopApi("DELETE", `/api/bots/${other.id}`);
+    }
+  });
   it("leaves out a line the owner forgot, for the owner too, and changes nothing without the option", async () => {
     // One bot per line: a second message to a bot that is still answering the first waits in its queue and is not in the
     // transcript yet, so each line goes to its own bot and is written at once.

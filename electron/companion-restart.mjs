@@ -67,6 +67,10 @@ export function createCompanionRestarter({
   let pendingToken = 0;
   // The generation the pending exit restart belongs to.
   let pendingOwner = null;
+  // Counts every unasked exit handed to the supervisor. A restart that failed
+  // because its own child died already had that death counted by the
+  // listener's onExit, so it must not count the same life again.
+  let exitsCounted = 0;
   const api = {
     /** The start at launch, retried after each gap while the phone is still
      * on, nobody else started or stopped the companion, no exit restart is
@@ -114,6 +118,7 @@ export function createCompanionRestarter({
      * the companion on at the moment it died. Returns the decision taken. */
     onExit({ expected, wasEnabled }) {
       if (expected || !wasEnabled || shuttingDown()) return { action: "none" };
+      exitsCounted += 1;
       const decision = supervisor.decide({ intentional: false });
       if (decision.action !== "restart") {
         log(`companion supervisor: ${decision.action} (${decision.reason ?? "stopped"})`);
@@ -134,11 +139,22 @@ export function createCompanionRestarter({
         void (async () => {
           try {
             if (shuttingDown()) return;
-            const state = await serialStart(() => !shuttingDown() && generation() === owner);
+            let countedAtStart = -1;
+            const state = await serialStart(() => {
+              const ours = !shuttingDown() && generation() === owner;
+              if (ours) countedAtStart = exitsCounted;
+              return ours;
+            });
             if (superseded(state)) return;
             // A start that did not come up is one more failed life, counted
             // and delayed like the rest, so the cap still ends the loop.
             if (state && (state.enabled === false || state.error)) {
+              // The child this start launched died on its own and the
+              // listener's onExit already counted it and owns the next try.
+              if (exitsCounted !== countedAtStart) {
+                log("companion supervisor: restart did not come up; its exit was already counted");
+                return;
+              }
               pending = false;
               api.onExit({ expected: false, wasEnabled: true });
             }

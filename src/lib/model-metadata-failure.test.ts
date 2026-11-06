@@ -1,9 +1,12 @@
 // Its own file on purpose: vitest gives each test file a fresh module
 // instance, and this one deliberately poisons the index. Run beside the others
 // it would make every later lookup return null.
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
-import { loadModelMetadata, lookupModelMetadata, modelMetadataLoads } from "./model-metadata.ts";
+import { loadModelMetadata, lookupModelMetadata, modelMetadataLoads, preloadModelMetadata } from "./model-metadata.ts";
+
+// The text arrives first (its own chunk since 1.0.18); the parse is what fails here.
+beforeAll(() => preloadModelMetadata());
 import { PRICE_UNKNOWN, isPriceUnknown, modelPriceLabel, pickerModels } from "./provider-model-picker.ts";
 
 describe("when the snapshot cannot be parsed at all", () => {
