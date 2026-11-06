@@ -59,7 +59,8 @@ function fromClockTime(text: string, now: number): number | undefined {
 }
 
 function fromRetryAfter(text: string, now: number): number | undefined {
-  const match = /retry[- ]after[":\s]+(\d+)/i.exec(text);
+  // 1.0.18: Flux and Fuigo also say "Retry in 12s"; that real time beats the one-hour default.
+  const match = /retry[- ]after[":\s]+(\d+)/i.exec(text) ?? /\bretry in (\d+)\s*(?:s|secs?|seconds?)\b/i.exec(text);
   return match ? now + Number(match[1]) * 1000 : undefined;
 }
 
@@ -89,7 +90,7 @@ export function limitRefusal(family: EngineFamily, refusal: { status?: number; t
     case "codex": resetsAt = fromJson(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now); break;
     case "gateway": resetsAt = fromJson(text, now) ?? fromRetryAfter(text, now); break;
     case "openai-chat": resetsAt = fromRetryAfter(text, now) ?? fromJson(text, now); break;
-    default: resetsAt = fromJson(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now);
+    default: resetsAt = fromJson(text, now) ?? fromRetryAfter(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now);
   }
   return resetsAt !== undefined && Number.isFinite(resetsAt) ? { resetsAt } : {};
 }

@@ -351,6 +351,9 @@ process.stdin.on("data", (d) => {
         if (mode === "fallback" && promptRunning) stranded.push(m.params.text);
         else if (mode === "fallback") runFallback(m.params.text, Number(process.env.FUIGO_FAKE_IDLE_FALLBACK_DELAY_MS ?? 100));
       }
+    } else if (m.method === "session/cancel") {
+      // A cancel is a notification: logged so a test can count it, never answered.
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "cancels.log"), JSON.stringify(m.params) + "\\n");
     } else if (m.id !== undefined) send({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "nm" } });
   }
 });
@@ -2198,5 +2201,52 @@ describe("a session open in only one Fuigo process (1.0.30)", () => {
     expect(lines("spawns.log")).toHaveLength(2);
     expect(lines("news.log")).toHaveLength(1);
     expect(recorder.events.filter((e) => e.type === "item.started" && (e as { title?: string }).title === "Picked up this conversation in a fresh session")).toHaveLength(0);
+  });
+});
+
+describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly once", () => {
+  // The fake engine's session id (its own SID lives inside FAKE_SOURCE, out of this scope).
+  const SID = "fake-fuigo-session";
+  const retrying = (reason: string, attempt: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "retry_state", type: "retrying", attempt, reason } } });
+  const log = (name: string) => existsSync(join(dumps, name)) ? readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean) : [];
+  // Recorded shape: LiteLLM flattens flux-router's 429 detail dict into the message as a Python repr; the code is only in `state`.
+  const FREE_CAP = "429 Too Many Requests: {'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'message': \"Your account's monthly allowance is used up.\"}}";
+  const HOLD = "429 Too Many Requests: Your credit is busy because other requests have temporarily reserved it. Retry in 2s.";
+  const reply = { jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answered" } } } };
+  const turn = (script: unknown[]) => runTurn({ environment: { FUIGO_FAKE_SCRIPT: JSON.stringify(script), FUIGO_FAKE_HOLD_MS: "400" } });
+
+  it("free_cap_reached: one prompt, the engine's retry is cancelled, and the turn is that refusal with its code", async () => {
+    const rec = await turn([retrying(FREE_CAP, 1)]);
+    expect(log("prompts.log")).toHaveLength(1);
+    expect(log("cancels.log")).toHaveLength(1);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+    expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: false });
+    expect(rec.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("a hold gets one engine retry after its wait: nothing is cancelled at the first notice", async () => {
+    const once = await turn([retrying(HOLD, 1), reply]);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(once.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+  });
+
+  it("Astra r4: one hold attempt seen on two notice rails counts once: nothing is cancelled", async () => {
+    const rec = await turn([retrying(HOLD, 1), retrying(HOLD, 1), reply]);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+  });
+
+  it("a hold seen twice is cancelled at the second notice", async () => {
+    const rec = await turn([retrying(HOLD, 1), retrying(HOLD, 2)]);
+    expect(log("cancels.log")).toHaveLength(1);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
+  });
+
+  it("a plain busy 429 with no Flux code keeps the engine's quiet retries: nothing is cancelled", async () => {
+    const rec = await turn([retrying("429 Too Many Requests: rate limited", 1), retrying("429 Too Many Requests: rate limited", 2), reply]);
+    expect(log("prompts.log")).toHaveLength(1);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+    expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
 });

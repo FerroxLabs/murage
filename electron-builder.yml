@@ -62,6 +62,7 @@ files:
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
   - shared/windows-sddl.mjs
+  - shared/md-secret-label.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
