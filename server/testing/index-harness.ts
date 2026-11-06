@@ -75,6 +75,7 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   hermes: { driver: "fixture-unavailable" },
   pi: { driver: "fixture-unavailable" },
   cline: { driver: "fixture-unavailable" },
+  muse: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private
@@ -695,6 +696,7 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
+      TMPDIR: tmpdir(),
       MURAGE_PORT: String(PORT),
       MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
       MURAGE_BOX_API: `http://127.0.0.1:${boxStubPort}`,

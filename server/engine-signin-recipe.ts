@@ -55,6 +55,9 @@ export const ENGINE_SIGNIN_TABLE: Readonly<Record<string, EngineSigninRow>> = Ob
   cursorAgent: { kind: "headless", args: ["login"], accountKeys: ["CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME"], root: { key: "CURSOR_CONFIG_DIR", fallback: [".cursor"] }, measured: "2026.10.22 detached: opener called, process stayed alive" },
   opencodeGo: terminal(["auth", "login"], ["XDG_DATA_HOME", "XDG_CONFIG_HOME", "OPENCODE_CONFIG_DIR"], { key: "XDG_DATA_HOME", fallback: [".local", "share", "opencode"], suffix: ["opencode"] }, "a picker, not headless"),
   clineAgent: terminal(["auth"], ["CLINE_DIR", "CLINE_DATA_DIR"], { key: "CLINE_DIR", fallback: [".cline"] }, "refuses without a TTY"),
+  // Not measured yet (GAP-MUSE-PROBES.md probe 6): `muse login` comes from upstream and OpenClaw, and a terminal works
+  // whether or not it needs a TTY. Muse keeps its sign-in under $XDG_CONFIG_HOME/muse or ~/.config/muse.
+  museCode: terminal(["login"], ["XDG_CONFIG_HOME"], { key: "XDG_CONFIG_HOME", fallback: [".config", "muse"], suffix: ["muse"] }, "not measured (probe 6); a terminal until a container proves it headless"),
   droidAgent: terminal([], ["FACTORY_HOME_OVERRIDE"], { key: "FACTORY_HOME_OVERRIDE", fallback: [".factory"], suffix: [".factory"] }, "1.1.0 pipes: draws a picker and prints no link"),
   openclawAgent: terminal(["onboard"], [], { fallback: [".openclaw"] }, "2026.10.5 pipes: refuses, needs a TTY"),
   hermesAgent: terminal(["setup"], ["HERMES_HOME"], { key: "HERMES_HOME", fallback: [".hermes"] }, "0.22.5 pipes: refuses, no TTY, prints no link"),

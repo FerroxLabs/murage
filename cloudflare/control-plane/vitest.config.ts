@@ -46,6 +46,8 @@ export default defineConfig({
           NOTICE_MAIL_KEY: TEST_NOTICE_MAIL_KEY,
           ALLOWED_ORIGINS: "https://app.murage.test",
           TEST_MIGRATIONS: await readD1Migrations(`${root}migrations`),
+          // F35 step 2, held back from migrations/ until no 1.7.1 Worker remains; only its own test applies it.
+          TEST_LATER_MIGRATIONS: await readD1Migrations(`${root}migrations-later`),
         },
       },
     })),

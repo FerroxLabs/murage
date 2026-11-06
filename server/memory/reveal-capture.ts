@@ -14,6 +14,7 @@ import type { MemoryRoster } from "./policy.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 
 type Receipt={cursor:string;status:"pending"|"complete";retryAt:number;reason?:string;attempts?:number};
 /** A minute, doubling while the SAME reason keeps coming back, up to an hour.
@@ -247,7 +248,7 @@ function sourceFor(jobId:string,roster:MemoryRoster){
   if(sourceIsWithheldMessage(LineageAllowance.tool(),source)||writetimeSourceState(source)!=="shown")return null;
   const raw=db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(source.thread_id,source.message_id);
   if(!raw)return null;
-  const message=JSON.parse(String(raw.json)),payload=JSON.parse(String(source.payload));
+  const message=rowToMessage({json:String(raw.json)}),payload=JSON.parse(String(source.payload));
   if(message.kind!=="text"||message.role!=="bot"||message.turnTerminal!==true||typeof message.text!=="string"||redactSecretsInText(wholeTurnText(db,String(source.thread_id),message))!==payload.text)return null;
   const threadId=String(source.thread_id);
   if(roster.groups.some(g=>g.threadId===threadId||g.tasks?.some(t=>t.threadId===threadId)))return null;

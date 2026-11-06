@@ -37,9 +37,10 @@ import type { AcpHistoryEngine } from "./engine-history-deletion.ts";
 import { applyFactsDelta, MAX_ENGINE_ROUNDS } from "./engine-history-run.ts";
 import { configureRedo, listRedo } from "./engine-redo.ts";
 import { inScopeFolder, privateScopeHome, scopeCandidates } from "./engine-closed.ts";
-import { runEngineHistoryOffThread, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryResult } from "./engine-history-offthread.ts";
+import { runEngineHistoryOffThread, startEngineHistoryJob, type EngineDiscovery, type EngineHistoryJob, type EngineHistoryOptions, type EngineHistoryResult } from "./engine-history-offthread.ts";
 import { hasContentSteps, homeKey, pathApiFor, type EnginePlanData, type HomePlanData } from "./engine-plan-core.ts";
 import { scrubWalAfterDelete, walScrubPending } from "./wal-maintenance.ts";
+import { searchMergeOwing } from "./search-merge-runner.ts";
 import { runningAppVersion } from "./memory/app-version.ts";
 import { OPEN_PASS_ENGINES } from "./engine-history-run.ts";
 import { closeThreadLog, threadLogNames, threadSessionLines, threadTempFiles, type SessionReadOptions } from "./harness/event-log.ts";
@@ -75,7 +76,7 @@ export interface DeletionLeftover { what: string; where: string }
 export const ENGINE_LABEL: Readonly<Record<string, string>> = {
   fuigoAgent: "Fuigo", grokAgent: "Grok", claudeAgent: "Claude Code", codex: "Codex", piAgent: "Pi", opencodeGo: "OpenCode",
   geminiAgent: "Gemini CLI", qwenAgent: "Qwen Code", kimiAgent: "Kimi", cursorAgent: "Cursor", droidAgent: "Droid",
-  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", customAcp: "your custom engine",
+  antigravityAgent: "Antigravity", hermesAgent: "Hermes", openclawAgent: "OpenClaw", clineAgent: "Cline", museCode: "Muse Code", customAcp: "your custom engine",
 };
 const engineLabel = (kind: string) => ENGINE_LABEL[kind] ?? "An engine";
 /** The driver kind whose label names an engine (codex -> Codex, grok -> Grok). */
@@ -407,8 +408,10 @@ export interface DeletionServiceOptions {
   pauseBackgroundRuns?: (engines: DeletionEngine[]) => Promise<() => void>;
   /** `waitMs`: how long a running turn of Murage's own gets to end before the home is skipped (SELF-OVERLOAD-105 item 2: it grows with
    * every attempt the same deletion lost to a running turn, 250 ms, 1 s, 4 s, 15 s, so a bot whose turns never stop cannot keep a deletion
-   * owed for days; new turns wait only for that long, once per attempt). */
-  holdHomes?: (homes: DeletionEngineHome[], waitMs?: number) => Promise<{ release: () => void; skipped: DeletionEngineHome[] }>;
+   * owed for days; new turns wait only for that long, once per attempt). `yieldAsked` turns true once a new turn has waited that long at
+   * the gate: the attempt stops at its next safe point and releases (DELETE-HOLDS-ENGINE); `yielded` resolves at that moment. A holder
+   * that returns neither is never asked. */
+  holdHomes?: (homes: DeletionEngineHome[], waitMs?: number) => Promise<{ release: () => void; skipped: DeletionEngineHome[]; yieldAsked?: () => boolean; yielded?: Promise<void> }>;
   /** New turns on these homes wait from this moment, in one synchronous step, and until the returned function is called. Before the port
    * opens nothing runs, so there is nothing to wait for: a crash journal is repaired before any turn can read the file it names. */
   holdHomesNow?: (homes: DeletionEngineHome[]) => () => void;
@@ -717,7 +720,8 @@ export class ConversationDeletions {
     // cleanup retries across restarts. They must never keep a removed chat in
     // the deletion journal or hold up another deletion. The WAL wait above is
     // bounded; a missing memory-worker acknowledgement is not awaited here.
-    if (walScrubPending() || this.memoryCleanupPending()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
+    // ...and the search index's merge and the WAL scrub after it (search-merge-runner.ts): shown until `scrub-done`, never waited on
+    if (walScrubPending() || this.memoryCleanupPending() || searchMergeOwing()) leftovers.push({ what: "Removed; finishing cleanup", where: "local memory; Murage retries automatically" });
     // the homes left for Murage's next update are still owed, for the same reason
     const engines = ran && deferred.length ? {
       ...ran,
@@ -751,7 +755,8 @@ export class ConversationDeletions {
       this.save(this.pending().map((other) => other.id === entry.id ? { ...other, attachments: [], deferredAttachments: stillDeferred } : other));
     }
     // A home skipped because Murage's own turn on the engine was still running is tried again as soon as that turn ends.
-    const ownTurnKeys = failed.length && engines ? engines.failedHomes.filter((key) => engines.homeReasons?.[key] === "engine-running" && !verifiedHomes(entry).includes(key)) : [];
+    // A home the attempt gave up because a waiting turn asked it to yield counts the same, whatever its marks or earlier reasons.
+    const ownTurnKeys = failed.length && engines ? [...new Set([...engines.failedHomes.filter((key) => engines.homeReasons?.[key] === "engine-running" && !verifiedHomes(entry).includes(key)), ...(engines.yieldedHomes ?? [])])] : [];
     this.waitForOwnTurns(entry, ownTurnKeys.length ? entry.engineHomes.filter((home) => ownTurnKeys.includes(homeKey(home.engine, home.home))) : [], startedAt);
     if (!failed.length && !stillDeferred.length) {
       this.abandon(entry);
@@ -762,7 +767,8 @@ export class ConversationDeletions {
     } else if (failed.length) {
       const state = this.retries.get(entry.id) ?? { attempts: 0 };
       state.ownTurn = ownTurnKeys.length > 0;
-      state.ownTurnLosses = ownTurnKeys.length > 0 ? (state.ownTurnLosses ?? 0) + 1 : 0;
+      // every yielded attempt is a loss, so five yields in a row at most come before the top rung, which runs whole (SELF-OVERLOAD-105)
+      state.ownTurnLosses = ownTurnKeys.length > 0 || engines?.yielded ? (state.ownTurnLosses ?? 0) + 1 : 0;
       state.holders = this.holdersOf(entry); state.looks = 0;
       this.retries.set(entry.id, state);
       // Only engine homes whose helper would not load under THIS version are owed: no retry can change that before Murage is updated,
@@ -998,7 +1004,8 @@ export class ConversationDeletions {
     for (const entry of this.pending()) {
       const state = this.retries.get(entry.id);
       if (state?.timer) clearTimeout(state.timer);
-      this.retries.delete(entry.id);
+      // the schedule starts again; the ladder of attempts lost to Murage's own turns does not (a press never lowers the rung)
+      this.retries.set(entry.id, { attempts: 0, ...(state?.ownTurnLosses ? { ownTurnLosses: state.ownTurnLosses } : {}) });
       started++;
       try { await this.finish(entry, { allHomes: true }); } catch (error) { console.warn("conversation deletion: a retry could not finish", error); }
     }
@@ -1162,7 +1169,7 @@ export class ConversationDeletions {
    * Every attempt starts from a fresh plan of all homes; nothing saved by an earlier attempt counts as proof. Up to
    * MAX_ENGINE_ROUNDS plan/execute/verify rounds per attempt; what is still owed stays in the record for the retry schedule.
    * Never throws. */
-  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">): Promise<EngineHistoryResult & { failedHomes: string[] }> {
+  private async removeEngineHistory(entry: PendingConversationDeletion, base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">): Promise<EngineHistoryResult & { failedHomes: string[]; yielded?: boolean; yieldedHomes?: string[] }> {
     const homesFailed = (): EngineHistoryResult & { failedHomes: string[] } => ({ removed: [], failed: [...new Set(base.homes.map((home) => home.home))], leftovers: [], failedHomes: [...new Set(base.homes.map((home) => homeKey(home.engine, home.home)))] });
     if (!base.homes.length) return { removed: [], failed: [], leftovers: [], failedHomes: [] };
     const removed: string[] = [], leftovers: EngineHistoryResult["leftovers"] = [];
@@ -1181,6 +1188,48 @@ export class ConversationDeletions {
     const stale = new Map<string, number>();
     const held = new Map<string, () => void>();
     let unpause: (() => void) | undefined;
+    // Worker-exit barrier (DELETE-HOLDS-ENGINE r2.1): every job of this attempt starts here, and `lastExit` is the exit of the newest
+    // one, which settles only after every job before it has exited too. No hold is released before it: a returned result is not proof
+    // the worker left, and the gate is what proves Murage's own engine is closed on a private scope (engine-closed.ts).
+    let lastExit: Promise<void> = Promise.resolve();
+    const job = (work: EngineHistoryJob, options?: EngineHistoryOptions): Promise<EngineHistoryResult> => {
+      const started = startEngineHistoryJob(work, options);
+      lastExit = started.exited;
+      return started.result;
+    };
+    // The holds taken, as the turns waiting at their gates see them: a turn that waited the attempt's budget asks it to yield.
+    const taken: Array<{ yieldAsked?: () => boolean; yielded?: Promise<void> }> = [];
+    // At the top rung of the ladder the attempt runs whole, as every attempt did before: five yields in a row at most (r2.5, r3.1).
+    const mayYield = () => (this.retries.get(entry.id)?.ownTurnLosses ?? 0) < HOLD_WAIT_STEPS_MS.length - 1;
+    const asked = () => mayYield() && taken.some((hold) => hold.yieldAsked?.() === true);
+    // The homes the LAST plan job that covered them shows closed before and after, with nothing left: written only by `notePlanned`
+    // and cleared for a home before it is executed, so the empty plan and the closed check always come from the same job (r2.2).
+    const verifiedKeys = new Set<string>();
+    const notePlanned = (only: string[], result: EngineHistoryResult) => {
+      const closed = new Set(result.closedHomes ?? []);
+      for (const key of only) {
+        const plan = result.plans?.[key];
+        if (plan && closed.has(key) && !hasContentSteps(plan)) verifiedKeys.add(key); else verifiedKeys.delete(key);
+      }
+    };
+    let yielded = false;
+    const yieldedHomes: string[] = [];
+    const releaseAll = () => { for (const release of new Set(held.values())) { try { release(); } catch { /* released */ } } };
+    /** A waiting turn asked: every home this attempt has not proved is given up as Murage's own turn running (the retry is woken when
+     * that turn ends), its verified mark of an earlier attempt is owed again, and the holds go once the last worker has exited. */
+    const yieldNow = async () => {
+      yielded = true;
+      for (const key of keys) {
+        if (stuck.has(key) || verifiedKeys.has(key)) continue;
+        yieldedHomes.push(key);
+        giveUp(key, "engine-running", homeOf(key).home);
+      }
+      const left = verifiedHomes(entry).filter((home) => !yieldedHomes.includes(home));
+      if (left.length) entry.homesVerified = left; else delete entry.homesVerified;
+      this.saveEngineState(entry);
+      await lastExit;
+      releaseAll();
+    };
     const giveUp = (key: string, reason: string, path: string) => {
       stuck.add(key); failedHomes.add(key); failed.add(path);
       homeReasons[key] ??= reason;
@@ -1208,7 +1257,7 @@ export class ConversationDeletions {
       // anything is paused or held: the full gate below would only find it open again, after closing Murage's own idle sessions on it
       // and pausing its background runs for nothing, every ten minutes for as long as that program runs. A probe that fails or sees
       // nothing changes nothing: the attempt goes on exactly as before.
-      const foreign = await this.foreignHomes(base, keys);
+      const foreign = await this.foreignHomes(base, keys, job);
       const logged: string[] = []; // homes on their hourly whole try whose holder line is already written: the plan adds no second one
       for (const [key, seen] of Object.entries(foreign)) {
         // Every FULL_TRY_EVERY-th skip of a home runs the whole attempt anyway: a process of Murage's own that is not under this
@@ -1229,14 +1278,14 @@ export class ConversationDeletions {
         try {
           // the plan first, and the ids it found saved, before anything they name is removed: a transcript removed now is where the
           // closed pass would otherwise learn the session id of a side file that stays owed
-          const planned = await runEngineHistoryOffThread({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: openPass });
+          const planned = await job({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: openPass });
           const ready = Object.keys(planned.plans ?? {});
           if (ready.length) {
             const merged = { ...(entry.engineDiscovery ?? {}), ...(planned.discovery ?? {}) };
             if (Object.keys(merged).length) entry.engineDiscovery = merged;
             for (const [key, plan] of Object.entries(planned.plans ?? {})) noteContent(key, plan);
             this.saveEngineState(entry);
-            const ran = await runEngineHistoryOffThread({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: ready, plans: planned.plans });
+            const ran = await job({ ...base, kind: "openPass", known: entry.engineDiscovery ?? {}, only: ready, plans: planned.plans });
             removed.push(...ran.removed);
           }
         } catch (error) { console.warn("conversation deletion: the open-engine pass did not run; the closed pass still does it all", error); }
@@ -1248,28 +1297,39 @@ export class ConversationDeletions {
       // A fresh plan of everything: a plan saved by an earlier attempt, and any mark in it, is not evidence of anything now.
       entry.enginePlan = { v: 3, homes: {} };
       const plans = entry.enginePlan.homes;
-      const settleQuiet = async (quiet: string[]) => {
+      /** Returns true when the attempt yielded inside it (safe point 4). */
+      const settleQuiet = async (quiet: string[]): Promise<boolean> => {
         // A home that keeps changing is left alone until its planned inputs have stopped changing (at most twice).
         const fingerprint = (key: string) => JSON.stringify((plans[key]?.steps ?? []).map(({ done: _done, ...step }) => step));
         for (let waits = 0; waits < 2; waits++) {
           const before = new Map(quiet.map((key) => [key, fingerprint(key)]));
-          await new Promise<void>((resolve) => { const timer = setTimeout(resolve, this.options.staleQuietMs ?? 10_000); timer.unref(); });
-          const replanned = await runEngineHistoryOffThread({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only: quiet, ...(logged.length ? { quiet: logged } : {}) });
+          // the sleep ends early when a waiting turn asks, and only when the attempt may yield (r3.3)
+          const asks = mayYield() ? taken.flatMap((hold) => hold.yielded ? [hold.yielded] : []) : [];
+          let timer: NodeJS.Timeout | undefined;
+          const sleep = new Promise<void>((resolve) => { timer = setTimeout(resolve, this.options.staleQuietMs ?? 10_000); timer.unref(); });
+          if (asks.length) await Promise.race([sleep, ...asks]); else await sleep;
+          clearTimeout(timer);
+          if (asked()) { await yieldNow(); return true; }
+          const replanned = await job({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only: quiet, ...(logged.length ? { quiet: logged } : {}) });
+          notePlanned(quiet, replanned);
           for (const [key, plan] of Object.entries(replanned.plans ?? {})) { plans[key] = plan; noteContent(key, plan); }
           if (replanned.discovery) entry.engineDiscovery = { ...(entry.engineDiscovery ?? {}), ...replanned.discovery };
           this.saveEngineState(entry);
-          if (quiet.every((key) => fingerprint(key) === before.get(key))) return;
+          if (asked()) { await yieldNow(); return true; }
+          if (quiet.every((key) => fingerprint(key) === before.get(key))) return false;
         }
+        return false;
       };
       /** Holds Murage's own sessions on these homes while their steps run, and keeps them held for the verifying plan. */
       const holdFor = async (candidates: string[]): Promise<void> => {
         const wanted = candidates.filter((key) => !held.has(key));
         if (!wanted.length || !this.options.holdHomes) return;
         try {
-          const taken = await this.options.holdHomes(wanted.map(homeOf), holdWaitMs(this.retries.get(entry.id)?.ownTurnLosses ?? 0));
-          const skipped = new Set(taken.skipped.map((home) => homeKey(home.engine, home.home)));
+          const hold = await this.options.holdHomes(wanted.map(homeOf), holdWaitMs(this.retries.get(entry.id)?.ownTurnLosses ?? 0));
+          taken.push(hold);
+          const skipped = new Set(hold.skipped.map((home) => homeKey(home.engine, home.home)));
           let released = false;
-          const release = () => { if (!released) { released = true; taken.release(); } };
+          const release = () => { if (!released) { released = true; hold.release(); } };
           for (const key of wanted) held.set(key, release);
           for (const key of wanted) if (skipped.has(key)) giveUp(key, "engine-running", homeOf(key).home);
         } catch (error) {
@@ -1285,9 +1345,12 @@ export class ConversationDeletions {
         // being open, so a plan made first would leave the home unread (on Windows it did, for good). The hold closes the idle ones
         // and waits until they have really exited; a live owner turn is never stopped, and its home stays pending (`skipped`).
         await holdFor(keys.filter((key) => !stuck.has(key)));
+        // safe point 1: no job of this attempt is running
+        if (asked()) { await yieldNow(); break; }
         const only = keys.filter((key) => !stuck.has(key));
         if (only.length) {
-          const planned = await runEngineHistoryOffThread({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only, ...(logged.length ? { quiet: logged } : {}) });
+          const planned = await job({ ...base, kind: "plan", known: entry.engineDiscovery ?? {}, only, ...(logged.length ? { quiet: logged } : {}) });
+          notePlanned(only, planned);
           Object.assign(reasons, planned.reasons);
           Object.assign(homeReasons, planned.homeReasons);
           Object.assign(homeApps, planned.homeApps);
@@ -1316,9 +1379,13 @@ export class ConversationDeletions {
           for (const key of active) giveUp(key, "changed", homeOf(key).home);
           break;
         }
+        // safe point 2: the plan is made and saved, nothing executed yet
+        if (asked()) { await yieldNow(); break; }
         const run = Object.fromEntries(active.filter((key) => !stuck.has(key)).map((key) => [key, plans[key]!]));
         if (!Object.keys(run).length) break;
-        const ran = await runEngineHistoryOffThread({ ...base, kind: "execute", plans: run }, { onStep });
+        // a home executed now is proved again only by a plan job that starts after this one
+        for (const key of Object.keys(run)) verifiedKeys.delete(key);
+        const ran = await job({ ...base, kind: "execute", plans: run }, { onStep });
         removed.push(...ran.removed);
         Object.assign(reasons, ran.reasons);
         Object.assign(homeReasons, ran.homeReasons);
@@ -1345,22 +1412,26 @@ export class ConversationDeletions {
           if (!stuck.has(key)) for (const step of plans[key]!.steps) step.done = true;
         }
         this.saveEngineState(entry);
-        if (quiet.length && round < MAX_ENGINE_ROUNDS - 1) await settleQuiet(quiet);
+        // safe point 3: the execute job has ended and its marks are saved
+        if (asked()) { await yieldNow(); break; }
+        if (quiet.length && round < MAX_ENGINE_ROUNDS - 1 && await settleQuiet(quiet)) break;
       }
       // What this attempt proved, home by home, for the report only. Not stuck means held and planned in the last round; the rest of the
       // finished test is the closed check of that plan and nothing left in it.
-      const clean = keys.filter((key) => !stuck.has(key) && plans[key] && closedOfLastPlan.includes(key) && !hasContentSteps(plans[key]!));
+      const clean = keys.filter((key) => !stuck.has(key) && verifiedKeys.has(key));
       const verified = [...new Set([...verifiedHomes(entry), ...clean])];
       if (JSON.stringify(verified) !== JSON.stringify(entry.homesVerified ?? [])) {
         if (verified.length) entry.homesVerified = verified; else delete entry.homesVerified;
         this.saveEngineState(entry);
       }
-      return { removed, failed: [...failed], leftovers, reasons, homeReasons, homeApps, failedHomes: [...failedHomes], syncedHomes: [...syncedHomes] };
+      return { removed, failed: [...failed], leftovers, reasons, homeReasons, homeApps, failedHomes: [...failedHomes], syncedHomes: [...syncedHomes], ...(yielded ? { yielded, yieldedHomes } : {}) };
     } catch (error) {
       console.warn("conversation deletion: the engine history was not removed yet", error);
-      return homesFailed();
+      return { ...homesFailed(), ...(yielded ? { yielded, yieldedHomes } : {}) };
     } finally {
-      for (const release of new Set(held.values())) { try { release(); } catch { /* released */ } }
+      // the barrier on this path too: after a timed-out or failed job its worker may still be running
+      try { await lastExit; } catch { /* an exit never rejects */ }
+      releaseAll();
       try { unpause?.(); } catch { /* released */ }
     }
   }
@@ -1375,9 +1446,9 @@ export class ConversationDeletions {
    * Logs one `home not read` line per home when another program starts holding it, then at most once an hour while it is still held,
    * and only when what holds it changed (by program and rule, not by pid). The owner's own Claude Code starts a shell or a search
    * for every tool call, so its holder list changes all day; a line per change was a line every few seconds (Sean's 1.0.6 log). */
-  private async foreignHomes(base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, keys: string[]): Promise<NonNullable<EngineHistoryResult["foreignHomes"]>> {
+  private async foreignHomes(base: Omit<EngineHistoryJob, "kind" | "known" | "only" | "plans">, keys: string[], run: (job: EngineHistoryJob) => Promise<EngineHistoryResult> = runEngineHistoryOffThread): Promise<NonNullable<EngineHistoryResult["foreignHomes"]>> {
     let probed: EngineHistoryResult;
-    try { probed = await runEngineHistoryOffThread({ ...base, kind: "probe", only: keys }); } catch { return {}; }
+    try { probed = await run({ ...base, kind: "probe", only: keys }); } catch { return {}; }
     const found = probed.foreignHomes ?? {};
     for (const key of keys) {
       const seen = found[key];

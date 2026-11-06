@@ -11,7 +11,7 @@ import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
 import { resolveToolLabel } from "../shared/tool-activity.ts";
 import { DATA_DIR } from "./config.ts";
 import { flushCoalesced } from "./atomic.ts";
-import { usageMonthKey } from "../shared/usage-month.ts";
+import { ROUTINE_USAGE_KEPT, ROUTINE_USAGE_MORE, usageMonthKey } from "../shared/usage-month.ts";
 import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
@@ -241,6 +241,41 @@ describe("Store", () => {
     expect(store.addRoomTurnUsage(bot.id, { input: 3000, output: 500 }, "room:turn-1")).toBe(false);
     expect(store.addRoomTurnUsage(bot.id, { input: 2000, output: 100, cachedInput: 1500 }, "room:turn-2")).toBe(true);
     expect(store.bot(bot.id)?.usageMonths?.[key]).toMatchObject({ replies: 3, input: 5100, output: 620, cachedInput: 1500 });
+  });
+
+  it("B45 (#1864): a routine's turns also land in that routine's month share, once, in chats and rooms, and survive a restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = usageMonthKey();
+    const daily = { id: "r-daily", name: "Daily brief" };
+    store.addTaskUsage(bot.id, bot.threadId, { input: 100, output: 20, costUsd: null }, "chat-1");
+    store.addTaskUsage(bot.id, bot.threadId, { input: 1000, output: 200, cachedInput: 400, costUsd: null }, "r-1", daily);
+    store.addTaskUsage(bot.id, bot.threadId, { input: 1000, output: 200, cachedInput: 400, costUsd: null }, "r-1", daily);
+    expect(store.addRoomTurnUsage(bot.id, { input: 50, output: 5 }, "room:r-2", { id: "r-goal", name: "Weekly goal" })).toBe(true);
+    expect(store.addRoomTurnUsage(bot.id, { input: 50, output: 5 }, "room:r-2", { id: "r-goal", name: "Weekly goal" })).toBe(false);
+    expect(store.bot(bot.id)?.usageMonths?.[key]).toMatchObject({ replies: 3, input: 1150, output: 225 });
+    const routines = store.bot(bot.id)?.usageRoutineMonths?.[key];
+    expect(routines?.["r-daily"]).toMatchObject({ name: "Daily brief", replies: 1, input: 1000, output: 200, cachedInput: 400 });
+    expect(routines?.["r-goal"]).toMatchObject({ name: "Weekly goal", replies: 1, input: 50, output: 5 });
+    expect(Object.keys(routines ?? {})).toHaveLength(2);
+    flushCoalesced();
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)?.usageRoutineMonths?.[key]?.["r-daily"]?.replies).toBe(1);
+  });
+
+  it("B45: a turn with no routine writes no routine share, and a month keeps at most ROUTINE_USAGE_KEPT routines apart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const key = usageMonthKey();
+    store.addTaskUsage(bot.id, bot.threadId, { input: 1, output: 1, costUsd: null }, "plain");
+    expect(store.bot(bot.id)?.usageRoutineMonths).toBeUndefined();
+    for (let i = 0; i < ROUTINE_USAGE_KEPT + 3; i += 1) store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 1, costUsd: null }, `t-${i}`, { id: `r-${i}`, name: `Routine ${i}` });
+    const routines = store.bot(bot.id)?.usageRoutineMonths?.[key] ?? {};
+    expect(Object.keys(routines)).toHaveLength(ROUTINE_USAGE_KEPT + 1);
+    expect(routines[ROUTINE_USAGE_MORE]).toMatchObject({ replies: 3, input: 30, output: 3 });
+    // a routine already kept apart keeps its own line after the cap is reached
+    store.addTaskUsage(bot.id, bot.threadId, { input: 10, output: 1, costUsd: null }, "t-again", { id: "r-0", name: "Routine 0 renamed" });
+    expect(store.bot(bot.id)?.usageRoutineMonths?.[key]?.["r-0"]).toMatchObject({ replies: 2, name: "Routine 0 renamed" });
   });
 
   it("turn path cost: one usage write adds one bounded bucket update, never a scan of history", () => {
@@ -2682,10 +2717,11 @@ describe("Store bounded message pages", () => {
     for (let i = 0; i < size; i++) {
       if (i % 11 === 3) mdb.insertMessage(threadId, legacyRow(threadId, i));
       else if (i % 17 === 5) {
-        mdb.insertMessage(threadId, legacyRow(threadId, i, {
-          role: "user", kind: "activity", text: undefined,
-          tool: { name: "probe", diagnostic: { turnId: "foreign", summary: "must be sanitized" } as never },
-        }));
+        // the stored-row check (U4 S3) drops this diagnostic on every write, so it is planted in the raw column, as an older build left it
+        const planted = legacyRow(threadId, i, { role: "user", kind: "activity", text: undefined, tool: { name: "probe" } });
+        mdb.insertMessage(threadId, planted);
+        database().prepare("UPDATE messages SET json=json_set(json,'$.tool.diagnostic',json(?)) WHERE thread_id=? AND id=?")
+          .run(JSON.stringify({ turnId: "foreign", summary: "must be sanitized" }), threadId, planted.id);
       } else if (i % 13 === 7) store.appendMessage(threadId, { role: "bot", kind: "screen", png: `png-${i}`, mime: "image/png" });
       else if (i % 19 === 9) {
         const source = store.messagesFor(threadId).findLast((message) => message.role === "user" && message.kind === "text");
@@ -2714,8 +2750,9 @@ describe("Store bounded message pages", () => {
       const { all, leaf } = full(threadId);
       expect(all.length).toBe(size);
       expect(all.some((message) => message.tool?.diagnostic)).toBe(false);
-      // The raw rows really carry a diagnostic and legacy rows, so both transforms are exercised.
-      const raw = mdb.readThread(threadId, join(DATA_DIR, "absent.json")).messages;
+      // The raw rows really carry a diagnostic and legacy rows, so both transforms are exercised (read from the column itself: every
+      // decoder now passes the stored-row check).
+      const raw = (database().prepare("SELECT json FROM messages WHERE thread_id=?").all(threadId) as Array<{ json: string }>).map((row) => JSON.parse(row.json) as Message);
       expect(raw.some((message) => message.tool?.diagnostic)).toBe(size > 5);
       expect(raw.some((message) => message.parentId === undefined)).toBe(size > 3);
       for (const limit of [0, 1, 50, 200]) {

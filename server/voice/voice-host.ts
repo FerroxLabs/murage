@@ -298,6 +298,8 @@ export class SentenceSplitter {
   clausePiece: string | null = null;
   /** The plain text of a voiced clause whose sentence is not complete yet. */
   clauseHead: string | null = null;
+  /** The clause as said, when that differs from how it was heard (its opening filler dropped). */
+  clauseHeadSaid: string | null = null;
   /** The clause was filtered, so the rest of its sentence is dropped too. */
   dropRest = false;
   /** Set by sentencesFrom just before it yields: that piece was a clause. */
@@ -384,8 +386,8 @@ const FILLER_OPENER = /^\s*(?:(?:h+m{2,}|m{2,})(?:[.,!?:;…–—-]+\s*|\s+|$)|
  *  filler sound at the very start of a reply; the words after it are kept. */
 export function dropLeadingFiller(sentence: string): string {
   const rest = sentence.replace(FILLER_OPENER, "").trim();
-  // "Hmm, iOS does" keeps iOS: only a plain lower-case word is capitalised
-  return rest === sentence.trim() || !/^[a-z](?![A-Z])/.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+  // "Hmm, iOS does" keeps iOS and "Hmm, macOS does" keeps macOS: only a first word written all in lower case is capitalised
+  return rest === sentence.trim() || !/^[a-z]+(?![\p{L}\p{N}])/u.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 type StreamPart =
@@ -501,10 +503,13 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
     splitter.said.add(plain);
     splitter.said.add(plainHeard);
     splitter.openerChecked = true;
-    if (clause) splitter.clauseHead = plainHeard;
+    if (clause) { splitter.clauseHead = plainHeard; splitter.clauseHeadSaid = plain; }
     else if (splitter.clauseHead) {
+      // both forms of the whole sentence: a doubled reply without the filler is the said form, and is still said once
       splitter.said.add(`${splitter.clauseHead} ${plain}`);
+      if (splitter.clauseHeadSaid) splitter.said.add(`${splitter.clauseHeadSaid} ${plain}`);
       splitter.clauseHead = null;
+      splitter.clauseHeadSaid = null;
     }
     splitter.lastWasClause = clause;
     if (sentence.length <= SPOKEN_MAX_CHARS) yield sentence;

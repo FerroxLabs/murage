@@ -7,7 +7,11 @@ import { cloudHomeCopy } from "./copy.ts";
  * engine is hidden on a home: never offered, then broken. runnable-engines.test.ts holds
  * this list to both files so it cannot drift. Driver kinds, as the registry names them. */
 export const CLOUD_RUNNABLE_ENGINES = ["claudeAgent", "codex", "grokAgent", "kimiAgent", "opencodeGo", "fuigoAgent"] as const;
-export const CLOUD_HIDDEN_ENGINES = ["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "antigravityAgent", "droidAgent", "qwenAgent", "customAcp"] as const;
+export const CLOUD_HIDDEN_ENGINES = ["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "antigravityAgent", "droidAgent", "qwenAgent", "customAcp", "museCode"] as const;
+/** Hidden engines the home launcher does not know at all (no turn-process.ts CLOUD_ENGINES
+ * row). Muse Code is desktop only until counsel or Meta answers whether a Ferrox-run
+ * machine may hold a tenant's Muse install and key (ledger row GAP-MUSE-CLOUD). */
+export const CLOUD_DESKTOP_ONLY_ENGINES = ["museCode"] as const;
 /** True for a driver kind a home has no way to run. Other kinds (the hosted-model and
  * computer drivers) do not start an engine process and are not listed here. */
 export function isCloudHiddenEngine(driver: string | undefined): boolean {

@@ -93,6 +93,7 @@
 // line's id, and the startup reconciliation (completeUnresolved) finishes any
 // "dispatched" or "unconfirmed" row that has no line yet.
 
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { murageLine } from "./murage-line.ts";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -519,15 +520,15 @@ export class SendStore {
   private atomically<T>(work: (db: DatabaseSync) => T): T {
     const db = this.db();
     const point = `owner_sends_${randomUUID().replace(/-/g, "")}`;
-    db.exec(`SAVEPOINT ${point}`);
+    beginWrite(db, point);
     txScopeBegin();
     try {
       const out = work(db);
-      db.exec(`RELEASE ${point}`);
+      endWrite(db, point);
       txScopeEnd(true);
       return out;
     } catch (error) {
-      try { db.exec(`ROLLBACK TO ${point}; RELEASE ${point}`); } catch { /* the handle is already gone */ }
+      try { undoWrite(db, point); } catch { /* the handle is already gone */ }
       txScopeEnd(false);
       throw error;
     }

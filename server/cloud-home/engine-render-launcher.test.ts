@@ -15,6 +15,7 @@ import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { applyProviderRoute } from "../provider-routing.ts";
 import { stripForeignProviderKeys } from "../drivers/acp/opencode-go.ts";
 import { kimiSpawnArgs } from "../drivers/acp/kimi.ts";
+import { FUIGO_POLICY_ASK } from "../drivers/acp/fuigo-policy.ts";
 import { MINIMAL_ARGV, launcherRig, type Rig } from "./engine-launch-fixture.ts";
 
 let rig: Rig;
@@ -84,14 +85,17 @@ describe("routes (test 3, r2 R1)", () => {
     expect(plan.env.FUIGO_HOME).toBe(state);
     expect(JSON.stringify(plan.files)).not.toContain(route.apiKey);
   });
-  it("Fuigo's shell commands ask Murage on every spawn, Full access included: [permission] ask = [\"Bash\"], one table with the memory rules", () => {
+  it("Fuigo's shell, read, edit, search and MCP calls ask Murage on every spawn, Full access included: the desktop launch policy's ask list, one table with the memory rules", () => {
     const h = rig.home("fuigoAgent"), scratch = "native/provider-turns/fuigoAgent-0123456789ab", state = `${h}/${scratch}`;
     const base = ["--no-memory", "agent", "--no-leader", "stdio"];
+    // FUIGO-SCOPE (1.0.18): the Cloud list is the desktop policy's list, so neither can drift from the other
+    const askLine = `ask = [${FUIGO_POLICY_ASK.map((rule) => JSON.stringify(rule)).join(", ")}]\n`;
+    expect(askLine).toBe('ask = ["Bash", "Read", "Edit", "Grep", "MCPTool"]\n');
     const asking = ok(rig.request("fuigoAgent", { args: ["--permission-mode", "default", ...base] })).files[`${h}/.fuigo/config.toml`];
-    expect(asking).toContain('\n[permission]\nask = ["Bash"]\n');
+    expect(asking).toContain(`\n[permission]\n${askLine}`);
     const withMemory = ok(rig.request("fuigoAgent", { scratch: [scratch], render: { route: { ...route, protocol: "openai" }, memoryTools: true } })).files[`${state}/config.toml`];
     expect(withMemory.split("[permission]")).toHaveLength(2);
-    expect(withMemory).toContain('[permission]\nask = ["Bash"]\nrules = [\n');
+    expect(withMemory).toContain(`[permission]\n${askLine}rules = [\n`);
     expect(withMemory).toContain('pattern = "murage-memory__memory_search"');
     // Full access spawns `default` too (Murage answers its asks), so a bypass spawn is refused before any file is rendered
     expect(refused(rig.request("fuigoAgent", { args: ["--permission-mode", "bypassPermissions", ...base] }))).toBe("Cloud engine argument is not allowed: --permission-mode");
