@@ -118,7 +118,7 @@ describe("the first paint", () => {
 
   it("opens Settings, a bot's settings and the computer panel on first use", () => {
     const reached = staticallyReached(graph);
-    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
+    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/BotSettingsPane.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }

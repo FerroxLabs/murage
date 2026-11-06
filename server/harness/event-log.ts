@@ -42,6 +42,7 @@ import { join } from "node:path";
 
 import { renameWithRetry, writeFileAtomic } from "../atomic.ts";
 import type { RuntimeEvent } from "../contracts.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 
 const ID = /^[\w-]+$/;
 const LOG_NAME = /^([\w-]+)(\.previous)?\.ndjson$/;
@@ -995,7 +996,7 @@ function rowsToForgotten(rows: unknown[]): ForgottenText[] {
   for (const row of rows as Array<{ thread_id?: unknown; text?: unknown; json?: unknown }>) {
     if (typeof row.thread_id !== "string") continue;
     let turnId: string | undefined;
-    try { const parsed = JSON.parse(String(row.json ?? "{}")) as { turnId?: unknown }; if (typeof parsed.turnId === "string") turnId = parsed.turnId; } catch { /* no turn */ }
+    try { const parsed = rowToMessage({ json: String(row.json ?? "{}") }) as { turnId?: unknown }; if (typeof parsed.turnId === "string") turnId = parsed.turnId; } catch { /* no turn */ }
     out.push({ threadId: row.thread_id, ...(turnId ? { turnId } : {}), ...(typeof row.text === "string" ? { text: row.text } : {}) });
   }
   return out;

@@ -36,7 +36,7 @@ export const PREVIEW_COPY: Record<PhonePreview, { label: string; body: string }>
 /** The one line under a switch that is on but does nothing on this host. */
 export const PREVIEW_BLOCKED_LINE: Record<PhoneOfferBlock | "unknown", string> = {
   "cloud-home": "On, but not used here: this Murage runs in the Cloud, and the preview works only on your own computer.",
-  "shared-workspace": "On, but off for now: a bot on this computer is, or was, shared with other people, and phone previews stay off while that is true.",
+  "shared-workspace": "On, but not used here: this workspace is shared with other people.",
   "launch-proof": "On, but not used here: open Murage from the desktop app to use it.",
   unknown: "On, but not used on this computer yet.",
 };

@@ -37,6 +37,9 @@
 // `unison`, a cloud CLI's delete-sync) removes from its destination whatever
 // the source lacks: the destination is read as `rm -rf` reads its paths.
 
+import { DELETE_VERBS, DISK_VERBS, RSYNC_DELETE, WINDOWS_DELETE_ALIASES, WINDOWS_DISK_VERBS } from "./shell/wipe-vocab.ts";
+import type { WipeWord } from "./shell/wipe-words.ts";
+import type { Hiding } from "./shell/hiding.ts";
 import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
 import { looksLikePowerShell, nestedProgram, POWERSHELLS, PWSH_READ_ONLY, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
@@ -73,6 +76,12 @@ export interface AlwaysAskHit {
    * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
    * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
   readerFailed?: true;
+  /** NOLIMITS-WIPE-WORD (R11): set by the verdict when the whole-text check found a delete, disk or mirror word, a disk
+   * or a fork-bomb shape in a text the reader could not follow; the card says what it found. */
+  wipeWord?: WipeWord;
+  /** NOLIMITS-UNREADABLE (1.0.16 R2): set by the verdict when a text the reader could not follow is written in a way
+   * that hides what it runs (hiding.ts); the card says so. */
+  hidden?: Hiding;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -96,8 +105,21 @@ const PROTECTED_WHAT: Record<ProtectedClass, string> = {
 
 /** The sentence a held card shows: what it would do, and why it asks. */
 export function alwaysAskNote(hit: AlwaysAskHit): string {
+  if (hit.hidden) return HIDDEN_NOTE;
+  if (hit.wipeWord) return wipeWordNote(hit.wipeWord);
   const fix = hit.unseenWhy ? ` ${UNSEEN_FIX[hit.unseenWhy]}` : "";
   return `${hit.what} Murage always asks before a command like this, at every access level.${fix}`;
+}
+
+/** NOLIMITS-UNREADABLE (1.0.16 R2 card text): a command written in a way that hides what it runs. Allow once only. */
+const HIDDEN_NOTE = "Murage could not read this command, and it is written in a way that hides what it runs, such as encoded text, eval, or code sent straight into a shell or a script runner. Allow once to run it.";
+
+/** NOLIMITS-WIPE-WORD (design R11 card text): what the whole-text check found, in plain words. Allow once only. */
+function wipeWordNote(found: WipeWord): string {
+  if (found.kind === "fork") return "Murage could not read this command, and it looks like one that starts copies of itself until the computer stops responding. Allow once to run it.";
+  if (found.word === "a disk") return "Murage could not read this command, and it mentions a disk. Writing to a disk can erase it. Allow once to run it.";
+  const does = found.kind === "disk" ? "which can erase a disk" : found.kind === "mirror" ? "which can delete files while it copies" : "which can delete files";
+  return `Murage could not read this command, and it mentions "${found.word}", ${does}. Allow once to run it.`;
 }
 
 /** 1.0.9 (R10): the one line a card adds for each reader limit on an unseen
@@ -495,7 +517,7 @@ function mirrorTargets(cmd: SimpleCommand): Candidate[][] | undefined {
     case "rsync": {
       const operands = mirrorOperands(texts, RSYNC_ARGS);
       const targets: number[] = [];
-      if (texts.some((text) => text !== undefined && /^--del(e(t(e.*)?)?)?$/.test(text))) targets.push(...operands.slice(1));
+      if (texts.some((text) => text !== undefined && RSYNC_DELETE.test(text))) targets.push(...operands.slice(1));
       if (texts.some((text) => text === "--remove-source-files" || text === "--remove-sent-files")) targets.push(...operands.slice(0, -1));
       return targets.length ? lists(targets) : undefined;
     }
@@ -590,13 +612,13 @@ function mirrorHit(cmd: SimpleCommand, ctx: WalkContext): AlwaysAskRule | null {
 }
 
 /** Commands that erase a disk whatever their operands say. */
-const DISK_WRITERS = new Set(["mke2fs", "newfs", "wipefs", "diskutil", "format", "format.com", "format-volume", "clear-disk", "initialize-disk", "mknod"]);
+const DISK_WRITERS = new Set<string>([...DISK_VERBS, ...WINDOWS_DISK_VERBS, "format.com"]);
 /** Commands that delete, move, overwrite or change who may use a file: the
  * Unix ones and PowerShell's (cmd's `rd`, `del` and `move` too). */
-const RISKY = new Set([
-  "rm", "rmdir", "unlink", "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee", "dd", "shred",
-  "rd", "del", "erase", "move", "copy", "xcopy", "robocopy", "icacls", "takeown", "attrib", "ren",
-  "remove-item", "ri", "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "set-content", "sc", "add-content", "ac", "clear-content", "clc", "out-file", "set-acl",
+const RISKY = new Set<string>([...DELETE_VERBS, ...WINDOWS_DELETE_ALIASES,
+  "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee",
+  "move", "copy", "xcopy", "icacls", "takeown", "attrib", "ren",
+  "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "add-content", "ac", "out-file", "set-acl",
 ]);
 
 /** A command the reader treats as destructive: a delete, a move, an

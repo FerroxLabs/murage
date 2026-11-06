@@ -19,5 +19,5 @@
 "share_passcode" = "Set a passcode on this phone, then open Murage.";
 "share_again" = "Open Murage to set up sharing again.";
 "share_update" = "Turn this on, or update Murage, on your computer.";
-"share_turned_off" = "This isn't on for this computer yet. On the computer, open Murage, then Settings, then Phone and other devices, and turn on Share and ask. If it's already on, the line under it says why it can't be used.";
+"share_turned_off" = "Your computer hasn't turned this on yet. Turn it on in Murage on the computer, in Settings → Phone and other devices.";
 "share_done" = "Done";

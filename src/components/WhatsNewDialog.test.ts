@@ -21,7 +21,7 @@ class FakeElement {
 }
 Object.assign(globalThis, { HTMLElement: FakeElement });
 vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: () => {}, initAnalytics: () => {}, track: () => {} }));
-const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, WHATS_NEW_MORE_1017, whatsNewArrowStep } = await import("./WhatsNewDialog");
+const { WhatsNewCard, WhatsNewDialog, whatsNewCardCount, whatsNewContent, WHATS_NEW_ART, WHATS_NEW_PAGES, WHATS_NEW_TILES, WHATS_NEW_MORE, WHATS_NEW_TILES_102, WHATS_NEW_MORE_102, WHATS_NEW_TILES_106, WHATS_NEW_MORE_106, WHATS_NEW_MORE_1014, WHATS_NEW_TILES_1015, WHATS_NEW_MORE_1015, WHATS_NEW_MORE_1016, whatsNewArrowStep } = await import("./WhatsNewDialog");
 const { runWhatsNewAction, openOutside, CHROME_STORE_OPEN_FAILED } = await import("./WhatsNewHost");
 
 const source = readFileSync(new URL("./WhatsNewDialog.tsx", import.meta.url), "utf8");
@@ -455,19 +455,6 @@ describe("one page per release, from 1.0.14 on", () => {
     expect(WHATS_NEW_TILES_1015[0]!.art).toBe("tile-one-place");
     const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102].map((tile) => [tile.art, tile.alt]));
     for (const tile of WHATS_NEW_TILES_1015.slice(1)) expect(earlier.get(tile.art), tile.action).toBe(tile.alt);
-  });
-
-  it("1.0.17 leads with Approve all, then its list, on art already in the app", () => {
-    expect(whatsNewCardCount("1.0.17")).toBe(2);
-    expect(text(renderAt("1.0.17", 0))).toContain("Approve all");
-    expect(buttons(renderAt("1.0.17", 0))).toEqual(["", "Open Needs you", "Next"]);
-    const more = renderAt("1.0.17", 1);
-    expect(buttons(more)).toEqual(["Back", "Let's go"]);
-    for (const line of WHATS_NEW_MORE_1017) expect(text(more)).toContain(line);
-    expect(more).toContain('href="https://github.com/FerroxLabs/murage-releases/releases/tag/v1.0.17"');
-    expect(renderAt("1.0.17", 2)).toBe("");
-    const earlier = new Map([...WHATS_NEW_TILES, ...WHATS_NEW_TILES_102, ...WHATS_NEW_TILES_1015].map((tile) => [tile.art, tile.alt]));
-    expect(earlier.get(WHATS_NEW_PAGES["1.0.17"]!.hero.art)).toBe(WHATS_NEW_PAGES["1.0.17"]!.hero.alt);
   });
 
   it("1.0.16 leads with Health, then its list, on art already in the app", () => {

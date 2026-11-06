@@ -42,7 +42,7 @@ describe("the this-computer warning names the mode being switched on", () => {
     const markup = render("unlimited");
     expect(markup).toContain("Allow No limits on this computer?");
     expect(markup).toContain(LOCAL_COMPUTER_NO_LIMITS_WARNING);
-    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("It still asks before a wipe it can read and before a command it cannot read in full");
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("It still asks before a wipe it can read, before a command it cannot read that names a delete, disk or mirror tool, and before a call that did not arrive whole");
     expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("A script file can still run unread.");
     expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).not.toMatch(/\bsafe\b|\u2014/i);
   });
