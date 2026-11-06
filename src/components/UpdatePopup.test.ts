@@ -18,6 +18,7 @@ vi.mock("@/lib/update-card", async (importOriginal) => {
   return { ...real, useUpdatePopup: (state: UpdaterState | null) => following.value || real.useUpdatePopup(state) };
 });
 import { UpdateBanner } from "./UpdateBanner";
+import { topModalDialog } from "@/lib/update-card";
 
 afterEach(() => { vi.unstubAllGlobals(); current.value = null; following.value = false; });
 
@@ -100,9 +101,37 @@ it("takes no focus: outside the centred card, focus only moves when a keyboard i
   expect(source.slice(source.indexOf("function UpdateCardBody(")).match(/\.focus\(|autoFocus/)).toBeNull();
 });
 
-it("sits under dialogs and the Undo toast, and the card hands a download over", () => {
+it("is a manual popover, so it is drawn in the top layer above every screen", () => {
+  const html = popup({ status: "downloading", version: "1.0.18", percent: 12 });
+  expect(html).toContain('popover="manual"');
   const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
-  expect(source).toContain("fixed z-40");
+  const frame = source.slice(source.indexOf("function UpdatePopup("), source.indexOf("function updateTitle("));
+  expect(frame).toContain("showPopover()");
+  expect(frame).toContain("createPortal(");
+  expect(frame).toContain("useModalHost()");
+});
+
+it("lives inside the open modal dialog (What's New included), so it is above it and not inert", () => {
+  const dialog = (modal: boolean, name: string) => ({ name, matches: (q: string) => q === ":modal" && modal });
+  const root = (list: unknown[]) => ({ querySelectorAll: () => list }) as unknown as ParentNode;
+  expect(topModalDialog(root([]))).toBeNull();
+  expect(topModalDialog(root([dialog(false, "inline")]))).toBeNull();
+  const top = dialog(true, "top");
+  expect(topModalDialog(root([dialog(true, "under"), dialog(false, "inline"), top]))).toBe(top);
+  // An engine without :modal still counts an open dialog.
+  const old = { matches: () => { throw new Error("unknown pseudo-class"); } };
+  expect(topModalDialog(root([old]))).toBe(old);
+});
+
+it("shows before the terms are accepted too: mounted beside the terms gate, not behind it", () => {
+  const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  expect(app.match(/<UpdateBanner \/>/g)).toHaveLength(1);
+  expect(app.indexOf("<UpdateBanner />")).toBeGreaterThan(app.indexOf("</TermsGate>"));
+});
+
+it("leaves room for the Undo toast, and the card hands a download over", () => {
+  const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
+  expect(source).toContain("[data-undo-toast]");
   expect(source).toContain('const cardShows = cardOpen && status !== "downloading"');
   expect(readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8")).toContain('if (status === "downloading") return showUpdatePopup();');
   expect(readFileSync(new URL("./UpdateIndicator.tsx", import.meta.url), "utf8")).toContain('s.status === "downloading" ? showUpdatePopup : openUpdateCard');

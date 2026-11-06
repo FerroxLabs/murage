@@ -47,15 +47,52 @@ function fromDuration(text: string, now: number): number | undefined {
   return ms > 0 ? now + ms : undefined;
 }
 
-/** "resets 3pm", "resets at 7:30 am": the next such local time after now. */
+/** A printed clock time drops its seconds, so a minute that has already begun is the reset arriving within it (or just
+ * past): it ends with that minute instead of rolling to tomorrow (#3102). */
+const MINUTE_END_MS = 59_999;
+
+/** "resets 3pm", "resets at 7:30 am": the next such local time after now; the current minute ends with that minute. */
 function fromClockTime(text: string, now: number): number | undefined {
   const match = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i.exec(text);
   if (!match) return undefined;
   let hour = Number(match[1]) % 12; if (match[3].toLowerCase() === "pm") hour += 12;
   const minute = Number(match[2] ?? 0);
   const at = new Date(now); at.setHours(hour, minute, 0, 0);
-  let value = at.getTime(); if (value <= now) value += 86_400_000;
+  let value = at.getTime();
+  if (value <= now) value = now - value <= MINUTE_END_MS ? value + MINUTE_END_MS : value + 86_400_000;
   return value;
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+function clockHours(hour: string, meridiem: string): number {
+  return (Number(hour) % 12) + (meridiem.toUpperCase() === "PM" ? 12 : 0);
+}
+
+/** Codex ends a usage-limit refusal with "Try again at 5:23 PM." (its own local date, no seconds) or "try again at
+ * Oct 17th, 2026 5:23 PM.", in this computer's local time (codex-rs format_retry_timestamp; upstream #3102). */
+export function codexTryAgainAt(text: string, now: number): number | undefined {
+  const when = /\btry again at ([^.]+)/i.exec(text)?.[1]?.trim() ?? "";
+  const time = /^(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(when);
+  if (time) {
+    const at = laterOfRepeated(new Date(now).setHours(clockHours(time[1], time[3]), Number(time[2]), 0, 0));
+    // Time-only means today: a time already past is the reset arriving now, never tomorrow.
+    return at <= now ? at + MINUTE_END_MS : at;
+  }
+  const dated = /^([A-Za-z]{3})[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4}),?\s+(\d{1,2}):(\d{2})\s*([AP]M)$/i.exec(when);
+  const month = dated ? MONTHS.indexOf(dated[1].toLowerCase()) : -1;
+  if (!dated || month < 0) return undefined;
+  const at = new Date(Number(dated[3]), month, Number(dated[2]), clockHours(dated[4], dated[6]), Number(dated[5]), 0, 0).getTime();
+  return Number.isFinite(at) ? laterOfRepeated(at) : undefined;
+}
+
+/** A local time inside an hour a DST change repeats names two instants and the words cannot say which; `Date` gives the
+ * first. Hold to the later one: a hold that lasts up to an hour longer never sends a turn to an engine that is still
+ * refusing, while ending it an hour early would. */
+function laterOfRepeated(first: number): number {
+  const later = first + (new Date(first + 3 * 3_600_000).getTimezoneOffset() - new Date(first).getTimezoneOffset()) * 60_000;
+  const a = new Date(first), b = new Date(later);
+  return later > first && b.getHours() === a.getHours() && b.getMinutes() === a.getMinutes() ? later : first;
 }
 
 function fromRetryAfter(text: string, now: number): number | undefined {
@@ -86,7 +123,7 @@ export function limitRefusal(family: EngineFamily, refusal: { status?: number; t
       resetsAt = pipe ? (Number(pipe[1]) < 1e12 ? Number(pipe[1]) * 1000 : Number(pipe[1])) : fromClockTime(text, now);
       break;
     }
-    case "codex": resetsAt = fromJson(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now); break;
+    case "codex": resetsAt = fromJson(text, now) ?? codexTryAgainAt(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now); break;
     case "gateway": resetsAt = fromJson(text, now) ?? fromRetryAfter(text, now); break;
     case "openai-chat": resetsAt = fromRetryAfter(text, now) ?? fromJson(text, now); break;
     default: resetsAt = fromJson(text, now) ?? fromDuration(text, now) ?? fromClockTime(text, now);

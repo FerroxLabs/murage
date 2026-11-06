@@ -143,6 +143,8 @@ const ROUTE_TERMS = {
   packages: "templates",
   // /api/phones: the phone tools card, Share to Murage targets and Ask Murage (1.0.9 phone tools, 9f6b1e18f)
   phones: "phone tools",
+  // Settings > Usage shows the plan use last reported by an engine.
+  "plan-usage": "usage",
   projects: "projects",
   "provider-connections": "engines",
   "routine-runs": "routines",
@@ -168,7 +170,7 @@ const ROUTE_TERMS = {
 };
 const ROUTE_PLUMBING = new Set([
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
-  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
+  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);
 const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);

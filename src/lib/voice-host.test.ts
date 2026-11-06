@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { openingOf, plainFailure } from "./voice-host";
+import { CALL_BUDGET_STOP, isBudgetFailure, openingOf, plainFailure } from "./voice-host";
 
 describe("an engine failure, said on a call", () => {
   it.each([
@@ -41,5 +41,24 @@ describe("the host request body", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("a turn that failed for the key's budget ends the call (VOICE-402-STOP)", () => {
+  it.each([
+    "error: API error (status 402 Payment Required): Key budget exceeded",
+    "Flux returned 402: insufficient_balance",
+    "You exceeded your current quota, please check your plan and billing details.",
+    "This key has reached its budget.",
+  ])("%s", (details) => expect(isBudgetFailure(details)).toBe(true));
+
+  it.each([
+    "API error (status 429 Too Many Requests): slow down",
+    "Grok CLI is not signed in: run `grok login` in a terminal",
+    "error: The model took too long.",
+  ])("not %s", (details) => expect(isBudgetFailure(details)).toBe(false));
+
+  it("says one plain line", () => {
+    expect(CALL_BUDGET_STOP).not.toMatch(/—|\bsafe\b|\bfree\b/i);
   });
 });

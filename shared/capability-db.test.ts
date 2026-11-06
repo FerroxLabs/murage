@@ -54,7 +54,7 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 const SLICE = [
   "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
   "engines.continue-with-chatgpt-grok", "engines.grok-images", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
-  "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.spending-per-bot",
+  "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.plan-usage", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
 ];
 

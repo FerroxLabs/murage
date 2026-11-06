@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "ea031914b5680189bd36054dbbc8a9f72d8a158a44d9edeb8037f4acbffec4e9";
+export const CAPABILITY_DB_REV = "1cbe3446d5bc1250c8c7cc784a8dbc1343e0782a39864a4bc0a40acaa6d9c41c";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -420,6 +420,29 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to every platform; every engine.",
     "rev": "c5683039417e01a002c9ca0e9c269cf159013d11f9d303576a845ed132a441a6"
+  },
+  {
+    "id": "cap:limits.plan-usage",
+    "title": "View plan usage",
+    "description": "Murage can do part of this.",
+    "heading": "How much of my plan have I used? / When does my plan limit reset? / Where can I check plan usage?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Usage",
+    "url": "https://murage.ai/docs",
+    "text": "Settings, Usage shows the plan use last reported by an engine, when it was checked, and the reported reset time. Use Refresh to check again. Readings are available when Codex reports them. Other engines and Murage Cloud may show no reading. A reset time does not confirm that more use is available. Ask your bot: Ask your bot to remind you to check your engine account when no reading is available.",
+    "capability": "limits.plan-usage",
+    "status": "partial",
+    "answer": "Settings, Usage shows the plan use last reported by an engine, when it was checked, and the reported reset time. Use Refresh to check again.",
+    "limits": "Readings are available when Codex reports them. Other engines and Murage Cloud may show no reading. A reset time does not confirm that more use is available.",
+    "askYourBot": "Ask your bot to remind you to check your engine account when no reading is available.",
+    "platforms": [
+      "all"
+    ],
+    "engines": [
+      "codex"
+    ],
+    "applies": "Applies to every platform; Codex.",
+    "rev": "7cf01ce8108865766247ffd69c2974940f3ed8a316e07dbbc86266c3fd09bdcf"
   },
   {
     "id": "cap:memory.learn-about-me",

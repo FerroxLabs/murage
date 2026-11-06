@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { onRollback, scopedTx } from "./tx-scope.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -14,9 +15,9 @@ export interface ProjectUsageTerminal {
 }
 function atomic<T>(db: DatabaseSync, run: () => T): T {
   return scopedTx(() => {
-    db.exec("SAVEPOINT usage_settlement");
-    try { const result = run(); db.exec("RELEASE usage_settlement"); return result; }
-    catch (error) { db.exec("ROLLBACK TO usage_settlement; RELEASE usage_settlement"); throw error; }
+    beginWrite(db, "usage_settlement");
+    try { const result = run(); endWrite(db, "usage_settlement"); return result; }
+    catch (error) { undoWrite(db, "usage_settlement"); throw error; }
   });
 }
 const count = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;

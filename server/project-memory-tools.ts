@@ -2,6 +2,7 @@ import { partitionSourcesAllowed } from "./partition-sources.ts";
 import { botRows, botViewer, type BotRow, type Viewer } from "./bot-read.ts";
 import type { LineVerdictState } from "./result-egress.ts";
 import type { Message } from "./store.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import { executionStore, sameThreadPartition } from "./execution-audience.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -232,13 +233,13 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
   let withheld: Set<string>;
   const checking = new Set<string>();
   // with each copy's link, so a copy of a forgotten original is withheld too (Astra r2 #13)
-  const copyOf = (row: Row) => { try { const copy = JSON.parse(row.json).copyOf; return copy && typeof copy.threadId === "string" && Array.isArray(copy.messageIds) ? { copyOf: { threadId: copy.threadId as string, messageIds: (copy.messageIds as unknown[]).filter((id): id is string => typeof id === "string") } } : {}; } catch { return {}; } };
+  const copyOf = (row: Row) => { try { const copy = rowToMessage({ json: row.json }).copyOf; return copy && typeof copy.threadId === "string" && Array.isArray(copy.messageIds) ? { copyOf: { threadId: copy.threadId as string, messageIds: (copy.messageIds as unknown[]).filter((id): id is string => typeof id === "string") } } : {}; } catch { return {}; } };
   try { withheld = roomReplayWithheld(LineageAllowance.tool(), threadId, page.map(row => ({ id: row.id, role: row.role, ...copyOf(row) })), checking); }
   catch { if (options.venue) throw new Error("venue lineage unavailable"); return { status: 403, body: { error: "That conversation is not part of this project." } }; }
   const names = new Map(roster.bots.map(bot => [bot.id, bot.name ?? "a member"]));
   // A bot reads the page through the reader door (bot-read.ts): a Murage-voice row never, a line the lineage withholds never. Every row is
   // judged there, a hidden one included (no stand-in passes unjudged): a hidden row the door admits shows only Murage's fixed withheld copy.
-  const asMessage = (row: Row): Message => { let stored: Partial<Message> = {}; try { stored = JSON.parse(row.json); } catch { /* columns only */ } return { ...stored, id: row.id, role: row.role, kind: row.kind, text: row.text ?? undefined, at: Number(row.at) } as Message; };
+  const asMessage = (row: Row): Message => { let stored: Partial<Message> = {}; try { stored = rowToMessage({ json: row.json }); } catch { /* columns only */ } return { ...stored, id: row.id, role: row.role, kind: row.kind, text: row.text ?? undefined, at: Number(row.at) } as Message; };
   // every line below is built from the door's BotRow for this viewer (rule 18b): its words, its speaker; a row the door left out is not shown
   const viewer = bot && reader ? botViewer(reader.id) : ownerPageViewer();
   const states = new Map<string, LineVerdictState>();
@@ -254,7 +255,7 @@ function readProjectPageWork(db: DatabaseSync, roster: NamedRoster, groupId: str
     if (!line) { oldestConsumed = Number(row.rowid); continue; }
     let message: { to?: string[]; replyToId?: string; withheldFromBots?: unknown; copyOf?: unknown; handoffOf?: unknown; handoffFrom?: unknown } = {};
     let parsed = true;
-    try { const stored: unknown = JSON.parse(row.json); if (stored && typeof stored === "object" && !Array.isArray(stored)) message = stored as typeof message; else parsed = false; }
+    try { const stored: unknown = rowToMessage({ json: row.json }); if (stored && typeof stored === "object" && !Array.isArray(stored)) message = stored as typeof message; else parsed = false; }
     catch { parsed = false; /* the row's own columns still say who and what */ }
     const speaker = line.role === "user" ? "Owner" : options.venue ? named(line.speaker?.id) : line.speaker?.name ?? (line.speaker ? names.get(line.speaker.id) : undefined) ?? "a member";
     // for a bot every role: an owner line the owner forgot reads as its withheld line too, never its words; the owner's own page keeps
@@ -354,7 +355,7 @@ export function updateProjectSummary(db: DatabaseSync, roster: MemoryRoster, con
   const threads = [...projectThreads(roster, context.groupId)];
   const found = new Map<string, string>();
   for (const id of ids as string[]) {
-    const row = db.prepare("SELECT thread_id, json FROM messages WHERE id=? AND thread_id IN (SELECT value FROM json_each(?))").get(id, JSON.stringify(threads)) as { thread_id: string; json: string } | undefined;
+    const row = db.prepare("SELECT thread_id FROM messages WHERE id=? AND thread_id IN (SELECT value FROM json_each(?))").get(id, JSON.stringify(threads)) as { thread_id: string } | undefined;
     if (row) found.set(id, row.thread_id);
   }
   const unknown = (ids as string[]).filter(id => !found.has(id));

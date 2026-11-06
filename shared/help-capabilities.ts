@@ -810,6 +810,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/plan-usage",
+    "term": "usage",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/projects",
     "term": "projects",
     "source": "server/index.ts"
