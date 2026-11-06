@@ -107,6 +107,13 @@ test("skipped items read the same on the Backup mode page and the Backups page",
   for (const line of samples.flatMap(sample => backupSkippedLines(sample))) assert.doesNotMatch(line, /—|[A-Z]{2,}_[A-Z_]+/);
 });
 
+// 1.0.18: DOWNGRADE_WORK_PENDING also refuses for a held or posting bot Post (296e04a04), so the sentence names messages and
+// bot posts and every way out (send, post or decline), never "send or cancel" alone.
+test("1.0.18: work still waiting before a step back names messages and bot posts", () => {
+  assert.equal(sentence("DOWNGRADE_WORK_PENDING"), "Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.");
+  assert.doesNotMatch(sentence("DOWNGRADE_WORK_PENDING"), /send or cancel/i);
+});
+
 test("1.0.12: a full disk names both drives, in a backup and in a restore, and never the recovery key", () => {
   for (const action of ["backup-encrypted", "restore-encrypted-new", "inspect-encrypted"]) {
     const text = sentence("BACKUP_DISK_FULL", { action });

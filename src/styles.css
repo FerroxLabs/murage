@@ -12,6 +12,8 @@
    agent profile) have no such ancestor and always keep their labels. */
 @custom-variant chip-fold (&:where([data-chat-header-chips="compact"] *));
 @custom-variant chip-trim (&:where([data-chat-header-chips="titled"] *, [data-chat-header-chips="compact"] *));
+/* The on-screen keyboard is up (lib/visual-viewport.ts): what can wait gives its height to what is being typed in. */
+@custom-variant keyboard-open (&:where(html[data-keyboard="open"] *));
 
 /* ─────────────────────────────────────────────────────────────────────────
    THEMES
@@ -1228,8 +1230,9 @@ button:disabled.bg-danger {
 }
 
 /* E35 (src/lib/reply-width.ts): a reply with a table runs as wide as the
-   message column; its prose keeps the reading width. */
-.chat-wide .chat-md > :not(.chat-table) {
+   message column; its prose keeps the reading width. A list or quote that
+   holds the table runs wide with it. */
+.chat-wide .chat-md > :not(.chat-table):not(:has(.chat-table)) {
   max-width: var(--chat-bubble-max);
 }
 

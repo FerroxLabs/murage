@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref, type RefObject } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref, type RefObject } from "react";
 import { picturesElsewhereHint } from "@/lib/picture-hint";
 import { computerEngineNote, engineSwitchLines } from "../../shared/engine-switch";
 import { Check, ChevronDown, Search, Star, RefreshCw, AlertTriangle, Eye, Wrench } from "lucide-react";
 import { api, useStore, type Bot, type ModelSelection } from "@/state/store";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
-import { pickerModels, pickerConnectionsToRefresh, orderedPickerModels, pickerKey, modelPriceLabel, isPriceUnknown, dollarOfTokens, priceBandNote, PRICE_UNKNOWN, contextLabel, engineMenuFamilies, engineMenuKey, pickerZone, ENGINE_DISABLED_SUFFIX, type EngineMenuFamily, type PickerEngine, type PickerModel, showNoLocalServerRow, localRowLabel, localRowNote, localToolsWarning, unavailableSelectionLabel, LOCAL_MODELS_GROUP, NO_LOCAL_SERVER_ROW, CHOOSE_ENGINE_OPTION, pickerCountLine, pickerEmptyState, pickerTriggerTitle, pickerRowSource } from "@/lib/provider-model-picker";
+import { modelMetadataReady, preloadModelMetadata, subscribeModelMetadata } from "@/lib/model-metadata";
+import { pickerModels, pickerConnectionsToRefresh, orderedPickerModels, pickerKey, modelPriceLabel, isPriceUnknown, isPricePending, dollarOfTokens, priceBandNote, PRICE_UNKNOWN, contextLabel, engineMenuFamilies, engineMenuKey, pickerZone, ENGINE_DISABLED_SUFFIX, type EngineMenuFamily, type PickerEngine, type PickerModel, showNoLocalServerRow, localRowLabel, localRowNote, localToolsWarning, unavailableSelectionLabel, LOCAL_MODELS_GROUP, NO_LOCAL_SERVER_ROW, CHOOSE_ENGINE_OPTION, pickerCountLine, pickerEmptyState, pickerTriggerTitle, pickerRowSource } from "@/lib/provider-model-picker";
 import { signInPickerNote } from "@/lib/model-signin-picker";
 import { ProviderMark } from "./ProviderIcons";
 import { EngineSetup, needsCli } from "./EngineSetup";
@@ -147,6 +148,8 @@ export function EngineSelect<T extends PickerEngine>({id,labelId,instances,value
  *
  *  A row with no resolvable rate says so, in the one wording the picker uses. */
 export function pickerRowTitle(row: Pick<PickerModel, "selection"|"pricing">): string {
+  // the band is still on its way (1.0.18): no tooltip rather than a wrong one
+  if (isPricePending(row)) return "";
   const label = modelPriceLabel(row);
   if (!row.pricing) return label === PRICE_UNKNOWN ? PRICE_UNKNOWN
     : `${label} · Flux Router picks a model for each turn, so this depends on which one runs.`;
@@ -172,14 +175,17 @@ export function pickerRowTitle(row: Pick<PickerModel, "selection"|"pricing">): s
  *  so "we do not know" can never be read as the cheap end of the scale, and no
  *  new colour token enters the skins. */
 export function PickerRowMeta({row,engineImages}:{row:PickerModel;engineImages?:boolean}){
-  const unknown=isPriceUnknown(row);
+  const pending=isPricePending(row);
+  const unknown=!pending&&isPriceUnknown(row);
   // the eye only shows when the engine also passes pictures, so nothing contradicts
   const sees=Boolean(row.capabilities?.vision)&&engineImages!==false;
   return <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-ink-secondary">
     {!row.localServer&&pickerRowSource(row)&&<span>{pickerRowSource(row)}</span>}
     {row.localServer&&localRowNote(row)&&<span>{localRowNote(row)}</span>}
     {contextLabel(row.contextWindow)&&<span>{contextLabel(row.contextWindow)}</span>}
-    {!row.localServer&&<span data-price-cell data-price-unknown={unknown?"":undefined} className={unknown?"italic":"font-medium"}>{modelPriceLabel(row)}</span>}
+    {!row.localServer&&(pending
+      ?<span data-price-cell data-price-pending="" aria-hidden="true" className="inline-block h-2.5 w-6 animate-pulse rounded bg-hairline/40"/>
+      :<span data-price-cell data-price-unknown={unknown?"":undefined} className={unknown?"italic":"font-medium"}>{modelPriceLabel(row)}</span>)}
     {(sees||row.capabilities?.tools)&&<span className="flex items-center gap-1">
       {sees&&<span data-capability="vision" role="img" aria-label="Reads images" title="Reads images" className="flex"><Eye size={12}/></span>}
       {row.capabilities?.tools&&<span data-capability="tools" role="img" aria-label="Uses tools" title="Uses tools" className="flex"><Wrench size={12}/></span>}
@@ -192,7 +198,8 @@ export function PickerRowMeta({row,engineImages}:{row:PickerModel;engineImages?:
  *  pinned separately, because a note that scrolls away is not a note. The date
  *  comes from the bundled snapshot, so it cannot quietly go stale. */
 export function PickerPriceNote({shown}:{shown:boolean}){
-  if(!shown)return null;
+  // undated until the snapshot lands would be a different note; it waits instead
+  if(!shown||!modelMetadataReady())return null;
   return <div data-price-band-note className="border-t border-hairline/40 px-4 pb-1 pt-2 text-[11px] text-ink-secondary">{priceBandNote()}</div>;
 }
 export function isThreadModelMutationLocked(threadId:string|undefined,busy:boolean|undefined){return Boolean(threadId&&busy);}
@@ -213,6 +220,12 @@ export function EngineSwitchNotice({lines}:{lines:string[]}){
   if(!lines.length)return null;
   return <ul data-engine-switch-notice className="space-y-0.5 border-b border-hairline/40 px-3 py-2 text-xs text-ink-secondary">{lines.map(line=><li key={line}>{line}</li>)}</ul>;
 }
+/** FLUX-FIRST-PICKER-OWN-ACCOUNT: the menu's last row. Flux and Fuigo lead the list; somebody with their own AI account finds where
+ *  to add it here, in Settings, Engines. */
+export function OwnAccountRow({onOpen}:{onOpen:()=>void}){
+  return <button type="button" data-own-account-row onClick={onOpen} className="border-t border-hairline/40 px-4 py-3 text-left text-sm text-ink-secondary hover:bg-control/60">{t("modelPicker.ownAccount")}</button>;
+}
+
 export function ModelPickerBusyNotice({locked}:{locked:boolean}){
   if(!locked)return null;
   return <div role="status" data-thread-model-busy className="border-b border-hairline/40 px-3 py-2 text-xs text-ink-secondary">This response is in progress. You can inspect models, but wait for it to finish or stop this turn before changing the model or effort.</div>;
@@ -261,10 +274,13 @@ export function ModelPicker({bot,threadId,className,contained=false,label,hideTr
     if(outcome.connections)setConnections(outcome.connections);
     setError(outcome.error);setFleetError(outcome.fleetError);
   }catch(cause){setError(cause instanceof Error?cause.message:t("modelPicker.catalogUnavailable"));}finally{refreshingRef.current=false;setRefreshing(false);}};
-  useEffect(()=>{if(open)void refresh();},[open]);
+  // Opening always asks for the price snapshot: a Flux-only list never looks one up, and its dated note waits for it.
+  useEffect(()=>{if(open){void refresh();void preloadModelMetadata();}},[open]);
   useEffect(()=>{const changed=()=>void refresh();window.addEventListener("murage:provider-connections-changed",changed);return()=>window.removeEventListener("murage:provider-connections-changed",changed);},[refreshInstances]);
   useEffect(()=>{if(!open)return;const outside=(e:MouseEvent)=>{if(!root.current?.contains(e.target as Node))setOpen(false);};const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.preventDefault();if(query)setQuery("");else{setOpen(false);focusTrigger();}}};window.addEventListener('mousedown',outside);window.addEventListener('keydown',escape);return()=>{window.removeEventListener('mousedown',outside);window.removeEventListener('keydown',escape);};},[open,query]);
-  const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections]);const currentKey=pickerKey(bot.modelSelection);const ordered=useMemo(()=>orderedPickerModels(rows,query,prefs.favorites,prefs.recent,currentKey),[rows,query,prefs,currentKey]);
+  // The bundled price snapshot arrives after the first paint (1.0.18); the rows are rebuilt once when it does.
+  const metadataReady=useSyncExternalStore(subscribeModelMetadata,modelMetadataReady,modelMetadataReady);
+  const rows=useMemo(()=>engine?pickerModels(engine,connections):[],[engine,connections,metadataReady]);const currentKey=pickerKey(bot.modelSelection);const ordered=useMemo(()=>orderedPickerModels(rows,query,prefs.favorites,prefs.recent,currentKey),[rows,query,prefs,currentKey]);
   // Spec V3: the Local rail is always answered for. No local server on this
   // computer is a state with a next step, not an absence the user has to notice.
   // The "add one" row is a next step only for a local engine (spec V3, "no dead ends"): never for openai-compat (an endpoint the owner named; its local rows, tools included, are extras once a server exists), never for the grok API, gemini, cursor and the like, and never while the engine is still loading.
@@ -281,6 +297,7 @@ const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows])
   const manage=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models'});});
   // The Local rail's empty row lands on the Local models section itself, with
   // "Add a server" focused — not on the Models pane for the user to hunt through.
+  const openOwnAccount=()=>navigate(()=>{setOpen(false);dispatch({type:'toggleAppSettings',open:true,section:'models',anchor:'engines-heading'});});
   const manageLocal=()=>{manage();setTimeout(()=>window.dispatchEvent(new Event(OPEN_LOCAL_MODELS_EVENT)),0);};
   // Settings → Models → Local models sends a tested model back here: the next
   // step after "Tools work" is choosing it, which only this menu can do.
@@ -313,6 +330,7 @@ const noLocalServer=useMemo(()=>showNoLocalServerRow(engine,rows),[engine,rows])
           rather than hardcoded, and never repeated per row. */}
       <PickerPriceNote shown={!!ordered.length}/>
       <button type="button" onClick={manage} className="border-t border-hairline/40 px-4 py-3 text-left text-sm text-ink hover:bg-control/60">Manage models and providers</button>
+      <OwnAccountRow onOpen={openOwnAccount}/>
     </div>}
   </div>;
 }

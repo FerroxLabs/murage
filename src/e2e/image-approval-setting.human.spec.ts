@@ -81,7 +81,7 @@ for (const [width, height] of [[1440, 900], [390, 844]] as const) {
 
     // the setting, in Bot settings, Permissions
     await openBotProfile(page, "Dax");
-    const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+    const dialog = page.getByRole("dialog", { name: "Bot settings: Dax", exact: true });
     await expect(dialog).toBeVisible();
     if (width < 640) await dialog.locator("select").first().selectOption("permissions");
     else await dialog.getByRole("button", { name: "Permissions", exact: true }).click();

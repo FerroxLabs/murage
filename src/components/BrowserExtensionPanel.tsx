@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { BrowserApprovalMode } from "./BrowserApprovalMode";
+import { useBrowserApprovalMode, type ApprovalMode } from "./BrowserApprovalMode";
 import { BrowserApprovedSites } from "./BrowserApprovedSites";
 import { BrowserActivityLog } from "./BrowserActivityLog";
 import { t } from "@/lib/i18n";
+import { isPhoneClient } from "@/lib/phone-client";
 import { api, useStore, type Bot } from "@/state/store";
 import { fromAnswer } from "@/state/answer-tag";
 export type ExtensionSiteAccess = "allow" | "ask" | "never";
 export type BrowserExtensionPanelStatus = {
-  profiles: { profileId: string; browser: string }[];
-  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
+  profiles: { profileId: string; browser: string; extensionVersion?: string }[];
+  bindings: { bindingId: string; botId: string; threadId: string; profileId: string; state: "active" | "paused" | "stopped"; /** EXT-RESTART 3.7: why the server paused it (connection_lost, uncertain, handoff). */ pausedReason?: string; /** Paused for a step only the owner can do (spec 2.5.1). */ handoff?: boolean; /** The task ended (End task or Stop): the offer to allow its sites for good reads this. */ taskEnded?: boolean; /** A failed save turned Allow always sites back to Ask (the status poll carries it). */ sitesLowered?: boolean; sites: Record<string, ExtensionSiteAccess> }[];
   helper: { running: boolean; reason?: string; problem?: "repair" | "foreign"; shared?: Partial<Record<Browser, string[]>> };
   storeUrl: string | null;
   extensionBuild?: "release" | "development" | "none";
@@ -35,6 +36,14 @@ export function browserList(chosen: Browser, shared: string[] | undefined): stri
  * paired but is never chosen for the owner: the picker asks. The profile is
  * named only when it is the one Chrome profile and says "chrome". Same rule as
  * server/user-chrome.ts pairedExtensionProfile. */
+/** EXT-RESTART FU-6: an extension older than 1.0.1 sends no resumedAt, so the app takes none of its Resumes in (fail closed). The
+ * owner is told the next step instead of a silent refusal. An unknown or unparsable version is not flagged. */
+export function extensionNeedsUpdate(version: string | undefined): boolean {
+  const parts = (version ?? "").split(".").map(part => Number(part));
+  if (!version || parts.some(part => !Number.isSafeInteger(part) || part < 0)) return false;
+  const [major = 0, minor = 0, patch = 0] = parts;
+  return major < 1 || (major === 1 && minor === 0 && patch < 1);
+}
 export function pairedExtensionProfile(profiles: ReadonlyArray<{ profileId: string; browser?: string }>): { ready: boolean; profileId?: string } {
   const chrome = profiles.filter(profile => ["chrome", "chromium"].includes((profile.browser ?? "").toLowerCase()));
   const named = chrome.length === 1 && (chrome[0]!.browser ?? "").toLowerCase() === "chrome" ? chrome[0]!.profileId : undefined;
@@ -54,25 +63,76 @@ export function BrowserExtensionConsent({ botName, pending, onConfirm, onCancel 
     <div className="flex flex-wrap gap-2"><button className={control} disabled={pending} onClick={onConfirm}>Set up my browser</button><button className={control} disabled={pending} onClick={onCancel}>Keep current browser</button></div>
   </div>;
 }
+/** The panel's own setup progress, kept in the page only. `added`: the owner said Murage for
+ * Chrome is in their browser. `picker`: show the browser choice. `changing`: Change reopened step 3. */
+export type SetupWizard = { added: boolean; picker: boolean; changing: boolean };
+const NO_WIZARD: SetupWizard = { added: false, picker: false, changing: false };
+export type SetupStep = 1 | 2 | 3 | "done";
+/** Which setup step is open. Step 1 ticks when Murage for Chrome is seen (a profile said hello) or
+ * the owner says it is added; step 2 when this bot's profile is connected; step 3 once the approval
+ * mode the server stores for this bot is known (every bot has one, so a connected bot goes straight
+ * to the summary), unless Change reopened it. The order is fixed: a later step never opens before an
+ * earlier one ticks. */
+export function setupProgress(status: BrowserExtensionPanelStatus | null, profileId: string | undefined, wizard: SetupWizard, modeKnown: boolean): { step: SetupStep; done: [boolean, boolean, boolean] } {
+  // Step 2 needs this bot's own profile: while the owner still has to pick one, setup is not finished.
+  const two = !!profileId && !!status?.profiles.some(profile => profile.profileId === profileId);
+  const one = two || (status?.profiles.length ?? 0) > 0 || wizard.added;
+  const three = two && modeKnown && !wizard.changing;
+  return { step: !one ? 1 : !two ? 2 : !three ? 3 : "done", done: [one, two, three] };
+}
+const SUMMARY: Record<ApprovalMode, "browserExt.setup.summary.step" | "browserExt.setup.summary.task" | "browserExt.setup.summary.full"> = { step: "browserExt.setup.summary.step", task: "browserExt.setup.summary.task", full: "browserExt.setup.summary.full" };
+const MODE_NAME: Record<ApprovalMode, "browserExt.mode.step.name" | "browserExt.mode.task.name" | "browserExt.mode.full.name"> = { step: "browserExt.mode.step.name", task: "browserExt.mode.task.name", full: "browserExt.mode.full.name" };
 type ViewProps = { botName: string; profileId?: string; status: BrowserExtensionPanelStatus | null; pending: boolean; error: string; connectBrowser: Browser; onConnectBrowser: (browser: Browser) => void; onCheck: (browser: Browser) => void; onProfile: (profileId: string) => void; onAction: (action: "stop" | "pause", bindingId: string) => void; /** Start a new task after Stop; shown only when the status carries the route. */ onStartNew?: (bindingId: string) => void; onSite: (bindingId: string, origin: string, access: ExtensionSiteAccess) => void; onOwnBrowser: () => void;
-  /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; /** Moved here from remote debugging by itself: say so once. */ upgraded?: boolean; onDismissUpgraded?: () => void; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void };
-export function BrowserExtensionPanelView({ botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel }: ViewProps) {
+  /** Mode, approved sites and activity (T34); the container fills it. */ settings?: ReactNode; /** Moved here from remote debugging by itself: say so once. */ upgraded?: boolean; onDismissUpgraded?: () => void; removing?: boolean; removedNote?: string; onRepair?: (browser: Browser) => void; onRemoveAsk?: () => void; onRemoveConfirm?: (browser: Browser) => void; onRemoveCancel?: () => void;
+  /** Setup step 3: the three cards (compact) for the first choice, the full settings after Change. */ modeCards?: ReactNode; modeSettings?: ReactNode; approvalMode?: ApprovalMode; /** The server's stored mode has been read. */ modeKnown?: boolean; /** The read itself: step 3 shows no choice until it is in, and offers Try again when it failed. */ modeRead?: "loading" | "failed" | "known"; onModeRetry?: () => void;
+  /** Full access was on during this visit: its settings stay reachable on step 1 or 2 after it is turned off. */ keepSettings?: boolean; wizard?: SetupWizard; onWizard?: (patch: Partial<SetupWizard>) => void };
+export function BrowserExtensionPanelView({ botName, profileId, status, pending, error, connectBrowser, onConnectBrowser, onCheck, onProfile, onAction, onStartNew, onSite, onOwnBrowser, settings, upgraded, onDismissUpgraded, removing, removedNote, onRepair, onRemoveAsk, onRemoveConfirm, onRemoveCancel, modeCards, modeSettings, approvalMode = "task", modeKnown = false, modeRead = modeKnown ? "known" : "loading", onModeRetry, keepSettings = false, wizard = NO_WIZARD, onWizard }: ViewProps) {
   const connected = !!status?.profiles.some(profile => !profileId || profile.profileId === profileId);
   // The stored profile is gone (a reinstalled extension makes a new id) while others are live: offer the picker, and for a single new profile an owner-confirmed rebind.
   const replaced = !!profileId && !!status && status.profiles.length > 0 && !connected;
+  const progress = setupProgress(status, profileId, wizard, modeKnown);
+  const finished = progress.step === "done";
+  const showPicker = wizard.picker || connectBrowser !== "chrome";
+  const stepItem = (n: 1 | 2 | 3, title: string, doneLine: string, body: ReactNode) => {
+    const state = progress.step === n ? "current" : progress.done[n - 1] ? "done" : "todo";
+    return <li key={n} data-step={n} data-state={state} aria-current={state === "current" ? "step" : undefined} className={`flex flex-col gap-3 rounded-lg p-3 ${state === "current" ? "bg-card" : ""}`}>
+      <div className="flex items-start gap-3"><span aria-hidden="true" className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium ${state === "done" ? "bg-accent text-app" : state === "current" ? "border border-accent text-ink" : "border border-hairline text-ink-secondary"}`}>{state === "done" ? "\u2713" : n}</span>
+        <div className="flex min-w-0 flex-col"><span className={`font-medium ${state === "todo" ? "text-ink-secondary" : ""}`}>{title}</span>{state === "done" && <span className="text-ink-secondary">{doneLine}</span>}</div></div>
+      {state === "current" && body}
+    </li>;
+  };
   return <section aria-label={`${botName}'s browser connection`} className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1 text-sm text-ink">
     <h3 className="font-medium">Use my Chrome</h3>
     {upgraded && <div role="status" className="flex items-start justify-between gap-2 rounded-lg bg-card p-3"><p>{botName} now works through Murage for Chrome. No more Allow prompts, and your tabs stay yours.</p>{onDismissUpgraded && <button className="rounded px-2 text-ink-secondary focus-visible:ring-2 focus-visible:ring-accent" aria-label="Dismiss" onClick={onDismissUpgraded}>×</button>}</div>}
-    <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : connected ? "Connected through Murage for Chrome" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Set up Murage for Chrome"}</p>
+    <p role="status" aria-live="polite" className="text-ink-secondary">{!status ? (error ? "Browser connection unavailable" : "Checking browser connection…") : finished ? t(SUMMARY[approvalMode], { bot: botName }) : connected ? "Connected through Murage for Chrome" : profileId && status.profiles.length ? "Your selected browser profile is not connected" : "Set up Murage for Chrome"}</p>
+    {finished && onWizard && <button className={control} data-action="change-setup" onClick={() => onWizard({ changing: true })}>{t("browserExt.setup.change")}</button>}
     {error && <p role="alert" className="rounded-lg border border-danger/30 p-3 text-danger">{error}</p>}
-    {!connected && <div className="flex flex-col gap-3 rounded-lg bg-card p-3">
-      {status?.extensionBuild === "development" && <p>Open Murage for Chrome in your browser to connect. This build uses an unpacked development extension.</p>}
-      <p className="text-ink-secondary">{status?.helper.reason || (status?.helper.running ? `Murage is waiting for the extension. Press Set up my browser below, then open the extension's side panel, and ${botName} connects by itself.` : `Add it from the Chrome Web Store if it is not in your browser. Then press Set up my browser below and open the extension's side panel. ${botName} connects by itself.`)}</p>
-      {status?.storeUrl && <a className={`${control} text-center`} href={status.storeUrl} target="_blank" rel="noopener noreferrer">Open Chrome Web Store</a>}
-      {status?.helper.problem === "repair" && onRepair && <button className={control} disabled={pending} onClick={() => onRepair(connectBrowser)}>Repair connection</button>}
-      <label className="flex flex-col gap-2">Browser to connect<select className={control} value={connectBrowser} disabled={pending} onChange={event => onConnectBrowser(event.target.value as "chrome" | "edge" | "brave")}><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option></select></label>
-      <button className={control} disabled={pending} onClick={() => onCheck(connectBrowser)}>{pending ? "Setting up…" : "Set up my browser"}</button>
-    </div>}
+    {!finished && (status || error) && <ol aria-label={t("browserExt.setup.label")} data-setup-steps className="flex flex-col gap-2">
+      {stepItem(1, t("browserExt.setup.step1.title"), t("browserExt.setup.step1.done"), <>
+        {status?.extensionBuild === "development" ? <p>Open Murage for Chrome in your browser to connect. This build uses an unpacked development extension.</p> : <p className="text-ink-secondary">{t("browserExt.setup.step1.body")}</p>}
+        {status?.storeUrl && <a className={`${control} text-center`} href={status.storeUrl} target="_blank" rel="noopener noreferrer">{t("browserExt.setup.step1.store")}</a>}
+        {onWizard && <button className={control} data-action="setup-added" onClick={() => onWizard({ added: true })}>{t("browserExt.setup.step1.added")}</button>}
+      </>)}
+      {stepItem(2, t("browserExt.setup.step2.title"), t("browserExt.setup.step2.done"), <>
+        <p className="text-ink-secondary">{status?.helper.reason || (status?.helper.running ? t("browserExt.setup.step2.waiting", { bot: botName }) : t("browserExt.setup.step2.body", { bot: botName }))}</p>
+        {status?.helper.problem === "repair" && onRepair && <button className={control} disabled={pending} onClick={() => onRepair(connectBrowser)}>Repair connection</button>}
+        {showPicker ? <label className="flex flex-col gap-2">Browser to connect<select className={control} value={connectBrowser} disabled={pending} onChange={event => onConnectBrowser(event.target.value as "chrome" | "edge" | "brave")}><option value="chrome">Chrome</option><option value="edge">Edge</option><option value="brave">Brave</option></select></label>
+          : onWizard && <button className="self-start text-ink-secondary underline focus-visible:ring-2 focus-visible:ring-accent" data-action="other-browser" onClick={() => onWizard({ picker: true })}>{t("browserExt.setup.step2.otherBrowser")}</button>}
+        <button className={control} data-action="connect-browser" disabled={pending} onClick={() => onCheck(connectBrowser)}>{pending ? t("browserExt.setup.step2.connecting") : t("browserExt.setup.step2.connect")}</button>
+      </>)}
+      {stepItem(3, t("browserExt.setup.step3.title", { bot: botName }), t(MODE_NAME[approvalMode]), <>
+        {/* No choice before the stored mode is in: the cards would show a default as if it were the bot's. */}
+        {modeRead === "loading" ? <p role="status" data-mode-read="loading" className="text-ink-secondary">{t("browserExt.setup.step3.loading", { bot: botName })}</p>
+          : modeRead === "failed" ? <div data-mode-read="failed" className="flex flex-col gap-2"><p role="alert" className="text-danger">{t("browserExt.setup.step3.failed", { bot: botName })}</p>{onModeRetry && <button className={control} data-action="mode-retry" onClick={onModeRetry}>{t("browserExt.setup.step3.retry")}</button>}</div>
+          : <><p className="text-ink-secondary">{t("browserExt.setup.step3.body", { bot: botName })}</p>
+        {wizard.changing ? modeSettings : modeCards}</>}
+        {wizard.changing && onWizard && <button className={control} data-action="setup-keep" onClick={() => onWizard({ changing: false })}>{t("browserExt.setup.step3.keep")}</button>}
+      </>)}
+    </ol>}
+    {/* Full access stays reachable to turn off while setup is back on step 1 or 2 (a disconnect), and once turned off the
+        settings stay, so the owner can still choose between the other two. */}
+    {/* A mode that could not be read (or a save not confirmed: Full may be on) shows its reason and Try again here too. */}
+    {!finished && progress.step !== 3 && (modeRead === "failed" || (modeKnown && (approvalMode === "full" || keepSettings))) && modeSettings}
     {replaced && <div data-rebind-profile className="flex flex-col gap-3 rounded-lg bg-card p-3"><p>Murage for Chrome has a new browser profile since you last connected. Choose it and {botName} carries on in your browser.</p>{status!.profiles.length === 1 && <button className={control} data-action="use-new-profile" disabled={pending} onClick={() => onProfile(status!.profiles[0]!.profileId)}>Use this browser profile</button>}</div>}
     {status && (status.profiles.length > 1 || (!profileId && status.profiles.length === 1) || replaced) && <label className="flex flex-col gap-2">Browser profile<select className={control} aria-label="Connected browser profile" value={replaced ? "" : profileId ?? ""} disabled={pending} onChange={event => onProfile(event.target.value)}><option value="" disabled>Choose a profile</option>{status.profiles.map(profile => <option key={profile.profileId} value={profile.profileId}>{profile.browser} · {profile.profileId.slice(0, 8)}</option>)}</select></label>}
     {connected && <>
@@ -80,7 +140,8 @@ export function BrowserExtensionPanelView({ botName, profileId, status, pending,
       {!status?.bindings.length && <p>No browser task is active. Ask {botName} to use a shared tab.</p>}
       {status?.bindings.map(binding => <div key={binding.bindingId} className="flex flex-col gap-3 rounded-lg border border-hairline p-3">
         {binding.handoff && binding.state === "paused" && <div role="status" data-your-turn className="rounded-lg border-2 border-warning p-3"><p className="font-medium">{t("browserExt.yourTurn.title")}</p><p className="text-ink-secondary">{t("browserExt.yourTurn.chatReminder", { bot: botName })}</p></div>}
-        <p role="status">{binding.state === "active" ? "Ready to work in shared tabs" : binding.state === "paused" ? "Paused by you" : "Stopped by you"}</p>
+        <p role="status">{binding.state !== "stopped" && !status?.profiles.some(profile => profile.profileId === binding.profileId) ? t("browserExt.state.offline") : binding.state === "active" ? "Ready to work in shared tabs" : binding.state === "paused" && (binding.pausedReason === "connection_lost" || binding.pausedReason === "uncertain") ? t("browserExt.state.connectionLost") : binding.state === "paused" ? "Paused by you" : "Stopped by you"}</p>
+        {binding.state === "paused" && extensionNeedsUpdate(status?.profiles.find(profile => profile.profileId === binding.profileId)?.extensionVersion) && <p role="status" data-extension-update className="text-ink-secondary">{t("browserExt.updateToResume")}</p>}
         <div className="flex flex-wrap gap-2"><button className={control} disabled={pending || binding.state === "stopped"} onClick={() => onAction("stop", binding.bindingId)}>Stop</button><button className={control} disabled={pending || binding.state !== "active"} onClick={() => onAction("pause", binding.bindingId)}>Pause</button>{binding.state === "stopped" && onStartNew && startNewTaskRoute(status) && <button className={control} data-action="start-new-task" disabled={pending} onClick={() => onStartNew(binding.bindingId)}>{t("browserExt.task.startNew")}</button>}</div>
         {Object.entries(binding.sites).map(([origin, access]) => <label key={origin} className="flex min-w-0 flex-col gap-2"><span className="break-all">{origin}</span><select aria-label={`Site access for ${origin}`} className={control} disabled={pending} value={access} onChange={event => onSite(binding.bindingId, origin, event.target.value as ExtensionSiteAccess)}><option value="allow">Allow site access</option><option value="ask">Ask each time</option><option value="never">Never allow</option></select></label>)}
       </div>)}
@@ -109,6 +170,15 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
   const [removing, setRemoving] = useState(false);
   const [removedNote, setRemovedNote] = useState("");
   const [upgraded, setUpgraded] = useState(() => upgradedToExtension.has(bot.id));
+  const [wizard, setWizard] = useState<SetupWizard>(NO_WIZARD);
+  useEffect(() => { setWizard(NO_WIZARD); }, [bot.id]);
+  const onWizard = (change: Partial<SetupWizard>) => setWizard(current => ({ ...current, ...change }));
+  // Step 3 ticks on the mode the server stores for this bot; no flag is kept on this computer.
+  const approval = useBrowserApprovalMode(bot, isPhoneClient());
+  // Full access seen on during this visit: its settings stay reachable after it is turned off, until another bot opens.
+  const [keepSettings, setKeepSettings] = useState(false);
+  useEffect(() => { setKeepSettings(false); }, [bot.id]);
+  useEffect(() => { if (approval.known && approval.mode === "full") setKeepSettings(true); }, [approval.known, approval.mode]);
   const epoch = useRef(0);
   const picked = useRef(false);
   const base = `/api/bots/${encodeURIComponent(bot.id)}/browser-extension`;
@@ -139,5 +209,6 @@ export function BrowserExtensionPanel({ bot }: { bot: Bot }) {
   }, [status, bot.browserExtensionProfileId, bot.busy]);
   const patch = (body: Record<string, unknown>) => perform(async () => { const generation = epoch.current; const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); if (generation === epoch.current) dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); });
   return <BrowserExtensionPanelView botName={bot.name} profileId={bot.browserExtensionProfileId} status={status} pending={pending} error={error || connectionError} connectBrowser={connectBrowser} onConnectBrowser={setConnectBrowser} onCheck={browser => void action({ action: "connect", browser })} onProfile={profileId => void patch({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: profileId })} onAction={(name, bindingId) => void action({ action: name, bindingId })} onStartNew={bindingId => { const route = startNewTaskRoute(status); if (route) void perform(async () => { const generation = epoch.current; await api(route, { method: "POST", body: JSON.stringify({ bindingId }) }); const next = await api(base) as BrowserExtensionPanelStatus; if (generation === epoch.current) setStatus(next); }); }} onSite={(bindingId, origin, access) => void action({ action: "site", bindingId, origin, access })} onOwnBrowser={() => void patch({ useMyChrome: false, browserTransport: null, browserExtensionProfileId: null })}
-    settings={<><BrowserApprovalMode bot={bot} /><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
+    modeCards={approval.view(true)} modeSettings={approval.view()} approvalMode={approval.mode} modeKnown={approval.known} modeRead={approval.read} onModeRetry={approval.retry} keepSettings={keepSettings} wizard={wizard} onWizard={onWizard}
+    settings={<><BrowserApprovedSites bot={bot} profileId={bot.browserExtensionProfileId} endedBindingIds={endedBindingIds(status)} sitesLowered={sitesLoweredIn(status)} /><BrowserActivityLog bot={bot} /></>} upgraded={upgraded} onDismissUpgraded={() => { upgradedToExtension.delete(bot.id); setUpgraded(false); }} removing={removing} removedNote={removedNote} onRepair={browser => void repair(browser)} onRemoveAsk={() => { setRemovedNote(""); setRemoving(true); }} onRemoveConfirm={browser => void remove(browser)} onRemoveCancel={() => setRemoving(false)} />;
 }
