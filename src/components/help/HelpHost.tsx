@@ -13,6 +13,7 @@ import { X } from "lucide-react";
 import { LazyBoundary, retryableLazy } from "@/components/LazyBoundary";
 import { focusableWithin, type TrapContainer, type TrapElement } from "@/lib/focus-trap";
 import { wrapTabTarget } from "@/lib/focus-wrap";
+import { openModalWindow, watchModalWindow } from "@/lib/modal-window";
 import type { FeedbackSurface } from "@/lib/feedback-surface";
 import type { HelpScreenInput } from "@/lib/screen-envelope";
 import { hx } from "./help-copy";
@@ -169,45 +170,9 @@ export function HelpLauncher({ onOpen }: { onOpen: () => void }) {
 // open, the tab and the panel are drawn inside it instead (a portal), which
 // keeps them usable and in that window's Tab order; help is still not a
 // modal of its own.
-export function openModalWindow(root: Pick<Document, "querySelectorAll"> = document): HTMLElement | null {
-  let found: HTMLElement[] = [];
-  try {
-    found = [...root.querySelectorAll<HTMLElement>("dialog:modal")];
-  } catch {
-    found = [...root.querySelectorAll<HTMLElement>("dialog[open]")];
-  }
-  return found.at(-1) ?? null;
-}
-type ObserverLike = Pick<MutationObserver, "observe" | "disconnect">;
-type ObserverMaker = new (callback: () => void) => ObserverLike;
-/** Calls `onChange` with the open modal window, now and whenever that changes:
- *  one watch on `open` attributes for the whole page (showModal and close set
- *  and clear it), plus, only while a window is held, a watch for that window
- *  being taken out of the page. Returns the stop. */
-export function watchModalWindow(
-  onChange: (host: HTMLElement | null) => void,
-  doc: Pick<Document, "querySelectorAll" | "body"> = document,
-  Observer: ObserverMaker = MutationObserver,
-): () => void {
-  let host: HTMLElement | null = null;
-  let removal: ObserverLike | null = null;
-  let first = true;
-  const update = () => {
-    const next = openModalWindow(doc);
-    if (next !== host || first) { host = next; first = false; onChange(host); }
-    if (host && !removal) {
-      removal = new Observer(() => { if (host && !host.isConnected) update(); });
-      removal.observe(doc.body, { childList: true, subtree: true });
-    } else if (!host && removal) {
-      removal.disconnect();
-      removal = null;
-    }
-  };
-  const opens = new Observer(update);
-  opens.observe(doc.body, { subtree: true, attributes: true, attributeFilter: ["open"] });
-  update();
-  return () => { opens.disconnect(); removal?.disconnect(); removal = null; };
-}
+// The watch itself is shared with the update pop-up (lib/modal-window.ts):
+// the top window is the one opened last, not the last in the page.
+export { openModalWindow, watchModalWindow };
 function useModalWindow(): HTMLElement | null {
   const [host, setHost] = useState<HTMLElement | null>(null);
   // Always watched, open or closed: the "?" tab has to be inside the window too.

@@ -839,7 +839,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         } catch {
           return;
         }
-        appendNative(threadId, { dir: "in", source: "agy.stream", msg: o });
+        appendNative(threadId, { dir: "in", source: "agy.stream", msg: o }, { rawChars: line.length });
         const payload = o[o.event] ?? {};
         switch (o.event) {
           case "init": {
