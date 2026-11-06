@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { partitionSourcesAllowed } from "./partition-sources.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -294,14 +295,14 @@ function projectToolBriefUpdateImpl(db: DatabaseSync, ctx: ProjectToolContext, b
 function projectToolTransaction(db: DatabaseSync, ctx: ProjectToolContext, body: Record<string, unknown>, apply: (db: DatabaseSync, ctx: ProjectToolContext, body: Record<string, unknown>) => ProjectToolResult): ProjectToolResult {
   if (!ctx.ownerAudience) return AUDIENCE_REFUSAL;
   return scopedTx(() => {
-    db.exec("SAVEPOINT project_tool");
+    beginWrite(db, "project_tool");
     try {
       const result = apply(db, ctx, body);
       if (result.status !== 200) db.exec("ROLLBACK TO project_tool");
-      db.exec("RELEASE project_tool");
+      endWrite(db, "project_tool");
       return result;
     } catch (error) {
-      db.exec("ROLLBACK TO project_tool; RELEASE project_tool");
+      undoWrite(db, "project_tool");
       throw error;
     }
   }, (result) => result.status !== 200);
