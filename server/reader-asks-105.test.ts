@@ -230,7 +230,8 @@ describe("what still asks at every level", () => {
     "deno run -A main.ts",
     "/bin/bash build.sh",
     "env bash build.sh",
-    "python -u manage.py migrate",
+    // 1.0.18 APPROVALS-SIMPLE 5a: `python -u manage.py` is admitted (server/approvals-simple-1018.test.ts); an option that takes a value still is not
+    "python -W ignore manage.py migrate",
     "bash build.sh | tee log.txt",
     "bash build.sh &",
     "(bash build.sh)",

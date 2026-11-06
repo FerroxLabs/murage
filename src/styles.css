@@ -1228,8 +1228,9 @@ button:disabled.bg-danger {
 }
 
 /* E35 (src/lib/reply-width.ts): a reply with a table runs as wide as the
-   message column; its prose keeps the reading width. */
-.chat-wide .chat-md > :not(.chat-table) {
+   message column; its prose keeps the reading width. A list or quote that
+   holds the table runs wide with it. */
+.chat-wide .chat-md > :not(.chat-table):not(:has(.chat-table)) {
   max-width: var(--chat-bubble-max);
 }
 

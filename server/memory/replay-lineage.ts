@@ -21,6 +21,7 @@
 // lists outgrew a whole-thread budget). Past the node and receipt budgets a
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
@@ -2367,9 +2368,9 @@ export interface OutputRoots {
 const rootKey = (thread: string, message: string) => `${thread}\u0000${message}`;
 /** One commit for a set and the row that points at it. */
 function atomically(db: ReturnType<typeof database>, work: () => void): void {
-  db.exec("SAVEPOINT memory_root_pointer");
-  try { work(); db.exec("RELEASE memory_root_pointer"); }
-  catch (error) { db.exec("ROLLBACK TO memory_root_pointer; RELEASE memory_root_pointer"); throw error; }
+  beginWrite(db, "memory_root_pointer");
+  try { work(); endWrite(db, "memory_root_pointer"); }
+  catch (error) { undoWrite(db, "memory_root_pointer"); throw error; }
 }
 /** The stored sets read so far, kept while the lineage cache is (a set is immutable under its id; every removal or change
  * of a set row moves the lineage epoch, which drops them with the verdicts). Where no cache can be kept (inside a

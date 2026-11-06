@@ -84,6 +84,8 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
     // The card is headed with what the bot actually asked, not a category.
     await openNeedsRow(page);
     await expect(page.getByRole("heading", { name: "Which format should the report use?", exact: true })).toBeVisible();
+    // UX L7: on a phone the card rises as a sheet named by that same heading, drawn once.
+    if (width === 390) await expect(page.getByRole("dialog", { name: "Which format should the report use?" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("button", { name: "Needs you (1)", exact: true })).toHaveClass(/bg-accent /);
     // The breakdown tabs sit beside the umbrella (8e8a3afa, bad39136); the
