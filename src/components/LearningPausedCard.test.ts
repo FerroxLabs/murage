@@ -34,7 +34,8 @@ describe("the Needs you card and the Usage page", () => {
     expect(card.match(/<ActionButton/g)).toHaveLength(2);
     expect(card).toContain("doubleLimitRequest(");
     expect(card).not.toMatch(/onClick=\{[^}]*\bapi\(/);
-    expect(usage).toContain("<ActionButton action={exportCsv}");
+    // UX-L3A-2 (04a532bda) marks the export control for the registry (data-setting-control="usage-heading") before its action prop
+    expect(usage).toMatch(/<ActionButton\b[^>]*\saction=\{exportCsv\}/);
   });
   it("sits in the Inbox decisions view, and Usage never prints a money figure", () => {
     expect(inbox).toContain("LearningPausedCard");

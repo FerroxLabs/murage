@@ -97,6 +97,10 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_sends_inbox",
     "email_sends_replaces",
     "email_sends_settled",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts_open",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares_status",
   ],
   tables: [
     "app_write_revision",
@@ -147,6 +151,10 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_tombstones",
     "email_trust",
     "email_trusted",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares",
   ],
 });
 
@@ -172,6 +180,28 @@ export interface AppSchemaDowngrade {
 const has = (db: DatabaseSync, type: string, name: string): boolean => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
 const quoted = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 const BUSY_FALLBACK_MS = 5 * 60_000;
+
+/** The card tables 1.0.18 makes at every open (database.ts): the held Post in… posts (venue-post-held.ts) and the cross-chat share
+ *  cards (room-shares-schema.ts). No earlier build knows them, and 1.0.2's database check refuses an object it does not know, so they
+ *  leave whatever the target, indexes first, in one transaction (a savepoint inside the caller's). Each row is a view of a card in a
+ *  transcript; the card message itself stays, and a later 1.0.18 start makes the empty tables again. Idempotent. */
+export const CARD_TABLES_AFTER_117 = Object.freeze({ indexes: ["venue_posts_open", "room_shares_status"], tables: ["venue_posts", "room_shares"] });
+export function downgradeCardTablesTo117(db: DatabaseSync): { dropped: number } {
+  const indexes = CARD_TABLES_AFTER_117.indexes.filter(name => has(db, "index", name));
+  const tables = CARD_TABLES_AFTER_117.tables.filter(name => has(db, "table", name));
+  if (!indexes.length && !tables.length) return { dropped: 0 };
+  const outer = db.isTransaction;
+  db.exec(outer ? "SAVEPOINT card_tables_downgrade" : "BEGIN IMMEDIATE");
+  try {
+    for (const name of indexes) db.exec(`DROP INDEX ${quoted(name)}`);
+    for (const name of tables) db.exec(`DROP TABLE ${quoted(name)}`);
+    db.exec(outer ? "RELEASE card_tables_downgrade" : "COMMIT");
+  } catch (error) {
+    try { if (outer) { db.exec("ROLLBACK TO card_tables_downgrade"); db.exec("RELEASE card_tables_downgrade"); } else db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+  return { dropped: indexes.length + tables.length };
+}
 const RECEIPTS_FILE = "delegation-receipts.json";
 const MAX_RECEIPTS = 100;
 

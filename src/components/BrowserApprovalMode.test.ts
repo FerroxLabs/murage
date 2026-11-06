@@ -2,7 +2,7 @@
 import { createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it, expect, vi } from "vitest";
-import { BrowserApprovalModeView, FullPermissiveDialog, HazardStripe, setApprovalMode, setActionCheck, upgradeNoticeText } from "./BrowserApprovalMode";
+import { BrowserApprovalModeView, FullPermissiveDialog, HazardStripe, setApprovalMode, setActionCheck } from "./BrowserApprovalMode";
 import { BrowserExtensionPanelView, endedBindingIds } from "./BrowserExtensionPanel";
 
 function find(node: ReactNode, predicate: (props: Record<string, any>) => boolean): Record<string, any> | undefined {
@@ -58,10 +58,15 @@ describe("danger-zone dialog", () => {
   });
 });
 
-describe("upgrade notice and copy rules", () => {
-  it("names the bot and Murage for Chrome", () => { expect(upgradeNoticeText("Mira")).toContain("Murage for Chrome now asks once per task"); expect(upgradeNoticeText("Mira")).toContain("how Mira asks here"); });
+describe("copy rules and Full stated once (1.0.18)", () => {
+  it("Full on shows the banner in place of the cards, and compact keeps only the cards and the floor line", () => {
+    const full = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), mode: "full" as const }));
+    expect(full).toContain("data-full-on"); expect(full).not.toContain("data-mode=");
+    const compact = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), compact: true }));
+    expect(compact).toContain('data-mode="task"'); expect(compact).not.toContain("<h4"); expect(compact).not.toContain("data-check=");
+  });
   it("uses no banned words in the markup", () => {
-    const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), mode: "full" as const })) + upgradeNoticeText("Mira");
+    const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), mode: "full" as const }));
     expect(html).not.toMatch(/—|\bsafe|safely|safety|unsafe|composio|always-on|price/i);
   });
 });
@@ -137,7 +142,8 @@ describe("gate e and b: tighten-only on the phone, and the end-of-task signal", 
     expect(html("step", true)).not.toContain('data-mode="task"');
     expect(html("task", true)).toContain('data-mode="step"'); expect(html("task", true)).toContain('data-mode="task"');
     expect(html("task", true)).not.toContain('data-mode="full"');
-    for (const key of ["step", "task", "full"]) expect(html("full", true)).toContain(`data-mode="${key}"`);
+    // Full is stated once (1.0.18): the phone sees the banner and Turn off, which only tightens, in place of the cards.
+    expect(html("full", true)).toContain("data-full-on"); expect(html("full", true)).toContain("Turn off"); expect(html("full", true)).not.toContain("data-mode=");
   });
   it("the desktop still shows every option", () => {
     for (const key of ["step", "task", "full"]) expect(html("step", false)).toContain(`data-mode="${key}"`);
