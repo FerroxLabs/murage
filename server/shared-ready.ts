@@ -16,6 +16,7 @@
 //     bounded safety sweep every SWEEP_MS with its position kept in `shared_drain_sweep` (`sweepWaitingTeams`, visited a few bots per pump).
 //   - `wait_on` says what a waiting team waits on (WaitOn), so each of those events wakes only the teams it frees.
 // Waiting teams are never re-checked by a pass, so the work of a pass follows the ready teams it serves (at most SHARED_DRAIN_TEAMS), never the backlog.
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 export const SHARED_READY_TABLE = "shared_ready_teams";
@@ -115,7 +116,7 @@ END;`;
  * after the table was created and before it was filled (or any other lost entry) is made whole by the next start. A team already in the set keeps its place and
  * its state. The schema and the fill commit together (one savepoint, so it also nests in a caller's transaction). */
 export function initializeSharedReady(db: DatabaseSync): void {
-  db.exec("SAVEPOINT shared_ready_init");
+  beginWrite(db, "shared_ready_init");
   try {
     db.exec(DDL);
     const readyColumns = (db.prepare("PRAGMA table_info(shared_ready_teams)").all() as Array<{ name: string }>).map((column) => column.name);
@@ -133,9 +134,9 @@ export function initializeSharedReady(db: DatabaseSync): void {
         SELECT to_bot_id, ${TEAM_OF("room_requests")} AS team, MAX(target_thread_id) AS thread, MIN(created_at) AS first FROM room_requests
         WHERE state='queued' AND refusal IS NOT 'retained_unresolved' AND to_bot_id IS NOT NULL AND ${TEAM_OF("room_requests")} IS NOT NULL GROUP BY 1, 2) q
       WHERE NOT EXISTS (SELECT 1 FROM shared_ready_teams r WHERE r.bot_id=q.to_bot_id AND r.team=q.team)`);
-    db.exec("RELEASE shared_ready_init");
+    endWrite(db, "shared_ready_init");
   } catch (error) {
-    db.exec("ROLLBACK TO shared_ready_init; RELEASE shared_ready_init");
+    undoWrite(db, "shared_ready_init");
     throw error;
   }
 }

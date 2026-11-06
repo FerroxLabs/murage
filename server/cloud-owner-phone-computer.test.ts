@@ -72,12 +72,13 @@ describe("the handlers ask the computer, not the surface", () => {
 
 describe("All chats answers a Cloud home's paired phone as the phone (chats slice 1)", () => {
   const source = readFileSync(join(here, "index.ts"), "utf8");
-  it("splits desktop from phone with isDesktopApp and admits only the desktop app or a companion-proven caller", () => {
+  it("splits desktop from phone with isDesktopApp and admits only the desktop app or the owner acting", () => {
     expect(source).toContain("const chatsDesktop = chatsView && isDesktopApp(req.headers, url.searchParams);");
-    expect(source).toContain('if (chatsView && !chatsDesktop && !companionAuthorized(req.headers)) return json(res, 404, { error: "no such route" });');
+    // ownerActs, not companionAuthorized: a Cloud browser with a remembered owner login gets no previews or owner-audience hits
+    expect(source).toContain('if (chatsView && !chatsDesktop && !ownerActs(req.headers)) return json(res, 404, { error: "no such route" });');
     expect(source).toContain("const visible = chatsDesktop ? null : new Set(store.visibleThreadIds());");
     expect(source).toContain("scope = chatSearchThreads(chatSource(chatsDesktop), chatFiltersFromQuery(url.searchParams))");
     const chats = source.slice(source.indexOf('if (method === "GET" && path === "/api/chats") {'));
-    expect(chats).toMatch(/^[^]*?const desktop = isDesktopApp\(req\.headers, url\.searchParams\);\s*if \(!desktop && !companionAuthorized\(req\.headers\)\) return json\(res, 404, \{ error: "no such route" \}\);/);
+    expect(chats).toMatch(/^[^]*?const desktop = isDesktopApp\(req\.headers, url\.searchParams\);\s*if \(!desktop && !ownerActs\(req\.headers\)\) return json\(res, 404, \{ error: "no such route" \}\);/);
   });
 });

@@ -115,6 +115,7 @@ const TABLE = {
   // refusals and short answers on the hand-off routes
   unknown_sender: () => "unknown sender",
   fields_required: () => "toBotId and message required",
+  done_when_invalid: () => "done_when must be one line of text, at most 280 characters: shorten it and send the hand-off again",
   cannot_message_self: () => "a bot cannot message itself",
   cannot_delegate_self: () => "a bot cannot delegate to itself",
   depth_exhausted: () => "the Chief-to-lead-to-specialist handoff depth is exhausted",

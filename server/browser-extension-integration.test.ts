@@ -20,6 +20,7 @@ async function fixture(profileIds: string[], browser: BrowserExtensionHello["bro
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const hello = (profileId: string): BrowserExtensionHello => ({ version: 1, type: "hello", profileId, browser, extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] });
   const broker = {
+    drop: () => false,
     profiles: () => connected ? profiles.map(hello) : [],
     async request(_profile: string, command: BrowserExtensionCommand): Promise<BrowserExtensionResponse> {
       if (!connected) throw Object.assign(Error("host_offline"), { code: "host_offline" });
