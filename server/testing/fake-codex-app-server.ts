@@ -300,6 +300,10 @@ const finishTurn = () => {
     notify("item/agentMessage/delta", { itemId: "m1", delta: "done from " });
     notify("item/agentMessage/delta", { itemId: "m1", delta: "fake codex" });
   }
+  if (mode === "big-frame") {
+    notify("fake/bigFrame", { text: `BIGFRAME-CANARY ${"x".repeat(70_000)}` });
+    notify("item/completed", { item: { id: "img2", type: "imageGeneration", status: "completed", result: "A".repeat(70_000), savedPath: "/tmp/provider-owned-path-must-not-be-read.png" } });
+  }
   if (mode === "image") {
     notify("item/completed", {
       item: {

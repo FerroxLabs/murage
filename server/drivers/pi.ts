@@ -1041,8 +1041,9 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       const rpcFailure = (err: unknown) => (err instanceof Error ? err.message : String(err)).slice(0, 500);
       child.stdin.on("error", () => rejectWaiters(new Error(`${ENGINE} stopped taking input.`)));
       const send = (obj: Record<string, unknown>) => {
-        appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj });
-        child.stdin.write(JSON.stringify(obj) + "\n");
+        const line = JSON.stringify(obj);
+        appendNative(threadId, { dir: "out", source: "pi.rpc", msg: obj }, { rawChars: line.length });
+        child.stdin.write(line + "\n");
       };
 
       /** Emit buffered assistant text as its own item, then clear it. */
@@ -1148,8 +1149,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       active.set(threadId, { stop, turnId, pending, child, scopedRequests });
       starting.delete(threadId);
 
-      const onEvent = (evt: PiEvent) => {
-        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
+      const onEvent = (evt: PiEvent, rawChars: number) => {
+        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt }, { rawChars });
         // After the end only what a graceful Stop needs still counts: the abort's response, and a dialog pi would otherwise wait on.
         if (settled && evt.type !== "response") {
           if (aborting && evt.type === "extension_ui_request" && evt.id && PI_DIALOGS.has(String(evt.method))) {
@@ -1423,7 +1424,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
         onLine: (line) => {
           if (!line.trim()) return;
           try {
-            onEvent(JSON.parse(line) as PiEvent);
+            onEvent(JSON.parse(line) as PiEvent, line.length);
           } catch {
             /* skip non-JSON line */
           }

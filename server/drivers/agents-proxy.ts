@@ -1,5 +1,5 @@
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
-import { PROJECT_TOOLS, VENUE_READ_TOOL, venueReadBody } from "./project-tool-schemas.ts";
+import { ASK_OWNER_TO_SHARE_TOOL, PROJECT_TOOLS, VENUE_READ_TOOL, venuePostBody, venuePostToolFor, venueReadBody } from "./project-tool-schemas.ts";
 import { EMAIL_TOOLS_ENV, emailToolBody, emailToolsFor, isEmailToolName } from "./email-tool-schemas.ts";
 // Agent-to-agent comms MCP proxy — spawned as an MCP server inside a bot's
 // agent process (via the "agents" integration). Exposes peer, routine, and
@@ -35,6 +35,7 @@ import { request as httpsRequest } from "node:https";
 import { CREDENTIAL_TARGETS, isCredentialTargetId, isMcpCredentialId } from "../../shared/credential-request.ts";
 import { ASK_USER_TOOL_DESCRIPTION, SHOW_WIDGET_TOOL_DESCRIPTION, UPDATE_WIDGET_TOOL_DESCRIPTION } from "../../shared/ask-wording.ts";
 import { QUESTION_LIMITS } from "../../shared/questions.ts";
+import { plainTimeZone } from "../../shared/plain-time-zone.ts";
 // Pure, dependency-free, and compiled in: the help corpus is a generated
 // module under shared/, so murage_help answers identically in a packaged build
 // (where apps/docs does not ship) and needs no harness round trip, no network,
@@ -67,6 +68,14 @@ const PROJECT_ROLE = process.env.MURAGE_PROJECT_ROLE === "lead" || process.env.M
 /** Bot venue awareness (lane 106): venue_read_messages is listed on the owner's direct turns the harness mounted it for, never with a
  * project role. Listing is presentation; the harness's generation-bound record decides every call (server/venue-read.ts). */
 const VENUE_READ = process.env.MURAGE_VENUE_READ === "1" && !PROJECT_ROLE;
+/** VENUE-POST-1017: venue_post is listed only on the turn the harness recorded a Post in… pick for (server/venue-post.ts decides every call). */
+const VENUE_POST = process.env.MURAGE_VENUE_POST === "1" && !PROJECT_ROLE;
+/** CROSS-CHAT-READ-1019: ask_owner_to_share is listed only on the owner-only room turn the harness mounted it for (room-shares.ts decides every call). */
+const ROOM_SHARE = process.env.MURAGE_ROOM_SHARE === "1" && PROJECT_ROLE !== "proposal";
+/** The owner's pick the harness recorded for this turn (ids only), named in the listed tool's description. */
+const VENUE_POST_PICK = ((): { venueId: string; venueThreadId?: string } | null => {
+  try { const pick: unknown = JSON.parse(process.env.MURAGE_VENUE_POST_PICK ?? "null"); return pick && typeof pick === "object" ? pick as { venueId: string; venueThreadId?: string } : null; } catch { return null; }
+})();
 // bot calls 1.0.9 (5.10): listed only when the harness says this bot has a needs_owner_now rule and may call
 const NEEDS_OWNER_NOW = process.env.MURAGE_NEEDS_OWNER_NOW === "1" && PROJECT_ROLE !== "proposal";
 const NEEDS_OWNER_NOW_TOOL = { name: "needs_owner_now", description: "Tell the owner you need them now, when something you are working on cannot wait for them to read their messages. Murage leaves them a message first and may ring them later if they have not seen it, within the rules the owner set. Give one short, plain line (at most 140 characters) saying what needs them. It returns \"Noted.\"; it does not tell you whether a call happens.", inputSchema: { type: "object", required: ["line"], additionalProperties: false, properties: { line: { type: "string", minLength: 1, maxLength: 140, description: "What needs the owner now, in one plain sentence." } } } };
@@ -407,6 +416,7 @@ const TOOLS = [
         bot_id: { type: "string", description: `The stable Murage bot ID from ${murageToolOnThisServer("list_bots")}, or a unique exact display name in your authorized roster. Never use a native provider session address.` },
         message: { type: "string", description: "What the peer should do / answer." },
         reason: { type: "string", description: "Optional one-line reason for the delegation (shown to the user as a chip)." },
+        done_when: { type: "string", maxLength: 280, description: "Optional: what finished looks like for this task, in one line (at most 280 characters). The user sees it under the hand-off and the peer gets it in its brief. Never put keys, passwords or other secrets here." },
       },
       required: ["bot_id", "message"],
     },
@@ -798,6 +808,8 @@ const AVAILABLE_TOOLS = PROJECT_ROLE === "proposal" ? [PROJECT_PROPOSE_TOOL] : [
   ...(IMAGE_LIBRARY_ON ? LISTED_TOOLS : withoutImageLibrary(LISTED_TOOLS)),
   ...(PROJECT_ROLE ? PROJECT_TOOLS.filter((tool) => PROJECT_TOOLS_FOR[PROJECT_ROLE]!.includes(tool.name)) : []),
   ...(VENUE_READ ? [VENUE_READ_TOOL] : []),
+  ...(VENUE_POST ? [venuePostToolFor(VENUE_POST_PICK)] : []),
+  ...(ROOM_SHARE ? [ASK_OWNER_TO_SHARE_TOOL] : []),
   ...(NEEDS_OWNER_NOW ? [NEEDS_OWNER_NOW_TOOL] : []),
   ...emailToolsFor(EMAIL_MODE),
 ];
@@ -1012,6 +1024,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const body = { members: args.members, leadBotId: args.leadBotId ?? null, mode: args.mode, brief: args.brief, budget: args.budget, planOutline: args.planOutline };
     return jsonToolResult(await api("/api/internal/project/propose", { method: "POST", body: JSON.stringify(body) }));
   }
+  if (name === "ask_owner_to_share" && ROOM_SHARE) {
+    return jsonToolResult(await api("/api/internal/room-share/ask", { method: "POST", body: JSON.stringify({ query: args.query, from: args.from }) }));
+  }
+  if (name === "venue_post" && VENUE_POST) {
+    return jsonToolResult(await api("/api/internal/venue/post", { method: "POST", body: JSON.stringify(venuePostBody(args)) }));
+  }
   if (name === "venue_read_messages" && VENUE_READ) {
     return jsonToolResult(await api("/api/internal/venue/read-messages", { method: "POST", body: JSON.stringify(venueReadBody(args)) }));
   }
@@ -1203,7 +1221,10 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const toBotId = teammateSelector(args);
     const message = String(args.message ?? "").trim();
     const reason = typeof args.reason === "string" ? args.reason.trim() : "";
+    const doneWhen = typeof args.done_when === "string" ? args.done_when.trim() : "";
     if (!toBotId || !message) return { text: needsTeammate("delegate_bot"), isError: true };
+    // the schema's 280 is checked here too (an engine may not enforce maxLength); the server checks it again before it writes anything
+    if ([...doneWhen].length > 280) return { text: "Couldn't queue the delegation: done_when is longer than 280 characters. Shorten it to one line and try again.", isError: true };
     const body: Record<string, unknown> = {
       fromBotId: BOT_ID,
       fromThreadId: THREAD_ID,
@@ -1212,6 +1233,7 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
       depth: DEPTH,
     };
     if (reason) body.reason = reason;
+    if (doneWhen) body.doneWhen = doneWhen;
     const r = await api(`/api/internal/delegate-bot`, { method: "POST", body: JSON.stringify(body) });
     if (r.error) return { text: `Couldn't queue the delegation: ${r.error}`, isError: true };
     // Fire-and-forget by contract: the harness returns immediately, the
@@ -1362,7 +1384,11 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
         ? { ...routine, runOn: RUN_ON_SHOWN[routine.runOn] }
         : routine);
     const now = typeof r.now === "string" ? r.now : new Date().toISOString();
-    const timeZone = typeof r.timeZone === "string" && r.timeZone ? r.timeZone : "local computer timezone";
+    // 1.0.18 U6 E32 (upstream 698cef40c): the sentence says the zone in plain words ("India time"); the IANA id
+    // stays as a machine field so a cron schedule copied back still names it exactly.
+    const timeZone = typeof r.timeZone === "string" && r.timeZone
+      ? `${plainTimeZone(r.timeZone)} (IANA id ${r.timeZone})`
+      : "the computer's own time zone";
     const webhooks = Array.isArray(r.webhooks) ? r.webhooks : [];
     const webhookText = webhooks.length ? `\n\nThis bot's webhooks (links and secrets are never shown here):\n${JSON.stringify(webhooks, null, 2)}` : "";
     if (!routines.length) {

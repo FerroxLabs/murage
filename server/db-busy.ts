@@ -66,9 +66,13 @@ export async function awaitWriterGateForeground(): Promise<void> {
   const gate = writerGate.promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const ceiling = new Promise<void>(resolve => { timer = setTimeout(resolve, FOREGROUND_GATE_MAX_MS); timer.unref?.(); });
+  foregroundWaiters++;
   try { await Promise.race([gate, ceiling]); }
-  finally { if (timer) clearTimeout(timer); }
+  finally { foregroundWaiters--; if (timer) clearTimeout(timer); }
 }
+let foregroundWaiters = 0;
+/** How many foreground writers are waiting out a hold right now: what a test reads to know a route has reached its gate. */
+export function writerGateWaiters(): number { return foregroundWaiters; }
 /** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files) never wait. */
 export function gateWriteRequest(method: string | undefined): Promise<void> {
   return method === "GET" || method === "HEAD" || method === "OPTIONS" ? Promise.resolve() : awaitWriterGateForeground();

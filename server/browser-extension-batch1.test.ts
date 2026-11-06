@@ -16,6 +16,7 @@ describe("a dialog answer is not queued behind the blocked command", () => {
     const seen: string[] = []; let releaseInput!: () => void; const inputBlocked = new Promise<void>(resolve => { releaseInput = resolve; });
     const tab = { tabId: 1, navigationEpoch: 1, origin: "https://fixture.test", url: "https://fixture.test/" }; const state = { generation: 1, state: "active" };
     const broker = {
+      drop: () => false,
       profiles: (): BrowserExtensionHello[] => [{ version: 1, type: "hello", profileId: "profile", browser: "chromium", extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] }],
       async request(_profile: string, command: BrowserExtensionCommand): Promise<BrowserExtensionResponse> {
         let result: any = { ...state, tabs: [tab] };
