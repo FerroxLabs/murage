@@ -291,6 +291,13 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/codex-hook.ts",
+   "fn": "warmHookRunner",
+   "anchor": "spawn(runtime,[\"-e\",\"\"],{env,stdio:\"ignore\",windowsHide:true})",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/container-computer.ts",
    "fn": "<module>",
    "anchor": "promisify(execFile)",
@@ -495,13 +502,6 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
-   "fn": "fireFuigoWatch",
-   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoSilenceWatch:rule}})",
-   "kind": "native-log",
-   "reason": "log-excluded"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
    "fn": "send",
    "anchor": "appendNative(threadId,{dir:\"out\",source:SOURCE,msg:nativeLogMessage(obj)})",
    "kind": "native-log",
@@ -539,6 +539,13 @@
    "file": "server/drivers/acp/core.ts",
    "fn": "noteFallback",
    "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoInterjection:event,...extra}})",
+   "kind": "native-log",
+   "reason": "log-excluded"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
+   "fn": "fireFuigoWatch",
+   "anchor": "appendNative(threadId,{dir:\"in\",source:SOURCE,msg:{fuigoSilenceWatch:rule}})",
    "kind": "native-log",
    "reason": "log-excluded"
   },
@@ -946,6 +953,20 @@
    "fn": "checkFluxKey",
    "anchor": "fetch",
    "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/flux-limits.ts",
+   "fn": "fetchFluxLimits",
+   "anchor": "fetch",
+   "kind": "fetch",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/settle-copy.ts",
+   "fn": "claimCopyScratch",
+   "anchor": "writeFileSync(join(dir,SCRATCH_OWNER_FILE),JSON.stringify({pid:process.pid,host:scratchTestHooks.host(),at:Date.now()}),{flag:\"wx\",mode:0o600})",
+   "kind": "fs-write",
    "reason": "not-learning"
   },
   {
@@ -1568,13 +1589,6 @@
    "file": "server/checkpoints.ts",
    "fn": "runGit",
    "anchor": "execFile(\"git\",args,{cwd,env,windowsHide:true,encoding:\"utf8\",timeout:120_000,maxBuffer:16*1024*1024},(err,stdout,stderr)=>{if(err)rejectPromise(newError(`git${",
-   "kind": "spawn",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/opencode-go.ts",
-   "fn": "runGit",
-   "anchor": "execFile(\"git\",[\"-C\",folder,...args],{cwd:folder,env,timeout:10_000,windowsHide:true},(error)=>(error?rejectGit(error):resolveGit()))",
    "kind": "spawn",
    "reason": "not-learning"
   },
@@ -2850,6 +2864,13 @@
    "reason": "not-learning"
   },
   {
+   "file": "server/drivers/acp/opencode-go.ts",
+   "fn": "runGit",
+   "anchor": "execFile(\"git\",[\"-C\",folder,...args],{cwd:folder,env,timeout:10_000,windowsHide:true},(error)=>(error?rejectGit(error):resolveGit()))",
+   "kind": "spawn",
+   "reason": "not-learning"
+  },
+  {
    "file": "server/drivers/acp/qwen.ts",
    "fn": "ensureQwenInjectModel",
    "anchor": "writeFileSync(path,`${JSON.stringify(settings,null,2)}\\n`,{mode:0o600})",
@@ -4034,6 +4055,14 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
+   "fn": "onRetryState",
+   "anchor": "send({jsonrpc:\"2.0\",method:\"session/cancel\",params:{sessionId}})",
+   "callee": "send",
+   "reason": "not-learning",
+   "note": "server/drivers/acp/core.ts:4001 sends only the JSON-RPC method session/cancel and the engine's sessionId: no user, memory or provider text."
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
    "fn": "interject",
    "anchor": "request(support.interjection!.method,{sessionId,text,interjectionId},ackMs)",
    "callee": "request",
@@ -4041,22 +4070,15 @@
   },
   {
    "file": "server/drivers/acp/core.ts",
+   "fn": "openSession",
+   "anchor": "request(method,sessionParams(params),timeoutMs)",
+   "callee": "request",
+   "reason": "not-learning"
+  },
+  {
+   "file": "server/drivers/acp/core.ts",
    "fn": "readStates",
    "anchor": "request(support.mcpListMethod,{sessionId},timeoutMs)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/new\",{cwd,mcpServers},NEW_SESSION_TIMEOUT)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/load\",{sessionId:resumeId,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
    "callee": "request",
    "reason": "not-learning"
   },
@@ -4073,29 +4095,6 @@
    "anchor": "request(\"authenticate\",{methodId},INIT_TIMEOUT)",
    "callee": "request",
    "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/load\",{sessionId:cursor,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/load\",{sessionId:cursor,cwd,mcpServers,_meta:{noReplay:true}},LOAD_SESSION_TIMEOUT,)",
-   "callee": "request",
-   "reason": "not-learning",
-   "n": 1
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/new\",{cwd,mcpServers},NEW_SESSION_TIMEOUT)",
-   "callee": "request",
-   "reason": "not-learning",
-   "n": 1
   },
   {
    "file": "server/drivers/acp/core.ts",
@@ -4122,13 +4121,6 @@
    "file": "server/drivers/acp/core.ts",
    "fn": "launch",
    "anchor": "request(\"session/set_mode\",{sessionId,modeId:readOnlyMode.normal},SESSION_CONFIG_TIMEOUT)",
-   "callee": "request",
-   "reason": "not-learning"
-  },
-  {
-   "file": "server/drivers/acp/core.ts",
-   "fn": "launch",
-   "anchor": "request(\"session/load\",{sessionId,cwd,mcpServers:reconnecting,_meta:{noReplay:true}},windowMs)",
    "callee": "request",
    "reason": "not-learning"
   },

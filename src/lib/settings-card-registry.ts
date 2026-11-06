@@ -41,6 +41,7 @@ const GENERAL: SettingsCard[] = [
   card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in", "launch", "autostart", "open at login"], advanced: true }),
   card("analytics", "general", "analytics-heading", { keywords: ["analytics"], surface: "any", advanced: true }),
   card("about-me", "general", "about-me-heading", { keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] }),
+  card("bring-your-ai", "general", "bring-your-ai-heading", { keywords: ["bring what you already use", "bring your ai", "import", "grok bot", "chatgpt", "claude", "dots", "duet", "learn about me", "export"] }),
 ];
 
 // ---- Bots (L4) ----

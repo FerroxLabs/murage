@@ -9,23 +9,54 @@ import { t } from "./i18n";
 import { callNative, nativeAvailable } from "./native-shell";
 
 export type BulkKindKey = "command" | "edit" | "app" | "other";
-export const BULK_REASON_KEYS = ["always-ask", "pay", "message", "delete", "needs-look", "held", "unattended", "truncated", "local-computer", "routine", "origin", "not-approval", "not-open"] as const;
-export type BulkReasonKey = typeof BULK_REASON_KEYS[number];
+import { BULK_REASON_KEYS, reasonLine, type BulkReasonKey } from "./approval-row";
+export { BULK_REASON_KEYS, reasonLine, type BulkReasonKey };
 
-export interface EligibleCard { threadId: string; requestId: string; botId?: string; kindLine: BulkKindKey; digest: string; card: DigestCard }
+/** `messageId` is the Inbox row the card is (a press binds to the rows on screen); `wants` is the bot's own line the
+ *  phone sheet shows. Neither is in the digest. */
+export interface EligibleCard { threadId: string; requestId: string; messageId?: string; wants?: string; botId?: string; kindLine: BulkKindKey; digest: string; card: DigestCard }
 export interface ExcludedCard { threadId: string; requestId: string; botId?: string; summary: string; reasonKey: BulkReasonKey }
 export interface ApproveAllPreview { batchId: string | null; eligible: EligibleCard[]; excluded: ExcludedCard[]; more: number; deviceId?: string }
 export interface ApproveAllSurface { show: boolean; app?: "desktop" | "phone"; cautionDismissed?: boolean }
 export interface ApplyResult { threadId: string; requestId: string; result: "approved" | "skipped" | "not-applied"; reason?: string }
 
+/** The Inbox views that offer Approve all: Approvals, and Needs you (`decisions`, the default tab; Sean 11-06: three
+ *  approval rows and no Approve all). Elsewhere null. APPROVALS-SIMPLE-1018 section 3 (Astra r1 H4): the count is the
+ *  rows ON SCREEN the server stamped `bulk: "ok"` (the same verdict the preview and respond run), never the page's
+ *  approval count, so the button never says a number it would not approve. Under 2 it stays away. */
+export function approveAllHint(view: string, shown: ReadonlyArray<{ kind?: string; bulk?: string }>): number | null {
+  if (view !== "approvals" && view !== "decisions") return null;
+  return shown.filter((item) => item.kind === "request" && item.bulk === "ok").length;
+}
+
+/** Section 3b: the list's generation token, the set of displayed request rows. It moves when that set changes, never
+ *  on a quiet poll that reads the same rows back. */
+export function listToken(keys: readonly string[]): string {
+  return [...new Set(keys)].sort().join("\n");
+}
+
+/** Section 3 (Astra r1 H4): a press answers exactly the rows on screen stamped ok that the preview also lists. Any
+ *  such row the preview does not list means the list moved under the press: nothing is applied ("changed"). A preview
+ *  that lists none of them: "none" ("Nothing left to approve."). */
+export function boundToScreen(preview: ApproveAllPreview, shownKeys: readonly string[]): { at: "cards"; cards: EligibleCard[] } | { at: "changed" } | { at: "none" } {
+  const keyOf = (card: EligibleCard) => (card.messageId ? `${card.threadId}\u0000${card.messageId}` : "");
+  const listed = new Set(preview.eligible.map(keyOf).filter(Boolean));
+  if (!preview.batchId || preview.eligible.length === 0 || shownKeys.length === 0) return { at: "none" };
+  if (shownKeys.some((key) => !listed.has(key))) return { at: "changed" };
+  const shown = new Set(shownKeys);
+  const cards = preview.eligible.filter((card) => shown.has(keyOf(card)));
+  return cards.length ? { at: "cards", cards } : { at: "none" };
+}
+
+/** Section 3b: a result line stays while the list only loses rows it was pressed over (the apply answering them);
+ *  a row that was not there at the press means the list moved, and the line goes. */
+export function resultSurvives(pressKeys: readonly string[], nextKeys: readonly string[]): boolean {
+  const pressed = new Set(pressKeys);
+  return nextKeys.every((key) => pressed.has(key));
+}
+
 const KIND_ORDER: readonly BulkKindKey[] = ["command", "edit", "app", "other"];
 const KIND_KEYS: Record<BulkKindKey, LocaleKey> = { command: "approveAll.kind.command", edit: "approveAll.kind.edit", app: "approveAll.kind.app", other: "approveAll.kind.other" };
-
-/** The short line under "Stays for you" for each reason the server can send. An unknown key reads as "needs its own
- *  look", never as nothing. */
-export function reasonLine(key: string): string {
-  return (BULK_REASON_KEYS as readonly string[]).includes(key) ? t(`approveAll.reason.${key}` as LocaleKey) : t("approveAll.reason.needs-look");
-}
 
 export function kindLine(kind: string, n: number): string {
   return t(KIND_KEYS[(KIND_ORDER as readonly string[]).includes(kind) ? kind as BulkKindKey : "other"], { n });
@@ -77,6 +108,9 @@ export function previewGate() {
     accepts(token: number): boolean { const ok = token === generation && !signing; if (token === generation) loading = false; return ok; },
     sign(): boolean { if (signing || loading) return false; signing = true; return true; },
     done(): void { signing = false; loading = false; generation += 1; },
+    /** Section 3b: the list moved. A preview still loading is dropped when it lands (it never restores a sheet); a sign
+     *  or apply already in flight keeps its lock until it settles. */
+    retire(): void { generation += 1; loading = false; },
     get signing(): boolean { return signing; },
   };
 }

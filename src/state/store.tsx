@@ -1,5 +1,6 @@
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
-import { createNewTaskOnce } from "./new-task-once";
+import { createNewTaskOnce, NEW_TASK_DEADLINE_MS, NewTaskStalled, withDeadline } from "./new-task-once";
+import { t } from "@/lib/i18n";
 import { requestMemoryWake } from "@/lib/memory-integrity-wake";
 import { probeInstances } from "@/lib/instances-probe";
 import { projectEvents, type ProjectFrame } from "@/lib/project-events";
@@ -17,6 +18,7 @@ import { EMAIL_STATUS_EVENT } from "@/lib/email-status-event";
 import type { SharedRow, SharedWorkMarker } from "@/lib/shared-teams";
 import { requestFailedSentence } from "@/lib/request-failed";
 import type { TaskResourceWait } from "@/lib/resource-wait";
+import type { BotSettingsSection } from "@/components/bot-settings-sections";
 import {
   createContext,
   useCallback,
@@ -31,7 +33,7 @@ import {
 import type { CloudBackend, EffortLevel, Subtask } from "../../server/contracts.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../../shared/provider-error";
 import type { RuntimeErrorDiagnostic } from "../../shared/error-diagnostic";
-import type { UsageMonth } from "../../shared/usage-month";
+import type { RoutineUsageMonth, UsageMonth } from "../../shared/usage-month";
 import { hostStoppedReason } from "../../shared/host-stop";
 import { sendNoticeCode, type SendNoticeCode } from "../../shared/send-notice";
 import { sendNoticeFromBody } from "@/lib/send-notice";
@@ -88,7 +90,7 @@ import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcr
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
-import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, type OutboxDraft } from "./send-delivery";
+import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type VenuePostPick } from "./send-delivery";
 import { checkPinnedDrafts, draftJournal, forgetDeletedDrafts, migrateLegacyDrafts, noteRefusedChips, releaseRecoveredSend, setDraftOwnerCheck, setDraftSendLookup, settleDraftSend, type DraftSendLookupResult } from "@/lib/drafts";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
 import { onSaveFailed } from "@/lib/save-file";
@@ -101,6 +103,7 @@ import { deletionErrorSentence, deletionNote, owedNote, type OwedLine } from "@/
 import { ANSWER_TTL_MS, answerClock, carryAnswerTag, fromAnswer, sentAtOf, tagAnswer, type HttpOrigin, type RoomOrigin } from "./answer-tag";
 export { asAnswer, freshAnswer, fromAnswer } from "./answer-tag";
 import { hiddenPatchFrom } from "@/lib/record-numbers";
+import { holdForBotPage } from "@/lib/settings-leave";
 import { requestPage } from "./page-intent";
 export { newDeleteAttempt, requestPage } from "./page-intent";
 
@@ -150,6 +153,8 @@ export interface OptionCardData {
   summary?: string;
   /** the tool input was cut short for display; the approval digest reads it */
   toolInputTruncated?: boolean;
+  /** APPROVALS-SIMPLE-1018: what the bot says it wants, one line, for "{bot} wants to {wants}" (display only) */
+  wants?: string;
   /** the push body the server sent for this ask */
   pushBody?: string;
   /** why auto mode stopped to ask anyway */
@@ -266,6 +271,10 @@ export interface SecretRequestCardData {
 }
 
 export interface Message {
+  /** CROSS-CHAT-READ-1019: the room row of a bot's share request; the card body is fetched for the owner (GET /api/room-shares/:id). */
+  roomShareId?: string;
+  /** CROSS-CHAT-READ-1019: an owner line the owner shared into the room from a chat with this bot. */
+  sharedFrom?: { botId: string; shareId: string };
   /** Bot calls 1.0.9 (design 8): this row is the call card of one intent (server/bot-calls-card.ts); ChatView renders BotCallCard. */
   botCall?: import("@/lib/bot-calls").BotCallMark;
   /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
@@ -310,7 +319,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string } };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; busy?: { engine: string; reason: "busy" | "credit" | "unresolved" | "hold" | "freeCap" }; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** 1.0.18 U6 E15: the turn ended with this step still open ("No result"). */ unrecorded?: boolean; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** a steered message the bot has not confirmed yet; cleared when it does */
@@ -366,6 +375,8 @@ export interface Message {
   /** rooms: bots no longer see this reply; it used something the owner
    * forgot, deleted or changed. The owner still does. */
   withheldFromBots?: boolean | "forgotten" | "checking";
+  /** VENUE-POST-1017: a bot posted this from its own chat with the owner (Post in…). */
+  postedFrom?: { botId: string; threadId: string };
 }
 
 export type GroupDefaultResponder =
@@ -593,6 +604,8 @@ export interface Bot {
   usageTotal?: TaskUsage;
   /** What the bot used per local calendar month ("YYYY-MM"); the Usage page reads this month's. */
   usageMonths?: Record<string, UsageMonth>;
+  /** The routines' share of usageMonths, by month then routine id; the Usage page reads this month's. */
+  usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>>;
   /** The "Always allow" keys across every task, each once. */
   grantsAll?: string[];
   /** Rows outside the window this client asked for by thread id. Never sent. */
@@ -910,6 +923,8 @@ export interface ConfigStatus {
   profile?: { name: string; email: string };
   /** UI language override; "" (or absent) follows the system language. */
   language?: string;
+  /** The monthly limit (a heads-up only) and the server's Flux key fingerprint, never a figure (src/lib/spend-meter.ts). The desktop's only; absent elsewhere. */
+  spend?: { monthlyLimitUsd: number | null; headsUpLeft: string | null; keyFingerprint: string | null };
   /** Opt-in flags. Absent means off. */
   features?: { skillRecorder: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
   /** Named browser sessions any bot can be pointed at. */
@@ -938,7 +953,7 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "features" | "browserProfiles" | "harness"
+  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -962,6 +977,7 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     notifications: frame.notifications,
     profile: frame.profile,
     language: frame.language,
+    spend: frame.spend,
     features: frame.features,
     browserProfiles: frame.browserProfiles,
     harness: frame.harness,
@@ -1040,7 +1056,9 @@ export type { AppSettingsSection };
  *  another section an Edit link in "What shapes <bot>" points at. */
 export type BotSettingsIntent =
   | { section: "skills"; addSkill: boolean }
-  | { section: "shapes" | "identity" | "memory" | "permissions" | "teams" | "learning"; addSkill?: undefined };
+  | { section: "shapes" | "identity" | "memory" | "permissions" | "teams" | "learning"; addSkill?: undefined }
+  /** A Settings address (lib/settings-address.ts): any section, and the row to highlight when the address names one. */
+  | { section: BotSettingsSection; anchor?: string; addSkill?: undefined };
 
 /** GET /api/instances `shellEnvironment` (Rule 74a): whether engines run with the owner's shell environment read this session,
  *  a kept one (with when and why it could not be re-read), or the app's own. */
@@ -1087,6 +1105,8 @@ export interface AppState {
   /** Where the bot window opens next: a section, and for Skills whether the
    *  picker starts open ("Add a skill" from the sidebar). Read once. */
   botSettingsIntent?: BotSettingsIntent | null;
+  /** The bot the Settings window shows when it was opened on one from its Bots group; null means the selected bot. */
+  settingsBotId?: string | null;
   pluginsOpen: boolean;
   /** Which half the Connected apps panel opens on (Settings > Connected
    *  apps has a button for each). Read when the panel mounts. */
@@ -1547,6 +1567,9 @@ export type Action =
       /** Minted fresh by each Send again press; an automatic retry of the press replays it. */
       actionId?: string;
       replyToId?: string;
+      /** VENUE-POST-1017: the composer's Post in… pick and the reply it quotes, on both send paths. */
+      postTo?: VenuePostPick;
+      quoteMessageId?: string;
       threadId?: string;
       /**
        * Runs once the server has ACCEPTED the message, queued or delivered.
@@ -1677,7 +1700,8 @@ export type Action =
   | { type: "renameTask"; botId: string; threadId: string; title: string }
   | { type: "pinTask"; botId: string; threadId: string; pinned: boolean }
   | { type: "deleteTask"; botId: string; threadId: string }
-  | { type: "newBot" }
+  /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
+  | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
   | ({ type: "botAdded"; bot: Bot } & HttpOrigin)
   /** The person deleted a bot (the sidebar, or the archived list with `archived`): removed at once, pending until the DELETE's own
    * answer or the deletion frame (§2.7). `attempt` is a client nonce (newDeleteAttempt); `onSettled` is a local hook, never sent. */
@@ -1731,7 +1755,7 @@ export type Action =
       /** the answer to the owner's own dismiss: the list as the server has it after the dismiss, applied even under the revision its own
        * broadcast already carried (that broadcast may have been seen first), so only the lines it covered go and any other owed line stays */
       answer?: boolean }
-  | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent }
+  | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent; botId?: string }
   | { type: "clearBotSettingsIntent" }
   | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
   | { type: "toggleComputer"; open?: boolean }
@@ -2075,6 +2099,8 @@ function updateBot(state: AppState, botId: string, fn: (b: Bot) => Bot): AppStat
  * nothing for it (STOP2). */
 function activityMotion(message: Message): Exclude<EmberMotion, "none"> | null {
   if (message.tool?.ok === false) return hostStoppedReason(message.tool.name) === undefined && sendNoticeCode(message.tool.name) === undefined ? "failure" : null;
+  // 1.0.18 U6 E15: a step marked "No result" has ended; it plays nothing
+  if (message.tool?.unrecorded === true) return null;
   return message.tool?.ok === true ? "success" : "working";
 }
 
@@ -2934,6 +2960,12 @@ const SHELL_OVERLAYS_CLOSED = { settingsOpen: false, computerOpen: false, inspec
 /** The first roster of a launch, for an owner whose setup is finished, with nothing chosen yet: Today. */
 export function landsOnToday(state: Pick<AppState, "hydrated" | "activeView" | "conversationPicks">, resumeId: string | undefined): boolean {
   return !state.hydrated && Boolean(resumeId) && state.activeView === "chat" && (state.conversationPicks ?? 0) === 0;
+}
+
+/** The bot the bot-settings window shows when it opens without one named: the selected bot, as App resolves it. */
+function settingsShownBotId(state: AppState): string | null {
+  if (state.groups.some((group) => group.id === state.selectedId)) return null;
+  return (state.bots.find((bot) => bot.id === state.selectedId) ?? state.bots[0])?.id ?? null;
 }
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -3909,6 +3941,9 @@ function reduceState(state: AppState, action: Action): AppState {
         ...state,
         settingsOpen: open,
         botSettingsIntent: open ? action.intent ?? null : null,
+        // A section-only open while the window is up (an Edit link in "What shapes") stays on the bot it shows.
+        // Pinned to the bot it opens on, so a chat switch behind the window (a select, a new message) never swaps the page.
+        settingsBotId: open ? action.botId ?? (state.settingsOpen ? state.settingsBotId ?? null : null) ?? settingsShownBotId(state) : null,
         computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
         appSettingsOpen: open ? false : state.appSettingsOpen,
@@ -4735,7 +4770,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 api(`/api/bots/${entry.botId}/messages`, {
                   method: "POST",
                   signal,
-                  body: JSON.stringify({ text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
+                  body: JSON.stringify({ text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...venuePostBody(entry), ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
                 }),
               ),
         releaseRefused: (sendId) => {
@@ -4941,6 +4976,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // The latest task switch per bot: an answer to an earlier one is not applied.
     const switchSeq: Record<string, number> = {};
     const newTaskOnce = createNewTaskOnce();
+    // a room's New conversation, once per action the same way (keyed by room id, its own map so a room id never meets a bot id)
+    const newGroupTaskOnce = createNewTaskOnce();
 
     // ── A bot Delete the person asked for (BOTADDED-DESIGN-V3 r6 §2.7) ──
     // Sent with its attempt id; an answer carrying the server's own JSON error is a refusal (shown, the bot fetched again); no answer
@@ -5014,6 +5051,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
 
     const wrapped: React.Dispatch<Action> = (action) => {
+      // The one way out of a bot's settings page (lib/settings-leave.ts): an action that would take the page away asks its
+      // unsaved-edit question first and runs again, once, on yes.
+      if (holdForBotPage(stateRef.current, action, () => wrapped(action))) return;
       if (pendingThreadActionBlocked(stateRef.current, action)) {
         const error = new Error("The replacement conversation is still loading. Wait for its transcript before sending or responding.");
         showError(error);
@@ -5120,6 +5160,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 threadId,
                 text: action.text,
                 ...(action.replyToId ? { replyToId: action.replyToId } : {}),
+                ...venuePostBody(action),
                 ...(action.outboxDraft ? { draft: action.outboxDraft } : {}),
                 ...(action.resend ? { resend: true as const, ...(action.restoreGen ? { restoreGen: action.restoreGen } : {}), ...(action.stopGen ? { stopGen: action.stopGen } : {}), ...(action.actionId ? { actionId: action.actionId } : {}) } : {}),
                 at: Date.now(),
@@ -5139,7 +5180,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // the same sendId on every repeat: a busy answer means the send did not run, and a repeat that did is deduplicated
             retryWhileBusy(() => api(`/api/bots/${action.botId}/messages`, {
               method: "POST",
-              body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId }),
+              body: JSON.stringify({ text: action.text, replyToId: action.replyToId, threadId, sendId, ...venuePostBody(action) }),
             })).then(() => action.onSent?.()).catch((error) => {
               if (action.onError?.(error) !== true) showError(error);
             });
@@ -5361,6 +5402,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (card?.requestId) {
             const behavior = card.skillRequest
               ? skillRequestBehavior(action.answer)
+              // a held Post in… card (server/venue-post-held.ts): Post it is the owner's yes, Don't post a no
+              : card.requestId.startsWith("venue-post-") ? (action.answer === "Post it" ? "allow" : "deny")
               : action.answer === "Allow" ? "allow" : action.answer === "Deny" ? "deny" : "answer";
             const requestId = card.requestId;
             const reviewedSha256 = behavior === "allow" && card.skillRequest ? reviewedSkillSha256(card.skillRequest) : undefined;
@@ -5426,9 +5469,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           persistCard(action.botId, action.messageId, { dismissed: false });
           break;
         case "newBot":
-          api("/api/bots", { method: "POST" })
-            .then(({ bot }) => rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot }))
-            .catch(showError);
+          api("/api/bots", action.profile ? { method: "POST", body: JSON.stringify({ name: action.profile.name, description: action.profile.description }) } : { method: "POST" })
+            .then(({ bot }) => {
+              rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot });
+              action.onSettled?.(null);
+            })
+            // A caller that says what happened (the Hire sheet) shows the refusal itself, with the owner's draft kept.
+            .catch((error: unknown) => (action.onSettled ? action.onSettled(error) : showError(error)));
           break;
         case "duplicateBot": {
           const source = stateRef.current.bots.find((b) => b.id === action.botId);
@@ -5619,9 +5666,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // never an unloaded thread, nor rows that predate a rehydrate: the cache holds only pages this client fetched and kept current
           if (leaving && !leaving.awaitingThreadSnapshot && !leaving.messagesUnloaded && !leaving.pageStale && !leaving.firstPageEvents) conversationCache()?.put(cachedPage(leaving));
           newTaskOnce(action.botId, action.cwd, () => requestPage(rawDispatch, stateRef.current, action.botId), (intent) => {
-            return api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}" })
+            // With a deadline, as a room's: a request that never answers would hold the guard, and New conversation, for good.
+            return withDeadline(NEW_TASK_DEADLINE_MS, (signal) => api(`/api/bots/${action.botId}/tasks`, { method: "POST", body: action.cwd ? JSON.stringify({ cwd: action.cwd }) : "{}", signal }))
               .then((r: any) => r?.bot && dispatch({ type: "taskSwitched", ...fromAnswer(r.bot), bot: r.bot, intent }))
-              .catch(showError);
+              .catch((e) => showError(e instanceof NewTaskStalled ? new Error(t("newConversation.stalled")) : e));
           });
           break;
         }
@@ -5696,9 +5744,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         // Channel tasks mirror bot tasks, but hydrate the whole channel so
         // switching atomically replaces its transcript, folder and pin.
         case "newGroupTask":
-          api(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}" })
-            .then((r: any) => r?.group && dispatch({ type: "groupPatched", origin: fromAnswer(r.group), group: r.group }))
-            .catch(showError);
+          // With a deadline: a request that never answers would hold the guard, and the button, for good.
+          newGroupTaskOnce(action.groupId, undefined, () => undefined, () =>
+            withDeadline(NEW_TASK_DEADLINE_MS, (signal) => api(`/api/groups/${action.groupId}/tasks`, { method: "POST", body: "{}", signal }))
+              .then((r: any) => r?.group && dispatch({ type: "groupPatched", origin: fromAnswer(r.group), group: r.group }))
+              .catch((e) => showError(e instanceof NewTaskStalled ? new Error(t("newConversation.stalled")) : e)));
           break;
         case "switchGroupTask":
           api(`/api/groups/${action.groupId}/tasks/${action.threadId}?messages=${MESSAGE_PAGE_SIZE}`, { method: "POST" })

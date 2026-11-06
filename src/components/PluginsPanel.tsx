@@ -26,6 +26,7 @@ import {
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import { FLUX_DASHBOARD_BILLING_PAGE } from "../../shared/flux-links";
 import {
   appCountLabel,
   appsClaimFor,
@@ -190,7 +191,7 @@ export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
-export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+export const FLUXROUTER_BILLING_URL = FLUX_DASHBOARD_BILLING_PAGE;
 const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
 
 /** The cut-off date as people read it; null when absent or unparseable. */
@@ -796,7 +797,10 @@ export function PluginsPanel() {
       return;
     }
     if (action === "billing") {
-      window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
+      // the system browser on desktop, Cloud and phone (a blank tab opened first in a plain browser, no opener): the billing page
+      // goes through Flux sign-in (shared/flux-links.ts), and a raw window.open answered nothing on Cloud and phone. A blocked
+      // pop-up stays quiet, as before.
+      void openExternalPage(FLUXROUTER_BILLING_URL, "").catch((error: unknown) => console.warn("[plugins] the Flux billing page did not open (a blocked pop-up stays quiet)", error));
       return;
     }
     if (action === "keep-legacy") {

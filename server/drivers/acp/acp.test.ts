@@ -22,7 +22,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
@@ -541,9 +541,36 @@ describe("ACP turns (fake CLI)", () => {
       }
       const completed = recorder.events.filter(e => e.type === "turn.completed");
       expect(completed).toHaveLength(2);
-      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5, ...(shape === "fuigo" ? { cachedInput: 30 } : {}) } });
       if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
     } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  // upstream #1993: OpenCode keeps cache reads out of inputTokens. Counting
+  // only inputTokens as the whole prompt, with the cache reads named as its
+  // cached part, made the fresh figure zero on a cached turn.
+  it.each([
+    ["cache-beside", { input: 100, output: 5, cachedInput: 90 }],
+    ["cache-inside", { input: 100, output: 5, cachedInput: 90 }],
+  ] as const)("counts cache reads as part of the whole prompt (%s)", async (shape, want) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create();
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-cache-${shape}`, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject(want);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ usage: want });
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  it("splits cache reads: no total means beside, absent or bad is not zero, Fuigo counts inside", () => {
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 90 }, false)).toEqual({ input: 100, cachedInput: 90 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 0 }, false)).toEqual({ input: 10, cachedInput: 0 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: -1 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 2.5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 100, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 100, cachedInput: 30 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 10, cachedInput: 10 });
   });
 
   it("reads token usage from the root of the prompt result", async () => {
