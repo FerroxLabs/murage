@@ -2,7 +2,31 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
 
-import { NO_CHATS, activeFilterCount, appendChatPage, chatTitle, chatsRequestPath, chatsSearchPath, foldChatHits, groupChats, type ChatRow } from "./all-chats";
+import { NO_CHATS, activeFilterCount, appendChatPage, chatTitle, chatDateRange, chatDateInput, chatDateValue, chatsRequestPath, chatsSearchPath, foldChatHits, groupChats, type ChatRow } from "./all-chats";
+
+it("carries date bounds and grouped cursors into both owner search and list requests", () => {
+  const from = chatDateInput("2026-10-01")!, to = chatDateInput("2026-10-26", true)!;
+  expect(chatDateValue(to, true)).toBe("2026-10-26");
+  expect(chatDateValue(from)).toBe("2026-10-01");
+  expect(chatDateInput("")).toBeUndefined();
+  const filters = { date: "custom" as const, dateFrom: from, dateTo: to, pinned: true, unread: true, archived: true };
+  for (const path of [chatsRequestPath(filters, null), chatsSearchPath("lease", filters, 40, "59:thread")]) {
+    const params = new URL(path, "http://fixture").searchParams;
+    expect(params.get("date_from")).toBe(String(from));
+    expect(params.get("date_to")).toBe(String(to));
+    expect(params.get("pinned")).toBe("1");
+    expect(params.get("unread")).toBe("1");
+    expect(params.get("archived")).toBe("1");
+  }
+  expect(chatsSearchPath("lease", filters, 40, "59:thread")).toContain("before=59%3Athread");
+  const today = chatDateRange("today", new Date(2026, 9, 26, 12).getTime());
+  expect(new Date(today.dateFrom!).getHours()).toBe(0);
+  expect(new Date(today.dateTo!).getDate()).toBe(27);
+  expect(new Date(chatDateRange("week", new Date(2026, 9, 26).getTime()).dateFrom!).getDate()).toBe(20);
+  expect(chatDateValue(chatDateRange("month", new Date(2026, 2, 31).getTime()).dateFrom)).toBe("2026-02-28");
+  expect(chatDateRange(undefined, Date.now())).toEqual({ date: undefined, dateFrom: undefined, dateTo: undefined });
+});
+
 import type { SearchHit } from "./search-hit";
 
 const NOW = Date.parse("2026-10-24T12:00:00-04:00");
@@ -18,12 +42,12 @@ describe("the All chats request", () => {
   });
 
   it("asks the message search for the chats view, where a forgotten line is never a hit", () => {
-    expect(chatsSearchPath(" austin lease ")).toBe("/api/search?q=austin%20lease&limit=40&view=chats");
+    expect(chatsSearchPath(" austin lease ")).toBe("/api/search?q=austin%20lease&limit=40&view=chats&group_by=thread");
   });
 
   it("sends every record filter to message search before the server applies the hit limit", () => {
     const params = new URL(chatsSearchPath("lease", { botId: "ember", groupId: "move", pinned: true, unread: true, archived: true, routines: true }), "http://fixture").searchParams;
-    expect(Object.fromEntries(params)).toEqual({ q: "lease", limit: "40", view: "chats", bot: "ember", group: "move", pinned: "1", unread: "1", archived: "1", routines: "1" });
+    expect(Object.fromEntries(params)).toEqual({ q: "lease", limit: "40", view: "chats", bot: "ember", group: "move", pinned: "1", unread: "1", archived: "1", routines: "1", group_by: "thread" });
   });
 
   it("uses chat for the placeholder while preserving routine task titles", () => {
@@ -80,6 +104,7 @@ describe("message matches", () => {
   it("folds hits to one row per chat with the count, newest hit standing for the chat", () => {
     const rows = foldChatHits([hit("t1", "m3"), hit("t2", "m9"), hit("t1", "m1")], {}, () => ({}));
     expect(rows.map((r) => [r.threadId, r.hit.messageId, r.count])).toEqual([["t1", "m3", 2], ["t2", "m9", 1]]);
+    expect(foldChatHits([hit("t1", "m3", { hits: 73 })], {}, () => ({}))[0]?.count).toBe(73);
   });
 
   it("applies the Bot, Project or channel, Pinned, Unread, Archived and routine filters", () => {

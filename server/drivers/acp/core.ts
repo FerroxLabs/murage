@@ -1702,6 +1702,20 @@ export function acpRetryDiscard(init: any): boolean {
   return init?.agentCapabilities?._meta?.["fuigo/capabilities"]?.retryDiscard?.version === 1;
 }
 
+/** One prompt's usage as the whole prompt plus its cached part. Cache writes
+ * stay out of `input`. An absent or bad cache count gives no `cachedInput`:
+ * absent is not zero. `inside` says the agent counts cache reads inside
+ * inputTokens; otherwise totalTokens decides, and with no total the reads are
+ * taken as beside it (the ACP shape opencode sends). */
+export function splitAcpCacheReads(usage: any, inside: boolean): { input: number; cachedInput?: number } {
+  const input = typeof usage?.inputTokens === "number" ? usage.inputTokens : 0;
+  const output = typeof usage?.outputTokens === "number" ? usage.outputTokens : 0;
+  const cached = usage?.cachedReadTokens;
+  if (!Number.isSafeInteger(cached) || cached < 0) return { input };
+  const beside = !inside && cached > 0 && (typeof usage.totalTokens !== "number" || usage.totalTokens >= input + output + cached);
+  return beside ? { input: input + cached, cachedInput: cached } : { input, cachedInput: Math.min(cached, Math.max(0, input)) };
+}
+
 export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> {
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
@@ -2632,7 +2646,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, /** the text streamed so far under textMessageId only (C7): a replay re-sends one message, not the turn */ messageText: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
           /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
            *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
           deniedBy: undefined as "user" | "timeout" | "system" | undefined };
@@ -3991,6 +4005,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // rows already emitted stay, they ran.
               onRetryState(u);
               break;
+            case "config_notice":
+              // Fuigo 1.0.40 answers reopenNotice with one English line after a
+              // folder-trust grant. Every grant is Murage's own reply, and that
+              // reply already left a localized chip naming the sources
+              // ("trusted folder:" / "trust chosen:"), so this line is not shown
+              // a second time.
+              break;
             case "response_completed":
               // a response boundary: a later discard without streamStartMs
               // never reaches back past it, and its text may now be closed
@@ -4112,9 +4133,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 });
               } else if (typeof delta === "string" && delta) {
                 const messageId = typeof u.messageId === "string" ? u.messageId : null;
+                if (messageId === null || messageId !== state.textMessageId) state.messageText = "";
                 if (support.resendsReasoningReply && messageId !== null && messageId === state.textMessageId
-                    && isReasoningReplay(delta, state.text)) break;
+                    && isReasoningReplay(delta, state.messageText)) break;
                 state.textMessageId = messageId;
+                if (support.resendsReasoningReply) state.messageText += delta;
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 state.text += delta;
@@ -5099,10 +5122,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // question cards (ASK3); a URL is shown, never fetched. An engine
                 // that gates folders is told this client can ask the owner
                 // (FUIGOTRUST1), so it never has to decide "untrusted" alone.
+                // reopenNotice (Fuigo 1.0.40, generation 2 only): after a grant
+                // mid-session the engine sends one `config_notice`; an older
+                // Fuigo ignores the field. Murage's own chip stays the owner's
+                // message (see the config_notice case in handleHelperUpdate).
                 clientCapabilities: {
                   fs: { readTextFile: false, writeTextFile: false },
                   elicitation: { form: {}, url: {} },
-                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": trustGeneration === 2 ? { interactive: true, v2: true } : { interactive: true } } } : {}),
+                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": trustGeneration === 2 ? { interactive: true, v2: true, reopenNotice: true } : { interactive: true } } } : {}),
                 },
               },
               INIT_TIMEOUT,
@@ -5591,20 +5618,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // The root is ACP per-prompt usage. Fuigo's nested usage is the
             // whole prompt; its sibling fields describe only the last call.
             const promptUsage = result?.usage ?? (DRIVER_KIND === "fuigoAgent" ? result?._meta?.usage : undefined);
-            if (promptUsage && Number.isSafeInteger(promptUsage.inputTokens) && promptUsage.inputTokens >= 0
+            // `input` is the whole prompt and `cachedInput` names its cached
+            // part, as in the Claude driver and the store. Fuigo's nested
+            // usage counts cache reads inside inputTokens. Root ACP usage
+            // differs by agent: opencode 1.18.25 keeps only the uncached share
+            // in inputTokens and puts cache reads beside it (upstream #1993),
+            // so totalTokens tells the two shapes apart.
+            const promptSplit = promptUsage ? splitAcpCacheReads(promptUsage, DRIVER_KIND === "fuigoAgent" && !result?.usage) : null;
+            if (promptSplit && Number.isSafeInteger(promptUsage.inputTokens) && promptUsage.inputTokens >= 0
               && Number.isSafeInteger(promptUsage.outputTokens) && promptUsage.outputTokens >= 0) {
-              settledUsage = { input: promptUsage.inputTokens, output: promptUsage.outputTokens,
-                ...(Number.isSafeInteger(promptUsage.cachedReadTokens) && promptUsage.cachedReadTokens >= 0 ? { cachedInput: promptUsage.cachedReadTokens } : {}) };
+              settledUsage = { input: promptSplit.input, output: promptUsage.outputTokens,
+                ...(promptSplit.cachedInput !== undefined ? { cachedInput: promptSplit.cachedInput } : {}) };
               if (DRIVER_KIND === "fuigoAgent" && !promptUsage.costIsPartial && !promptUsage.usageIsIncomplete
                 && Number.isFinite(promptUsage.costUsdTicks) && promptUsage.costUsdTicks >= 0) settledCharge = promptUsage.costUsdTicks / 1e10;
             }
             const usage = promptUsage ?? result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
+              const split: { input: number; cachedInput?: number } = usage === promptUsage && promptSplit ? promptSplit : { input: usage.inputTokens ?? 0 };
               emit({
                 ...base(threadId, turnId),
                 type: "thread.token-usage.updated",
-                input: usage.inputTokens ?? 0,
+                input: split.input,
                 output: usage.outputTokens ?? 0,
+                ...(split.cachedInput !== undefined ? { cachedInput: split.cachedInput } : {}),
               });
             }
             const reason = result?.stopReason;

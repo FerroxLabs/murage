@@ -703,6 +703,8 @@ let permissionAskedAt: number | null = null;
 let folderTrustInteractive = false;
 const trustV2 = process.env.FAKE_ACP_TRUST_V === "2";
 let folderTrustClientV2 = false;
+/** Fuigo 1.0.40: a client that set reopenNotice gets one `config_notice` after a grant. */
+let folderTrustReopenNotice = false;
 /** Keys a reject silenced: Fuigo keeps these for the life of the process, nowhere else. */
 const trustRejected = new Set<string>();
 /** Keys a `duration: "process"` trust covers (Fuigo 1.0.38): this process only, never the store. */
@@ -1232,6 +1234,11 @@ function handle(msg: any) {
         else persistGrant(trustWorkspace());
       } else trustRejected.add(trustWorkspace());
     }
+    // Fuigo 1.0.40: one live notice after a grant, only to a client that opted in.
+    if (mode === "folder-trust" && msg.id === 9006 && folderTrustReopenNotice && msg.result?.outcome === "trust") {
+      out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: "fake-acp-session", update: { sessionUpdate: "config_notice", message: "Folder trust is on. Reopen this session to use it." } } });
+      dumpState.reopenNoticeSent = ((dumpState.reopenNoticeSent as number | undefined) ?? 0) + 1;
+    }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1275,6 +1282,7 @@ function handle(msg: any) {
       const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       folderTrustClientV2 = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.v2 === true;
+      folderTrustReopenNotice = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.reopenNotice === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1858,6 +1866,13 @@ function handle(msg: any) {
           // the result root with an empty _meta, instead of usage under _meta.
           process.env.FAKE_ACP_USAGE_ROOT === "fuigo"
             ? { stopReason: "end_turn", _meta: { inputTokens: 1, outputTokens: 2, usage: { inputTokens: 100, outputTokens: 50, cachedReadTokens: 30, costUsdTicks: 2500000000 } } }
+            // opencode 1.18.25 (upstream #1993): inputTokens is only the
+            // uncached share, cache reads sit beside it, totalTokens is the sum.
+            : process.env.FAKE_ACP_USAGE_ROOT === "cache-beside"
+            ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
+            // an agent that counts cache reads inside inputTokens
+            : process.env.FAKE_ACP_USAGE_ROOT === "cache-inside"
+            ? { stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
             : process.env.FAKE_ACP_USAGE_ROOT
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },

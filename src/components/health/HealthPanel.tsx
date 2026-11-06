@@ -24,6 +24,12 @@ const AREAS = [
 
 const tick = <span aria-hidden="true" className="text-success">✓</span>;
 
+/** "Fuigo 1.0.39 · Flux Router" with the version the server read from the install receipt; never a pinned number. */
+export function fuigoCardTitle(version: string | null | undefined): string {
+  const bare = version?.replace(/^fuigo\s+/i, "").trim();
+  return bare ? t("ux.l2a.health.fluxCardVersion", { version: bare }) : t("ux.l2a.health.fluxCard");
+}
+
 export function HealthPanel({ answer, folds }: { answer: EngineHealthAnswer | null; folds: readonly HealthFold<HealthIssue>[] }) {
   const { dispatch } = useStore();
   const desktop = useDesktopSurface();
@@ -46,7 +52,7 @@ export function HealthPanel({ answer, folds }: { answer: EngineHealthAnswer | nu
   return <section aria-labelledby="health-panel-title" className="rounded-xl border border-hairline/50 bg-panel text-[13px]">
     <h2 id="health-panel-title" className="px-4 pt-3 text-[13px] font-semibold text-ink-secondary">{t("ux.l2a.health.checked")}</h2>
     <div className="border-b border-hairline/40 px-4 py-3">
-      <p className="font-medium text-ink">{t("ux.l2a.health.fluxCard")}</p>
+      <p className="font-medium text-ink">{fuigoCardTitle(answer?.fuigoVersion)}</p>
       <p className="mt-0.5 text-ink-secondary">{answer ? fluxPanelLine(answer.flux, answer.fluxInfo) : t("ux.l2a.health.flux.checking")}</p>
     </div>
     {used.length > 0 && <div className="border-b border-hairline/40 px-4 py-3">
