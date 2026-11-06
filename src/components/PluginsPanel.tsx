@@ -26,6 +26,7 @@ import {
 import { useDesktopSurface } from "@/lib/use-surface";
 import { t } from "@/lib/i18n";
 import { openExternalPage } from "@/lib/open-external";
+import { FLUX_DASHBOARD_BILLING_PAGE } from "../../shared/flux-links";
 import {
   appCountLabel,
   appsClaimFor,
@@ -190,7 +191,7 @@ export type ConnectedAppsNotice =
   | { kind: "consent"; body: string; actions: Array<{ id: ConnectedAppsNoticeAction; label: string }> }
   | { kind: "line"; tone: "warning" | "muted"; text: string; action?: { id: ConnectedAppsNoticeAction; label: string } };
 
-export const FLUXROUTER_BILLING_URL = "https://fluxrouter.ai/dashboard/billing";
+export const FLUXROUTER_BILLING_URL = FLUX_DASHBOARD_BILLING_PAGE;
 const CLAIMED_NOTICE_MS = 24 * 60 * 60 * 1000;
 
 /** The cut-off date as people read it; null when absent or unparseable. */
@@ -573,6 +574,8 @@ function ServiceIcon({ card }: { card: ToolkitCard }) {
   );
 }
 
+const CACHED_CATALOG_ERROR = "connectedApps.cachedCatalogError";
+
 export function PluginsPanel() {
   const { state, dispatch } = useStore();
   const desktop = useDesktopSurface();
@@ -796,7 +799,10 @@ export function PluginsPanel() {
       return;
     }
     if (action === "billing") {
-      window.open(FLUXROUTER_BILLING_URL, "_blank", "noopener,noreferrer");
+      // the system browser on desktop, Cloud and phone (a blank tab opened first in a plain browser, no opener): the billing page
+      // goes through Flux sign-in (shared/flux-links.ts), and a raw window.open answered nothing on Cloud and phone.
+      void openExternalPage(FLUXROUTER_BILLING_URL, t("modelSignIn.error.browser"))
+        .catch(() => setError(t("modelSignIn.error.browser")));
       return;
     }
     if (action === "keep-legacy") {
@@ -844,6 +850,7 @@ export function PluginsPanel() {
       .then((r) => {
         if (!mounted.current || request !== catalogRequest.current) return;
         catalogAnswered.current = true;
+        setError((current) => current === CACHED_CATALOG_ERROR ? null : current);
         const answer = catalogAnswerFrom(r);
         setCards(r.cards ?? []);
         setCatalog(answer);
@@ -919,7 +926,11 @@ export function PluginsPanel() {
         setCards(r.cards ?? []);
         setCatalog({ ...catalogAnswerFrom(r), allApps: false });
       })
-      .catch(() => {});
+      .catch(() => {
+        // The checked request still runs; a late cache failure must not
+        // replace its result or an unrelated action error.
+        if (alive && !catalogAnswered.current) setError((current) => current || CACHED_CATALOG_ERROR);
+      });
     void loadCatalog();
     return () => {
       alive = false;
@@ -1539,7 +1550,7 @@ export function PluginsPanel() {
             )}
           </div>
         )}
-        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error}</div>}
+        {error && <div role="alert" className="mx-6 mt-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-8">{error === CACHED_CATALOG_ERROR ? t(CACHED_CATALOG_ERROR) : error}</div>}
 
         <BoxBody ref={scrollRef} className="px-6 pb-7 pt-5 sm:px-8">
           {cards === null && tab === "marketplace" ? (

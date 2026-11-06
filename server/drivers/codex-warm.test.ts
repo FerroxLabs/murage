@@ -152,6 +152,9 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     await create();
     const first = await run("t-hot", "one", base);
     const second = await run("t-hot", "two", { ...base, integrations: agents("tok-2") });
+    // before the pid: a second process then fails here, and the line says why it was started
+    expect(dispatches()[0]).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
+    expect(dispatches()[1]).toBe("codex dispatch thread=t-hot process=reused reason=unchanged");
     expect(second.pid).toBe(first.pid);
     expect(spawns()).toHaveLength(1);
     const methods = (second.seen.calls as Array<{ method: string }>).map((c) => c.method);
@@ -159,8 +162,6 @@ describe("CodexDriver warm app-server (fake app-server)", () => {
     expect(methods.filter((m) => m === "thread/start")).toHaveLength(1);
     expect(methods.filter((m) => m === "thread/resume")).toHaveLength(0);
     expect(methods.filter((m) => m === "turn/start")).toHaveLength(2);
-    expect(dispatches()[0]).toBe("codex dispatch thread=t-hot process=spawned reason=no-process");
-    expect(dispatches()[1]).toBe("codex dispatch thread=t-hot process=reused reason=unchanged");
     expect(closes()).toEqual([]);
     expect(recorder.events.filter((e) => e.type === "turn.completed" && (e as any).ok === true)).toHaveLength(2);
   });

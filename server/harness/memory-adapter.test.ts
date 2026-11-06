@@ -182,7 +182,9 @@ const FUIGO_SOURCE = [
   '  const ok = (r) => send({ jsonrpc: "2.0", id: m.id, result: r });',
   '  if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }] });',
   '  else if (m.method === "authenticate") ok({});',
-  '  else if (m.method === "session/new") ok({ sessionId: "fake-fuigo-session" });',
+  // Fuigo 1.0.36+ acknowledges Murage's launch policy on every session open; without it the turn fails (FUIGO-SCOPE).
+  '  else if (m.method === "session/new") { const sha = m.params && m.params._meta && m.params._meta["fuigo/permissionPolicySha256"];',
+  '    ok({ sessionId: "fake-fuigo-session", ...(sha ? { _meta: { "fuigo/permissionPolicy": { sha256: sha } } } : {}) }); }',
   '  else if (m.method === "session/prompt") { writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));',
   '    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fake-fuigo-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });',
   '    ok({ stopReason: "end_turn" }); }',

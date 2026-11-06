@@ -22,6 +22,7 @@
 //
 // Unknown positions fail closed. A carried line with no lineage row, or a prefix of a thread that is not ready, is carried at UNKNOWN_LSN: the
 // marker reaches it from ANY revoke in that thread. Its mem_lsn folds as 0 and its footprint as FOOTPRINT_STAR.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -109,14 +110,14 @@ let savepoints = 0;
  * with no lineage row reads "checking" (withheld), so a failed write never shows anything. */
 function atomically<T>(tx: DatabaseSync, what: string, fallback: T, work: () => T): T {
   const point = `lineage_${++savepoints}`;
-  try { tx.exec(`SAVEPOINT ${point}`); }
+  try { beginWrite(tx, point); }
   catch (error) { warn(what, error); return fallback; }
   try {
     const out = work();
-    tx.exec(`RELEASE ${point}`);
+    endWrite(tx, point);
     return out;
   } catch (error) {
-    try { tx.exec(`ROLLBACK TO ${point}`); tx.exec(`RELEASE ${point}`); } catch { /* the outer transaction rolls back */ }
+    try { undoWrite(tx, point); } catch { /* the outer transaction rolls back */ }
     warn(what, error);
     return fallback;
   }

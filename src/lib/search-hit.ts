@@ -4,6 +4,8 @@ export interface SearchHit {
   groupId?: string;
   name: string;
   threadId: string;
+  /** Matches in this chat in the searched window. */
+  hits?: number;
   task?: string;
   messageId: string;
   role: string;

@@ -71,10 +71,24 @@ describe("RailDoors", () => {
 describe("the shell wiring", () => {
   const app = read("../../App.tsx");
   const sidebar = read("../Sidebar.tsx");
+  const sidebarWiring = /<Sidebar\s+(?:onLayoutChange=\{onSidebarLayout\}\s+)?needs=\{needs\}\s+health=\{health\}/;
   it("keeps the rail on every view, Routines included", () => {
     expect(app).not.toContain("calendarFocus");
-    expect(app).toMatch(/<Sidebar\s+needs=\{needs\}\s+health=\{health\}/);
+    expect(app).toMatch(sidebarWiring);
     expect(app).toContain("useBotListDrawer(true)");
+  });
+  it("accepts the layout callback while still requiring both rail data bindings", () => {
+    expect("<Sidebar onLayoutChange={onSidebarLayout} needs={needs} health={health} />").toMatch(sidebarWiring);
+    expect("<Sidebar needs={needs} health={health} />").toMatch(sidebarWiring);
+    for (const props of [
+      "health={health}",
+      "needs={needs}",
+      "needs={other} health={health}",
+      "needs={needs} health={other}",
+      "/> <Other needs={needs} health={health}",
+    ]) {
+      expect(`<Sidebar onLayoutChange={onSidebarLayout} ${props} />`).not.toMatch(sidebarWiring);
+    }
   });
   it("renders Today, Needs you and Health in the main slot, the offline band, Undo and the phone tabs", () => {
     expect(app).toContain('state.activeView === "today" && !todayLandingOnHold ? (');
