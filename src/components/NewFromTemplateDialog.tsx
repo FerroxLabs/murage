@@ -97,10 +97,12 @@ export function templateImportUrl(manifest: unknown, reviewed: unknown, acknowle
 
 type Screen = { kind: "choose" } | { kind: "hermes" } | { kind: "preview"; entry: TemplateEntry; preview: PendingTeamImport | null; error: string };
 
-export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCreated }: {
+export function NewFromTemplateDialog({ kind, onClose, onBlank, onHire, onOpenFile, onCreated }: {
   kind: TemplateKind;
   onClose(): void;
   onBlank(): void;
+  /** UX-L6A part 2: hire in one sentence, its own entry beside Start blank (bots only). */
+  onHire?(): void;
   onOpenFile(): void;
   onCreated(result: TeamImportResult): void;
 }) {
@@ -347,9 +349,10 @@ export function NewFromTemplateDialog({ kind, onClose, onBlank, onOpenFile, onCr
           </BoxFoot>
         )}
         {screen.kind === "choose" && (
-          <BoxFoot className="gap-4 border-t border-hairline/40 px-5 py-3 text-[12.5px]">
+          <BoxFoot className="flex-wrap gap-x-4 gap-y-2 border-t border-hairline/40 px-5 py-3 text-[12.5px]">
             {kind === "bot" && hermesDetected(state.instances) && <button type="button" onClick={() => setScreen({ kind: "hermes" })} className="text-ink-secondary hover:text-ink">Import from Hermes…</button>}
             <button type="button" onClick={onOpenFile} className="text-ink-secondary hover:text-ink">Open a file…</button>
+            {kind === "bot" && onHire && <button type="button" onClick={onHire} className="text-ink-secondary hover:text-ink">{t("ux.l6a.hire.entry")} →</button>}
             <button type="button" onClick={onBlank} className="text-ink-secondary hover:text-ink">{kind === "bot" ? "Start blank" : "Pick from my bots"} →</button>
           </BoxFoot>
         )}

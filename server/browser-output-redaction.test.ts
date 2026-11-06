@@ -171,7 +171,11 @@ describe("native diagnostics", () => {
     const native = await import("./drivers/native.ts");
     native.appendNative("thread-out-canary", { dir: "in", source: "test", msg: { tool_result: PAGE_TEXT, nested: { rows: [PAGE_TEXT] } } });
     const text = readFileSync(join(config.NATIVE_DIR, "thread-out-canary.ndjson"), "utf8");
-    expect(text).toContain("tool_result");
+    // ql2 sink fold (was: the line held "tool_result"): a frame of an unknown shape keeps its ids and numbers only, so this one
+    // is an empty record (the row is still written: its time, direction and source)
+    const row = JSON.parse(text.trim().split("\n").at(-1)!);
+    expect(row).toMatchObject({ dir: "in", source: "test" });
+    expect(row.msg).toEqual({});
     expect(leaks(text)).toEqual([]);
   });
   it("the append path keeps the folder inside its budget and ages out an idle previous segment", async () => {

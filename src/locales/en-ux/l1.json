@@ -19,6 +19,7 @@
   "ux.l1.why.unreadCall": "Murage could not read this whole, so it asks. Allow it once if it is right.",
   "ux.l1.why.destructiveGuard": "This looks destructive, so Auto asks. Full access runs it without asking.",
   "ux.l1.why.promptGuard": "This command may wait for a password or input nobody would see, so Murage asks.",
+  "ux.l1.why.outsideContent": "This chat read outside content, so Murage asks before running this.",
   "ux.l1.why.stopGrantNote": "Murage will not ask about {place} again. It still asks when a command could wait for input or reads a key.",
   "ux.l1.why.recipientNotNoted": "Murage could not note {name} as known, so the next email to {name} asks again.",
   "ux.l1.verb.allow": "Allow once",

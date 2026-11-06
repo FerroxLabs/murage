@@ -28,7 +28,8 @@ describe("Approve all copy (APPROVE-ALL-1016 batch B)", () => {
     for (const [i, key] of BULK_REASON_KEYS.entries()) expect(lines[i]).toBe((en as Record<string, string>)[`approveAll.reason.${key}`]);
     expect(new Set(lines).size).toBe(BULK_REASON_KEYS.length);
     expect(reasonLine("brand-new")).toBe(reasonLine("needs-look"));
-    expect(reasonLine("origin")).toBe("Started outside the app");
+    expect(reasonLine("origin")).toBe("started outside the app");
+    expect(reasonLine("sensitive")).toBe("reads keys or passwords");
   });
   it("no new string uses an em dash or the words safe or free", () => {
     const strings = Object.entries(en as Record<string, string>).filter(([key]) => key.startsWith("approveAll."));
@@ -108,10 +109,18 @@ describe("the phone signs the exact ticked set once", () => {
 });
 
 describe("the button follows the server, never a client guess", () => {
-  it("Inbox shows it on Approvals only, and the component reads the server's owner-app answer", () => {
+  it("Inbox shows it on Approvals and on Needs you (Sean 11-06), and the component reads the server's owner-app answer", () => {
     const inbox = readFileSync(new URL("../components/Inbox.tsx", import.meta.url), "utf8");
-    expect(inbox).toMatch(/view === "approvals" && <ApproveAllButton/);
+    expect(inbox).toContain("const approveAllEligible = approveAllHint(view, shownRows);");
+    expect(inbox).toMatch(/approveAllEligible !== null && <ApproveAllButton ready=\{approveAllReady\}/);
+    // APPROVALS-SIMPLE-1018: the count is the rows on screen the server stamped ok (Astra r1 H4)
+    const ok = { kind: "request", bulk: "ok" }, held = { kind: "request", bulk: "delete" };
+    expect(lib.approveAllHint("decisions", [ok, ok, held])).toBe(2);
+    expect(lib.approveAllHint("approvals", [ok, held])).toBe(1);
+    expect(lib.approveAllHint("decisions", [])).toBe(0);
+    for (const other of ["questions", "connections", "routines", "to-read", "results", "all"]) expect(lib.approveAllHint(other, [ok, ok])).toBeNull();
     const component = readFileSync(new URL("../components/ApproveAll.tsx", import.meta.url), "utf8");
+    expect(component).toContain("if (!surface.show) return null;");
     expect(component).toContain('"/api/inbox/approve-all/surface"');
     expect(component).toMatch(/if \(!surface\.show/);
     expect(component).not.toMatch(/localStorage|isDesktopApp|nativeAvailable|userAgent/);
@@ -132,11 +141,20 @@ describe("review fixes on 159ca90ca (H1, H2)", () => {
     return renderToStaticMarkup(createElement(view.ApproveAllSheet as never, { preview, detailed: true, botName: (id?: string) => names[id ?? ""] ?? "A bot", botOf: () => undefined, busy: false, onCancel: () => {}, onApprove: () => {}, ...props }));
   };
 
-  it("H1: the phone sheet shows every card it will sign with its tool, subtitle, summary and held line", () => {
+  it("APPROVALS-SIMPLE-1018: the phone sheet lists every card it will sign by bot, in words and kind, never a command", () => {
     const html = sheet({});
-    for (const text of ["Bash", "npm run build", "Build the site", "Murage checked this command", "Edit", "src/app.ts", "Fix the header", "mcp__notes__add", "Add a note"]) expect(html).toContain(text);
-    // summary equal to the subtitle is shown once, as InboxRequest does
-    expect(html.split("Add a note").length - 1).toBe(1);
+    for (const text of ["Finch wants to run a command", "Finch wants to edit files", "Kessler wants to use a connected app", "Runs a command", "Edits files", "Uses a connected app"]) expect(html).toContain(text);
+    for (const text of ["npm run build", "src/app.ts", "mcp__notes__add", "Bash"]) expect(html).not.toContain(text);
+  });
+
+  it("NOLIMITS merge ruling: a held (outside) card shows its held note on its own row of the rows-at-click list", () => {
+    const html = sheet({});
+    const rows = [...html.matchAll(/<li[^>]*data-request-id="([^"]+)"[^>]*>(.*?)<\/li>/g)].map((m) => [m[1], m[2]] as const);
+    expect(rows.map(([id]) => id)).toEqual(["r1", "r2", "r3"]);
+    expect(rows.filter(([, body]) => body.includes('data-testid="approve-all-held"')).map(([id]) => id)).toEqual(["r1"]);
+    expect(rows[0]![1]).toContain("Murage checked this command");
+    const narrowed = sheet({ cards: [eligible[1], eligible[2]] });
+    expect(narrowed).not.toContain("approve-all-held");
   });
 
   it("H1: the phone signs exactly the ids and hashes the sheet shows", async () => {
@@ -183,7 +201,81 @@ describe("review fixes on 159ca90ca (H1, H2)", () => {
     expect(gate.sign()).toBe(false); // nothing to sign while a preview is still loading
     expect(gate.accepts(again)).toBe(true);
     const component = readFileSync(new URL("../components/ApproveAll.tsx", import.meta.url), "utf8");
-    expect(component).toMatch(/if \(gate\.accepts\(token\)\) setStep\(\{ at: "sheet"/);
+    expect(component).toMatch(/if \(!gate\.accepts\(ticket\) \|\| !live\.current\.mounted\) return;/);
     expect(component).toMatch(/if \(!gate\.sign\(\)\) return;/);
+  });
+});
+
+describe("Opus r2 High: Got it approves exactly the rows seen at the click (designs/APPROVALS-SIMPLE-1018-gotit-design.md)", () => {
+  // gen = Refresh presses | list moves (monotonic) | id-set token
+  const seen = { gen: "0|0|a\nb", ready: ["a", "b"] };
+  const deferred = () => { let done = () => {}; let fail = (_e: Error) => {}; const wait = new Promise<void>((ok, no) => { done = ok; fail = no; }); return { wait, done, fail }; };
+  const liveOf = () => ({ ...seen, ready: [...seen.ready], mounted: true, interaction: 1 });
+
+  it("a list that moves during the Don't show again save applies nothing and says the list changed", async () => {
+    expect(view.continueFromCaution).toBeTypeOf("function");
+    const live = liveOf();
+    const press = view.pressSnapshot(live, 1);
+    const save = deferred();
+    const verdict = view.continueFromCaution(press, () => save.wait, () => live);
+    // a third ready row arrives while the save is out (the 5 s beat): the live list moves
+    live.gen = "0|1|a\nb\nc"; live.ready.push("c");
+    save.done();
+    expect(await verdict).toBe("changed");
+    // the snapshot is a copy taken at the click: it never follows the live rows
+    expect(press.ready).toEqual(["a", "b"]);
+  });
+
+  it("the same list after the save runs, with the snapshot it took at the click", async () => {
+    const live = liveOf();
+    expect(await view.continueFromCaution(view.pressSnapshot(live, 1), async () => undefined, () => live)).toBe("run");
+    expect(await view.continueFromCaution(view.pressSnapshot(live, 1), null, () => live)).toBe("run");
+  });
+
+  it("a failed save is swallowed, and a moved list still applies nothing", async () => {
+    const live = liveOf();
+    const press = view.pressSnapshot(live, 1);
+    const save = deferred();
+    const verdict = view.continueFromCaution(press, () => save.wait, () => live);
+    live.gen = "1|0|a\nb"; // a Refresh during the save
+    save.fail(new Error("offline"));
+    expect(await verdict).toBe("changed");
+    const still = liveOf();
+    expect(await view.continueFromCaution(view.pressSnapshot(still, 1), () => Promise.reject(new Error("offline")), () => still)).toBe("run");
+  });
+
+  it("a list that moves away and back (A->B->A) during the save is still a change (Astra)", async () => {
+    const live = liveOf();
+    const press = view.pressSnapshot(live, 1);
+    const save = deferred();
+    const verdict = view.continueFromCaution(press, () => save.wait, () => live);
+    live.gen = "0|2|a\nb"; // the same rows again, after two moves
+    save.done();
+    expect(await verdict).toBe("changed");
+  });
+
+  it("a stamp that flips on the same rows counts as a change; a left tab or a newer action does nothing", async () => {
+    const live = liveOf();
+    const press = view.pressSnapshot(live, 1);
+    live.ready = ["a"]; // b is no longer ok, the id set (gen) is unchanged
+    expect(view.stillPressed(press, live)).toBe(false);
+    expect(await view.continueFromCaution(press, null, () => live)).toBe("changed");
+    expect(await view.continueFromCaution(press, null, () => ({ ...liveOf(), mounted: false }))).toBe("gone");
+    // Review them first, Cancel or a newer press moved the interaction on: the old save never runs (Astra)
+    expect(await view.continueFromCaution(press, null, () => ({ ...liveOf(), interaction: 2 }))).toBe("gone");
+  });
+
+  it("the component snapshots at the click before any await, binds to the snapshot, re-checks before every post, and the note keeps the button", () => {
+    const component = readFileSync(new URL("../components/ApproveAll.tsx", import.meta.url), "utf8");
+    const gotIt = component.slice(component.indexOf("const gotIt = "), component.indexOf("const press = "));
+    expect(gotIt.indexOf("pressSnapshot(live.current")).toBeGreaterThan(-1);
+    expect(gotIt.indexOf("pressSnapshot(live.current")).toBeLessThan(gotIt.indexOf("await "));
+    expect(gotIt).toMatch(/if \(stepNow\.current\.at !== "caution"\) return;/);
+    expect(component).toMatch(/boundToScreen\(preview, press\.ready\)/);
+    expect(component).not.toMatch(/boundToScreen\(preview, live\.current\.ready\)/);
+    // every apply post and the phone's signed retry
+    expect(component).toMatch(/\(body\) => \{\s*\/\/[^\n]*\n\s*if \(!stillPressed\(press, live\.current\)\)/);
+    // "The list changed" is never a dead end: the note step keeps an enabled Approve all
+    expect(component).toMatch(/\(step\.at === "idle" \|\| step\.at === "note"\) && n >= 2 && <button/);
   });
 });

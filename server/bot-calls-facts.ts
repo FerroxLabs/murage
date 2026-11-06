@@ -18,7 +18,8 @@ export type ServerFact = (
   | { kind: "watch"; botId: string; threadId: string; watchId: string; runId: string; at: number }
   | { kind: "webhook"; botId: string; threadId: string; routineId: string; eventType: string; eventId: string; at: number }
   | { kind: "routine_problem"; problem: "failed" | "needs_you"; botId: string; threadId: string; routineId: string; runId: string; at: number }
-  | { kind: "needs_owner_now"; botId: string; threadId: string; runId: string; line: string; at: number }
+  // `outside`: the source label of a marked turn, so the owner knows what is behind the line (bot-calls-card.ts). Never a permission.
+  | { kind: "needs_owner_now"; botId: string; threadId: string; runId: string; line: string; at: number; outside?: string | null }
 ) & {
   /** Read back from a saved run by the boot re-scan, not seen live: a rule then admits it only when it was neither made nor
    * changed since (updated_at <= at), so a rule switched on after the fact never rings for it (Astra p5 r1 item 2). */
@@ -40,7 +41,7 @@ export function factIdentity(f: ServerFact): { factKey: string; factKind: FactKi
     case "watch": return { factKey: `watch:${f.watchId}:${f.runId}`, factKind: "watch.changed", fields: { watchId: f.watchId, runId: f.runId } };
     case "webhook": return { factKey: `webhook:${f.eventId}`, factKind: "webhook.event", fields: { routineId: f.routineId, eventType: f.eventType } };
     case "routine_problem": return { factKey: `run:${f.runId}`, factKind: f.problem === "failed" ? "routine.failed" : "routine.needs_you", fields: { routineId: f.routineId, runId: f.runId } };
-    case "needs_owner_now": return { factKey: `run:${f.runId}`, factKind: "routine.needs_owner_now", fields: { runId: f.runId } };
+    case "needs_owner_now": return { factKey: `run:${f.runId}`, factKind: "routine.needs_owner_now", fields: { runId: f.runId, ...(f.outside ? { outside: f.outside } : {}) } };
   }
 }
 

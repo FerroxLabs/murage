@@ -29,11 +29,12 @@ describe("bulkEligibility: a positive allowlist, fail closed", () => {
     expect(bulkEligibility(ordinary(), RID)).toEqual({ ok: true });
   });
 
-  it("every verdict source has an explicit answer, and only no-grant may qualify", () => {
+  it("every verdict source has an explicit answer, and only no-grant and an attended routine step may qualify", () => {
     expect(Object.keys(BULK_REASON).sort()).toEqual(Object.keys(REASON_FOLD).sort());
+    const may = new Set(["no-grant", "routine-allow"]); // APPROVALS-SIMPLE-1018 section 4
     for (const [reason, verdict] of Object.entries(BULK_REASON)) {
-      expect(verdict === null).toBe(reason === "no-grant");
-      if (reason !== "no-grant") expect(bulkEligibility(ordinary({}, { reason }), RID).ok).toBe(false);
+      expect(verdict === null).toBe(may.has(reason));
+      if (!may.has(reason)) expect(bulkEligibility(ordinary({}, { reason }), RID).ok).toBe(false);
     }
   });
 
@@ -43,20 +44,16 @@ describe("bulkEligibility: a positive allowlist, fail closed", () => {
     ["message", {}, { stop: { kind: "message", public: true, placed: true, places: 1 } }],
     ["delete", {}, { stop: { kind: "delete", public: false, placed: true, places: 1 } }],
     ["held", {}, { reason: "destructive-guard" }],
-    ["held", {}, { reason: "sensitive-guard" }],
+    ["sensitive", {}, { reason: "sensitive-guard" }],
     ["held", {}, { reason: "prompt-guard" }],
     ["held", {}, { reason: "unread-call" }],
     ["held", {}, { reason: "narrow" }],
     ["unattended", {}, { reason: "unattended-block" }],
     ["unattended", {}, { unattended: true }],
     ["unattended", { unattended: true }, {}],
-    ["routine", {}, { automated: true }],
-    ["routine", {}, { routine: { routineId: "r1" } }],
     ["local-computer", {}, { scope: "local-computer" }],
     ["local-computer", { approvalScope: "local-computer" }, {}],
     ["local-computer", {}, { reason: "local-computer-block" }],
-    ["origin", {}, { origin: "owner-channel" }],
-    ["origin", {}, { origin: "routine" }],
     ["origin", {}, { origin: "other" }],
     ["origin", {}, { origin: undefined }],
     ["held", { held: "Murage held this one." }, {}],
@@ -99,6 +96,14 @@ describe("bulkEligibility: a positive allowlist, fail closed", () => {
   it("lowRisk is advisory and never read", () => {
     expect(bulkEligibility(ordinary({ lowRisk: true }, { reason: "destructive-guard" }), RID).ok).toBe(false);
     expect(bulkEligibility(ordinary({ lowRisk: false }), RID).ok).toBe(true);
+  });
+
+  // NOLIMITS 1.0.18 (MurageMain order 11-06): a card held because the turn read outside content never joins Approve all,
+  // whatever else the card says (an owner, attended turn included).
+  it("an outside-turn card never qualifies", () => {
+    expect(bulkEligibility(ordinary({}, { reason: "outside-turn" }), RID).ok).toBe(false);
+    expect(bulkEligibility(ordinary({ held: "Bot read a web page …" }, { reason: "outside-turn" }), RID).ok).toBe(false);
+    expect(bulkEligibility(ordinary({}, { reason: "outside-turn", origin: "owner", unattended: false }), RID).ok).toBe(false);
   });
 });
 
@@ -245,6 +250,21 @@ describe("source: one responder, refusals before every resolver", () => {
       expect(applyFn.includes(name), name).toBe(false);
     }
     expect(applyFn).toContain('{ requestId: card.requestId, behavior: "allow" }');
+  });
+
+  it("the bot respond route names its bot's own thread and answers only through respondToCard (BOT-RESPOND-ROUTE-UNIFY)", () => {
+    const route = between("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/respond$/);", "\n    }\n");
+    expect(route).toContain("const bot = requestedDirectBot(m[1], ");
+    expect(route).toContain("return await respondToCard({ req, url, res }, bot.threadId, body, undefined, { botId: bot.id });");
+    // no second copy of the card rules is left in the route
+    for (const name of ["answerRequest", "answerLimitCard", "answerEmailCard", "answerAsSendReply", "questionReply", "resolveSkillRequest", "resolveAndSendRoutine", "resolvePeerComms", "answerCard", "resolveHostComputerConsent", "freshAuthRefusal", "taskGrantRefusal", "mayApprove", "publishAnswerAllowed", "json(res"]) {
+      expect(route.includes(name), name).toBe(false);
+    }
+    // and the one copy is never called in bulk from this route
+    expect(route).not.toContain("bulk");
+    // undo, skill and routine answers are decided for the route's own bot, as before the move (Astra r1 Medium)
+    expect(respond).toContain("route ? route.botId : cardBotId ?? store.botByThread(threadId)?.id");
+    for (const kind of ["undo", "skill", "routine"]) expect(respond, kind).toMatch(new RegExp(`const ${kind}BotId = cardOwner\\(`));
   });
 
   it("a card's origin is owner only in the owner's own typed turn: a peer ask, delegation, wake or continuation reads other (Astra R1 H2)", () => {

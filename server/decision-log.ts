@@ -27,6 +27,7 @@ import { join } from "node:path";
 
 import type { AutoVerdictSource } from "./auto-approve.ts";
 import { redactSecrets } from "./redact.ts";
+import { bareToolName, persistedRow, SHELL_ASK_TOOLS, SHELL_LABEL } from "./runtime-event-out.ts";
 
 export type DecisionKind =
   /** Rule 72: a narrowing denial delivered to the engine with its reason */
@@ -169,6 +170,38 @@ export function onDecisionAppended(watcher: DecisionWatcher): () => void {
   return () => { decisionWatchers.delete(watcher); };
 }
 
+// Astra r1 H11 (MurageMain ruling 2026-11-06): a decision row is written through the one persisted-row sanitizer
+// (runtime-event-out.ts persistedRow), at this one choke point, so every route (card shown, a person's answer, an automatic
+// approval, a tripwire, a folder decision) is covered. `summary` and `rule` are fixed labels: a summary is the command or the
+// file the agent named, a rule a guard's regex or a granted key built from a command. The tool, the decision, its source and
+// the ids stay. Watchers (above) still see the row as given: they run in memory and write none of its text.
+const isShellTool = (tool: unknown): boolean => typeof tool === "string" && SHELL_ASK_TOOLS.has(bareToolName(tool));
+/** A rule's fixed label: the tool family it names (`shell:echo` -> `shell`, `Bash:git` -> `Bash`), else `rule`. */
+const RULE_FAMILY = /^([A-Za-z_][A-Za-z0-9_.-]{0,63})(?=[:(=])/;
+/** NOLIMITS-MEANS-IT 2.3: a gate file a clean owner line ran is logged by its row. The row id is Murage's own (ruleRowId), one
+ *  word, so the shape is the whole rule; anything else falls back to the family. */
+const HELD_GATE_ROW = /^held=gate:[A-Za-z0-9_-]{1,64}$/;
+function decisionSummaryLabel(row: Omit<DecisionRow, "at">): string {
+  if (isShellTool(row.tool)) return SHELL_LABEL;
+  if (row.source === "question") return "question";
+  if (row.decision.startsWith("folder-")) return "folder";
+  return "tool";
+}
+/** A decision row as the log keeps it. Exported for tests. */
+export function loggedDecision(row: DecisionRow): Record<string, unknown> {
+  const family = typeof row.rule === "string" ? RULE_FAMILY.exec(row.rule)?.[1] : undefined;
+  return persistedRow(
+    { at: row.at, threadId: row.threadId, requestId: row.requestId, botId: row.botId, decision: row.decision, source: row.source, unattended: row.unattended, omitted: row.omitted, batchId: row.batchId, batchSize: row.batchSize },
+    {
+      // the bot is named by its id: a bot's name is free text the owner typed, and the sink allowlist writes none (no reader of
+      // the log reads the name; a caller that shows one looks it up by botId)
+      tool: row.tool === undefined ? undefined : typeof row.tool === "string" && /^[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/.test(row.tool) ? row.tool : "tool",
+      summary: row.summary === undefined ? undefined : decisionSummaryLabel(row),
+      rule: row.rule === undefined ? undefined : typeof row.rule === "string" && HELD_GATE_ROW.test(row.rule) ? row.rule : family ?? "rule",
+    },
+  );
+}
+
 /** Append one decision row. Fire-and-forget, mirroring the event bus tee:
  * the fold that calls this is delivering approvals and cards, and a full
  * disk must not turn into denied tools. */
@@ -186,7 +219,7 @@ export function appendDecision(
   // Encode/redact before retaining anything. The bounds include the current
   // write; already-admitted records stay FIFO. Overload retains only a count.
   try {
-    const encoded = JSON.stringify(redactSecrets({ at: new Date().toISOString(), ...row })) + "\n";
+    const encoded = JSON.stringify(redactSecrets(loggedDecision({ at: new Date().toISOString(), ...row }))) + "\n";
     const bytes = Buffer.byteLength(encoded);
     if (bytes > DECISION_MAX_RECORD_BYTES || queue.bytes + queue.markerBytes + bytes > DECISION_MAX_PENDING_BYTES || queue.items.length + (queue.markerBytes ? 1 : 0) >= DECISION_MAX_PENDING_RECORDS) addOmissions(queue);
     else {
