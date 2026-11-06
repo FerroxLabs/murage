@@ -9,9 +9,10 @@
 // the routine manager and any dispatch to repair a crash between the two.
 import { projectCreationRecord } from "./project-new.ts";
 import { randomUUID } from "node:crypto";
-import { chmodSync, existsSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, fsyncSync, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { removeCopy, SettleCopySpaceError, settledCopyKept, settleFtsCopy } from "./settle-copy.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 import { database, transaction } from "./database.ts";
@@ -114,17 +115,53 @@ export function materializeProjectCreation(store: Store, groupId: string): void 
 }
 
 /** A consistent copy of messages.db beside it, taken before a boot-time bulk
- * delete. Returns false when the copy could not be made. */
-function snapshotProjectRows(db: DatabaseSync, now: number): boolean {
-  const target = join(DATA_DIR, `project-rows-before-prune-${now}.db`);
+ * delete. Returns false when the copy could not be made. The copy settles
+ * itself before it gets its final name (SMOOTH-FTS-MERGE R6 section 3): a
+ * `.partial` from VACUUM INTO, then settleFtsCopy, then the rename. A file
+ * already under the final name is kept only when it proves settled and has no
+ * side file beside it; otherwise it and its side files are made again. */
+export function snapshotProjectRows(db: DatabaseSync, now: number, dir: string = DATA_DIR): boolean {
+  const target = join(dir, `project-rows-before-prune-${now}.db`);
+  const partial = `${target}.partial`;
   try {
-    if (existsSync(target)) return true;
-    db.prepare("VACUUM INTO ?").run(target);
-    try { chmodSync(target, 0o600); } catch { /* platforms without POSIX modes */ }
+    if (existsSync(target)) {
+      if (settledCopyKept(target)) return true;
+      removeCopy(target);
+    }
+    removeCopy(partial);
+    db.prepare("VACUUM INTO ?").run(partial);
+    try { chmodSync(partial, 0o600); } catch { /* platforms without POSIX modes */ }
+    settleFtsCopy(partial, { check: false });
+    renameSync(partial, target);
+    if (process.platform !== "win32") {
+      let fd: number | undefined;
+      try { fd = openSync(dir, "r"); fsyncSync(fd); } catch { /* some file systems refuse a folder fsync */ } finally { if (fd !== undefined) closeSync(fd); }
+    }
     return true;
-  } catch {
+  } catch (error) {
+    try { removeCopy(partial); } catch { /* nothing to remove */ }
+    if (error instanceof SettleCopySpaceError) console.warn(`[project-migration] not enough free disk space to keep a copy before the project-row prune (${error.message}); the prune waits for the next start`);
     return false;
   }
+}
+
+/** What a killed pre-prune copy leaves (SMOOTH-FTS-MERGE R6.2): the `.partial` and its side files, a settle's `.partial-settle`
+ * (settle-copy.ts) and its side files, and side files of a final copy whose `.db` is gone (removeCopy unlinks the main file first, so a
+ * kill inside it leaves them with no main file; nothing can open that family again). A side file beside an existing final `.db` is never
+ * removed here: it may hold frames the owner's own tool committed. Earlier starts' final copies are left as they are (the shipped rule). */
+const PRE_PRUNE_PRIVATE = /^project-rows-before-prune-\w+\.db\.partial(?:-settle)?(?:-journal|-wal|-shm)?$/;
+const PRE_PRUNE_FINAL_SIDECAR = /^(project-rows-before-prune-\w+\.db)(?:-journal|-wal|-shm)$/;
+export function sweepPrePruneLeftovers(dir: string = DATA_DIR): string[] {
+  const removed: string[] = [];
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return removed; }
+  const present = new Set(names);
+  for (const name of names) {
+    const main = PRE_PRUNE_FINAL_SIDECAR.exec(name)?.[1];
+    if (!PRE_PRUNE_PRIVATE.test(name) && (main === undefined || present.has(main))) continue;
+    try { rmSync(join(dir, name), { force: true }); removed.push(name); } catch { /* the next boot tries again */ }
+  }
+  return removed;
 }
 
 /** Boot repair for half-done cross-store operations (SPEC-P section 2):
@@ -133,6 +170,7 @@ function snapshotProjectRows(db: DatabaseSync, now: number): boolean {
  *  - a group with channelProject and no settings row gets default rows;
  *  - a desk task whose project rows are gone is archived (never removed). */
 export function reconcileProjectRecords(store: Store): void {
+  sweepPrePruneLeftovers();
   const db = database();
   const now = Date.now();
   const rows = db.prepare("SELECT * FROM project_settings").all() as Array<Record<string, unknown>>;

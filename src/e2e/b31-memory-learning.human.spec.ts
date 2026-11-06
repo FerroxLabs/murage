@@ -92,7 +92,7 @@ test("learning choices persist, stale edits require refresh, and workspace activ
   await expect(advanced.getByText(/Counts cover the whole workspace/)).toBeVisible();
   await expect(advanced.getByText("No activity recorded", { exact: false }).first()).toBeVisible();
   await expect(advanced.getByText(/Synthesis: disabled/)).toBeVisible();
-  await expect(advanced.getByText("Supplied to turns", { exact: true })).toBeVisible();
+  await expect(advanced.getByText("Memory references sent to bots", { exact: true })).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await inspectWidth(page, width, panel, controls, facts);
     await page.keyboard.press("Space"); await expect(facts).toBeChecked(); await expect(facts).toBeEnabled(); await page.keyboard.press("Space"); await expect(facts).not.toBeChecked(); await expect(facts).toBeEnabled();

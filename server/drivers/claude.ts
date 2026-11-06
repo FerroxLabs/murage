@@ -2714,7 +2714,7 @@ export function acquireClaudeOverlay(text: string, store: Pick<ClaudeOverlayStor
     // The app log's only line for this: the code and where the helper was looked for (an install path), never the overlay's content.
     const helperPath = (error as { helperPath?: unknown }).helperPath;
     console.warn(`claude private folder setup refused: ${code} helper=${typeof helperPath === "string" ? JSON.stringify(helperPath) : "unknown"}`);
-    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.`, { cause: error });
+    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Fuigo and Codex keep working.`, { cause: error });
   }
 }
 

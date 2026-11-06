@@ -18,7 +18,8 @@ export type BrowserAction = { operation: string; document: BrowserDocument; targ
   /** T20: the level the service's decision gave this step. Only "L2" can use an L2 grant, and the grant is held here, never read from the action. */
   level?: "L2" };
 /** Why a binding is paused beyond the owner pressing Pause: "handoff" is the hard floor asking for the owner. */
-export type PausedReason = "handoff" | "uncertain";
+/** connection_lost (EXT-RESTART 3.4a): Chrome or Murage closed while the task ran; memory only, it restores as a plain pause. */
+export type PausedReason = "handoff" | "uncertain" | "connection_lost";
 export type SiteAccess = "allow" | "ask" | "never";
 type Tab = { document: BrowserDocument; url: string };
 type Binding = { context: BindingContext; state: "active" | "paused" | "stopped"; pausedReason?: PausedReason; tabs: Map<number, Tab>; sites: Map<string, SiteAccess>; l2: Set<string> };

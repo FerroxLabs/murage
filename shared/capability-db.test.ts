@@ -169,7 +169,7 @@ describe("export and diff", () => {
     expect(JSON.stringify(exported)).not.toContain("\"internal\"");
     for (const record of exported.entries) expect(record.applies).toMatch(/^Applies to /);
     expect(exported.valid_paths).toEqual(expect.arrayContaining([
-      "Settings → Bots → Advanced → Channel turn timeout", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
+      "Settings → Bots → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
     ]));
     const diff = run(["--diff", join(scratch, "no-previous.json"), "--current", file]);
     expect(diff.ok).toBe(true);
