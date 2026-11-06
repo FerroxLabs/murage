@@ -407,7 +407,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // Every tab counts every signed-out engine, not only the tabs that list
   // them (inboxTabCounts), so the numbers stay put when the tab changes.
   const reading = useEngineReading();
-  const engineRow = engineNeed(reading, signedOutEngineIds(setupView), Boolean(setupView && firstRunOwnsMainView(setupView)));
+  const engineRow = engineNeed({ engine: reading.health, flux: reading.flux }, signedOutEngineIds(setupView), Boolean(setupView && firstRunOwnsMainView(setupView)));
   const shown = inboxTabCounts(result, setupView, gone, engineRow ? [{ id: engineRow.key }] : []);
   // A daily backup held up by a waiting card (0.1.60 Linux D6). Shown where
   // decisions are, beside the card it waits for; never counted.
@@ -804,7 +804,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         </>}
       >
         {doorRows ? <>
-          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} className="mb-3 flex flex-wrap gap-2">
+          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} data-needs-chips className="mb-3 flex flex-wrap gap-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>button]:shrink-0">
             <button type="button" className={viewTab(!picked)} aria-pressed={!picked} onClick={() => setBotFilter("")}>{t("ux.l2b.door.chipAll", { n: ordered.length })}</button>
             {chips.map(chip => <button key={chip.bot} type="button" className={viewTab(picked === chip.bot)} aria-pressed={picked === chip.bot} onClick={() => setBotFilter(chip.bot)}>{t("ux.l2b.door.chip", { bot: chip.bot, n: chip.count })}</button>)}
           </div>}

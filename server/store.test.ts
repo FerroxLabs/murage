@@ -2682,10 +2682,11 @@ describe("Store bounded message pages", () => {
     for (let i = 0; i < size; i++) {
       if (i % 11 === 3) mdb.insertMessage(threadId, legacyRow(threadId, i));
       else if (i % 17 === 5) {
-        mdb.insertMessage(threadId, legacyRow(threadId, i, {
-          role: "user", kind: "activity", text: undefined,
-          tool: { name: "probe", diagnostic: { turnId: "foreign", summary: "must be sanitized" } as never },
-        }));
+        // the stored-row check (U4 S3) drops this diagnostic on every write, so it is planted in the raw column, as an older build left it
+        const planted = legacyRow(threadId, i, { role: "user", kind: "activity", text: undefined, tool: { name: "probe" } });
+        mdb.insertMessage(threadId, planted);
+        database().prepare("UPDATE messages SET json=json_set(json,'$.tool.diagnostic',json(?)) WHERE thread_id=? AND id=?")
+          .run(JSON.stringify({ turnId: "foreign", summary: "must be sanitized" }), threadId, planted.id);
       } else if (i % 13 === 7) store.appendMessage(threadId, { role: "bot", kind: "screen", png: `png-${i}`, mime: "image/png" });
       else if (i % 19 === 9) {
         const source = store.messagesFor(threadId).findLast((message) => message.role === "user" && message.kind === "text");
@@ -2714,8 +2715,9 @@ describe("Store bounded message pages", () => {
       const { all, leaf } = full(threadId);
       expect(all.length).toBe(size);
       expect(all.some((message) => message.tool?.diagnostic)).toBe(false);
-      // The raw rows really carry a diagnostic and legacy rows, so both transforms are exercised.
-      const raw = mdb.readThread(threadId, join(DATA_DIR, "absent.json")).messages;
+      // The raw rows really carry a diagnostic and legacy rows, so both transforms are exercised (read from the column itself: every
+      // decoder now passes the stored-row check).
+      const raw = (database().prepare("SELECT json FROM messages WHERE thread_id=?").all(threadId) as Array<{ json: string }>).map((row) => JSON.parse(row.json) as Message);
       expect(raw.some((message) => message.tool?.diagnostic)).toBe(size > 5);
       expect(raw.some((message) => message.parentId === undefined)).toBe(size > 3);
       for (const limit of [0, 1, 50, 200]) {

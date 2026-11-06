@@ -498,3 +498,106 @@ describe("Sentinel self-health in diagnostics", () => {
     expect(buildDiagnosticsReport({})).toContain("sentinel.available=false");
   });
 });
+
+// REDACT-MD-SINKS (designs/REDACT-MD-SINKS-1104.md §4, §5 rows 12, 13, 19).
+// Each row fails on the base (int/1015 b47ece583) on an assertion.
+describe("REDACT-MD-SINKS electron tail", () => {
+  const twice = (line) => {
+    const once = redactSecretsInLine(line);
+    expect(redactSecretsInLine(once)).toBe(once);
+    return once;
+  };
+
+  it.each([
+    ["XAI_API_KEY: **alpha1234)TAILSECRET9**", ["TAILSECRET9", "alpha1234"]],
+    ["XAI_API_KEY=x«redactedSECRET", ["SECRET", "x«redacted"]],
+    ["password=x«redactedSECRET", ["SECRET"]],
+  ])("row 12 masks %j", (line, secrets) => {
+    const out = twice(line);
+    for (const secret of secrets) expect(out).not.toContain(secret);
+  });
+
+  const MARKERS = ["«redacted 12 chars»", "«redacted»", "«redacted private key»", "«redacted provider credentials»"];
+  it.each(MARKERS)("row 13 keeps the exact marker %j whole, twice", (marker) => {
+    for (const line of [`XAI_API_KEY: ${marker}`, `password=${marker}`, `my.secret = ${marker}`]) {
+      expect(redactSecretsInLine(line)).toBe(line);
+      expect(redactSecretsInLine(redactSecretsInLine(line))).toBe(line);
+    }
+  });
+  it.each(MARKERS)("row 13 masks the marker %j whole when anything follows it", (marker) => {
+    for (const line of [`XAI_API_KEY: ${marker}TAILSECRET9`, `XAI_API_KEY=${marker}x`, `password=${marker}TAILSECRET9`, `my.api_key: ${marker}x`]) {
+      const out = twice(line);
+      expect(out).not.toContain("TAILSECRET9");
+      expect(out).not.toMatch(/(?:chars|key|credentials|redacted)»(?:TAIL|x)/);
+    }
+  });
+  // GrokBuild round 1 H1: only a WHOLE marker is kept; any glued tail masks the marker and the tail together.
+  const LONG = ["«redacted 1 chars»", "«redacted 12 chars»", "«redacted 123456789 chars»", "«redacted private key»", "«redacted provider credentials»"];
+  it.each(LONG)("row 13 never keeps a prefix of %j and leaves a glued tail", (marker) => {
+    const names = ["XAI_API_KEY", "ANTHROPIC_API_KEY", "password", "my.secret", "auth_token"];
+    for (const name of names) for (const sep of [": ", "=", " = ", ":"]) for (const tail of ["TAILSECRET9", "-TAILSECRET9", "«redacted»TAILSECRET9", "»TAILSECRET9"]) {
+      const line = `${name}${sep}${marker}${tail}`;
+      const out = twice(line);
+      expect(out, line).not.toContain("TAILSECRET9");
+      expect(out, line).not.toContain(`${marker}${tail}`);
+    }
+  });
+
+  it("row 22: electron still masks the prose values it masks today", () => {
+    expect(redactSecretsInLine("the token: leave this prose alone")).toBe("the token=«redacted 5 chars» this prose alone");
+    expect(redactSecretsInLine("const token = await getToken();")).toBe("const token=«redacted 5 chars» getToken();");
+    expect(redactSecretsInLine("my_token: x")).toBe("my_token=«redacted 1 chars»");
+  });
+
+  // Equivalence corpus: on text with no wrapped label and no marker, the port
+  // matches exactly what today's PEM_BLOCK and KEY_VALUE_PAIR matched.
+  const OLD_KEY_VALUE_PAIR = /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)\s*[:=]\s*("[^"]*"|'[^']*'|[^\s"',;)\]}]+)/gi;
+  const OLD_PEM = /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----)/g;
+  const oldMask = (v) => `«redacted ${v.length} chars»`;
+  const oldUnquote = (v) => v.replace(/^["']|["']$/g, "");
+  const today = (line) => line
+    .replace(OLD_PEM, (_m, open, close) => `${open}«redacted private key»${close}`)
+    .replace(OLD_KEY_VALUE_PAIR, (_m, key, value) => `${key}=${oldMask(oldUnquote(value))}`);
+  it.each([
+    'password="hunter2 two" ok',
+    "token='abc def' ok",
+    "xpassword=abc",
+    "a.b.api_key: zz9 done",
+    "x-.secret=val; .token = 'q'",
+    "one token=aa\ntwo password = bb;\nthree",
+    "k=v auth-token:abc, access_key=def)",
+    "x -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- y",
+    "-----BEGIN PRIVATE KEY-----a-----END PRIVATE KEY----- mid -----BEGIN EC PRIVATE KEY-----\nb\n-----END EC PRIVATE KEY-----",
+    "-----BEGIN PRIVATE KEY----- no end here",
+    "a-b-c-d-e-api_key=zz secrets=1 passwords: 2",
+    "Xtoken9=abc tokentoken=def",
+  ])("equivalence corpus %j", (line) => {
+    expect(redactSecretsInLine(line)).toBe(today(line));
+  });
+
+  // Row 19, electron. Run in a child with a time limit: today's quadratic
+  // KEY_VALUE_PAIR and PEM_BLOCK would hang this worker, so the base fails on
+  // the assertion instead.
+  it("row 19 stays linear at 64 and 256 KiB", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { pathToFileURL } = await import("node:url");
+    const url = pathToFileURL(join(import.meta.dirname, "diagnostics.mjs")).href;
+    const code = `
+      const { redactSecretsInLine } = await import(${JSON.stringify(url)});
+      const units = [["a-", "api_key="], ["-----BEGIN PRIVATE KEY-----", ""], ["**password**: alpha1234 ", ""], ["«", ""], ["a_", ""], ["\`", ""]];
+      const out = [];
+      for (const [unit, tail] of units) {
+        const text = (n) => unit.repeat(Math.ceil(n / unit.length)) + tail;
+        const time = (s) => { const t = performance.now(); redactSecretsInLine(s); return performance.now() - t; };
+        const best = (s) => Math.min(time(s), time(s), time(s));
+        out.push({ unit, t64: Math.max(best(text(64 * 1024)), 1), t256: best(text(256 * 1024)) });
+      }
+      process.stdout.write(JSON.stringify(out));`;
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", timeout: 20_000 });
+    expect(child.status, child.stderr || "timed out").toBe(0);
+    for (const { unit, t64, t256 } of JSON.parse(child.stdout)) {
+      expect(t256 / t64, unit).toBeLessThan(6);
+      expect(t256, unit).toBeLessThan(250);
+    }
+  }, 60_000);
+});
