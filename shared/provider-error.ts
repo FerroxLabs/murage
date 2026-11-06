@@ -1,3 +1,4 @@
+import { FLUX_BILLING_PAGE } from "./flux-links.ts";
 /** Safe structured facts about a provider rejection. No request/response text. */
 export interface ProviderErrorInfo {
   kind: "credits" | "spend-cap" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
@@ -140,7 +141,7 @@ export function providerErrorPresentation(info: ProviderErrorInfo): { title: str
       title: `${provider} needs credits`,
       summary: "Your AI service says the account has run out of credit, so this reply could not finish.",
       resolution: "If you have already added credits, try again once the new balance shows. You can also pick another AI in Models & engines.",
-      ...(info.provider === "flux-router" ? { billingUrl: "https://fluxrouter.ai/home/billing" } : {}),
+      ...(info.provider === "flux-router" ? { billingUrl: FLUX_BILLING_PAGE } : {}),
     };
     case "authentication": return { title: `${provider} did not accept the sign-in`, summary: "Your AI service did not accept the sign-in or key used for this request.", resolution: "Check this AI's sign-in or key in Models & engines, then try again." };
     case "permission": return { title: `${provider} denied access`, summary: "Your AI service refused this request. You may still be signed in.", resolution: "Check that your account can use the model you picked, or pick another AI in Models & engines." };
