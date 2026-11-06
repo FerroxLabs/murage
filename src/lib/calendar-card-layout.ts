@@ -17,3 +17,25 @@ export function calendarCardLayout(heightPx: number): CalendarCardLayout {
   if (heightPx >= 24) return "compact";
   return "tiny";
 }
+
+/** A one-line or title-only card has no room for the bot's face, so a small
+ * dot keeps the run's state in view, the same states the face shows. null:
+ * nothing to show yet (no run, or one still queued). */
+export type CalendarStatusTone = "working" | "attention" | "done" | "problem" | "stopped";
+
+export function calendarStatusTone(status: string | undefined): CalendarStatusTone | null {
+  if (status === "running") return "working";
+  if (status === "waiting" || status === "needs-you") return "attention";
+  if (status === "completed") return "done";
+  if (status === "failed" || status === "missed") return "problem";
+  if (status === "cancelled") return "stopped";
+  return null;
+}
+
+export const CALENDAR_STATUS_DOT: Record<CalendarStatusTone, string> = {
+  working: "bg-accent animate-pulse motion-reduce:animate-none",
+  attention: "bg-warning",
+  done: "bg-success",
+  problem: "bg-danger",
+  stopped: "bg-white/50",
+};

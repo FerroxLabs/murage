@@ -33,7 +33,7 @@ describe("safe provider error details", () => {
     const info = classifyProviderError(error)!;
     expect(info).toEqual({ kind: "credits", provider: "flux-router", httpStatus: 402 });
     const display = providerErrorPresentation(info);
-    expect(display.billingUrl).toBe("https://fluxrouter.ai/home/billing");
+    expect(display.billingUrl).toBe("https://fluxrouter.ai/auth/sign-in?return_to=%2Fhome%2Fbilling");
     expect(display.resolution).toContain("already added credits");
     expect(JSON.stringify({ info, display })).not.toContain("fake-secret-canary");
   });
