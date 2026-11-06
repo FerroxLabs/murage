@@ -103,7 +103,6 @@ export const ALLOWED: Allowed[] = [
   { file: "ModelPicker.tsx", swallowed: 1, reason: "localStorage write for the picker's own preference; a blocked store is not a failed action." },
   { file: "NewsSignupSettings.tsx", swallowed: 1, reason: "Status read at mount (/api/news); no answer means this home has no news signup (Cloud), so the card stays hidden on purpose. The join action itself shows its outcome." },
   { file: "PhoneNotifications.tsx", swallowed: 3, reason: BACKGROUND },
-  { file: "PluginsPanel.tsx", swallowed: 1, reason: "Audit Medium/Low (PluginsPanel.tsx:1431 family): follow-up read after a Reconnect or Retry that has its own notice." },
   { file: "SkillRecorderPage.tsx", swallowed: 5, reason: "Audit Low (SkillRecorderPage.tsx:363,446): stopping capture and closing transcription during teardown; the Finishing recording label is the open Low row." },
   { file: "SubscriptionSignIn.tsx", swallowed: 3, reason: "Audit Low (SubscriptionSignIn.tsx:85): refresh after a sign-in that already succeeded; the Checking label on submit is the open Low row." },
   { file: "TeamLibraryPanel.tsx", voidOnClick: 1, reason: "Opens a team's detail page in the browser; the link stays on the card if the open fails. Not in the audit; to triage." },

@@ -14,7 +14,8 @@ import * as elevenlabs from "./elevenlabs.ts";
 import * as fluxSpeech from "./flux-speech.ts";
 import * as xaiSpeech from "./xai-speech.ts";
 import { pronounceable } from "./speech-text.ts";
-import { clearUnavailable, isUnavailable, markUnavailable, resetUnavailable, type VoiceEndpoint, type VoicePart } from "../voice/voice-routes.ts";
+import { clearUnavailable, isBudgetReached, isUnavailable, markBudgetReached, markUnavailable, resetUnavailable, type VoiceEndpoint, type VoicePart } from "../voice/voice-routes.ts";
+export { SpeechBudgetReached } from "./flux-speech.ts";
 
 /** Where hosted speech runs (Flux, or an own OpenAI key) and which provider
  *  serves each part of a call. Injected by the harness, which owns the model
@@ -144,6 +145,10 @@ async function speakFluxEleven(text: string, voice: string, run: systemVoices.Ru
   }
   // what Flux's voice list already said for this key, when it has been read
   const known = knownElevenCatalog(flux);
+  if (isBudgetReached(flux)) {
+    if (exact) throw new fluxSpeech.SpeechBudgetReached();
+    return speakPastBudget(text, run);
+  }
   if (isUnavailable(flux) || known?.status === "notOnKey") {
     if (exact) throw new fluxSpeech.ElevenNotOnKey(fluxSpeech.ELEVEN_NOT_ON_KEY);
   } else if (known?.status === "locked") {
@@ -154,6 +159,11 @@ async function speakFluxEleven(text: string, voice: string, run: systemVoices.Ru
     try {
       return await fluxSpeech.synthesizeClip(text, voice, flux, streamed);
     } catch (error) {
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(flux);
+        if (exact) throw error;
+        return speakPastBudget(text, run);
+      }
       if (error instanceof fluxSpeech.ElevenNotOnKey) markUnavailable(flux);
       else if (!(error instanceof fluxSpeech.ElevenRefused)) throw error;
       if (exact) throw error;
@@ -168,10 +178,15 @@ async function speakFluxEleven(text: string, voice: string, run: systemVoices.Ru
 async function speakXai(text: string, voice: string | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   const own = xaiRoute();
   const flux = own ? null : fluxGrokRoute();
+  if (flux && isBudgetReached(flux)) return speakPastBudget(text, undefined);
   if (!flux || isUnavailable(flux)) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
   try {
     return await fluxSpeech.synthesizeClip(text, voice ?? DEFAULT_GROK_VOICE, flux, streamed);
   } catch (error) {
+    if (error instanceof fluxSpeech.SpeechBudgetReached) {
+      markBudgetReached(flux);
+      return speakPastBudget(text, undefined);
+    }
     if (error instanceof fluxSpeech.SpeechUnavailable) markUnavailable(flux);
     throw error;
   }
@@ -182,10 +197,17 @@ async function speakXai(text: string, voice: string | undefined, streamed: boole
  *  an own xAI key takes over, else the Flux list's other voices do. */
 async function speakFluxGrok(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   const flux = fluxGrokRoute();
+  // the key's budget is used up: no other paid route first, only the
+  // computer's own voice (VOICE-402-STOP)
+  if (flux && isBudgetReached(flux)) return speakPastBudget(text, run);
   if (flux && !isUnavailable(flux)) {
     try {
       return await fluxSpeech.synthesizeClip(text, voice, flux, streamed);
     } catch (error) {
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(flux);
+        return speakPastBudget(text, run);
+      }
       if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
       markUnavailable(flux);
     }
@@ -200,11 +222,17 @@ async function speakFluxGrok(text: string, voice: string, run: systemVoices.Runn
  *  a call that goes silent looks broken, and a plainer voice does not. */
 async function speakHosted(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
   let refused: Error | null = null;
-  for (const route of speechRoutes()) {
+  const routes = speechRoutes();
+  if (routes.some((route) => route.via === "flux" && isBudgetReached(route))) return speakPastBudget(text, run);
+  for (const route of routes) {
     if (isUnavailable(route)) continue;
     try {
       return await fluxSpeech.synthesizeClip(text, voice, route, streamed);
     } catch (error) {
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(route);
+        return speakPastBudget(text, run);
+      }
       if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
       markUnavailable(route);
       refused = error;
@@ -219,6 +247,17 @@ async function speakHosted(text: string, voice: string, run: systemVoices.Runner
 }
 import * as systemVoices from "./system-voices.ts";
 import * as windowsVoices from "./windows-voices.ts";
+
+/** The Flux key's budget is used up: the computer's own voice speaks where
+ *  there is one, else the plain budget line. Never another paid route. */
+async function speakPastBudget(text: string, run: systemVoices.Runner | undefined): Promise<elevenlabs.Clip> {
+  if (platformCanSpeak() || run) {
+    return windowsVoices.windowsVoicesAvailable()
+      ? windowsVoices.synthesizeWindows(text, undefined)
+      : systemVoices.synthesizeSystem(text, undefined, run);
+  }
+  throw new fluxSpeech.SpeechBudgetReached();
+}
 
 /** Whether this machine can speak without a key. Windows was missing before,
  *  which left a Windows owner with no voice at all on day one. */
