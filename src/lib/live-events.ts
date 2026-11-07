@@ -1,3 +1,4 @@
+import { validChatsGen, type ChatsGen } from "./chats-gen";
 import { onNativeEvent } from "./native-shell";
 
 /**
@@ -17,6 +18,8 @@ export interface LiveFrame {
   kind: string;
   cursor?: string;
   resumed?: boolean;
+  chatsGen?: ChatsGen;
+  gen?: ChatsGen;
   event?: unknown;
 }
 
@@ -57,7 +60,7 @@ export interface LiveEventsHandlers {
   onSnapshotRequired: () => Promise<boolean>;
   onOpen?: () => void;
   /** The stream's first word: `resumed` says whether it carries on from the cursor. */
-  onHello?: (resumed: boolean) => void;
+  onHello?: (resumed: boolean, chatsGen?: ChatsGen) => void;
   onError?: () => void;
   /** Asked after the stream drops. EventSource never reveals the status that
    * ended it, so a dead session looks exactly like a host that went to
@@ -322,6 +325,8 @@ function parseLiveFrame(data: string): LiveFrame | null {
     kind?: unknown;
     cursor?: unknown;
     resumed?: unknown;
+    chatsGen?: unknown;
+    gen?: unknown;
     event?: unknown;
   };
   if (candidate.kind !== String(candidate.kind)) return null;
@@ -329,6 +334,8 @@ function parseLiveFrame(data: string): LiveFrame | null {
   if (candidate.resumed !== undefined && candidate.resumed !== Boolean(candidate.resumed)) return null;
   // SAFETY: kind is a string and the two optional transport fields were
   // checked against their exact primitive representations above.
+  if (!validChatsGen(candidate.chatsGen)) candidate.chatsGen = undefined;
+  if (!validChatsGen(candidate.gen)) candidate.gen = undefined;
   return candidate as LiveFrame;
 }
 
@@ -437,11 +444,11 @@ function browserPlatform(overrides: Partial<LiveEventsPlatform>): LiveEventsPlat
 export function openLiveEvents(
   handlers: LiveEventsHandlers,
   platformOverrides: Partial<LiveEventsPlatform> = {},
-): () => void {
+): (() => void) & { wake: () => void } {
   const platform = browserPlatform(platformOverrides);
   if (!platform) {
     handlers.onError?.();
-    return () => {};
+    return Object.assign(() => {}, { wake: () => {} });
   }
 
   const staleMs = handlers.staleMs ?? LIVE_EVENTS_STALE_MS;
@@ -519,7 +526,7 @@ export function openLiveEvents(
   };
 
   const openSource = () => {
-    if (stopped || source || !platform.isOnline()) return;
+    if (stopped || source || !platform.isOnline() || (hasConnected && !platform.isVisible())) return;
     let current: LiveEventSourceLike;
     try {
       current = platform.createEventSource(
@@ -557,7 +564,7 @@ export function openLiveEvents(
       }
 
       if (frame.kind === "hello") {
-        handlers.onHello?.(frame.resumed === true);
+        handlers.onHello?.(frame.resumed === true, frame.chatsGen);
         replayBoundary = frame.resumed === true ? parseCursor(frame.cursor) : null;
         // `resumed:true` is followed by replay frames. Advancing to hello's
         // newest cursor here would skip any replay frame not yet delivered if
@@ -638,34 +645,29 @@ export function openLiveEvents(
     openSource();
   };
 
-  const reconnectNow = (reportDisconnect: boolean) => {
-    if (stopped || !platform.isOnline()) return;
-    clearRetry();
-    if (source) {
-      closeSource();
-      if (reportDisconnect) handlers.onError?.();
-    }
-    connect();
+  const wake = () => {
+    if (stopped) return;
+    handlers.onError?.();
+    closeSource(); retryAttempt = 0; clearRetry();
+    if (platform.isOnline() && platform.isVisible()) connect();
   };
-
+  const offline = () => {
+    if (stopped) return;
+    handlers.onError?.(); closeSource(); clearRetry();
+  };
   const recover = () => {
-    // Background tabs suspend timers and network delivery. Let visibility or
-    // focus perform one recovery on wake instead of churning hidden sockets.
-    if (stopped || !platform.isOnline() || !platform.isVisible()) return;
-    if (!source || shouldReconnectLiveEvents(lastHeardAt, platform.now(), staleMs)) {
-      reconnectNow(source !== null);
-    }
+    if (stopped) return;
+    if (!platform.isOnline()) { offline(); return; }
+    if (!platform.isVisible()) return;
+    if (!source || shouldReconnectLiveEvents(lastHeardAt, platform.now(), staleMs)) wake();
   };
-  const onOnline = () => recover();
-  const onFocus = () => {
-    if (platform.isVisible()) recover();
-  };
-  const onVisibilityChange = () => {
-    if (platform.isVisible()) recover();
-  };
+  const onOnline = wake;
+  const onFocus = wake;
+  const onVisibilityChange = () => { if (platform.isVisible()) wake(); };
 
   connect();
   const staleTimer = setInterval(recover, staleCheckMs);
+  platform.windowTarget?.addEventListener("offline", offline);
   platform.windowTarget?.addEventListener("online", onOnline);
   platform.windowTarget?.addEventListener("focus", onFocus);
   platform.documentTarget?.addEventListener("visibilitychange", onVisibilityChange);
@@ -674,23 +676,20 @@ export function openLiveEvents(
   // suspended iOS WebView can hand back a socket that died without an error,
   // and the 40 s stale watchdog would leave the person looking at old state
   // for that long; replace it now, and forgive earlier backoff.
-  const stopResume =
-    platform.resumeSignal?.(() => {
-      if (stopped) return;
-      retryAttempt = 0;
-      reconnectNow(source !== null);
-    }) ?? null;
+  const stopResume = platform.resumeSignal?.(wake) ?? null;
 
   stop = () => {
     if (stopped) return;
+    handlers.onError?.();
     stopped = true;
     clearInterval(staleTimer);
     clearRetry();
     closeSource();
+    platform.windowTarget?.removeEventListener("offline", offline);
     platform.windowTarget?.removeEventListener("online", onOnline);
     platform.windowTarget?.removeEventListener("focus", onFocus);
     platform.documentTarget?.removeEventListener("visibilitychange", onVisibilityChange);
     stopResume?.();
   };
-  return stop;
+  return Object.assign(stop, { wake });
 }

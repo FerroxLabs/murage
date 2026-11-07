@@ -5,10 +5,9 @@
   "url": "https://models.dev/api.json",
   "repository": "https://github.com/anomalyco/models.dev",
   "license": "MIT",
-  "fetchedAt": "2026-09-23",
-  "etag": "W/\"4a5e39dac76169586f6edf0360820cd0\""
+  "fetchedAt": "2026-11-06"
  },
- "digest": "975eab00149c50cee4adb7b7b0a8ce57de9a4e8db8a7ade833efcd97ca08ff63",
+ "digest": "4258d4dd50be6fb7f26e3e8016913c7b34dae09b1fd144a6094d64b25a51cef2",
  "providers": {
   "302ai": {
    "name": "302.AI",
@@ -6761,6 +6760,15 @@
     },
     "claude-sonnet-5": {
      "name": "Claude Sonnet 5",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1000000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "claude-sonnet-5-5": {
+     "name": "Claude Sonnet 5.5",
      "inputPerMillion": 2,
      "outputPerMillion": 10,
      "contextWindow": 1000000,
@@ -44885,6 +44893,15 @@
     },
     "gpt-6-sol": {
      "name": "GPT-6 Sol",
+     "inputPerMillion": 2,
+     "outputPerMillion": 10,
+     "contextWindow": 1050000,
+     "vision": true,
+     "tools": true,
+     "reasoning": true
+    },
+    "gpt-6.1-sol": {
+     "name": "GPT-6.1 Sol",
      "inputPerMillion": 2,
      "outputPerMillion": 10,
      "contextWindow": 1050000,

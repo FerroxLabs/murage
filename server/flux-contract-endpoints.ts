@@ -42,6 +42,9 @@ export const FLUX_KNOWN_UNSERVED: readonly string[] = [
   "/v1/images/models",
   "/v1/images/jobs",
   "/v1/audio/transcriptions/stream",
+  // UX-L2C spend meter (1.0.18): Flux serves it only behind FLUX_KEY_LIMITS_ROUTE_ENABLED, still off in prod; the meter says "will show once
+  // Flux reports it" until then. When Flux turns it on, move it to FLUX_ENDPOINTS as key.limits (probed) and list it on server/flux-limits.ts.
+  "/v1/key/limits",
 ];
 
 /** Non-test server files that name a Flux base or host, and what they use. A
@@ -59,6 +62,8 @@ export const FLUX_CALLER_FILES: Readonly<Record<string, readonly string[]>> = {
   "server/drivers/acp/opencode-go.ts": ["chat.completions"],
   "server/drivers/codex.ts": ["responses"],
   "server/flux-key-health.ts": ["key.info"],
+  // GET /v1/key/limits for the spend meter: known-unserved above until Flux turns the route on in prod (then ["key.limits"]).
+  "server/flux-limits.ts": [],
   // Recognises a Flux host so callers attach the memory headers; no request of its own.
   "server/flux-memory-headers.ts": [],
   // Builds the usage tags (bot, feature, thread) and reads the served-model headers; recognises a Flux host so callers attach

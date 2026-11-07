@@ -459,8 +459,8 @@ export async function launchVerificationServer(
     // only a test run carries it, so a launcher outside one adds nothing.
     ...(parentEnv.MURAGE_TEST_DOOR_TOKEN ? { MURAGE_COMPANION_TOKEN: parentEnv.MURAGE_TEST_DOOR_TOKEN } : {}),
     // The suite's stand-in for the native engine-exclusion addon (server/testing/engine-exclusion-stub.cjs), which a deletion of
-    // an engine's files needs before it changes anything.
-    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH ? { MURAGE_ENGINE_EXCLUSION_PATH: parentEnv.MURAGE_ENGINE_EXCLUSION_PATH } : {}),
+    // an engine's files needs before it changes anything. The override is honored only with NODE_ENV=test.
+    ...(parentEnv.MURAGE_TEST_DOOR_TOKEN && parentEnv.MURAGE_ENGINE_EXCLUSION_PATH ? { NODE_ENV: "test", MURAGE_ENGINE_EXCLUSION_PATH: parentEnv.MURAGE_ENGINE_EXCLUSION_PATH } : {}),
     ...(options.turnLog ? {
       FAKE_CLAUDE_DUMP_EACH_TURN: "1",
       FAKE_CLAUDE_DUMP_LOG: fixtureTurnLogPath,
