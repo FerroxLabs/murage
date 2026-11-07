@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import snapshot from "../data/model-metadata.json";
-import { modelMetadataUpdatedAt } from "./model-metadata.ts";
+import { modelMetadataUpdatedAt, preloadModelMetadata } from "./model-metadata.ts";
 import { dollarOfTokens, priceBand, priceBandNote } from "./provider-model-picker.ts";
+
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 const band = (outputPerMillion: number) => priceBand({ outputPerMillion, source: "fixture", updatedAt: 1 });
 

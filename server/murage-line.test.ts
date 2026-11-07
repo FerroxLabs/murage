@@ -145,6 +145,8 @@ const FORWARDS: Record<string, string> = {
   "handoff-reply.ts :: message": "appendHandoffReply: only a recovered reply with its original, the worker's own row (S6 rule 5: a bot row with copyOf, validated at read); one with no original is murageLine",
   "delegations.ts :: sender ? { ...row, from: { botId: sender.id, name: sender.name, color: sender.color } } : row": "row = murageLine(message) (tested below)",
   "index.ts :: { ...recoveredSteerLine(row, randomUUID()), ...(row.origin ? { origin: row.origin as MessageOrigin } : {}) }": "an owner row (tested below)",
+  "room-shares.ts :: line": "shareRoomExcerpts (CROSS-CHAT-READ-1019 3.2): the owner's Share line handed to the caller's append (index.ts :: line), role user with a server-written copyOf; never engine output",
+  "index.ts :: line": "serveShareRelease (CROSS-CHAT-READ-1019 3.2): the owner's Share line, role user with a server-written copyOf of the owner's own source lines and prefix refs (room-shares.ts shareRoomExcerpts); never engine output",
   "index.ts :: sendNoticeLine(\"notConfirmed\")": "the stamped notice helper (tested below)",
   "index.ts :: sendNoticeLine(\"lateRefused\")": "the stamped notice helper (tested below)",
   "index.ts :: stored": "the event fold (pushMessage): stamps every chip that is not the engine's, and a bot row of the engine names event.turnId",
@@ -155,6 +157,9 @@ const FORWARDS: Record<string, string> = {
   "index.ts :: turnId ? { ...row, turnId } : row": "openAnswerAsSendCard (1.0.6 QW Q1, 958352223): the engine's question names the turn that asked it (card.turnId too); with no turn it is an unmarked engine row naming none, which message-db.ts unattributedRefs rests on every open turn's parents, never Murage's own line",
   "store.ts :: input":"appendAfterHead / insertMessageBefore handing their caller's row (scanned at the caller) to appendMessage",
   "store.ts :: message": "insertMessageAfter handing its caller's row (scanned at the caller) to appendMessage",
+  "index.ts :: venuePostRow(bot, record.threadId, text)": "VENUE-POST-1017 postVenueMessage: the bot's own words the owner picked a room for, posted as the bot's row (postedFrom) with the post's lineage refs, which message-db.ts unattributedRefs rests on the source turn's inputs",
+  "index.ts :: row": "VENUE-POST-1017 answerVenuePost: the host's append handing answerHeldVenuePost's venuePostRow (scanned at its caller, the entry above) to store.appendMessage with its stableId and lineage",
+  "venue-post.ts :: row": "VENUE-POST-1017: the HeldAnswerHost.append doc comment and the venuePostRow doc comment name store.appendMessage(target, row, ...); no call. The write is the index.ts entries above",
   "output-publication.ts :: imageOutputRow(row, options.turnId)": "completeImageOutput: the producing turn's engine output (turnId from the actor's capability), or murageLine when no turn made it (tested in output-publication.test.ts)",
   "output-publication.ts :: imageOutputRow(row, receipt.producer === \"assistant-image\" && receipt.runId ? receipt.runId : undefined)": "finishImageReceipt: an assistant image's receipt run id is the provider turn that sent it (index.ts publishAssistantImage)",
 };
@@ -187,6 +192,7 @@ const MURAGE_COPY: Record<string, string> = {
   "index.ts :: { role: \"bot\", kind: \"text\", text: intakeClosingLine(outcome, intake.candidate?.name), }": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "index.ts :: { role: \"bot\", kind: \"text\", text: `I switched off my \"${name}\" skill because the skill check found ": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
   "publish/publish-ops.ts :: { role: \"bot\", kind: \"options\", ...(from ? { from } : {}), card: { title, subtitle: \"\", options: [],": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
+  "index.ts :: { role: \"bot\", kind: \"text\", text: shareAskRowText(bot?.name ?? \"A bot\"), roomShareId: share.id }": "Murage composes these words (fixed copy and the bot's name; the bot's query stays on the owner's card); no engine or bot text",
   "store.ts :: { role: \"bot\", kind: \"text\", text: openingLine(name) }": "Murage composes these words (fixed copy, a bot's or skill's name, or a status line); no engine or bot text",
 };
 /** Marked rows with a text field that may carry the model's or a bot's words and name no producing turn. Empty: every such row names its turn
