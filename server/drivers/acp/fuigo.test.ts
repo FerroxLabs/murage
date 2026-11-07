@@ -215,6 +215,15 @@ if (process.env.FUIGO_FAKE_HARD_KILL === "1") process.on("SIGTERM", () => { setT
 else if (process.env.FUIGO_FAKE_EXIT_DELAY_MS) { process.on("SIGTERM", releaseAndExit); process.stdin.on("end", releaseAndExit); }
 let busyLoads = Number(process.env.FUIGO_FAKE_LOAD_BUSY ?? 0);
 const reconnected = {};
+// Fuigo 1.0.36+: a session opened with the launch policy pair in _meta answers with the policy ack (fake-acp-cli.ts
+// models the hash check and the refusals; this fake only echoes the ack). FUIGO_FAKE_ACK_OFF=new|load|reconnect drops
+// the ack from that one answer, as an engine that ignored the policy on it would.
+const ackOff = process.env.FUIGO_FAKE_ACK_OFF ?? "";
+const withAck = (m, r, kind) => {
+  const sha = m.params && m.params._meta && m.params._meta["fuigo/permissionPolicySha256"];
+  if (typeof sha !== "string" || ackOff === kind) return r;
+  return Object.assign({}, r, { _meta: Object.assign({}, r && r._meta, { "fuigo/permissionPolicy": { sha256: sha } }) });
+};
 let buf = "";
 process.stdin.on("data", (d) => {
   buf += d;
@@ -236,7 +245,7 @@ process.stdin.on("data", (d) => {
       const hasMcp = Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length > 0;
       if (hasMcp) send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 1, connected: 0 } });
       if (hasMcp && mcpMode === "before") mcpReady(SID);
-      ok(process.env.FUIGO_FAKE_NEW_MODEL ? { sessionId: SID, models: { currentModelId: process.env.FUIGO_FAKE_NEW_MODEL, availableModels: [] } } : { sessionId: SID });
+      ok(withAck(m, process.env.FUIGO_FAKE_NEW_MODEL ? { sessionId: SID, models: { currentModelId: process.env.FUIGO_FAKE_NEW_MODEL, availableModels: [] } } : { sessionId: SID }, "new"));
       order("new-response");
       // 1.0.x advertises its "/" commands right after session/new
       // (session_setup.rs send_available_commands_update), before any prompt.
@@ -263,6 +272,11 @@ process.stdin.on("data", (d) => {
     }
     else if (m.method === "session/load") {
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "load-attempts.log"), "load\\n");
+      // FUIGO_FAKE_LOAD_POLICY_ERROR=1: Fuigo 1.0.38 refusing a load opened under another policy (-32602, data.policy_error)
+      if (process.env.FUIGO_FAKE_LOAD_POLICY_ERROR === "1") {
+        send({ jsonrpc: "2.0", id: m.id, error: { code: -32602, message: "Invalid params", data: { policy_error: "session_policy_conflict", path: null, line: null, message: "conflict" } } });
+        continue;
+      }
       if (busyLoads > 0 || lockHeld()) {
         busyLoads -= 1;
         const busyMessage = "This session is open in another Fuigo window. Close it there, or turn on the shared leader (--leader) to use it from several windows.";
@@ -274,7 +288,8 @@ process.stdin.on("data", (d) => {
       // A session this process already holds (the pool's reuse, #1575):
       // re-applied servers are announced again, as 1.0.20 does.
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "loads.log"), JSON.stringify(m.params) + "\\n");
-      ok(process.env.FUIGO_FAKE_CURRENT_MODEL ? { models: { currentModelId: process.env.FUIGO_FAKE_CURRENT_MODEL, availableModels: [] } } : {});
+      const isReconnect = (m.params?.mcpServers ?? []).some((server) => (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT"));
+      ok(withAck(m, process.env.FUIGO_FAKE_CURRENT_MODEL ? { models: { currentModelId: process.env.FUIGO_FAKE_CURRENT_MODEL, availableModels: [] } } : {}, isReconnect ? "reconnect" : "load"));
       if (Array.isArray(m.params?.mcpServers) && m.params.mcpServers.length) mcpReady(m.params.sessionId);
       for (const server of m.params?.mcpServers ?? []) {
         if (process.env.FUIGO_FAKE_MCP_RECONNECT_TO && (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT")) reconnected[server.name] = process.env.FUIGO_FAKE_MCP_RECONNECT_TO;
@@ -351,6 +366,9 @@ process.stdin.on("data", (d) => {
         if (mode === "fallback" && promptRunning) stranded.push(m.params.text);
         else if (mode === "fallback") runFallback(m.params.text, Number(process.env.FUIGO_FAKE_IDLE_FALLBACK_DELAY_MS ?? 100));
       }
+    } else if (m.method === "session/cancel") {
+      // A cancel is a notification: logged so a test can count it, never answered.
+      if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "cancels.log"), JSON.stringify(m.params) + "\\n");
     } else if (m.id !== undefined) send({ jsonrpc: "2.0", id: m.id, error: { code: -32601, message: "nm" } });
   }
 });
@@ -1548,6 +1566,16 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     expect(readFileSync(join(dumps, "prompt.json"), "utf8")).not.toContain("[Murage:");
   });
 
+  it("(j2) FUIGO-SCOPE: a reconnect answered without the policy ack fails the turn before the prompt", async () => {
+    process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "3000";
+    await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable" }), FUIGO_FAKE_MCP_RECONNECT_TO: "ready", FUIGO_FAKE_ACK_OFF: "reconnect" }, COMPOSIO);
+    const done = await recorder!.until((e) => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: false });
+    expect(existsSync(join(dumps, "loads.log"))).toBe(true); // the reconnect load was sent and answered
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toMatch(/did not confirm your approval settings/);
+  });
+
   it("(k) connected apps 'ready' by status but still on the stand-in list: reconnected once, and the bot is not told they are unavailable", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "800";
     const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
@@ -2113,6 +2141,27 @@ describe("a session open in only one Fuigo process (1.0.30)", () => {
     expect(notices).toHaveLength(0);
   });
 
+  // FUIGO-SCOPE: a policy failure on the cursor load is not a lost session. Falling back to a fresh session would fail
+  // the same way (or, on an engine that ignored the policy, open one without it): the turn stops with the reason.
+  it("a cursor load answered without the policy ack fails the turn: no fresh session, no prompt", async () => {
+    await twoTurns({ FUIGO_FAKE_ACK_OFF: "load" });
+    expect(lines("news.log")).toHaveLength(1); // the first turn's only
+    expect(lines("load-attempts.log")).toHaveLength(1);
+    expect(lines("prompts.log")).toHaveLength(1);
+    expect(JSON.stringify(recorder!.events)).toMatch(/did not confirm your approval settings/);
+  });
+
+  it("Fuigo refusing the cursor load's policy fails the turn in plain words: no fresh session", async () => {
+    await twoTurns({ FUIGO_FAKE_LOAD_POLICY_ERROR: "1" });
+    expect(lines("news.log")).toHaveLength(1);
+    expect(lines("prompts.log")).toHaveLength(1);
+    const events = JSON.stringify(recorder!.events);
+    expect(events).toMatch(/this conversation has older approval settings/);
+    expect(events).toMatch(/Start a new conversation to use your current approval settings\./);
+    expect(events).not.toMatch(/update Fuigo/);
+    expect(events).not.toMatch(/Invalid params/);
+  });
+
   it("the narrow text form (no structured kind) is still recognised for Fuigo", async () => {
     const notices = await twoTurns({ FUIGO_FAKE_LOAD_BUSY: "1", FUIGO_FAKE_TEXT_ONLY: "1" });
     expect(lines("load-attempts.log")).toHaveLength(2);
@@ -2198,5 +2247,52 @@ describe("a session open in only one Fuigo process (1.0.30)", () => {
     expect(lines("spawns.log")).toHaveLength(2);
     expect(lines("news.log")).toHaveLength(1);
     expect(recorder.events.filter((e) => e.type === "item.started" && (e as { title?: string }).title === "Picked up this conversation in a fresh session")).toHaveLength(0);
+  });
+});
+
+describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly once", () => {
+  // The fake engine's session id (its own SID lives inside FAKE_SOURCE, out of this scope).
+  const SID = "fake-fuigo-session";
+  const retrying = (reason: string, attempt: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "retry_state", type: "retrying", attempt, reason } } });
+  const log = (name: string) => existsSync(join(dumps, name)) ? readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean) : [];
+  // Recorded shape: LiteLLM flattens flux-router's 429 detail dict into the message as a Python repr; the code is only in `state`.
+  const FREE_CAP = "429 Too Many Requests: {'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'message': \"Your account's monthly allowance is used up.\"}}";
+  const HOLD = "429 Too Many Requests: Your credit is busy because other requests have temporarily reserved it. Retry in 2s.";
+  const reply = { jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answered" } } } };
+  const turn = (script: unknown[]) => runTurn({ environment: { FUIGO_FAKE_SCRIPT: JSON.stringify(script), FUIGO_FAKE_HOLD_MS: "400" } });
+
+  it("free_cap_reached: one prompt, the engine's retry is cancelled, and the turn is that refusal with its code", async () => {
+    const rec = await turn([retrying(FREE_CAP, 1)]);
+    expect(log("prompts.log")).toHaveLength(1);
+    expect(log("cancels.log")).toHaveLength(1);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+    expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: false });
+    expect(rec.events.filter((e) => e.type === "turn.completed")).toHaveLength(1);
+  });
+
+  it("a hold gets one engine retry after its wait: nothing is cancelled at the first notice", async () => {
+    const once = await turn([retrying(HOLD, 1), reply]);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(once.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+  });
+
+  it("Astra r4: one hold attempt seen on two notice rails counts once: nothing is cancelled", async () => {
+    const rec = await turn([retrying(HOLD, 1), retrying(HOLD, 1), reply]);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+  });
+
+  it("a hold seen twice is cancelled at the second notice", async () => {
+    const rec = await turn([retrying(HOLD, 1), retrying(HOLD, 2)]);
+    expect(log("cancels.log")).toHaveLength(1);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
+  });
+
+  it("a plain busy 429 with no Flux code keeps the engine's quiet retries: nothing is cancelled", async () => {
+    const rec = await turn([retrying("429 Too Many Requests: rate limited", 1), retrying("429 Too Many Requests: rate limited", 2), reply]);
+    expect(log("prompts.log")).toHaveLength(1);
+    expect(log("cancels.log")).toHaveLength(0);
+    expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
+    expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
 });

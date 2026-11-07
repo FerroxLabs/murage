@@ -72,6 +72,12 @@ export class LazyBoundary extends Component<
      *  frame, so a panel that failed to load still looks like that panel and
      *  keeps its own Close (the help panel, L4A). */
     frame?: (alert: ReactNode) => ReactNode;
+    /** A surface's own words in the app's language (the help panel, L-COPY r3).
+     *  Each falls back to the global English line. They are used both when the
+     *  chunk could not load and when the panel threw while drawing. */
+    retryLabel?: string;
+    errorLabel?: string;
+    closeLabel?: string;
     /** Test seam; the page reload by default. */
     reload?: () => void;
   },
@@ -106,23 +112,29 @@ export class LazyBoundary extends Component<
   render() {
     if (this.state.broken) return this.renderBroken();
     if (!this.state.failed) return this.props.children;
+    const { onDismiss, retryLabel, errorLabel, closeLabel } = this.props;
     const button = (
       <button
         type="button"
         onClick={this.retry}
         className="min-h-11 rounded-xl border border-hairline/50 bg-card px-4 text-[13px] text-ink shadow-xl hover:bg-raised"
       >
-        {LAZY_RETRY_TEXT}
+        {retryLabel ?? LAZY_RETRY_TEXT}
       </button>
     );
-    if (this.props.inline) return this.inlineAlert(button);
-    const { onDismiss } = this.props;
+    const content = errorLabel === undefined ? button : (
+      <div className="flex flex-col items-start gap-2">
+        <p className="text-[13px] text-ink">{errorLabel}</p>
+        {button}
+      </div>
+    );
+    if (this.props.inline) return this.inlineAlert(content);
     return (
       <div role="alert" className="overlay-inset fixed inset-0 z-50 flex flex-col items-center justify-center gap-2 bg-black/20">
-        {button}
+        {content}
         {onDismiss && (
           <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-white/80 hover:text-white">
-            Close
+            {closeLabel ?? "Close"}
           </button>
         )}
       </div>
@@ -135,17 +147,17 @@ export class LazyBoundary extends Component<
   }
 
   renderBroken() {
-    const { onDismiss, inline } = this.props;
+    const { onDismiss, inline, retryLabel, errorLabel, closeLabel } = this.props;
     const body = (
       <div className="flex max-w-sm flex-col items-center gap-3 rounded-xl border border-hairline/50 bg-card p-4 text-center shadow-xl">
-        <p className="text-[13px] text-ink">{PANEL_ERROR_TEXT}</p>
+        <p className="text-[13px] text-ink">{errorLabel ?? PANEL_ERROR_TEXT}</p>
         <div className="flex gap-2">
           <button type="button" onClick={this.renderAgain} className="min-h-11 rounded-xl border border-hairline/50 bg-card px-4 text-[13px] text-ink hover:bg-raised">
-            {PANEL_ERROR_RETRY}
+            {retryLabel ?? PANEL_ERROR_RETRY}
           </button>
           {onDismiss && (
             <button type="button" onClick={onDismiss} className="min-h-11 rounded-xl px-4 text-[13px] text-ink-secondary hover:text-ink">
-              Close
+              {closeLabel ?? "Close"}
             </button>
           )}
         </div>

@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+
+ Test Files  1 passed (1)
+      Tests  11 passed (11)
+   Start at  21:44:05
+   Duration  6.66s (transform 5.20s, setup 5.74s, import 775ms, tests 35ms, environment 0ms)
+

@@ -95,6 +95,19 @@ switch (scenario) {
   case "string-is-error": init(); result({ is_error: "false" }); break;
   case "result-first": result(); init(); break;
   case "text-result": init(); result({ structured_output: undefined, result: '{"ok":true}' }); break;
+  // Schema in the prompt (a Flux route): the answer is the result text only.
+  case "text-fenced": init(); result({ structured_output: undefined, result: '```json\n{"ok":true}\n```' }); break;
+  case "text-bad": init(); result({ structured_output: undefined, result: "Sure, here it is: ok" }); break;
+  case "text-wrong-schema": init(); result({ structured_output: undefined, result: '{"wrong":1}' }); break;
+  case "text-bad-then-ok": { // the first spawn recorded in --stub-out misses, every later one answers
+    const spawns = readFileSync(stub["stub-out"], "utf8").split("\n").filter((l) => l.includes('"argv"')).length;
+    init(); result({ structured_output: undefined, result: spawns <= 1 ? "not json" : '{"ok":true}' }); break;
+  }
+  case "text-bad-then-sleep": { // the first spawn misses; a later one writes no output at all and waits to be stopped
+    const spawns = readFileSync(stub["stub-out"], "utf8").split("\n").filter((l) => l.includes('"argv"')).length;
+    if (spawns <= 1) { init(); result({ structured_output: undefined, result: "not json" }); } else await hang();
+    break;
+  }
   case "helper": { // a same-group helper that outlives the root: the root exits, the helper stays
     const { spawn } = await import("node:child_process");
     const h = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { stdio: "ignore" }); h.unref(); appendFileSync(stub["stub-out"], JSON.stringify({ event: "helper", pid: h.pid }) + "\n");

@@ -1,1 +1,17 @@
-{}
+{
+  "ux.l7.sheet.close": "Close",
+  "ux.l7.needs.next": "Next",
+  "ux.l7.level.title": "Level for {bot}",
+  "ux.l7.level.routineTitle": "Level for the routine {routine}",
+  "ux.l7.level.onComputer": "Full access and No limits are set on your computer, where you can see what they change.",
+  "ux.l7.level.chatScope": "This changes the level for this chat. Routines keep their own.",
+  "ux.l7.level.routineScope": "This routine follows this level.",
+  "ux.l7.routines.empty": "Nothing is set to run this week.",
+  "ux.l7.alerts.title": "Get an alert when a bot needs you",
+  "ux.l7.alerts.sub": "Your phone tells you when a bot asks a question or wants your OK.",
+  "ux.l7.alerts.on": "Turn on alerts",
+  "ux.l7.alerts.later": "Not now",
+  "ux.l7.pay.title": "Billing",
+  "ux.l7.pay.line": "Billing lives on your computer for now. Open Murage on desktop to see it.",
+  "ux.l7.pay.hint": "Open on desktop"
+}

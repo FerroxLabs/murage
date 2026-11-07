@@ -72,6 +72,10 @@ export function isHighLevelWrite(name: string): boolean {
   return HIGHLEVEL_WRITE_TOOLS.has(name as HighLevelToolName);
 }
 
+/** The twelve tools that only read. HL-S2 ships these alone (MurageMain 11-04): no change tool is ever listed, mounted,
+ * pre-allowed or granted. Changes are row HL-S2-WRITES-DESIGN. */
+export const HIGHLEVEL_READ_TOOL_NAMES: readonly HighLevelToolName[] = HIGHLEVEL_TOOL_NAMES.filter((name) => !HIGHLEVEL_WRITE_TOOLS.has(name));
+
 const identifier = z.string().min(1).max(180).regex(/^[A-Za-z0-9_.-]+$/);
 /** A native connection's account id: "hl_" plus an opaque id (section 5, LocationConnection). */
 export const highlevelAccountIdSchema = z.string().min(4).max(180).regex(/^hl_[A-Za-z0-9_-]+$/);
@@ -99,3 +103,17 @@ export const highlevelBotAccessSchema = z.object({
   grants: z.array(nativeGrantSchema).max(50),
 }).strict();
 export type HighLevelBotAccess = z.infer<typeof highlevelBotAccessSchema>;
+
+/** A stored record as HL-S2 reads it: every grant is "read" and keeps only its read tools, and a grant left with none
+ * is dropped. Older data saved with "propose" or with change tools therefore reads as read. Anything that does not
+ * parse is returned as is, so the caller's own check refuses it. */
+export function readOnlyHighLevelAccess(value: unknown): unknown {
+  const parsed = highlevelBotAccessSchema.safeParse(value);
+  if (!parsed.success) return value;
+  const grants: NativeGrant[] = [];
+  for (const grant of parsed.data.grants) {
+    const tools = grant.tools.filter((tool) => !HIGHLEVEL_WRITE_TOOLS.has(tool));
+    if (tools.length > 0) grants.push({ ...grant, tools, ceiling: "read" });
+  }
+  return { ...parsed.data, grants };
+}

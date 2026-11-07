@@ -213,11 +213,17 @@ export const rowOriginLine = (record: ContinuityRecord, now: number): string =>
   record.tier === "observed" ? CONFIRMED_LABEL : wroteLine(record.editedAt, now);
 
 const REFUSAL_LINES: Record<string, string> = {
+  "refused:monthly-limit": "Paused: this month's learning limit has no room for this run",
+  "refused:unseen-calls": "Paused to protect your limit: some learning calls did not report their usage",
+  "refused:call-pace": "Paused: the learning pace has no room for this run",
+  "refused:cap:daily-bytes": "Stopped: today's input allowance has no room for this run",
+  "refused:cap:spend-ceiling": "Paused: a learning limit stopped this run",
+  "refused:cap:budget-exhausted": "Paused: a learning limit stopped this run",
   "refused:cap": "Stopped: daily limit reached",
   "refused:off": "Stopped: reflection was switched off",
   "refused:unsupported": "Held: this engine cannot answer using only text",
   "refused:transient": "Paused: the engine did not answer in time",
-  "refused:unstable": "Stopped: three attempts did not finish",
+  "refused:unstable": "Stopped: this run did not finish",
   "refused:bad-output": "Stopped: the answer was not usable",
   "refused:isolation": "Stopped: the engine did more than return text",
 };
