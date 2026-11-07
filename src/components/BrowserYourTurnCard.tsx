@@ -16,7 +16,7 @@ import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
 /** The hard floor's categories (server/browser-floor.ts). "account" is an account or security change (password, sign-in, recovery, permissions, sharing, closing the account): D1 hands it back, no mode passes it. `null` is a step the floor could not classify. */
-export type YourTurnCategory = "consent" | "verification" | "credentials" | "payment" | "account" | null;
+export type YourTurnCategory = "consent" | "verification" | "credentials" | "payment" | "account" | "siteNotSet" | null;
 
 export interface BrowserYourTurnCardProps {
   /** the bot's name */
@@ -40,6 +40,7 @@ const BODY: Record<Exclude<YourTurnCategory, null>, LocaleKey> = {
   credentials: "browserExt.yourTurn.credentials",
   payment: "browserExt.yourTurn.payment",
   account: "browserExt.yourTurn.account",
+  siteNotSet: "browserExt.yourTurn.siteNotSet",
 };
 
 export function BrowserYourTurnCard({ bot, site, category, pausedReason, actions, phone, onContinue, onStop }: BrowserYourTurnCardProps) {

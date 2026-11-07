@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/apps/mobile
+
+
+ Test Files  6 passed (6)
+      Tests  298 passed (298)
+   Start at  15:05:15
+   Duration  571ms (transform 528ms, setup 0ms, import 887ms, tests 411ms, environment 0ms)
+

@@ -145,10 +145,21 @@ test("Tango keeps its identity/history/Chief while conversationally adopting rev
     expect(ancestors(messages,second.id).has(reply1.id)).toBe(true);
     expect(ancestors(messages,reply2.id).has(second.id)).toBe(true);
     expect(launches[1].prompt).toContain("That's about right");
-    // two turns, two turn ids on the answers; the second sentence names its own turn T2, whose launch carried it
-    expect(reply1.turnId).toBeTruthy();expect(reply2.turnId).toBeTruthy();expect(reply2.turnId).not.toBe(reply1.turnId);
-    expect(second.dispatchedIn).toBe(reply2.turnId);
-    expect(launches.find((turn:any)=>turn.turnId===second.dispatchedIn)?.prompt).toContain("That's about right");
+    expect(reply1.turnId).toBeTruthy();expect(reply2.turnId).toBeTruthy();
+    if(second.steered===true&&second.dispatchedIn===T1&&launches[1].turnId===T1){
+      // sent during T1's final answer: the CLI runs it as its own pass right after `result`, and the driver holds T1 open
+      // for that pass, so it is one turn with one turn id and each sentence still gets its own answer
+      // (claude.test.ts "a message sent during the final answer is answered in the same turn, not lost")
+      expect(reply2.turnId).toBe(T1);
+      expect(reply2.text).toBe(REPLIES[1]);
+      expect(reply2.parentId).toBe(second.id);
+      expect(launches).toHaveLength(2);
+    }else{
+      // two turns, two turn ids on the answers; the second sentence names its own turn T2, whose launch carried it
+      expect(reply2.turnId).not.toBe(reply1.turnId);
+      expect(second.dispatchedIn).toBe(reply2.turnId);
+      expect(launches.find((turn:any)=>turn.turnId===second.dispatchedIn)?.prompt).toContain("That's about right");
+    }
   }
   await page.screenshot({path:info.outputPath("tango-adapted-cowork.png"),fullPage:true});
 });

@@ -1,7 +1,8 @@
 import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
 import { endAllLivePairedRequests } from "./handoff-pair.ts";
 import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
-import type { BotRecord, GroupRecord } from "./store.ts";
+import type { BotRecord, GroupRecord, Message } from "./store.ts";
+import { rowToMessage, storedJson } from "./transcript-seq.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { markIntegrityPassProven } from "./memory/integrity-state.ts";
 import { prepareProjectTablesForRestore } from "./project-tables.ts";
@@ -27,6 +28,7 @@ import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { isReservedBotId } from "../shared/bot-identity.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
 import { bumpWriteEpoch } from "./app-write-revision.ts";
+import { settleFtsCopy } from "./settle-copy.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
 import { prepareRestoredEmail } from "./email/restore.ts";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
@@ -373,10 +375,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         const update = db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
         for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
           if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) fail("INVALID_RESTORE_MESSAGE");
-          const before = JSON.parse(row.json);
+          const before = rowToMessage({ json: row.json }); // U4 S3: the one decoder, and storedJson below the one encoder
           const after = expireMessage(before);
           if (after.id !== row.id) fail("INVALID_RESTORE_MESSAGE");
-          const encoded = JSON.stringify(after);
+          const encoded = storedJson(after as unknown as Message);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
         // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.
@@ -405,6 +407,11 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }
+      // The candidate settles itself before it can be activated (SMOOTH-FTS-MERGE R6 section 3): an archive from a build before the
+      // copy rule can carry deleted conversations in its search index. inspectInstallationDatabase proved every row above, so no
+      // quick_check here. A throw fails the restore. Nothing after this inserts or deletes messages_fts rows; the candidate leaves
+      // in journal_mode=DELETE, so a read-only open by activation creates no side files.
+      settleFtsCopy(join(state, "messages.db"), { check: false });
     }
     write("bots.json", sharingBots); write("groups.json", sharingGroups);
     validateSharingPaused(sharingBots, sharingGroups);
