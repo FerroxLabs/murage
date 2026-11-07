@@ -9,12 +9,12 @@ import { reviewInstallation, activateInstallation } from "./installation-activat
 import { writeInstallationDamagedExport } from "./installation-damaged-export.ts";
 import { writeEncryptedInstallationBackup, inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew, skippedSummary } from "./installation-encrypted-backup.ts";
 import { resolveWindowsBackupRuntime } from "./installation-backup-encryption.ts";
-import { downgradeInstallationMemorySchema, MEMORY_DOWNGRADE_TARGETS } from "./installation-memory-downgrade.ts";
+import { downgradeInstallationMemorySchema, MEMORY_DOWNGRADE_TARGETS, refuseStepBefore102 } from "./installation-memory-downgrade.ts";
 import { MAX_BACKUP_BYTES } from "../shared/backup-limits.ts";
 import { MAX_BACKUP_DURATION_MS } from "../shared/backup-budget.mjs";
 import type { BackupProgressReport } from "../shared/backup-progress.mjs";
 
-export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> [--to 1|2|3|4|5|6|7|8|9|10|11|12] | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
+export const usage = "Usage: installation-recovery backup --data-dir <stopped-installation> --output <new-backup.zip> | export-damaged --data-dir <stopped-installation> --output <private-preservation.zip> | inspect --archive <backup.zip> | plan-restore --archive <backup.zip> | restore --data-dir <stopped-installation> --archive <backup.zip> --sha256 <inspected-hash> | rollback --data-dir <installation> | memory-downgrade --data-dir <stopped-installation> --to 7|8|9|10|11|12 | backup-encrypted --data-dir <stopped-installation> --output <new-backup.age> --age-tool <verified-age> --recipient <age-recipient> --credential-policy preserve-in-encrypted-fidelity | inspect-encrypted --archive <backup.age> --age-tool <verified-age> | restore-encrypted-new --data-dir <new-installation> --archive <backup.age> --sha256 <inspected-hash> --age-tool <verified-age>. Encrypted commands read the recovery identity from stdin.";
 
 async function identityFromStdin(): Promise<string> {
   let identity="";
@@ -89,7 +89,9 @@ export async function installationRecoveryCommand(args: string[], input: { readI
     return { ok: true, operation: "rollback", ...rollbackInstallationRestore(options.get("--data-dir")!) };
   }
   if (command === "memory-downgrade" && options.has("--data-dir") && (options.size === 1 || options.size === 2 && MEMORY_DOWNGRADE_TARGETS.some(to => String(to) === options.get("--to")))) {
-    const to = MEMORY_DOWNGRADE_TARGETS.find(target => String(target) === options.get("--to")) ?? 1;
+    const to = MEMORY_DOWNGRADE_TARGETS.find(target => String(target) === options.get("--to"));
+    // no target used to mean 1: a step to 1.0.1's shape or older, which belongs to 1.0.2's own command. The only caller that leaves it out is a hand-run one.
+    if (to === undefined) refuseStepBefore102();
     return { ok: true, operation: "memory-downgrade", ...downgradeInstallationMemorySchema(options.get("--data-dir")!, to) };
   }
   if (command === "review" && options.size === 1 && options.has("--data-dir")) {

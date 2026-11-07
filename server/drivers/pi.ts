@@ -66,6 +66,7 @@ import { localContextWindow, type LocalHost } from "./local-inject.ts";
 import { isPlainObject, readNativeJsonConfig } from "./native-config-file.ts";
 import { primeLocalContext } from "../local-server-probe.ts";
 import { approvalSummary } from "../../shared/approval-summary.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { boundedToolInput } from "../approval-text.ts";
 import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { PI_GATE_TITLE_PREFIX } from "./pi-permission-gate.ts";
@@ -679,7 +680,7 @@ function piGateCall(message: string, mounts: readonly McpMountRecord[]): PiGateA
     const identity = { namespace: "mcp", name: `${mount}__${mcpTool}` };
     if (cut) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolIdentity: identity };
     if (!input) return { tool: name, summary: `${mcpTool.slice(0, 300)} (the call was cut)${note}`, truncated: true, toolInputMissing: "input", toolIdentity: identity };
-    return { tool: name, summary: `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
+    return { tool: name, summary: phoneAskLine(name, input) ?? `${mcpTool.slice(0, 300)}${note}`, ...(boundedToolInput(input) ? { toolInput: boundedToolInput(input) } : {}), toolCall: { name, input }, toolIdentity: identity, gateInput: input };
   }
   const display = tool === "bash" ? "Bash" : tool === "powershell" ? "PowerShell" : tool === "edit" ? "Edit" : tool === "write" ? "Write" : tool || "pi";
   if (cut) return { tool: display, summary: `${shown} (the call was cut)${note}`, truncated: true };

@@ -42,7 +42,7 @@ function seed() {
   put("B", "deleted", 5000, "the austin lease, source deleted");
   // withheld from bots for another reason (it used something changed): the owner's own line, still shown
   put("B", "withheld", 6000, "the austin lease, withheld for a change", { withheldFromBots: true });
-  // a tombstone for another reason is not a forget
+  // a tombstone for any other reason still ends the line in this view (privacy first)
   put("B", "other", 7000, "the austin lease, other bookkeeping");
   tombstone("B", "other", "forgotten-original");
 }
@@ -59,7 +59,7 @@ describe("excludeForgotten", () => {
       if (indexed) rebuildMessageSearchIndex(database());
       else closeMessageDb();
       const chats = searchMessagesWithMeta("austin lease", 40, undefined, { owner: true, excludeForgotten: true });
-      expect(ids(chats)).toEqual(["kept", "other", "withheld"]);
+      expect(ids(chats)).toEqual(["kept", "withheld"]);
       // scoped to a thread as well
       expect(ids(searchMessagesWithMeta("austin lease", 40, ["A"], { owner: true, excludeForgotten: true }))).toEqual(["kept"]);
       // without the option the owner's search is what it was: every row, forgotten ones included
@@ -95,4 +95,28 @@ describe("excludeForgotten", () => {
     deleteThread("A");
     expect(searchMessagesWithMeta("austin lease", 40, undefined, { owner: true, excludeForgotten: true }).hits.some(hit => hit.threadId === "A")).toBe(false);
   });
+});
+
+it.each([false, true])("RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=%s", indexed => {
+  seed(); deletedSource("B", "deleted");
+  put("A", "removed", 8000, "the austin lease removed");
+  if (indexed) rebuildMessageSearchIndex(database()); else closeMessageDb();
+  database().prepare("DELETE FROM messages WHERE id='removed'").run();
+  expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {}))).toEqual(["kept"]);
+  expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {owner:true}))).toEqual(["deleted", "kept", "other", "owner-forget", "stamped", "supporting", "withheld"]);
+});
+
+it("RULE Case B applies rendered predicates before pagination in both search walks", async () => {
+  const { searchRowRendered } = await import("./search-rendered.ts");
+  put("A", "visible", 1, "needle visible");
+  database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES('A','hidden',2,'bot','activity',?)")
+    .run(JSON.stringify({id:"hidden",kind:"activity",tool:{name:"needle hidden",ok:true}}));
+  database().prepare("INSERT INTO messages(thread_id,id,at,role,kind,json) VALUES('A','expired',3,'bot','activity',?)")
+    .run(JSON.stringify({id:"expired",kind:"activity",at:3,folderPrompt:{folder:"Desktop",done:true},tool:{name:"needle expired"}}));
+  for(const indexed of [false,true]) {
+    if(indexed) rebuildMessageSearchIndex(database()); else closeMessageDb();
+    const rendered = (_thread:string, row: import('./store.ts').Message) => searchRowRendered(row,false);
+    expect(ids(searchMessagesWithMeta("needle",1,undefined,{owner:true,rendered}))).toEqual(["visible"]);
+    expect(ids(searchMessagesWithMeta("needle",10,undefined,{owner:true,rendered:(_thread,row)=>searchRowRendered(row,true)}))).toEqual(["hidden","visible"]);
+  }
 });

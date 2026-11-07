@@ -17,6 +17,7 @@ import { WORKING_CONTEXT_MAX_BYTES, workingContext, workingContextForTurn, worki
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { channelToProjectRows } from "./project-settings.ts";
+import type { RoutineDetail } from "./routine-detail-line.ts";
 
 const NOW = Date.UTC(2026, 8, 29, 12, 0, 0);
 const HOUR = 3_600_000;
@@ -199,4 +200,36 @@ it.each(["ended", "missing row", "missing table", "missing block"])("T7: %s read
   expect(ended).not.toContain("Research three segments");
   expect(ended).toContain(`Channel "Tallyroo Launch", thread`);
   expect(ended).toContain("I finished the launch outline.");
+});
+
+// 1.0.18 U6 F38 (upstream d40f17d7f): the rich routine line, only when the host passed details for the owner's own direct turn
+it("U6 F38: details say what each routine does and when, at most six, previews redacted and the block inside its budget", () => {
+  say("reed-task", "Sent the RWA follow-up to Dana.", NOW - 26 * HOUR);
+  const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123"; // secret-scan: fixture
+  const details: RoutineDetail[] = Array.from({ length: 9 }, (_, i) => ({
+    name: `Routine ${i}`, botId: "reed", enabled: true, schedule: { type: "daily", time: "09:00", weekdays: [1, 2, 3, 4, 5] },
+    nextRunAt: NOW + HOUR, prompt: `Use ${secret} then ${"check the queue ".repeat(30)}`, createdAt: NOW - i * HOUR,
+  }));
+  details.push({ name: "One-off launch check", botId: "reed", enabled: true, schedule: { type: "once", at: NOW + 2 * HOUR }, nextRunAt: NOW + 2 * HOUR, prompt: "Check the launch page.", createdAt: NOW - 99 * HOUR });
+  details.push({ name: "Cole's own", botId: "cole", enabled: true, schedule: { type: "interval", everyMinutes: 30, anchorAt: NOW }, nextRunAt: null, prompt: "Not Reed's.", createdAt: NOW });
+  const text = workingContext(LineageAllowance.tool(1_000_000_000), { ...input, currentThreadId: "reed-task", routineDetails: { list: () => details, timeZone: "Asia/Kolkata" } });
+  expect(Buffer.byteLength(text)).toBeLessThanOrEqual(WORKING_CONTEXT_MAX_BYTES);
+  expect(text).toContain("My routines (what each does and when):");
+  expect(text).toContain("Before saying work a routine covers is done, check it with list_routines; pause a monitor only when its goal is met.");
+  expect(text).not.toContain(secret);
+  expect(text).not.toContain("Cole's own");
+  expect(text).not.toContain("Asia/Kolkata");
+  const entries = text.split("\n").filter((line) => line.startsWith("- ") && line.includes(". Does: "));
+  expect(entries.length).toBeGreaterThan(0);
+  expect(entries.length).toBeLessThanOrEqual(6);
+  // a one-time routine comes first, whatever its age
+  expect(entries[0]).toContain("One-off launch check: once,");
+  expect(entries[1]).toContain("Routine 0: weekdays at 9:00 India time; next run");
+  for (const entry of entries) expect(entry.split(". Does: ")[1]!.length).toBeLessThanOrEqual(200);
+});
+
+it("U6 F38 (invariant): without details from the host, the line stays names only", () => {
+  const text = workingContext(LineageAllowance.tool(1_000_000_000), { ...input, currentThreadId: "reed-task" });
+  expect(text).toContain("My routines: Daily sales digest");
+  expect(text).not.toContain("what each does and when");
 });

@@ -6,6 +6,8 @@
 // was playing, so reading one message ends the last. A call starting stops it
 // too (startCall in src/lib/call.ts calls speaker.stop()).
 import type { Speaker } from "./tts";
+import { knownComputer, surface } from "./surface";
+import { replyController } from "./tts/reply-speech";
 
 /** Said once in place of every code block or tool output in a reply. */
 export const CODE_OMITTED = "Code omitted.";
@@ -80,6 +82,7 @@ export function readAloudLabel({ playing, ready }: { playing: boolean; ready: bo
 }
 
 export interface ReadAloudTarget {
+  threadId?: string;
   text: string;
   botId?: string;
   messageId: string;
@@ -88,14 +91,15 @@ export interface ReadAloudTarget {
 }
 
 /** True while this exact message is the one being read. */
-export function isReading(speech: { status: string; messageId?: string }, messageId: string): boolean {
-  return speech.status !== "idle" && speech.messageId === messageId;
+export function isReading(speech: { status: string; messageId?: string; threadId?: string }, messageId: string, threadId?: string): boolean {
+  return speech.status !== "idle" && speech.messageId === messageId && (!speech.threadId || speech.threadId === threadId);
 }
 
 /** Stop if this message is playing; otherwise read it (which stops any other). */
 export function toggleReadAloud(sp: Pick<Speaker, "state" | "speak" | "stop">, target: ReadAloudTarget): void {
+  if (knownComputer() === undefined) { void surface().then(() => { if (knownComputer() !== undefined) toggleReadAloud(sp, target); }); return; }
+  if (knownComputer() === true) { if (target.threadId) replyController.manual({ threadId: target.threadId, messageId: target.messageId, botId: target.botId }); return; }
   if (isReading(sp.state, target.messageId)) return sp.stop();
-  const spoken = readAloudText(target.text);
-  if (!spoken) return;
-  void sp.speak(spoken, { botId: target.botId, messageId: target.messageId, voiceId: target.voiceId });
+  if (!target.text.trim()) return;
+  void sp.speak(target.text, { botId: target.botId, messageId: target.messageId, voiceId: target.voiceId });
 }
