@@ -29,6 +29,7 @@ vi.resetModules();
 const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
 const { ensureWorkspace, loadMemory, readMemoryFile, saveMemoryFile, workspaceDir, writeMemoryFile, WORKSPACES_DIR } = await import("./workspace.ts");
 const { removeTempDirSync } = await import("./testing/cleanup.ts");
+const { resetDataRootsForTest } = await import("./data-roots.ts");
 
 const BOT = "bot-notebook-race";
 const file = () => join(workspaceDir(BOT), "MEMORY.md");
@@ -44,6 +45,7 @@ describe("U33: a bot write during a notebook save is never overwritten", () => {
   beforeEach(() => {
     hooks.fsync = hooks.rename = hooks.link = undefined; hooks.noHardLinks = false;
     removeTempDirSync(WORKSPACES_DIR);
+    resetDataRootsForTest();
     ensureWorkspace(BOT);
     writeMemoryFile(BOT, "- likes tea\n");
   });

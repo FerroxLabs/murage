@@ -353,3 +353,10 @@ describe("M3: provider payment wording in the store apps", () => {
     expect(markup).not.toContain("Top up at the billing page.");
   });
 });
+
+it("T14 all three skill failure codes render the locale title, message and resolution",()=>{
+  for(const code of ["skill-link-foreign","skill-link-staging","pinned-procedures"]){
+    const markup=render({message:"diagnostic",localFailure:code});
+    for(const part of ["title","message","resolution"]){const key=`runtimeError.local.${code}.${part}`;expect((en as Record<string,string>)[key]).toBeTruthy();expect(markup).toContain(rendered((en as Record<string,string>)[key]!));for(const pack of Object.values(locales))expect((pack as Record<string,string>)[key]).toBeTruthy();}
+  }
+});

@@ -482,14 +482,14 @@ describe("provider reload retires hosted-row anchors", () => {
     const run = { threadId: "scoped-thread", botId: "bot", snapshot: { modelSelection: { instanceId: "off" } } };
     const given: Record<string, unknown> = {
       toolRowByItem: anchors, providerFleetReady: true, browserSetup: undefined, browserExtension: undefined, cfg: {},
-      store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }] },
+      store: { bots: [{ id: "bot", threadId: "room-thread", busy: false }], retireFuigoResumeState: () => undefined }, // S5 site 26: a reload retires the Fuigo resume state of an instance it removed
       directRuns: { forBot: () => [run], current: () => false },
       directRunInstanceId: (entry: typeof run) => entry.snapshot.modelSelection.instanceId,
       projectTurnLeases: { generations: () => [], generationsForThreads: () => [], disposed: () => undefined, threadIds: () => [] },
       // rev 5, H2: no engine left a child open here, so nothing is retained
       unconfirmedCloses: async () => new Map(), reloadRetained: new RetainedCloses(), threadsWithWorkInFlight: () => new Map(), localVmThreadTargets: new Map(), Map,
       bus: { detachAll: () => undefined, detach: () => undefined, attach: () => undefined },
-      registry: { disposeAll: async () => undefined, load: async () => undefined, reload: scopedReload, instances: () => [] },
+      registry: { disposeAll: async () => undefined, load: async () => undefined, reload: scopedReload, instances: () => [], get: () => undefined },
       scopedReloadUnsafe: () => false, Set, Promise,
     };
     const context = new Proxy(given, {

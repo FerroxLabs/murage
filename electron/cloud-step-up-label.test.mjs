@@ -12,7 +12,7 @@ import { FALLBACK_LABEL, STEP_UP_LABELS, describeStepUp, findStepUpLabel } from 
 // One concrete request per step-up / credential entry in server/route-policy.ts (and a few the gate escalates by shape).
 const SAMPLES = [
   ["POST", "/api/cloud/model-signins/chatgpt/start"], ["POST", "/api/cloud/model-signins/supergrok/attempts/abc123/cancel"], ["DELETE", "/api/cloud/model-signins/chatgpt"],
-  ["POST", "/api/cloud/own-server"], ["POST", "/api/cloud/pairing"], ["POST", "/api/cloud/devices/d1"],
+  ["POST", "/api/cloud/own-server"], ["POST", "/api/data-dir/confirm-root"], ["POST", "/api/cloud/pairing"], ["POST", "/api/cloud/devices/d1"],
   ["POST", "/api/bots/b1/computer/join"], ["GET", "/api/mcp-grants"], ["POST", "/api/mcp-grants"], ["DELETE", "/api/mcp-grants/g1"], ["POST", "/api/routines/r1/run"],
   ["GET", "/api/bots/b1/browser-extension/activity"], ["POST", "/api/bots/b1/browser-extension/mode"], ["POST", "/api/bots/b1/browser-extension/sites"],
   ["POST", "/api/bots/b1/browser-extension/check"], ["POST", "/api/bots/b1/browser-extension/start-task"], ["GET", "/api/browser-extension/clients"], ["POST", "/api/browser/linux-sandbox/enable"],
@@ -54,6 +54,8 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
+  // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
+  ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
 ];
 
 describe("every step-up route has a human label", () => {

@@ -24,6 +24,7 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(?:chatgpt|supergrok)\/attempts\/[^/]+\/cancel$/, label: "Cancel a model sign-in on your Cloud home" },
   { methods: ["DELETE"], path: rx(String.raw`/api/cloud/model-signins/(?:chatgpt|supergrok)`), label: "Remove a model connection from your Cloud home" },
   { methods: ANY, path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, label: "Change the server your bots use as a computer" },
+  { methods: ["POST"], path: rx("/api/data-dir/confirm-root"), label: "Confirm where a linked data folder now points" },
   { methods: ANY, path: /^\/api\/engine-login\/(?:codex|claudeAgent|grokAgent|kimiAgent|opencodeGo)$/, label: "Sign in or out of an engine on your Cloud home" },
 
   // Bots.
@@ -67,6 +68,9 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["PUT"], path: rx(`/api/groups/${ID}/project/work-roots`), label: "Choose the folders a project can work in" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}/project/work-profile`), label: "Change a project's work profile", summary: "settings" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}/project/settings`), label: "Change a project's settings", summary: "settings" },
+  // CROSS-CHAT-READ: the owner's answer on a share card, and the owner's ask from a room's composer.
+  { methods: ["POST"], path: rx(`/api/room-shares/${ID}/(?:share|decline)`), label: "Share or keep private what a bot found in its other chats" },
+  { methods: ["POST"], path: rx(`/api/groups/${ID}/room-shares`), label: "Ask a bot to look in its other chats for this room" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}`), label: "Change a team or group", summary: "settings" },
   { methods: ["DELETE"], path: rx(`/api/groups/${ID}`), label: "Delete a team or group" },
   { methods: ["POST"], path: /^\/api\/teams\/(?:import|export)$/, label: "Import or export a team" },

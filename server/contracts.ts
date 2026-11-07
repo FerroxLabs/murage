@@ -115,7 +115,7 @@ export type ItemOrigin = "engine" | "murage";
 
 export type RuntimeEvent = RuntimeEventBase &
   (
-    | { type: "session.started"; sessionId: string | null; model?: string | null;
+    | { type: "session.started"; replayPending?: boolean; sessionId: string | null; model?: string | null;
         /** The driver's session contract this session was made under (ProviderInstance.sessionContract). */
         sessionContract?: number }
     /** A sub agent or background task started, progressed or ended. `subtasks`
@@ -434,6 +434,7 @@ export interface SendTurnInput {
   /** Server custody only; never serialized into bot settings or the renderer. */
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
+  fuigoResume?: import("./drivers/acp/fuigo-policy.ts").FuigoResumeContext;
   resumeCursor?: unknown;
   /** Start without the previous native context, including a retained idle
    * process. Takes precedence over resumeCursor. Set whenever the harness

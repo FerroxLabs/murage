@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { Store } from "./store.ts";
 import { RoutineManager, routineInstructionRevision } from "./routines.ts";
@@ -17,7 +18,7 @@ import { bindHumanThread, observeVerifiedHuman, linkHumanBinding, resolveHumanBi
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); });
 const markdown = (text: string) => `---\nname: checked-method\ndescription: Check actual results\n---\n${text}\n`;
 function receipt(snapshot: ProcedureReviewSnapshot): ProcedureEvaluationReceipt {
   const candidate = snapshot.target.kind === "skill" ? markdown("Verify the output before reporting success.") : "Verify the output before reporting success.";

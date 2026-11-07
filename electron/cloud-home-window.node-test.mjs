@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { cloudHomeEnabled, cloudRequestAllowed, createDistReader, installCloudHome } from "./cloud-home-window.mjs";
+import { CLOUD_OPEN_MS, CLOUD_RETRY_MS, cloudHomeEnabled, cloudRequestAllowed, createDistReader, installCloudHome } from "./cloud-home-window.mjs";
 import { cloudHomeNavigationAction, createMainNavigationGuard } from "./main-ipc-trust.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
@@ -106,4 +106,99 @@ test("nav guard wired through createMainNavigationGuard blocks, redirects and op
   const redirect = ev("murage-home://h-abc/api/x"); guard.willRedirect(redirect); assert.equal(redirect.prevented, true);
   const sub = ev("https://evil/", false); guard.willNavigate(sub); assert.equal(sub.prevented, false, "subframes are not governed here");
   assert.ok(warned.length >= 2);
+});
+
+// F43 (upstream 8c960af7b): a Cloud window that never loads shows the offline screen, looks again by itself, and Try again
+// is a fresh watched load. On the base the window stayed blank: loadURL's failure was only a warning.
+function windowWorld() {
+  const loads = [], timers = new Map(), warned = [];
+  let nextTimer = 0;
+  const handlers = {}, contents = {
+    url: "", stopped: 0,
+    on: (name, fn) => { handlers[name] = fn; },
+    stop() { contents.stopped += 1; },
+    getURL: () => contents.url,
+    setWindowOpenHandler() {},
+  };
+  const winEvents = {};
+  function BrowserWindow() {
+    this.webContents = contents;
+    this.on = (name, fn) => { winEvents[name] = fn; };
+    this.isDestroyed = () => false;
+    this.loadURL = (url) => new Promise((resolve, reject) => { contents.url = url; loads.push({ url, resolve, reject }); });
+  }
+  const timerApi = { set: (work, ms) => { const id = ++nextTimer; timers.set(id, { work, ms }); return id; }, clear: (id) => { timers.delete(id); } };
+  const fire = (ms) => { for (const [id, t] of [...timers]) if (t.ms === ms) { timers.delete(id); t.work(); } };
+  const session = { fromPartition: () => ({ protocol: { handle() {} }, setPermissionRequestHandler() {}, webRequest: { onBeforeRequest() {} } }) };
+  const cloud = installCloudHome({ protocol: { registerSchemesAsPrivileged() {} }, session, BrowserWindow, shell: { openExternal: async () => {} }, net: { fetch: async () => null },
+    env: { MURAGE_DESKTOP_CLOUD: "1" }, packaged: false, distDir: "/nonexistent", warn: (m) => warned.push(m), timers: timerApi });
+  return { cloud, loads, timers, fire, handlers, winEvents, contents, warned };
+}
+const HOME = "11111111-1111-4111-8111-111111111111";
+const tick = () => new Promise((r) => setImmediate(r));
+
+test("F43: a Cloud page that hasn't loaded in 30 s shows the offline screen, then looks again by itself", async () => {
+  const w = windowWorld();
+  w.cloud.open(HOME);
+  assert.equal(w.loads.length, 1);
+  assert.equal(w.loads[0].url, `murage-home://${HOME}/`);
+  assert.deepEqual([...w.timers.values()].map((t) => t.ms), [CLOUD_OPEN_MS]);
+  w.fire(CLOUD_OPEN_MS);
+  assert.equal(w.contents.stopped, 1);
+  assert.equal(w.loads.length, 2);
+  assert.ok(w.loads[1].url.startsWith("data:text/html"), "the offline screen, not a blank window");
+  const page = decodeURIComponent(w.loads[1].url);
+  assert.match(page, /Can't reach your Cloud right now/);
+  assert.match(page, new RegExp(`href="murage-home://${HOME}/"[^>]*>Try again`));
+  assert.doesNotMatch(page, /<script/i);
+  // The stopped first load rejecting late changes nothing.
+  w.loads[0].reject(Object.assign(new Error("aborted"), { code: "ERR_ABORTED" }));
+  await tick();
+  assert.equal(w.loads.length, 2);
+  assert.deepEqual([...w.timers.values()].map((t) => t.ms), [CLOUD_RETRY_MS]);
+  w.fire(CLOUD_RETRY_MS);
+  assert.equal(w.loads.length, 3);
+  assert.equal(w.loads[2].url, `murage-home://${HOME}/`);
+  w.loads[2].resolve();
+  await tick();
+  assert.equal(w.timers.size, 0, "loaded: no watchdog, no retry left running");
+  assert.equal(w.loads.length, 3);
+});
+
+test("F43: a failed load shows the offline screen at once; Try again is a fresh watched load", async () => {
+  const w = windowWorld();
+  w.cloud.open(HOME);
+  w.loads[0].reject(Object.assign(new Error("net::ERR_FAILED"), { code: "ERR_FAILED" }));
+  await tick();
+  assert.ok(w.loads[1].url.startsWith("data:text/html"));
+  assert.ok(w.warned.some((m) => /ERR_FAILED/.test(m)));
+  const click = { url: `murage-home://${HOME}/`, isMainFrame: true, prevented: false, preventDefault() { this.prevented = true; } };
+  w.handlers["will-navigate"](click);
+  assert.equal(click.prevented, true, "the page's own navigation is replaced by a watched load");
+  assert.equal(w.loads.length, 3);
+  assert.equal(w.loads[2].url, `murage-home://${HOME}/`);
+  assert.deepEqual([...w.timers.values()].map((t) => t.ms), [CLOUD_OPEN_MS], "Try again is watched too, and the auto retry is replaced");
+  // Off the offline screen, navigation goes through the guard as before.
+  const api = { url: `murage-home://${HOME}/api/threads`, isMainFrame: true, prevented: false, preventDefault() { this.prevented = true; } };
+  w.handlers["will-navigate"](api);
+  assert.equal(api.prevented, true);
+  assert.equal(w.loads.length, 3);
+});
+
+test("F43: ERR_ABORTED is the page moving on, not offline; closing the window stops every timer", async () => {
+  const w = windowWorld();
+  w.cloud.open(HOME);
+  w.loads[0].reject(Object.assign(new Error("aborted"), { code: "ERR_ABORTED" }));
+  await tick();
+  assert.equal(w.loads.length, 1, "no offline screen for a hand-over");
+  w.contents.url = `murage-home://${HOME}/settings`;
+  w.handlers["did-finish-load"]();
+  assert.equal(w.timers.size, 0, "the page that took over finished: the watchdog ends");
+  const w2 = windowWorld();
+  w2.cloud.open(HOME);
+  w2.winEvents.closed();
+  assert.equal(w2.timers.size, 0);
+  w2.loads[0].reject(Object.assign(new Error("x"), { code: "ERR_FAILED" }));
+  await tick();
+  assert.equal(w2.loads.length, 1, "a closed window never loads the offline screen");
 });

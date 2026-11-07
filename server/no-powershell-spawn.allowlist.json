@@ -48,7 +48,7 @@
     "server/claude-accounts.ts": {
       "reason": "label: tells the sign-in screen which shell the pasted sign-in command is written for; starts nothing",
       "lines": {
-        "4d973dd536a0e033": "return {configDir,managed:!!configDir,isDefault:instanceId===\"claude\",signInCommand:claude"
+        "d1ca29f5931e72c8": "return {configDir,managed:!!configDir,isDefault:instanceId===\"claude\",signInCommand:unavai"
       }
     },
     "server/contracts.ts": {
