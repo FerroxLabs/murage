@@ -1,3 +1,5 @@
+import { ProviderRegistry } from "./harness/registry.ts";
+import { makeFakeDriver } from "./testing/fake-driver.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -446,4 +448,26 @@ describe("1.0.15 Astra M8 and MurageMain ruling 2", () => {
     expect(store.bot(b.id)!.engineAutoPicked).toBeUndefined();
     expect(onDisk(b.id).modelSelection).toEqual({ instanceId: "claude", model: "sonnet" });
   });
+});
+
+it("E1: a published birth reading does not move Claude and still permits empty-to-Fuigo", async () => {
+  const fake = makeFakeDriver();
+  const registry = new ProviderRegistry([fake.driver]);
+  await registry.load({ claude: { driver: "fake" }, fuigo: { driver: "fake" } });
+  Object.assign(registry.get("claude")!, { driverKind: "claudeAgent", models: { default: "sonnet", options: [{ id: "sonnet", label: "Sonnet" }] }, snapshot: async () => ({ state: "available", authenticated: true, billing: "subscription" }) });
+  Object.assign(registry.get("fuigo")!, { driverKind: "fuigoAgent", models: { default: "login/m1", options: [{ id: "login/m1", label: "M1" }] } });
+  // The unchanged engine pass is also exercised on the build base, which has no birth-reading API.
+  if (typeof registry.describeFlight === "function") {
+    const flight = registry.describeFlight();
+    registry.publishScan(flight, await flight.run);
+    expect(registry.scanReading()?.rows.find(row => row.instanceId === "claude")?.billing).toBe("subscription");
+  } else await registry.describe();
+  const store = new Store(() => EMPTY);
+  const chief = store.createBot({ modelSelection: { instanceId: "claude", model: "sonnet" } }, { seedMessages: false, engineAutoPicked: true });
+  const empty = store.createBot({ modelSelection: EMPTY }, { seedMessages: false, engineAutoPicked: true });
+  const repick = createEngineRepick({ store, registry, describe: opts => registry.describe(opts), sleep: async () => {}, log: () => {}, ladder: [0] });
+  await repick.request("key");
+  expect(store.bot(chief.id)!.modelSelection).toEqual({ instanceId: "claude", model: "sonnet" });
+  expect(store.bot(empty.id)!.modelSelection).toEqual({ instanceId: "fuigo", model: "login/m1" });
+  await registry.disposeAll();
 });

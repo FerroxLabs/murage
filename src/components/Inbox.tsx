@@ -9,11 +9,13 @@ import { firstRunOwnsMainView } from "@/lib/first-run";
 import { useEngineReading } from "@/components/today/use-engine-health";
 import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
-import { InboxRequestAnswer, inlineAnswerKind, requestHeadline } from "./InboxRequest";
+import { InboxQuickAnswer, InboxRequestAnswer, inlineAnswerKind, readRequestCard, requestHeadline, requestSummary } from "./InboxRequest";
 import { useSetupView } from "./FirstRunChrome";
 import { inboxTabCounts, signedOutEngineIds, signedOutEngineRows, type SignedOutEngineRow } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
+import { onInboxChanged } from "@/lib/inbox-changed";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
+import { backupNoticeSentence } from "../../shared/backup-capture-failure.mjs";
 import { t } from "@/lib/i18n";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { InboxEngineSignInRow } from "./InboxEngineSignInRow";
@@ -24,6 +26,8 @@ import { botChips, createSnoozeReturns, groupNeeds, needsKeyAction, nextAfterAns
 import { isEditableTarget, undoHost } from "@/lib/undo";
 import { showSnoozeReturn } from "@/lib/notify";
 import { ApproveAllButton } from "./ApproveAll";
+import { approveAllHint } from "@/lib/approve-all";
+import { bulkReadyRows, rowKey, rowKind, rowLine, rowMeta } from "@/lib/approval-row";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // One timer per row snoozed from the door, kept while the app is open (not while this page is), so the
@@ -55,6 +59,9 @@ export const botNameFromSource = (sourceLabel: string) => sourceLabel.split(" ·
 /** How many waiting requests the Inbox reads the live card for in one page.
  * Bounded so a workspace with a wall of them does not open a wall of reads. */
 const INLINE_CARD_LIMIT = 10;
+/** The Needs you door reads every waiting request on its page (25 at most): each row says WHAT it asks, and a plain
+ *  one answers from the row (NEEDSYOU-INLINE-APPROVE), so no row is left a blind "Approval requested". */
+const DOOR_CARD_LIMIT = 25;
 
 /** Opening navigates to the exact persisted source; a waiting request can
  * also be read and answered here, through the conversation's own routes. */
@@ -235,7 +242,7 @@ function InboxSection({ label, aside, children }: { label: string; aside?: React
   </section>;
 }
 
-export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions", door = false }: { onOpen: (link: InboxLink) => void; door?: boolean; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models", anchor?: string) => void; refreshKey?: number; initialView?: InboxView }) {
+export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMemory, onOpenSettingsPage, refreshKey = 0, initialView = "decisions", door = false, onViewChange }: { onOpen: (link: InboxLink) => void; door?: boolean; /** a tab picked here (the page keeps it, and may ask for another through `initialView`) */ onViewChange?: (view: InboxView) => void; onClose?: () => void; onOpenBackups?: () => void; onOpenLearning?: (botId: string) => void; onOpenMemory?: (subject: { kind: "bot" | "room" | "other"; id: string; name: string }) => void; onOpenSettingsPage?: (section: "backups" | "storage" | "memory" | "engines" | "models", anchor?: string) => void; refreshKey?: number; initialView?: InboxView }) {
   const [view, setView] = useState<InboxView>(initialView);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
@@ -262,6 +269,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const [readError, setReadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
+  // Refresh presses only (APPROVALS-SIMPLE-1018 3b): each closes anything Approve all has open, whatever the list reads.
+  const [refreshes, setRefreshes] = useState(0);
   // What the person has already answered here: item ids, and `engine:<id>`.
   // Hidden the moment they click, so the row goes when they say so and not
   // when the next read happens to land, and a read already in flight when
@@ -310,6 +319,10 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     return () => window.clearTimeout(timer);
   }, [preparing, revision]);
 
+  // A CHANGE ELSEWHERE REACHES EVERY TAB (FUNCTION-SWEEP-1018). The rail badge re-reads on the server's `inbox.changed`
+  // and only Needs you had a beat of its own, so on Approvals a new request (or one answered on the phone) moved the
+  // badge to 3 while the open tab still said (2) and listed the old rows until Refresh. Every tab now reads on the notice.
+  useEffect(() => onInboxChanged(() => setRevision(current => current + 1)), []);
   // Hidden (a locked phone, a background tab): no 5 s reads nobody can see.
   const pageVisible = usePageVisible();
   const wasHidden = useRef(false);
@@ -342,7 +355,11 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // A new list: what was on screen belongs to the old one, so it goes rather
   // than sitting there under the new tab's name until the read lands.
   const reset = () => { setResult(null); setPage(0); setCursors([]); };
-  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); setOpenId(null); setBotFilter(""); } };
+  const chooseView = (next: InboxView) => { if (next !== view) { setView(next); reset(); setOpenId(null); setBotFilter(""); onViewChange?.(next); } };
+  // THE TAB IS THE PAGE'S, NOT ONLY OURS (FUNCTION-SWEEP-1018). A tab picked here never reached the page, so the page
+  // still thought it was on Needs you, and the rail's Needs you door (which asks for that tab) changed nothing while
+  // Approvals was open. Picked tabs are reported up; a tab the page asks for is taken here.
+  useEffect(() => { chooseView(initialView); }, [initialView]); // eslint-disable-line react-hooks/exhaustive-deps
   // Setting aside a request to connect an app: the same call as the card's
   // own "Not now" in the chat, one card or every one on this page.
   const dismiss = (items: InboxItem[]) => act(items.map(item => item.id), async () => {
@@ -407,7 +424,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // Every tab counts every signed-out engine, not only the tabs that list
   // them (inboxTabCounts), so the numbers stay put when the tab changes.
   const reading = useEngineReading();
-  const engineRow = engineNeed(reading, signedOutEngineIds(setupView), Boolean(setupView && firstRunOwnsMainView(setupView)));
+  const engineRow = engineNeed({ engine: reading.health, flux: reading.flux }, signedOutEngineIds(setupView), Boolean(setupView && firstRunOwnsMainView(setupView)));
   const shown = inboxTabCounts(result, setupView, gone, engineRow ? [{ id: engineRow.key }] : []);
   // A daily backup held up by a waiting card (0.1.60 Linux D6). Shown where
   // decisions are, beside the card it waits for; never counted.
@@ -445,18 +462,16 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const [cards, setCards] = useState<Record<string, OptionCardData>>({});
   const pendingRequests = (door ? doorOrder(list, Date.now()) : list).filter(item => item.kind === "request" && item.status === "pending");
   // The door reads the live card of the open row too, wherever it sits, so an open card always has its verbs.
-  const openBeyond = door && openId ? pendingRequests.slice(INLINE_CARD_LIMIT).find(item => item.id === openId) : undefined;
-  const waiting = [...pendingRequests.slice(0, INLINE_CARD_LIMIT), ...(openBeyond ? [openBeyond] : [])];
+  const cardLimit = door ? DOOR_CARD_LIMIT : INLINE_CARD_LIMIT;
+  const openBeyond = door && openId ? pendingRequests.slice(cardLimit).find(item => item.id === openId) : undefined;
+  const waiting = [...pendingRequests.slice(0, cardLimit), ...(openBeyond ? [openBeyond] : [])];
   const waitingKey = waiting.map(item => `${item.link.threadId}:${item.link.messageId}:${item.version}`).join("|");
   useEffect(() => {
     if (!waiting.length) { setCards(current => (Object.keys(current).length ? {} : current)); return; }
     const controller = new AbortController();
     void Promise.all(waiting.map(async item => {
-      try {
-        const thread = await api(`/api/threads/${item.link.threadId}/messages?around=${item.link.messageId}&limit=1`, { signal: controller.signal }) as { messages?: { id: string; card?: OptionCardData }[] };
-        const card = thread.messages?.find(message => message.id === item.link.messageId)?.card;
-        return card?.requestId ? ([item.link.messageId, card] as const) : null;
-      } catch { return null; }
+      const card = await readRequestCard(item.link, controller.signal);
+      return card ? ([item.link.messageId, card] as const) : null;
     })).then(found => {
       if (controller.signal.aborted) return;
       setCards(Object.fromEntries(found.filter(entry => entry !== null)));
@@ -475,7 +490,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const groups = doorRows ? groupNeeds(picked ? ordered.filter(item => botOf(item) === picked) : ordered, botOf) : [];
   const doorIds = groups.flatMap(group => group.rows.map(item => item.id));
   const shownOpen = openId && doorIds.includes(openId) ? openId : null;
-  const snoozedOwed = owed ? result?.snoozedOwed ?? 0 : 0;
+  // "N snoozed" counts what this tab's Show snoozed brings back: everything owed on Needs you, the segment's own on its tab.
+  const snoozedOwed = owed ? (view === "decisions" ? result?.snoozedOwed : result?.snoozedHere) ?? 0 : 0;
   // Focus follows the sweep: into the card that just opened (its first control, so 1 to 9 pick), or back to a row's Open.
   useEffect(() => {
     const next = focusAfter.current;
@@ -495,6 +511,17 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     if (!group && loading) focusAfter.current = next;
   });
   const openRow = (id: string | null, into = true) => { setOpenId(id); if (id) focusAfter.current = { id, into }; };
+  /** A one-click answer from a collapsed row (NEEDSYOU-INLINE-APPROVE) was accepted: the row leaves now, and focus
+   *  goes to the next row's Open, never onto another answer, so a second Enter opens a card rather than approving. */
+  const settledInline = (item: InboxItem) => {
+    snoozeReturns.cancel(item.id);
+    const next = nextAfterAnswer(doorIds, item.id);
+    setGone(current => new Set([...current, item.id]));
+    if (next && next !== item.id) focusAfter.current = { id: next, into: false };
+    // the last row answered: the page's heading, so focus is never dropped (Astra full review Medium)
+    else requestAnimationFrame(() => document.getElementById("inbox-title")?.focus());
+    setRevision(current => current + 1);
+  };
   const snooze = (item: InboxItem) => {
     const target = snoozeTarget(Date.now());
     const remaining = doorIds.filter(id => id !== item.id);
@@ -539,8 +566,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     const target = event.target as HTMLElement;
     const row = target.closest<HTMLElement>("[data-needs-row]")?.dataset.needsRow ?? null;
     const onHead = target.hasAttribute("data-needs-open");
-    // Enter and Space on a row's Open button are that button's own click.
-    if (onHead && (event.key === "Enter" || event.key === " ")) return;
+    // Enter and Space on a row's Open button, or on its one-click answer, are that button's own click.
+    if ((onHead || target.closest("[data-needs-quick]")) && (event.key === "Enter" || event.key === " ")) return;
     const action = needsKeyAction({
       key: event.key,
       typing: event.metaKey || event.ctrlKey || event.altKey || isEditableTarget(target),
@@ -563,7 +590,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
             // read; `item.title` is the kind of thing it is, and stays as the
             // line above it rather than as the headline.
             const card = cards[item.link.messageId];
-            const headline = requestHeadline(card);
+            // APPROVALS-SIMPLE-1018: an approval is headed by what the bot wants, in words ("Petra wants to ..."),
+            // never by its command; the command stays in the answer panel and the conversation.
+            const headline = requestHeadline(card) || (card && inlineAnswerKind(card) === "approval" ? rowLine(card, botNameFromSource(item.sourceLabel), requestSummary) : "");
             const answerable = Boolean(card) && inlineAnswerKind(card) !== null;
             const snoozed = item.snoozedUntil !== null && item.snoozedUntil > Date.now();
             // The door shows snoozed rows only when asked to, and says when each comes back.
@@ -590,7 +619,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
                 {item.duplicates > 1 && <span className="py-0.5 text-ink-secondary">{item.kind === "error" ? `${item.duplicates} times` : `${item.duplicates} matching receipts`}</span>}
                 {snoozeShown && snoozed && <span className="py-0.5 text-ink-secondary">{door ? t("ux.l2b.snooze.until", { time: shortWhen(item.snoozedUntil!) }) : `Snoozed until ${shortWhen(item.snoozedUntil!)}`}</span>}
               </div>}
-              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} onSettled={() => {
+              {answerable && <InboxRequestAnswer threadId={item.link.threadId} card={card!} botName={botNameFromSource(item.sourceLabel)} details={door} onSettled={() => {
                 // The sweep: an accepted answer takes the row away now and opens the next one.
                 snoozeReturns.cancel(item.id);
                 if (doorRows) { setGone(current => new Set([...current, item.id])); openRow(nextAfterAnswer(doorIds, item.id)); }
@@ -610,10 +639,23 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
               </div>
             </>;
   };
+  // Approve all counts and binds to the rows ON SCREEN (APPROVALS-SIMPLE-1018 section 3): the door's rows under the
+  // bot picked, else the list. `listed` is every request row shown, the generation token of 3b.
+  const shownRows = doorRows ? groups.flatMap(group => group.rows) : list;
+  const approveAllEligible = approveAllHint(view, shownRows);
+  const approveAllReady = bulkReadyRows(shownRows).map(item => rowKey(item.link));
+  const approveAllListed = shownRows.filter(item => item.kind === "request").map(item => rowKey(item.link));
+  // The same query the list read (RESIDUALS-1018-B row 6): the preview reads this page, Show snoozed and cursor included.
+  const approveAllAfter = page > 0 ? cursors[page] : undefined;
+  const approveAllScreen = { view, query, page, pageSize: 25, includeSnoozed, ...(approveAllAfter ? { after: approveAllAfter } : {}) };
+  // The grey line's "one at a time: {reason}" is said only where Approve all is on offer (2 or more it would answer).
+  const bulkNote = (approveAllEligible ?? 0) >= 2;
   return <section aria-labelledby="inbox-title" aria-busy={loading} className={`${BOX_FRAME} mx-auto h-full w-full max-w-4xl bg-panel text-ink`}>
-    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" className="text-[22px] font-semibold">{door ? t("ux.l2a.door.needsYou") : "Inbox"}</h1>
+    <BoxHead className="border-b border-hairline/40 px-4 py-3 sm:px-6"><h1 id="inbox-title" tabIndex={-1} className="text-[22px] font-semibold focus:outline-none">{door ? t("ux.l2a.door.needsYou") : "Inbox"}</h1>
       <div className="flex gap-2">
-        <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => setRevision(current => current + 1)}>
+        {/* Refresh re-reads everything on the page: the list and its counts, the signed-out engine rows (FUNCTION-SWEEP-1018:
+            they waited for their own poll), and it closes anything Approve all had open (APPROVALS-SIMPLE-1018 3b). */}
+        <button className={`${button} inline-flex items-center gap-2`} disabled={saving} onClick={() => { setRevision(current => current + 1); setRefreshes(current => current + 1); refreshSetup(); }}>
           <RefreshCw size={14} aria-hidden className={loading ? "animate-spin motion-reduce:animate-none" : ""} />Refresh
         </button>
         {onClose && <button className={button} onClick={onClose}>Close Inbox</button>}
@@ -621,8 +663,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     </BoxHead>
     <BoxBody className="flex flex-col p-4 sm:p-6">
     <p className="text-[13px] leading-relaxed text-ink-secondary">{INBOX_VIEW_COPY[view] ?? INBOX_VIEW_COPY.all}</p>
-    {/* Approve all (APPROVE-ALL-1016): the Approvals tab only; the server says whether this surface shows it */}
-    {view === "approvals" && <ApproveAllButton eligibleHint={result?.approvals ?? 0} onApplied={() => setRevision(current => current + 1)} />}
+    {/* Approve all (APPROVE-ALL-1016): Approvals and Needs you; the server says whether this surface shows it, and under 2 it stays away */}
+    {approveAllEligible !== null && <ApproveAllButton ready={approveAllReady} listed={approveAllListed} screen={approveAllScreen} refreshes={refreshes} onApplied={() => setRevision(current => current + 1)} onChanged={() => setRevision(current => current + 1)} />}
     {/* FIVE LISTS, AND ONLY THREE OF THEM CARRY A NUMBER.
         The owner opened this with thirty six against it, and thirty five of
         those were one provider outage listed once per run. A count he cannot
@@ -637,7 +679,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         {label}{shown && count ? ` (${count(shown) + (door && value === "decisions" ? result?.snoozedOwed ?? 0 : 0)})` : ""}
       </button>)}
     </nav>
-    <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } }}>
+    <form role="search" className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); const next = draft.trim(); if (next !== query) { setQuery(next); reset(); } else setRevision(current => current + 1); }}>
       <label className="sr-only" htmlFor="inbox-search">Search Inbox</label><input id="inbox-search" type="search" maxLength={200} value={draft} onChange={event => setDraft(event.target.value)} className={`${field} flex-1`} placeholder="Search results or bots" />
       <button className={button}>Search</button>
     </form>
@@ -684,7 +726,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       <InboxSection label="Backups">
         <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
           <p className="font-medium text-ink">The last backup didn't finish</p>
-          <p className="mt-1 text-ink-secondary">{backupFailed.sentence}</p>
+          <p className="mt-1 text-ink-secondary">{backupNoticeSentence(backupFailed, t)}</p>
           {onOpenBackups && <div className="mt-3 flex flex-wrap gap-2"><button className={button} onClick={onOpenBackups}>Open Backups</button></div>}
         </div>
       </InboxSection>
@@ -804,7 +846,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
         </>}
       >
         {doorRows ? <>
-          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} className="mb-3 flex flex-wrap gap-2">
+          {chips.length > 1 && <div role="group" aria-label={t("ux.l2b.door.chipsLabel")} data-needs-chips className="mb-3 flex flex-wrap gap-2 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>button]:shrink-0">
             <button type="button" className={viewTab(!picked)} aria-pressed={!picked} onClick={() => setBotFilter("")}>{t("ux.l2b.door.chipAll", { n: ordered.length })}</button>
             {chips.map(chip => <button key={chip.bot} type="button" className={viewTab(picked === chip.bot)} aria-pressed={picked === chip.bot} onClick={() => setBotFilter(chip.bot)}>{t("ux.l2b.door.chip", { bot: chip.bot, n: chip.count })}</button>)}
           </div>}
@@ -818,16 +860,25 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
                   const bot = botOf(item);
                   const since = waitingSinceTime(item.at, Date.now());
                   const botRecord = item.botId ? store?.state.bots.find(entry => entry.id === item.botId) : undefined;
+                  // APPROVALS-SIMPLE-1018: the bot's words on the line, Murage's kind on the grey line, no command here
+                  const approval = item.kind === "request" && (item.toolKind !== undefined || Boolean(card?.tool));
+                  // UX L7: Next in the phone sheet goes on down the list, never back round to the top.
+                  const nextId = doorIds[doorIds.indexOf(item.id) + 1];
                   return <NeedsRow
                     key={item.id}
                     id={item.id}
-                    line={requestHeadline(card) || item.title}
-                    meta={bot ? t("ux.l2b.door.meta", { bot, time: since }) : t("ux.l2b.door.metaNoBot", { time: since })}
+                    line={rowLine(card, bot, requestSummary) || item.title}
+                    meta={approval ? rowMeta({ kind: rowKind(item, card), ...(bot ? { bot } : {}), time: since, ...(item.bulk ? { bulk: item.bulk } : {}), note: bulkNote })
+                      : bot ? t("ux.l2b.door.meta", { bot, time: since }) : t("ux.l2b.door.metaNoBot", { time: since })}
+                    details={item.kind === "request"}
                     avatar={botRecord ? <BotAvatar bot={botRecord} size={32} /> : undefined}
                     open={shownOpen === item.id}
                     cameBack={cameBack(item, Date.now())}
                     onToggle={() => openRow(shownOpen === item.id ? null : item.id)}
                     headRef={(element) => { if (element) heads.current.set(item.id, element); else heads.current.delete(item.id); }}
+                    actions={card ? <InboxQuickAnswer threadId={item.link.threadId} card={card} botName={bot} labelledBy={`needs-row-line-${item.id}`} onSettled={() => settledInline(item)} /> : undefined}
+                    onNotNow={item.snoozedUntil !== null && item.snoozedUntil > Date.now() ? undefined : () => snooze(item)}
+                    onNext={nextId ? () => openRow(nextId) : undefined}
                   >{cardBody(item)}</NeedsRow>;
                 })}
               </ul>

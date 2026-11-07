@@ -829,6 +829,8 @@ const askedWindows = new Map<string, { at: number; suppressed: number }>();
 /** NOLIMITS-KEY-TEXT 3.7: why the key guard held a verdict, by fixed name, for the asked line only. */
 type KeyWhy = "path" | "value" | "field" | "mcp" | "summary" | "unmodeled" | "pwsh" | "local-hold";
 const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
+/** APPROVALS-SIMPLE-1018: why the reader held an `unreadable` hit, a fixed content-free name (UnseenWhy and three more). */
+const readerWhyOf = new WeakMap<AutoVerdict, string>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
 
@@ -889,7 +891,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   // NOLIMITS-MEANS-IT and KEY-TEXT: fixed names only: whether the owner started this turn, a row's id and the class of read, never a path, a name or command text
   const keyRow = held === "key-row" || held === "local-hold" ? keyRowId(verdict.rule) : undefined;
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
-  const why = keyWhyOf.get(verdict);
+  const why = keyWhyOf.get(verdict) ?? readerWhyOf.get(verdict);
   const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
   console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}`);
 }
@@ -989,7 +991,10 @@ function autoVerdictOf(
   // ahead of this return. It needs `outer` from before the inner read. `inputTruncated` already keeps a cut call's card.
   if (catastrophe && !unseenCovered) {
     const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
-    return { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+    const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+    // APPROVALS-SIMPLE-1018 5 (NOLIMITS-UNREADABLE R6): the asked line says which reader shape still cards, no text
+    if (reader) readerWhyOf.set(held, catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
+    return held;
   }
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds

@@ -39,7 +39,7 @@ export const SITES_MESSAGES = {
   "browserExt.sites.errorBotId": "That bot is not valid.",
   "browserExt.sites.errorProfileId": "That browser profile is not valid.",
   "browserExt.sites.errorRule": "That is not a site setting Murage knows.",
-  "browserExt.sites.errorLowered": "Only an Ask site can be lowered.",
+  "browserExt.sites.errorLowered": "Only a site set to Ask can have its permission level lowered.",
   "browserExt.sites.errorTooMany": "That is more sites than Murage keeps for one browser. Remove some first.",
   "browserExt.sites.errorOldRecord": "Murage could not read the old browser connection record, so nothing was moved. Nothing was changed.",
   "browserExt.sites.errorOldRecordNewer": "The browser connection record was saved by a newer version of Murage, so this version leaves it alone. Update Murage to use it.",

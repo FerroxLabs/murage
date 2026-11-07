@@ -18,7 +18,15 @@ export interface HoldResult {
   /** instance ids whose running turns did not finish in time: they are not held */
   busy: string[];
   release: () => void;
+  /** True once a turn has waited this hold's `waitMs` at the gate of one of its instances: the holder is asked to stop at its next safe
+   * point and release, so the owner's turn never waits for a whole removal (DELETE-HOLDS-ENGINE). */
+  yieldAsked: () => boolean;
+  /** Resolves the first time `yieldAsked` turns true; never for a hold no turn waits on. Lets a holder's sleep end early. */
+  yielded: Promise<void>;
 }
+
+/** One hold on one instance, as the waiting turns see it: asked when a turn has waited `waitMs` from the later of `from` and its start. */
+interface HoldHandle { waitMs: number; from: number; asked: boolean; ask: () => void }
 
 export class InstanceHolds {
   private readonly held = new Map<string, number>();
@@ -29,6 +37,12 @@ export class InstanceHolds {
   /** When each instance last saw a turn end. */
   private readonly endedAt = new Map<string, number>();
   private readonly freeWaiters = new Set<{ ids: string[]; since: number; wake: () => void }>();
+  /** The holds (from `hold`, never `holdNow`) on each instance, each asked to yield at its own budget. */
+  private readonly handles = new Map<string, Set<HoldHandle>>();
+  /** The turns waiting at each instance's gate, kept from their first wait until the gate is really down. */
+  private readonly waiting = new Map<string, Set<{ since: number }>>();
+  /** One timer per instance, for the soonest handle due (`rearm`). */
+  private readonly timers = new Map<string, NodeJS.Timeout>();
   /** Called once for each turn that has to wait, with the thread it was for. */
   onWait?: (instanceId: string, threadId: string) => void;
 
@@ -95,16 +109,84 @@ export class InstanceHolds {
   /** A turn's admission: waits while the instance is held, and registers the turn as running in the same synchronous step as the
    * check that found no hold. After this resolves the turn is counted, so a hold installed at any later moment waits for it. */
   async admit(instanceId: string, threadId: string): Promise<void> {
-    let waited = false;
-    while (this.isHeld(instanceId)) {
-      if (!waited) { waited = true; this.onWait?.(instanceId, threadId); }
-      await new Promise<void>((resolve) => {
-        const list = this.gates.get(instanceId) ?? [];
-        list.push(resolve);
-        this.gates.set(instanceId, list);
-      });
+    let waiter: { since: number } | undefined;
+    try {
+      while (this.isHeld(instanceId)) {
+        if (!waiter) {
+          waiter = { since: Date.now() };
+          const set = this.waiting.get(instanceId) ?? new Set();
+          set.add(waiter);
+          this.waiting.set(instanceId, set);
+          this.onWait?.(instanceId, threadId);
+          this.rearm(instanceId);
+        }
+        await new Promise<void>((resolve) => {
+          const list = this.gates.get(instanceId) ?? [];
+          list.push(resolve);
+          this.gates.set(instanceId, list);
+        });
+      }
+    } finally {
+      if (waiter) {
+        const set = this.waiting.get(instanceId);
+        set?.delete(waiter);
+        if (set && !set.size) this.waiting.delete(instanceId);
+        this.rearm(instanceId);
+      }
     }
     this.noteStarted(instanceId, threadId);
+  }
+
+  /** Arms the instance's one timer for the soonest unasked handle due while a turn waits at its gate: a handle is due `waitMs` after the
+   * later of its own start and the oldest waiting turn's. On fire every due handle of the LIVE set is asked, then the timer is armed
+   * again for the rest. No waiter, no unasked handle or the gate down: no timer. */
+  private rearm(instanceId: string): void {
+    const armed = this.timers.get(instanceId);
+    if (armed) { clearTimeout(armed); this.timers.delete(instanceId); }
+    const oldest = this.oldestWaiter(instanceId);
+    const handles = this.handles.get(instanceId);
+    if (oldest === undefined || !handles?.size || !this.isHeld(instanceId)) return;
+    let due = Infinity;
+    for (const handle of handles) if (!handle.asked) due = Math.min(due, Math.max(handle.from, oldest) + handle.waitMs);
+    if (due === Infinity) return;
+    const timer = setTimeout(() => {
+      this.timers.delete(instanceId);
+      const since = this.oldestWaiter(instanceId);
+      if (since !== undefined) {
+        const now = Date.now();
+        for (const handle of [...(this.handles.get(instanceId) ?? [])]) {
+          if (handle.asked || Math.max(handle.from, since) + handle.waitMs > now) continue;
+          handle.asked = true;
+          try { handle.ask(); } catch { /* an ask never breaks the waiting turn */ }
+        }
+      }
+      this.rearm(instanceId);
+    }, Math.max(0, due - Date.now()));
+    timer.unref();
+    this.timers.set(instanceId, timer);
+  }
+
+  private oldestWaiter(instanceId: string): number | undefined {
+    const set = this.waiting.get(instanceId);
+    if (!set?.size) return undefined;
+    let oldest = Infinity;
+    for (const waiter of set) oldest = Math.min(oldest, waiter.since);
+    return oldest;
+  }
+
+  private addHandle(instanceId: string, handle: HoldHandle): void {
+    const set = this.handles.get(instanceId) ?? new Set();
+    set.add(handle);
+    this.handles.set(instanceId, set);
+    this.rearm(instanceId);
+  }
+
+  private dropHandle(instanceId: string, handle: HoldHandle | undefined): void {
+    if (!handle) return;
+    const set = this.handles.get(instanceId);
+    set?.delete(handle);
+    if (set && !set.size) this.handles.delete(instanceId);
+    this.rearm(instanceId);
   }
 
   private unhold(instanceId: string): void {
@@ -147,11 +229,22 @@ export class InstanceHolds {
    * whether they are all confirmed gone; an adapter that fails to say so, or throws, leaves its instance reported busy. */
   async hold(instanceIds: readonly string[], waitMs: number, idleOf: (instanceId: string) => Promise<IdleHold | undefined>): Promise<HoldResult> {
     const ids = [...new Set(instanceIds)];
-    for (const id of ids) this.held.set(id, (this.held.get(id) ?? 0) + 1);
+    let asked = false;
+    let markYielded!: () => void;
+    const yielded = new Promise<void>((resolve) => { markYielded = resolve; });
+    const ask = () => { if (asked) return; asked = true; markYielded(); };
+    const mine = new Map<string, HoldHandle>();
+    const now = Date.now();
+    for (const id of ids) {
+      this.held.set(id, (this.held.get(id) ?? 0) + 1);
+      const handle: HoldHandle = { waitMs, from: now, asked: false, ask };
+      mine.set(id, handle);
+      this.addHandle(id, handle);
+    }
     const deadline = Date.now() + waitMs;
     const ok = await Promise.all(ids.map((id) => this.idle(id, deadline)));
     const busy = ids.filter((_, index) => !ok[index]);
-    for (const id of busy) this.unhold(id);
+    for (const id of busy) { this.unhold(id); this.dropHandle(id, mine.get(id)); }
     const kept: string[] = [];
     const releases: Array<() => void> = [];
     for (const id of ids.filter((_, index) => ok[index])) {
@@ -162,6 +255,7 @@ export class InstanceHolds {
       // Not confirmed idle: let the adapter start engines again, lift the hold, and report the instance busy.
       try { idle?.release(); } catch { /* already free */ }
       this.unhold(id);
+      this.dropHandle(id, mine.get(id));
       busy.push(id);
     }
     let released = false;
@@ -171,8 +265,10 @@ export class InstanceHolds {
         if (released) return;
         released = true;
         for (const back of releases) { try { back(); } catch { /* already free */ } }
-        for (const id of kept) this.unhold(id);
+        for (const id of kept) { this.unhold(id); this.dropHandle(id, mine.get(id)); }
       },
+      yieldAsked: () => asked,
+      yielded,
     };
   }
 }

@@ -672,7 +672,8 @@ describe("ensureKimiInjectAlias", () => {
     const home = mkdtempSync(join(tmpdir(), "murage-kimi-userprofile-"));
     scratchDirs.push(home);
     mkdirSync(join(home, ".kimi-code", "credentials"), { recursive: true });
-    writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), "{}");
+    // L9 Kimi design, root/shape contract: a held hint needs a nonblank token.
+    writeFileSync(join(home, ".kimi-code", "credentials", "kimi-code.json"), JSON.stringify({ access_token: "userprofile-fixture-token" }));
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-userprofile",
       displayName: "Kimi",

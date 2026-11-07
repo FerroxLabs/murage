@@ -15,6 +15,7 @@
 // checkpoint that cuts the write-ahead log back (never waiting on a lock),
 // and incremental vacuum where the file allows it. No step changes what any
 // set holds: a converted set keeps its members and its content address.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import { readTimeRetired } from "./read-time-retired.ts";
 import { statSync, statfsSync } from "node:fs";
 import { dirname } from "node:path";
@@ -208,16 +209,16 @@ export function compactRootSetsStep(db: DatabaseSync, budget: StepBudget = {}): 
       // The chunk's inserts, the count and the cursor commit as one unit: an interruption between them must not leave rows the cursor does not account for
       // (a retry would add none of them and the exact total would come out short).
       const before = { added, total, rowid, src: cursor.src, rows: cursor.rowid, n: cursor.n };
-      db.exec("SAVEPOINT memory_root_set_enumerate");
+      beginWrite(db, "memory_root_set_enumerate");
       try {
         const inserted = db.prepare(`INSERT OR IGNORE INTO ${ROOT_SET_WORKLIST_TABLE}(thread_id,size,set_id) SELECT o.thread_id,r.size,o.set_id FROM ${table} o JOIN memory_root_sets r ON r.set_id=o.set_id
           WHERE o.rowid>? AND o.rowid<=? AND o.set_id<>''`).run(rowid, hi);
         added += Number(inserted.changes); rowid = hi; total = added;
         cursor.src = src; cursor.rowid = rowid; cursor.n = added;
         saveRow();
-        db.exec("RELEASE memory_root_set_enumerate");
+        endWrite(db, "memory_root_set_enumerate");
       } catch (error) {
-        db.exec("ROLLBACK TO memory_root_set_enumerate; RELEASE memory_root_set_enumerate");
+        undoWrite(db, "memory_root_set_enumerate");
         added = before.added; total = before.total; rowid = before.rowid; cursor.src = before.src; cursor.rowid = before.rows; cursor.n = before.n;
         throw error;
       }
@@ -320,14 +321,14 @@ export function compactRootSetsStep(db: DatabaseSync, budget: StepBudget = {}): 
     }
     if (work.held !== previous.size) return drop("kept");
     // 4. the cut: the set's rows become just what it adds to its parent. One transaction, bounded by maxCutRows (previous.size).
-    db.exec("SAVEPOINT memory_root_set_compaction");
+    beginWrite(db, "memory_root_set_compaction");
     try {
       const cut = db.prepare(`DELETE FROM memory_root_set_members WHERE set_id=? AND (root_thread_id,root_message_id) IN (SELECT t,m FROM ${BELOW})`).run(set.id);
       link.run(set.id, previous.id);
       // the rows were counted before the cut (exactly the set's size) and every row below was found among them: what the cut removed is the predecessor
       if (Number(cut.changes) !== previous.size) throw new Error("MEMORY_ROOT_SET_COMPACTION_MISMATCH");
-      db.exec("RELEASE memory_root_set_compaction");
-    } catch (error) { db.exec("ROLLBACK TO memory_root_set_compaction; RELEASE memory_root_set_compaction"); inHand.delete(db); clearBelow(); throw error; }
+      endWrite(db, "memory_root_set_compaction");
+    } catch (error) { undoWrite(db, "memory_root_set_compaction"); inHand.delete(db); clearBelow(); throw error; }
     result.rows += previous.size;
     inHand.delete(db); clearBelow();
     return "converted";
@@ -336,12 +337,12 @@ export function compactRootSetsStep(db: DatabaseSync, budget: StepBudget = {}): 
   /** Saves the place: the last worklist row finished and the set in hand, and forgets the worklist rows behind it in the same unit. */
   const checkpoint = (hand: SetInHand | null) => {
     cursor.hand = hand ? { id: hand.id, prev: hand.previous, phase: hand.phase, key: hand.key, counted: hand.counted } : null;
-    db.exec("SAVEPOINT memory_root_set_cursor");
+    beginWrite(db, "memory_root_set_cursor");
     try {
       if (cursor.k) forget.run(cursor.k[0], cursor.k[1], cursor.k[2]);
       saveRow();
-      db.exec("RELEASE memory_root_set_cursor");
-    } catch (error) { db.exec("ROLLBACK TO memory_root_set_cursor; RELEASE memory_root_set_cursor"); throw error; }
+      endWrite(db, "memory_root_set_cursor");
+    } catch (error) { undoWrite(db, "memory_root_set_cursor"); throw error; }
   };
 
   let previous: { id: string; size: number } | null = null, previousThread: string | null = null;
@@ -445,7 +446,7 @@ export function collectRootSetsSlice(db: DatabaseSync, options: { limit?: number
   const drainChunk = db.prepare(`DELETE FROM memory_root_set_members WHERE set_id=?1 AND (root_thread_id,root_message_id) IN
     (SELECT root_thread_id,root_message_id FROM memory_root_set_members WHERE set_id=?1 ORDER BY root_thread_id,root_message_id LIMIT ?2)`);
   const setExists = db.prepare("SELECT 1 FROM memory_root_sets WHERE set_id=?");
-  db.exec("SAVEPOINT memory_root_set_collect");
+  beginWrite(db, "memory_root_set_collect");
   try {
     let examineMore = true;
     if (cursor.drain !== null) {
@@ -477,8 +478,8 @@ export function collectRootSetsSlice(db: DatabaseSync, options: { limit?: number
       else cursor.after = last;
     }
     if (JSON.stringify(cursor) !== before || out.wrapped) { writeCollectCursor(db, cursor); collectCursorWrites++; }
-    db.exec("RELEASE memory_root_set_collect");
-  } catch (error) { db.exec("ROLLBACK TO memory_root_set_collect; RELEASE memory_root_set_collect"); collectCursors.delete(db); throw error; }
+    endWrite(db, "memory_root_set_collect");
+  } catch (error) { undoWrite(db, "memory_root_set_collect"); collectCursors.delete(db); throw error; }
   return out;
 }
 

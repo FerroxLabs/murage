@@ -40,6 +40,9 @@ export interface DraftOutboxEntry {
   threadId: string;
   text: string;
   replyToId?: string;
+  /** VENUE-POST-1017: the Post in… pick (send-delivery.ts VenuePostPick), kept with the send so a retry or a reload carries it. */
+  postTo?: { venueId: string; venueThreadId?: string };
+  quoteMessageId?: string;
   mode?: "chat" | "goal";
   responderId?: string;
   resend?: true;

@@ -1,0 +1,41 @@
+✔ handoff: seals and removes the stash (7.83225ms)
+✔ handoff: a stale, unsealed or foreign stash is deleted unread (3.012737ms)
+✔ handoff: argv filtered (0.990875ms)
+✖ DQ-3/B11: the first process seals, relaunches without the link, releases the lock and exits (2.702528ms)
+✔ Windows argv: the #t= fragment survives the registry handler's quoting (simulated) (2.586814ms)
+✔ B11/A5: acknowledgment precedes release; usable earlier directory avoids homedir lookup (3.091265ms)
+✔ B11/A5: spawn error, synchronous throw and confirmed timeout continue locally with lock held (10.756322ms)
+✔ BF-1: unconfirmed timeout remains owned and late acknowledgment cannot hand over (16.962398ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 7
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 119.835716
+
+✖ failing tests:
+
+test at electron/cloud-link-handoff.node-test.mjs:68:1
+✖ DQ-3/B11: the first process seals, relaunches without the link, releases the lock and exits (2.702528ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   'relaunch',
+      'release',
+  -   'relaunch',
+      'exit 0'
+    ]
+  
+      at TestContext.<anonymous> (file:///root/swarm1018/SPEC-STARTUP-SILENT-1018/repo/electron/cloud-link-handoff.node-test.mjs:75:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'relaunch', 'release', 'exit 0' ],
+    expected: [ 'release', 'relaunch', 'exit 0' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
