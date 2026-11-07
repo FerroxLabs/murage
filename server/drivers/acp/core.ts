@@ -1,6 +1,10 @@
+import { markBudgetReached } from "../../voice/voice-routes.ts";
+import { fluxKey } from "../../flux-config.ts";
+import { OpenCodeQuiet, parseOpenCodeFailure } from "./opencode-quiet.ts";
 import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "../isolation-cache.ts";
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
+import { fluxRefusalCode, fluxRefusalFinal, type FluxRefusalCode } from "../../flux-refusal.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
 import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
 import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
@@ -55,6 +59,7 @@ import { hostStoppedActivityName } from "../../../shared/host-stop.ts";
 import { resolveToolIdentity, resolveToolLabel, toolFailureText } from "../../../shared/tool-activity.ts";
 import { normalizeAgentPlan } from "../../../shared/agent-plan.ts";
 import { approvalSummary } from "../../../shared/approval-summary.ts";
+import { acpPhoneAskLine } from "../phone-tool-schemas.ts";
 import { boundedToolInput, commandText } from "../../approval-text.ts";
 import { extractMcpImages } from "../../mcp-tool-images.ts";
 import { managedDeskQualifies } from "../../managed-workspace-trust.ts";
@@ -114,6 +119,7 @@ export function acpErrorDiagnostic(base:{eventId:string;turnId:string},processGe
 }
 import { classifyProviderError, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
+import { withProviderSaid } from "../../provider-said.ts";
 
 import { toolFilePaths } from "../../own-workspace-approval.ts";
 import type { ExecEnv, McpMountRecord } from "../../../shared/mount-identity.ts";
@@ -1157,6 +1163,16 @@ export interface AcpSupport {
   /** The scoped home this env names (GROK_HOME, FACTORY_HOME_OVERRIDE, GEMINI_CLI_HOME): reconciled once more when the turn ends. */
   scopeRoot?(env: Record<string, string | undefined>): string | undefined;
   applyMountEnv?(env: Record<string, string | undefined>, ctx: { mcpServerNames: readonly string[]; cliVersion?: string; botId?: string }): void;
+  /** `_meta` the engine needs on EVERY session/new and session/load of this turn (Fuigo's launch policy, FUIGO-SCOPE),
+   *  read from the finished child env. */
+  sessionMeta?(env: Readonly<Record<string, string | undefined>>): Record<string, unknown> | undefined;
+  /** Checks each session/new or session/load answer before anything is prompted; a throw fails the turn. */
+  checkSession?(result: unknown, env: Readonly<Record<string, string | undefined>>): void;
+  /** The policy failure an error carries (a `checkSession` throw, or the engine refusing the session `_meta`), as the
+   *  error to fail the turn with; undefined for any other error. Recovery paths rethrow it instead of falling back. */
+  policyFailure?(error: unknown): Error | undefined;
+  /** Readable words for an engine that exited with its reason on stderr (Fuigo's exit-78 policy refusal). */
+  exitNote?(stderr: string): string | undefined;
   /** Put the Flux Memory headers of this turn on a Flux-routed child (PROPOSAL-v2
    *  5.4). Called after the route is settled, only when the turn reaches Flux, so
    *  the mechanism is engine-specific (a config overlay, a settings file, an env
@@ -1207,13 +1223,15 @@ export interface AcpSupport {
   /** "fail": abort the turn if auth is missing/errors (subscription CLIs).
    *  "continue": proceed anyway (CLIs that work off an ambient login). */
   authFailure: "fail" | "continue";
-  /** snapshot(): can this harness actually run a turn? (env already carries the
+  /** snapshot(): sign-in observation, which may be a local hint (env carries the
    *  merged config). May be async for harnesses that have to ask the CLI.
    *  Undefined: the CLI did not say, which is not signed out. */
   isAuthenticated(env: Record<string, string | undefined>, config: AcpConfig): boolean | undefined | Promise<boolean | undefined>;
-  /** isAuthenticated asks a real sign-in check, so its undefined means the check did not answer: the snapshot says
+  /** When isAuthenticated checks sign-in or local credential shape, undefined means the check did not answer: the snapshot says
    *  unverified, never signed in. Left unset, undefined means the harness has no sign-in to report. */
   authUnknownIsUnverified?: boolean;
+  /** Local credential shape cannot prove that a provider rejection is over. */
+  signInAnswerIsLocalHint?: boolean;
   /** Where a one-off session's folder goes (set-up check, learning). Unset: the OS temp folder. */
   oneShotFolder?(): Promise<string>;
   /** Refuse a first-party cloud turn before spawning when snapshot auth is
@@ -1702,6 +1720,20 @@ export function acpRetryDiscard(init: any): boolean {
   return init?.agentCapabilities?._meta?.["fuigo/capabilities"]?.retryDiscard?.version === 1;
 }
 
+/** One prompt's usage as the whole prompt plus its cached part. Cache writes
+ * stay out of `input`. An absent or bad cache count gives no `cachedInput`:
+ * absent is not zero. `inside` says the agent counts cache reads inside
+ * inputTokens; otherwise totalTokens decides, and with no total the reads are
+ * taken as beside it (the ACP shape opencode sends). */
+export function splitAcpCacheReads(usage: any, inside: boolean): { input: number; cachedInput?: number } {
+  const input = typeof usage?.inputTokens === "number" ? usage.inputTokens : 0;
+  const output = typeof usage?.outputTokens === "number" ? usage.outputTokens : 0;
+  const cached = usage?.cachedReadTokens;
+  if (!Number.isSafeInteger(cached) || cached < 0) return { input };
+  const beside = !inside && cached > 0 && (typeof usage.totalTokens !== "number" || usage.totalTokens >= input + output + cached);
+  return beside ? { input: input + cached, cachedInput: cached } : { input, cachedInput: Math.min(cached, Math.max(0, input)) };
+}
+
 export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> {
   const DRIVER_KIND = support.driverKind;
   const SOURCE = support.nativeSource;
@@ -1861,6 +1893,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (phoneJobs) {
           servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: acpEnv(phoneJobs.env) });
         }
+        // native HighLevel (HL-S2, read only): the host checks the grant on every call and lists no change tool.
+        const highlevel = turn.integrations?.highlevel;
+        if (highlevel) {
+          servers.push({ name: "highlevel", command: highlevel.command, args: highlevel.args, env: acpEnv(highlevel.env) });
+        }
         // The bot's computer, mounted exactly like the Claude driver does.
         // Cloud boxes use the REST adapter; host and sandbox Cua connections
         // expose Cua Driver's official MCP server directly.
@@ -1903,6 +1940,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (turn.integrations?.composio) own.set(connectedAppsServerName(turn.integrations.composio.env), "own:connector");
         if (turn.integrations?.browser) own.set("browser", "own:browser");
         if (turn.integrations?.phoneJobs) own.set("phoneJobs", "own:phoneJobs");
+        if (turn.integrations?.highlevel) own.set("highlevel", "own:highlevel");
         if (turn.integrations?.computer || turn.integrations?.localComputer) own.set("computer", "own:computer");
         const records: McpMountRecord[] = [];
         for (const server of servers) {
@@ -2632,7 +2670,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const startEpoch = epochOf(threadId);
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, /** a Flux refusal that sending again cannot fix, seen in the engine's own retry notice: the retry was cancelled (1.0.18 f) */ fluxRefusal: undefined as { code: FluxRefusalCode; text: string } | undefined, /** engine retries already allowed for a Flux hold (one, after its Retry-After) */ fluxHoldRetries: 0, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, /** the text streamed so far under textMessageId only (C7): a replay re-sends one message, not the turn */ messageText: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
           /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
            *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
           deniedBy: undefined as "user" | "timeout" | "system" | undefined };
@@ -2714,6 +2752,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** configureSession's wait for `modelsUpdateNotification` (awaitModelsUpdate): woken by the notification, the turn's end or a stop. */
         let releaseModelsWait: (() => void) | null = null;
         const failureObservations = createFuigoFailureObservations();
+        const quiet = DRIVER_KIND === "opencodeGo" ? new OpenCodeQuiet((category, quietMs) => {
+          if (!state.settled && !state.cancelRequested && !state.stopRequested) emit({ ...base(threadId, turnId), type: "turn.diagnostic", category, quietMs });
+        }) : undefined;
         let interruptTimer: ReturnType<typeof setTimeout> | null = null;
         const rpcPending = new Map<
           number,
@@ -2881,6 +2922,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // Requesting termination is not closure; the teardown observes close.
         const stop = (reason: LifecycleStopReason) => {
           state.stopRequested = true;
+          quiet?.stop();
           releaseModelsWait?.();
           lifecycle.record("stop_requested", {
             reason,
@@ -2985,11 +3027,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           return true;
         };
 
+        // OpenCode --print-logs can echo opaque credentials in provider errors.
+        // Both native sinks share this allowlist; pattern redaction is not a
+        // privacy boundary for arbitrary upstream text or structured fields.
+        const capturedEngineStderr = () => {
+          const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
+          if (DRIVER_KIND !== "opencodeGo") return captured;
+          if (!sessionId) return "";
+          const categories = new Set(captured.split(/\r?\n/).map(line => parseOpenCodeFailure(line, sessionId!)).filter(category => category !== undefined));
+          return [...categories].map(category => JSON.stringify({ type: "opencode_failure", category })).join("\n");
+        };
+
         /** A failed turn keeps the engine's last stderr lines in the thread's
          * native log as one bounded, redacted record for support; otherwise
          * the ring is gone with the process. */
         const persistEngineStderr = (stopReason: string | null) => {
-          const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
+          const captured = capturedEngineStderr();
           let lines = redactSecretsInText(stripVTControlCharacters(captured)).split(/\r?\n/);
           // eslint-disable-next-line no-control-regex -- matching them is the point
           lines = lines.map((line) => line.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").trimEnd()).filter(Boolean);
@@ -3019,6 +3072,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         ) => {
           if (state.settled) return;
           state.settled = true;
+          quiet?.stop();
           stopFuigoWatch();
           releaseTrustHold?.();
           releaseCardHolds();
@@ -3465,6 +3519,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
         // server→client permission request → canonical request.opened
         const handleServerRequest = (msg: any) => {
+          if (state.promptSent && sessionId && msg.params?.sessionId === sessionId) quiet?.progress();
           if (FUIGO_FOLDER_TRUST_METHODS.has(msg.method)) return handleFolderTrustRequest(msg);
           const vendorAsk = questionMethodFor(msg.method);
           if (vendorAsk) return handleQuestionRequest(msg, vendorAsk);
@@ -3553,7 +3608,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // text, so it only stands in when there is no structured target.
           const commandLine = commandText(toolCall.rawInput?.command);
           const editPaths = !commandLine && (kind === "edit" || kind === "delete" || kind === "move") ? acpToolFilePaths(toolCall) : undefined;
-          const headline = normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool));
+          // BOT-CALLS-1020 3f: a phone call card shows the number, goal, details, limits, when, resolved language and revision. Never in
+          // front of a command or file target: those always show the real action.
+          const headline = (!commandLine && !editPaths ? acpPhoneAskLine(toolCall) : null) ?? normalAsk?.summary ?? commandLine ?? (editPaths ? editPaths.join(", ") : String(toolCall.title ?? tool));
           const summary = approvalSummary(headline);
           // The model's title is only a label when the engine named the real
           // target (paths); keep it, marked as the model's, so a move's
@@ -3796,6 +3853,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             fallback.grace = undefined;
             if (!graceCanRun()) return;
             flushAssistantText();
+            // Astra r6: a fallback going quiet after a Flux refusal cancelled the engine's retry ends as that refusal.
+            if (state.fluxRefusal) { finishFluxRefusal(); return; }
             settle(true, null);
           }, fallbackGraceMs());
           fallback.grace.unref?.();
@@ -3804,6 +3863,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  `interject-fallback-` turn Fuigo runs for it, bounded by the cap. */
         const settleClean = () => {
           if (state.settled) return;
+          // A helper or fallback hold that ends after a Flux refusal cancelled the engine's retry is that refusal, not a clean end.
+          if (state.fluxRefusal && !state.cancelRequested && !state.stopRequested) { finishFluxRefusal(); return; }
           if (!support.interjection || (!fallback.accepted && interjectionsPending.size === 0)) {
             settle(true, null);
             return;
@@ -3937,8 +3998,43 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (text) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "reasoning_text", delta: text });
           }
         };
+        /** Engine attempts already counted for a Flux hold (one per attempt across both notice rails). */
+        const fluxHoldAttempts = new Set<number>();
+        /** The one ending of a turn whose engine retry was cancelled for a Flux refusal (onRetryState): from the prompt's
+         *  return, a helper or fallback hold reaching settleClean, or the cancel deadline. Idempotent: settle() runs once. */
+        const finishFluxRefusal = () => {
+          if (state.settled || !state.fluxRefusal || state.cancelRequested || state.stopRequested) return;
+          const eventBase = base(threadId, turnId);
+          emit({
+            ...eventBase,
+            type: "runtime.error",
+            message: acpEngineErrorText(state.fluxRefusal.text) ?? `${ENGINE} could not finish this turn.`,
+            gatewayCode: state.fluxRefusal.code,
+            diagnostic: acpErrorDiagnostic(eventBase, lifecycle.generation),
+          });
+          settle(false, "rpc_error");
+        };
         const onRetryState = (u: any) => {
           if (u.type !== "retrying") return;
+          // 1.0.18 (f): a Masterclass customer's Fuigo sent one free_cap_reached 429 fourteen times in four minutes; the engine's
+          // own retries (FUIGO_MAX_RETRIES) resent a refusal that no resend can fix. A Flux code in the retry notice cancels the
+          // retry before it goes out: a spent allowance or credit is sent once, a hold gets one retry after its Retry-After.
+          // A plain busy 429 with no code keeps the engine's own quiet retries.
+          // Astra r4/r6: read only on a turn that reaches Flux (the same test as the Flux Memory headers): a saved connection
+          // that is not Flux, or a local model, keeps the engine's retries whatever words its notice holds.
+          const code = fluxRoutedTurn && !state.cancelRequested && !state.fluxRefusal && sessionId ? fluxRefusalCode(u.reason, u.error, u.message, u.detail) : undefined;
+          // Astra r4: Fuigo sends one retry notice on both rails (session/update and its own notification), so a hold is
+          // counted once per engine attempt, not once per notice. A notice with no attempt number counts on its own.
+          const freshHold = code === "hold" && (typeof u.attempt !== "number" || !fluxHoldAttempts.has(u.attempt));
+          if (freshHold && typeof u.attempt === "number") fluxHoldAttempts.add(u.attempt);
+          if (code && (fluxRefusalFinal(code) || (freshHold && ++state.fluxHoldRetries > 1))) {
+            state.fluxRefusal = { code, text: typeof u.reason === "string" ? u.reason.slice(0, 2000) : "" };
+            send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+            // Astra r4: an engine that never answers the cancel still ends this turn as the refusal, once.
+            const deadline = setTimeout(finishFluxRefusal, ACP_CANCEL_GRACE_MS);
+            deadline.unref?.();
+            return;
+          }
           if (!retryDiscard) resetForRetry();
           else if (u.discardEmitted === true) discardForRetry(u);
         };
@@ -3990,6 +4086,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // arrived since the last committed item (tool call) is void; tool
               // rows already emitted stay, they ran.
               onRetryState(u);
+              break;
+            case "config_notice":
+              // Fuigo 1.0.40 answers reopenNotice with one English line after a
+              // folder-trust grant. Every grant is Murage's own reply, and that
+              // reply already left a localized chip naming the sources
+              // ("trusted folder:" / "trust chosen:"), so this line is not shown
+              // a second time.
               break;
             case "response_completed":
               // a response boundary: a later discard without streamStartMs
@@ -4094,6 +4197,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (!state.promptSent || p._meta?.isReplay === true) return;
           const u = p.update ?? {};
+          if (p.sessionId === sessionId && ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(u.sessionUpdate)) quiet?.progress();
           turnTrace(threadId).once("first.update", { kind: String(u.sessionUpdate) });
           switch (u.sessionUpdate) {
             case "agent_message_chunk": {
@@ -4112,9 +4216,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 });
               } else if (typeof delta === "string" && delta) {
                 const messageId = typeof u.messageId === "string" ? u.messageId : null;
+                if (messageId === null || messageId !== state.textMessageId) state.messageText = "";
                 if (support.resendsReasoningReply && messageId !== null && messageId === state.textMessageId
-                    && isReasoningReplay(delta, state.text)) break;
+                    && isReasoningReplay(delta, state.messageText)) break;
                 state.textMessageId = messageId;
+                if (support.resendsReasoningReply) state.messageText += delta;
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 state.text += delta;
@@ -4341,6 +4447,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
         },
         stderr: (text) => {
+          if (!state.settled && !state.cancelRequested && !state.stopRequested) quiet?.feed(text);
+          else quiet?.stop();
           const remaining = STDERR_DIAGNOSTIC_CHARS - stderrDiagnostic.length;
           stderrDiagnostic += text.slice(0, Math.max(0, remaining));
           if (text.length > remaining) stderrDiagnosticTruncated = true;
@@ -4355,7 +4463,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         close: (code, signal) => {
           // Redact before splitting records, so a credential crossing a chunk
           // boundary is not exposed. A capped partial final line is omitted.
-          const captured = acpEngineStderrCapture(stderrDiagnostic, stderrDiagnosticTruncated);
+          const captured = capturedEngineStderr();
           const diagnostic = redactSecretsInText(stripVTControlCharacters(captured));
           for (let offset = 0; offset < diagnostic.length; offset += 4096) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr", turnId, processGeneration: lifecycle.generation, text: diagnostic.slice(offset, offset + 4096) } });
           if (stderrDiagnosticTruncated) appendNative(threadId, { dir: "in", source: `${SOURCE}.stderr`, msg: { type: "engine_stderr_truncated", turnId, limitChars: STDERR_DIAGNOSTIC_CHARS } });
@@ -4380,6 +4488,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // A fallback hold ends here unfinished: the engine-exit failure below.
             if (helpers.holding && !fallback.holding && !fallback.accepted && interjectionsPending.size === 0) {
               flushAssistantText();
+              // Astra r6: a held helper turn whose engine retry was cancelled for a Flux refusal ends as that refusal.
+              if (state.fluxRefusal && !state.cancelRequested && !state.stopRequested) { finishFluxRefusal(); stderrDiagnostic = ""; return; }
               settle(true, null);
               stderrDiagnostic = "";
               return;
@@ -4400,10 +4510,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               return;
             }
             const detail = acpEngineExitStderrText(captured);
+            const note = support.exitNote?.(captured);
             emit({
               ...base(threadId, turnId),
               type: "runtime.error",
-              message: engineClosedLine(ENGINE, code, undefined, detail || undefined),
+              message: note ?? engineClosedLine(ENGINE, code, undefined, detail || undefined),
             });
             settle(false, "exit_before_result");
           }
@@ -4417,6 +4528,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const interrupt = () => {
           if (state.settled) return;
           state.cancelRequested = true;
+          quiet?.stop();
           // A turn still waiting for MCP readiness has sent no prompt: the
           // waiter wakes and settles it as cancelled at once.
           releaseMcpWait?.();
@@ -4661,6 +4773,29 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           Object.assign(env, handed.env);
           handedEnv = handed;
         }
+        // FUIGO-SCOPE: every session/new and session/load of this turn carries the engine's session `_meta` (read from
+        // the finished env), and every answer is checked before anything is prompted.
+        const sessionParams = <T extends object>(params: T): T => {
+          const meta = support.sessionMeta?.(env);
+          return meta ? { ...params, _meta: { ...((params as { _meta?: Record<string, unknown> })._meta ?? {}), ...meta } } : params;
+        };
+        const sessionOpened = <T>(result: T): T => { if (result) support.checkSession?.(result, env); return result; };
+        /** session/new or session/load with this turn's `_meta`, its answer checked. An engine refusal that is a policy
+         *  failure becomes that failure. `strict`: a null answer is checked too (a reconnect on a live session). */
+        const openSession = async (method: "session/new" | "session/load", params: object, timeoutMs: number, strict = false): Promise<any> => {
+          let result: any;
+          try {
+            result = await request(method, sessionParams(params), timeoutMs);
+          } catch (error) {
+            throw support.policyFailure?.(error) ?? error;
+          }
+          if (strict && !result) support.checkSession?.({}, env);
+          return sessionOpened(result);
+        };
+        const rethrowPolicyFailure = (error: unknown): void => {
+          const failure = support.policyFailure?.(error);
+          if (failure) throw failure;
+        };
         /** support.hostComputerAskedByMurage: the engine runs Murage's `computer`
          *  mount unasked, so the host-computer route asks here before each call
          *  reaches the computer, with the tool's exact name and arguments. The
@@ -5042,15 +5177,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 try {
                   if (resumeId === null) {
                     // another thread's spare, and this thread has no native session yet
-                    sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+                    sessionResult = await openSession("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
                     sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
                     if (!sessionId) throw new Error("session/new answered no session");
                   } else {
-                    sessionResult = await request(
-                      "session/load",
-                      { sessionId: resumeId, cwd, mcpServers, _meta: { noReplay: true } },
-                      LOAD_SESSION_TIMEOUT,
-                    );
+                    sessionResult = await openSession("session/load", { sessionId: resumeId, cwd, mcpServers, _meta: { noReplay: true } }, LOAD_SESSION_TIMEOUT);
                     if (!sessionResult) throw new Error("session/load answered no session");
                     sessionId = resumeId;
                   }
@@ -5058,6 +5189,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 } catch (error) {
                   if (state.settled) return;
                   if (state.cancelRequested) { settle(true, "cancelled"); return; }
+                  // a fresh process would open its session under the same policy: fail the turn with the reason
+                  rethrowPolicyFailure(error);
                   appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "reestablish_failed" } });
                   // The pooled process belongs to no one now: its close is
                   // observed by the pool, and this turn owns the replacement.
@@ -5099,10 +5232,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // question cards (ASK3); a URL is shown, never fetched. An engine
                 // that gates folders is told this client can ask the owner
                 // (FUIGOTRUST1), so it never has to decide "untrusted" alone.
+                // reopenNotice (Fuigo 1.0.40, generation 2 only): after a grant
+                // mid-session the engine sends one `config_notice`; an older
+                // Fuigo ignores the field. Murage's own chip stays the owner's
+                // message (see the config_notice case in handleHelperUpdate).
                 clientCapabilities: {
                   fs: { readTextFile: false, writeTextFile: false },
                   elicitation: { form: {}, url: {} },
-                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": trustGeneration === 2 ? { interactive: true, v2: true } : { interactive: true } } } : {}),
+                  ...(support.folderTrust ? { _meta: { "fuigo/folderTrust": trustGeneration === 2 ? { interactive: true, v2: true, reopenNotice: true } : { interactive: true } } } : {}),
                 },
               },
               INIT_TIMEOUT,
@@ -5132,11 +5269,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (cursor) {
               try {
                 try {
-                  sessionResult = await request(
-                    "session/load",
-                    { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } },
-                    LOAD_SESSION_TIMEOUT,
-                  );
+                  sessionResult = await openSession("session/load", { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } }, LOAD_SESSION_TIMEOUT);
                 } catch (firstError) {
                   // Fuigo 1.0.30: a session is open in one process only. A load that lands while the
                   // previous child still holds it is not a lost session: wait for that child's
@@ -5155,11 +5288,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   // the teardown, and once more after a short backoff if it still answers session_unavailable.
                   for (let attempt = 0; ; attempt++) {
                     try {
-                      sessionResult = await request(
-                        "session/load",
-                        { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } },
-                        LOAD_SESSION_TIMEOUT,
-                      );
+                      sessionResult = await openSession("session/load", { sessionId: cursor, cwd, mcpServers, _meta: { noReplay: true } }, LOAD_SESSION_TIMEOUT);
                       break;
                     } catch (retryError) {
                       if (attempt >= 1 || !sessionOpenElsewhere(retryError)) throw retryError;
@@ -5175,6 +5304,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // prompted a session the agent had already forgotten.
                 if (sessionResult) sessionId = cursor;
               } catch (error) {
+                // A policy failure is not a missing session either: a fresh session would fail the same way.
+                rethrowPolicyFailure(error);
                 // A refusal is not a missing session (upstream c61d7c86,
                 // #1705). Starting fresh on a sign-in refusal or on invalid
                 // params (a bad model or config) silently dropped the
@@ -5205,7 +5336,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // through the memory replay filter (upstream c61d7c86).
                 promptTurn = replayTurn("[Your previous session could not be restored. Continue from this conversation history:]");
               }
-              sessionResult = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+              sessionResult = await openSession("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
               sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
               if (!sessionId) throw new Error(`${ENGINE} did not open a conversation.`);
             }
@@ -5442,8 +5573,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                     : server);
                   const until = Date.now() + windowMs;
                   try {
-                    await request("session/load", { sessionId, cwd, mcpServers: reconnecting, _meta: { noReplay: true } }, windowMs);
-                  } catch { /* the window below still reads what the engine reports */ }
+                    // the reconnect answer is checked like every other: a live session reloaded without the policy fails the turn
+                    await openSession("session/load", { sessionId, cwd, mcpServers: reconnecting, _meta: { noReplay: true } }, windowMs, true);
+                  } catch (error) {
+                    rethrowPolicyFailure(error);
+                    /* any other failure: the window below still reads what the engine reports */
+                  }
                   if (proc) proc.sessionKey = null;
                   while (missing.length && Date.now() < until && !state.settled && !state.cancelRequested) {
                     await new Promise(resolve => setTimeout(resolve, 250));
@@ -5556,6 +5691,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // The fence is the harness's own code and can stop this turn. Nothing is written after a stop, and what the fence recorded
             // for this write is withdrawn.
             if (turnHalted()) { turn.notWritten?.(); settleHalted(); return; }
+            if (sessionId) quiet?.start(sessionId);
             state.promptSent = true; turnTrace(threadId).once("prompt.sent");
             promptStartedAt = Date.now();
             if (DRIVER_KIND === "fuigoAgent") startFuigoWatch();
@@ -5591,23 +5727,34 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // The root is ACP per-prompt usage. Fuigo's nested usage is the
             // whole prompt; its sibling fields describe only the last call.
             const promptUsage = result?.usage ?? (DRIVER_KIND === "fuigoAgent" ? result?._meta?.usage : undefined);
-            if (promptUsage && Number.isSafeInteger(promptUsage.inputTokens) && promptUsage.inputTokens >= 0
+            // `input` is the whole prompt and `cachedInput` names its cached
+            // part, as in the Claude driver and the store. Fuigo's nested
+            // usage counts cache reads inside inputTokens. Root ACP usage
+            // differs by agent: opencode 1.18.25 keeps only the uncached share
+            // in inputTokens and puts cache reads beside it (upstream #1993),
+            // so totalTokens tells the two shapes apart.
+            const promptSplit = promptUsage ? splitAcpCacheReads(promptUsage, DRIVER_KIND === "fuigoAgent" && !result?.usage) : null;
+            if (promptSplit && Number.isSafeInteger(promptUsage.inputTokens) && promptUsage.inputTokens >= 0
               && Number.isSafeInteger(promptUsage.outputTokens) && promptUsage.outputTokens >= 0) {
-              settledUsage = { input: promptUsage.inputTokens, output: promptUsage.outputTokens,
-                ...(Number.isSafeInteger(promptUsage.cachedReadTokens) && promptUsage.cachedReadTokens >= 0 ? { cachedInput: promptUsage.cachedReadTokens } : {}) };
+              settledUsage = { input: promptSplit.input, output: promptUsage.outputTokens,
+                ...(promptSplit.cachedInput !== undefined ? { cachedInput: promptSplit.cachedInput } : {}) };
               if (DRIVER_KIND === "fuigoAgent" && !promptUsage.costIsPartial && !promptUsage.usageIsIncomplete
                 && Number.isFinite(promptUsage.costUsdTicks) && promptUsage.costUsdTicks >= 0) settledCharge = promptUsage.costUsdTicks / 1e10;
             }
             const usage = promptUsage ?? result?._meta ?? {};
             if (typeof usage.inputTokens === "number" || typeof usage.outputTokens === "number") {
+              const split: { input: number; cachedInput?: number } = usage === promptUsage && promptSplit ? promptSplit : { input: usage.inputTokens ?? 0 };
               emit({
                 ...base(threadId, turnId),
                 type: "thread.token-usage.updated",
-                input: usage.inputTokens ?? 0,
+                input: split.input,
                 output: usage.outputTokens ?? 0,
+                ...(split.cachedInput !== undefined ? { cachedInput: split.cachedInput } : {}),
               });
             }
             const reason = result?.stopReason;
+            // The engine's retry of a Flux refusal was cancelled above (onRetryState): the turn is that refusal, with its code.
+            if (state.fluxRefusal && !state.cancelRequested && !state.stopRequested) { finishFluxRefusal(); return; }
             // Flushed here, not in settle, so the check below sees a reply
             // that was still buffered as streamed text.
             if (reason === "end_turn") flushAssistantText();
@@ -5660,6 +5807,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...eventBase,
                 type: "runtime.error",
                 message: errorMessage,
+                ...(fluxRefusalCode(result?.error, result?.message, result?._meta) ? { gatewayCode: fluxRefusalCode(result?.error, result?.message, result?._meta) } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation),
               });
               settle(false, reason ?? "failed");
@@ -5669,7 +5817,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (stopWasAsked() || (disposed && !state.promptSent)) { settleHalted(); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
-              const providerError = classifyProviderError(e);
+              const flux = turn.providerRoute ? turn.providerRoute.preset === "flux" : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
+              const providerError = classifyProviderError(e, flux);
+              const budgetKey = turn.providerRoute?.apiKey ?? fluxKey();
+              if (providerError?.fluxBudget && budgetKey) markBudgetReached({ via: "flux", label: "Flux", baseUrl: turn.providerRoute?.baseUrl ?? "https://api.fluxrouter.ai/v1", key: budgetKey, model: "" });
               // Authentication setup is a user action, not a retry. The
               // classifier is preferred; loginNote remains a compatibility
               // fallback for existing ACP supports.
@@ -5699,12 +5850,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 message: engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
+                // Read from the raw error and its data, before the text above is sanitised (Flux's code sits in error.state,
+                // a header name or a Python repr that the sanitiser drops).
+                ...((fluxRefusalCode(message, rpc?.data) ?? state.fluxRefusal?.code) ? { gatewayCode: fluxRefusalCode(message, rpc?.data) ?? state.fluxRefusal?.code } : {}),
                 ...(acpEngineLimitResetsAt(rpc?.data) !== undefined ? { limitResetsAt: acpEngineLimitResetsAt(rpc?.data) } : {}),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error
                   ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]
                   .filter(Boolean).join("\n") || undefined,
-                ...(providerError ? { providerError } : {}),
+                // What the provider itself said travels on the structured info, cleaned (server/provider-said.ts), for every
+                // kind: the card shows it under "What <service> said" while its headline stays the reviewed copy.
+                ...(providerError ? { providerError: withProviderSaid(providerError, e) } : {}),
                 ...(needsAuth ? { setup: true } : {}),
               });
               settle(false, needsAuth ? "auth_required" : "rpc_error");
@@ -5833,7 +5989,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
         const authenticated = await support.isAuthenticated(env, config);
-        return { state: "available", version: probe.version, ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}) };
+        return { state: "available", version: probe.version, ...(support.signInAnswerIsLocalHint ? { signInAnswerIsLocalHint: true as const } : {}), ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}) };
       };
 
       return withCliMemoryLearning({

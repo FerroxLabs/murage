@@ -65,8 +65,13 @@ describe("help's panel chunk loads only when help opens", () => {
     expect(importers.map((file) => relative(src, file).split(sep).join("/"))).toEqual(["components/help/HelpHost.tsx"]);
     // The words for each screen and the tables that name them stay on the help chunk too.
     const lazyOnly = (pattern: RegExp) => files.filter((file) => pattern.test(readFileSync(file, "utf8"))).map((file) => relative(src, file).split(sep).join("/")).sort();
-    expect(lazyOnly(/en-help\/screens\.json["']/)).toEqual(["lib/help-screen-copy.ts"]);
-    expect(lazyOnly(/from\s*["'][^"']*help-screen-copy["']|import\s*["'][^"']*help-screen-copy["']/)).toEqual(["lib/screen-envelope.ts"]);
+    // L-COPY r3: English Help is gathered by help-screen-copy.ts and read only through the help copy store, which
+    // only help chunk modules import (src/first-paint.test.ts proves the boot graph never reaches either).
+    expect(lazyOnly(/en-help\/[^"']*\.json["']/)).toEqual(["lib/help-screen-copy.ts"]);
+    expect(lazyOnly(/locales\/help\//)).toEqual(["lib/help-copy-store.ts"]);
+    expect(lazyOnly(/from\s*["'][^"']*help-screen-copy["']|import\s*["'][^"']*help-screen-copy["']/)).toEqual(["lib/help-copy-store.ts"]);
+    expect(lazyOnly(/from\s*["'][^"']*help-copy-store["']/)).toEqual(["components/help/FeedbackForm.tsx", "components/help/HelpPanel.tsx", "components/help/help-copy.ts", "lib/screen-envelope.ts"]);
+    expect(lazyOnly(/from\s*["'][^"']*\/help-copy["']/)).toEqual(["components/help/FeedbackForm.tsx", "components/help/HelpAskChief.tsx", "components/help/HelpPanel.tsx", "components/help/HelpTips.tsx"]);
     expect(lazyOnly(/^import\s+\{[^}]*\}\s+from\s*["'][^"']*screen-envelope["']/m)).toEqual(["components/help/FeedbackForm.tsx", "components/help/HelpPanel.tsx"]);
   });
 });

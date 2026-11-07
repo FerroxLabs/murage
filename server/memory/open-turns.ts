@@ -14,6 +14,7 @@
 //
 // The slice driver is the revocation index's (revocation-index.ts): adaptive 8..512 rows per transaction, a few milliseconds each, the
 // writer gate awaited before each slice, a longer pause while an owner turn is live, a held lock tried again later.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground } from "../database.ts";
 import { TURN_SOURCE_HIGH, TURN_SOURCE_LOW } from "./schema.ts";
@@ -101,10 +102,10 @@ export function openTurnsStep(db: DatabaseSync, interrupt: InterruptOpenTurn, sl
   // r3, Fable P3-5). The passed-over source stays `working`, which is never extracted (fail closed). A lock still ends the slice (retried).
   let skippedOnce = false;
   const settle = (turn: { id: string; threadId: string; turnId: string }): boolean => {
-    db.exec("SAVEPOINT open_turn_settle");
-    try { interrupt(db, turn); db.exec("RELEASE open_turn_settle"); return true; }
+    beginWrite(db, "open_turn_settle");
+    try { interrupt(db, turn); endWrite(db, "open_turn_settle"); return true; }
     catch (error) {
-      db.exec("ROLLBACK TO open_turn_settle"); db.exec("RELEASE open_turn_settle");
+      undoWrite(db, "open_turn_settle");
       if (lockedError(error)) throw error;
       if (!skippedOnce) { skippedOnce = true; console.warn(`[memory] open turns: ${turn.id} could not be settled (${error instanceof Error ? error.message.slice(0, 120) : String(error)}); it stays open and the rest go on`); }
       return false;

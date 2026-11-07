@@ -1,7 +1,8 @@
+import { runVoiceHostTurn } from "../testing/protected-host.ts";
 import { describe, expect, it } from "vitest";
 
 import { handDownResult, handDownStatus, parseHandDowns, sameRequest, type HandDown } from "./hand-downs.ts";
-import { historyMessages, runVoiceHostTurn, type VoiceHostEvent } from "./voice-host.ts";
+import { historyMessages, type VoiceHostEvent } from "./voice-host.ts";
 import type { Message } from "../store.ts";
 
 const T = 1_790_000_000_000;
@@ -114,4 +115,16 @@ describe("hand-down receipts (F7)", () => {
     expect(handDownStatus({ ...base, state: "dropped" }, [], false).kind).toBe("dropped");
     expect(handDownResult({ kind: "dropped" })).toMatch(/dropped before it started/);
   });
+});
+
+
+it("D24 exposes complete answer identity before the legacy result cap", () => {
+  const answer = { id: "answer", role: "bot", kind: "text", text: "padding ".repeat(2000) + "password: hst0001", at: 2000 } as Message;
+  const owner = { id: "owner", role: "user", kind: "text", text: "check", at: 1000 } as Message;
+  let found: Message | undefined;
+  const status = handDownStatus({ id: "hand", request: "check", at: 1000, state: "accepted" }, [owner, answer], false, undefined, sources => { found = sources.answer; });
+  expect(found).toBe(answer);
+  expect(found!.text).toContain("hst0001");
+  expect(status.kind).toBe("done");
+  if (status.kind === "done") expect(status.answer.length).toBeLessThan(answer.text!.length);
 });

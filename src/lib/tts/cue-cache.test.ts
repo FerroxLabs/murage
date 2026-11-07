@@ -99,3 +99,14 @@ describe("CueCache", () => {
     expect(await cache.get(o)?.text()).toBe("live");
   });
 });
+
+it("prewarm forwards budget to its call and stops dispatching further cues", async () => {
+  const onBudget = vi.fn();
+  const fetchClip = vi.fn(async (_text: string, o: { onBudget?: () => void }) => {
+    o.onBudget?.();
+    throw new Error("budget");
+  });
+  await new CueCache(fetchClip).prewarm({ botId: "budget", locale: "en", keys: ["calls.ack.look", "calls.ack.oneSec"], onBudget });
+  expect(onBudget).toHaveBeenCalledTimes(1);
+  expect(fetchClip).toHaveBeenCalledTimes(1);
+});

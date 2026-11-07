@@ -320,11 +320,19 @@ export interface Step { position: number; json: string; parent: string | null; r
 /** One step up a branch: the row's storage position and parent id. A row saved
  * before branching existed (no parentId key) is chained to the row stored
  * before it, as Store.loadedMessages reads it. */
-export function stepUpRow(db: DatabaseSync, threadId: string, id: string): { position: number; json: string; message: Record<string, unknown>; parent: string | null } | null {
+export function stepUpRow(db: DatabaseSync, threadId: string, id: string): { position: number; json: string; message: Record<string, unknown>; parent: string | null } | { damaged: true } | null {
   walkStats.parentReads++;
   const row = db.prepare("SELECT rowid AS position, seq, json FROM messages WHERE thread_id = ? AND id = ?").get(threadId, id) as { position: number; seq: number | null; json: string } | undefined;
   if (!row) return null;
-  const message = rowToMessage(row) as unknown as Record<string, unknown>;
+  let message: Record<string, unknown>;
+  try { message = rowToMessage(row) as unknown as Record<string, unknown>; }
+  catch (error) { if (error instanceof SyntaxError) return { damaged: true }; throw error; }
+  // A damaged ancestor is an unknown end of this walk, not a writable row, and it is
+  // not a missing one either: { damaged: true } lets a walk that answers membership or
+  // completeness say "unknown" instead of "no" or "complete". Preview maintenance must
+  // not abort a new message because an older raw row is null, a scalar, an array or
+  // malformed JSON.
+  if (!message || typeof message !== "object" || Array.isArray(message)) return { damaged: true };
   if (message.parentId === undefined) {
     walkStats.parentReads++;
     const before = db.prepare("SELECT id FROM messages WHERE thread_id = ? AND rowid < ? ORDER BY rowid DESC LIMIT 1").get(threadId, row.position) as { id: string } | undefined;

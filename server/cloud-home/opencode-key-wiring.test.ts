@@ -20,7 +20,8 @@ it("keeps the key in the home turn env (the driver's credential grant) with upda
   const map = instanceConfigs({ opencodeGo: { apiKey: KEY } });
   const driver = readFileSync(new URL("../drivers/acp/opencode-go.ts", import.meta.url), "utf8");
   expect(driver).toContain('credentialEnv: ["OPENCODE_API_KEY"]');
-  expect(driver).toContain('spawnArgs: () => ["acp"]');
+  // 1b4f75f181 enables owned provider error logs; this does not change the key grant.
+  expect(driver).toContain('spawnArgs: () => ["acp", "--print-logs"]');
   const env = cloudTurnEnvironment("opencodeGo", { ...map.opencodeGo.environment }, ["OPENCODE_API_KEY"]);
   expect(env).toMatchObject({ OPENCODE_API_KEY: KEY, OPENCODE_DISABLE_AUTOUPDATE: "1", HOME: "/data/engine-homes/opencodeGo", PATH: "/opt/murage/bin:/usr/local/bin:/usr/bin:/bin" });
 });

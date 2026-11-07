@@ -1,10 +1,11 @@
+import { t } from "@/lib/i18n";
+import { useChatResource, type HitsPage } from "@/lib/chat-previews";
 // Message hits under the sidebar's search box. The box already filters bots
 // by name; from two characters on it also asks the server for messages
 // across every bot task and room, and a click lands on the message — right
 // bot, right task, right branch — rather than just opening the chat.
-import { useEffect, useState } from "react";
 import { GitBranch, Wrench } from "lucide-react";
-import { api, useStore, formatTime } from "@/state/store";
+import { useStore, formatTime } from "@/state/store";
 import { BotAvatar } from "./Avatar";
 import { cn } from "@/lib/cn";
 import type { SearchHit } from "@/lib/search-hit";
@@ -15,32 +16,11 @@ const DEBOUNCE_MS = 250;
 
 export function SearchResults({ query, onLanded }: { query: string; onLanded: () => void }) {
   const { state, dispatch } = useStore();
-  const [hits, setHits] = useState<SearchHit[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [partial, setPartial] = useState(false);
   const q = query.trim();
-
-  useEffect(() => {
-    if (q.length < MIN_QUERY) {
-      setHits(null);
-      setError(null);
-      return;
-    }
-    // Do not leave the previous query's hits clickable while the debounced
-    // request for this query is still in flight.
-    setHits(null);
-    setError(null);
-    let alive = true;
-    const t = setTimeout(() => {
-      api(`/api/search?q=${encodeURIComponent(q)}&limit=40`)
-        .then((r: { hits: SearchHit[]; partial?: boolean }) => alive && (setHits(r.hits), setPartial(r.partial === true), setError(null)))
-        .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : String(e)));
-    }, DEBOUNCE_MS);
-    return () => {
-      alive = false;
-      clearTimeout(t);
-    };
-  }, [q]);
+  const held = useChatResource<HitsPage>(q.length < MIN_QUERY ? null : `/api/search?view=chats&q=${encodeURIComponent(q)}&limit=40`, undefined, DEBOUNCE_MS);
+  const hits = held.eligible ? held.data?.hits ?? null : null;
+  const error = held.error ? String(held.error) : null;
+  const partial = held.data?.partial;
 
   if (q.length < MIN_QUERY) return null;
 
@@ -59,6 +39,7 @@ export function SearchResults({ query, onLanded }: { query: string; onLanded: ()
         Messages{hits ? ` · ${hits.length}${hits.length === 40 ? "+" : ""}` : ""}
       </div>
       {partial && hits && <div className="px-3 pb-1 text-[11.5px] text-ink-secondary">Showing matches from your most recent messages. Search is still getting ready for older ones.</div>}
+      {!held.eligible && <p role="status">{t("chats.previews.checking")}</p>}
       {error && <div className="px-3 py-2 text-[12.5px] text-danger">couldn't search: {error}</div>}
       {hits && hits.length === 0 && !error && <div className="px-3 py-3 text-[13px] text-ink-secondary">No messages match “{q}”</div>}
       {hits?.map((hit) => {
