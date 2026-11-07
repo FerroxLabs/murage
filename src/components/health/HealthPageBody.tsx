@@ -48,7 +48,7 @@ export function HealthPageBody({ onLeave }: HealthPageProps) {
   const desktop = useDesktopSurface();
   const [panelOpen, setPanelOpen] = useState(false);
   const panelId = useId();
-  const status = healthWithChecks(healthFromEngines(reading.engine, reading.flux, reading.fromServer || state.instances.length > 0), strongestHealthLevel(folds));
+  const status = healthWithChecks(healthFromEngines(reading.health, reading.flux, reading.fromServer || state.instances.length > 0), strongestHealthLevel(folds));
   const checks = summary ? healthStateLine(summary.status, summary.view?.summary ?? null, now) : null;
   const quiet = folds.length > 0 && folds.every((fold) => fold.level === "note");
   // Every finding in order of impact (Flux Router and Fuigo first), from what the page already holds.

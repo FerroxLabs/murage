@@ -62,6 +62,7 @@ files:
   - shared/guarded-http.mjs
   - shared/flux-desktop-signin-default.mjs
   - shared/windows-sddl.mjs
+  - shared/md-secret-label.mjs
   - installer/lib/systemd.mjs
   - installer/lib/private-files.mjs
   - installer/lib/service-account.mjs
@@ -111,6 +112,8 @@ extraResources:
     to: licenses/instrument-serif
   # xterm.js (MIT, @xterm/xterm, bundled in the renderer): the Cloud-home engine
   # sign-in terminal. Its licence text travels with the distribution.
+  - from: third_party/muse-code-sdk
+    to: licenses/muse-code-sdk
   - from: third_party/xterm
     to: licenses/xterm
   # WhatsApp channel: Baileys (MIT), its libsignal dependency (GPL-3.0, full

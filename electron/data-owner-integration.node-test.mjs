@@ -1,9 +1,11 @@
+import {createReturnAuthority,revokeReturn,joinExplicitQuit} from "./backup-offline-return.mjs";
 // Node runner: included by package.json test:electron, not Vitest discovery.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { settleDesktopStartup, terminalDesktopStartup, startupFailureCode } from "./startup-settle.mjs";
 import { BACKUP_MODE_ARGUMENT } from "./backup-mode.mjs";
 import { awaitOwnedWork, SERVER_CHILD_STOP_TIMEOUT_MS } from "./server-child-lifecycle.mjs";
 import { dataDirLeasePaths } from "./data-dir-lease.mjs";
@@ -19,10 +21,10 @@ const rawSource = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
 // Test-only negative controls execute the actual main function with exactly
 // one barrier removed. They never edit the shared worktree or launch Electron.
 const controls = {
-  "no-bootstrap-lease": ['  if (app.isPackaged) acquireDesktopDataOwner();', ''],
+  "no-bootstrap-lease": ['  if (app.isPackaged) { acquireDesktopDataOwner(); await initializeSentinelHost(); }', '  if (app.isPackaged) { await initializeSentinelHost(); }'],
   "no-child-root": ['    MURAGE_DATA_DIR: desktopDataDir,', ''],
   "no-fallback-wait": ['  await lifecycle.stop();\n  assertDesktopStartupActive();', '  void lifecycle.stop();\n  assertDesktopStartupActive();'],
-  "no-shutdown-child-wait": ['    await awaitOwnedWork(Promise.all([...ownedServerChildren].map((child) => child.stop())), "The owned harness has not exited");', ''],
+  "no-shutdown-child-wait": ['    await awaitOwnedWork(Promise.all([...ownedServerChildren].map((child) => child.stop())), "The owned harness has not exited", SERVER_CHILD_STOP_TIMEOUT_MS);', ''],
   "no-credential-wait": ['    await awaitOwnedWork(Promise.allSettled([...credentialWrites]), "Credential writes have not settled");', ''],
   "no-cua-wait": ['    await awaitOwnedWork(stopCua(), "Computer-use cleanup has not completed", CUA_STOP_TIMEOUT_MS);', ''],
   "no-legacy-migration": ['    migrateLegacyDataDirectory({', '    (() => false)({'],
@@ -68,7 +70,7 @@ function bootstrapWiring({ menu = [], selectionActive = false } = {}) {
 function runBootstrap(scope, prelude = "", wiring = {}) {
   const full = { ...bootstrapWiring(wiring), ...scope };
   full.process = { argv: [], ...full.process };
-  return new AsyncFunction(...Object.keys(full), `${prelude}${bootstrapBody()}`)(...Object.values(full));
+  return new AsyncFunction(...Object.keys(full), `${shutdownCauseWiring()}${prelude}${bootstrapBody()}`)(...Object.values(full));
 }
 const between = (start, end) => {
   const first = source.indexOf(start);
@@ -76,6 +78,12 @@ const between = (start, end) => {
   assert.ok(first >= 0 && last > first, `actual main wiring exists: ${start}`);
   return source.slice(first, last);
 };
+// D-STARTUP-SILENT-r3 A4: "Owner is assigned at explicit owner actions"
+// Execute the production declarations/callback, rather than inventing a cause
+// or making the new owner callback inert in extracted bootstrap code.
+const shutdownCauseWiring = () => between("let shutdownCause = null;", "// Windows created to be shown");
+// A5: "kill the helper and confirm it exited ... before continuing locally."
+const relaunchHelpersWiring = () => between("const ownedRelaunchHelpers = new Set();", "const launchCloudLink =");
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 const deferred = () => {
   let resolve;
@@ -278,11 +286,12 @@ test("actual canonical root resolver rejects empty override without acquiring or
   assert.equal(claims,0);
 });
 
-function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{},deadlineMs=25}={}) {
+function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanups=[],startup=Promise.resolve(),cua=async()=>{},release=()=>true,managedComposioShutdown=new AbortController(),androidStop=async()=>{},relaunchStop=null,deadlineMs=25}={}) {
   const text=source.slice(source.indexOf("function cleanupDesktopForExit() {"));
-  const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger;
+  const messages=[];let quit=0,backgroundQuits=0,androidStops=0;let trigger,ownerRequest=false;
   const scope={
-    app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{quit++;}},
+    startupDecisionPending:false,updateRecoveryDescriptor:null,updateRequester:false,returnAuthority:createReturnAuthority(),revokeReturn,joinExplicitQuit:options=>joinExplicitQuit({...options,setTimer:()=>{}}),finishUpdateWait:()=>{},takeBackupProgress:()=>null,messages,
+    app:{on:(_event,handler)=>{trigger=handler;},quit:()=>{if(ownerRequest)trigger({preventDefault(){}});else quit++;}},
     // The actual before-quit handler first tells the background lifecycle
     // (5b140c4f) that quit began so tray/close handling stops re-hiding the window.
     backgroundLifecycle:{beginQuit:()=>{backgroundQuits++;}},
@@ -313,13 +322,18 @@ function shutdownFixture({stop=async()=>{},writes=[],backupOperations=[],cleanup
     stopDeskPresence:()=>{},
     serverStopReason:{note(){},logOnce(){}},
   };
-  const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release",`
+  const state=new Function(...Object.keys(scope),"stop","writes","backupOperations","release","relaunchStop",`
+    ${shutdownCauseWiring()}
+    ${relaunchHelpersWiring()}
+    if (relaunchStop) ownedRelaunchHelpers.add({stop:relaunchStop});
+    let quitRequested=false;
     let desktopShutdownStarted=false,cuaCleanedUp=false,desktopCleanup=null,desktopCleanupStage="owned harness";
+    const cleanupFailed=error=>messages.push(desktopCleanupStage+": "+error.message);
     let desktopDataOwner={release};const CUA_STOP_TIMEOUT_MS=25;
     const exitedServerChildren=[];const ownedServerChildren=new Set([{stop}]),credentialWrites=new Set(writes),backupRemoteOperations=new Set(backupOperations),companionStarts=new Set();
-    ${text};return {cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
-  `)(...Object.values(scope),stop,writes,backupOperations,release);
-  return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,androidStops:()=>androidStops,trigger:()=>trigger({preventDefault(){}})};
+    ${text};return {ownerQuit:requestOwnerQuit,get cause(){return shutdownCause;},cleanupWithoutQuit:cleanupDesktopForExit,get cleanup(){return desktopCleanup;},get owned(){return Boolean(desktopDataOwner);}};
+  `)(...Object.values(scope),stop,writes,backupOperations,release,relaunchStop);
+  return {state,messages,quit:()=>quit,backgroundQuits:()=>backgroundQuits,androidStops:()=>androidStops,trigger:()=>{ownerRequest=true;try{state.ownerQuit();assert.equal(state.cause,"owner");}finally{ownerRequest=false;}}};
 }
 
 test("actual before-quit waits for child exit AND pending credentials before releasing",async()=>{
@@ -495,12 +509,25 @@ test("an automatic companion start gives way to a Stop pressed during HTTPS obse
 });
 
 test("actual startup rejection is handled visibly without echoing arbitrary private details",async()=>{
-  const text=between("void desktopStartup.catch((error) => {",'app.on("window-all-closed"');
-  const visible=[],logs=[];let quits=0;
-  const scope={desktopStartup:Promise.reject(new Error("private supplied credential")),desktopShutdownStarted:false,closedBackupRequested:false,finishClosedBackup:()=>{throw new Error("ordinary startup is not a closed backup");},
-    slog:line=>logs.push(line),dialog:{showErrorBox:(...args)=>visible.push(args)},app:{quit:()=>{quits++;}}};
-  await new Function(...Object.keys(scope),`${text};return desktopStartup.catch(()=>{});`)(...Object.values(scope));
-  assert.equal(quits,1);assert.equal(visible.length,1);
+  // B2: "One settle path ... replaces main.mjs:5147 and :5151."
+  // A8: "observed at its one call site with a nonthrowing terminal handler".
+  const text=between("const startupSettleDeps = {", 'app.on("window-all-closed"');
+  const visible=[],logs=[],events=[];let quits=0;
+  const scope={settleDesktopStartup,terminalDesktopStartup,startupFailureCode,
+    desktopStartup:Promise.reject(new Error("private supplied credential")),desktopShutdownStarted:false,closedBackupRequested:false,
+    finishClosedBackup:()=>{throw new Error("ordinary startup is not a closed backup");},
+    recordDesktopCrash:entry=>logs.push(entry),slog:line=>logs.push(line),
+    closeStartupSplash:()=>events.push("close"),closeSplashWhenNoMainWindow:()=>{},
+    showDesktopRecovery:()=>{throw new Error("unpackaged startup must use the error box");},
+    cleanupDesktopForExit:async()=>events.push("cleanup"),
+    dialog:{showErrorBox:(...args)=>{events.push("visible");visible.push(args);}},
+    app:{isPackaged:false,quit:()=>{quits++;},exit:code=>events.push(["exit",code])}};
+  await new Function(...Object.keys(scope),`${shutdownCauseWiring()}${text};return desktopStartup.catch(()=>{});`)(...Object.values(scope));
+  await nextTurn();
+  assert.equal(quits,0,"failure exits explicitly only after confirmed cleanup");assert.equal(visible.length,1);
+  assert.deepEqual(events,["close","visible","cleanup",["exit",1]]);
+  assert.ok(logs.some(entry=>entry?.kind==="startup-refused"&&entry.code==="STARTUP_FAILED"));
+  assert.ok(logs.some(entry=>entry==="desktop startup refused (STARTUP_FAILED)"));
   assert.doesNotMatch(JSON.stringify([visible,logs]),/private supplied credential/);
 });
 
@@ -514,4 +541,34 @@ test("updater cleanup awaits the actual owned barriers without quitting early", 
   child.resolve();await new Promise(resolve=>setImmediate(resolve));assert.equal(released,0);
   write.resolve();await cleanup;
   assert.equal(released,1);assert.equal(f.state.owned,false);assert.equal(f.quit(),0);
+});
+
+// A5 adds a helper to the existing ownership barrier; a stopped helper must
+// never authorize skipping the original child or credential barriers.
+test("actual updater cleanup retains ownership until the handoff helper exits", async () => {
+  const helper=deferred();let released=0;
+  const f=shutdownFixture({relaunchStop:()=>helper.promise,release:()=>{released++;return true;}});
+  const cleanup=f.state.cleanupWithoutQuit();
+  await nextTurn();assert.equal(released,0);assert.equal(f.state.owned,true);assert.equal(f.quit(),0);
+  helper.resolve();await cleanup;
+  assert.equal(released,1);assert.equal(f.state.owned,false);assert.equal(f.quit(),0);
+});
+
+import {runStartupBoundary} from '../scripts/macwd/startup-boundary.mjs';
+for(const winner of ["old","candidate"])test(`F11 T18 production startup excludes loser with ${winner} winner`,async()=>{
+ for(const won of [false,true]){
+  const counts={},exit={};
+  const instrument=(name,result)=>()=>{counts[name]=(counts[name]??0)+1;return result;};
+  const operations={acquireDesktopDataOwner(){},pendingUpgrade(){},settleRequestedInstall(){}};
+  const version=winner==="candidate"?'2.0.0':'1.0.0';
+  const host={internalStatus:()=>({phase:'install-requested'}),pendingUpgrade:instrument(operations.pendingUpgrade.name,{phase:'install-requested',candidate:{version:'2.0.0'}}),completeUpgrade:instrument('completeUpgrade')};
+  host.settleRequestedInstall=instrument(operations.settleRequestedInstall.name,{kind:'review'});
+  const scope={closedBackupRequested:false,console:{log(){}},app:{requestSingleInstanceLock:()=>won,isPackaged:true,getVersion:()=>version,getLocale:()=> 'en'},process:{exit:()=>{throw exit;},platform:'darwin'},
+   acquireDesktopDataOwner:instrument(operations.acquireDesktopDataOwner.name),initializeSentinelHost:async()=>{},initializeBackupScheduleHost:async()=>{},desktopMark(){},announceLastBackupFailure(){},announceLastBackupResult(){},backupScheduleHost:host,ensureDesktopUpdater:()=>({}),backupToolCheck:Promise.resolve(),desktopStartup:Promise.resolve(),startupSplash:{set(){}},updateRecoveryWords:()=>({}),startUpdateGate:()=>host.settleRequestedInstall(),pauseForReview(){}};
+  try{await runStartupBoundary(source,scope);}catch(error){assert.equal(error,exit);}
+  assert.equal(counts[operations.acquireDesktopDataOwner.name]??0,won?1:0);
+  assert.equal(counts[operations.pendingUpgrade.name]??0,won?1:0);
+  assert.equal(counts[operations.settleRequestedInstall.name]??0,won&&winner==='old'?1:0);
+  assert.equal(counts.completeUpgrade??0,won&&winner==='candidate'?1:0);
+ }
 });

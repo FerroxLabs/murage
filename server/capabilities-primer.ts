@@ -36,6 +36,7 @@ import { ownerOnly } from "./owner-audience.ts";
 import type { SendTurnInput } from "./contracts.ts";
 import type { BrowserProtection } from "./browser-lock.ts";
 import { driverMountsPhoneJobs } from "./phone-jobs-engines.ts";
+import { HIGHLEVEL_CLOSED_LINE } from "./highlevel/owner-turn.ts";
 
 /** Exactly the integrations the harness can hand a driver. Taken from the
  * contract rather than restated, so the two cannot drift. */
@@ -105,6 +106,12 @@ export const INTEGRATION_FACTS = {
     present: "use the phone tools listed for you, each of which the owner confirms on their phone",
     absent: "",
   },
+  // Native HighLevel (HL-S2): present only on an owner turn for a bot the owner gave a confirmed location.
+  highlevel: {
+    // read only in HL-S2 (MurageMain 11-04): the bot is never told it can change the CRM
+    present: "read the owner's HighLevel CRM (read only: it cannot change records there)",
+    absent: "",
+  },
   memory: {
     present: "search Murage's memory for more than this turn already carries",
     absent: "",
@@ -169,6 +176,8 @@ export interface PrimerFacts {
   readonly emailMode?: "send" | "read";
   /** Bot email: why an owner turn has no email tools on this engine or in this mode (BOT-EMAIL-MURAGE-109 3.2), when it has none. */
   readonly emailAbsentLine?: string;
+  /** HL-RO (1.0.17): the bot holds a HighLevel grant, but this owner turn is not a message the owner sent it directly in its chat. */
+  readonly highlevelClosed?: boolean;
   /** True when the turn is with the owner (their own chat), the only audience
    * that can open the MCP servers panel. */
   readonly ownerAudience?: boolean;
@@ -388,6 +397,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
       ? `Read recent lines from your projects and channels with ${murageTool("venue_read_messages")}.`
       : "",
     emailPrimer(facts.mounted.agents ? facts.emailMode : undefined, facts.emailAbsentLine, facts.ownerAudience === true),
+    facts.highlevelClosed && !facts.mounted.highlevel && facts.ownerAudience ? HIGHLEVEL_CLOSED_LINE : "",
     facts.mounted.agents && facts.peers > 0
       ? "The only bots you can reach are the ones your coordination instructions above name; follow that chain rather than picking a bot yourself, and never write or act in another bot's name."
       : "",
@@ -412,7 +422,9 @@ const ENGINE_LABELS: Readonly<Record<string, string>> = {
   hermesAgent: "Hermes",
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
+  museCode: "Muse Code",
   opencodeGo: "OpenCode",
+  copilotAgent: "GitHub Copilot",
   customAcp: "a custom ACP engine",
   boxAgent: "the cloud computer agent",
 };
@@ -454,6 +466,8 @@ export function turnCapabilityFacts(input: {
   browserLock?: BrowserProtection;
   /** Bot email: the mount's line for an owner turn without the tools (email/admission.ts). */
   emailAbsentLine?: string | null;
+  /** HL-RO: set at the mount when a granted bot's turn did not pass the allow proof. */
+  highlevelClosed?: boolean;
   /** The computer this harness runs on; a test passes it, a live turn reads the process. */
   platform?: NodeJS.Platform;
 }): PrimerFacts {
@@ -465,6 +479,8 @@ export function turnCapabilityFacts(input: {
   }
   // 1.0.9 S13b: an engine whose driver does not mount the phone-jobs server is never told it has phone tools.
   if (mounted.phoneJobs && !driverMountsPhoneJobs(input.instance.driverKind)) delete mounted.phoneJobs;
+  // HighLevel rides the same per-turn internal-token mount, so the same table decides it.
+  if (mounted.highlevel && !driverMountsPhoneJobs(input.instance.driverKind)) delete mounted.highlevel;
   const engineAcceptsImages = input.instance.adapter.capabilities.images === true;
   const agentsEnv = (input.integrations.agents as { env?: Record<string, string> } | undefined)?.env;
   const imageInput: ImageInput = !engineAcceptsImages
@@ -480,7 +496,7 @@ export function turnCapabilityFacts(input: {
   return {
     engine: ENGINE_LABELS[input.instance.driverKind] ?? input.instance.displayName ?? input.instance.driverKind,
     model: label,
-    toolAccess: !mounted.agents && !mounted.composio && !mounted.custom && !mounted.browser && !mounted.computer && !mounted.localComputer && !mounted.memory && !mounted.phone && !mounted.phoneJobs && !mounted.dweb
+    toolAccess: !mounted.agents && !mounted.composio && !mounted.custom && !mounted.browser && !mounted.computer && !mounted.localComputer && !mounted.memory && !mounted.phone && !mounted.phoneJobs && !mounted.highlevel && !mounted.dweb
       ? "none"
       : input.instance.adapter.mcpToolSurface?.kind === "none" ? "none" : input.instance.adapter.mcpToolSurface?.kind === "search-then-call" ? "search-first" : input.instance.adapter.mcpToolSurface?.kind === "neutral" ? "neutral" : "direct",
     imageInput,
@@ -488,6 +504,7 @@ export function turnCapabilityFacts(input: {
     ...(agentsEnv?.MURAGE_VENUE_READ === "1" && !agentsEnv.MURAGE_PROJECT_ROLE ? { venueRead: true } : {}),
     ...((agentsEnv?.MURAGE_EMAIL === "send" || agentsEnv?.MURAGE_EMAIL === "read") && !agentsEnv.MURAGE_PROJECT_ROLE ? { emailMode: agentsEnv.MURAGE_EMAIL } : {}),
     ...(input.emailAbsentLine ? { emailAbsentLine: input.emailAbsentLine } : {}),
+    ...(input.highlevelClosed ? { highlevelClosed: true } : {}),
     memory: input.memory,
     imageProvider: input.imageProvider,
     ...(input.imageConnections ? { imageConnections: input.imageConnections } : {}),

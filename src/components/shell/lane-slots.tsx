@@ -16,8 +16,8 @@
 export { NeedsYouPage, useNeedsSummary } from "@/components/needs/NeedsYouPage";
 export { HealthPage } from "@/components/health/HealthPage";
 export { useHealthStatus } from "@/components/health/health-status";
-export { FirstRunTodayCard } from "./stubs/cards-stub";
-export { MonthCard, useMonthTag } from "./stubs/cards-stub";
-export { ClientsCard, useClientsTag } from "./stubs/cards-stub";
+// L6A's FirstRunTodayCard: TodayView lazy-loads it straight from its module (UX-L7 part 2, bundle budget).
+export { MonthCard, useMonthTag } from "@/components/today/MonthCard";
+export { ClientsCard, useClientsTag } from "@/components/agency/ClientsCard";
 export { OtherWorkspacesStrip } from "./stubs/cards-stub";
-export { PhoneTabs } from "./stubs/cards-stub";
+export { PhoneTabs } from "@/components/phone/PhoneTabs";

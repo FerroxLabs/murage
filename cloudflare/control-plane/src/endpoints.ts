@@ -10,6 +10,7 @@ import {
 import { CLOUD_HOME_DISABLED_CODE, CLOUD_HOME_MISCONFIGURED_CODE, cloudHomeCloudflare, type ControlPlaneConfig } from "./config";
 import { errorResponse, HTTPError, json } from "./http";
 import { requireInstallation } from "./installations";
+import { persistAlert } from "./ops-monitor";
 
 type EndpointStatus = "pending" | "provisioning" | "ready" | "deleting" | "deleted" | "error";
 
@@ -97,6 +98,18 @@ const CLEANUP_BACKOFF_3_MS = 60 * 60 * 1_000;
 const CLEANUP_BACKOFF_4_MS = 6 * 60 * 60 * 1_000;
 const CLEANUP_BACKOFF_MAX_MS = 24 * 60 * 60 * 1_000;
 const MANUAL_CLEANUP_THRESHOLD_MS = 24 * 60 * 60 * 1_000;
+
+// B99: Cloudflare's per-account tunnel limit (1,000 by default; one account today). A tunnel-create 429 while the tunnels we hold in D1
+// are at or over it is capacity, not a rate limit: 503 endpoint_capacity with Retry-After, and new tunnel creation in that account waits
+// out a ten-minute gate so apps stop retrying into it. The count is the tunnels we have recorded (tunnel_id set, row not deleted).
+const ENDPOINT_CAPACITY = "endpoint_capacity";
+const TUNNEL_ACCOUNT_LIMIT = 1_000;
+const TUNNEL_ALERT_PERCENT = 90;
+const TUNNEL_CAPACITY_ALERT = "endpoints.tunnel_capacity";
+const CAPACITY_GATE_MS = 10 * 60 * 1_000;
+const CAPACITY_RETRY_AFTER_S = 600;
+// B99: a tunnel whose endpoint was never published (no ready ever recorded) and whose row nobody has touched for this long is reclaimed.
+const RECLAIM_QUIET_MS = 24 * 60 * 60 * 1_000;
 
 class EndpointOperationError extends Error {
   constructor(public readonly code: string) {
@@ -218,8 +231,10 @@ async function claimEndpoint(
   row: EndpointRow,
   nextStatus: "deleting" | "provisioning",
   kind: EndpointKind = DESKTOP_KIND,
-  /** A further SQL condition the row must still meet in the claiming statement itself (no bound values). */
+  /** A further SQL condition the row must still meet in the claiming statement itself. */
   stillEligible = "",
+  /** Values bound to the `?` placeholders of `stillEligible`, in order (B99's reclaim binds the generation and tunnel it observed). */
+  eligibleValues: unknown[] = [],
 ): Promise<ClaimedEndpoint | null> {
   const now = Date.now();
   const leaseOwner = crypto.randomUUID();
@@ -247,6 +262,7 @@ async function claimEndpoint(
     now,
     row.owner_id,
     now,
+    ...eligibleValues,
   ).run();
   if (result.meta.changes === 0) return null;
   const claimed = await endpointRow(env, kind, row.owner_id);
@@ -408,6 +424,63 @@ async function failClaim(
     claim.row.generation,
     claim.leaseOwner,
   ).run();
+}
+
+/** The endpoint tables whose tunnels live in the same Cloudflare account as `kind`'s: both when the homes account is the desktop
+ *  account, else only its own. Constants, never request input. */
+function tablesSharingAccount(config: ControlPlaneConfig, kind: EndpointKind): EndpointKind["table"][] {
+  const homes = config.cloudHome.state === "ready" ? config.cloudHome.cloudflare.accountId : null;
+  if (homes !== null && homes === config.cloudflare.accountId) return [DESKTOP_KIND.table, MACHINE_KIND.table];
+  return [kind.table];
+}
+
+async function heldTunnelCount(env: Env, tables: EndpointKind["table"][]): Promise<number> {
+  const parts = tables.map((table) => `SELECT COUNT(*) AS n FROM ${table} WHERE tunnel_id IS NOT NULL AND status != 'deleted'`);
+  const row = await env.DB.prepare(`SELECT COALESCE(SUM(n), 0) AS n FROM (${parts.join(" UNION ALL ")})`).first<{ n: number }>();
+  return Number(row?.n ?? 0);
+}
+
+/** Milliseconds left on the capacity gate for this account (0 when open): the latest row that failed at capacity, within ten minutes. */
+async function capacityGateRemainingMs(env: Env, config: ControlPlaneConfig, kind: EndpointKind, now: number): Promise<number> {
+  const tables = tablesSharingAccount(config, kind);
+  const parts = tables.map((table) => `SELECT MAX(updated_at) AS at FROM ${table}
+      WHERE status = 'error' AND last_error_code = '${ENDPOINT_CAPACITY}' AND updated_at > ?`);
+  const row = await env.DB.prepare(`SELECT MAX(at) AS at FROM (${parts.join(" UNION ALL ")})`)
+    .bind(...tables.map(() => now - CAPACITY_GATE_MS)).first<{ at: number | null }>();
+  return row?.at ? Math.max(0, row.at + CAPACITY_GATE_MS - now) : 0;
+}
+
+/** The gate applies only to a request that would create a tunnel: an owner whose row already holds one (a ready endpoint reconciling,
+ *  a token roll) is never held back by it. Returns the 503 to send, or null. */
+async function capacityGateForNewTunnel(env: Env, config: ControlPlaneConfig, kind: EndpointKind, ownerId: string): Promise<Response | null> {
+  const row = await endpointRow(env, kind, ownerId);
+  if (row?.tunnel_id) return null;
+  const remaining = await capacityGateRemainingMs(env, config, kind, Date.now());
+  return remaining > 0 ? capacityResponse(remaining / 1_000) : null;
+}
+
+function capacityResponse(retryAfterSeconds: number): Response {
+  const response = errorResponse(503, ENDPOINT_CAPACITY);
+  const headers = new Headers(response.headers);
+  headers.set("retry-after", String(Math.max(1, Math.ceil(retryAfterSeconds))));
+  return new Response(response.body, { status: response.status, headers });
+}
+
+/** Records (no network; the monitoring sweep delivers it, one open alert at a time) that the account holds 90% or more of its tunnel
+ *  limit. Counts only, never an id or a hostname. Never fails the request it rides on. */
+async function noteTunnelCapacity(env: Env, config: ControlPlaneConfig, kind: EndpointKind, known?: number): Promise<void> {
+  try {
+    const count = known ?? await heldTunnelCount(env, tablesSharingAccount(config, kind));
+    if (count * 100 < TUNNEL_ACCOUNT_LIMIT * TUNNEL_ALERT_PERCENT) return;
+    await persistAlert(env, {
+      homeId: "ops",
+      kind: TUNNEL_CAPACITY_ALERT,
+      severity: "high",
+      detail: `Cloudflare tunnels in use: ${count} of ${TUNNEL_ACCOUNT_LIMIT}`,
+    }, Date.now());
+  } catch {
+    // The alert is advisory; provisioning keeps its own result.
+  }
 }
 
 function busyResponse(): Response {
@@ -576,6 +649,20 @@ async function reconcileClaim(
         tunnelId = tunnel.id;
         createdTunnel = true;
       } catch (createError) {
+        // B99: Cloudflare refused the create with 429 while the account is at or over its tunnel limit. That is capacity (nothing was
+        // created); any other 429, or one below the limit, takes the usual path below.
+        if (createError instanceof CloudflareAPIError && createError.status === 429) {
+          let held: number | null = null;
+          try {
+            held = await heldTunnelCount(env, tablesSharingAccount(config, claim.kind));
+          } catch {
+            // Unknown count: not proven capacity.
+          }
+          if (held !== null && held >= TUNNEL_ACCOUNT_LIMIT) {
+            await noteTunnelCapacity(env, config, claim.kind, held);
+            throw new EndpointOperationError(ENDPOINT_CAPACITY);
+          }
+        }
         // A timeout/network failure can arrive after Cloudflare committed the
         // POST. Reconcile by the stable opaque name instead of creating a
         // duplicate tunnel on the next request.
@@ -597,6 +684,7 @@ async function reconcileClaim(
     if (!tunnelId) throw new EndpointOperationError("tunnel_missing");
     const activeTunnelId = tunnelId;
     await updateClaimedResources(env, claim, activeTunnelId, dnsRecordId);
+    if (createdTunnel) await noteTunnelCapacity(env, config, claim.kind);
     await withClaimLease(
       env,
       claim,
@@ -833,6 +921,8 @@ export async function provisionManagedEndpoint(
   requestId: string,
 ): Promise<Response> {
   const installation = await requireInstallation(request, env);
+  const gated = await capacityGateForNewTunnel(env, config, DESKTOP_KIND, installation.installation_id);
+  if (gated) return gated;
   await enforceEndpointRateLimit(env, installation.installation_id, "reconcile_endpoint");
   const row = await ensureEndpointRow(
     env,
@@ -874,6 +964,10 @@ export async function provisionManagedEndpoint(
       // Same answer the request would have received had the revocation,
       // rotation or expiry landed before authentication.
       throw new HTTPError(401, "unauthorized");
+    }
+    if (errorCode(error) === ENDPOINT_CAPACITY) {
+      console.error(JSON.stringify({ message: "managed endpoint at tunnel capacity", requestId, errorCode: ENDPOINT_CAPACITY }));
+      return capacityResponse(CAPACITY_RETRY_AFTER_S);
     }
     console.error(JSON.stringify({
       message: "managed endpoint reconcile failed",
@@ -1023,7 +1117,72 @@ export async function sweepManagedEndpointCleanup(
     requestId,
     Math.max(1, CLEANUP_SWEEP_LIMIT - candidates.results.length),
   );
-  return candidates.results.length + machines;
+  // Only what is left of the same budget; a busy run leaves the reclaim for the next one.
+  const reclaimed = await reclaimNeverPublishedTunnels(
+    env,
+    config,
+    fetcher,
+    requestId,
+    CLEANUP_SWEEP_LIMIT - candidates.results.length - machines,
+  );
+  return candidates.results.length + machines + reclaimed;
+}
+
+/** B99 (GrokBuild rev 2): the claim condition for reclaiming a tunnel left by provisioning that stopped. Unqualified columns are the row's;
+ *  binds the generation and tunnel id the sweep observed, then the quiet cut-off. Only a row that never published a ready endpoint
+ *  (last_reconciled_at IS NULL: finishReadyClaim and finishDeletedClaim both set it), still provisioning or in error, at the exact
+ *  generation and tunnel seen, untouched since the cut-off. A successor claim (new generation), a publication (last_reconciled_at set) or
+ *  any other write in between makes the claim a no-op. A once-ready endpoint back in 'provisioning' keeps last_reconciled_at and its live
+ *  connector, so it is never reclaimed. */
+const RECLAIM_ELIGIBLE_SQL = `last_reconciled_at IS NULL AND status IN ('provisioning', 'error')
+  AND generation = ? AND tunnel_id = ? AND updated_at <= ?`;
+
+/** B99: deletes tunnels (and their DNS record, if one was written) that a provisioning request created and never handed out: the row is
+ *  claimed 'deleting' under RECLAIM_ELIGIBLE_SQL, then the ordinary identity-checked delete runs (tunnel re-verified by ID AND name,
+ *  DNS by hostname and CNAME target). A delete that fails leaves the row 'deleting' for the cleanup sweep's backoff. Never a ready
+ *  endpoint. Returns how many rows it claimed. */
+async function reclaimNeverPublishedTunnels(
+  env: Env,
+  config: ControlPlaneConfig,
+  fetcher: CloudflareFetch,
+  requestId: string,
+  limit: number,
+): Promise<number> {
+  if (limit <= 0) return 0;
+  const now = Date.now();
+  const quietBefore = now - RECLAIM_QUIET_MS;
+  // A homes zone we cannot reach is left alone, as in cleanupEndpointForMachine.
+  const kinds = config.cloudHome.state === "ready" ? [DESKTOP_KIND, MACHINE_KIND] : [DESKTOP_KIND];
+  let claimed = 0;
+  for (const kind of kinds) {
+    if (claimed >= limit) break;
+    const observed = await env.DB.prepare(
+      `SELECT ${kind.idColumn} AS owner_id, generation, tunnel_id FROM ${kind.table}
+        WHERE last_reconciled_at IS NULL AND status IN ('provisioning', 'error') AND tunnel_id IS NOT NULL
+          AND updated_at <= ? AND (lease_expires_at IS NULL OR lease_expires_at <= ?)
+        ORDER BY updated_at ASC, ${kind.idColumn} ASC
+        LIMIT ?`,
+    ).bind(quietBefore, now, limit - claimed).all<{ generation: number; owner_id: string; tunnel_id: string }>();
+    for (const seen of observed.results) {
+      try {
+        const row = await endpointRow(env, kind, seen.owner_id);
+        if (!row) continue;
+        const claim = await claimEndpoint(env, row, "deleting", kind, RECLAIM_ELIGIBLE_SQL,
+          [seen.generation, seen.tunnel_id, quietBefore]);
+        if (!claim) continue;
+        claimed += 1;
+        await deleteClaim(env, config, claim, fetcher);
+        console.log(JSON.stringify({ message: "never-published endpoint tunnel reclaimed", requestId, table: kind.table }));
+      } catch (error) {
+        console.error(JSON.stringify({
+          message: "never-published endpoint tunnel reclaim pending",
+          requestId,
+          errorCode: errorCode(error),
+        }));
+      }
+    }
+  }
+  return claimed;
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,6 +1247,8 @@ export async function provisionMachineEndpoint(
   // Only machines created with managed_endpoint have a row; the hostname was
   // allocated then and is never re-allocated here.
   if (!row) throw new HTTPError(404, "not_found");
+  const gated = await capacityGateForNewTunnel(env, config, MACHINE_KIND, machineId);
+  if (gated) return gated;
   await enforceEndpointRateLimit(env, machineId, "reconcile_endpoint", MACHINE_KIND);
   const claim = await claimEndpoint(env, row, "provisioning", MACHINE_KIND);
   if (!claim) return busyResponse();
@@ -1103,6 +1264,10 @@ export async function provisionMachineEndpoint(
         errorCode: CREDENTIAL_INACTIVE,
       }));
       throw new HTTPError(401, "unauthorized");
+    }
+    if (errorCode(error) === ENDPOINT_CAPACITY) {
+      console.error(JSON.stringify({ message: "managed machine endpoint at tunnel capacity", requestId, errorCode: ENDPOINT_CAPACITY }));
+      return capacityResponse(CAPACITY_RETRY_AFTER_S);
     }
     console.error(JSON.stringify({
       message: "managed machine endpoint reconcile failed",

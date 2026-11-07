@@ -54,6 +54,8 @@ export class TurnSubmissionBoundary {
     if (this.accepted) { try { this.onLateRefusal?.(error); } catch { /* the refusal itself still stands */ } }
   }
   assertNotRefused() { if (this.state === "refused") throw this.refusal; }
+  /** What refused the submission, if anything did: a late settlement reads its own line from it (U22 G20 backup refusals). */
+  get refusedWith(): unknown { return this.state === "refused" ? this.refusal : undefined; }
   get canRetry() { return this.state !== "unknown"; }
 }
 

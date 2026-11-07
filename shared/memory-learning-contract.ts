@@ -82,7 +82,7 @@ export function ceilingAdmits(ceiling: LearningCeiling, used: { input: number; o
 
 /** The smart search phrase of the Memory status line (copy rules: no em dashes). */
 export function semanticStatusPhrase(semantic: SemanticIndexStatus): string {
-  if (semantic.state === "keyword-only") return "Keyword memory until smart search is ready.";
+  if (semantic.state === "keyword-only") return "Memory search uses keywords until smart search is ready.";
   if (semantic.state === "ready") return "Smart search ready.";
   if (semantic.total <= 0) return "Getting smart search ready.";
   return `Indexing for smart search, ${semantic.done.toLocaleString("en-US")} of ${semantic.total.toLocaleString("en-US")}.`;

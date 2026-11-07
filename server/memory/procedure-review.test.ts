@@ -287,3 +287,18 @@ it("reaches a runnable review behind more than 128 parked reviews within a bound
   for(let scan=0;scan<8&&!seen.includes("procedure-review:runnable");scan++)seen.push(...pendingProcedureReviews());
   expect(seen).toContain("procedure-review:runnable");
 });
+
+it("a conversation deleted while evaluation waits invalidates publication without moving foreground authority", async () => {
+  const { captureThreadDeletion } = await import("./capture.ts");
+  settle();
+  const h = host(), id = await expand(h);
+  const epoch = database().prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch;
+  h.evaluate = async snapshot => {
+    transaction(db => captureThreadDeletion(db, "unrelated-deleted-thread"));
+    expect(database().prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch).toBe(epoch);
+    return receipt(snapshot);
+  };
+  await processProcedureReview(id, h, signal());
+  expect(h.publish).not.toHaveBeenCalled();
+  expect(intent(id).reason).toBe("PROCEDURE_REVIEW_REVOKED");
+});

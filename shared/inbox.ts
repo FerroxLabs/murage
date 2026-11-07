@@ -117,6 +117,12 @@ export interface InboxItem {
   /** Nothing is owed on it, so the owner may clear it away (InboxStateUpdate
    *  `cleared`). It comes back only if it happens again. */
   clearable?: true;
+  /** APPROVALS-SIMPLE-1018 section 3: on a request row of `GET /api/inbox`, whether Approve all would answer it now
+   *  ("ok") or the reason it stays one at a time (a BulkReasonKey). The same verdict the preview and respond run. */
+  bulk?: string;
+  /** APPROVALS-SIMPLE-1018 section 1: on an approval row, its plain kind from the tool name (shared/bulk-kind.ts), for
+   *  the grey line "Runs a command · Petra · waiting since 06:39". Murage's fact, never the bot's words. */
+  toolKind?: "command" | "edit" | "app" | "other";
   link: InboxLink;
 }
 /** `after`: the `next` of the page before, to continue the list from there
@@ -168,6 +174,9 @@ export interface InboxPage {
   /** Owed items snoozed right now (UX L2B). They are left out of `decisions` and the segments, and they are still
    *  owed: snoozing is not answering, so the Needs you badge and the umbrella tab add this back. Absent when zero. */
   snoozedOwed?: number;
+  /** On a segment view (approvals, questions, connections): that segment's owed items snoozed right now, what its tab's
+   *  "N snoozed" line says. Absent when zero and on every other view. */
+  snoozedHere?: number;
   /** Unread news, on the same basis. */
   toRead: number;
   /** Permission owed on a specific drafted act. */

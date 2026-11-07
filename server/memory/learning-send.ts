@@ -16,6 +16,7 @@ import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, isDatabaseBusy, noteBusy, setBusy 
 import { txScopeBegin, txScopeEnd } from "../tx-scope.ts";
 import { noteIdentityEpoch } from "./provenance-stamp.ts";
 import { NOISY_SYSTEM_SUBJECTS, bumpLearningFence } from "./authority-epoch.ts";
+import { memoryLookup } from "./deny-read.ts";
 import { MemorySendFenced } from "./learning-send-fence.ts";
 
 /** The lock was held by another connection past the background budget: nothing was released, the call is deferred, not dropped. */
@@ -171,6 +172,8 @@ export function heldRefsCurrent(db: DatabaseSync, refs: HeldRefs): boolean {
     if (ref.digest !== undefined && digestOf(String(row.text)) !== ref.digest) return false;
     if (db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(ref.id, ref.version)) return false;
   }
+  const sources=(refs.sources??[]).map(ref=>({kind:"source" as const,id:ref.id,version:ref.revision}));
+  for(const verdict of memoryLookup(db,sources,{audience:null,ownFlag:true}).values())if(verdict.state!=="shown")return false;
   for (const ref of refs.sources ?? []) {
     const row = db.prepare("SELECT s.revision,s.state,v.payload FROM memory_sources s LEFT JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=?").get(ref.id);
     if (!row || Number(row.revision) !== ref.revision || row.state !== "active") return false;

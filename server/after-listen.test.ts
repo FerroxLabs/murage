@@ -177,3 +177,29 @@ describe.skipIf(process.platform === "win32")("the listen tick", () => {
     expect(stdout).toMatch(/\[loop\] stall blocked=\d+ms holder=listen\.testBlock:\d+ms/);
   }, 60_000);
 });
+
+it.skipIf(process.platform === "win32")("C2 rig 9: a delayed first health request cannot let the waiting monitor write in the listen window", async () => {
+  const port = await freePortBlock([0, 1], 19_399, 200);
+  const home = mkdtempSync(join(tmpdir(), "murage-delayed-health-"));
+  mkdirSync(join(home, ".murage"), { recursive: true });
+  writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({ instances: {} }));
+  let stdout = "", stderr = "";
+  const child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    cwd: join(SERVER_DIR, ".."),
+    env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home,
+      MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_TEST_LISTEN_BLOCK_MS: "650" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout!.on("data", chunk => (stdout += chunk));
+  child.stderr!.on("data", chunk => (stderr += chunk));
+  try {
+    const deadline = Date.now() + 30_000;
+    while (!stdout.includes(`murage server on http://127.0.0.1:${port}`) && Date.now() < deadline) await sleep(10);
+    expect(stdout, stderr).toContain(`murage server on http://127.0.0.1:${port}`);
+    // Cross two monitor ticks with no health request, still below the after-listen fallback.
+    await sleep(1100);
+    expect((await fetch(`http://127.0.0.1:${port}/api/health`)).ok).toBe(true);
+    while (!/\[startup\] writes before first health=\d+/.test(stdout) && Date.now() < deadline) await sleep(20);
+    expect(stdout, stderr).toMatch(/\[startup\] writes before first health=0\b/);
+  } finally { await waitForExit(child, { signal: "SIGTERM" }); await removeTempDir(home); }
+}, 60_000);

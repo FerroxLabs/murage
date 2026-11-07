@@ -1,3 +1,4 @@
+import { sourceDenied } from "./deny.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { BACKGROUND_BUSY_MS, database, isDatabaseBusy, transaction } from "../database.ts";
@@ -391,7 +392,7 @@ export function publishMemoryWork(work: MemoryWork, worker: string, input: Memor
     const source=db.prepare("SELECT revision,state FROM memory_sources WHERE id=?").get(work.sourceId);
     // Fenced by owner and generation (see heartbeatMemoryJob): a lease that ran out while nobody took it over is still the holder's.
     if (!job || job.status!=="leased" || job.lease_owner!==worker || job.lease_generation!==work.leaseGeneration || result.id!==work.id || result.leaseGeneration!==work.leaseGeneration) throw new Error("STALE_MEMORY_LEASE");
-    if (!source || source.revision!==work.revision || source.state!=="active" || meta.policy_revision!==work.policyRevision || meta.deletion_epoch!==work.deletionEpoch) throw new Error("STALE_MEMORY_SOURCE");
+    if (!source || sourceDenied(db,work.sourceId) || source.revision!==work.revision || source.state!=="active" || meta.policy_revision!==work.policyRevision || meta.deletion_epoch!==work.deletionEpoch) throw new Error("STALE_MEMORY_SOURCE");
     if (result.status==="deferred" || result.status==="failed") {
       if(result.chunks.length || result.nextCursor!==work.cursor) throw new Error("INVALID_FAILURE_COVERAGE");
       const reason=result.reason??"worker-failed", prior=parseJobError(job.error), keep=prior.redriven?"redriven:":"";
