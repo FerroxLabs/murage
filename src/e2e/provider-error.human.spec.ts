@@ -179,7 +179,7 @@ test("Flux credits render a billing action, useful recovery details and keyboard
   await expect(page.getByRole("heading", { name: "Flux Router needs credits" })).toBeVisible();
   await expect(alert).toContainText("How to continue");
   const billing = page.getByRole("link", { name: "Add Flux credits" });
-  await expect(billing).toHaveAttribute("href", "https://fluxrouter.ai/home/billing");
+  await expect(billing).toHaveAttribute("href", "https://fluxrouter.ai/auth/sign-in?return_to=%2Fhome%2Fbilling");
   await expect(billing).toHaveAttribute("rel", "noopener noreferrer");
   expect(await page.evaluate(() => (window as any).retryCalls)).toBe(0);
   await billing.focus();

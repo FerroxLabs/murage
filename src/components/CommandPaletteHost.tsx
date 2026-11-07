@@ -4,6 +4,7 @@
 // it. From then on the palette owns its chord and its open state.
 import { Suspense, useEffect, useState } from "react";
 import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
+import { imeComposing } from "@/lib/composer-enter";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 
 const Palette = retryableLazy(() => import("./CommandPalette").then((module) => ({ default: module.CommandPalette })));
@@ -13,6 +14,7 @@ export function CommandPaletteHost({ onOpenChange }: { onOpenChange?: (open: boo
   useEffect(() => {
     if (first) return;
     const onKey = (e: KeyboardEvent) => {
+      if (imeComposing(e)) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         setFirst({ query: "" });

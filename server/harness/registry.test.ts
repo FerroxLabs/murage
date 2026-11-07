@@ -1,7 +1,8 @@
 // The registry's contract is forward/backward compatibility: a config
 // written by a newer or differently-built app must load as an
 // unavailable shadow, never crash the fleet. These tests pin that.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 
 import type { ModelCatalog } from "../contracts.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
@@ -267,6 +268,33 @@ describe("ProviderRegistry", () => {
     await registry.disposeAll();
   });
 
+  it("an empty catalogue at boot is read again on the next due pass, a few times, then waits the 24 h age", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; } });
+    await registry.refreshModelCatalogs(); expect(calls).toBe(0); // just created: the create read counts
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1); // still empty: due again
+    for (let i = 0; i < 10; i++) { now += 2000; await registry.refreshModelCatalogs(); }
+    expect(calls).toBe(5); // capped
+    now += 24 * 60 * 60_000; await registry.refreshModelCatalogs(); expect(calls).toBe(6); // the 24 h age still applies
+    await registry.disposeAll();
+  });
+
+  it("an empty catalogue that fills stops the short retries", async () => {
+    const fake = makeFakeDriver(); let now = 1000;
+    const registry = new ProviderRegistry([fake.driver], () => now);
+    await registry.load({ a: { driver: "fake" } });
+    const instance = registry.get("a")!; let calls = 0;
+    const models = { default: "", options: [] as Array<{ id: string; label: string }> };
+    Object.assign(instance, { models, refreshModels: async () => { calls++; models.default = "m"; models.options = [{ id: "m", label: "M" }]; } });
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    now += 2000; await registry.refreshModelCatalogs(); expect(calls).toBe(1);
+    await registry.disposeAll();
+  });
+
   // The tray re-reads the setup view every minute (SIGNED_OUT_FRESH_MS), and
   // that read describes the fleet. With a forced catalog refresh, every read
   // spawned `fuigo models` and sent Flux a GET /v1/models: the 60 s poll seen
@@ -395,4 +423,176 @@ describe("G9: which engine commands start an engine inside WSL", () => {
     expect(withWslNote({ state: "available", versionNote: "old" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: "old" });
     expect(withWslNote({ state: "available" }, "wsl hermes", "win32")).toEqual({ state: "available", versionNote: WSL_ENGINE_NOTE });
   });
+});
+
+describe("ENGINE-DEFAULT registry evidence", () => {
+  it("S1/S4: only final mapped rows publish and disposal invalidates them", async () => {
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    await registry.load({ a: { driver: "fake" } });
+    registry.get("a")!.snapshot = async () => ({ state: "available", authenticated: true, billing: "subscription" });
+    const flight = registry.describeFlight();
+    const rows = await flight.run;
+    expect(registry.scanReading()).toBeNull();
+    registry.publishScan(flight, rows);
+    expect(registry.scanReading()?.rows[0]).toMatchObject({ authenticated: true, billing: "subscription" });
+    await registry.disposeAll();
+    expect(registry.scanReading()).toBeNull();
+  });
+  it("S2/S3: older and stale mapped completions cannot replace newer evidence", async () => {
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    await registry.load({ a: { driver: "fake" } });
+    const older = registry.describeFlight({ catalogs: "due" });
+    const newer = registry.describeFlight({ catalogs: "fresh" });
+    const [oldRows, newRows] = await Promise.all([older.run, newer.run]);
+    registry.publishScan(newer, newRows);
+    registry.publishScan(older, oldRows);
+    expect(registry.scanReading()?.seq).toBe(newer.seq);
+    const stale = registry.describeFlight();
+    const rows = await stale.run;
+    await registry.reload(new Set(["a"]), { a: { driver: "fake" } });
+    registry.publishScan(stale, rows);
+    expect(registry.scanReading()).toBeNull();
+  });
+  it("RM1/RM6: settlement requires the registry's captured configuration on all four branches", async () => {
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    const saved = { a: { driver: "fake", config: { value: 1 } }, b: { driver: "fake", enabled: false }, c: { driver: "fake", config: { bad: true } }, u: { driver: "unknown" } };
+    await registry.load(saved);
+    expect(registry.entries().map(e => e.builtFrom)).toEqual(Object.values(saved));
+    saved.a.config.value = 2;
+    expect(registry.entries()[0].builtFrom.config).toEqual({ value: 1 });
+    for (const id of ["b", "c", "u"]) expect(registry.get(id)).toBeNull();
+    registry.retire(["a", "b", "c", "u", "absent", "missing"]);
+    registry.settle({ ...saved, missing: { driver: "fake" } });
+    expect(registry.retiredIds()).toEqual(["a", "missing"]);
+    registry.settle({});
+    expect(registry.retiredIds()).toEqual(["a"]);
+  });
+  it("RM2/RM7: retirement holds through disposal and shutdown survives settlement and late load", async () => {
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    const saved = { a: { driver: "fake" } };
+    await registry.load(saved);
+    let release!: () => void;
+    registry.get("a")!.dispose = () => new Promise<void>(resolve => { release = resolve; });
+    registry.retire(["a"]);
+    const reloading = registry.reload(new Set(["a"]), { a: { driver: "fake", enabled: false } });
+    await Promise.resolve(); await Promise.resolve();
+    expect(registry.get("a")).not.toBeNull();
+    expect(registry.isRetired("a")).toBe(true);
+    release(); await reloading;
+    registry.settle({ a: { driver: "fake", enabled: false } });
+    expect(registry.isRetired("a")).toBe(false);
+    expect(registry.get("a")).toBeNull();
+    registry.retire(["a"]);
+    registry.beginShutdown(); registry.beginShutdown();
+    await registry.load({ n: { driver: "fake" } });
+    registry.settle({ a: { driver: "fake", enabled: false }, n: { driver: "fake" } });
+    expect(registry.retiredIds()).toEqual(["a"]);
+    expect(registry.isShuttingDown()).toBe(true);
+    for (const id of ["a", "n", "unknown"]) expect(registry.isRetired(id)).toBe(true);
+    expect(new ProviderRegistry([]).isShuttingDown()).toBe(false);
+  });
+});
+
+describe("BF-12 mapped flight publication", () => {
+  it.each(["fresh", "due"] as const)("S5: %s shares one mapped publication and never publishes raw evidence", async catalogs => {
+    const { mappedInstanceScan } = await import("../mapped-instance-scan.ts");
+    const index = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
+    expect(index).toContain('describe: options => describedInstances(options)');
+    expect(index).toContain('return pickDefaultEngine(await describedInstances({ catalogs: "due" }))');
+    expect(index).toContain('instances: () => describedInstances({ catalogs: "due" })');
+    expect(index).toContain('ownerEnvAfterDiscovery(fresh, () => describedInstances(');
+    expect(index).toContain('() => describedInstances({ catalogs: "due" })');
+    expect(index).not.toMatch(/registry\.(describe|publishScan)\s*\(/);
+    const registry = new ProviderRegistry([makeFakeDriver({ kind: "claudeAgent" }).driver]);
+    await registry.load({ claude: { driver: "claudeAgent" } });
+    registry.get("claude")!.snapshot = async () => ({ state: "available", authenticated: true, billing: "subscription" });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let maps = 0;
+    const describe = mappedInstanceScan(registry, async rows => {
+      maps++; await gate;
+      return rows.map(row => ({ ...row, snapshot: { state: "unavailable" as const, reason: "invalid account" } }));
+    });
+    const first = describe({ catalogs }), second = describe({ catalogs });
+    expect(first).toBe(second);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(registry.scanReading()).toBeNull();
+    release(); await first;
+    expect(maps).toBe(1);
+    expect(registry.scanReading()?.rows).toEqual([{ instanceId: "claude", driverKind: "claudeAgent", enabled: true }]);
+  });
+  it("S6: rejected mapping has no raw publication fallback", async () => {
+    const { mappedInstanceScan } = await import("../mapped-instance-scan.ts");
+    const registry = new ProviderRegistry([makeFakeDriver().driver]);
+    await registry.load({ a: { driver: "fake" } });
+    const describe = mappedInstanceScan(registry, () => { throw Error("mapping failed"); });
+    await expect(describe()).rejects.toThrow("mapping failed");
+    expect(registry.scanReading()).toBeNull();
+  });
+});
+
+it("RM3/RM4/RM5: marks survive caller waits, scans and a stale-map resurrection", async () => {
+  const registry = new ProviderRegistry([makeFakeDriver({ kind: "claudeAgent" }).driver]);
+  const entry = { driver: "claudeAgent" };
+  await registry.load({ x: entry });
+  registry.get("x")!.snapshot = async () => ({ state: "available", authenticated: true, billing: "subscription" });
+  registry.retire(["x"]);
+  const flight = registry.describeFlight(); registry.publishScan(flight, await flight.run);
+  expect(registry.scanReading()?.rows[0].authenticated).toBe(true);
+  expect(registry.get("x")).not.toBeNull();
+  expect(registry.isRetired("x")).toBe(true);
+  registry.settle({ x: { ...entry, config: { different: true } } });
+  expect(registry.isRetired("x")).toBe(true);
+  await registry.load({ x: entry }); registry.settle({});
+  expect(registry.isRetired("x")).toBe(true);
+  await registry.reload(new Set(["x"]), {}); registry.settle({});
+  expect(registry.isRetired("x")).toBe(false);
+  expect(registry.get("x")).toBeNull();
+  expect(registry.scanReading()).toBeNull();
+});
+it.each(["due", "fresh"] as const)("BF-12: production account mapper rejects invalid evidence on %s", async catalogs => {
+  const { mappedInstanceScan, mapClaudeAccountInstances } = await import("../mapped-instance-scan.ts");
+  const { birthCandidate } = await import("../birth-reading.ts");
+  const fake = makeFakeDriver({ kind: "claudeAgent" }); Object.assign(fake.driver, { install: {} });
+  const registry = new ProviderRegistry([fake.driver]);
+  await registry.load({ named: { driver: "claudeAgent" } });
+  registry.get("named")!.snapshot = async () => ({ state: "available", authenticated: true, billing: "subscription" });
+  const describe = mappedInstanceScan(registry, rows => mapClaudeAccountInstances(rows, { named: { driver: "claudeAgent", config: { configDir: "relative" } } }));
+  expect((await describe({ catalogs }))[0].snapshot.state).toBe("unavailable");
+  expect(registry.scanReading()?.rows[0]).not.toHaveProperty("authenticated");
+  expect(registry.scanReading()?.rows[0]).not.toHaveProperty("billing");
+  expect(birthCandidate({ reading: registry.scanReading(), source: null, paidOnly: true, live: id => registry.get(id) })).toBeNull();
+});
+it("BF-12: a newer mapped fresh flight wins while older mapping and epoch changes are held", async () => {
+  const { mappedInstanceScan } = await import("../mapped-instance-scan.ts");
+  const registry = new ProviderRegistry([makeFakeDriver().driver]);
+  await registry.load({ a: { driver: "fake" } });
+  let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  const describe = mappedInstanceScan(registry, async rows => { if (++calls === 1) { entered(); await held; } return rows; });
+  const older = describe({ catalogs: "due" }); await waiting;
+  await describe({ catalogs: "fresh" });
+  const newer = registry.scanReading()!.seq;
+  release(); await older;
+  expect(registry.scanReading()!.seq).toBe(newer);
+  let releaseStale!: () => void;
+  const staleDescribe = mappedInstanceScan(registry, async rows => { await new Promise<void>(resolve => { releaseStale = resolve; }); return rows; });
+  const stale = staleDescribe();
+  while (!releaseStale) await Promise.resolve();
+  await registry.reload(new Set(["a"]), { a: { driver: "fake" } });
+  releaseStale(); await stale;
+  expect(registry.scanReading()).toBeNull();
+});
+
+it("S6: a rejected raw flight preserves the previous mapped reading", async () => {
+  const registry = new ProviderRegistry([makeFakeDriver().driver]);
+  await registry.load({ a: { driver: "fake" } });
+  const flight = registry.describeFlight(); registry.publishScan(flight, await flight.run);
+  const previous = registry.scanReading();
+  vi.spyOn(registry as unknown as { scan: (due: boolean) => Promise<unknown[]> }, "scan").mockRejectedValueOnce(Error("raw failed"));
+  await expect(registry.describe()).rejects.toThrow("raw failed");
+  expect(registry.scanReading()).toBe(previous);
+  vi.restoreAllMocks();
 });

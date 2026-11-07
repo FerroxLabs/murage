@@ -299,7 +299,7 @@ test("cached continuation verifies the publisher before admission and rechecks a
     const h = coordinator(f);
     const sha512 = createHash("sha512").update(await readFile(f.file)).digest("base64");
     const info = { version: "2.0.0", files: [{ url: name, sha512 }] };
-    h.updater.downloadedUpdateHelper = { file: f.file, versionInfo: info, fileInfo: { info: info.files[0] } };
+    h.updater.downloadedUpdateHelper = { cacheDir: f.dir, file: f.file, versionInfo: info, fileInfo: { info: info.files[0] } };
     h.updater.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: info });
     const candidate = await captureUpdateCandidate(h.updater, { downloadedFiles: [f.file] });
     let admitted = 0;

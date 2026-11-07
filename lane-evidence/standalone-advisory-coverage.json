@@ -1,0 +1,135 @@
+{
+  "scope": "Offline comparison against the advisories already captured in audit-base.json; not a fresh registry audit and not an assertion about unknown advisories.",
+  "coverage": [
+    {
+      "file": "apps/mobile/pnpm-lock.yaml",
+      "findings": [
+        {
+          "advisory": "GHSA-82fw-gwwq-j7x9",
+          "module": "vitest",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0 <4.1.11",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-82fw-gwwq-j7x9",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0 <4.1.11",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-q2hr-2g5m-vwhr",
+          "module": "brace-expansion",
+          "version": "5.0.12",
+          "affectedRange": ">=4.0.0 <5.0.12",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-qxg6-89mg-rqv8",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0-beta.7 <4.1.12",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-xp26-3454-mjgp",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=4.1.11 <4.1.12",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-g3hv-75wg-m249",
+          "module": "minimatch",
+          "version": "11.0.1",
+          "affectedRange": ">=7.0.0 <11.0.1",
+          "affected": false
+        }
+      ]
+    },
+    {
+      "file": "cloudflare/push-relay/pnpm-lock.yaml",
+      "findings": [
+        {
+          "advisory": "GHSA-82fw-gwwq-j7x9",
+          "module": "vitest",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0 <4.1.11",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-82fw-gwwq-j7x9",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0 <4.1.11",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-qxg6-89mg-rqv8",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=2.1.0-beta.7 <4.1.12",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-xp26-3454-mjgp",
+          "module": "@vitest/mocker",
+          "version": "4.1.12",
+          "affectedRange": ">=4.1.11 <4.1.12",
+          "affected": false
+        },
+        {
+          "advisory": "GHSA-mrhx-c7xc-m3w5",
+          "module": "zod",
+          "version": "4.6.7",
+          "affectedRange": "<4.6.6",
+          "affected": false
+        }
+      ]
+    },
+    {
+      "file": "cloud-portal/package-lock.json",
+      "findings": [
+        {
+          "advisory": "GHSA-mrhx-c7xc-m3w5",
+          "module": "zod",
+          "version": "4.6.7",
+          "affectedRange": "<4.6.6",
+          "affected": false
+        }
+      ]
+    }
+  ],
+  "workspaceFloorCoverage": {
+    "source": "pnpm-workspace.yaml overrides (independent of audit-base.json)",
+    "resolutionSource": "Existing workspace lock metadata and integrity hashes; no registry audit or dependency install",
+    "locks": [
+      {
+        "file": "apps/mobile/pnpm-lock.yaml",
+        "resolutions": {
+          "source-map-js": "1.2.2"
+        },
+        "consumers": [
+          "postcss"
+        ]
+      },
+      {
+        "file": "cloudflare/push-relay/pnpm-lock.yaml",
+        "resolutions": {
+          "sharp": "0.35.5",
+          "@img/sharp-libvips-*": "1.3.4",
+          "undici": "7.30.1",
+          "source-map-js": "1.2.2"
+        },
+        "consumers": [
+          "miniflare -> sharp (including platform binaries and libvips)",
+          "miniflare -> undici",
+          "postcss -> source-map-js"
+        ]
+      }
+    ],
+    "persistentOverrides": true,
+    "waivers": []
+  }
+}

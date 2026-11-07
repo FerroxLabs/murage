@@ -1,0 +1,147 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ server/chats-api.test.ts (10 tests | 1 failed | 9 skipped) 5270ms
+   × RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation 795ms
+stdout | server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=false
+[memory] index build before listen name=memory_records_pinned ms=0
+[sqlite] storage file=2 wal=2 freelist=0
+
+stdout | server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=true
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_write_revision( id INTEGER PRIMARY KEY CHEC ms=117 source=exec:CREATE TABLE IF NOT EXISTS app_write_rev
+
+ ❯ server/message-search-forgotten.test.ts (8 tests | 3 failed | 5 skipped) 1461ms
+   × RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=false 522ms
+   × RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=true 532ms
+   × RULE Case B applies rendered predicates before pagination in both search walks 403ms
+stdout | server/chat-search.test.ts > RULE rendered predicate covers grouped counts and bounded continuation, 4 hidden rows
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS pending_delegations (id TEXT PRIMARY KEY NOT NU ms=52 source=exec:CREATE TABLE IF NOT EXISTS pending_deleg
+[memory] index build before listen name=memory_records_pinned ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=79 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=2 wal=2 freelist=0
+
+stdout | server/chat-search.test.ts > RULE rendered predicate covers grouped counts and bounded continuation, 6000 hidden rows
+[sqlite] slow op=WITH RECURSIVE n(v) AS (VALUES(?) UNION ALL SELECT v+? FROM n WHERE v<?) INSERT  ms=53 source=caller:chat-search.test.ts:191<chunk-artifact.js:2027
+
+ ❯ server/chat-search.test.ts (14 tests | 2 failed | 12 skipped) 1524ms
+   × RULE rendered predicate covers grouped counts and bounded continuation, 4 hidden rows 614ms
+   × RULE rendered predicate covers grouped counts and bounded continuation, 6000 hidden rows 906ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/chat-search.test.ts > RULE rendered predicate covers grouped counts and bounded continuation, 4 hidden rows
+AssertionError: expected [ 'hidden-4' ] to deeply equal [ 'visible' ]
+
+- Expected
++ Received
+
+  [
+-   "visible",
++   "hidden-4",
+  ]
+
+ ❯ server/chat-search.test.ts:201:36
+    199|     hits.push(...page.hits);
+    200|   }
+    201|   expect(hits.map(h=>h.messageId)).toEqual(['visible']);
+       |                                    ^
+    202|   expect(hits[0].hits).toBe(1);
+    203| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  server/chat-search.test.ts > RULE rendered predicate covers grouped counts and bounded continuation, 6000 hidden rows
+AssertionError: expected [ 'hidden-6000' ] to deeply equal [ 'visible' ]
+
+- Expected
++ Received
+
+  [
+-   "visible",
++   "hidden-6000",
+  ]
+
+ ❯ server/chat-search.test.ts:201:36
+    199|     hits.push(...page.hits);
+    200|   }
+    201|   expect(hits.map(h=>h.messageId)).toEqual(['visible']);
+       |                                    ^
+    202|   expect(hits[0].hits).toBe(1);
+    203| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  server/chats-api.test.ts > RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation
+AssertionError: expected undefined to match object { Object (epoch, rev) }
+
+- Expected:
+{
+  "epoch": Any<String>,
+  "rev": Any<Number>,
+}
+
++ Received:
+undefined
+
+ ❯ server/chats-api.test.ts:291:30
+    289|       const owner=await desktopApi('GET',`/api/search?q=rule-search${s…
+    290|       expect(owner.status).toBe(200);
+    291|       expect(owner.body.gen).toMatchObject({epoch:expect.any(String),r…
+       |                              ^
+    292|       expect(owner.body.hits.map((h:any)=>h.messageId).sort()).toEqual…
+    293|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=false
+ FAIL  server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=true
+AssertionError: expected [ 'deleted', 'kept', 'other', …(2) ] to deeply equal [ 'kept' ]
+
+- Expected
++ Received
+
+  [
++   "deleted",
+    "kept",
++   "other",
++   "owner-forget",
++   "supporting",
+  ]
+
+ ❯ server/message-search-forgotten.test.ts:105:74
+    103|   if (indexed) rebuildMessageSearchIndex(database()); else closeMessag…
+    104|   database().prepare("DELETE FROM messages WHERE id='removed'").run();
+    105|   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {})…
+       |                                                                          ^
+    106|   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {ow…
+    107| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  server/message-search-forgotten.test.ts > RULE Case B applies rendered predicates before pagination in both search walks
+AssertionError: expected [ 'expired' ] to deeply equal [ 'visible' ]
+
+- Expected
++ Received
+
+  [
+-   "visible",
++   "expired",
+  ]
+
+ ❯ server/message-search-forgotten.test.ts:119:85
+    117|     if(indexed) rebuildMessageSearchIndex(database()); else closeMessa…
+    118|     const rendered = (_thread:string, row: import('./store.ts').Messag…
+    119|     expect(ids(searchMessagesWithMeta("needle",1,undefined,{owner:true…
+       |                                                                                     ^
+    120|     expect(ids(searchMessagesWithMeta("needle",10,undefined,{owner:tru…
+    121|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  6 failed | 26 skipped (32)
+   Start at  21:26:29
+   Duration  15.12s (transform 4.38s, setup 6.32s, import 202ms, tests 8.25s, environment 0ms)
+
