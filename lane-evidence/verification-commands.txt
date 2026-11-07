@@ -1,0 +1,36 @@
+All commands ran in the Docker lane checkout, with TMPDIR under ../scratch/tmp.
+Long Vitest/tsc batches used setsid nohup, redirected output, < /dev/null,
+and one blocking shell wait. No full suite or real provider calls.
+
+Dependencies (COREPACK_HOME, XDG_CACHE_HOME and store-dir under ../scratch):
+corepack pnpm update adm-zip zod --depth Infinity --ignore-scripts --lockfile-only
+corepack pnpm update vitest katex minimatch brace-expansion --depth Infinity --ignore-scripts --lockfile-only
+corepack pnpm install --frozen-lockfile --ignore-scripts
+The install repaired a demonstrated stale control-plane Vitest 4.1.11 link
+against the new 4.1.12 lockfile; it was not an initial/redundant install.
+corepack pnpm audit --json
+Audit also ran against BASE18 and the local release commit manifests/lockfiles
+in ../scratch/base-audit and ../scratch/release-audit, without installing them.
+
+node_modules/.bin/vitest run scripts/security-dependencies.test.mjs scripts/stage-hoisted.test.mjs scripts/staged-tree-check.test.mjs scripts/whatsapp-inventory.test.mjs server/channels/whatsapp/bridge.test.ts src/mermaid-frame/frame-page.test.ts src/mermaid-frame/protocol.test.ts src/lib/markdown-fidelity.test.ts src/lib/markdown-render-cache.test.ts
+node_modules/.bin/vitest run server/inbox.hotpath-r4.test.ts server/inbox.hotpath-r5.test.ts server/inbox.hotpath-r6.test.ts server/writetime-s2.test.ts server/writetime-rootsets-turn.test.ts server/writetime-r11c.test.ts server/memory/writetime-integration.test.ts server/memory/writetime-schema.test.ts server/memory/writetime-readers.test.ts server/memory/writetime-live-differential.test.ts server/memory/writetime-differential.test.ts
+node_modules/.bin/vitest run --config vitest.config.ts --root cloudflare/control-plane test/legal-flows.test.ts test/checkout-route.test.ts test/checkout-policy.test.ts
+
+NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/tsc -p tsconfig.json
+NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/tsc -p tsconfig.server.json
+WRANGLER_SEND_METRICS=false node_modules/.bin/wrangler types --config cloudflare/control-plane/wrangler.jsonc cloudflare/control-plane/worker-configuration.d.ts
+NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/tsc -p cloudflare/control-plane/tsconfig.json
+Wrangler's generated declaration is ignored by Git; XDG_CONFIG_HOME/cache and
+TMPDIR point inside the lane. The initial missing-declaration failure and the
+Buffer typing failure are retained in ../scratch, along with intermediate runs.
+
+TMPDIR=<lane>/scratch/tmp node --experimental-strip-types scripts/control-murage.ts launch
+MURAGE_DATA_DIR=<lane>/scratch/tmp/murage-verify-data-mtBJJ4 node --experimental-strip-types scripts/control-murage.ts doctor --url http://127.0.0.1:20306
+Doctor: connected, only fake verification engine. Ctrl-C stopped the owned
+launcher/child and removed its temporary home/data. Persistent server log:
+<lane>/scratch/tmp/murage-verification-evidence/server-1793972466684-1304.log
+
+Dedicated rerun, after every other job finished (unchanged thresholds/code):
+node_modules/.bin/vitest run server/inbox.hotpath-r5.test.ts server/inbox.hotpath-r6.test.ts
+11/11 passed. The preceding 11-file run had 89 passes and 2 timing failures
+while overlapping the control-plane run; retained in rig-loaded.log.

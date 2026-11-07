@@ -42,7 +42,7 @@ function seed() {
   put("B", "deleted", 5000, "the austin lease, source deleted");
   // withheld from bots for another reason (it used something changed): the owner's own line, still shown
   put("B", "withheld", 6000, "the austin lease, withheld for a change", { withheldFromBots: true });
-  // a tombstone for another reason is not a forget
+  // a tombstone for any other reason still ends the line in this view (privacy first)
   put("B", "other", 7000, "the austin lease, other bookkeeping");
   tombstone("B", "other", "forgotten-original");
 }
@@ -59,7 +59,7 @@ describe("excludeForgotten", () => {
       if (indexed) rebuildMessageSearchIndex(database());
       else closeMessageDb();
       const chats = searchMessagesWithMeta("austin lease", 40, undefined, { owner: true, excludeForgotten: true });
-      expect(ids(chats)).toEqual(["kept", "other", "withheld"]);
+      expect(ids(chats)).toEqual(["kept", "withheld"]);
       // scoped to a thread as well
       expect(ids(searchMessagesWithMeta("austin lease", 40, ["A"], { owner: true, excludeForgotten: true }))).toEqual(["kept"]);
       // without the option the owner's search is what it was: every row, forgotten ones included

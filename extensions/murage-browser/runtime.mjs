@@ -590,7 +590,10 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (state === 'paused' && handoff) { const id = b.selectedTabId; if (id !== undefined) await Promise.resolve(api.tabs.update?.(id, { active: true })).catch(() => {}); }
     return summary(b);
   }
-  async function addTab(b, tabId, bootstrap = false) {
+  // SABLE-B r8: `generation` (given by page-popup adoption only) is the generation the caller checked; the tab is inserted only if the binding is
+  // still connected, active, ready and at that generation after the tabs.get await, so an adoption that began before a Pause, a disconnect or a
+  // bind that took a site back cannot land after it.
+  async function addTab(b, tabId, bootstrap = false, generation) {
     if ([...bindings.values()].some(other => other.id !== b.id && other.tabs.has(tabId))) fail('tab_owned');
     const tab = await api.tabs.get(tabId);
     // A private window is never shared, and nothing about it is stored: refused before the binding records the tab.
@@ -598,6 +601,7 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     if (tab.url === 'about:blank' && !bootstrap) fail('site_denied');
     const origin = tab.url === 'about:blank' ? 'null' : originOf(tab.url);
     if (origin !== 'null' && !b.approvedOrigins.includes(origin)) fail('site_denied');
+    if (generation !== undefined && !(connected && b.state === 'active' && b.ready && b.generation === generation)) fail('binding_inactive');
     b.tabs.set(tabId, { tabId, navigationEpoch: 1, origin, url: tab.url, bootstrap });
     const groupId = await api.tabs.group({ tabIds: [tabId], ...(b.groupId === undefined ? {} : { groupId: b.groupId }) });
     b.groupId = groupId; b.windowId = tab.windowId; b.selectedTabId ??= tabId; await save(); await indicator(b);
@@ -1050,8 +1054,10 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // The page was read across awaits: a Stop, Pause or disconnect that landed meanwhile wins, and nothing here brings the task back.
     if (!connected || b.state === 'stopped' || b.generation !== generation || bindings.get(b.id) !== b) fail('binding_inactive');
     for (const [t, origin, url] of seen) { t.origin = origin; t.url = url; t.navigationEpoch++; }
-    b.generation++; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
-    await save(); await indicator(b); event(b, 'resumed', summary(b)); return summary(b);
+    // 1.0.1: resumedAt is the generation this Resume made, recorded at the bump and never changed. The app takes a Resume in only
+    // through it (the event's own generation is stamped at emit, after the awaits below, and an unshare meanwhile moves it).
+    b.generation++; const resumedAt = b.generation; b.state = 'active'; b.ready = false; delete b.pausedReason; delete b.handoff; delete b.yourTurn;
+    await save(); await indicator(b); event(b, 'resumed', { ...summary(b), resumedAt }); return summary(b);
   }
   async function handlePanel(action) {
     if (action.action === 'status') return statusSnapshot();
@@ -1140,10 +1146,11 @@ export function createBrowserExtensionRuntime(api, options = {}) {
     // The new tab showed a page, so its first address was not a download: it no longer stands for one.
     const announced = popupUrls.get(details.tabId); popupUrls.delete(details.tabId); if (announced) blockedUrls.delete(announced);
     if (!b || !connected || b.state !== 'active' || !b.ready) return;
+    const generation = b.generation;
     let origin = '';
     try { origin = originOf(details.url); } catch { origin = ''; }
     if (origin && b.approvedOrigins.includes(origin)) {
-      try { await addTab(b, details.tabId); event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: true }); return; } catch { /* reported below */ }
+      try { await addTab(b, details.tabId, false, generation); event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: true }); return; } catch { /* reported below */ }
     }
     event(b, 'notice', { kind: 'tab_opened', tabId: details.tabId, origin, adopted: false });
   }

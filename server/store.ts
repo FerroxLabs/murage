@@ -12,7 +12,7 @@ import type { MessageEngine } from "../shared/engine-switch.ts";
 import type { MessageActorKind } from "../shared/message-actor.ts";
 import { BROWSER_CHECK_FAILED_REASON, browserUnavailableActivityName } from "../shared/browser-unavailable.ts";
 import { isErrorActivity } from "../shared/message-visibility.ts";
-import { bumpUsageMonth, type UsageMonth } from "../shared/usage-month.ts";
+import { bumpRoutineUsageMonth, bumpUsageMonth, type RoutineUsageMonth, type UsageMonth } from "../shared/usage-month.ts";
 import type { RoutineRunMarkerTrigger } from "../shared/routine-run-marker.ts";
 import type { ProcedurePin } from "./procedure-bundles.ts";
 import { threadHumanPrincipal, isWorkspaceOwner, withBindingScope } from "./human-principals.ts";
@@ -26,7 +26,7 @@ import { accessRoleBinding, botAccessPolicy } from "./bot-access-role.ts";
 import type { ConnectedAppAccess } from "../shared/bot-access.ts";
 import { mentionedPeers, mentionsEveryone } from "../shared/mention-boundary.ts";
 import type { LocalSetupFailure, ProviderErrorInfo } from "../shared/provider-error.ts";
-import { parseRuntimeErrorDiagnostic, type RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
+import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { existsSync, mkdirSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -36,6 +36,7 @@ import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, loadBrowserProfileIdAliases } from "./config.ts";
 import { clearFollowingPins, followCleanupDone, markFollowCleanupDone } from "./thread-follow-model.ts";
 import * as mdb from "./message-db.ts";
+import type { LineageRef } from "./memory/lineage-types.ts";
 import { murageLine } from "./murage-line.ts";
 import { guardHandoffPrompt, isHandoffPromptId } from "./handoff-stamp.ts";
 import type { ProviderReply } from "./provider-reply.ts";
@@ -58,6 +59,7 @@ import { newId, type CloudBackend, type EffortLevel, type ModelCatalog, type Mod
 import { fuigoBirthModel, fuigoUsable } from "./default-engine.ts";
 import { pickBotName, DEFAULT_BOT_COLOR } from "./names.ts";
 import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
 import { queueExternalUpdate } from "./external-context-delivery.ts";
 import { AVATAR_FOCUS_CENTER, AVATAR_ZOOM_MIN, botAvatarProfile, clampAvatarFocus, clampAvatarZoom, type BotAvatarCrop } from "../shared/bot-avatar.ts";
 import { BOT_PROFILE_LIMITS } from "../shared/bot-profile.ts";
@@ -135,6 +137,8 @@ export interface OptionCardData {
   /** The tool input on this card was cut to fit; the card offers no
    * "always allow" and the owner must read the full card. */
   toolInputTruncated?: boolean;
+  /** APPROVALS-SIMPLE-1018: what the bot says it wants, one line (server/approval-text.ts cardWants). Display only. */
+  wants?: string;
   /** What a push notification for this card may say (no typed text or field values). */
   pushBody?: string;
   /** Murage for Chrome (D1): the step is one Murage asks about every time, in every mode. */
@@ -289,6 +293,13 @@ export interface SecretRequestCardData {
   error?: string;
 }
 
+/** A routine turn's share of the month, beside the bot's own bucket (upstream #1864). No routine, no write. */
+function bumpRoutineUsage(owner: { usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>> }, routine: { id: string; name: string } | undefined, turn: { input?: number; output?: number; cachedInput?: number }): void {
+  if (!routine?.id) return;
+  owner.usageRoutineMonths ??= {};
+  bumpRoutineUsageMonth(owner.usageRoutineMonths, routine, turn);
+}
+
 /** Who put a user message into the transcript. The harness decides this when
  * it writes the message, from the surface the request proved (the desktop
  * app's secret, the phone companion's launch credential), never from the
@@ -297,6 +308,38 @@ export interface SecretRequestCardData {
 export type MessageOrigin = "desktop" | "companion" | "unproven";
 export function isOwnerOrigin(origin: MessageOrigin | undefined): boolean {
   return origin === "desktop" || origin === "companion";
+}
+
+/** VENUE-POST-1017 route (a): the owner's structured pick. */
+export type PostTo = { venueId: string; venueThreadId?: string };
+
+/** The store boundary for `postTo` (VENUE-POST-1017 section 1): it stays only on a `role: "user"` text line with a proven owner origin
+ * written to a bot's own direct thread (main chat or one of its own tasks that is neither a desk nor shared work). Every other writer
+ * (channel services, import, steer, routine, an unproven caller) has it dropped: the line is stored without it, never an error. */
+export function dropUnprovenPostTo<T extends { role?: string; kind?: string; origin?: MessageOrigin; postTo?: unknown; quoteMessageId?: unknown }>(
+  input: T, directThread: boolean,
+): T {
+  if (input.postTo === undefined && input.quoteMessageId === undefined) return input;
+  const p = input.postTo as { venueId?: unknown; venueThreadId?: unknown } | undefined;
+  const shaped = !!p && typeof p === "object" && typeof p.venueId === "string" && p.venueId.length > 0
+    && (p.venueThreadId === undefined || (typeof p.venueThreadId === "string" && p.venueThreadId.length > 0));
+  if (shaped && directThread && input.role === "user" && input.kind === "text" && isOwnerOrigin(input.origin)) {
+    const postTo: PostTo = { venueId: p!.venueId as string, ...(p!.venueThreadId ? { venueThreadId: p!.venueThreadId as string } : {}) };
+    const { quoteMessageId, ...rest } = input;
+    return { ...rest, postTo, ...(typeof quoteMessageId === "string" && quoteMessageId ? { quoteMessageId } : {}) } as T;
+  }
+  const { postTo: _postTo, quoteMessageId: _quote, ...rest } = input;
+  return rest as T;
+}
+
+/** CROSS-CHAT-READ-1019 store boundary: `sharedFrom` stays only on a proven owner text line that carries a server-written copyOf (the
+ * Share route's write); `roomShareId` only on a Murage line. Every other writer has them dropped, never an error. */
+export function dropUnprovenShare<T extends { role?: string; kind?: string; origin?: MessageOrigin; copyOf?: unknown; sharedFrom?: unknown; roomShareId?: unknown; murageLine?: unknown }>(input: T): T {
+  if (input.sharedFrom === undefined && input.roomShareId === undefined) return input;
+  let out = input;
+  if (out.sharedFrom !== undefined && !(out.role === "user" && out.kind === "text" && out.copyOf && isOwnerOrigin(out.origin))) { const { sharedFrom: _s, ...rest } = out; out = rest as T; }
+  if (out.roomShareId !== undefined && out.murageLine !== true) { const { roomShareId: _r, ...rest } = out; out = rest as T; }
+  return out;
 }
 
 export interface Message {
@@ -359,9 +402,13 @@ export interface Message {
    * something — the UI offers setup instead of a retry that cannot work. */
   /** `summary` is a short read of what the call was for — the only thing that
    * tells two chips apart on engines that route every tool through a wrapper. */
-  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+  tool?: { name: string; action?: ReturnType<typeof import("./reply-action-guard.ts").toolAction>; ok?: boolean; /** An engine notice shown in the conversation; never an action or a tool outcome. */ notice?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; /** 1.0.18: a Fuigo / Flux refusal that is not a limit (limit-continuation.ts gatewayBusy): the one card's copy. */ busy?: { engine: string; reason: import("./limit-continuation.ts").GatewayBusyReason }; localFailure?: LocalSetupFailure; /** The engine a local failure is about (an engine-folder failure), for the localized line. */ localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number;
+    /** 1.0.18 U6 E15: the turn ended with this step still open, so it has no recorded end ("No result"). A late real completion replaces the tool and clears it. */
+    unrecorded?: boolean;
     /** An image made without an approval card (server/image-approval.ts): what was asked for and the whole prompt, shown folded like the card's. */
-    imageRecord?: { summary: string; prompt: string } };
+    imageRecord?: { summary: string; prompt: string };
+    /** U4 S3: a hand-off row's "done when" line (server/done-when.ts), shown muted under the chip. */
+    doneWhen?: string };
   /** user messages sent INTO a running turn (capabilities.queueing): the
    * model saw it mid-turn, so the transcript marks it — a reader should
    * know the reply above it may already account for this line */
@@ -444,6 +491,18 @@ export interface Message {
   queueId?: string;
   /** user messages: see MessageOrigin. Server-written only. */
   origin?: MessageOrigin;
+  /** VENUE-POST-1017 route (a): the venue the owner picked with Post in… for this line. Kept only on a proven owner line of a bot's own
+   *  direct thread (dropUnprovenPostTo, at every append); never rendered to bots. */
+  postTo?: PostTo;
+  /** VENUE-POST-1017: the bot reply the owner asked to post with "Post this in…" (only beside postTo). */
+  quoteMessageId?: string;
+  /** VENUE-POST-1017: a row a bot posted into a room from its own chat with the owner (the room note and the bots' context line). */
+  postedFrom?: { botId: string; threadId: string };
+  /** CROSS-CHAT-READ-1019: an owner line written by the owner's Share of a room_shares card (server/room-shares.ts), beside a server-written
+   *  copyOf. Kept only on a role "user" line that carries copyOf (dropUnprovenShare); memory capture skips it. */
+  sharedFrom?: { botId: string; shareId: string };
+  /** CROSS-CHAT-READ-1019: the room line that holds a bot's share request (its text is the query only; the card body is owner-only). */
+  roomShareId?: string;
   /** user messages: the line is third-party words that arrived by a phone share or an ask-intent. Server-written only; patchMessage never changes it. */
   via?: "share" | "ask-intent";
   /** user messages: the standing instruction a scheduled or manual routine
@@ -814,15 +873,9 @@ export interface TaskUsage {
  * is theirs and stays as typed. Stored, not just displayed: the transcript
  * is replayed into every rebuild, and a leaked key would otherwise be
  * permanent. */
-function sanitizeMessageDiagnostic<T extends Omit<Message, "id" | "at">>(message: T): T {
-  if (message.tool?.diagnostic === undefined) return message;
-  const tool = { ...message.tool };
-  delete tool.diagnostic;
-  const diagnostic = parseRuntimeErrorDiagnostic(message.tool.diagnostic);
-  if (message.role === "bot" && message.kind === "activity" && diagnostic?.turnId === message.turnId) tool.diagnostic = diagnostic;
-  return { ...message, tool };
-}
-
+/** U4 S3: a stored row passes checkStoredRow (server/stored-row-check.ts) at the one decoder and encoder (transcript-seq.ts), so every
+ * mdb read is already checked. It is called here only where a row is built or patched in memory, so the copy in memory equals the
+ * stored copy. */
 /** A removal row keeps what the guard cut from a bot's reply: bot-authored,
  * so it is redacted and bounded wherever it is written. */
 function boundRemovedText<T extends Partial<Message>>(message: T): T {
@@ -830,7 +883,7 @@ function boundRemovedText<T extends Partial<Message>>(message: T): T {
 }
 
 function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number }>(message: T): T {
-  message = boundRemovedText(sanitizeMessageDiagnostic(message));
+  message = boundRemovedText(checkStoredRow(message));
   if (typeof message.text === "string") message = { ...message, text: renderMurageTools(message.text, NEUTRAL_TOOL_SURFACE, { agents: "agents", memory: "murage-memory", phone: "phone", browser: "browser" }) };
   if (message.role !== "bot") return message;
   const out = { ...message };
@@ -1042,6 +1095,9 @@ export interface BotRecord {
   partitionedAt?: number;
   /** What this bot used per local calendar month (Settings, Usage). Upserted with each settled turn; bounded to a year. Months before 1.0.3 have no bucket. */
   usageMonths?: Record<string, UsageMonth>;
+  /** The part of usageMonths that routines ran, by month then routine id (Settings, Usage: "This month by routine").
+   * Upserted in the same write; bounded to a year and ROUTINE_USAGE_KEPT routines a month. Months before 1.0.18 have none. */
+  usageRoutineMonths?: Record<string, Record<string, RoutineUsageMonth>>;
   id: string;
   /** the ACTIVE task's thread — everything that runs a turn reads this */
   threadId: ThreadId;
@@ -1736,6 +1792,15 @@ export class Store {
   /** Unsubscribes this store from the numbering walk (a test that builds many stores). */
   readonly stopSeqStamps: () => void;
   /** Where each id sits in a held thread's array, for the walk's stamps: rebuilt when a position no longer names the id. */
+  /** VENUE-POST-1017: dropUnprovenPostTo with the direct-thread fact from the roster now. */
+  private boundPostTo<T extends Omit<Message, "id" | "at">>(threadId: string, input: T): T {
+    input = dropUnprovenShare(input);
+    if (input.postTo === undefined && input.quoteMessageId === undefined) return input;
+    const direct = this.bots.some(bot => bot.threadId === threadId
+      || (bot.tasks ?? []).some(task => task.threadId === threadId && !task.channelProjectDesk && !task.sharedWork));
+    const room = this.groups.some(group => group.threadId === threadId || (group.tasks ?? []).some(task => task.threadId === threadId));
+    return dropUnprovenPostTo(input, direct && !room);
+  }
   private seqPlaces = new WeakMap<ThreadState, Map<string, number>>();
   private stampSeq(threadId: string, stamps: ReadonlyArray<readonly [string, number]>, flipped: () => boolean): void {
     const t = this.threads.peek(threadId);
@@ -2722,7 +2787,7 @@ export class Store {
   /** Patch one message whose row is already in hand. A thread already in memory goes through patchMessage (its cache stays right); otherwise only that row is rewritten, so the transcript is never loaded. */
   private patchMessageRow(threadId: string, current: Message, patch: Partial<Message>): Message | null {
     if (this.threads.has(threadId)) return this.patchMessage(threadId, current.id, patch);
-    const next = sanitizeMessageDiagnostic({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
+    const next = checkStoredRow({ ...current, ...boundRemovedText(patch), card: patch.card ?? current.card });
     mdb.updateMessage(threadId, next);
     this.emit({ type: "message.patch", threadId, message: next, before: current });
     return next;
@@ -2876,7 +2941,7 @@ export class Store {
    * sanitization, and legacy rows (no parentId) chained to the row before
    * them in stored order. `previous` seeds that chain for a bounded slice. */
   private loadedMessages(stored: Message[], previous: Message | null = null): Message[] {
-    const messages = stored.map(sanitizeMessageDiagnostic);
+    const messages = stored.slice();
     let prev: string | null = previous?.id ?? null;
     for (const m of messages) {
       if (m.parentId === undefined) m.parentId = prev;
@@ -3191,7 +3256,7 @@ export class Store {
       return at === -1 ? null : loaded.messages.slice(at + 1, at + 1 + limit);
     }
     const rows = mdb.readThreadAfter(threadId, messageId, limit);
-    return rows && rows.map(sanitizeMessageDiagnostic);
+    return rows;
   }
 
   /** Walk the active branch from its head toward the root, at most `limit`
@@ -3209,7 +3274,7 @@ export class Store {
       seen.add(next);
       const step = mdb.branchStep(threadId, next);
       if (!step) return false;
-      if (visit(sanitizeMessageDiagnostic(step.message))) return true;
+      if (visit(step.message)) return true;
       next = step.parent;
     }
     return false;
@@ -3263,14 +3328,28 @@ export class Store {
   turnRows(threadId: string, turnId: string): Message[] {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.filter((m) => m.turnId === turnId);
-    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+    return mdb.turnRows(threadId, turnId);
   }
 
   /** The rows one turn wrote, read through the turn index (turn_first) even when the thread is loaded: the work is the turn's own
    * rows, never a filter over the loaded thread's history. A loaded thread not yet prepared reads its cache, as turnRows does. */
   turnRowsBounded(threadId: string, turnId: string): Message[] {
     if (this.threads.has(threadId) && !isThreadPrepared(threadId)) return this.turnRows(threadId, turnId);
-    return mdb.turnRows(threadId, turnId).map(sanitizeMessageDiagnostic);
+    return mdb.turnRows(threadId, turnId);
+  }
+
+  /** 1.0.18 U6 E15 (pass 1, turn end): the open tool rows of exactly this turn (turn index, never a time window or the whole
+   * thread) are marked `unrecorded`, so they stop spinning forever. Rows of another turn, engine notices and settled rows are
+   * left as they are. Idempotent. Returns how many rows were marked. */
+  markTurnToolsUnrecorded(threadId: string, turnId: string): number {
+    let marked = 0;
+    for (const row of this.turnRowsBounded(threadId, turnId)) {
+      const tool = row.tool;
+      if (row.role !== "bot" || row.kind !== "activity" || row.turnId !== turnId || !tool) continue;
+      if (tool.ok !== undefined || tool.notice || tool.unrecorded) continue;
+      if (this.patchMessagePoint(threadId, row.id, { tool: { ...tool, unrecorded: true } })) marked += 1;
+    }
+    return marked;
   }
 
   /** The ids of the replies a turn wrote on its own (bot text that is not a copy), oldest first: the originals a copy of the
@@ -3279,7 +3358,7 @@ export class Store {
   turnReplyOriginals(threadId: string, turnId: string): string[] {
     const isOriginal = (m: Message) => m.role === "bot" && m.kind === "text" && !m.copyOf;
     const loaded = this.threads.get(threadId);
-    const rows = loaded ? loaded.messages.filter((m) => m.turnId === turnId) : mdb.turnTextRows(threadId, turnId, [LINE_TEXT, LINE_BOT_EMPTY]).map(sanitizeMessageDiagnostic);
+    const rows = loaded ? loaded.messages.filter((m) => m.turnId === turnId) : mdb.turnTextRows(threadId, turnId, [LINE_TEXT, LINE_BOT_EMPTY]);
     return rows.filter(isOriginal).map((m) => m.id);
   }
 
@@ -3290,17 +3369,17 @@ export class Store {
       for (let i = loaded.messages.length - 1; i >= 0; i--) { const m = loaded.messages[i]!; if (lineClassesOf(m).some((cls) => classes.includes(cls)) && visit(m)) return true; }
       return false;
     }
-    return mdb.scanTextLinesNewest(threadId, (m) => visit(sanitizeMessageDiagnostic(m)), classes);
+    return mdb.scanTextLinesNewest(threadId, visit, classes);
   }
 
   /** The rows of this thread that carry saved files (artifactIds), by index. */
   artifactRows(threadId: string): Message[] {
-    return mdb.artifactRows(threadId).map(sanitizeMessageDiagnostic);
+    return mdb.artifactRows(threadId);
   }
 
   /** ROUTINE-DELIVER-1010: saved-file rows of one window of a conversation (message-db.ts artifactRowsBetween). */
   artifactRowsBetween(threadId: string, from: number, to: number, limit: number): Message[] {
-    return mdb.artifactRowsBetween(threadId, from, to, limit).map(sanitizeMessageDiagnostic);
+    return mdb.artifactRowsBetween(threadId, from, to, limit);
   }
 
   /** The first row of this thread that attaches `path`, by the message_image
@@ -3309,7 +3388,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.find((message) => message.attachments?.some((item) => item.path === path));
     const row = mdb.rowsNamingImage(threadId, path).find((message) => message.attachments?.some((item) => item.path === path));
-    return row && sanitizeMessageDiagnostic(row);
+    return row;
   }
 
   /** The thread's open request cards, read through the card index (never the
@@ -3317,10 +3396,10 @@ export class Store {
   openRequestCardRows(threadId: string): Message[] {
     const loaded = this.threads.get(threadId);
     const open = mdb.openRequestCards(threadId, OPEN_CARD_SWEEP_LIMIT).reverse()
-      .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? sanitizeMessageDiagnostic(message));
+      .map(({ message }) => loaded?.messages.find((row) => row.id === message.id) ?? message);
     // a card the start retired (its run died) is out of the open-card list but still answerable: it counts as open here (keyed family "orphaned")
     const seen = new Set(open.map((row) => row.id));
-    const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned").map(sanitizeMessageDiagnostic))
+    const orphaned = (loaded ? loaded.messages.filter((row) => row.card?.orphaned && row.card.requestId && !row.card.answered && !row.card.dismissed) : mdb.keyedCardRows(threadId, "orphaned"))
       .filter((row) => !seen.has(row.id));
     return orphaned.length ? [...orphaned, ...open].sort((a, b) => a.at - b.at) : open;
   }
@@ -3366,19 +3445,19 @@ export class Store {
    * setup flow said, an unconfirmed steer. Read through keyed_card, so the
    * work is those rows and never the thread, loaded or not. */
   keyedCards(threadId: string, family: KeyedFamily, key?: string): Message[] {
-    return mdb.keyedCardRows(threadId, family, key).map(sanitizeMessageDiagnostic);
+    return mdb.keyedCardRows(threadId, family, key);
   }
 
   /** A thread's rows of one kind, oldest first, by the (kind, thread) index:
    * only for a kind that is rare by nature ("secret", "connector"). */
   rowsOfKind(threadId: string, kind: string): Message[] {
-    return mdb.rowsOfKind(threadId, kind).map(sanitizeMessageDiagnostic);
+    return mdb.rowsOfKind(threadId, kind);
   }
 
   /** Every thread's rows filed under `family` (a family that is small by
    * nature: open browser-setup offers), by thread then position. */
   keyedCardsEverywhere(family: KeyedFamily): Array<{ threadId: string; message: Message }> {
-    return mdb.keyedCardRowsAll(family).map((row) => ({ threadId: row.threadId, message: sanitizeMessageDiagnostic(row.message) }));
+    return mdb.keyedCardRowsAll(family).map((row) => ({ threadId: row.threadId, message: row.message }));
   }
 
   /** The newest screen frame of a thread that still carries its pixels. Pruning
@@ -3388,7 +3467,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded) return loaded.messages.findLast((m) => m.kind === "screen" && Boolean(m.png));
     const found = mdb.newestScreenWithPixels(threadId);
-    return found ? sanitizeMessageDiagnostic(found) : undefined;
+    return found ?? undefined;
   }
 
   /** Whether the thread has a row with this id: one keyed read, loaded or not. */
@@ -3455,7 +3534,7 @@ export class Store {
           seen.add(cursor);
           const step = mdb.branchStep(threadId, cursor);
           if (!step) { cursor = null; break; }
-          messages.push(sanitizeMessageDiagnostic(step.message));
+          messages.push(step.message);
           cursor = step.parent;
           if ((messages.length & 31) === 0 && performance.now() >= end) break;
         }
@@ -3508,7 +3587,7 @@ export class Store {
         while (id && page.length < pageRows) {
           const step = mdb.branchStep(threadId, id);
           if (!step) break;
-          page.push(sanitizeMessageDiagnostic(step.message));
+          page.push(step.message);
           id = step.parent;
         }
         return { messages: page.reverse(), done: starts.length === 0 };
@@ -3555,7 +3634,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) { const path = this.activePath(threadId); return path.findLast((m) => Boolean(m.card?.requestId)); }
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), LINE_REQUEST_CARD, 1).rows[0];
-    return found && sanitizeMessageDiagnostic(found.message);
+    return found && found.message;
   }
 
   /** The newest text line of the active branch that `test` accepts (the room's last owner message, for one). */
@@ -3563,7 +3642,7 @@ export class Store {
     const loaded = this.threads.get(threadId);
     if (loaded && !isThreadPrepared(threadId)) return this.activePath(threadId).findLast((m) => m.kind === "text" && Boolean(m.text) && test(m));
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), LINE_TEXT, 1, test).rows[0];
-    return found && sanitizeMessageDiagnostic(found.message);
+    return found && found.message;
   }
 
   /** The newest row of a class (branch-index LINE_*) on the active branch, with its place for ordering against other rows. */
@@ -3575,7 +3654,7 @@ export class Store {
       return undefined;
     }
     const found = mdb.topRowsOnBranch(threadId, this.branchLeaf(threadId), cls, 1, accept).rows[0];
-    return found && mdb.rowPlace(threadId, this.branchLeaf(threadId), found.mrow, sanitizeMessageDiagnostic(found.message));
+    return found && mdb.rowPlace(threadId, this.branchLeaf(threadId), found.mrow, found.message);
   }
 
   /** The newest `limit` text lines of the active branch, oldest first, and whether the branch has older ones: the lines a
@@ -3594,7 +3673,7 @@ export class Store {
       return { messages: out.reverse(), hasMore: more };
     }
     const found = mdb.activeTextLines(threadId, loaded ? loaded.activeLeafId : mdb.readActiveLeafOrNewest(threadId), limit);
-    return { messages: found.messages.map(sanitizeMessageDiagnostic), hasMore: found.hasMore };
+    return { messages: found.messages, hasMore: found.hasMore };
   }
 
   /** Rows of one class of the line index (branch-index.ts LINE_*) that are on the active branch, newest first. `after(other)`
@@ -3607,7 +3686,7 @@ export class Store {
       return;
     }
     for (const row of mdb.branchLinesNewest(threadId, loaded ? loaded.activeLeafId : mdb.readActiveLeafOrNewest(threadId), cls)) {
-      yield { message: sanitizeMessageDiagnostic(row.message), position: row.mrow, after: row.after };
+      yield { message: row.message, position: row.mrow, after: row.after };
     }
   }
 
@@ -3620,7 +3699,7 @@ export class Store {
       for (let i = loaded.messages.length - 1; i >= 0 && out.length < limit; i--) { const m = loaded.messages[i]!; if (m.kind === "text" && m.text) out.push(m); }
       return out.reverse();
     }
-    return mdb.newestTextLines(threadId, limit).map(sanitizeMessageDiagnostic);
+    return mdb.newestTextLines(threadId, limit);
   }
 
   /** The visible conversation: root → activeLeafId. */
@@ -3714,6 +3793,7 @@ export class Store {
    * messages as in one of 20 (the restart marker of an interrupted direct turn). */
   appendAfterHead(threadId: string, headId: string, input: Omit<Message, "id" | "at">): Message | null {
     if (this.threads.has(threadId)) return this.thread(threadId).activeLeafId === headId ? this.appendMessage(threadId, input) : null;
+    input = this.boundPostTo(threadId, input);
     return this.writing(threadId, () => {
       if (mdb.readActiveLeafOrNewest(threadId) !== headId) return null;
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
@@ -3727,12 +3807,14 @@ export class Store {
 
   /** `within` runs in the same transaction as the insert (links the message must not exist without); if it throws, nothing
    * is written, cached or announced. A `stableId` that already names a stored row returns that row (a redelivered event). */
-  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void, reply?: ProviderReply): Message {
+  appendMessage(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void, reply?: ProviderReply,
+    lineage?: readonly LineageRef[]): Message {
+    input = this.boundPostTo(threadId, input);
     return this.writing(threadId, () => {
       // A thread that is not loaded is not loaded to add one row (a screen
       // frame prunes the newest frames, read by index).
       if (!this.threads.has(threadId)) {
-        const appended = this.appendUnloaded(threadId, input, stableId, within);
+        const appended = this.appendUnloaded(threadId, input, stableId, within, lineage);
         if (appended) return appended;
       }
       const t = this.thread(threadId);
@@ -3742,7 +3824,7 @@ export class Store {
       const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: t.activeLeafId, ...redactBotAuthored(message) };
       // Runtime proof of the one dispatch path: a hand-off's prompt id is written only in the transaction that moves its row to started (handoff-stamp.ts).
       const inside = within ? () => within(full) : undefined;
-      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply);
+      mdb.appendMessage(threadId, full, isHandoffPromptId(full.id) ? guardHandoffPrompt(database, full.id, inside) : inside, reply, lineage);
       t.messages.push(full);
       t.activeLeafId = full.id;
       this.grew(threadId, t, messageBytes(full));
@@ -3769,7 +3851,8 @@ export class Store {
    * and owner-message follow-up, from the stored branch head and the newest
    * APPEND_TAIL_ROWS rows, never the transcript. Null for a thread with no
    * rows, which takes the full path (its one-time legacy import). */
-  private appendUnloaded(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void): Message | null {
+  private appendUnloaded(threadId: string, input: Omit<Message, "id" | "at"> & { at?: number }, stableId?: string, within?: (message: Message) => void,
+    lineage?: readonly LineageRef[]): Message | null {
     const leaf = mdb.readActiveLeafOrNewest(threadId);
     if (leaf === null) return null;
     if (stableId) { const held = mdb.storedMessage(threadId, stableId); if (held) return held; }
@@ -3778,7 +3861,7 @@ export class Store {
     const owner = message.role === "user" && message.kind === "text";
     const recent = owner ? this.newestMessages(threadId, APPEND_TAIL_ROWS).messages : [];
     const full: Message = { id: stableId ?? newId(), at: Date.now(), parentId: leaf, ...redactBotAuthored(message) };
-    mdb.appendMessage(threadId, full, within ? () => within(full) : undefined);
+    mdb.appendMessage(threadId, full, within ? () => within(full) : undefined, undefined, lineage);
     if (full.kind === "screen") {
       for (const pruned of this.pruneScreenFrames({ messages: this.newestFrames(threadId) }, 4)) {
         mdb.updateMessage(threadId, pruned);
@@ -3809,7 +3892,7 @@ export class Store {
    * it), never from a look through the rows stored since. A legacy row with no parentId is the child of the row stored
    * before it, as a load reads it. */
   private childrenStoredAfter(threadId: string, anchorId: string): Message[] {
-    return mdb.childrenOfRow(threadId, anchorId).map(sanitizeMessageDiagnostic);
+    return mdb.childrenOfRow(threadId, anchorId);
   }
 
   /** The newest screen frames of a thread that is not loaded, oldest first:
@@ -3853,7 +3936,7 @@ export class Store {
         const screens = [...(t ? t.messages : this.newestFrames(threadId)), full].filter((m) => m.kind === "screen" && m.png);
         for (const m of screens.slice(0, Math.max(0, screens.length - 4))) prunedCopies.push({ ...m, png: undefined });
       }
-      const reparented = children.map((child) => sanitizeMessageDiagnostic({ ...child, parentId: full.id }));
+      const reparented = children.map((child) => checkStoredRow({ ...child, parentId: full.id }));
       transaction(() => { mdb.insertMessageAfter(threadId, full, anchorId!, prunedCopies, reparented); });
       if (!t) {
         for (const pruned of prunedCopies) this.emit({ type: "message.patch", threadId, message: pruned });
@@ -3898,14 +3981,14 @@ export class Store {
       const t = this.threads.get(threadId);
       if (stableId) { const held = t?.messages.find(m => m.id === stableId) ?? mdb.storedMessage(threadId, stableId); if (held) return held; }
       const step = t ? undefined : mdb.branchStep(threadId, beforeId);
-      const target = t ? t.messages.find((m) => m.id === beforeId) : step ? sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent }) : undefined;
+      const target = t ? t.messages.find((m) => m.id === beforeId) : step ? checkStoredRow({ ...step.message, parentId: step.parent }) : undefined;
       if (!target) return this.appendMessage(threadId, input, stableId, within, reply);
       const message = this.messageRewrite ? this.messageRewrite(threadId, input) : input;
       if (message === null) return { id: newId(), at: Date.now(), parentId: target.parentId, ...redactBotAuthored(input) };
       // No backfill for unmarked rows: insertion before a row first ships with
       // this marker, so no saved database holds an unmarked inserted row.
       const full: Message = { id: stableId ?? newId(), at: Date.now(), ...redactBotAuthored(message), parentId: target.parentId, insertedBefore: target.id };
-      const moved = sanitizeMessageDiagnostic({ ...target, parentId: full.id });
+      const moved = checkStoredRow({ ...target, parentId: full.id });
       transaction(() => {
         mdb.insertMessageBefore(threadId, full, moved, reply);
         const inside = within ? () => within(full) : undefined;
@@ -4068,8 +4151,8 @@ export class Store {
         const step = mdb.branchStep(threadId, messageId);
         // the message is gone: the other change is still owed, as on a loaded thread (no conversation is made for it)
         if (!step) { if (within) transaction(() => within()); return null; }
-        const before = sanitizeMessageDiagnostic({ ...step.message, parentId: step.parent });
-        const next = sanitizeMessageDiagnostic({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
+        const before = checkStoredRow({ ...step.message, parentId: step.parent });
+        const next = checkStoredRow({ ...before, ...boundRemovedText(patch), card: patch.card ?? before.card });
         // `within` joins this write too: a card settled with the send it became (QW Q1) is one transaction on an unloaded thread as well
         mdb.updateMessage(threadId, next, within);
         this.emit({ type: "message.patch", threadId, message: next, before });
@@ -4078,7 +4161,7 @@ export class Store {
       const t = this.thread(threadId);
       const idx = t.messages.findIndex((m) => m.id === messageId);
       if (idx === -1) { if (within) transaction(() => within()); return null; }
-      const next = sanitizeMessageDiagnostic({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
+      const next = checkStoredRow({ ...t.messages[idx], ...boundRemovedText(patch), card: patch.card ?? t.messages[idx].card });
       // SQLite is the durable source of truth. Persist before changing memory so
       // a failed write cannot make this process believe a card was answered
       // while a restart would still show it as pending.
@@ -5110,6 +5193,8 @@ export class Store {
     turn: { input?: number; output?: number; cachedInput?: number; costUsd: number | null },
     /** idempotency key of the provider turn: banked in the same write as the totals, so a redelivery changes nothing */
     turnKey?: string,
+    /** the routine whose run this turn was, if any: its share of the month is kept apart as well */
+    routine?: { id: string; name: string },
   ): TaskUsage | null {
     const task = this.taskByThread(botId, threadId);
     if (!task) return null;
@@ -5137,7 +5222,7 @@ export class Store {
     if (turnKey) task.usageTurnKeys = [...(task.usageTurnKeys ?? []), turnKey].slice(-64);
     // The month's bucket: one small upsert in the same deferred write, nothing that grows with history.
     const owner = this.bots.find(candidate => candidate.id === botId);
-    if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); }
+    if (owner) { owner.usageMonths ??= {}; bumpUsageMonth(owner.usageMonths, turn); bumpRoutineUsage(owner, routine, turn); }
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return task.usage;
@@ -5147,13 +5232,14 @@ export class Store {
    * task of the bot's own, so addTaskUsage never saw them while the project ledger (settleProjectUsage) counted the same
    * tokens against the limit. Same figures, same turn event: Usage and the limit now read one stream. A redelivery adds nothing. */
   private roomUsageKeys = new Set<string>();
-  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string): boolean {
+  addRoomTurnUsage(botId: string, turn: { input?: number; output?: number; cachedInput?: number }, turnKey: string, routine?: { id: string; name: string }): boolean {
     const owner = this.bots.find(candidate => candidate.id === botId);
     if (!owner || this.roomUsageKeys.has(turnKey)) return false;
     this.roomUsageKeys.add(turnKey);
     if (this.roomUsageKeys.size > 512) this.roomUsageKeys.delete(this.roomUsageKeys.values().next().value as string);
     owner.usageMonths ??= {};
     bumpUsageMonth(owner.usageMonths, turn);
+    bumpRoutineUsage(owner, routine, turn);
     this.saveBots(this.bots, { defer: true });
     this.emit({ type: "bot", botId });
     return true;

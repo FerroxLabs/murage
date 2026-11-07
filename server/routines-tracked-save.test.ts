@@ -151,7 +151,16 @@ const DRIVERS: Record<string, (f: Fixture) => unknown> = {
   eventKindDeclined: f => f.m.eventKindDeclined(f.webhook.id, "create"),
   interruptUnresolvedEventTimeouts: f => { f.m.admitEventAction(f.webhook.id, "admission-7", "handoff"); f.m.recordEventAdmissionReceipt(f.webhook.id, "admission-7", "timeout:task-9"); expect(f.m.interruptUnresolvedEventTimeouts(() => false)).toBe(1); },
   listRoutineNames: f => f.m.listRoutineNames(),
+  // 1.0.18 U6 F38 (c8ce9d59e) and E32 (221b41699), U28 B45 (1034c9dc3): read-only additions, driven so a save after each still matches disk
+  listRoutineDetails: f => expect(f.m.listRoutineDetails("bot-a").map(detail => detail.name)).toEqual(["A"]),
+  hasStartedRun: f => f.m.hasStartedRun(f.a.id),
+  roomGoalRunForThread: f => f.m.roomGoalRunForThread(f.goalThread),
   activeWebhookRunCount: f => f.m.activeWebhookRunCount("hook-1"),
+  // RESIDUALS-B U28b (1fe2378a1): which routine a turn's usage belongs to. A read: a live run answers, any other thread does not
+  usageRunForThread: f => {
+    expect(f.m.usageRunForThread(f.thread)).toEqual({ routineId: f.a.id, routineName: "A", triggerSource: "manual" });
+    expect(f.m.usageRunForThread("no-such-thread")).toBeNull();
+  },
   cancelQueuedWebhook: f => f.m.cancelQueuedWebhook("hook-1", "The webhook was removed"),
   cancelRun: f => f.m.cancelRun(f.running.id),
   markAllSeen: f => expect(f.m.markAllSeen().length).toBeGreaterThan(0),

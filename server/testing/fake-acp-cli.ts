@@ -134,6 +134,11 @@
 //   FAKE_ACP_PERMISSION_TIMING_FILE  append {askedAt, waitMs} per answered
 //                   permission-mode ask: how long the client took to answer,
 //                   as the engine sees it (Grok's own wait_ms)
+//   FUIGO_POLICY_PATH / FUIGO_POLICY_SHA256  Fuigo 1.0.36+ launch policy, as 1.0.38 handles it: the file must hash to
+//                   the env value or the process prints one {"policy_error":...} line and exits 78; session/new and
+//                   session/load carrying `_meta` fuigo/permissionPolicyPath + Sha256 are checked the same way
+//                   (-32602 with the record as data) and acknowledged in `_meta["fuigo/permissionPolicy"]`.
+//   FAKE_ACP_POLICY_ACK=0  behave like an engine older than 1.0.36: ignore the policy, never acknowledge it
 //   FAKE_ACP_DUMP   path to write {argv, env} as JSON, so a test can assert
 //                   argv shape (agent/stdio flags) and env hygiene
 //   FAKE_ACP_LOAD_ERROR  JSON-RPC error object session/load answers with
@@ -302,7 +307,7 @@
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
 import { execFileSync, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
 import { homedir } from "node:os";
@@ -414,6 +419,8 @@ const dumpEnv = Object.fromEntries(
     "FAKE_ACP_MODE",
     "FAKE_ACP_RPC_DUMP",
     "TEST_POLICY",
+    "FUIGO_POLICY_PATH",
+    "FUIGO_POLICY_SHA256",
     "KIMI_MODEL_NAME",
     "KIMI_MODEL_BASE_URL",
     "KIMI_MODEL_PROVIDER_TYPE",
@@ -550,6 +557,32 @@ const fixtureRequested = (text: string, marker: string) => {
   return (lines.pop() ?? "").includes(marker);
 };
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
+
+// Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
+const policyKnown = process.env.FAKE_ACP_POLICY_ACK !== "0";
+function policyFileError(path: unknown, sha256: unknown): Record<string, unknown> | null {
+  if (typeof sha256 !== "string" || !/^[0-9a-f]{64}$/.test(sha256)) return { policy_error: "hash_missing", path, line: null, message: "hash missing" };
+  if (typeof path !== "string" || !isAbsolute(path)) return { policy_error: "not_absolute", path, line: null, message: "not absolute" };
+  let bytes: Buffer;
+  try {
+    if (lstatSync(path).isSymbolicLink()) return { policy_error: "symlink", path, line: null, message: "symlink" };
+    bytes = readFileSync(path);
+  } catch { return { policy_error: "not_found", path, line: null, message: "not found" }; }
+  return createHash("sha256").update(bytes).digest("hex") === sha256 ? null : { policy_error: "hash_mismatch", path, line: null, message: "hash mismatch" };
+}
+if (policyKnown && process.env.FUIGO_POLICY_PATH !== undefined) {
+  const failed = policyFileError(process.env.FUIGO_POLICY_PATH, process.env.FUIGO_POLICY_SHA256);
+  if (failed) { process.stderr.write(`${JSON.stringify(failed)}\n`); process.exit(78); }
+}
+/** The session answer's policy `_meta`, an error already sent (true), or nothing (no policy on the request). */
+function sessionPolicy(msg: any): { _meta?: Record<string, unknown> } | true {
+  const meta = msg.params?._meta;
+  if (!policyKnown || !meta || typeof meta !== "object" || !("fuigo/permissionPolicyPath" in meta || "fuigo/permissionPolicySha256" in meta)) return {};
+  const failed = policyFileError(meta["fuigo/permissionPolicyPath"], meta["fuigo/permissionPolicySha256"]);
+  if (failed) { out({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "Invalid params", data: failed } }); return true; }
+  if (process.env.FAKE_ACP_DUMP) appendFileSync(`${process.env.FAKE_ACP_DUMP}.policy.jsonl`, `${JSON.stringify({ method: msg.method, path: meta["fuigo/permissionPolicyPath"], sha256: meta["fuigo/permissionPolicySha256"] })}\n`);
+  return { _meta: { "fuigo/permissionPolicy": { sha256: meta["fuigo/permissionPolicySha256"] } } };
+}
 /** A test's own gate: `then` runs once the file exists. */
 const whenFile = (file: string, then: () => void) => { if (existsSync(file)) then(); else setTimeout(() => whenFile(file, then), 10); };
 // `_fuigo/interject`, Fuigo's steer into a running prompt (Grok Build: `_x.ai/interject`,
@@ -703,6 +736,8 @@ let permissionAskedAt: number | null = null;
 let folderTrustInteractive = false;
 const trustV2 = process.env.FAKE_ACP_TRUST_V === "2";
 let folderTrustClientV2 = false;
+/** Fuigo 1.0.40: a client that set reopenNotice gets one `config_notice` after a grant. */
+let folderTrustReopenNotice = false;
 /** Keys a reject silenced: Fuigo keeps these for the life of the process, nowhere else. */
 const trustRejected = new Set<string>();
 /** Keys a `duration: "process"` trust covers (Fuigo 1.0.38): this process only, never the store. */
@@ -1232,6 +1267,11 @@ function handle(msg: any) {
         else persistGrant(trustWorkspace());
       } else trustRejected.add(trustWorkspace());
     }
+    // Fuigo 1.0.40: one live notice after a grant, only to a client that opted in.
+    if (mode === "folder-trust" && msg.id === 9006 && folderTrustReopenNotice && msg.result?.outcome === "trust") {
+      out({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: "fake-acp-session", update: { sessionUpdate: "config_notice", message: "Folder trust is on. Reopen this session to use it." } } });
+      dumpState.reopenNoticeSent = ((dumpState.reopenNoticeSent as number | undefined) ?? 0) + 1;
+    }
     if (process.env.FAKE_ACP_DUMP) {
       dumpState.decision = msg.result ?? { error: msg.error };
       writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1275,6 +1315,7 @@ function handle(msg: any) {
       const authMethods = mode === "no-auth" ? [] : process.env.FAKE_ACP_AUTH_METHODS ? process.env.FAKE_ACP_AUTH_METHODS.split(",").map((id) => ({ id })) : [{ id: "cached_token" }];
       folderTrustInteractive = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.interactive === true;
       folderTrustClientV2 = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.v2 === true;
+      folderTrustReopenNotice = msg.params?.clientCapabilities?._meta?.["fuigo/folderTrust"]?.reopenNotice === true;
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.initialize = msg.params ?? null;
         writeMainDump(process.env.FAKE_ACP_DUMP, JSON.stringify(dumpState, null, 2));
@@ -1309,6 +1350,8 @@ function handle(msg: any) {
         });
         break;
       }
+      const newPolicy = sessionPolicy(msg);
+      if (newPolicy === true) break;
       const servers: McpEntry[] = Array.isArray(msg.params?.mcpServers) ? msg.params.mcpServers : [];
       if (process.env.FAKE_ACP_DUMP) {
         dumpState.mcpServers = dumpedServers(servers);
@@ -1335,6 +1378,7 @@ function handle(msg: any) {
       startMcpChild(servers);
       result(msg.id, {
         sessionId: newSessionId,
+        ...newPolicy,
         ...(opts ? { configOptions: opts } : {}),
         ...(mdls ? { models: mdls } : {}),
         ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}),
@@ -1371,6 +1415,8 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      const loadPolicy = sessionPolicy(msg);
+      if (loadPolicy === true) break;
       const resident = liveSession !== null && msg.params?.sessionId === liveSession;
       if (resident && process.env.FAKE_ACP_REJECT_LIVE_LOAD) {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "session is already loaded" } });
@@ -1401,7 +1447,7 @@ function handle(msg: any) {
       const mdls = sessionModels();
       if (typeof msg.params?.sessionId === "string") liveSession = msg.params.sessionId;
       liveServers = loadServers;
-      result(msg.id, { ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}), ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}) });
+      result(msg.id, { ...loadPolicy, ...(opts ? { configOptions: opts } : {}), ...(mdls ? { models: mdls } : {}), ...(process.env.FAKE_ACP_SESSION_MODES ? { modes: JSON.parse(process.env.FAKE_ACP_SESSION_MODES) } : {}) });
       if (serversChanged && typeof msg.params?.sessionId === "string" && process.env.FAKE_ACP_MCP_READY_NEW_ONLY !== "1") announceMcpReady(msg.params.sessionId, msg.params?.mcpServers);
       // the real engine runs the trust prompt after session/load too
       // (`load_session_inner`), so a resumed turn is gated like a new one
@@ -1778,7 +1824,8 @@ function handle(msg: any) {
           // Fuigo 1.0.18 tags a provider rejection `api`. The typed kind rides
           // the whole path here: driver event -> bus -> store -> API -> card.
           error_kind: "api",
-          message: "API error (status 402 Payment Required): Your credit balance is exhausted. https://billing.invalid/?token=fake-secret-canary",
+          // Three kinds of provider text: a sentence the reader knows but rewords, prose it does not know, and a link with a token.
+          message: "API error (status 402 Payment Required): This team's credit balance is exhausted. FIXTURE_PROVIDER_PROSE_CANARY https://billing.invalid/?token=fake-secret-canary",
         } } });
         return;
       }
@@ -1858,6 +1905,13 @@ function handle(msg: any) {
           // the result root with an empty _meta, instead of usage under _meta.
           process.env.FAKE_ACP_USAGE_ROOT === "fuigo"
             ? { stopReason: "end_turn", _meta: { inputTokens: 1, outputTokens: 2, usage: { inputTokens: 100, outputTokens: 50, cachedReadTokens: 30, costUsdTicks: 2500000000 } } }
+            // opencode 1.18.25 (upstream #1993): inputTokens is only the
+            // uncached share, cache reads sit beside it, totalTokens is the sum.
+            : process.env.FAKE_ACP_USAGE_ROOT === "cache-beside"
+            ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
+            // an agent that counts cache reads inside inputTokens
+            : process.env.FAKE_ACP_USAGE_ROOT === "cache-inside"
+            ? { stopReason: "end_turn", usage: { inputTokens: 100, outputTokens: 5, cachedReadTokens: 90, totalTokens: 105 }, _meta: {} }
             : process.env.FAKE_ACP_USAGE_ROOT
             ? { stopReason: "end_turn", usage: { inputTokens: 10, outputTokens: 5 }, _meta: {} }
             : { stopReason: "end_turn", _meta: { inputTokens: 10, outputTokens: 5 } },

@@ -32,6 +32,7 @@ import { admitShared, cancelDeletedSharedRequest, drainSharedWork, isSharedWorkR
 import type { AdmissionClaim, ExecutionAudience } from "./work-admission.ts";
 import type { RoutinePeerSource } from "./routine-permissions.ts";
 import type { CoordinationTrace } from "./coordination-budget.ts";
+import { doneWhenBriefLine } from "./done-when.ts";
 import type { BotRecord, Message } from "./store.ts";
 import {
   DELEGATION_DELETED, DELEGATION_NOT_STARTABLE, DELETED_NOTE, MAX_BUSY_ATTEMPTS, acknowledgeDelegation, announceHeld, appendDelegationRow, cancelForDeletion, clearWaitLine,
@@ -682,7 +683,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
   };
   try {
     if (ctx.shared) {
-      text = sharedOps!.text(request!);
+      text = sharedOps!.text(request!) + doneWhenBriefLine(item.doneWhen);
       options = sharedOps!.turnOptions(request!);
       // F3 (02-3): a shared hand-off's worker carries its trace like the non-shared one: derived from the request tree (turnOptions), else the
       // trace its asker advanced and the row carries (a parentless hand-off from a direct conversation)
@@ -698,7 +699,7 @@ async function launch(ctx: StartContext, env: HandoffEnv, running?: SharedRun, s
       // The waiting line (with its Stop) goes as the turn starts: once the row is started it is no longer in the queue, so the end of the drain cannot find it.
       clearWaitLine(bus, source, item);
       const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
-      text = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
+      text = `[Delegated by @${sender.name}, another bot in this Murage workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}${doneWhenBriefLine(item.doneWhen)}`;
       options = {
         automation: { kind: "delegation" },
         chainRootThreadId: source,

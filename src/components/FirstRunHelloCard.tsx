@@ -15,7 +15,10 @@ import { useId, useState } from "react";
 
 import { setEmailGateDone } from "@/lib/analytics";
 import { FIRST_RUN_COPY, greetingLine, probeLine } from "@/lib/first-run-copy";
-import { api } from "@/state/store";
+import { afterPaint, startFirstRunTiming } from "@/lib/first-run-timing";
+import { t } from "@/lib/i18n";
+import { api, type Bot } from "@/state/store";
+import { FirstRunWorking } from "./FirstRunWorking";
 import {
   FIRST_RUN_FOCUS,
   FIRST_RUN_INPUT,
@@ -173,13 +176,16 @@ export async function skipHelloAnswer(
   return { greeting: name ? greetingLine(name) : "" };
 }
 
-export function FirstRunHelloCard({ settled }: { settled: boolean }) {
+export function FirstRunHelloCard({ settled, bot }: { settled: boolean; bot?: Bot | null }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   // Set when the email box is left, or Continue or Enter is pressed.
   const [emailChecked, setEmailChecked] = useState(false);
   const emailNoteId = useId();
-  const [busy, setBusy] = useState(false);
+  // What the press is doing, set in the click handler itself so the Chief is
+  // seen working in the same render as the press, before any request leaves.
+  const [pressing, setPressing] = useState<"" | "name" | "skip">("");
+  const busy = pressing !== "";
   const [saved, setSaved] = useState("");
   const [failure, setFailure] = useState("");
   const [signupNote, setSignupNote] = useState("");
@@ -212,32 +218,47 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
     const next = helloContinue(name, email);
     if (next === "check-email") setEmailChecked(true);
     if (next !== "save") return;
-    setBusy(true);
+    setPressing("name");
     setFailure("");
+    const timing = startFirstRunTiming("hello");
     try {
-      const answer = await saveHelloAnswer({ name, email });
+      // The working line is painted before anything leaves.
+      await afterPaint();
+      const answer = await saveHelloAnswer({ name, email }, {
+        ...LIVE,
+        api: (path, init) => timing.time(path === "/api/config" ? "config" : "subscribe", () => api(path, init)),
+        answer: (step, said) => answerSetupStep(step, said, timing),
+      });
       setSaved(answer.greeting);
       setActed(true);
       void answer.signup.then((outcome) => { if (outcome === "failed") setSignupNote(SIGNUP_FAILED_NOTE); });
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
-      setBusy(false);
+      timing.done();
+      setPressing("");
     }
   };
 
   const skip = async () => {
     if (busy) return;
-    setBusy(true);
+    setPressing(name.trim() ? "name" : "skip");
     setFailure("");
+    const timing = startFirstRunTiming("hello-skip");
     try {
-      const { greeting } = await skipHelloAnswer({ name, email });
+      await afterPaint();
+      const { greeting } = await skipHelloAnswer({ name, email }, {
+        ...LIVE,
+        api: (path, init) => timing.time("config", () => api(path, init)),
+        skip: (step) => skipSetupStep(step, timing),
+      });
       if (greeting) setSaved(greeting);
       setActed(true);
     } catch (cause) {
       setFailure(failureText(cause, copy.failure));
     } finally {
-      setBusy(false);
+      timing.done();
+      setPressing("");
     }
   };
 
@@ -247,7 +268,7 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
       <div className="mt-2 text-[15px] font-semibold text-ink">{copy.heading}</div>
 
       {!done && (
-        <div className="mt-3 grid gap-2">
+        <div className="mt-3 grid gap-2" data-state={busy ? "saving" : "open"} aria-busy={busy || undefined}>
           <label className="text-[13px] text-ink-secondary">
             {copy.nameLabel}
             <input
@@ -310,9 +331,10 @@ export function FirstRunHelloCard({ settled }: { settled: boolean }) {
               onClick={() => void save()}
               className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS} aria-disabled:opacity-50`}
             >
-              {busy ? copy.working : copy.submit}
+              {pressing === "name" ? copy.working : copy.submit}
             </button>
           </div>
+          {busy && <FirstRunWorking bot={bot} words={t(pressing === "name" ? "firstRun.press.name" : "firstRun.press.skip")} />}
         </div>
       )}
 
