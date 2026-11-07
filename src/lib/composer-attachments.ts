@@ -3,6 +3,7 @@
 // send, so every driver receives the same message shape.
 import { audioTranscriptionMime, isAudioCandidate } from "./audio-intake.ts";
 import { batchRefusalLine, isDiskSpaceMessage } from "../../shared/attachment-storage.ts";
+import { IMAGE_UPLOAD_MAX_BYTES, TURN_IMAGE_MIMES } from "../../shared/media-assets.ts";
 export type PasteAttachment = {
   kind: "paste";
   id: string;
@@ -86,9 +87,23 @@ export function fileAttachment(name: string, path: string, size: number): FileAt
   return { kind: "file", id: newId(), path, name, size };
 }
 
-/** Matches the server's IMAGE_MAX_BYTES — checked client-side so an
- * oversized paste is refused before the upload starts, not mid-stream. */
-export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+/** The most any chat upload of a picture may be (shared IMAGE_UPLOAD_MAX_BYTES),
+ * checked before the file is read so an oversized paste is refused before the
+ * upload starts. The server may answer with a lower limit for the
+ * conversation's engine, and its sentence names that number. */
+export const IMAGE_MAX_BYTES = IMAGE_UPLOAD_MAX_BYTES;
+
+/** The sentence for a picture over `limit`: its own size and the real limit. */
+export function imageTooLargeLine(name: string, size: number, limit: number): string {
+  return `${name || "That image"} is ${formatSize(size)}. Images can be up to ${formatSize(limit)}.`;
+}
+
+/** A picture a turn can show the bot (PNG, JPEG, WebP). A GIF is attached as
+ * a file instead: no turn inlines it, and as a picture it reached the bot as
+ * nothing at all, or, on Fuigo, failed the whole send with "Reattach". */
+export function isTurnImageFile(file: { type: string }): boolean {
+  return (TURN_IMAGE_MIMES as readonly string[]).includes(file.type.split(";")[0]!.trim().toLowerCase());
+}
 
 export function isImageFile(file: { type: string; size: number }): boolean {
   return (
@@ -129,7 +144,7 @@ export function clipboardHasImages(data: ClipboardData): boolean {
  * with the path; the prompt references that path so every CLI can open it. */
 export async function imageAttachmentFromFile(file: File, threadId?: string, surfaceHeaders: Record<string, string> = {}): Promise<ImageAttachment | null> {
   if (!isImageFile(file)) return null;
-  if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(`${file.name} exceeds 10 MB`), { status: 413 });
+  if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(imageTooLargeLine(file.name, file.size, IMAGE_MAX_BYTES)), { status: 413 });
   const bytes = new Uint8Array(await file.arrayBuffer());
   const headers: Record<string, string> = { ...surfaceHeaders, "content-type": file.type };
   const response = await fetch(`/api/attachments${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ""}`, {
@@ -502,7 +517,7 @@ export async function intakeFiles<T extends DroppedFile & { type: string }>(
       } catch (error) { imageErrors.push(`${file.name}: ${error instanceof Error ? error.message : "Could not queue audio"}`); }
       continue;
     }
-    if (isImageFile(file)) {
+    if (isImageFile(file) && isTurnImageFile(file)) {
       // Refused out loud. Falling through to the path attachment turned a
       // dropped picture into an <attached-file path> the responder cannot
       // look at, with nothing on screen to say the image had been dropped —

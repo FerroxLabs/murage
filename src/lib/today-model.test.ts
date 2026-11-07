@@ -6,7 +6,7 @@
 // first-run Today (one tag only), and the routine rows.
 import { describe, expect, it } from "vitest";
 import type { Routine, RoutineRun } from "@/lib/routines";
-import { engineState, finishedInBackground, greetingFor, primaryEngine, routinesToday, todayModel, type TodayInput } from "./today-model";
+import { detailedOrder, doneToday, engineState, engineTag, finishedInBackground, greetingFor, healthEngine, leadLine, needsTag, primaryEngine, routinesRanToday, routinesToday, todayEngine, todayModel, type TodayInput } from "./today-model";
 
 const at = (h: number, m = 0) => new Date(2026, 9, 30, h, m).getTime();
 const base = (over: Partial<TodayInput> = {}): TodayInput => ({
@@ -164,5 +164,111 @@ describe("Today's routines and Finished in the background", () => {
       run({ id: "d", output: "old", finishedAt: at(9) - 2 * 86_400_000 }),
     ], { nova: "Nova" }, now);
     expect(rows.map((row) => [row.line, row.meta])).toEqual([["Morning brief sent to you", "Nova · 08:02"], ["14 invoices filed in Drive", "Nova · 06:30"]]);
+  });
+});
+
+describe("the engine the Health level reads (HEALTH-HEADLINE-FALLBACK)", () => {
+  const row = (id: string, state: "ready" | "missing" | "signed-out" | "off" | "limit" | "checking", usedBy = 0) => ({ id, label: id, state, line: "", usedBy });
+  it("never reads an engine nobody chose and no bot uses, so an unused missing engine cannot turn Health red", () => {
+    expect(healthEngine([row("codex", "missing"), row("claude", "missing")], null)).toBeNull();
+    expect(healthEngine([row("codex", "missing"), row("fuigo", "ready", 2)], null)).toMatchObject({ id: "fuigo", state: "ready" });
+    expect(healthEngine([row("codex", "missing"), row("claude", "ready")], "claude")).toMatchObject({ id: "claude" });
+  });
+  it("reads the worst of the default and every engine a bot uses", () => {
+    expect(healthEngine([row("claude", "ready"), row("codex", "signed-out", 1)], "claude")).toMatchObject({ id: "codex", state: "signed-out" });
+    expect(healthEngine([row("claude", "missing"), row("codex", "ready", 3)], "claude")).toMatchObject({ id: "claude", state: "missing" });
+    expect(healthEngine([row("claude", "limit", 1), row("codex", "off", 1)], "codex")).toMatchObject({ id: "codex" });
+  });
+  it("an older answer with no usedBy still reads the default", () => {
+    expect(healthEngine([{ id: "claude", label: "Claude", state: "signed-out", line: "" }, { id: "codex", label: "Codex", state: "missing", line: "" }], "claude")).toMatchObject({ id: "claude" });
+  });
+});
+
+describe("Today slice 1.0.18: head and Done today", () => {
+  const run = (over: Partial<RoutineRun>): RoutineRun => ({ id: "x1", routineId: "r1", routineName: "Morning brief", target: "bot" as RoutineRun["target"], botId: "nova", runOn: "local" as RoutineRun["runOn"], scheduledFor: at(8), status: "completed", manual: false, startedAt: at(8), finishedAt: at(8) + 40_000, ...over } as RoutineRun);
+  const now = new Date(at(9, 30));
+
+  it("reads Nothing needs you in the ok tone, and a count above 0 in info", () => {
+    expect(needsTag(0)).toMatchObject({ tone: "ok", text: "Nothing needs you" });
+    expect(needsTag(2)).toMatchObject({ tone: "info" });
+    expect(needsTag(undefined)).toBeNull();
+    expect(todayModel(base({ needsCount: 0 })).tags.find((tag) => tag.key === "needs")?.tone).toBe("ok");
+  });
+
+  it("the head's all-clear needs a fresh 0 count and no Worth a look line, as NeedsBlock does (H6)", () => {
+    const tag = (count: number | undefined, needsState: TodayInput["needsState"]) => todayModel(base({ needsCount: count, needsState })).tags.find((t) => t.key === "needs");
+    // a stale zero: the checking words, never green
+    expect(tag(0, { stale: true, lines: 0, reads: true })).toMatchObject({ tone: "info", text: "Checking what needs you." });
+    // a stale count above 0: never green either
+    expect(tag(2, { stale: true, lines: 2, reads: true })?.tone).not.toBe("ok");
+    // unknown on a surface that reads Needs you: checking, not silence and not green
+    expect(tag(undefined, { reads: true })).toMatchObject({ tone: "info", text: "Checking what needs you." });
+    // the browser door has no read: no tag, as before
+    expect(tag(undefined, { reads: false })).toBeUndefined();
+    // zero owed but Worth a look lines below: counted, in info, never Nothing needs you
+    expect(tag(0, { stale: false, lines: 1, reads: true })).toMatchObject({ tone: "info", text: "1 thing needs you" });
+    expect(tag(0, { stale: false, lines: 3, reads: true })).toMatchObject({ tone: "info", text: "3 things need you" });
+    // the count above 0 keeps the badge truth
+    expect(tag(4, { stale: false, lines: 1, reads: true })).toMatchObject({ tone: "info", text: "4 things need you" });
+    // only a fresh 0 with no line is the green all-clear
+    expect(tag(0, { stale: false, lines: 0, reads: true })).toMatchObject({ tone: "ok", text: "Nothing needs you" });
+  });
+
+  it("Detailed blocks are in DOM order for the active layout: phone one column, desktop row by row", () => {
+    expect(detailedOrder(true)).toEqual(["needs", "cost", "day", "routines", "working", "done"]);
+    expect(detailedOrder(false)).toEqual(["needs", "day", "cost", "routines", "working", "done"]);
+  });
+
+  it("puts Fuigo first when any visible bot runs on Fuigo, and says Fuigo on Flux Router", () => {
+    const engines = [
+      { instanceId: "claude", displayName: "Claude", snapshot: { state: "available" as const, authenticated: true } },
+      { instanceId: "fuigo", displayName: "Fuigo", driverKind: "fuigoAgent", snapshot: { state: "available" as const, authenticated: false } },
+    ];
+    const most = primaryEngine(engines, ["claude", "claude", "fuigo"]);
+    expect(most).toMatchObject({ id: "claude" });
+    const engine = todayEngine(most, engines, ["claude", "claude", "fuigo"]);
+    expect(engine).toMatchObject({ id: "fuigo", state: "ready", fuigo: true });
+    const tags = todayModel(base({ engine })).tags;
+    expect(tags[0]).toMatchObject({ key: "engine", tone: "ok", text: "Fuigo on Flux Router", action: "engines" });
+    // The server's own row keeps the server's state.
+    expect(todayEngine({ id: "claude", label: "Claude", state: "ready", line: "" }, engines, ["fuigo"], [{ id: "fuigo", label: "Fuigo", state: "missing", line: "Not found" }])).toMatchObject({ id: "fuigo", state: "missing", fuigo: true });
+    expect(engineTag({ engine: { id: "fuigo", label: "Fuigo", state: "missing", line: "", fuigo: true }, flux: "ok", connectivity: "online" })?.text).toBe("Fuigo is not on this computer");
+    // No bot on Fuigo: the engine Today already named, untouched.
+    expect(todayEngine(most, engines, ["claude"])).toBe(most);
+    // Flux allowance still outranks it.
+    expect(todayModel(base({ engine, flux: "allowance-used-up" })).tags[0]?.text).toBe("Flux Router: allowance used up");
+  });
+
+  it("builds the lead line from its parts, dropping every part at 0", () => {
+    expect(leadLine({ ran: 4, look: 2, decide: 1, next: { name: "Inbox sweep", at: at(11) } })).toEqual([
+      { key: "ux.l2a.today.lead.ran", params: { n: 4 } },
+      { key: "ux.l2a.today.lead.look", params: { n: 2 } },
+      { key: "ux.l2a.today.lead.decide", params: { n: 1 } },
+      { key: "ux.l2a.today.lead.next", params: { name: "Inbox sweep", time: "11:00" } },
+    ]);
+    expect(leadLine({ ran: 3, look: 0, decide: 2, next: null }).map((part) => "key" in part && part.key)).toEqual(["ux.l2a.today.lead.ran", "ux.l2a.today.lead.decide"]);
+    expect(leadLine({ ran: 0, look: 0, decide: 0, next: null })).toEqual([{ key: "ux.l2a.today.lead.quiet" }]);
+    expect(leadLine({ ran: 0, look: Number.NaN, decide: -1, next: { name: "Digest", at: at(17, 5) } })).toEqual([{ key: "ux.l2a.today.lead.quiet" }, { key: "ux.l2a.today.lead.next", params: { name: "Digest", time: "17:05" } }]);
+    expect(routinesRanToday([run({ id: "a" }), run({ id: "b", status: "failed" }), run({ id: "c", finishedAt: at(8) - 86_400_000, scheduledFor: at(8) - 86_400_000 })], now)).toBe(1);
+  });
+
+  it("titles Done today by the routine name, failed and missed first with their error or the generic line", () => {
+    const rows = doneToday([
+      run({ id: "ok", routineName: "Morning brief", output: "## 14 invoices filed\nmore", finishedAt: at(9) }),
+      run({ id: "bad", routineName: "Inbox sweep", status: "failed", error: "Gmail is not authorized.\nstack", finishedAt: at(7) }),
+      run({ id: "miss", routineName: "Weekly digest", status: "missed", finishedAt: undefined, scheduledFor: at(6) }),
+      run({ id: "quiet", routineName: "Tidy", output: "", finishedAt: at(8, 30) }),
+      run({ id: "live", status: "running", finishedAt: undefined }),
+      run({ id: "old", finishedAt: at(9) - 86_400_000 }),
+    ], { nova: "Nova" }, now);
+    expect(rows.map((row) => [row.title, row.status, row.line])).toEqual([
+      ["Inbox sweep", "failed", { raw: "Gmail is not authorized." }],
+      ["Weekly digest", "missed", { key: "ux.l2a.today.look.failedGeneric" }],
+      ["Morning brief", "completed", { raw: "14 invoices filed" }],
+      ["Tidy", "completed", null],
+    ]);
+    expect(rows[0]).toMatchObject({ tone: "bad", botName: "Nova", time: "07:00" });
+    expect(todayModel(base({ runs: [run({ id: "ok", output: "Done" })] })).done.map((row) => row.title)).toEqual(["Morning brief"]);
+    expect(todayModel(base({ firstRun: true, runs: [run({})] })).done).toEqual([]);
   });
 });

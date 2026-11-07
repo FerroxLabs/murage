@@ -7,6 +7,7 @@
 // disk — so a future collector mistake still cannot leak a credential.
 //
 import fs from "node:fs";
+import { maskSecretLabelsToEnd } from "../shared/md-secret-label.mjs";
 
 // CREDENTIAL_ENV_NAMES mirrors WORKSPACE_CREDENTIAL_ENV (server/config.ts).
 // Duplicated because the desktop shell cannot import TypeScript; a test
@@ -23,6 +24,7 @@ export const CREDENTIAL_ENV_NAMES = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
+  "META_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "MURAGE_MODEL_PROVIDER_CONNECTIONS",
@@ -65,14 +67,12 @@ const CREDENTIAL_TOKEN_FORMATS = [
   /\bAIza[0-9A-Za-z_-]{30,}/g,
   /\bnpm_[A-Za-z0-9]{20,}/g,
 ];
-const KEY_VALUE_PAIR =
-  /\b([A-Za-z0-9_.-]*(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?)["']?\s*[:=]\s*("[^"]*"|'[^']*'|[^\s"',;)\]}]+)/gi;
 // A quote may close the name first: JSON spells the header {"Authorization":"Basic ..."}.
 const AUTHORIZATION =
   /\b(authorization)["']?\s*[:=]\s*(?:"|')?([A-Za-z][A-Za-z0-9_-]*\s+[A-Za-z0-9._~+/=-]+)(?:"|')?/gi;
 const BEARER = /(\bbearer\s+)([A-Za-z0-9._~+/=-]{8,})/gi;
-const PEM_BLOCK =
-  /(-----BEGIN [A-Z ]*PRIVATE KEY-----)[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----)/g;
+const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PEM_CLOSE = /-----END [A-Z ]*PRIVATE KEY-----/g;
 
 const mask = (value) => `«redacted ${value.length} chars»`;
 const unquote = (value) => value.replace(/^["']|["']$/g, "");
@@ -80,26 +80,58 @@ const unquote = (value) => value.replace(/^["']|["']$/g, "");
 // Shared value grammar; String.raw keeps \s and \] intact when the pattern
 // is embedded into the dynamically built env-name regexes below.
 const VALUE_PART = String.raw`("[^"]*"|'[^']*'|[^\s"',;)\]}]+)`;
+// Our own markers, tested at the value position before VALUE_PART. A marker
+// that ends at a blank, a delimiter or the end is kept whole (group 1); a
+// marker with ANY suffix is one value and is masked whole, marker included
+// (group 2), so no `12 chars»TAIL` tail survives.
+const MARKER_ALT = String.raw`(?:«redacted \d{1,9} chars»|«redacted»|«redacted private key»|«redacted provider credentials»)`;
+const VALUE_WITH_MARKERS =
+  String.raw`(?:((?:"${MARKER_ALT}"|'${MARKER_ALT}'|${MARKER_ALT})(?=[\s"',;)\]}]|$))|(${MARKER_ALT}[^\s"',;)\]}]*)|${VALUE_PART})`;
+const SECRET_NAME = String.raw`(?:api[_-]?key|apikey|secret|token|password|passwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key)s?`;
+// Run-anchored: one start per run of name characters and one lookahead per
+// run (linear), then a lazy walk to the first `\b`, where today's key began.
+const KEY_VALUE_PAIR = new RegExp(
+  String.raw`(?<![A-Za-z0-9_.-])(?=[A-Za-z0-9_.-]*${SECRET_NAME}["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"',;)\]}]+))([A-Za-z0-9_.-]*?)\b([A-Za-z0-9_.-]*${SECRET_NAME})["']?\s*[:=]\s*${VALUE_WITH_MARKERS}`,
+  "gi",
+);
+
+/** One pass: each BEGIN pairs with the next END after it; with no END left,
+ * no later BEGIN can pair either, so the walk stops. */
+function redactPemBlocks(text) {
+  let out = "", last = 0;
+  PEM_OPEN.lastIndex = 0;
+  for (let open; (open = PEM_OPEN.exec(text)); ) {
+    PEM_CLOSE.lastIndex = PEM_OPEN.lastIndex;
+    const close = PEM_CLOSE.exec(text);
+    if (!close) break;
+    out += `${text.slice(last, open.index)}${open[0]}«redacted private key»${close[0]}`;
+    last = PEM_OPEN.lastIndex = PEM_CLOSE.lastIndex;
+  }
+  return out + text.slice(last);
+}
+
+const maskValue = (match, key, keep, suffixed, value) => {
+  if (keep !== undefined) return match;
+  return `${key}=${mask(suffixed !== undefined ? suffixed : unquote(value))}`;
+};
 
 export function redactSecretsInLine(line) {
-  let out = String(line ?? "");
+  // Extent A first: after a markdown-wrapped secret label, the rest of the
+  // whole tail is one value (accepted for a support bundle).
+  let out = maskSecretLabelsToEnd(String(line ?? ""), mask);
   // The credential bank contains nested JSON and arbitrary opaque keys. A
   // scalar token regex cannot safely delimit JSON; discard that line remainder.
   // Plain scalar values retain the standard mask and surrounding log context.
   out = out.replace(/\b(MURAGE_MODEL_PROVIDER_CONNECTIONS)["']?\s*[:=]\s*["']?\s*[\[{][^\r\n]*/gi,
     (_match, name) => `${name}=«redacted provider credentials»`);
-  const alreadyMasked = (value) => String(value).includes("«redacted");
   for (const name of CREDENTIAL_ENV_NAMES) {
-    out = out.replace(
-      new RegExp(`\\b(${name})\\s*[:=]\\s*${VALUE_PART}`, "gi"),
-      (_match, key, value) => alreadyMasked(value) ? _match : `${key}=${mask(unquote(value))}`,
-    );
+    out = out.replace(new RegExp(`\\b(${name})\\s*[:=]\\s*${VALUE_WITH_MARKERS}`, "gi"), maskValue);
   }
   out = out.replace(AUTHORIZATION, (_match, key, value) => `${key}=${mask(value)}`);
   out = out.replace(BEARER, (_match, lead, token) => `${lead}${mask(token)}`);
-  out = out.replace(PEM_BLOCK, (_match, open, close) => `${open}«redacted private key»${close}`);
-  out = out.replace(KEY_VALUE_PAIR, (_match, key, value) =>
-    alreadyMasked(value) ? _match : `${key}=${mask(unquote(value))}`,
+  out = redactPemBlocks(out);
+  out = out.replace(KEY_VALUE_PAIR, (match, pre, key, keep, suffixed, value) =>
+    keep !== undefined ? match : `${pre}${maskValue(match, key, keep, suffixed, value)}`,
   );
   for (const format of CREDENTIAL_TOKEN_FORMATS) out = out.replace(format, (found) => mask(found));
   return out;

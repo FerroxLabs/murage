@@ -90,8 +90,12 @@
     [NOT_WRITABLE, ["BACKUP_FOLDER_NOT_WRITABLE"]],
     [IN_USE, ["BACKUP_FILE_IN_USE"]],
     [FOLDER_UNUSABLE, ["BACKUP_FOLDER_UNUSABLE"]],
-    ["You still have messages waiting to send or restore. Send or cancel them, then try again.", ["DOWNGRADE_WORK_PENDING"]],
+    // The same code refuses for messages and restore holds, a held or posting bot Post (296e04a04), a teammate's reply still
+    // on its way and an edited conversation still being finished, so the sentence names every way out: act on it, or let it finish.
+    ["Some messages, bot posts or other work are still waiting. Open Murage, send, post or decline what is waiting, let the rest finish, then try again.", ["DOWNGRADE_WORK_PENDING"]],
     ["Some hand-offs are waiting for you. Send again or dismiss them, then try going back to the earlier version.", ["DOWNGRADE_HANDOFFS_HELD"]],
+    ["Murage could not finish clearing deleted conversations from search before going back to the earlier version. Your conversations are kept. Try going back to the earlier version again.", ["SEARCH_INDEX_NOT_SETTLED"]],
+    ["Murage could not finish writing your conversations database before going back to the earlier version. Your conversations are kept. Close anything else using Murage's data, then try going back to the earlier version again.", ["WAL_CHECKPOINT_INCOMPLETE"]],
     [CANCELLED, ["RECOVERY_CAPTURE_CANCELLED", "SNAPSHOT_CANCELLED"]],
     [EXPIRED, ["RECOVERY_SELECTION_EXPIRED"]],
     [CAPTURE_WINDOWS, ["RECOVERY_CAPTURE_UNAVAILABLE", "RECOVERY_CAPTURE_FAILED", "INVALID_RECOVERY_CAPTURE", "INVALID_RECOVERY_CAPTURE_RESULT"]],

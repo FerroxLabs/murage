@@ -322,6 +322,12 @@ const appConfigSchema = z.object({
     quoteReplies: z.enum(["off", "groups", "all"]).optional(),
   }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
+  /** The owner's monthly limit (UX-L2C): a heads-up only, nothing is held or refused by it. `monthlyLimitUsd` null = no limit;
+   * `headsUpLeft` = "<Flux resets_at>@80" or "@100", the heads-up the owner left for that Flux month. Not a secret. */
+  spend: z.object({
+    monthlyLimitUsd: z.number().finite().positive().max(1_000_000).nullable().optional(),
+    headsUpLeft: z.string().max(80).regex(/^[0-9T:.+\-Z]{10,64}@(80|100)$/).nullable().optional(),
+  }).strict().optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
    * upstream (e.g. "fireworks"). Both are non-secret and optional. */
@@ -417,6 +423,7 @@ export interface AppConfig {
     readReceipts?: boolean; quoteReplies?: "off" | "groups" | "all";
   };
   notifications?: NotificationPreferences;
+  spend?: { monthlyLimitUsd?: number | null; headsUpLeft?: string | null };
   engineDiscovery?: "automatic" | "explicit";
   hermesProfilesPinned?: boolean;
   /** Effort for a new bot whose selection names none; absent sends none. */
@@ -801,6 +808,10 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
+  // Muse Code's Meta key. On both strip lists so no other engine or tool
+  // child inherits it; the museCode driver adds it back from its own
+  // instance env only.
+  "META_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "MURAGE_MODEL_PROVIDER_CONNECTIONS",
@@ -875,6 +886,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
   "CLINE_API_KEY",
+  "META_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -948,9 +960,31 @@ export function stripCapturedProviderEnv(env: Record<string, string | undefined>
   }
 }
 
+/** Bumped by every save that touches the Flux section (a key saved, rotated, selected or removed), before and after the
+ * write. The monthly meter's key fingerprint hashes it (server/flux-limits.ts), so no answer read before the save can
+ * match after it, even for the same key. In memory only; a restart starts again with the key in the hash. */
+let fluxKeyEpochValue = 0;
+export const fluxKeyEpoch = (): number => fluxKeyEpochValue;
+const fluxKeySavedListeners = new Set<() => void>();
+/** Called after every save that touches the Flux section, rollbacks and sign-ins included (the server tells every open
+ *  window the new key fingerprint). Returns the unsubscribe. */
+export function onFluxKeySaved(listener: () => void): () => void {
+  fluxKeySavedListeners.add(listener);
+  return () => { fluxKeySavedListeners.delete(listener); };
+}
+
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: ConfigWritePatch): void {
+  if (!patch.flux) return writeConfigPatch(patch);
+  fluxKeyEpochValue++;
+  try { writeConfigPatch(patch); } finally {
+    fluxKeyEpochValue++;
+    for (const listener of fluxKeySavedListeners) { try { listener(); } catch { /* a listener never breaks a save */ } }
+  }
+}
+
+function writeConfigPatch(patch: ConfigWritePatch): void {
   if (process.env.MURAGE_CLOUD_ROLE === "home") assertNoCloudPlaintext(patch);
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
@@ -970,7 +1004,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1224,6 +1258,7 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     cline: { driver: "clineAgent" },
+    muse: { driver: "museCode" },
     pi: { driver: "piAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise

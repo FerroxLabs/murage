@@ -12,8 +12,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { PublicProviderConnection } from "../../shared/provider-connections";
+import { preloadModelMetadata } from "@/lib/model-metadata";
 import { EngineListNote, EngineOptionRows, PickerPriceNote, PickerRowMeta, pickerRowTitle, ModelPickerBusyNotice, ModelPickerNotices, isThreadModelMutationLocked, modelPickerMaxHeight, modelPickerViewportOffset, refreshModelPickerCatalog } from "./ModelPicker";
 import { ENGINE_DISABLED_SUFFIX, PRICE_UNKNOWN, engineMenuFamilies, priceBandNote, type PickerEngine, type PickerModel } from "@/lib/provider-model-picker";
 
@@ -27,6 +28,8 @@ const connection = (id: string, catalog: Partial<PublicProviderConnection["catal
 const fleetLine = "The engine list could not refresh; the engines shown are the last known ones. Switch to another window and back to probe the engines again.";
 const partialLine = "Some model lists could not refresh. Their last saved models are preserved; check Models settings for details.";
 const pickerSource = readFileSync(fileURLToPath(new URL("./ModelPicker.tsx", import.meta.url)), "utf8");
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 describe("model picker viewport placement", () => {
   it.each([
@@ -322,6 +325,20 @@ describe("the price-band note", () => {
     expect(shown).toContain(priceBandNote());
     expect(shown).toMatch(/approximate, from published rates, \w+ \d{4}/);
     expect(renderToStaticMarkup(createElement(PickerPriceNote, { shown: false }))).toBe("");
+  });
+
+  it("ends with a row for your own account that opens Settings, Engines", async () => {
+    const { OwnAccountRow } = await import("./ModelPicker");
+    let opened = 0;
+    const html = renderToStaticMarkup(createElement(OwnAccountRow, { onOpen: () => { opened++; } }));
+    expect(html).toContain("data-own-account-row");
+    expect(html).toContain("Use your own account");
+    expect(opened).toBe(0);
+    const manage = pickerSource.indexOf("Manage models and providers");
+    const row = pickerSource.indexOf("<OwnAccountRow onOpen={openOwnAccount}/>");
+    expect(row).toBeGreaterThan(manage);
+    expect(pickerSource.slice(row).indexOf("</div>}")).toBeLessThan(80);
+    expect(pickerSource).toMatch(/const openOwnAccount=\(\)=>navigate\(\(\)=>\{setOpen\(false\);dispatch\(\{type:'toggleAppSettings',open:true,section:'models',anchor:'engines-heading'\}\);\}\);/);
   });
 
   it("sits outside the scrolling list, so it cannot scroll away", () => {
