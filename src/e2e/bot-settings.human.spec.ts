@@ -45,7 +45,7 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/__bot-settings`);
     const computer = page.locator('aside').filter({ has: page.getByTitle('Bot settings', { exact: true }) });
-    const settings = page.getByRole('dialog', { name: 'Bot settings', exact: true });
+    const settings = page.getByRole('dialog', { name: /^Bot settings/ });
     for (const close of width < 640 ? ['button', 'escape'] : ['button', 'escape', 'backdrop']) {
       await page.getByRole('button', { name: 'Open computer', exact: true }).click();
       await expect(computer).toBeVisible();
@@ -69,7 +69,7 @@ test("Computer gear opens the same bot settings exclusively and allows reopening
 test("Appearance is open at the top of Identity & instructions, and an image avatar opens larger", async ({ page }, testInfo) => {
   await page.goto(`${origin}/__bot-settings`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+  const dialog = page.getByRole("dialog", { name: /^Bot settings/ });
   await expect(dialog).toBeVisible();
   // the panel opens on what the bot is FOR; Appearance is no longer on Overview
   await expect(dialog.getByText("What is this bot for?", { exact: true })).toBeVisible();
@@ -129,7 +129,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   // A phone opens the profile from the header's "..." menu, and focus comes back to that button.
   const opener = await phoneLayout(page) ? headerMoreButton(page) : page.getByRole("button", { name: "Open Settings proof bot's profile", exact: true }).first();
   await openBotProfile(page, "Settings proof bot");
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: /^Bot settings/ }); await expect(dialog).toBeVisible();
   await expect(dialog.getByText("Imported role: Team leader", { exact: true })).toBeVisible();
   await expect(dialog.getByText("Imported team: Studio", { exact: true })).toBeVisible();
   await expect(dialog.getByText("The imported role is not active. Use the role control below to assign a role explicitly.", { exact: true })).toBeVisible();
@@ -189,7 +189,7 @@ for (const skin of ["light", "dark"]) for (const width of [390, 1440]) test(`sec
   await expect(dialog.getByRole("textbox", { name: /^Instructions/ })).toHaveValue("Use supplied evidence.");
   await page.screenshot({ path: testInfo.outputPath(`settings-identity-${width}-${skin}.png`), fullPage: true });
   await dialog.getByRole("button", { name: "Close bot settings", exact: true }).focus(); await page.keyboard.press("Tab");
-  expect(await page.evaluate(() => Boolean(document.activeElement?.closest('dialog[open]')))).toBe(true);
+  expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true);
   await page.keyboard.press("Escape"); await expect(dialog).toHaveCount(0); await expect(opener).toBeFocused();
   expect(authority((await storedBots()).find(bot => bot.id === botId)!)).toEqual(before);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -205,7 +205,7 @@ test("a refused Full access snaps back to the saved level and says why; away fro
     : route.continue());
   await page.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true });
+  const dialog = page.getByRole("dialog", { name: /^Bot settings/ });
   await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
   const full = dialog.getByRole("radio", { name: "Full access", exact: true });
   await full.click();
@@ -228,7 +228,7 @@ test("a refused Full access snaps back to the saved level and says why; away fro
     await phone.route("**/api/desktop-secret", route => route.fulfill({ status: 404, contentType: "application/json", body: "{}" }));
     await phone.goto(`${origin}/__bot-settings?bot=${levelBotId}`);
     await phone.getByRole("button", { name: "Open bot settings", exact: true }).click();
-    const remote = phone.getByRole("dialog", { name: "Bot settings", exact: true });
+    const remote = phone.getByRole("dialog", { name: /^Bot settings/ });
     await remote.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
     await expect(remote.getByRole("radio", { name: "Full access", exact: true })).toBeDisabled();
     await expect(remote.getByRole("radio", { name: "Auto", exact: true })).toBeEnabled();

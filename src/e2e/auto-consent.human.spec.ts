@@ -64,7 +64,7 @@ test("the settings Auto switch on a bot with no chosen computer asks before the 
   });
   await page.goto(origin + "/__auto-consent");
   await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
+  const dialog = page.getByRole("dialog", { name: /^Bot settings/ }); await expect(dialog).toBeVisible();
   await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
   const auto = dialog.getByRole("radio", { name: "Auto", exact: true });
   await expect(auto).not.toBeChecked();
@@ -123,7 +123,7 @@ test.describe("a browser whose UA names another platform (FOLLOW5)", () => {
     expect(await page.evaluate(() => navigator.userAgent)).toBe(foreignUserAgent);
     expect(((await (await fetch(fixture.info.url + "/api/config", { headers: owner })).json()) as { harness?: { platform?: string } }).harness).toEqual({ platform: process.platform });
     await page.getByRole("button", { name: "Open bot settings", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Bot settings", exact: true }); await expect(dialog).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: /^Bot settings/ }); await expect(dialog).toBeVisible();
     await dialog.getByRole("searchbox", { name: "Search settings" }).fill("permissions");
     const auto = dialog.getByRole("radio", { name: "Auto", exact: true });
     await expect(auto).not.toBeChecked();

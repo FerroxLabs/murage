@@ -36,7 +36,7 @@ test.beforeEach(async ({ page }) => { await page.route("**/api/whats-new?*", rou
 const SIZES = [{ width: 1100, height: 800 }, { width: 1100, height: 420 }, { width: 390, height: 844 }, { width: 390, height: 500 }];
 const SURFACES: Array<{ name: string; open: string; root: string }> = [
   { name: "inbox", open: "Open inbox", root: "dialog[open]" },
-  { name: "bot-settings", open: "Open bot", root: "dialog[open]" },
+  { name: "bot-settings", open: "Open bot", root: '[role="dialog"][aria-label^="Bot settings"]' },
   { name: "settings", open: "Open settings", root: '[role="dialog"][aria-modal="true"]' },
   { name: "card", open: "Open card", root: "dialog[open]" },
   { name: "form", open: "Open form", root: "dialog[open]" },
@@ -116,6 +116,23 @@ for (const skin of ["light", "dark"] as const) for (const surface of SURFACES) t
     await page.keyboard.press("Escape");
     await expect(page.locator(surface.root)).toHaveCount(0);
   }
+});
+
+// With the keyboard up (html[data-keyboard=open]) bot settings gives its quick-jump chips and its standing note back to the page, so the profile-setup card keeps its room; both return when the keyboard goes.
+test("bot settings frees the chips and the standing note while the keyboard is up", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${origin}/__sticky`);
+  await page.getByRole("button", { name: "Open bot", exact: true }).click();
+  const root = page.locator('[role="dialog"][aria-label^="Bot settings"]').last();
+  const chips = root.locator("[data-bot-header-chips]"), note = root.locator("[data-box-foot]").first();
+  await expect(chips, "chips show with the keyboard down").toBeVisible();
+  await expect(note, "note shows with the keyboard down").toBeVisible();
+  await keyboardUp(page, 500);
+  await expect(chips, "chips give way with the keyboard up").toBeHidden();
+  await expect(note, "note gives way with the keyboard up").toBeHidden();
+  await page.evaluate(() => { delete document.documentElement.dataset.keyboard; });
+  await expect(chips, "chips return").toBeVisible();
+  await expect(note, "note returns").toBeVisible();
 });
 
 // A Save row inside a long Settings page: no box foot, so it holds to the bottom of the page's own scroller.
