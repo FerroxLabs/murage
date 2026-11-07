@@ -71,7 +71,9 @@ export class BrowserExtensionIntegration {
     /** The provider turn running in a conversation now, from the server's turn state: the approval card (its summary quotes the model) names it. */
     turnOf?: (threadId: string) => string | undefined;
     /** The owner's saved rule for a site on this bot and browser profile (the approved-sites list). */
-    siteSetting?: (botId: string, profileId: string, origin: string) => { rule: "allow" | "ask" | "never"; lowered?: boolean } | undefined };
+    siteSetting?: (botId: string, profileId: string, origin: string) => { rule: "allow" | "ask" | "never"; lowered?: boolean } | undefined;
+    /** EXT-RESTART 4.1: the origins this bot's Settings list holds as Never on this profile. */
+    savedNever?: (botId: string, profileId: string) => string[] };
   constructor(options: BrowserExtensionIntegration["options"]) {
     this.options = options;
     // Continuation records sit inside browser-extension/, which a backup never takes. A restart within 24 hours keeps a card answerable.
@@ -94,6 +96,14 @@ export class BrowserExtensionIntegration {
     try { for (const binding of service.status().bindings) if (binding.botId === botId) this.approvals.cancelBinding(binding.bindingId); } catch { /* the service fence below still runs */ }
     return service.settingsChanged(botId, change).catch(() => {});
   }
+  /** EXT-RESTART 4.2: the owner saved Allow always in Settings (desktop only). Only this bot's running tasks on that profile get the site for
+   * their task; their pending cards die first. Paused, idle, offline and routine bindings get nothing. Never throws. */
+  settingsAllowed(botId: string, change: { origin: string; profileId: string }): Promise<void> {
+    const service = this.service;
+    if (!service) return this.starting ? this.starting.then(() => this.settingsAllowed(botId, change), () => {}) : Promise.resolve();
+    try { for (const binding of service.status().bindings) if (binding.botId === botId && binding.profileId === change.profileId && binding.state === "active" && binding.taskEnded !== true && !this.isRoutineThread(binding.threadId)) this.approvals.cancelBinding(binding.bindingId); } catch { /* the service raise below still runs */ }
+    try { return service.settingsAllowed(botId, change).catch(() => {}); } catch { return Promise.resolve(); }
+  }
   /** True when this conversation is an unattended or routine run. Any throw reads as a routine: it only ever means "ask a human". */
   isRoutineThread(threadId: string): boolean { try { return this.options.routine?.(threadId) === true; } catch { return true; } }
   /** The owner answers a card. A card whose call already returned WAITING (or that survived a restart) needs the saved state loaded
@@ -114,7 +124,9 @@ export class BrowserExtensionIntegration {
   private async open(): Promise<Service> {
     const directory = join(this.options.dataDir, "browser-extension");
     prepareStateDirectory(directory);
-    const broker = await startBrowserExtensionBroker({ stateDir: this.options.socketDir, configAlias: "native-host.json", onMessage: (profileId, message) => this.handleBrokerMessage(profileId, message) });
+    const broker = await startBrowserExtensionBroker({ stateDir: this.options.socketDir, configAlias: "native-host.json", onMessage: (profileId, message) => this.handleBrokerMessage(profileId, message),
+      // SABLE-B 5.7: a reconnected profile gets the server's per-binding hello steps (the fail-closed re-send). Nobody waits on them.
+      onHello: profileId => { this.liveHello(profileId); } });
     try {
       const service = await createBrowserExtensionService({ broker, workspaceId: this.options.workspaceId, stateFile: join(directory, "state.json"), createEngine: this.options.createEngine, collectFacts: this.options.collectFacts, protectedOrigins: this.options.protectedOrigins,
         // The side panel shows the bot's name and the conversation, never the ids.
@@ -122,6 +134,7 @@ export class BrowserExtensionIntegration {
         approvalMode: context => this.options.bot(context.botId)?.browserApproval ?? "task",
         botName: context => this.options.bot(context.botId)?.name ?? "Your bot",
         siteSetting: (context, origin) => this.options.siteSetting?.(context.botId, context.profileId, origin),
+        savedNever: context => this.options.savedNever?.(context.botId, context.profileId) ?? [],
         // Flux by default, the bot's own engine on the owner's switch. Not available (no key, or Flux has not shipped no-retain) means none.
         checker: context => {
           const bot = this.options.bot(context.botId); const check = bot?.browserActionCheck ?? "flux";
@@ -141,6 +154,8 @@ export class BrowserExtensionIntegration {
         onHandoff: info => { const bot = this.options.bot(info.context.botId); if (bot) this.options.yourTurn?.({ ...info, bot }); },
         onHandoffFailed: info => { const bot = this.options.bot(info.context.botId); if (bot) this.options.handoffFailed?.({ ...info, bot }); },
         onStateRecovered: info => { this.options.stateRecovered?.(info); },
+        // EXT-RESTART 3.7: one chat line per binding that was running a task when Chrome or Murage closed.
+        onConnectionLost: info => { const bot = this.options.bot(info.context.botId); this.ownerLine(info.context, `Chrome or Murage closed while ${bot?.name ?? "your bot"} was using the browser, so the task is paused. Check the page, then press Resume in the Murage side panel.`); },
         onContinue: info => { this.continueWhenFree(info, 0); },
         // The side panel already shows the conversation under the name, so the name is the bot's alone.
         botLabel: context => extensionBindName(this.options.bot(context.botId), context.botId),
@@ -161,6 +176,7 @@ export class BrowserExtensionIntegration {
         consumeApproval: (context, query) => this.approvals.consume({ bindingId: context.bindingId, kind: query.kind, binding: query.binding }),
       });
       this.broker = broker; this.service = service;
+      await this.afterOpen(service, broker);
       // A task idle for 30 minutes, or running for 8 hours, ends even if the bot never calls again.
       this.expiry = setInterval(() => { void service.expireTasks().catch(() => {}); this.approvals.sweep(); void this.approvals.drain().catch(() => {}); }, 60_000); this.expiry.unref?.();
       return service;
@@ -168,17 +184,58 @@ export class BrowserExtensionIntegration {
   }
   /** Everything the broker passes up: events, and the one kind of response that arrives with no request waiting (the restarted extension's
    * "the last step may have run"). Public so the broker-to-service path is testable end to end. */
+  private pendingReports: { profileId: string; message: Parameters<Service["handleMessage"]>[1] }[] = [];
+  private overflowed = new Set<string>();
+  /** Profiles whose hello the live hook handled between publishing the service and the end of afterOpen (Astra M2). */
+  private helloSinceOpen: Set<string> | undefined;
+  /** The broker's hello hook: the per-binding hello steps once the service exists (SABLE-B 5.7), noted while afterOpen runs. */
+  private liveHello(profileId: string): void {
+    if (!this.service) return;
+    this.service.onHello(profileId); this.helloSinceOpen?.add(profileId);
+  }
+  private static readonly UNCERTAIN_TEXT = "The browser restarted during the last step, so it may not have finished. Check the page, then resume.";
+  private ownerLine(context: { botId: string }, text: string) {
+    const bot = this.options.bot(context.botId);
+    if (bot) { try { this.options.outcomeUnknown?.({ context: { ...context } as never, bot, text }); } catch { /* telling the owner is best effort */ } }
+  }
+  /** RES-002: the owner line, then the service's pause and mark. */
+  private async reportUncertain(profileId: string, message: Parameters<Service["handleMessage"]>[1]): Promise<void> {
+    if (message.type !== "response") return;
+    this.approvals.cancelBinding(message.bindingId);
+    const entry = this.service?.status().bindings.find(binding => binding.bindingId === message.bindingId);
+    if (entry && entry.profileId === profileId && entry.state !== "stopped") this.ownerLine(entry, BrowserExtensionIntegration.UNCERTAIN_TEXT);
+    await this.service?.handleMessage(profileId, message).catch(() => {});
+  }
+  /** EXT-RESTART 3.6, right after the service is published: queued reports in order, overflowed profiles, restored lines, then the hello
+   * steps for every profile that was already live (its hello came before the service existed). */
+  private async afterOpen(service: Service, broker: { profiles(): { profileId: string }[] }): Promise<void> {
+    // Set in the same tick the service is published (open() calls this right after), before the first await below.
+    this.helloSinceOpen = new Set();
+    for (const { profileId, message } of this.pendingReports.splice(0)) await this.reportUncertain(profileId, message);
+    for (const profileId of [...this.overflowed]) {
+      this.overflowed.delete(profileId);
+      for (const context of await service.markUncertain(profileId).catch(() => [])) this.ownerLine(context, BrowserExtensionIntegration.UNCERTAIN_TEXT);
+    }
+    service.flushRestoreLines();
+    // Astra M2: a profile whose hello arrived live during the replay above already had its hello steps; running them again could pause a
+    // task the owner resumed in between. Only the hellos that came before the service existed are run here.
+    const handled = this.helloSinceOpen; this.helloSinceOpen = undefined;
+    for (const profile of broker.profiles()) { if (handled?.has(profile.profileId)) continue; try { service.onHello(profile.profileId); } catch { /* the next hello repeats it */ } }
+  }
   handleBrokerMessage(profileId: string, message: Parameters<Service["handleMessage"]>[1]): void {
     // The extension is talking to the helper, so setup worked: a leftover registration problem is no longer true.
     this.registrationProblem = ""; this.registrationCode = "";
     if (message.type === "response") {
       // RES-002: an uncertain report is owner news. Cards for the old step die first; the service pauses the binding and keeps the outcome-unknown mark.
       if (message.error?.code === "uncertain") {
-        this.approvals.cancelBinding(message.bindingId);
-        const entry = this.service?.status().bindings.find(binding => binding.bindingId === message.bindingId);
-        const bot = entry && entry.profileId === profileId && entry.state !== "stopped" ? this.options.bot(entry.botId) : undefined;
-        if (entry && bot) { try { this.options.outcomeUnknown?.({ context: { ...entry } as never, bot, text: "The browser restarted during the last step, so it may not have finished. Check the page, then resume." }); } catch { /* telling the owner is best effort */ } }
-        void this.service?.handleMessage(profileId, message).catch(() => {});
+        // EXT-RESTART 3.6: a report that arrives before open() publishes the service is queued (at most 64), never dropped; beyond 64 its
+        // profile is remembered and every binding of it is marked after start.
+        if (!this.service) {
+          if (this.pendingReports.length < 64) this.pendingReports.push({ profileId, message });
+          else if (!this.overflowed.has(profileId)) { this.overflowed.add(profileId); try { console.warn("Murage for Chrome: too many restart reports before start; every task on that browser profile is marked as possibly unfinished."); } catch { /* logging is best effort */ } }
+          return;
+        }
+        void this.reportUncertain(profileId, message);
       }
       return;
     }
@@ -303,6 +360,7 @@ export class BrowserExtensionIntegration {
     if (state !== "active") throw Object.assign(new Error(state === "stopped" ? "Browser control is stopped for this conversation. The owner stopped it, so do not use the browser here unless the owner starts it again."
       : state === "paused" && status?.pausedReason === "handoff" ? "YOUR TURN: this step needs the owner. Murage has asked them. Ask the owner to press Continue in Murage for Chrome so you can carry on. Do not try another way to do the step."
       : state === "paused" && status?.pausedReason === "uncertain" ? "Browser control is paused because the owner's browser restarted during the last step, so that step may not have finished. Ask the owner to check the page and resume it in Murage for Chrome before you carry on."
+      : state === "paused" && status?.pausedReason === "connection_lost" ? "Browser control is paused because Chrome or Murage closed while you were using it. Ask the owner to check the page and press Resume in Murage for Chrome before you carry on."
       : state === "paused" ? BROWSER_EXTENSION_PAUSED_REASON
       : "The owner's browser is not connected right now."), { code: "browser_extension_not_ready" });
     return binding;

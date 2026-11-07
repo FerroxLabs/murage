@@ -384,6 +384,7 @@ server/index-bots-roster.test.ts	extended
 server/index-bots-task-window.test.ts	extended
 server/installed-playbooks.test.ts	extended
 server/intake-turn.test.ts	extended
+server/io-budget-win-counter.test.ts	extended
 server/io-budget.test.ts	extended
 server/launch-no-tty.structure.test.ts	extended
 server/leadership-admission.test.ts	extended
@@ -559,6 +560,7 @@ server/memory/revoke-thread-drain-bench.test.ts	extended
 server/memory/revoke-fold-bench.test.ts	extended
 server/memory/revoke-deletion-cover-bench.test.ts	extended
 server/drivers/acp/fuigo-windows-real.test.ts	extended
+server/drivers/acp/fuigo-policy-live.test.ts	extended
 server/memory/root-set-bench.test.ts	extended
 server/memory/root-set-reclaim-owner.test.ts	extended
 server/memory/schema-assertion-marker.test.ts	extended
@@ -892,6 +894,7 @@ shared/message-limits.test.ts	extended
 shared/model-label.test.ts	extended
 shared/outcome-choices.test.ts	extended
 shared/plain-engine-error.test.ts	extended
+shared/plain-time-zone.test.ts	extended
 shared/provider-error.test.ts	extended
 shared/publish-card.test.ts	extended
 shared/reply-markers.test.ts	extended
@@ -950,6 +953,7 @@ src/components/CallAvatar.test.ts	extended
 src/components/CallCaption.test.ts	extended
 src/components/CallView.test.ts	extended
 src/components/ChatHeader.test.ts	extended
+src/components/ChatMarkdown.render-once.test.ts	extended
 src/components/ChatMarkdown.test.ts	extended
 src/components/ChatView.test.ts	delete (pending review; runs here until then)
 src/components/ClaudeUpdatePrompt.test.ts	extended
@@ -1042,6 +1046,7 @@ src/components/ProviderIcons.test.ts	extended
 src/components/PublishCard.test.ts	extended
 src/components/PushToTalk.test.ts	extended
 src/components/QuestionCard.onetap.test.ts	extended
+src/components/RailBotList.test.ts	extended
 src/components/RemoteConnectionBanner.test.ts	extended
 src/components/RemoteSignOut.test.ts	extended
 src/components/RemoteSurface.test.ts	extended
@@ -1087,6 +1092,7 @@ src/components/TranscriptWidth.test.ts	delete (pending review; runs here until t
 src/components/UnifiedBrowserPanel.test.ts	extended
 src/components/UpdateDot.test.ts	extended
 src/components/UsagePopover.test.ts	extended
+src/components/UsageSection.cache-note.test.ts	extended
 src/components/UseAsReferenceButton.test.ts	extended
 src/components/VirtualRows.test.ts	extended
 src/components/VirtualTranscript.test.ts	extended
@@ -1253,6 +1259,7 @@ src/lib/local-computer.test.ts	extended
 src/lib/local-models-view.test.ts	extended
 src/lib/local-vm-workspace.test.ts	extended
 src/lib/markdown-plain-characters.test.ts	extended
+src/lib/markdown-render-cache.test.ts	extended
 src/lib/mascot.test.ts	extended
 src/lib/media-resolve.harness.test.ts	extended
 src/lib/memory-evolution-controls.test.ts	extended
@@ -1264,6 +1271,7 @@ src/lib/mentions.test.ts	extended
 src/lib/menu-placement.test.ts	extended
 src/lib/model-metadata-failure.test.ts	extended
 src/lib/model-metadata-lazy.test.ts	extended
+src/lib/model-metadata-pending.test.ts	extended
 src/lib/model-metadata.test.ts	extended
 src/lib/native-action-error.test.ts	extended
 src/lib/native-contract.test.ts	extended
@@ -1392,6 +1400,7 @@ src/lib/tts/voicefast.test.ts	extended
 src/lib/turn-tail.test.ts	extended
 src/lib/unloadable-routines.test.ts	extended
 src/lib/usage-card.test.ts	extended
+src/lib/usage-routines.test.ts	extended
 src/lib/usage.test.ts	extended
 src/lib/use-action.test.ts	extended
 src/lib/use-active-skin.test.ts	extended
@@ -1464,9 +1473,19 @@ src/components/WorkspaceFeatureRow.test.ts	extended
 src/lib/bot-calls.test.ts	extended
 src/lib/bot-email.test.ts	extended
 server/drivers/openai-chat-tools-real.test.ts	extended
+src/components/routines/RoutineSheet.test.ts	extended
 src/lib/clock-format.test.ts	extended
 src/components/ChatReadingPolish.test.ts	extended
 src/components/RoomsA11yPolish.test.ts	extended
 src/lib/calendar-card-layout.test.ts	extended
 src/state/new-task-once.test.ts	extended
+server/search-merge-r6-103k-t2.test.ts	extended
+server/search-merge-r6-103k-t5.test.ts	extended
+server/search-merge-r6-t7-wall.test.ts	extended
+src/lib/routine-sheet-model.test.ts	extended
+src/lib/schedule-words.test.ts	extended
+server/routine-sheet-run-now.e2e.test.ts	extended
 src/components/BrowserApprovedSites.activity-label.test.ts	extended
+shared/bot-access-presets.test.ts	extended
+src/components/BotAccessSettings.presets.test.ts	extended
+server/grok-image-repro.test.ts	extended
