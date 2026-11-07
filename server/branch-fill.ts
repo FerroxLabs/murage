@@ -11,6 +11,7 @@ import { lineClassesOfFillRow } from "./line-classes.ts";
 import { keyedCardsOf, mayBeKeyed } from "./keyed-cards.ts";
 import { imagePathsOf } from "./message-image-paths.ts";
 import { SWEEP_SLICE_MS } from "./slice-budget.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 /** What the fills have cost this process: sync prepares are defects (a turn prepares first); `sliceMs` is every slice's time, newest 5,000. */
 export const prepareStats = { syncPrepares: 0, slices: 0, maxSliceMs: 0, rows: 0, sliceMs: [] as number[] };
@@ -33,7 +34,7 @@ export function fillExtras(database: DatabaseSync, threadId: string): FillSink {
       for (const cls of lineClassesOfFillRow(row)) lines.push(key, cls, Number(row.mrow));
       if (row.body !== null) {
         let parsed: { role?: unknown; text?: unknown; attachments?: unknown };
-        try { parsed = JSON.parse(row.body) as typeof parsed; } catch { return; }
+        try { parsed = rowToMessage({ json: row.body }) as typeof parsed; } catch { return; }
         for (const path of imagePathsOf(parsed)) image.run(threadId, path, row.id);
         // the families that live on text rows (a steer, a setup line, a routine run's prompt, a digest line) are filed here;
         // the older option cards were filed by the global pass

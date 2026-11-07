@@ -31,7 +31,7 @@ it("actual direct and room submission callbacks reject changed provider revision
   } finally { removeTempDirSync(cacheDir); }
 });
 
-const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration", "assertCursorNotSealed", "store", "bot", "instance", "instanceId", "resumeCursor", "keptSession"] as const;
+const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration", "assertCursorNotSealed", "store", "bot", "instance", "instanceId", "resumeCursor", "keptSession", "assertBackupStillUsable", "turnSelection", "roomTurnSelection"] as const;
 // The callback bodies are lifted from index.ts as written, TypeScript included (the direct one casts `error as { code?: string }`):
 // esbuild erases the types first, so the real body runs and not a syntax error.
 const BODY_PARAMS = ["providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", ...LIVE_ROOM_NAMES];
@@ -42,7 +42,9 @@ const liveRoom = (stopped: { abandoned?: boolean; cancelled?: boolean; generatio
   [stopped.abandoned === true, () => stopped.cancelled === true, new Map([["room-t", { generation: stopped.generation ?? 1 }]]),
     { activeGeneration: (threadId: string) => threadId === "room-t" && !stopped.revoked ? (stopped.generation ?? 1) : undefined }, "room-t", 1,
     // THREAD-SEAL: both bodies check the seal first; an unsealed thread stands in for it here
-    () => {}, { taskByThread: () => undefined }, { id: "bot" }, { instanceId: "engine" }, "engine", undefined, undefined];
+    () => {}, { taskByThread: () => undefined }, { id: "bot" }, { instanceId: "engine" }, "engine", undefined, undefined,
+    // U22 G20: a turn on the bot's own engine (no backup provenance) passes the dispatch gate
+    () => {}, { selection: { instanceId: "engine", model: "m" } }, undefined];
 
 it("U29 + CANCEL-TREE-104 R1: the room's one pre-submit check refuses a turn stopped after setup or whose generation was revoked, before the engine call and before memory acceptance", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");

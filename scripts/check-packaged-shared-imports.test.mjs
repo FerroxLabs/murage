@@ -6,6 +6,21 @@
 // through signing and notarisation, and only the Linux packaged smoke caught it.
 // This test moves that failure back to where it is cheap.
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { removeTempDirSync } from "../server/testing/cleanup.ts";
+
+// Give each historical omission a complete config of its own. A separate
+// assertion above checks the live config, so unrelated omissions stay visible.
+function withConfig(files, run) {
+  const directory = mkdtempSync(join(tmpdir(), "packaged-imports-"));
+  const config = join(directory, "electron-builder.yml");
+  try {
+    writeFileSync(config, `files:\n${files.map(file => `  - ${file}\n`).join("")}`);
+    return run(config);
+  } finally { removeTempDirSync(directory); }
+}
 
 import {
   builderFilePatterns,
@@ -39,9 +54,11 @@ describe("every shared module the packaged app imports is actually packaged", ()
   it("would have caught the 0.1.57 break", () => {
     // Same comparison, with the real import list against a config that has
     // every line except the one that was forgotten.
-    const packaged = new Set(sharedModulesPackaged().filter((name) => name !== "shared/backup-capture-failure.mjs"));
-    const missing = sharedModulesImportedByElectron().filter((name) => !packaged.has(name));
-    expect(missing).toEqual(["shared/backup-capture-failure.mjs"]);
+    const imported = sharedModulesImportedByElectron();
+    withConfig(imported.filter(name => name !== "shared/backup-capture-failure.mjs"), config => {
+      const packaged = new Set(sharedModulesPackaged(config));
+      expect(imported.filter(name => !packaged.has(name))).toEqual(["shared/backup-capture-failure.mjs"]);
+    });
   });
 });
 
@@ -62,11 +79,13 @@ describe("every module the main process's import graph reaches is packaged", () 
     expect(packagedImportGraph([electronEntries()[0]]).files).toContain("shared/windows-sddl.mjs");
   });
 
-  it("would have caught the windows-sddl.mjs break", () => {
-    const patterns = builderFilePatterns();
-    const without = { include: patterns.include.filter((pattern) => !pattern.test("shared/windows-sddl.mjs")), exclude: patterns.exclude };
-    const reached = unpackagedMainProcessModules().reached;
-    expect(reached.filter((file) => !isPackaged(file, without))).toEqual(["shared/windows-sddl.mjs"]);
+  it.each(["shared/windows-sddl.mjs", "shared/backup-space.mjs"])("would have caught the %s break", omitted => {
+    const reached = packagedImportGraph([electronEntries()[0]]).files;
+    expect(reached).toContain(omitted);
+    withConfig(reached.filter(file => file !== omitted), config => {
+      const patterns = builderFilePatterns(config);
+      expect(reached.filter(file => !isPackaged(file, patterns))).toEqual([omitted]);
+    });
   });
 
   it("reads electron-builder's include and exclude patterns as electron-builder does", () => {

@@ -311,6 +311,14 @@ test.describe("setup is somewhere you go and ask for it", () => {
     // Match the existing normal-viewport bottom-edge allowance for fractional
     // CSS-pixel scroll rounding; root scrolling is independently forbidden.
     expect(box!.y + box!.height).toBeLessThanOrEqual(500 + 1);
+    // The screen's edge is not where the card has to end: the page scrolls in its own part of the window, and what
+    // lies past that part is behind the window's footer or clipped. The whole card shows there, and so does Close.
+    const settings = app.getByRole("dialog", { name: `Bot settings: ${FIXTURES.blank.name}`, exact: true });
+    const view = await settings.locator("[data-settings-scroll]").first().boundingBox();
+    expect(box!.y, "the top of the card is above the page's own view").toBeGreaterThanOrEqual(view!.y - 1);
+    expect(box!.y + box!.height, "the bottom of the card is below the page's own view").toBeLessThanOrEqual(view!.y + view!.height + 1);
+    const close = await settings.getByRole("button", { name: "Close bot settings", exact: true }).boundingBox();
+    expect(close!.y + close!.height, "Close is under the keyboard").toBeLessThanOrEqual(500 + 1);
     expect(await app.locator("#root").evaluate((element) => element.scrollTop)).toBe(0);
   });
   test("waits for the skill inventory before offering fresh setup", async ({ app }) => {

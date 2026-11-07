@@ -202,7 +202,9 @@ export async function writeEncryptedInstallationBackup(dataDir:string,destinatio
   // Windows too (0.1.60 Windows re-test 3 D4): the helper's private folder
   // in the backup folder receives only backup.age; everything else goes to
   // the owner-only .murage-backup-work beside the data folder.
-  const work=createBackupWork(sourceRoot);
+  let work;
+  try{work=createBackupWork(sourceRoot);}
+  catch(error){throw withCaptureStep(error instanceof InstallationSnapshotError?error:capturedFilesystemError(error),"stage");}
   let retain=false,step:CaptureStep="offline-open",failure:unknown;
   let bots:Record<string,string>={};
   const report=safeBackupProgress(options.onProgress);

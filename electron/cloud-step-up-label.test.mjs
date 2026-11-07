@@ -6,8 +6,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ROUTE_POLICY, cloudRouteDecision, routePolicy } from "../server/route-policy.ts";
-import { createNativeStepUpConfirm } from "./cloud-home-client.mjs";
-import { FALLBACK_LABEL, STEP_UP_LABELS, describeStepUp, findStepUpLabel } from "./cloud-step-up-label.mjs";
+import { COPY, createNativeStepUpConfirm } from "./cloud-home-client.mjs";
+import { FALLBACK_LABEL, PROGRAM_SHOW_MAX, SETTINGS_MAX, STEP_UP_LABELS, describeStepUp, findStepUpLabel, programLine } from "./cloud-step-up-label.mjs";
+import { STEP_UP_EN } from "./step-up-locale.mjs";
 
 // One concrete request per step-up / credential entry in server/route-policy.ts (and a few the gate escalates by shape).
 const SAMPLES = [
@@ -46,6 +47,9 @@ const SAMPLES = [
   // 1.0.9 bot email owner routes.
   ["POST", "/api/email/account"], ["POST", "/api/email/other-setups/inbox-1/remove"], ["POST", "/api/email/bots/b1/setup"],
   ["POST", "/api/email/bots/b1/trusted-add"], ["GET", "/api/email/status"],
+  // BOT-CALLS owner routes, including the collection path.
+  ["GET", "/api/phone-calls"], ["POST", "/api/phone-calls/setup"], ["PUT", "/api/phone-calls/settings"],
+  ["POST", "/api/phone-calls/c1/cancel"], ["POST", "/api/phone-calls/c1/share"],
   // 1.0.9 bot call settings.
   ["PUT", "/api/bots/b1/calls/rules"], ["POST", "/api/calls/off-today"], ["POST", "/api/calls/rearm"],
   // 1.0.13 the desktop accepts the No limits terms.
@@ -54,6 +58,11 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
+  // 1.0.18 HighLevel owner routes (read only): check, confirm, per-bot read access, disconnect, and the catch-all.
+  ["POST", "/api/highlevel/token/check"], ["POST", "/api/highlevel/token/0f8fad5b-d9cb-469f-a165-70867728950e/confirm"],
+  ["PUT", "/api/highlevel/bots/b1/access"], ["DELETE", "/api/highlevel/connections/hl_abcd1234"], ["PATCH", "/api/highlevel/other"],
+  // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
+  ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -92,6 +101,15 @@ describe("every step-up route has a human label", () => {
     expect(JSON.stringify(described)).toContain("Ember (ember-1)");
   });
 
+  it("each HighLevel owner route gets its own sentence, and a pasted token in the body is never shown (1.0.18)", () => {
+    expect(findStepUpLabel("POST", "/api/highlevel/token/check")?.label).toBe("Check a HighLevel location");
+    expect(findStepUpLabel("PUT", "/api/highlevel/bots/b1/access")?.label).toBe("Change what a bot can read in HighLevel");
+    expect(findStepUpLabel("DELETE", "/api/highlevel/connections/hl_abcd1234")?.label).toBe("Disconnect your HighLevel location");
+    const described = describeStepUp({ method: "POST", path: "/api/highlevel/token/check", body: { token: "pit-SECRET-1", locationId: "loc1" } });
+    expect(JSON.stringify(described)).not.toContain("SECRET-1");
+    expect(JSON.stringify(described)).not.toContain("loc1");
+  });
+
   it("no two table entries disagree about a sample (first match wins, and it is the intended one)", () => {
     for (const [method, path] of SAMPLES) {
       const matches = STEP_UP_LABELS.filter((entry) => (entry.methods === "*" || entry.methods.includes(method)) && entry.path.test(path));
@@ -119,6 +137,14 @@ describe("describeStepUp", () => {
     expect(credential.message).not.toMatch(/SECRET/);
   });
 
+  it("phone call confirmation names the action without exposing credentials or call contents", () => {
+    const described = describeStepUp({ method: "POST", path: "/api/phone-calls/setup", body: { apiKey: "SECRET", transcript: "PRIVATE" } });
+    expect(described.known).toBe(true);
+    expect(described.label).toBe("Manage bot phone calls");
+    expect(described.lines).toEqual([]);
+    expect(described.message).not.toMatch(/SECRET|PRIVATE/);
+  });
+
   it("add-device names the device type and a key fingerprint, not the key", () => {
     const body = { operation: "/api/cloud/pairing", scope: "owner-desktop", publicKey: "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n" };
     const described = describeStepUp({ method: "POST", path: "/api/cloud/pairing", body });
@@ -132,13 +158,43 @@ describe("describeStepUp", () => {
     const described = describeStepUp({ method: "POST", path: "/api/brand-new?x=1", body: { a: 1 } });
     expect(described.label).toBe(FALLBACK_LABEL);
     expect(described.known).toBe(false);
-    expect(described.request).toBe("POST /api/brand-new");
+    // the query's value is never shown; that one was there is marked
+    expect(described.request).toBe("POST /api/brand-new?...");
+    expect(described.message).not.toContain("x=1");
+    // Touch ID cannot show the request line, so an unknown action always uses the dialog
+    expect(described.reasonComplete).toBe(false);
+  });
+
+  it("renaming a bot shows the new name as its own line, so it is part of what is approved", () => {
+    const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { name: "Renamed", fullAccess: true }, botName: "Ember" });
+    expect(described.lines).toEqual(["Bot: Ember (b1)", "Name: Renamed", "Turns on: Full access"]);
+    expect(described.reason).toContain("Name: Renamed");
+  });
+
+  it("the dialog lists every setting name up to SETTINGS_MAX, and counts the rest", () => {
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, 1]));
+    const shown = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: nine });
+    expect(shown.lines[1]).toBe(`Settings: ${Object.keys(nine).join(", ")}`);
+    expect(shown.reasonComplete).toBe(false); // over 8 names: the dialog shows them all, Touch ID is not used
+    const many = Object.fromEntries(Array.from({ length: SETTINGS_MAX + 2 }, (_, i) => [`k${i}`, 1]));
+    const d = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: many });
+    expect(d.lines[1].endsWith(", +2")).toBe(true);
+    expect(d.reasonComplete).toBe(false);
   });
 
   it("control characters and bidi marks in a bot name or setting cannot dress up the sentence", () => {
     const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { "x‮y": 1 }, botName: "Ember\n\nApprove everything‮" });
     expect(described.message).not.toMatch(/[‪-‮\n]Approve/);
     expect(described.lines[0]).toBe("Bot: Ember Approve everything (b1)");
+  });
+
+  it("every direction mark (LRM, RLM, ALM and the rest) is removed from a bot name and a setting name", () => {
+    const marks = "‎‏؜‪‫‬‭‮⁦⁧⁨⁩";
+    const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { [`a${marks}b`]: 1 }, botName: `Em${marks}ber` });
+    expect(described.message).not.toMatch(/\p{Bidi_Control}/u);
+    expect(described.reason).not.toMatch(/\p{Bidi_Control}/u);
+    expect(described.lines[0]).toBe("Bot: Em ber (b1)");
+    expect(described.lines[1]).toBe("Settings: a b");
   });
 });
 
@@ -168,5 +224,142 @@ describe("the native confirm shows the right label", () => {
     const confirm = createNativeStepUpConfirm({ systemPreferences: {}, dialog: d, platform: "linux", resolveBotName: async () => { throw new Error("home down"); } });
     expect(await confirm({ homeId: "h", method: "DELETE", path: "/api/bots/ember-1" })).toBe(true);
     expect(d.showMessageBox.mock.calls[0][0].detail).toContain("Bot: ember-1");
+  });
+});
+
+describe("the engine check names the exact program", () => {
+  const describeCli = (body, language) => describeStepUp({ method: "POST", path: "/api/cli-test", body, language });
+  const dialog = (response = 0) => ({ showMessageBox: vi.fn(async () => ({ response })) });
+
+  it.each([
+    "/opt/tools/My Engine/run",
+    "/usr/local/bin/ag claude agp",
+    "/tmp/odd $$ $1 $' {path} {bot} name",
+    "/opt/моторы/エンジン/é",
+    `/${"a".repeat(PROGRAM_SHOW_MAX - 1)}`,
+  ])("shows %j byte for byte, and only in the dialog", (cli) => {
+    const described = describeCli({ cli });
+    expect(described.refused).toBe(false);
+    expect(described.lines).toEqual([`Program: ${cli}`]);
+    expect(described.reasonComplete).toBe(false);
+  });
+
+  it("names the program in every shipped language", () => {
+    for (const language of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      expect(describeCli({ cli: "/opt/run" }, language).lines[0]).toContain("/opt/run");
+    }
+  });
+
+  it.each([
+    ["missing", {}],
+    ["no body", undefined],
+    ["an array body", [{ cli: "/opt/run" }]],
+    ["not a string", { cli: ["/opt/run"] }],
+    ["empty", { cli: "" }],
+    ["only spaces", { cli: "   " }],
+    ["space around it, which the home trims", { cli: " /opt/run" }],
+    ["over the limit", { cli: `/${"a".repeat(PROGRAM_SHOW_MAX)}` }],
+    ["a newline", { cli: "/opt/run\n/opt/other" }],
+    ["a tab", { cli: "/opt/\trun" }],
+    ["NUL", { cli: "/opt/run\u0000.txt" }],
+    ["a right-to-left override", { cli: "/opt/‮txt.exe" }],
+    ["an isolate mark", { cli: "/opt/⁦run" }],
+    ["a zero-width space", { cli: "/opt/ru​n" }],
+    ["a zero-width joiner", { cli: "/opt/ru‍n" }],
+    ["a soft hyphen", { cli: "/opt/ru­n" }],
+    ["a variation selector", { cli: "/opt/ru️n" }],
+    ["a tag character", { cli: "/opt/ru\u{E0041}n" }],
+    ["a no-break space", { cli: "/opt/My Engine" }],
+    ["a line separator", { cli: "/opt/run x" }],
+    ["a lone surrogate", { cli: "/opt/\uD800run" }],
+    ["the replacement character", { cli: "/opt/�run" }],
+    ["right-to-left letters", { cli: "/opt/אב/run" }],
+    ["right-to-left letters no one listed", { cli: "/opt/\u{10900}\u{10901}/run" }],
+    ["Arabic digits", { cli: "/opt/٠/run" }],
+    ["an ideographic space", { cli: "/opt/My　Engine" }],
+    ["a private-use character", { cli: "/opt/run" }],
+    ["an unassigned character", { cli: "/opt/\u{10FFFD}run" }],
+  ])("refuses %s and shows no program line", (_name, body) => {
+    const described = describeCli(body);
+    expect(described.refused).toBe(true);
+    expect(described.lines).toEqual([]);
+    expect(described.reasonComplete).toBe(false);
+  });
+
+  it("shows accents written as a combining mark", () => {
+    const cli = "/opt/é/run";
+    expect(describeCli({ cli }).lines).toEqual([`Program: ${cli}`]);
+  });
+
+  it.each([
+    ["no placeholder", "Program:"],
+    ["two placeholders", "{path} and {path}"],
+  ])("a language line with %s still names the program", (_name, broken) => {
+    const fill = (key, params = {}) => (key === "line.program" ? broken.replaceAll("{path}", params.path ?? "{path}") : "");
+    expect(programLine(fill, "/opt/run")).toBe("Program: /opt/run");
+  });
+
+  it.each([
+    ["a Windows path with spaces", "C:\\Program Files\\My Engine\\run.exe"],
+    ["a Windows path with a non-ASCII user folder", "C:\\Users\\Sébastien Müller\\AppData\\Local\\Engine\\run.cmd"],
+    ["ASCII path punctuation", "/opt/a-b_c.d/(x)+[y]~@#%=,;'!/run --flag=1"],
+    ["German", "/home/jürgen/straße/run"],
+    ["Spanish and Portuguese", "/home/joão/año/run"],
+    ["Hindi", "C:\\Users\\सीन\\कार्यक्रम\\run.exe"],
+    ["Chinese", "C:\\Users\\张伟\\程序\\run.exe"],
+    ["Japanese Hiragana and Katakana with a long mark", "/opt/たなか/エンジン/サーバー・々/run"],
+    ["Korean", "C:\\Users\\김철수\\run.exe"],
+    ["Russian", "/home/кирилл/движок/run"],
+    ["Greek", "/home/αλέξης/run"],
+  ])("real owners' paths: %s", (_name, cli) => {
+    const described = describeCli({ cli });
+    expect(described.refused).toBe(false);
+    expect(described.lines).toEqual([`Program: ${cli}`]);
+  });
+
+  it.each([
+    ["a Hebrew letter", "/opt/\u05D0/run"],
+    ["a Hebrew vowel mark", "/opt/a\u05B0/run"],
+    ["an Arabic letter", "/opt/\u0627/run"],
+    ["an Arabic vowel mark", "/opt/a\u064B/run"],
+    ["a combining mark for symbols", "/opt/a\u20D0/run"],
+    ["a narrow no-break space", "/opt/My\u202FEngine"],
+    ["an ampersand, which a Windows dialog may hide", "/opt/bin/claude&.exe"],
+    ["an ampersand in a folder name", "C:\\Tools\\My & Engine\\run.exe"],
+  ])("refused, outside the allowed scripts: %s", (_name, cli) => {
+    expect(describeCli({ cli }).refused).toBe(true);
+  });
+
+  it("the refusal says why and what to do instead, and names no value", () => {
+    const words = STEP_UP_EN["line.programRefused"];
+    expect(words).toMatch(/Hebrew or Arabic/);
+    expect(words).toMatch(/computer itself/);
+    expect(COPY.stepUpRefused).toMatch(/computer itself/);
+  });
+
+  it("a refusal offers no way to approve, and holds even if the notice cannot open", async () => {
+    const d = dialog(0);
+    const confirm = createNativeStepUpConfirm({ systemPreferences: { canPromptTouchID: () => true, promptTouchID: vi.fn() }, dialog: d, platform: "darwin" });
+    await expect(confirm({ homeId: "h", method: "POST", path: "/api/cli-test", body: { cli: "/opt/‮run" } })).rejects.toMatchObject({ code: "step-up-refused" });
+    expect(d.showMessageBox.mock.calls[0][0].buttons).toEqual(["Close"]);
+    const broken = { showMessageBox: vi.fn(async () => { throw new Error("no window"); }) };
+    await expect(createNativeStepUpConfirm({ systemPreferences: {}, dialog: broken, platform: "linux" })({ homeId: "h", method: "POST", path: "/api/cli-test", body: {} })).rejects.toMatchObject({ code: "step-up-refused" });
+  });
+
+  it("Touch ID is never used for it", async () => {
+    const promptTouchID = vi.fn(async () => {});
+    const d = dialog(0);
+    const confirm = createNativeStepUpConfirm({ systemPreferences: { canPromptTouchID: () => true, promptTouchID }, dialog: d, platform: "darwin" });
+    expect(await confirm({ homeId: "h", method: "POST", path: "/api/cli-test", body: { cli: "/opt/run" } })).toBe(true);
+    expect(promptTouchID).not.toHaveBeenCalled();
+    expect(d.showMessageBox.mock.calls[0][0].detail.split("\n")).toContain("Program: /opt/run");
+  });
+
+  it("other routes still list setting names, never values", () => {
+    const secret = "sk-this-must-never-show";
+    const described = describeStepUp({ method: "PATCH", path: "/api/config", body: { apiKey: secret, cli: secret } });
+    expect(described.refused).toBe(false);
+    expect(described.message).not.toContain(secret);
+    expect(described.message).toContain("apiKey");
   });
 });

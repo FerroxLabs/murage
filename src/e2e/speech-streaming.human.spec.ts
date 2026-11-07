@@ -25,6 +25,8 @@ test.beforeAll(async () => {
   server = await createServer({
     configFile: false, root, cacheDir: cache, envFile: false,
     optimizeDeps: { noDiscovery: true },
+    // the speaker imports the string catalog (src/lib/i18n.ts), which reads "@/locales"
+    resolve: { alias: { "@": join(root, "src") } },
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [{
       name: "speech-streaming-fixture",
