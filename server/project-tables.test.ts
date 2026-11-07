@@ -317,6 +317,26 @@ describe("pruneProjectActivity", () => {
   });
 });
 
+describe("pruneProjectActivity keeps the routine of an unfinished request (RESIDUALS-1018-B, Astra r2)", () => {
+  it("keeps an old routine_run row while its request is paused, drops it once the request is done, and projectRoutineUsageRun still finds it", async () => {
+    const { projectRoutineUsageRun } = await import("./project-routines.ts");
+    const db = freshDb();
+    insertSettings(db, "grp");
+    insertRequest(db, "paused", "grp", "waiting_owner");
+    insertRequest(db, "finished", "grp", "done");
+    const old = NOW - 200 * 24 * 60 * 60 * 1000;
+    const detail = JSON.stringify({ runId: "run-1", threadId: "t", routineId: "rt-1", routineName: "Morning" });
+    for (const [id, req] of [["a-paused", "paused"], ["a-done", "finished"]] as const) {
+      db.prepare("INSERT INTO project_activity (id, group_id, at, kind, actor, request_id, detail) VALUES (?,?,?,'routine_run','server',?,?)").run(id, "grp", old, req, detail);
+    }
+    pruneProjectActivity(db, NOW);
+    expect((db.prepare("SELECT id FROM project_activity").all() as Array<{ id: string }>).map(r => r.id)).toEqual(["a-paused"]);
+    expect(projectRoutineUsageRun(db, "grp", "paused")).toMatchObject({ routineId: "rt-1", routineName: "Morning" });
+    expect(projectRoutineUsageRun(db, "grp", "finished")).toBeNull();
+    db.close();
+  });
+});
+
 describe("markProjectDerivedStale (SPEC-P 15.3)", () => {
   it("marks every derived row citing a forgotten message", () => {
     const db = freshDb();

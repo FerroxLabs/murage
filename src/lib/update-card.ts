@@ -152,6 +152,60 @@ export function useUpdatePopup(state: UpdaterState | null): boolean {
   return popupVisible(latch, state?.status);
 }
 
+// The sidebar footer the pop-up sits above. The pop-up can come up before the sidebar exists (a download during the terms
+// screen), so the footer says when it mounts and when it goes, and the pop-up measures again then.
+let anchor: HTMLElement | null = null;
+const anchorListeners = new Set<() => void>();
+
+function setAnchor(next: HTMLElement | null): void {
+  if (anchor === next) return;
+  anchor = next;
+  for (const listener of [...anchorListeners]) listener();
+}
+
+/** The footer's ref: it registers the element while mounted. A footer that is replaced does not clear its successor. */
+export function updatePopupAnchorRef(element: HTMLElement | null): (() => void) | undefined {
+  if (!element) return undefined;
+  setAnchor(element);
+  return () => { if (anchor === element) setAnchor(null); };
+}
+
+export const updatePopupAnchor = (): HTMLElement | null => anchor;
+export function subscribeUpdatePopupAnchor(listener: () => void): () => void {
+  anchorListeners.add(listener);
+  return () => { anchorListeners.delete(listener); };
+}
+
+/** The mounted footer, or null; the pop-up re-renders when it comes or goes. */
+export function useUpdatePopupAnchor(): HTMLElement | null {
+  return useSyncExternalStore(subscribeUpdatePopupAnchor, updatePopupAnchor, () => null);
+}
+
+/** Where focus may go when a keyboard inside the pop-up closes it, best first; the caller focuses each in turn until one takes
+ *  it (a control can turn disabled or hidden while focus was in the pop-up). Inside a modal window everything outside that window
+ *  is inert, so the round button in the sidebar is never a choice there: the control focus came from (when it is still in the
+ *  window), then the window's controls, then the window itself. With no window open: where focus came from, then the round
+ *  button. */
+export function popupFocusReturn<E extends { isConnected: boolean }>(input: {
+  host: E | null;
+  origin: E | null;
+  inHost: (element: E) => boolean;
+  inPopup: (element: E) => boolean;
+  hostControls: () => E[];
+  button: () => E | null;
+}): E[] {
+  const { host, origin, inHost, inPopup } = input;
+  const usable = (element: E | null): element is E => Boolean(element && element.isConnected && !inPopup(element) && (!host || inHost(element)));
+  const order: E[] = [];
+  const add = (element: E | null) => { if (usable(element) && !order.includes(element)) order.push(element); };
+  add(origin);
+  if (host) {
+    for (const control of input.hostControls()) add(control);
+    if (host.isConnected) order.push(host);
+  } else add(input.button());
+  return order;
+}
+
 /** States that give the round button a reason to be on screen: something to do, something under way, or something wrong. */
 export function indicatorShows(status: UpdaterState["status"] | undefined): boolean {
   return status === "available" || status === "downloading" || status === "downloaded" || status === "installing" || status === "deferred" || status === "handed-off" || status === "error";

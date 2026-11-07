@@ -30,10 +30,10 @@ test.afterAll(async()=>{try{await vite?.close();}finally{await fixture?.close();
 test("owner enable and explicit interrupted-job retry remain truthful and accessible in the bounded settings scroller",async({page},info)=>{
   await page.route("**/api/**",route=>route.continue({headers:{...route.request().headers(),...headers}}));await page.goto(`${origin}/__evolution`);
   const controls=page.getByRole("region",{name:"Tested recall improvements"});
-  await expect(controls.getByText("These checks cover recall selection.",{exact:false})).toBeVisible();
+  await expect(controls.getByText("These checks test which memories Murage chooses to use.",{exact:false})).toBeVisible();
   const authorization=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="evolution-authorize");
   await controls.getByRole("button",{name:"Enable tested recall improvements"}).click();const authorizedResponse=await authorization;expect(authorizedResponse.ok()).toBe(true);expect(authorizedResponse.request().postDataJSON()).toEqual({action:"evolution-authorize"});
-  await expect(controls.getByText("Authorized for shipped synthetic examples",{exact:true})).toBeVisible();
+  await expect(controls.getByText("Authorized for artificial examples included with the app",{exact:true})).toBeVisible();
   await expect.poll(async()=>(await api("/api/memory/status")).evolution.job.status,{timeout:20000}).toBe("waiting");
   // Null remains the stored preference; connection resolution is reported separately.
   const initial=await api("/api/memory/status");expect(initial.learning.settings.version).toBe(3);expect(initial.configuration.extractorInstanceId).toBeNull();expect(initial.evolution.job.started).toBe(false);
@@ -84,14 +84,14 @@ test("classification authorization is separate; procedure previews require an ex
     await route.continue({headers:requestHeaders});
   });
   await page.goto(`${origin}/__evolution`);
-  const classification=page.getByRole("region",{name:"Tested classification improvements"});
+  const classification=page.getByRole("region",{name:"Tested improvements to sorting memory statements into categories"});
   const request=page.waitForResponse(response=>response.url().endsWith("/api/memory/action")&&response.request().postDataJSON()?.action==="evolution-authorize-classification");
-  await classification.getByRole("button",{name:"Enable tested classification improvements"}).click();expect((await request).ok()).toBe(true);
-  await expect(classification.getByText("Authorized for shipped synthetic examples",{exact:true})).toBeVisible();
+  await classification.getByRole("button",{name:"Enable tested sorting improvements"}).click();expect((await request).ok()).toBe(true);
+  await expect(classification.getByText("Authorized for artificial examples included with the app",{exact:true})).toBeVisible();
   const procedures=page.getByRole("region",{name:"Procedure evaluation permissions"}),selector=procedures.getByRole("combobox",{name:"Waiting procedure review"});
   await selector.selectOption("unsupported");await expect(procedures.getByRole("button",{name:"Allow this procedure evaluation"})).toBeDisabled();expect(grants).toEqual([]);
   await selector.selectOption("supported");const exact=procedures.getByLabel("Exact procedure instructions");await expect(exact).toContainText("PRIVATE PROCEDURE CANARY");await expect(page.locator("script[data-user-instruction]")).toHaveCount(0);
-  await expect(procedures.getByText("Retained conversation evidence stays local.",{exact:false})).toBeVisible();expect(grants).toEqual([]);await expect(procedures.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(procedures.getByText("Saved conversation excerpts are not sent.",{exact:false})).toBeVisible();expect(grants).toEqual([]);await expect(procedures.locator('input[type="checkbox"]')).toHaveCount(0);
   await procedures.getByRole("button",{name:"Allow this procedure evaluation"}).click();await expect(procedures.getByRole("alert")).toContainText("This preview changed");await expect(procedures.getByRole("button",{name:"Allow this procedure evaluation"})).toBeDisabled();
   await procedures.getByRole("button",{name:"Refresh procedure preview"}).click();await expect(exact).toContainText("Owner revised instruction");await procedures.getByRole("button",{name:"Allow this procedure evaluation"}).click();
   await expect(procedures.getByRole("status")).toContainText("Evaluation allowed");
