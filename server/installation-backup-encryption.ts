@@ -11,6 +11,15 @@ import { redactCauseText } from "../shared/backup-capture-failure.mjs";
 import { safeBackupProgress } from "../shared/backup-progress.mjs";
 import { MAX_BACKUP_DURATION_MS } from "../shared/backup-budget.mjs";
 import { isNoSpaceError } from "./disk-space.ts";
+/** Test-only seam (WIN-BACKUP-RT-1018): a vitest on a Windows runner has no signed
+ * installed app, so it may point the resolver at a fixture resources folder and
+ * replace ONLY the signature check. Honoured only under vitest; null by default,
+ * so production behaviour is unchanged. */
+let windowsRuntimeTestSeam: { host: { resourcesPath: string; currentExecutable: string }; overrides: Parameters<typeof createWindowsBackupResourceResolver>[1] } | null = null;
+export function setWindowsBackupRuntimeTestSeam(seam: typeof windowsRuntimeTestSeam) {
+  if (!process.env.VITEST) throw new Error("the Windows backup test seam is for vitest only");
+  windowsRuntimeTestSeam = seam;
+}
 function fail(code: string): never { throw new InstallationSnapshotError(code); }
 export function assertBackupAgeTool(executable: string, operation: "encrypt"|"decrypt" = "encrypt") {
   if (!backupAgePinForTarget(process.platform, process.arch)) fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
@@ -24,7 +33,10 @@ export function assertBackupAgeTool(executable: string, operation: "encrypt"|"de
  * a renderer resource root, trust flag, or injected verification callback. */
 export async function resolveWindowsBackupRuntime(requestedAge: string) {
   if (process.platform !== "win32" || process.arch !== "x64") fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
-  const verifyHelper = createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
+  const seam = windowsRuntimeTestSeam;
+  const verifyHelper = seam
+    ? createWindowsBackupResourceResolver(seam.host, seam.overrides)
+    : createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
   const { executable } = await verifyHelper();
   const ageExecutable = win32.join(win32.dirname(executable), "age.exe");
   if (typeof requestedAge !== "string" || requestedAge.toLowerCase() !== ageExecutable.toLowerCase()) fail("AGE_TOOL_UNVERIFIED");

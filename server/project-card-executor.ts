@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { sqlRowRestoreHeld } from "./restore-fence.ts";
 import { createGuardedCompletion } from "./guarded-completion.ts";
 import { scopedTx, txScopeBegin, txScopeEnd } from "./tx-scope.ts";
@@ -177,7 +178,7 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
     let result!: ReturnType<typeof finishRequestTurn>;
     owedReady(db);
     scopedTx(() => {
-    db.exec("SAVEPOINT card_terminal");
+    beginWrite(db, "card_terminal");
     try {
       // A review run that ends with no verdict is no longer taken as
       // "changes" (lane review): its completion records "No verdict given"
@@ -198,9 +199,9 @@ export function createProjectCardExecutor(deps: CardExecutorDeps) {
       if (deliver) db.prepare("INSERT OR IGNORE INTO project_card_delivery_owed(request_id,payload,created_at) VALUES(?,?,?)").run(id, outcome.owedPayload ?? null, deps.now());
       else if (owedRow(db, id) && !sqlRowRestoreHeld(db, "card_delivery", id)) deliver = true;
       deps.changed(request.groupId);
-      db.exec("RELEASE card_terminal");
+      endWrite(db, "card_terminal");
     } catch (error) {
-      db.exec("ROLLBACK TO card_terminal; RELEASE card_terminal");
+      undoWrite(db, "card_terminal");
       // The claim stays held: the request is still running (the rollback undid its terminal state) and the caller retries
       // this finish, so admission is only released by a finish that committed (or by shutdown).
       throw error;

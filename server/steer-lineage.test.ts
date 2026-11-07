@@ -5,6 +5,7 @@
 // roots must still be on the running turn and its engine session, so the next
 // write's session check resets the session. Through the real Fuigo driver and
 // the fake ACP CLI, whose interjection echo (the acknowledgement) is delayed.
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -56,6 +57,7 @@ function access() {
  * resting on thread "older"'s message m1: a permitted memory-derived reply. */
 async function memoryDerivedReply() {
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const turn = access();
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
@@ -224,6 +226,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
 // steer sent before then waits in the driver's pre-init queue. It logs every
 // user line it receives.
 const SLOW_INIT_CLAUDE = `#!/usr/bin/env node
+if (process.argv.includes("--version")) { console.log("2.1.292 (Claude Code)"); process.exit(0); }
 const fs = require("node:fs");
 const out = (frame) => process.stdout.write(JSON.stringify(frame) + "\\n");
 const log = (line) => fs.appendFileSync(process.env.STEER_LINEAGE_LOG, line + "\\n");

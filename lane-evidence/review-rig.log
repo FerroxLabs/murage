@@ -1,0 +1,41 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+stdout | server/memory/writetime-integration.test.ts > the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, only when the owner is idle > hands the space back: each object in its own step, then a VACUUM; the file is at most 1.25 x its live bytes; the validator accepts it
+WRITETIME-RECLAIM fixture 123.3 MB; longest write-lock hold per step kind clear:memory_root_set_members 377 ms, clear:memory_root_sets 1 ms, drop-index:memory_root_set_members_root 1 ms, drop-table:memory_root_set_members 5 ms, drop-table:memory_root_set_parents 2 ms, drop-table:memory_root_sets 2 ms, drop-table:memory_output_roots 1 ms, drop-table:memory_session_roots 1 ms, drop-table:memory_root_set_compaction 1 ms; all steps 5873 ms; vacuum (one statement, the file was not incremental) 34 ms
+
+ ❯ server/memory/writetime-integration.test.ts (18 tests | 1 failed) 144159ms
+     × hands the space back: each object in its own step, then a VACUUM; the file is at most 1.25 x its live bytes; the validator accepts it 7571ms
+stdout | server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > while the worker projects it, no concurrent main-thread write waits more than 50 ms
+[r6-writes] 344 main-thread writes during the projection: worst 71.6 ms
+
+ ❯ server/inbox.hotpath-r6.test.ts (5 tests | 1 failed) 57031ms
+     × while the worker projects it, no concurrent main-thread write waits more than 50 ms 2609ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > while the worker projects it, no concurrent main-thread write waits more than 50 ms
+AssertionError: expected 71.55145099999936 to be less than or equal to 50
+ ❯ server/inbox.hotpath-r6.test.ts:146:19
+    144|     const worst = Math.max(...waits);
+    145|     console.log(`[r6-writes] ${waits.length} main-thread writes during…
+    146|     expect(worst).toBeLessThanOrEqual(50);
+       |                   ^
+    147|   }, 180_000);
+    148|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/memory/writetime-integration.test.ts > the root-set reclaim (1.0.2): drop, then one VACUUM to incremental, only when the owner is idle > hands the space back: each object in its own step, then a VACUUM; the file is at most 1.25 x its live bytes; the validator accepts it
+AssertionError: expected 377.4872710000018 to be less than 250
+ ❯ server/memory/writetime-integration.test.ts:254:53
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 9 passed (11)
+      Tests  2 failed | 89 passed (91)
+   Start at  15:07:03
+   Duration  382.53s (transform 6.05s, setup 11.39s, import 799ms, tests 369.16s, environment 1ms)
+

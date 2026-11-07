@@ -1,3 +1,4 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // The voice host: the fast half of a call.
 //
 // A call used to wait for the bot's engine (Claude Code, Codex, Fuigo) to
@@ -28,7 +29,7 @@
 // its OpenAI-compatible endpoint. Runs on the HARNESS, never the renderer:
 // keys must not leave the server.
 import { fluxCallHeadersVia } from "../flux-memory-headers.ts";
-import { isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
+import { isBudgetReached, markBudgetReached, isVoiceBudgetFrame, isUnavailable, markUnavailable, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "./voice-routes.ts";
 import { firstClauseBreak, firstClauseEnd, splitFirstClause, splitLong, splitSentences } from "../tts/speech-text.ts";
 import { sameRequest } from "./hand-downs.ts";
 
@@ -140,7 +141,7 @@ export type VoiceHostEvent =
   | { type: "done" }
   | { type: "error"; reason: VoiceHostFailure; message: string };
 
-export type VoiceHostFailure = "key" | "auth" | "premium" | "unavailable" | "rate_limit" | "timeout" | "upstream";
+export type VoiceHostFailure = "budget" | "key" | "auth" | "premium" | "unavailable" | "rate_limit" | "timeout" | "upstream";
 
 /** Each thread message in the host's snapshot (voice-host-route.ts keeps
  *  the newest RECENT_MESSAGES of them). */
@@ -298,6 +299,8 @@ export class SentenceSplitter {
   clausePiece: string | null = null;
   /** The plain text of a voiced clause whose sentence is not complete yet. */
   clauseHead: string | null = null;
+  /** The clause as said, when that differs from how it was heard (its opening filler dropped). */
+  clauseHeadSaid: string | null = null;
   /** The clause was filtered, so the rest of its sentence is dropped too. */
   dropRest = false;
   /** Set by sentencesFrom just before it yields: that piece was a clause. */
@@ -384,8 +387,8 @@ const FILLER_OPENER = /^\s*(?:(?:h+m{2,}|m{2,})(?:[.,!?:;…–—-]+\s*|\s+|$)|
  *  filler sound at the very start of a reply; the words after it are kept. */
 export function dropLeadingFiller(sentence: string): string {
   const rest = sentence.replace(FILLER_OPENER, "").trim();
-  // "Hmm, iOS does" keeps iOS: only a plain lower-case word is capitalised
-  return rest === sentence.trim() || !/^[a-z](?![A-Z])/.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
+  // "Hmm, iOS does" keeps iOS and "Hmm, macOS does" keeps macOS: only a first word written all in lower case is capitalised
+  return rest === sentence.trim() || !/^[a-z]+(?![\p{L}\p{N}])/u.test(rest) ? rest : rest.charAt(0).toUpperCase() + rest.slice(1);
 }
 
 type StreamPart =
@@ -398,52 +401,66 @@ type StreamPart =
  *  and what Flux actually charged. */
 interface LookupOutcome { done: boolean; citations?: string[]; searches?: number; costUsd?: string }
 
+const isBudgetReachedNow = (endpoint: VoiceEndpoint) => isBudgetReached(endpoint);
+const BUDGET_EVENT = { type: "error", reason: "budget", message: "This key has reached its budget." } as const;
+class VoiceBudgetReached extends Error {}
+function rememberBudget(endpoint: VoiceEndpoint): never {
+  markBudgetReached(endpoint);
+  throw new VoiceBudgetReached();
+}
+
 /** Read an OpenAI-shaped streaming completion into text and tool pieces.
  *  `lookup` collects a Flux lookup's completion frame. */
-async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: LookupOutcome): AsyncGenerator<StreamPart> {
+async function* readCompletion(body: ReadableStream<Uint8Array>, lookup?: LookupOutcome, endpoint?: VoiceEndpoint): AsyncGenerator<StreamPart> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    buffer += decoder.decode(value, { stream: true });
-    let newline: number;
-    while ((newline = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (!line.startsWith("data:")) continue;
-      const data = line.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      let frame: any;
-      try {
-        frame = JSON.parse(data);
-      } catch {
-        continue;
-      }
-      if (frame?.object === "flux.voice.lookup.error") throw new Error(`lookup failed: ${frame?.error?.code ?? "unknown"}`);
-      if (frame?.object === "flux.voice.lookup.done") {
-        if (lookup) {
-          lookup.done = true;
-          if (Array.isArray(frame.citations)) lookup.citations = frame.citations.filter((c: unknown): c is string => typeof c === "string");
-          if (Number.isInteger(frame.searches)) lookup.searches = frame.searches;
-          if (typeof frame.cost_usd === "string") lookup.costUsd = frame.cost_usd;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        let frame: any;
+        try {
+          frame = JSON.parse(data);
+        } catch {
+          continue;
         }
-        continue;
-      }
-      const delta = frame?.choices?.[0]?.delta;
-      if (typeof delta?.content === "string" && delta.content) yield { kind: "text", text: delta.content };
-      const finish = frame?.choices?.[0]?.finish_reason;
-      if (typeof finish === "string" && finish) yield { kind: "finish", reason: finish };
-      for (const part of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
-        yield {
-          kind: "tool",
-          index: typeof part?.index === "number" ? part.index : 0,
-          name: typeof part?.function?.name === "string" ? part.function.name : undefined,
-          args: typeof part?.function?.arguments === "string" ? part.function.arguments : undefined,
-        };
+        if (endpoint?.via === "flux" && isVoiceBudgetFrame(frame)) rememberBudget(endpoint);
+        if (frame?.object === "flux.voice.lookup.error") throw new Error(`lookup failed: ${frame?.error?.code ?? "unknown"}`);
+        if (frame?.object === "flux.voice.lookup.done") {
+          if (lookup) {
+            lookup.done = true;
+            if (Array.isArray(frame.citations)) lookup.citations = frame.citations.filter((c: unknown): c is string => typeof c === "string");
+            if (Number.isInteger(frame.searches)) lookup.searches = frame.searches;
+            if (typeof frame.cost_usd === "string") lookup.costUsd = frame.cost_usd;
+          }
+          continue;
+        }
+        const delta = frame?.choices?.[0]?.delta;
+        if (typeof delta?.content === "string" && delta.content) yield { kind: "text", text: delta.content };
+        const finish = frame?.choices?.[0]?.finish_reason;
+        if (typeof finish === "string" && finish) yield { kind: "finish", reason: finish };
+        for (const part of Array.isArray(delta?.tool_calls) ? delta.tool_calls : []) {
+          yield {
+            kind: "tool",
+            index: typeof part?.index === "number" ? part.index : 0,
+            name: typeof part?.function?.name === "string" ? part.function.name : undefined,
+            args: typeof part?.function?.arguments === "string" ? part.function.arguments : undefined,
+          };
+        }
       }
     }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 
@@ -501,10 +518,13 @@ function* sentencesFrom(splitter: SentenceSplitter, text: string | null, wholeOn
     splitter.said.add(plain);
     splitter.said.add(plainHeard);
     splitter.openerChecked = true;
-    if (clause) splitter.clauseHead = plainHeard;
+    if (clause) { splitter.clauseHead = plainHeard; splitter.clauseHeadSaid = plain; }
     else if (splitter.clauseHead) {
+      // both forms of the whole sentence: a doubled reply without the filler is the said form, and is still said once
       splitter.said.add(`${splitter.clauseHead} ${plain}`);
+      if (splitter.clauseHeadSaid) splitter.said.add(`${splitter.clauseHeadSaid} ${plain}`);
       splitter.clauseHead = null;
+      splitter.clauseHeadSaid = null;
     }
     splitter.lastWasClause = clause;
     if (sentence.length <= SPOKEN_MAX_CHARS) yield sentence;
@@ -560,6 +580,7 @@ function failure(status: number, provider = "Flux", said = ""): { reason: VoiceH
   // the key is fine; this feature is not switched on for it
   if (status === 403 && notPermitted(said)) return { reason: "unavailable", message: `Fast replies on calls are not switched on for this ${provider} key yet.` };
   if (status === 401 || status === 403) return { reason: "auth", message: `${provider} rejected the saved key.` };
+  if (provider === "Flux" && status === 402 && classifyFluxRefusal(status, said) === "budget") return BUDGET_EVENT;
   if (status === 402) return { reason: "premium", message: `Fast replies on calls need ${plan}.` };
   if (status === 404) return { reason: "unavailable", message: `Fast replies on calls are not available for this ${provider} account.` };
   if (status === 429) return { reason: "rate_limit", message: `${provider} is rate-limiting this account.` };
@@ -591,7 +612,7 @@ async function logRefusal(res: Response, provider: string): Promise<string> {
   }
   message = String(message).replace(/\s+/g, " ").slice(0, 300);
   if (res.status === 400) console.warn(`[voice-host] ${provider} refused the request: ${message}`);
-  return message;
+  return said;
 }
 
 function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, number | string> {
@@ -604,11 +625,11 @@ function sampling(endpoint: VoiceEndpoint, maxTokens: number): Record<string, nu
 /**
  * Open the connection and wake the model when a call starts, so the owner's
  * first question does not pay the cold start (measured 2.3-5 s cold against
- * about 1.3 s warm). One token, fire and forget; a failure here only means
- * the first reply is slower.
+ * about 1.3 s warm). One token, fire and forget. Budget refusals are
+ * remembered so the first real turn does not ask the same exhausted key.
  */
 export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeof fetch = fetch): Promise<void> {
-  if (!host) return;
+  if (!host || isBudgetReached(host)) return;
   await fetchImpl(`${host.baseUrl}/chat/completions`, {
     method: "POST",
     headers: { authorization: `Bearer ${host.key}`, "content-type": "application/json", ...fluxCallHeadersVia("voice-host", host.via) },
@@ -619,7 +640,11 @@ export async function warmVoiceHost(host: VoiceEndpoint | null, fetchImpl: typeo
     }),
     signal: AbortSignal.timeout(FIRST_TOKEN_TIMEOUT_MS),
   })
-    .then((res) => res.body?.cancel())
+    .then(async (res) => {
+      if (host.via === "flux" && res.status === 402) {
+        if (classifyFluxRefusal(res.status, await res.text()) === "budget") markBudgetReached(host);
+      } else await res.body?.cancel();
+    })
     .catch(() => undefined);
 }
 
@@ -724,6 +749,7 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<any>
  * provider's own web search tool.
  */
 async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof fetch, signal: AbortSignal): AsyncGenerator<string> {
+  if (isBudgetReached(endpoint)) throw new VoiceBudgetReached();
   const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
     call(`${endpoint.baseUrl}${path}`, {
       method: "POST",
@@ -740,6 +766,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
       const said = await logRefusal(res, providerName(endpoint));
       // a valid key this account may not use lookups with: the next source
       if (res.status === 403 && notPermitted(said)) throw new VoiceUnavailable("Flux lookups aren't switched on for this key yet.");
+      if (endpoint.via === "flux" && res.status === 402 && classifyFluxRefusal(res.status, said) === "budget") rememberBudget(endpoint);
       throw new Error(`lookup ${res.status}`);
     }
     // Flux's contract (2026-09-23): HTTP 200 and [DONE] alone are not
@@ -747,7 +774,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     // come before or after text, and a stream that just ends is a dropped
     // connection. What was said before either is kept by the caller.
     const outcome: LookupOutcome = { done: false };
-    for await (const part of readCompletion(res.body, outcome)) if (part.kind === "text") yield part.text;
+    for await (const part of readCompletion(res.body, outcome, endpoint)) if (part.kind === "text") yield part.text;
     if (!outcome.done) throw new Error("lookup ended without finishing");
     if (outcome.costUsd) console.log(`[voice] lookup via Flux: ${outcome.searches ?? "?"} searches, $${outcome.costUsd}, ${outcome.citations?.length ?? 0} sources`);
     return;
@@ -772,6 +799,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     );
     if (!res.ok || !res.body) {
       await logRefusal(res, providerName(endpoint));
+
       throw new Error(`lookup ${res.status}`);
     }
     yield* responsesText(res.body);
@@ -792,6 +820,7 @@ async function* lookupText(query: string, endpoint: VoiceEndpoint, call: typeof 
     );
     if (!res.ok || !res.body) {
       await logRefusal(res, providerName(endpoint));
+
       throw new Error(`lookup ${res.status}`);
     }
     yield* anthropicText(res.body);
@@ -870,6 +899,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
   // a source that said lookups are not switched on is skipped for a while
   const lookupSources = [options.lookup ?? []].flat().filter((source) => !isUnavailable(source));
   const lookupSource = lookupSources.length > 0;
@@ -906,6 +936,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
     let parts: AsyncGenerator<StreamPart> | null = null;
     let first: IteratorResult<StreamPart> | null = null;
     for (let attempt = 1; ; attempt += 1) {
+      if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
       timing.attempts = attempt;
       if (attempt === 1) clock.start = Date.now();
       controller = new AbortController();
@@ -936,13 +967,16 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
       if (!res.ok || !res.body) {
         clearTimeout(firstToken);
         const said = await logRefusal(res, providerName(host));
-        yield { type: "error", ...failure(res.status, providerName(host), said) };
+        const refused = failure(res.status, providerName(host), said);
+        if (refused.reason === "budget") markBudgetReached(host);
+        yield { type: "error", ...refused };
         return;
       }
-      parts = readCompletion(res.body);
+      parts = readCompletion(res.body, undefined, host);
       try {
         first = await parts.next();
-      } catch {
+      } catch (error) {
+        if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
         clearTimeout(firstToken);
         if (options.signal?.aborted) return;
         if (stalled && attempt === 1) {
@@ -989,7 +1023,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
           calls.set(part.index, entry);
         }
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
       if (options.signal?.aborted) return;
       if (idled) {
         // hung mid-reply: what was said stands, ended on a whole sentence. A
@@ -1042,6 +1077,7 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
 
     let handed = false;
     for (const { name, args } of calls.values()) {
+      if (name === "quick_lookup" && [options.lookup ?? []].flat().some(isBudgetReachedNow)) { yield BUDGET_EVENT; return; }
       // Something to be done is work, even when doing it starts with a
       // search: grok-4.20 looked up "book me a table" instead of handing it
       // down, whatever the tool text said.
@@ -1097,7 +1133,8 @@ async function* hostTurn(options: VoiceHostOptions, timing: HostTiming, clock: {
             answered = true;
             yield { type: "sentence", text: sentence };
           }
-        } catch {
+        } catch (error) {
+          if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
           // judged below: an answer already begun is kept, none is handed down.
           // Whole sentences that arrived before the failure are still said;
           // a half-finished one is not.
@@ -1214,6 +1251,7 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
     yield { type: "error", reason: "key", message: "Fast replies on calls need a Flux key or a model connection." };
     return;
   }
+  if (isBudgetReached(host)) { yield BUDGET_EVENT; return; }
   const answer = clip(options.answer, BRIEF_MAX_CHARS);
   const alreadyInResults = Object.values(options.results ?? {}).some((result) => result.includes(answer.slice(0, 200)));
   const prompt = [
@@ -1256,18 +1294,21 @@ export async function* runVoiceBrief(options: VoiceBriefOptions): AsyncGenerator
     }
     if (!res.ok || !res.body) {
       const said = await logRefusal(res, providerName(host));
-      yield { type: "error", ...failure(res.status, providerName(host), said) };
+      const refused = failure(res.status, providerName(host), said);
+      if (refused.reason === "budget") markBudgetReached(host);
+      yield { type: "error", ...refused };
       return;
     }
     const splitter = new SentenceSplitter({ rule: "short" });
     let capped = false;
     try {
-      for await (const part of readCompletion(res.body)) {
+      for await (const part of readCompletion(res.body, undefined, host)) {
         clearTimeout(firstToken);
         if (part.kind === "text") for (const sentence of sentencesFrom(splitter, part.text)) yield { type: "sentence", text: sentence };
         else if (part.kind === "finish") capped = part.reason === "length";
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof VoiceBudgetReached) { yield BUDGET_EVENT; return; }
       if (!options.signal?.aborted) yield { type: "error", reason: "upstream", message: "The brief was cut off." };
       return;
     }

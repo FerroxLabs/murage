@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { interruptSharedThread } from "./shared-work.ts";
 import { validateSharingStructure } from "./sharing-restore.ts";
 // Copyright 2026 Ferrox Labs
@@ -30,7 +31,7 @@ function scope(db:DatabaseSync,key:string){return db.prepare("SELECT id FROM mem
 function moveMemory(db:DatabaseSync,from:string,to:string){
  if(!scope(db,from))return;
  if(scope(db,to))throw new Error(TEAM_RENAME_STALLED);
- db.exec("SAVEPOINT team_memory_move");try{db.prepare("UPDATE memory_scopes SET owner_key=?,revision=revision+1 WHERE kind='team' AND owner_key=?").run(to,from);db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");revokeAllDisclosures(db,"team-move");db.exec("RELEASE team_memory_move");}catch(e){db.exec("ROLLBACK TO team_memory_move; RELEASE team_memory_move");throw e;}
+ beginWrite(db, "team_memory_move");try{db.prepare("UPDATE memory_scopes SET owner_key=?,revision=revision+1 WHERE kind='team' AND owner_key=?").run(to,from);db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");revokeAllDisclosures(db,"team-move");endWrite(db, "team_memory_move");}catch(e){undoWrite(db, "team_memory_move");throw e;}
 }
 function referenced(files:JournalFiles,db:DatabaseSync,id:string){return files.bots.some(b=>b.sharedWith?.teams.some(t=>t.id===id)||b.tasks?.some(t=>t.sharedWork?.teamId===id))||files.groups.some(g=>g.dmAudience?.kind==="team"&&g.dmAudience.teamId===id||Object.values(g.partitionedFor??{}).some(m=>m.kind==="team"&&m.teamId===id))||!!db.prepare("SELECT 1 FROM room_requests WHERE json_extract(execution_audience,'$.team')=? AND state IN ('queued','running','waiting_owner','waiting_bot')").get(id);}
 function renamePrecheck(files:JournalFiles,db:DatabaseSync,to:string):void {
@@ -52,12 +53,12 @@ export function beginTeamJournal(store:Store,from:string,to:string|undefined,cho
  if(legacyLabel(files,db,from)){legacyTeamChange(store,files,db,from,to,choice);return null;}
  const id=teamIdFor(from),now=Date.now(),records={bots:files.bots.filter(b=>sectionKey(b.section)===from).map(b=>b.id),groups:files.groups.filter(g=>sectionKey(g.section)===from).map(g=>g.id)};
  const label=choice?`deleted-team:${new Date(now).toISOString()}:${randomUUID()}:${from}`:to!;
- db.exec("SAVEPOINT open_team_journal");
+ beginWrite(db, "open_team_journal");
  try {
   db.prepare("UPDATE team_identities SET op=?,op_label=?,op_choice=?,op_phase=1,op_records=?,op_since=?,updated_at=? WHERE team_id=?").run(op,label,choice??null,JSON.stringify(records),now,now,id);
   if(choice)for(const row of db.prepare("SELECT id FROM room_requests WHERE json_extract(execution_audience,'$.team')=? AND state IN ('queued','running','waiting_owner','waiting_bot')").all(id))completeRequest(db,String(row.id),{state:"cancelled",now,outcomeNote:"team-deleted"});
-  db.exec("RELEASE open_team_journal");
- }catch(error){db.exec("ROLLBACK TO open_team_journal; RELEASE open_team_journal");throw error;}
+  endWrite(db, "open_team_journal");
+ }catch(error){undoWrite(db, "open_team_journal");throw error;}
  if(choice)for(const bot of files.bots)for(const task of bot.tasks??[])if(task.sharedWork?.teamId===id||records.bots.includes(bot.id)&&task.sharedWork)interruptSharedThread(task.threadId);
  check(`${op}:1`);runJournal(files,db,id,false);store.markPartitions();return id;
 }

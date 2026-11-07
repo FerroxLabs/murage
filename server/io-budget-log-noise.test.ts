@@ -70,7 +70,7 @@ describe("io-budget diagnostic rate", () => {
     at = 60_000;
     expect(budget.tick()?.tripped).toBe(true);
     expect(lines).toHaveLength(1);
-    expect(lines[0]).toContain("…; suppressed=0");
+    expect(lines[0]).toMatch(/…; osBytes=\d+; applicationBytes=\d+; suppressed=0$/);
     // Three capped categories per minute remain comfortably below the 10 MB/min noise ceiling.
     expect(Buffer.byteLength(lines[0]!)).toBeLessThan(20_000);
   });

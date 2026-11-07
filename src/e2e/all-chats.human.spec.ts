@@ -83,6 +83,47 @@ for (const width of [1440, 390]) for (const skin of ["light", "dark"]) {
   });
 }
 
+// A press that leaves the search box but never gets its pointerup (the window
+// loses focus mid-press) must not keep the phone tabs away for good.
+async function pressOutOfSearchThenBlur(page: Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await open(page);
+  const tabs = page.locator("[data-phone-tabs]");
+  // All chats focuses its search box on load, which hides the tabs by design. Take the focus off first so the starting screen shows them.
+  await page.evaluate(() => { (document.activeElement as HTMLElement | null)?.blur(); });
+  await expect(tabs).toBeVisible();
+  await page.getByRole("textbox", { name: "Search all chats", exact: true }).click();
+  await expect(tabs).toHaveCount(0);
+  const older = page.getByRole("button", { name: /^Show older chats/ });
+  await older.scrollIntoViewIfNeeded();
+  const box = (await older.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(older).toBeFocused();
+  await page.waitForTimeout(50);
+  await expect(tabs).toHaveCount(0);
+  await page.evaluate(() => { window.dispatchEvent(new Event("blur")); });
+  return tabs;
+}
+
+test("at 390px a press out of the search box cut off by a window blur brings the tabs back", async ({ page }) => {
+  const tabs = await pressOutOfSearchThenBlur(page);
+  await expect(tabs).toBeVisible({ timeout: 1000 });
+  await page.mouse.up();
+});
+
+test("at 390px after a press cut off by a window blur, keyboard Tab reaches the tabs", async ({ page }) => {
+  await pressOutOfSearchThenBlur(page);
+  await page.evaluate(() => { window.dispatchEvent(new Event("focus")); });
+  let reached = false;
+  for (let i = 0; i < 60 && !reached; i++) {
+    await page.keyboard.press("Tab");
+    reached = await page.evaluate(() => !!document.activeElement?.closest("[data-phone-tab]"));
+  }
+  expect(reached).toBe(true);
+  await page.mouse.up();
+});
+
 for (const width of [1440, 390]) {
   test(`Back and the close X both leave All chats at ${width}px, inside the screen`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });

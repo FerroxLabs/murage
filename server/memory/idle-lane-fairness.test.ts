@@ -3,6 +3,7 @@
 // them (one every ten seconds, each waiting up to 120 s) kept the idle learning lanes from ever asking the gate.
 // Also: a forget does not wait for the owner (it is a synchronous write, not an engine call) and its derived
 // cleanup is not gated either, so it completes under sustained owner pressure.
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -59,6 +60,7 @@ it("a forget completes, and its derived cleanup runs, while the owner is in a tu
   const registry = new InternalCapabilities(); registry.begin("bot", "chat", "g");
   const turn = memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "bot", threadId: "chat", generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);

@@ -21,5 +21,5 @@ export function rememberedOrigin(id: string): { provider: LamProvider; precision
 }
 
 export const LAM_PROVIDER_NAMES: Record<LamProvider, string> = {
-  chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", grok: "Grok", copilot: "Copilot", other: "",
+  chatgpt: "ChatGPT", claude: "Claude", gemini: "Gemini", grok: "Grok", copilot: "Copilot", dots: "dots", duet: "Duet", other: "",
 };

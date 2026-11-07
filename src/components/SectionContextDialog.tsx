@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { loadSectionContext, saveSectionContext } from "@/lib/section-context-client";
 import { api } from "@/state/store";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
+import { useBotSettingsDraft, useInBotSettings } from "./bot-settings-drafts";
 
 export function SectionContextDialog({ section, label, onClose }: { section: string; label: string; onClose: () => void }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -29,6 +30,10 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
   onCloseRef.current = onClose;
   savingRef.current = saving;
   dirtyRef.current = dirty;
+  // Over a bot's settings page (What shapes), the page's own unsaved-edit check, and every opener the store holds for it,
+  // counts this editor; its portal stays part of the Settings session for focus return (lib/settings-leave.ts).
+  const inBotSettings = useInBotSettings();
+  useBotSettingsDraft("section-context", dirty, saving);
 
   const requestClose = useCallback(() => {
     if (savingRef.current) return;
@@ -116,6 +121,7 @@ export function SectionContextDialog({ section, label, onClose }: { section: str
 
   return createPortal(
     <div
+      data-settings-owned={inBotSettings ? "" : undefined}
       className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-center justify-center bg-black/55 p-4 backdrop-blur-[2px] sm:p-6"
       onMouseDown={(event) => event.target === event.currentTarget && requestClose()}
     >

@@ -52,7 +52,12 @@ export function anchoredScrollTop(next: {
   return Math.max(0, next.scrollHeight - next.clientHeight - next.distanceFromBottom);
 }
 
-/** Publish `--vvh`, `--kb` and `data-keyboard` on <html>. Returns a teardown.
+/** Whether the page is pinch zoomed. A little slack: some browsers report a scale a hair off 1 at rest. */
+export function isPinchZoomed(v: { scale?: number }): boolean {
+  return (v.scale ?? 1) > 1.01;
+}
+
+/** Publish `--vvh`, `--kb`, `data-keyboard` and `data-zoomed` on <html>. Returns a teardown.
  * Call once for the app, not per component. */
 export function trackVisualViewport(): () => void {
   const vv = typeof window === "undefined" ? undefined : window.visualViewport;
@@ -78,6 +83,10 @@ export function trackVisualViewport(): () => void {
     // between the composer and the keyboard. 0 while the keyboard is closed.
     root.style.setProperty("--vvt", open ? `${Math.max(0, vv.offsetTop)}px` : "0px");
     root.dataset.keyboard = open ? "open" : "closed";
+    // A pinch zoom shortens the visual viewport too, so `data-keyboard` alone reads it as a keyboard. A keyboard does
+    // not raise the scale. A scale change fires the viewport's resize, so this stays current both ways.
+    if (isPinchZoomed(vv)) root.dataset.zoomed = "";
+    else delete root.dataset.zoomed;
   };
   // iOS fires resize+scroll many times through the keyboard animation; one
   // frame's worth of writes is enough and keeps the layout out of a thrash.
@@ -104,6 +113,7 @@ export function trackVisualViewport(): () => void {
     document.removeEventListener("visibilitychange", schedule);
     window.removeEventListener("pageshow", schedule);
     if (frame) cancelAnimationFrame(frame);
+    delete document.documentElement.dataset.zoomed;
   };
 }
 
