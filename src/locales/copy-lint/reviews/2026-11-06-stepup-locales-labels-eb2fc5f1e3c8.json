@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "47eea05b194c187f57e89d881fe2c5ac8368f0ce",
+  "scope": "Three reworded step-up labels",
+  "strings": {
+    "stepup/en:label.botSkill": {
+      "text": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/en:label.browserClients": {
+      "text": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/en:label.cliTest": {
+      "text": "Run an engine program to see if it starts",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/de:label.botSkill": {
+      "text": "Einen Skill eines Bots ansehen, ein- oder ausschalten, entfernen oder eine frühere Version wiederherstellen",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/de:label.browserClients": {
+      "text": "Den Zugriff externer Apps auf deinen Browser ein- oder ausschalten, eine externe App hinzufügen (das fügt einen Bot hinzu) oder eine entfernen",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/de:label.cliTest": {
+      "text": "Ein Engine-Programm ausführen, um zu sehen, ob es startet",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/es:label.botSkill": {
+      "text": "Ver, activar o desactivar o eliminar una habilidad de un bot, o restaurar una versión anterior",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/es:label.browserClients": {
+      "text": "Activar o desactivar el acceso de apps externas a tu navegador, añadir una app externa (esto añade un bot) o quitar una",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/es:label.cliTest": {
+      "text": "Ejecutar un programa de motor para ver si arranca",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/fr:label.botSkill": {
+      "text": "Voir, activer, désactiver ou supprimer une compétence d'un bot, ou restaurer une version antérieure",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/fr:label.browserClients": {
+      "text": "Activer ou désactiver l'accès des apps externes à ton navigateur, ajouter une app externe (cela ajoute un bot) ou en retirer une",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/fr:label.cliTest": {
+      "text": "Lancer un programme de moteur pour voir s'il démarre",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/hi:label.botSkill": {
+      "text": "बॉट की स्किल देखना, चालू या बंद करना, हटाना या पिछला संस्करण वापस लाना",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/hi:label.browserClients": {
+      "text": "बाहरी ऐप की आपके ब्राउज़र तक पहुँच चालू या बंद करना, बाहरी ऐप जोड़ना (इससे एक बॉट जुड़ता है) या उसे हटाना",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/hi:label.cliTest": {
+      "text": "यह देखने के लिए इंजन प्रोग्राम चलाना कि वह शुरू होता है या नहीं",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/ja:label.botSkill": {
+      "text": "ボットのスキルを表示、オン・オフ、削除する、または以前のバージョンに戻す",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/ja:label.browserClients": {
+      "text": "外部アプリのブラウザへのアクセスをオン・オフする、外部アプリを追加する（ボットも追加されます）、または削除する",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/ja:label.cliTest": {
+      "text": "エンジンのプログラムを実行して起動するか確認する",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/pt-br:label.botSkill": {
+      "text": "Ver, ligar ou desligar ou remover uma habilidade de um bot, ou restaurar uma versão anterior",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/pt-br:label.browserClients": {
+      "text": "Ligar ou desligar o acesso de apps externos ao seu navegador, adicionar um app externo (isso adiciona um bot) ou remover um",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/pt-br:label.cliTest": {
+      "text": "Executar um programa de mecanismo para ver se ele inicia",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/zh:label.botSkill": {
+      "text": "查看、开启或关闭、移除机器人的技能，或恢复到以前的版本",
+      "en": "See, switch on or off, remove or restore an earlier version of a bot's skill",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/zh:label.browserClients": {
+      "text": "开启或关闭外部应用对你的浏览器的访问，添加外部应用（这会添加一个机器人），或移除外部应用",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    },
+    "stepup/zh:label.cliTest": {
+      "text": "运行一个引擎程序，看它能否启动",
+      "en": "Run an engine program to see if it starts",
+      "verdict": "pass",
+      "note": "Read in round 3."
+    }
+  },
+  "files": {}
+}

@@ -8,6 +8,9 @@ import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "..
 import { findCliCandidates } from "../env-path.ts";
 import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
+/** An empty catalogue is read again after this long, at most EMPTY_CATALOG_RETRIES times before the 24 h age applies. */
+export const EMPTY_CATALOG_RETRY_MS = 1500;
+export const EMPTY_CATALOG_RETRIES = 5;
 import { filterFluxRows } from "../flux-surface.ts";
 import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
@@ -73,7 +76,7 @@ export class ProviderRegistry {
 
   /** Bumped whenever the set of engines changes, so a scan that began before a change is never shared with a caller that came after it. */
   private epoch = 0;
-  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void> }>();
+  private catalogRefreshes = new WeakMap<ProviderInstance, { attemptedAt: number; pending?: Promise<void>; emptyRetries?: number }>();
 
   private readonly now: () => number;
   /** Murage's own sessions wait on an instance while a deleted conversation is removed from its engine's files. */
@@ -238,7 +241,14 @@ export class ProviderRegistry {
     if (!instance.refreshModels || instance.enabled === false) return Promise.resolve();
     const state = this.catalogRefreshes.get(instance) ?? { attemptedAt: -Infinity };
     if (state.pending) return state.pending;
-    if (dueOnly && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    // CATALOG-BOOT-EMPTY-NO-RETRY: an engine whose catalogue is still empty (its first read at boot found nothing) is due again after
+    // a short pause, a few times only, so the boot engine pass and the minute poll can recover it without a key save.
+    // A full catalogue keeps the 24 h age.
+    const empty = !instance.models?.options?.length;
+    if (!empty) state.emptyRetries = 0;
+    const emptyDue = empty && (state.emptyRetries ?? 0) < EMPTY_CATALOG_RETRIES && this.now() - state.attemptedAt >= EMPTY_CATALOG_RETRY_MS;
+    if (dueOnly && !emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) return Promise.resolve();
+    if (dueOnly && emptyDue && this.now() - state.attemptedAt < MODEL_CATALOG_REFRESH_MS) state.emptyRetries = (state.emptyRetries ?? 0) + 1;
     state.attemptedAt = this.now();
     state.pending = Promise.resolve().then(async () => {
       if (this.get(instance.instanceId) === instance) await instance.refreshModels!({ manual: !dueOnly });
@@ -285,13 +295,18 @@ export class ProviderRegistry {
    *  out on purpose: it says a turn was refused, not whether a login exists, so a sign-in reads the engine itself. Undefined when the
    *  registry lacks the id. */
   async engineLogin(instanceId: InstanceId): Promise<boolean | null | undefined> {
+    const snapshot = await this.engineLoginSnapshot(instanceId);
+    if (snapshot === undefined) return undefined;
+    return snapshot?.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
+  }
+
+  /** Raw sign-in observation, including whether it is merely local credential shape.
+   * Read once so the answer and its provenance cannot come from different probes. */
+  async engineLoginSnapshot(instanceId: InstanceId): Promise<ProviderSnapshot | null | undefined> {
     const entry = this.byId.get(instanceId);
     if (!entry) return undefined;
     if (entry.shadow) return null;
-    try {
-      const snapshot = await entry.live.snapshot();
-      return snapshot.state === "available" && typeof snapshot.authenticated === "boolean" ? snapshot.authenticated : null;
-    } catch { return null; }
+    try { return await entry.live.snapshot(); } catch { return null; }
   }
 
   /** instance snapshots for the model picker: id, driver, models, health.

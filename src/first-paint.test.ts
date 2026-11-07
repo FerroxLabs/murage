@@ -12,7 +12,7 @@
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build, transform, type Metafile, type Plugin } from "esbuild";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { brotliCompressSync, constants } from "node:zlib";
 import { beforeAll, describe, expect, it } from "vitest";
 
@@ -118,7 +118,7 @@ describe("the first paint", () => {
 
   it("opens Settings, a bot's settings and the computer panel on first use", () => {
     const reached = staticallyReached(graph);
-    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
+    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/BotSettingsPane.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
@@ -138,6 +138,13 @@ describe("the first paint", () => {
       expect(graph.inputs[path], path).toBeDefined();
     }
     expect(reached).toContain("src/lib/connected-apps-preload.ts");
+  });
+
+  it("loads Today's first-run card in its own chunk, only while setup is going (UX-L7 part 2, 1.0.19)", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).not.toContain("src/components/today/FirstRunTodayCard.tsx");
+    expect(graph.inputs["src/components/today/FirstRunTodayCard.tsx"]).toBeDefined();
+    expect(importsOf("src/components/today/TodayView.tsx").filter((edge) => edge.path === "src/components/today/FirstRunTodayCard.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
   });
 
   it("opens a group or project chat's room view and details panel on first open, not with Today (1.0.17)", () => {
@@ -269,7 +276,20 @@ describe("the first paint", () => {
     const reached = staticallyReached(graph);
     expect(reached).toContain("src/lib/analytics.ts");
     expect(reached).not.toContain("posthog-js");
+    expect(reached).not.toContain("src/lib/analytics-active.ts");
     expect(importsOf("src/lib/analytics.ts").filter((edge) => edge.path === "posthog-js").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
+  it("loads the bundled model price snapshot after the first paint, while the picker's rules stay (1.0.18)", () => {
+    // About 100 KiB brotli of a 1.6 MB string that no screen draws on arrival.
+    const snapshot = importsOf("src/lib/model-metadata.ts").filter((edge) => edge.path.endsWith("data/model-metadata.json?raw"));
+    expect(snapshot.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+    const reached = staticallyReached(graph);
+    expect([...reached].filter((path) => path.endsWith("model-metadata.json?raw"))).toEqual([]);
+    // the lookup rules and the picker are the first paint, and small
+    for (const file of ["src/lib/model-metadata.ts", "src/lib/provider-model-picker.ts", "src/components/ModelPicker.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
   });
 
   it("leaves both Markdown editors and Tiptap to the first edit", () => {
@@ -291,5 +311,43 @@ describe("the first paint", () => {
     }
     // the translators' bookkeeping never ships to the renderer at all
     expect(graph.inputs["src/locales/source-hashes.json"]).toBeUndefined();
+  });
+
+  // L-COPY r3 (design section 5, test a): Help copy is its own partition, loaded with the help chunk only.
+  it("leaves every Help catalogue, the help copy store and the copy lint's files to the help chunk", () => {
+    const reached = [...staticallyReached(graph)];
+    const banned = /^src\/locales\/(?:help|en-help|copy-lint)\/|^src\/lib\/help-copy-store\.ts$|^src\/lib\/help-screen-copy\.ts$|^src\/components\/help\/help-copy\.ts$|^src\/lib\/help-pack-search\.ts$|^shared\/help-tokenize\.ts$/;
+    expect(reached.filter((path) => banned.test(path))).toEqual([]);
+    // ...and they are still in the app, past a dynamic import (an empty answer cannot pass)
+    for (const file of ["src/lib/help-copy-store.ts", "src/lib/help-screen-copy.ts", "src/locales/en-help/screens.json", "src/components/help/help-copy.ts"]) {
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const file = `src/locales/help/${code}.json`;
+      expect(graph.inputs[file], file).toBeDefined();
+      expect(reached, file).not.toContain(file);
+    }
+    // Every reader of the ux.l4b words stays past the dynamic import too.
+    for (const file of ["src/lib/help-ask-chief.ts", "src/components/help/HelpAskChief.tsx"]) {
+      expect(graph.inputs[file], file).toBeDefined();
+      expect(reached, file).not.toContain(file);
+    }
+    // HelpHost is in the first paint: its words come from the main pack, never through hx or the store.
+    expect(reached).toContain("src/components/help/HelpHost.tsx");
+    expect(importsOf("src/components/help/HelpHost.tsx").filter((edge) => edge.kind !== "dynamic-import").map((edge) => edge.path)
+      .filter((path) => /help-copy|help-screen-copy|HelpPanel/.test(path))).toEqual([]);
+  });
+
+  it("boots with main keys only: neither boot English nor any main pack carries a Help key", async () => {
+    const { en } = await import("@/locales");
+    const helpDir = join(root, "src/locales/en-help");
+    const helpKeys = readdirSync(helpDir).filter((name) => name.endsWith(".json"))
+      .flatMap((name) => Object.keys(JSON.parse(readFileSync(join(helpDir, name), "utf8")) as Record<string, string>));
+    expect(helpKeys.length).toBeGreaterThan(50);
+    expect(helpKeys.filter((key) => Object.hasOwn(en, key))).toEqual([]);
+    for (const code of ["de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const pack = JSON.parse(readFileSync(join(root, `src/locales/${code}.json`), "utf8")) as Record<string, string>;
+      expect(helpKeys.filter((key) => Object.hasOwn(pack, key)), code).toEqual([]);
+    }
   });
 });

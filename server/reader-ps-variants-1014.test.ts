@@ -16,7 +16,8 @@ const { approvalKey, autoVerdict } = await import("./auto-approve.ts");
 const { alwaysAskCommand } = await import("./always-ask.ts");
 
 type Context = Parameters<typeof autoVerdict>[3];
-const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null } as const;
+// 1.0.20: a clean lane turn; PowerShell keeps today's verdicts there (ruling 3)
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null } as const;
 const read = (cmd: string) => alwaysAskCommand(cmd, undefined, "command", "pwsh");
 
 const ENDS = ["\n", "\r\n", "\r"] as const;

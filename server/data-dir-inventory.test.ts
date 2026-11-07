@@ -43,6 +43,7 @@ const NOT_THE_DATA_FOLDER: Record<string, Record<string, string>> = {
     "<<name>>": "another engine's history folder",
   },
   "server/memory/settings.ts": { "<<part>>": "path parts inside DATA_DIR/memory-model, checked by memoryModelPath" },
+  "server/project-migration.ts": { "<<name>>": "deletes only project-rows-before-prune-*.db.partial and its side files, and side files beside a final copy (all classified), matched by name before removal" },
   "server/procedure-bundles.ts": { "<<part>>": "path parts inside DATA_DIR/skill-state/<bot>" },
   "server/installation-app-schema-downgrade.ts": { "<<LEGACY_DELEGATIONS_FILE>>": "delegations.json (classified): the 1.0.1 queue file the downgrade writes back" },
   "server/index.ts": { "<<relative>>": "relative paths inside DATA_DIR/workspaces" },

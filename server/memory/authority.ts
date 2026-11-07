@@ -11,7 +11,8 @@ import { learningGate, recordDigest, sampleLearningFence, sourceDigest } from ".
 import { readMemoryLearning } from "./learning-policy.ts";
 import { activateGroundedMemory, holdMemoryCandidate, ownerLearningRefusal, invitedCanonRefusal, type MemoryClaimType } from "./automatic-learning.ts";
 import { evidenceEmailDerived, markRecordEmailDerived, recordEmailDerived } from "./email-derived.ts";
-import { turnEmailDerived } from "../email/external-marks.ts";
+import { turnEmailDerived, turnOutsideRead } from "../email/external-marks.ts";
+import { markRecordOutsideDerived } from "./outside-derived.ts";
 import { assertMemoryAccess, type MemoryAccess, type MemoryRoster } from "./policy.ts";
 import { enqueueProcedureCorrectionReview } from "./procedure-review.ts";
 import { isPipKind } from "./pip-kinds.ts";
@@ -95,6 +96,9 @@ function saveCandidate(text: string, evidence: MemoryEvidenceHandle[], key: stri
     // bot email (5.4): a memory saved during a marked turn (it read outside mail or carried a marked row), or quoting a marked row,
     // carries the external-mail origin: held for the owner (automatic-learning.ts) and fenced wherever it is shown later
     if (turnEmailDerived(access.threadId) || evidenceEmailDerived(db,evidence)) { markRecordEmailDerived(db,id,String(scope)); holdMemoryCandidate(db,id,"external-mail"); }
+    // NOLIMITS v1 F2 (r4 O4): saved on a marked turn at any level: the outside origin is bound to the record id (data only; kept
+    // in the outside store, so it never moves the learning fence)
+    if (turnOutsideRead(access.threadId) !== null) markRecordOutsideDerived(db,id,String(scope));
     if (!candidateScope) activateGroundedMemory(db,id,claimType);
     return id;
   });

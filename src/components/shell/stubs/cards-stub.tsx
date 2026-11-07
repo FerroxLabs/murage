@@ -8,7 +8,7 @@
 // until their lane lands (L2C This month, L6C agency, L7 phone tabs), which is
 // what those cards do anyway when they have nothing to show.
 import { t } from "@/lib/i18n";
-import type { ClientsCardProps, FirstRunTodayCardProps, MonthCardProps, OtherWorkspacesStripProps, PhoneTabsProps, TodayTag } from "../shell-contract";
+import type { FirstRunTodayCardProps, MonthCardProps, OtherWorkspacesStripProps, PhoneTabsProps, TodayTag } from "../shell-contract";
 
 export function FirstRunTodayCard({ remote, onContinueSetup }: FirstRunTodayCardProps) {
   return (
@@ -29,7 +29,5 @@ export function FirstRunTodayCard({ remote, onContinueSetup }: FirstRunTodayCard
 
 export function MonthCard(_props: MonthCardProps) { return null; }
 export function useMonthTag(): TodayTag | null { return null; }
-export function ClientsCard(_props: ClientsCardProps) { return null; }
-export function useClientsTag(): TodayTag | null { return null; }
 export function OtherWorkspacesStrip(_props: OtherWorkspacesStripProps) { return null; }
 export function PhoneTabs(_props: PhoneTabsProps) { return null; }

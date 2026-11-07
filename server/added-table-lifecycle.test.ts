@@ -3,8 +3,8 @@
 //
 // Review round 4 #1 and #3: every table 1.0.2 adds is on ONE list (APP_SCHEMA_102_ADDITIONS.tables, which the downgrade drops and the snapshot
 // accepts), and each has a lifecycle entry. The list is checked against the real 1.0.1 (git archive d950cbf67 in the gitignored .v101-ref
-// directory), in both directions; the real 1.0.1 inspector accepts a downgraded file with rows in every registered table; rows of a child table never
-// outlive their request.
+// directory), in both directions; the real 1.0.1 inspector accepts a stepped file with rows in every registered table once the inbox projection is out;
+// rows of a child table never outlive their request.
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,7 +15,7 @@ import { closeDatabase, database } from "./database.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
 import { APP_SCHEMA_102_ADDITIONS, CARD_DELIVERY_OWED_LINE, DOWNGRADE_CARD_DELIVERY_OWED, downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
-import { validateMemorySchema } from "./memory/schema.ts";
+import { discardInboxProjection, isInboxProjectionObject } from "./inbox.ts";
 import { deleteProjectRows } from "./project-tables.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { insertRoomRequest, pruneTerminalRoomRequests, ROOM_REQUEST_RETENTION_MS } from "./room-requests.ts";
@@ -173,18 +173,18 @@ describe("R5-04: a card result still owed to its project room is never discarded
 });
 
 describe("against the real 1.0.1 (git archive d950cbf67)", () => {
-  it.skipIf(!haveV101)("the list is exactly the objects 1.0.2 adds: nothing unlisted is added, nothing listed already existed in 1.0.1", async () => {
-    const db = database();
-    const memory = validateMemorySchema(db);
-    const current = (db.prepare("SELECT type,name,tbl_name FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string }>)
-      .filter(row => !memory.has(row.name) && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_"));
+  // 1.0.2 is judged by the file it really makes (testing/schema-1.0.2-fresh.json): a later build's objects are not 1.0.2's, and leave through their own steps.
+  it.skipIf(!haveV101)("the list names what fresh 1.0.2 adds to the real 1.0.1, beside the inbox projection and the forget table, and nothing listed already existed in 1.0.1", async () => {
+    const fresh102 = (JSON.parse(readFileSync(new URL("./testing/schema-1.0.2-fresh.json", import.meta.url), "utf8")) as { objects: Array<{ type: string; name: string; tbl_name: string }> }).objects;
+    const current = fresh102.filter(row => !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_"));
     const { referenceSchema } = await realV101();
     const old = new Set(referenceSchema().keys());
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
-    // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table)
-    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
-    expect(unlisted, "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual([]);
+    // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table). The inbox projection and the forget table stay in a stepped
+    // file, 1.0.2's own step included: that is why a step to schema 6 is 1.0.2's to run, and why the test below judges the file without the projection.
+    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    expect(unlisted.sort(), "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual(["event_log_forgets", "sqlite_autoindex_event_log_forgets_1"]);
     // listed objects that exist here must be new: a 1.0.1 object on the list would be dropped by the downgrade
     const present = new Set(current.map(row => row.name));
     expect([...listed].filter(name => present.has(name) && old.has(name)), "on the list but already in 1.0.1").toEqual([]);
@@ -192,20 +192,23 @@ describe("against the real 1.0.1 (git archive d950cbf67)", () => {
     for (const name of CHILDREN) { expect(present.has(name), name).toBe(true); expect(old.has(name), name).toBe(false); }
   });
 
-  it.skipIf(!haveV101)("the real 1.0.1 inspector accepts a downgraded file that held rows in every registered table", async () => {
+  it.skipIf(!haveV101)("the real 1.0.1 inspector refuses a stepped file only over the inbox projection, and accepts it without, after rows in every registered table", async () => {
     request("one", "g", 1); mapping("one");
     request("two", "g"); mapping("two");
     expect(rows("shared_request_events")).toBe(2);
     // the owed deliveries must be delivered first: the downgrade refuses until they are
     closeDatabase();
-    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 6)).toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
+    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
     database().prepare("DELETE FROM project_card_delivery_owed").run();
     closeDatabase();
-    const result = downgradeInstallationMemorySchema(DATA_DIR, 6);
+    const result = downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
     expect(result).toMatchObject({ status: "downgraded", to: 6 });
     const { inspectInstallationDatabase: inspect101 } = await realV101();
     const down = new DatabaseSync(join(DATA_DIR, "messages.db"));
     try {
+      // the reason the command refuses this step (installation-recovery-command.test.ts). When this stops throwing, that refusal can be looked at again.
+      expect(() => inspect101(down)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
+      discardInboxProjection(down);
       expect(() => inspect101(down)).not.toThrow();
       const names = (down.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name);
       for (const table of CHILDREN) expect(names.includes(table), table).toBe(false);

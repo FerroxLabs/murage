@@ -3,6 +3,8 @@ import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-s
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
 import { CODEX_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { notePromptSent } from "../turn-hold.ts";
+import { markTurnOutside } from "../email/external-marks.ts";
+import { spanTurn } from "../outside-wire.ts";
 // Codex driver — upstream CodexDriver skeleton over agentcal's
 // drivers/codex.js runtime: the official `codex` CLI headless over its
 // app-server JSON-RPC protocol (newline-delimited JSON on stdio).
@@ -32,7 +34,7 @@ import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withS
 import {
   CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
-  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv, hookRuntime, warmHookRunner,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -50,6 +52,7 @@ import { wakeAwareTimeout } from "../sleep-clock.ts";
 import { humanWaitOpen } from "../harness/human-wait.ts";
 import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MESSAGE, warmPool, pastWarmMaxAge, spawnedAtOf } from "./warm-pool.ts";
 import { awaitCliRootClose, awaitCliTreeStopped, cliVersionReader, describeSpawnFailure, engineJob, engineProcessPid, execCli, killCliTree, spawnCli, hostPowerKeyField } from "../procs.ts";
+import { enginePathFromEnv, noteEnginePath } from "../outside-scan.ts";
 import { cachedCliVersion } from "../cli-version-cache.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 
@@ -1166,12 +1169,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
         if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
+        // HOOK-LIVENESS-COLD-START: the runtime's first start runs beside Codex's own start and handshake; turn/start waits for it
+        if (hookFiles) void warmHookRunner();
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
         if (hookFiles && !reuse && process.platform === "win32") {
           env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(hookFiles.launcher);
-          env[CODEX_HOOK_EXE_ENV] = process.execPath;
+          env[CODEX_HOOK_EXE_ENV] = hookRuntime();
         }
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
@@ -1185,7 +1190,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         let child: ReturnType<typeof spawnCli>;
         try {
-          if (reuse) child = reuse.child;
+          // NOLIMITS 1.0.18 (Astra acct5 r1 H2): a reused process was started with this env (its warm key holds the env's
+          // digest), so its PATH is noted for this thread as a spawn's is
+          if (reuse) { child = reuse.child; noteEnginePath(threadId, enginePathFromEnv(env)); }
           else {
             const launchCli = engineLaunchFile(config.cli, launchPath);
             child = spawnCli(launchCli, spawnArgs, {
@@ -1194,7 +1201,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               stdio: ["pipe", "pipe", "pipe"],
               // S4 power (design section 2, revision 4.1): Windows only; on Mac and Linux Codex keeps its own sandbox
               // (codexTurnPolicy, unchanged) and its spawn carries no hostPower.
-            }, engineJob({ posixHostPower: false }));
+            }, engineJob({ posixHostPower: false }), undefined, threadId);
           }
         } catch (error) {
           if (!reuse) { hookGate?.close(); hookGate?.release(); }
@@ -1634,7 +1641,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         refusal.refuse(line);
         proof?.void();
         incidentNotes.set(threadId, line);
-        appendDecision(DATA_DIR, { threadId, tool: "shell", summary: command, decision: "auto-denied", source: "observed" });
+        // GrokBuild case 19: the decision log names the tool, never the command (the live error and the next turn's line keep it)
+        appendDecision(DATA_DIR, { threadId, tool: "shell", summary: "shell", decision: "auto-denied", source: "observed" });
         emit({ ...base(threadId, turnId), type: "runtime.error", message: line });
         // the interrupt is asked for first (the turn stops at once on a build that honours it), and the process goes with the turn
         void (async () => {
@@ -1826,6 +1834,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ...(commandShell ? { commandShell } : {}),
           ...(execEnv ? { execEnv } : {}),
           requestType: questions ? "question" : "permission",
+          // 1.0.19 A3: the approval names its item; that item's mark is the call's own
+          ...(!questions && typeof params?.itemId === "string" && params.itemId ? { callKey: params.itemId } : {}),
           tool,
           summary,
           ...(target?.reason ? { reason: target.reason } : {}),
@@ -1908,6 +1918,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const p = msg.params ?? {};
         // A helper's own thread: progress and its end are the helper's, never the turn's.
         if (typeof p.threadId === "string" && p.threadId !== codexThreadId && helpers.tracker.has(p.threadId)) {
+          // NOLIMITS v1 V8 + F7: a helper's own thread is not seen in full; any of its notifications marks the parent turn, settled or not
+          markTurnOutside(threadId, "helper");
+          // v1 V4 (b): a helper can write where no rule names; its turn spans every root
+          spanTurn(threadId);
           if (state.settled) return;
           if (msg.method === "item/started" && ["commandExecution", "mcpToolCall", "fileChange", "webSearch"].includes(p.item?.type)) {
             const count = (helpers.tools.get(p.threadId) ?? 0) + 1;
@@ -2005,7 +2019,18 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               if (paths.length) fileChangePaths.set(String(item.id), paths);
               fileChangeItems.set(String(item.id), item.changes);
             }
-            if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title, toolIdentity: { name: item.type === "commandExecution" ? "shell" : title }, input: item.arguments });
+            // 1.0.19 A4 / A6 / 4.3: the shell's command and folder, the edit's changes, the MCP tool with its server, and the
+            // item id as the call's key (its approval names the same item)
+            if (title) emit({
+              ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title,
+              toolIdentity: item.type === "commandExecution" ? { name: "shell" }
+                : item.type === "mcpToolCall" && typeof item.server === "string" && item.server ? { namespace: item.server, name: String(title) }
+                  : { name: title },
+              input: item.type === "commandExecution" ? { command: item.command, ...(typeof item.cwd === "string" ? { cwd: item.cwd } : {}) }
+                : item.type === "fileChange" ? { changes: item.changes }
+                  : item.arguments,
+              ...(typeof item.id === "string" && item.id ? { callKey: item.id } : {}),
+            });
             break;
           }
           case "item/completed": {
@@ -2531,6 +2556,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           try { conn.baseline = await descendantPids(enginePid); } catch { /* stays null: fails closed at settle */ }
         }
         if (cancelledBeforeStart()) return;
+        // HOOK-LIVENESS-COLD-START: the hook's runtime has started once before the bound starts (codex-hook.ts warmHookRunner), so the
+        // bound measures the hook, not the operating system's first launch of the runtime. Started when the process launched; usually done.
+        if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) {
+          await warmHookRunner();
+          // an attempt the close path retired (or a turn that settled) during the wait writes nothing (Astra r1 #1)
+          if (abandoned || state.settled || cancelledBeforeStart()) return;
+        }
         // The submission fence (SendTurnInput.beforeSubmit), on every
         // attempt: no await separates it from the turn/start write below. A
         // refusal writes nothing. Before sendTurn resolved the harness stops

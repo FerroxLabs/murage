@@ -26,6 +26,7 @@ import { computerHere } from "@/lib/computer-surface";
 import { inNativeShell } from "@/lib/native-shell";
 import { allowNeedsComputer, approvalSurface, useComputerOnlyRefusal } from "@/lib/approval-surface";
 import { ComputerOnlyNotice } from "@/components/ComputerOnlyNotice";
+import { OutsideEngineNote } from "@/components/engine/OutsideEngineNote";
 import { useDecisionFeedback, type DecisionHooks } from "@/lib/approval-feedback";
 import { ApprovalBusyLabel, ApprovalConfirmLine, PRESSED, approvalButton } from "@/components/ApprovalFeedback";
 import { type QueueStatus } from "@/lib/approval-queue";
@@ -135,6 +136,7 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
         </p>
       )}
       {held && <CollapsibleText text={held} className="mt-1 text-[12.5px] text-warning" />}
+      <OutsideEngineNote card={pending.message.card} bot={bot} />
       {!held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
       {!bar && (
         <>

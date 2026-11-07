@@ -13,6 +13,7 @@
 // inherits Murage's own environment by omission.
 
 import { createHash, randomBytes } from "node:crypto";
+import { noteEngineEnv } from "./outside-scan.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { delimiter, win32 } from "node:path";
 import { ABSENT_PINS, ENV_PINS, isPowerShellProgram, resolvePins, valuePins, type PinRun, type SshResolution } from "../shared/arg-vocabulary.ts";
@@ -151,6 +152,9 @@ export async function handEnv(
   const handed: HandedEnv = { env: envAsSpawned(env, platform), absent: [...ABSENT_PINS], capture: owner.capture, ownerStartup, pins, ssh };
   lastSsh = ssh;
   rememberHand(handed);
+  // NOLIMITS 1.0.18 (GrokBuild #16 close): the finished map an engine is handed (the owner's captured toolchain env, not
+  // cloudTurnEnvironment's) is noted too; spawnCli notes it again at the spawn
+  noteEngineEnv(handed.env);
   return handed;
 }
 

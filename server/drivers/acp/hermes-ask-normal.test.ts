@@ -163,7 +163,7 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
       expect(verdict.approve).toBeNull();
       expect(["unread-call", "always-ask"]).toContain(verdict.source);
       // and at No limits on a turn the owner started: a call that did not arrive whole asks there too
-      const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
+      const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
       expect(owner.approve, id).toBeNull();
       await instance?.dispose();
       instance = undefined;

@@ -4,10 +4,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { EngineSetup, installCommandFor, needsCli, needsSignIn, setupStep } from "./EngineSetup";
 import { installProgressLine } from "./EngineManagement";
+import { setLocale } from "@/lib/i18n";
 import type { InstanceInfo } from "@/state/store";
 
 vi.mock("@/state/store", async (original) => ({ ...await original<typeof import("@/state/store")>(), useStore: () => ({ dispatch: vi.fn() }) }));
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => { vi.unstubAllGlobals(); await setLocale("en"); });
 
 describe("Pi below the version Murage can run", () => {
   it("offers the update with the reason, not a first install", () => {
@@ -119,5 +120,62 @@ describe("set-up steps", () => {
     const grok = (platform: "linux" | "win32"): InstanceInfo => ({ ...instance({ state: "unavailable" }), driverKind: "grokAgent", displayName: "Grok", install: { command: { linux: "curl -fsSL https://x.ai/cli/install.sh | bash" }, platform } });
     expect(renderToStaticMarkup(createElement(EngineSetup, { instance: grok("linux") }))).toContain("Open install in Terminal");
     expect(renderToStaticMarkup(createElement(EngineSetup, { instance: grok("win32") }))).toContain("one-line installer");
+  });
+});
+
+it("L9 B3(d): EngineSetup offers the real-reply Check while a Kimi hint remains marked", () => {
+  vi.stubGlobal("window", { muragebox: { platform: "linux", openEngineSetupTerminal: () => true } });
+  const marked = instance({ state: "available", authenticated: false, signInAnswerIsLocalHint: true, reason: "This engine is not signed in." });
+  const html = renderToStaticMarkup(createElement(EngineSetup, { instance: marked }));
+  expect(html).toContain("Check that it works");
+  expect(html).toContain("Check");
+  expect(html).not.toContain("Signed in to Kimi");
+});
+
+describe("Medium 1: marked Kimi recovery respects setup intent", () => {
+  const marked = (): InstanceInfo => ({
+    ...instance({ state: "available", authenticated: false, signInAnswerIsLocalHint: true, reason: "This engine is not signed in." }),
+    install: { command: { linux: "uv tool install kimi-cli" }, platform: "linux", signInCommand: "kimi login" },
+  });
+
+  it.each([false, true])("keeps inject on local-model setup (setUp=%s)", (setUp) => {
+    vi.stubGlobal("window", { muragebox: { platform: "linux", openEngineSetupTerminal: () => true } });
+    const html = renderToStaticMarkup(createElement(EngineSetup, { instance: marked(), intent: "inject", setUp }));
+    expect(html).toContain("Install the engine once, then you can run it with local models; no cloud sign-in required.");
+    expect(html).toContain("uv tool install kimi-cli");
+    expect(html).toContain("Check again");
+    expect(html).not.toContain("Check that it works");
+    expect(html).not.toContain("Sign in to Kimi");
+    expect(html).not.toContain("kimi login");
+  });
+
+  it.each([false, true])("keeps cloud on the real-reply check (setUp=%s)", (setUp) => {
+    vi.stubGlobal("window", { muragebox: { platform: "linux", openEngineSetupTerminal: () => true } });
+    const html = renderToStaticMarkup(createElement(EngineSetup, { instance: marked(), intent: "cloud", setUp }));
+    expect(html).toContain("Check that it works");
+    expect(html).not.toContain("uv tool install kimi-cli");
+    expect(html).not.toContain("Sign in to Kimi");
+  });
+});
+
+
+describe("B3(d): marked reply-check copy", () => {
+  it.each([
+    ["en", "Send a short message to check that the engine can reply.", "You look signed in."],
+    ["de", "Sende eine kurze Nachricht, um zu prüfen, ob die Engine antworten kann.", "Du scheinst angemeldet zu sein."],
+  ])("describes the marked check and preserves ordinary signed-in copy in %s", async (locale, line, signedIn) => {
+    await setLocale(locale);
+    vi.stubGlobal("window", { muragebox: { platform: "linux", openEngineSetupTerminal: () => true } });
+    const marked = instance({ state: "available", authenticated: false, signInAnswerIsLocalHint: true, reason: "This engine is not signed in." });
+    for (const setUp of [false, true]) {
+      const html = renderToStaticMarkup(createElement(EngineSetup, { instance: marked, setUp }));
+      expect(html).toContain(line);
+      expect(html).not.toContain(signedIn);
+    }
+    const ordinary = renderToStaticMarkup(createElement(EngineSetup, {
+      instance: instance({ state: "available", authenticated: true }), setUp: true,
+    }));
+    expect(ordinary).toContain(signedIn);
+    expect(ordinary).not.toContain(line);
   });
 });

@@ -3,8 +3,12 @@
 //
 // Thread recall handler (THREAD-RECALL-DESIGN r6 rules 1 to 9, 11 to 17, 21, 23a and 23a's tests; seal S1). The handler is driven through its
 // host interface with a real database, real message store, real lineage-write and a real memory policy; only the turn registry is a stand-in.
-import { mkdirSync, readFileSync } from "node:fs";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "./email/external-marks.ts";
+import { fileOutsideStore } from "./outside-store.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { appendMessage, closeMessageDb, insertMessageBefore, readMessage } from "./message-db.ts";
@@ -860,5 +864,28 @@ describe("a line the owner forgot is never returned (106 recall-forgotten)", () 
     expect((await r.call("thread_search", { query: "needle" })).body.hits.map((hit: Json) => hit.messageId)).toEqual(["n1"]);
     expect((await r.call("thread_read", { message_id: "n1", direction: "around" })).body.rows.map((row: Json) => row.messageId)).toEqual(["n1"]);
     expect((await r.call("thread_list")).body.threads.find((entry: Json) => entry.threadId === "t-task").lastAt).toBe(new Date(4000).toISOString());
+  });
+});
+
+// NOLIMITS v1 1.0.19 4.2 r3 (U3c): a thread tool marks the reading turn only by what it released: a row of a turn that was
+// marked (test T), never the call itself
+describe("NOLIMITS 4.2 r3 (U3c): thread recall marks on evidence", () => {
+  afterEach(() => forgetOutsideState());
+  it("clean rows are released and leave the turn clean; a row of a marked turn marks it memory", async () => {
+    let now = 1_000;
+    expect(wireOutsideStore(fileOutsideStore(join(mkdtempSync(join(tmpdir(), "recall-outside-")), "o.jsonl")), () => now)).toBe(true);
+    seed();
+    beginOutsideTurn("t-main", "claude", undefined, false);
+    const r = rig();
+    expect((await r.call("thread_search", { query: "vault" })).body.hits.length).toBeGreaterThan(0);
+    expect((await r.call("thread_read", { message_id: "b1", direction: "around" })).body.rows.length).toBeGreaterThan(0);
+    expect((await r.call("thread_list")).body.threads.length).toBeGreaterThan(0);
+    expect(turnOutsideRead("t-main")).toBeNull();
+    // the trip task had a marked turn when b2 was written
+    now = 3_000; beginOutsideTurn("t-task", "claude", undefined, false); markTurnOutside("t-task", "web page");
+    now = 900_000; beginOutsideTurn("t-main", "claude", undefined, false);
+    expect(turnOutsideRead("t-main")).toBeNull();
+    expect((await r.call("thread_search", { query: "vault" })).body.hits.map((hit: Json) => hit.messageId)).toContain("b2");
+    expect(turnOutsideRead("t-main")).toBe("memory");
   });
 });

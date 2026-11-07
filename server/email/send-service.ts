@@ -50,7 +50,8 @@ export interface SendServiceOptions {
   locks?: InboxLocks;
 }
 
-export interface SubmitInput { botId: string; generation: number; threadId: string; draft: EmailDraft; replySource?: ReplySource | null }
+/** `holdForOwner` (NOLIMITS v1 V6 (b)): a marked lane turn: the policy's auto-clear is skipped, so the Send / Don't send card shows. */
+export interface SubmitInput { botId: string; generation: number; threadId: string; draft: EmailDraft; replySource?: ReplySource | null; holdForOwner?: boolean }
 export type SubmitResult =
   | { status: "no_inbox" }
   | { status: "duplicate"; row: SendRow }
@@ -147,7 +148,7 @@ export class EmailSendService {
       return { status: "accepted", row };
     });
     if (prepared.status !== "accepted") return prepared;
-    return { status: "accepted", row: await this.decide(prepared.row) };
+    return { status: "accepted", row: await this.decide(prepared.row, input.holdForOwner === true) };
   }
 
   private newRow(input: SubmitInput, inboxId: string, hash: string, replaces: string | null): SendRow {
@@ -166,9 +167,9 @@ export class EmailSendService {
   }
 
   /** 3.3 on a `prepared` row (at entry and again at boot): awaiting_owner, or dispatching then the call. */
-  private async decide(row: SendRow): Promise<SendRow> {
+  private async decide(row: SendRow, holdForOwner = false): Promise<SendRow> {
     const binding = this.store.getBinding(row.botId);
-    const decision = decideSend({
+    const decision = holdForOwner ? { needsOwner: true, why: "waiting_ask" as const } : decideSend({
       policy: binding?.policy ?? "ask", kind: row.kind, to: row.summary.to, cc: row.summary.cc, subject: row.summary.subject,
       text: this.textOf(row), attachmentCount: row.summary.attachments.length, replySource: row.summary.replySource,
       isApproved: address => this.store.isApproved(row.botId, address),
