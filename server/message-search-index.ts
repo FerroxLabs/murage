@@ -17,6 +17,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground, isDatabaseBusy } from "./db-busy.ts";
 import { readIndexState, writeIndexState } from "./transcript-backfill.ts";
+import { kickSearchMerge } from "./search-merge-runner.ts";
+import { afterCommit } from "./tx-scope.ts";
 
 export const MESSAGE_SEARCH_TABLE = "messages_fts";
 /** Fewer code points than this cannot form a trigram: those queries scan. */
@@ -41,6 +43,23 @@ const BACKFILL_CHUNK = 500;
 const BACKFILL_PIECE = 100, BACKFILL_CHUNK_MS = 25, BACKFILL_CHUNK_CHARS = 256 * 1024;
 /** The rowids one piece of the background fill reads at most, whatever their kind. */
 const BACKFILL_SPAN = 2_000;
+/** The level-0 segment count at which a fill step asks for the merge at once (crisismerge fires at 16: half is the margin a loaded machine needs). */
+const BACKFILL_MERGE_AT_LEVEL0 = 8;
+/** Segments in level 0 of the index, from its structure record (one primary-key row, whatever the history); -1 when it cannot be read. Layout: fts5_index.c
+ * fts5StructureDecode: 4-byte cookie, an optional 4-byte v2 mark, varints nLevel, nSegment and the write counter, then per level nMerge and nSeg. */
+export function searchLevel0Segments(db: DatabaseSync): number {
+  try {
+    const row = db.prepare(`SELECT block FROM ${MESSAGE_SEARCH_TABLE}_data WHERE id = 10`).get() as { block: Uint8Array } | undefined;
+    if (!row) return -1;
+    const b = row.block;
+    let i = b[4] === 0xff && b[5] === 0 && b[6] === 0 && b[7] === 1 ? 8 : 4;
+    // a record cut short throws here (caught below: -1), never a made-up small count
+    const varint = () => { let v = 0; for (let n = 0; n < 9; n++) { if (i >= b.length) throw new Error("short structure record"); const c = b[i++]!; if (n === 8) return v * 256 + c; v = v * 128 + (c & 0x7f); if (!(c & 0x80)) return v; } return v; };
+    const levels = varint(); varint(); varint(); // nLevel, nSegment, write counter
+    if (levels < 1) return 0;
+    varint(); return varint(); // level 0: nMerge, nSeg
+  } catch { return -1; }
+}
 const ready = new WeakSet<DatabaseSync>();
 let warned = false;
 
@@ -80,27 +99,64 @@ export function syncMessageSearchRow(db: DatabaseSync, rowid: number, text: stri
   try {
     db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid = ?`).run(rowid);
     if (text !== null) db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`).run(rowid, text);
+    // automerge is off: the worker merges the level-0 segment this write made, after the write's own COMMIT
+    afterCommit(() => kickSearchMerge());
   } catch (error) { degrade(db, error); }
 }
 
-/** Drop the entries of every row of a thread; call BEFORE deleting the rows.
- * Returns whether any entry existed, so the caller can merge the segments. */
+/** Drop the entries of every row of a thread; call BEFORE deleting the rows, inside the deletion's transaction.
+ * Returns whether any entry existed. It THROWS when the drop fails (designs/SMOOTH-FTS-MERGE-R6.md §1): the caller then empties the
+ * index in the same transaction (recoverSearchIndexAfterDropFailure) or rolls back, so a deletion never commits with the index still
+ * holding the thread. */
 export function dropThreadSearchRows(db: DatabaseSync, threadId: string): boolean {
-  try {
-    const present = db.prepare(
-      `SELECT 1 AS present FROM ${MESSAGE_SEARCH_TABLE}_docsize WHERE id IN (SELECT rowid FROM messages WHERE thread_id = ?) LIMIT 1`,
-    ).get(threadId) !== undefined;
-    if (present) db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid IN (SELECT rowid FROM messages WHERE thread_id = ?)`).run(threadId);
-    return present;
-  } catch (error) { degrade(db, error); return false; }
+  const present = db.prepare(
+    `SELECT 1 AS present FROM ${MESSAGE_SEARCH_TABLE}_docsize WHERE id IN (SELECT rowid FROM messages WHERE thread_id = ?) LIMIT 1`,
+  ).get(threadId) !== undefined;
+  if (dropTestHooks.failDrop) throw new Error("test: the search index drop failed");
+  if (present) db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid IN (SELECT rowid FROM messages WHERE thread_id = ?)`).run(threadId);
+  return present;
+}
+/** Test only: make the next drops (and with `failDeleteAll` the recovery too) throw. */
+export const dropTestHooks = { failDrop: false, failDeleteAll: false };
+
+/** The marker a deletion writes in its own transaction (§1): `done=0` the index owes a merge, `done=1` the merge is proven and the
+ * WAL scrub is owed (§2). Literal SQL; the name is the primary key. Throws into the transaction (never swallowed). */
+export const SEARCH_MERGE_MARKER = "search_merge";
+export function oweSearchMerge(db: DatabaseSync): void {
+  db.exec(`INSERT INTO transcript_index_state(name, done, cursor, skipped) VALUES('${SEARCH_MERGE_MARKER}', 0, 0, 0) ON CONFLICT(name) DO UPDATE SET done = 0`);
+}
+/** Whether the marker row exists in either state (database.ts at open: the scheduler's mirror starts true). Read errors count as owed. */
+export function searchMergeRowExists(db: DatabaseSync): boolean {
+  try { return db.prepare("SELECT 1 AS present FROM transcript_index_state WHERE name = ?").get(SEARCH_MERGE_MARKER) !== undefined; } catch { return true; }
 }
 
-/** Deleted entries stay in the index's segments as markers until a merge, so
- * a conversation deletion merges them away (secure_delete zeroes the freed
- * pages), the same way the Fuigo session index is scrubbed. */
-export function mergeMessageSearchIndex(db: DatabaseSync): void {
-  try { db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('optimize')`); }
-  catch (error) { degrade(db, error); }
+/** A thread's drop threw: inside the SAME transaction, stop trusting the index on this handle, empty it, and reset the fill so the
+ * backfill rebuilds it from messages (the caller re-queues the backfill after COMMIT). If the delete-all throws, it propagates and the
+ * transaction rolls back. Searches scan until the fill marks the handle ready again. */
+export function recoverSearchIndexAfterDropFailure(db: DatabaseSync): void {
+  ready.delete(db);
+  if (dropTestHooks.failDeleteAll) throw new Error("test: the search index delete-all failed");
+  db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('delete-all')`);
+  writeIndexState(db, SEARCH_FILL, { done: 0, cursor: 0, skipped: 0 });
+}
+
+/** The merge settings of the fast path, set at open on the server connection (literals: a bound parameter fails with "SQL logic
+ * error"). automerge=0 and deletemerge=0: a deletion's COMMIT writes tombstones only and spends no merge credit; usermerge=4: the worker's
+ * positive slices merge levels of 4 segments, as automerge did. crisismerge stays at 16 (the floor that keeps query cost bounded).
+ * The fast path is declared only by the worker's readback (search-merge-runner.ts searchMergeFastPath); a failure here costs time only. */
+export function applySearchMergeConfig(db: DatabaseSync): Record<string, number> {
+  const values: Record<string, number> = {};
+  try {
+    for (const row of db.prepare(`SELECT k, v FROM ${MESSAGE_SEARCH_TABLE}_config WHERE k IN ('automerge', 'deletemerge', 'usermerge')`).all()) values[String(row.k)] = Number(row.v);
+    if (values.automerge === 0 && values.deletemerge === 0 && values.usermerge === 4) return values;
+    db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('automerge', 0)`);
+    db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('deletemerge', 0)`);
+    db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('usermerge', 4)`);
+    for (const row of db.prepare(`SELECT k, v FROM ${MESSAGE_SEARCH_TABLE}_config WHERE k IN ('automerge', 'deletemerge', 'usermerge')`).all()) values[String(row.k)] = Number(row.v);
+  } catch (error) {
+    console.warn("[message-search] merge config not set (deletes merge at commit until it is):", error instanceof Error ? error.message : error);
+  }
+  return values;
 }
 
 /** Index every searchable row above what the index already covers. Rows are
@@ -140,6 +196,7 @@ export function backfillMessageSearchIndex(db: DatabaseSync, options: { onProgre
       options.onProgress?.({ done: cursor, total: last });
     }
     ready.add(db);
+    if (indexed) kickSearchMerge();
   } catch (error) { degrade(db, error); }
   return indexed;
 }
@@ -218,6 +275,9 @@ export function stepMessageSearchBackfill(db: DatabaseSync, rows = BACKFILL_CHUN
     writeIndexState(db, SEARCH_FILL, { done: finished ? 1 : 0, cursor: finished ? Math.max(cursor, newest) : cursor, skipped: 0 });
     db.exec("COMMIT");
     if (finished) ready.add(db);
+    // every step commits a level-0 segment and automerge is off, so the merge worker is the only thing that keeps level 0 below crisismerge (16), whose
+    // merge a COMMIT would pay. The normal kick waits kickMs; a fill that finds level 0 at the count trigger asks for the merge at once (one row read).
+    kickSearchMerge(searchLevel0Segments(db) >= BACKFILL_MERGE_AT_LEVEL0 ? { soon: true } : {});
     return { more: !finished, done: cursor, total: newest };
   } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } degrade(db, error); throw error; }
 }

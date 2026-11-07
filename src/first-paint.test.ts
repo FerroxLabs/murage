@@ -118,7 +118,7 @@ describe("the first paint", () => {
 
   it("opens Settings, a bot's settings and the computer panel on first use", () => {
     const reached = staticallyReached(graph);
-    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
+    for (const file of ["src/components/SettingsModal.tsx", "src/components/BotSettingsDialog.tsx", "src/components/BotSettingsPane.tsx", "src/components/SettingsPanel.tsx", "src/components/ComputerPanel.tsx"]) {
       expect(reached, file).not.toContain(file);
       expect(graph.inputs[file], file).toBeDefined();
     }
@@ -138,6 +138,13 @@ describe("the first paint", () => {
       expect(graph.inputs[path], path).toBeDefined();
     }
     expect(reached).toContain("src/lib/connected-apps-preload.ts");
+  });
+
+  it("loads Today's first-run card in its own chunk, only while setup is going (UX-L7 part 2, 1.0.19)", () => {
+    const reached = staticallyReached(graph);
+    expect(reached).not.toContain("src/components/today/FirstRunTodayCard.tsx");
+    expect(graph.inputs["src/components/today/FirstRunTodayCard.tsx"]).toBeDefined();
+    expect(importsOf("src/components/today/TodayView.tsx").filter((edge) => edge.path === "src/components/today/FirstRunTodayCard.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
   });
 
   it("opens a group or project chat's room view and details panel on first open, not with Today (1.0.17)", () => {
@@ -269,7 +276,20 @@ describe("the first paint", () => {
     const reached = staticallyReached(graph);
     expect(reached).toContain("src/lib/analytics.ts");
     expect(reached).not.toContain("posthog-js");
+    expect(reached).not.toContain("src/lib/analytics-active.ts");
     expect(importsOf("src/lib/analytics.ts").filter((edge) => edge.path === "posthog-js").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
+  it("loads the bundled model price snapshot after the first paint, while the picker's rules stay (1.0.18)", () => {
+    // About 100 KiB brotli of a 1.6 MB string that no screen draws on arrival.
+    const snapshot = importsOf("src/lib/model-metadata.ts").filter((edge) => edge.path.endsWith("data/model-metadata.json?raw"));
+    expect(snapshot.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+    const reached = staticallyReached(graph);
+    expect([...reached].filter((path) => path.endsWith("model-metadata.json?raw"))).toEqual([]);
+    // the lookup rules and the picker are the first paint, and small
+    for (const file of ["src/lib/model-metadata.ts", "src/lib/provider-model-picker.ts", "src/components/ModelPicker.tsx"]) {
+      expect(reached, file).toContain(file);
+    }
   });
 
   it("leaves both Markdown editors and Tiptap to the first edit", () => {
