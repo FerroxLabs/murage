@@ -652,7 +652,7 @@ export function ComputerPanel({
           setError(
             bot.autoStartVps
               ? `${status.problem ?? "No ready VPS container"}. Auto will prepare or wake it when this bot next works.`
-              : `${status.problem ?? "No ready VPS container"}. Enable Start VPS automatically below, or choose Cloud to provision it.`,
+              : `${status.problem ?? "No ready VPS container"}. Enable Start hosted computer automatically below, or choose Cloud to provision it.`,
           );
           setPhase(status.container === "stopped" ? "vps-stopped" : "vps-unconfigured");
         })
@@ -1581,14 +1581,14 @@ export function ComputerPanel({
               {!bot.computer && cloudBackend === "vps" && (
                 <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="text-[13px] text-ink">Start VPS automatically</div>
+                    <div className="text-[13px] text-ink">Start hosted computer automatically</div>
                     <div className="mt-0.5 text-[11.5px] text-ink-secondary">
                       Off by default. When enabled, Auto may create or wake this bot's managed container.
                     </div>
                   </div>
                   <Switch
                     checked={Boolean(bot.autoStartVps)}
-                    aria-label="Start VPS automatically"
+                    aria-label="Start hosted computer automatically"
                     onClick={() => dispatch({
                       type: "updateBot",
                       botId: bot.id,

@@ -109,6 +109,28 @@ describe("device door stream upgrade", () => {
   });
 });
 
+describe("D24 retained paired direct call authority", () => {
+  it.each(["/api/calls/sessions", "/api/calls/sessions/call/ticket", "/api/calls/sessions/call/end", "/api/tts/call/reply", "/api/bots/bot/voice-host"])("stamps proven principal for %s", async path => {
+    const response = await fetch(`http://127.0.0.1:${doorPort}${path}`, { method: "POST", headers: { authorization: `Bearer ${GOOD}`, "content-type": "application/json", "x-murage-stream-principal": "desktop", "x-murage-call-id": "server-call" }, body: "{}" });
+    expect(response.status).toBe(200); await response.text();
+    expect(ticketHeaders?.["x-murage-stream-principal"]).toBe("companion:dev_9:bearer");
+    expect(ticketHeaders?.["x-murage-companion-token"]).toBe(proof);
+    expect(ticketHeaders?.["x-murage-call-id"]).toBe("server-call");
+  });
+  it("keeps the call channel and microphone stream in separate bounded slots and revokes both", async () => {
+    const audio = connect({ authorization: `Bearer ${GOOD}` });
+    await new Promise<void>((resolve, reject) => { audio.once("open", resolve); audio.once("error", reject); });
+    const channel = new WebSocket(`ws://127.0.0.1:${doorPort}/api/calls/sessions/call/live?ticket=t`, { headers: { authorization: `Bearer ${GOOD}`, "x-murage-stream-principal": "desktop" } });
+    try {
+      await new Promise<void>((resolve, reject) => { channel.once("open", resolve); channel.once("error", reject); });
+      expect(upgraded?.url).toBe("/api/calls/sessions/call/live?ticket=t");
+      expect(upgraded?.headers["x-murage-stream-principal"]).toBe("companion:dev_9:bearer");
+      const ended = Promise.all([audio, channel].map(ws => new Promise<void>(resolve => ws.once("close", () => resolve()))));
+      expect(tracker.disconnect("dev_9")).toBe(true); await ended;
+    } finally { audio.terminate(); channel.terminate(); }
+  });
+});
+
 describe("device door hardening", () => {
   it("answers 503 to the ticket POST without the launch proof", async () => {
     const bare = createServer(createProxyHandler(options(1, undefined)));
