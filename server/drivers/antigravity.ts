@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
+import { ownedPath } from "../data-roots.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
@@ -569,10 +570,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // A turn that names its own folder (the Chief's proposal turn) gets no
       // per-thread workspace: it would stay behind, empty, after every run.
       const tag = threadId.replace(/[^\w-]/g, "");
-      const workspace = join(DATA_DIR, "workspaces", tag);
+      let workspace = join(DATA_DIR, "workspaces", tag);
       if (!turn.cwd) {
         try {
-          mkdirSync(workspace, { recursive: true });
+          // C11 (S5-DATADIR-PATHS r4.1): the one walker; a `workspaces/<tag>` link is refused, and the spawn uses the canonical (DR5)
+          workspace = ownedPath(workspace, { create: true }).canonical;
         } catch (error) {
           pending.delete(threadId);
           throw error;

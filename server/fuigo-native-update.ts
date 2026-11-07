@@ -1,3 +1,8 @@
+import { DATA_DIR } from "./config.ts";
+import { dataRoots, ownedPath } from "./data-roots.ts";
+import { managedCliConstructors } from "./config-paths.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -40,7 +45,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.39";
+export const QUALIFIED_FUIGO_VERSION = "1.0.40";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {
@@ -250,6 +255,21 @@ export async function managedFuigoReceipt(root: string, id: string, cli?: string
     if (!manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.size > 65536) return null;
     const value = JSON.parse(await readFile(manifestPath, "utf8")) as FuigoReceipt;
     if (value.schema !== 1 || value.instanceId !== id || !supportedFuigoVersion(value.version) || !/^[a-f0-9]{64}$/.test(value.binarySha256) || value.proof?.version !== value.version || value.proof.protocolVersion !== 1 || !value.proof.loadSession || !value.proof.sessionCreated) return null;
+    if (typeof value.previousManagedCli === "string") {
+      const previous = dataRoots().previousRoots();
+      const result = rebaseStoredPath(value.previousManagedCli, managedCliConstructors(value.previousManagedCli, id, previous), { previous });
+      // A refused rollback target is unavailable in memory; the receipt stays byte-identical.
+      if ("refused" in result) { const { previousManagedCli: _previous, ...rest } = value; return rest; }
+      if ("path" in result) {
+        // Only the application's managed store may be migrated, through DR4 and an atomic replacement.
+        if (resolve(root) !== join(DATA_DIR, "managed-engines")) return null;
+        const checked = ownedPath(dirname(manifestPath), { create: false });
+        const next = { ...value, previousManagedCli: result.path };
+        writeFileAtomic(join(checked.canonical, "manifest.json"), JSON.stringify(next, null, 2), { mode: 0o600 });
+        console.warn("data-dir-rebase kind=cli count=1");
+        return next;
+      }
+    }
     return value;
   } catch { return null; }
 }

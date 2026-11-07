@@ -36,7 +36,7 @@ async function fixture(customize?: { bot?: Record<string, unknown>; group?: Reco
   mkdirSync(data);
   const put = (path: string, value: unknown) => { mkdirSync(dirname(join(data, path)), { recursive: true }); writeFileSync(join(data, path), JSON.stringify(value)); };
   put("config.json", { instances: { fake: { driver: "claudeAgent", enabled: true, config: { cli: "must-not-run" } } }, features: { browser: true, skillRecorder: true } });
-  put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_1", composio: true, busy: true, tasks: [{ threadId: "thread", title: "Keep me", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeSeals: { engine: { cursor: "kept", generation: 1 } }, resumeCursors: { old: "cursor" } }], ...customize?.bot }]);
+  put("bots.json", [{ id: "bot", threadId: "thread", name: "Preserved bot", autoApprove: true, autoReview: "enforce", alwaysAllow: ["Bash:sh"], computer: "cloud", autoStartVps: true, browser: true, useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: "profile_1", composio: true, busy: true, resumePolicies: { engine: { root: "/old", sha256: "hash" } }, replayPending: { engine: { cursor: "kept" } }, tasks: [{ threadId: "thread", title: "Keep me", autoApprove: true, alwaysAllow: ["Bash:sh"], resumePolicies: { engine: { root: "/old", sha256: "hash" } }, replayPending: { engine: { cursor: "kept" } }, resumeSeals: { engine: { cursor: "kept", generation: 1 } }, resumeCursors: { old: "cursor" } }], ...customize?.bot }]);
   put("groups.json", [{ id: "room", threadId: "room-thread", name: "Room", memberIds: ["bot"], working: true, busyBotId: "bot", ...customize?.group }]);
   const run = { routineId: "routine", routineName: "Routine", botId: "bot", target: "bot", runOn: "ember", scheduledFor: 1, manual: true, createdAt: 1 };
   put("routines.json", { version: 1, routines: [{ id: "routine", name: "Routine", prompt: "Task", botId: "bot", target: "bot", runOn: "ember", enabled: true, schedule: { type: "once", at: 1 }, durationMinutes: 30, nextRunAt: 1, createdAt: 1, updatedAt: 1 }], runs: [{ ...run, id: "done", status: "completed", result: "immutable receipt" }, { ...run, id: "queued", status: "queued" }], routineRequestReceipts: [{ requestId: "terminal-id", messageId: "terminal", botId: "bot", threadId: "thread", action: "create", fingerprintVersion: 1, fingerprint: "a".repeat(64), resultId: "routine", appliedAt: 1 }] });
@@ -92,6 +92,8 @@ it("prepares a blocked candidate preserving terminal identities and suspending c
   expect(read("bots.json")[0]).not.toHaveProperty("browserExtensionProfileId");
   expect(existsSync(join(result.stateDirectory, "browser-extension"))).toBe(false);
   expect(read("groups.json")[0]).toMatchObject({ working: false, busyBotId: null });
+  expect(read("bots.json")[0].resumePolicies).toBeUndefined();
+  expect(read("bots.json")[0].replayPending).toBeUndefined();
   expect(read("bots.json")[0].tasks).toEqual([{ threadId: "thread", title: "Keep me", autoApprove: false, alwaysAllow: [], resumeCursors: {} }]);
   expect(read("routines.json").runs[0]).toMatchObject({ id: "done", status: "completed", result: "immutable receipt" });
   expect(read("routines.json").runs[1].status).toBe("cancelled");

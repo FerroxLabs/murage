@@ -1,3 +1,4 @@
+import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { DELEGATION_OUTCOMES, ROUTINE_RUN_ON, ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS, ROUTINE_TARGETS, WEBHOOK_ATTEMPT_OUTCOMES } from "../shared/record-values.ts";
@@ -39,6 +40,15 @@ const sectionContexts = z.object({
   }).passthrough()),
 }).passthrough();
 
+// Recovery accepts source roots from either supported path syntax, without reading them.
+const absoluteRoot = z.string().refine(value => posix.isAbsolute(value) || win32.isAbsolute(value));
+const linkedRoot = z.object({ target: absoluteRoot, dev: z.number().finite(), ino: z.number().finite(), at: z.string() }).passthrough();
+const rootRecord = z.object({
+  schema: z.literal(1), root: absoluteRoot,
+  previous: z.array(z.object({ root: absoluteRoot, at: z.string(), source: z.enum(["start", "restore"]) }).passthrough()).max(4),
+  linkedRoots: z.object({ workspaces: linkedRoot.optional(), providers: linkedRoot.optional() }).passthrough().optional(),
+}).passthrough();
+
 let current = "";
 function fail(): never { throw new InstallationSnapshotError("INVALID_INSTALLATION_RECORDS", { path: current }); }
 function unique(records: Array<Record<string, unknown>> | undefined, field: string) {
@@ -54,7 +64,9 @@ function unique(records: Array<Record<string, unknown>> | undefined, field: stri
  * targets are not grounds for discarding historical receipts. */
 function validateRecords(path: string, value: unknown): void {
   current = path;
-  if (path === "routines.json") {
+  if (path === ".murage-root.json") {
+    if (!rootRecord.safeParse(value).success) fail();
+  } else if (path === "routines.json") {
     const parsed = routineFile.safeParse(value); if (!parsed.success) fail();
     unique(parsed.data.routines, "id"); unique(parsed.data.runs ?? [], "id"); unique(parsed.data.routineRequestReceipts, "requestId");
   } else if (path === "calendar-calls.json") {

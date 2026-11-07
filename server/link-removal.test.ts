@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { NotALinkError, addonTreeRemove, installNoFollowRmSync, noFollowRmSync, nodeTreeFs, removeTreeWithoutFollowing, relinkDirectory, removeLink, removeLinkWithRetry, type LinkFs } from "./link-removal.ts";
 import { emulateElectronWindowsRmSync } from "./testing/electron-windows-rmsync.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -316,5 +316,124 @@ describe("noFollowRmSync", () => {
   it("is installed process-wide only on Windows", () => {
     expect(installNoFollowRmSync("linux")).toBe(false);
     expect(installNoFollowRmSync("darwin")).toBe(false);
+  });
+});
+
+// Identity must be checked inside the retry, not once around relinkDirectory.
+import * as removal from "./link-removal.ts";
+it("T12e mismatch at the retry re-read keeps a substituted link",()=>{
+  const expected={dev:1,ino:2,size:3,mtimeMs:4,text:"/old",isSymbolicLink:true};
+  let reads=0,removes=0;
+  const io={lstat:()=>({isSymbolicLink:()=>true}),unlink:()=>{removes++;throw Object.assign(new Error("busy"),{code:"EBUSY"});},rmdir:()=>{},symlink:()=>{}};
+  expect(()=>removal.relinkDirectoryChecked("/entry","/new",expected,()=>++reads===1?expected:{...expected,text:"/replacement"},io,"linux")).toThrow(/changed/);
+  expect(removes).toBe(1);
+});
+it("T10 lexical roots and strict stale tails",()=>{
+  const options={threadId:"t",name:"skill",target:"C:\\new\\threads\\t\\.murage-procedures\\"+"a".repeat(64)+"\\skills\\skill",platform:"win32" as const};
+  const tail="threads\\t\\.murage-procedures\\"+"a".repeat(64)+"\\skills\\skill";
+  for(const prefix of ["D:\\Old\\","\\\\?\\D:\\Old\\","\\??\\D:\\Old\\","D:/OLD/","\\\\srv\\share\\","\\\\?\\UNC\\srv\\share\\","\\??\\UNC\\srv\\share\\"])expect(removal.ownLinkTail(prefix+tail,options)).toBe("ours");
+  for(const prefix of ["D:old\\","\\old\\","\\\\?\\foo\\","\\\\\\share\\","\\\\srv\\\\x\\"])expect(removal.ownLinkTail(prefix+tail,options)).toBe("foreign");
+  expect(removal.ownLinkTail("D:\\Old\\"+tail.replace("threads","THREADS"),options)).toBe("foreign");
+  expect(removal.ownLinkTail(options.target.toUpperCase(),options)).toBe("current");
+});
+
+
+import { prefixRebaseLinks, setRelinkNotice, prefixRebaseSeams } from "./link-removal.ts";
+
+describe("S5 prefix-rebase", () => {
+  function fixture(kind: "dir" | "file" = "dir", text?: string) {
+    const dir = join(scratch, `prefix-${++n}`);
+    fs.mkdirSync(dir);
+    const dataDir = join(dir, "new");
+    fs.mkdirSync(dataDir);
+    const old = join(dir, "old");
+    const target = join(dataDir, "leaf");
+    if (kind === "dir") fs.mkdirSync(target); else fs.writeFileSync(target, "fixture");
+    const link = join(dir, "link");
+    fs.symlinkSync(text ?? `${old}/leaf`, link, kind);
+    const lines: string[] = [];
+    setRelinkNotice(line => lines.push(line));
+    const options = { site: 4 as const, dataDir, previousRoots: [old], kind,
+      create: (target: string, path: string) => fs.symlinkSync(target, path, kind) };
+    return { dir, dataDir, old, target, link, lines, options };
+  }
+  afterEach(() => { vi.restoreAllMocks(); setRelinkNotice(line => console.warn(line)); });
+  it("S5 prefix-rebase 1 rebases a recorded prefix without reading the old target", () => {
+    const c = fixture();
+    prefixRebaseLinks.relink(c.link, c.options);
+    expect(fs.readlinkSync(c.link)).toBe(c.target);
+    expect(c.lines).toEqual([]);
+  });
+  it.each(["missing", "outside", "kind"] as const)("S5 prefix-rebase 2/4/5 refuses %s byte-identically", reason => {
+    const c = fixture();
+    if (reason === "missing") fs.rmdirSync(c.target);
+    if (reason === "kind") { fs.rmdirSync(c.target); fs.writeFileSync(c.target, "file"); }
+    if (reason === "outside") { fs.unlinkSync(c.link); fs.symlinkSync(`${c.old}/x/../leaf`, c.link); }
+    const text = fs.readlinkSync(c.link), ino = fs.lstatSync(c.link).ino;
+    prefixRebaseLinks.relink(c.link, c.options);
+    expect(fs.readlinkSync(c.link)).toBe(text);
+    expect(fs.lstatSync(c.link).ino).toBe(ino);
+    expect(c.lines).toEqual([`relink-skipped site=4 reason=${reason}`]);
+  });
+  it("S5 prefix-rebase 5 file to directory is refused", () => {
+    const c = fixture("file");
+    fs.unlinkSync(c.target); fs.mkdirSync(c.target);
+    const ino = fs.lstatSync(c.link).ino;
+    prefixRebaseLinks.relink(c.link, c.options);
+    expect(fs.readlinkSync(c.link)).toBe(`${c.old}/leaf`);
+    expect(fs.lstatSync(c.link).ino).toBe(ino);
+    expect(c.lines).toEqual(["relink-skipped site=4 reason=kind"]);
+  });
+  it.each(["foreign", "relative", "empty-roots"])("S5 prefix-rebase 3/9 %s is silent", mode => {
+    const c = fixture();
+    if (mode === "empty-roots") c.options.previousRoots = [];
+    else { fs.unlinkSync(c.link); fs.symlinkSync(mode === "relative" ? "old/leaf" : `${c.old}-foreign/leaf`, c.link); }
+    const text = fs.readlinkSync(c.link), ino = fs.lstatSync(c.link).ino;
+    prefixRebaseLinks.relink(c.link, c.options);
+    expect(fs.readlinkSync(c.link)).toBe(text);
+    expect(fs.lstatSync(c.link).ino).toBe(ino);
+    expect(c.lines).toEqual([]);
+  });
+  it("S5 prefix-rebase 6 interrupted replace is swept only after ten minutes", () => {
+    const c = fixture();
+    vi.spyOn(prefixRebaseSeams, "afterCreate").mockImplementation(() => { throw new Error("simulated process interruption"); });
+    expect(() => prefixRebaseLinks.relink(c.link, c.options)).toThrow("simulated process interruption");
+    const sibling = fs.readdirSync(c.dir).find(x => x.includes(".murage-relink-"))!;
+    expect(sibling).toBeTruthy();
+    const now = fs.lstatSync(join(c.dir, sibling)).mtimeMs;
+    const plain = join(c.dir, "plain.murage-relink-1-1"); fs.writeFileSync(plain, "keep");
+    prefixRebaseLinks.sweep(c.dir, now + 5 * 60_000);
+    expect(fs.lstatSync(join(c.dir, sibling)).isSymbolicLink()).toBe(true);
+    prefixRebaseLinks.sweep(c.dir, now + 11 * 60_000);
+    expect(fs.existsSync(join(c.dir, sibling))).toBe(false);
+    expect(fs.readFileSync(plain, "utf8")).toBe("keep");
+    expect(fs.readlinkSync(c.link)).toBe(`${c.old}/leaf`);
+  });
+  it.each(["ok", "fallback", "restore", "restore-failed", "changed"])("S5 prefix-rebase 8 win32 %s", branch => {
+    const c = fixture();
+    vi.spyOn(prefixRebaseSeams, "platform").mockReturnValue("win32");
+    // Match Windows spellings while using real Linux directory links through the primitive seam.
+    const originalText = fs.readlinkSync(c.link);
+    let calls = 0;
+    vi.spyOn(prefixRebaseSeams, "rename").mockImplementation((a, b) => {
+      calls++;
+      if (branch !== "ok" && calls === 1) {
+        if (branch === "changed") { fs.unlinkSync(c.link); fs.symlinkSync("changed", c.link); }
+        throw errno("EPERM");
+      }
+      if (branch.startsWith("restore")) throw errno("EIO");
+      fs.renameSync(a, b);
+    });
+    if (branch === "restore-failed") c.options.create = (target, path) => {
+      if (path === c.link) throw errno("EIO"); fs.symlinkSync(target, path, "dir");
+    };
+    expect(() => prefixRebaseLinks.relink(c.link, c.options)).not.toThrow();
+    if (branch === "ok" || branch === "fallback") expect(fs.readlinkSync(c.link)).toBe(c.target);
+    if (branch === "restore") expect(fs.readlinkSync(c.link)).toBe(originalText);
+    if (branch === "changed") expect(fs.readlinkSync(c.link)).toBe("changed");
+    if (branch === "restore-failed") expect(fs.lstatSync(c.link, { throwIfNoEntry: false })).toBeUndefined();
+    expect(c.lines).toEqual(branch === "restore-failed" ? ["relink-failed site=4 reason=restore"] :
+      branch === "restore" || branch === "changed" ? [`relink-skipped site=4 reason=${branch === "restore" ? "replace" : "changed"}`] : []);
+    expect(fs.readdirSync(c.dir).filter(x => x.includes(".murage-relink-"))).toEqual([]);
   });
 });

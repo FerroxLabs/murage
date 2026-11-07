@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 4 skipped (5)
+   Start at  15:17:36
+   Duration  8.56s (transform 4.81s, setup 5.96s, import 16ms, tests 2.46s, environment 0ms)
+

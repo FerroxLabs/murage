@@ -55,7 +55,10 @@ it("an optional index built off the main thread brackets itself the same way", a
   const db = new DatabaseSync(join(dir, "messages.db")); dbs.push(db);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
   migrateMemorySchema(db, "active");
-  const index = OPTIONAL_INDEXES[0]!;
+  // The first registered index whose table this memory-only file holds: messages-table indexes (message-id, transcript-seq)
+  // can register first, depending on import order, and this file has no messages table.
+  const index = OPTIONAL_INDEXES.find(item => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(item.table))!;
+  expect(index, OPTIONAL_INDEXES.map(item => `${item.name}:${item.table}`).join(" ")).toBeDefined();
   let heldDuring = false;
   const watch = (on: boolean) => { hold(on); if (on) heldDuring = writersHeldForIndexBuild(); };
   expect(await buildOptionalIndexOffThread(db, index, { retries: 0, hold: watch })).toBe(true);

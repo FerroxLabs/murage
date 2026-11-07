@@ -146,7 +146,7 @@ it("a non-owner turn's procedure work stays flat however many pins the task has 
       const playbooks=[{key:`p${i}`,name:`P${i}`,summary:"s",triggers:["t"],instructions:`run ${i}`}];
       preparePinnedProcedures(id,thread,createProcedurePin(id,thread,catalogue,playbooks,undefined,undefined,{ownerTurn:i%2===0,shipped:isShipped}),true);
     }
-    expect(readdirSync(join(taskWorkspacePath(DATA_DIR,id,thread),".murage-procedures")).length).toBe(Math.max(history,1));
+    expect(readdirSync(join(taskWorkspacePath(DATA_DIR,id,thread),".murage-procedures")).filter(name=>name!==".relink").length).toBe(Math.max(history,1));
     const room=createProcedurePin(id,thread,catalogue,[],undefined,undefined,{ownerTurn:false,shipped:isShipped});
     preparePinnedProcedures(id,thread,room,true);
     const holder=fs as unknown as Record<string,unknown>,original=fs.readdirSync,calls:string[]=[];
@@ -334,7 +334,7 @@ it("a same-name entry that is not this task's earlier pin projection still fails
     rmSync(nativeLink(id,thread,".agents/skills","checked-method"));replace(thread,first.bundleId);
     setSkillEnabled(id,"second-method",false);
     const second=createProcedurePin(id,thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});
-    expect(()=>preparePinnedProcedures(id,thread,second,true),label).toThrow("Pinned procedures are unavailable or changed");
+    expect(codeFrom(()=>preparePinnedProcedures(id,thread,second,true)),label).toBe("skill-link-foreign");
   }
   expect(readFileSync(join(nativeLink(id,"task-4",".agents/skills","checked-method"),"SKILL.md"),"utf8")).toBe("Owner bytes");
 });
@@ -389,7 +389,8 @@ it("a routine re-run relinks and drops earlier-pin links under the Windows runti
   expect(existsSync(join(pinTarget(id,thread,first.bundleId,"second-method"),"SKILL.md"))).toBe(true);
 });
 
-it("a relink that fails twice does not refuse the turn and names the skill for the chat",()=>{
+it("T12c no-addon relink fails twice, runs with linkNotice, and retries next turn",()=>{
+  if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);
   const id=bot(),thread="routine-locked",routine={id:"routine-1",instructionRevision:"a".repeat(64)};learned(id,"Original");
   const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine,undefined,{ownerTurn:true,shipped:()=>true});preparePinnedProcedures(id,thread,first,true);
   const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"beta")],[],routine,undefined,{ownerTurn:true,shipped:()=>true});
@@ -421,7 +422,8 @@ it("the chat line for unlinked skills names each one",()=>{
   expect(skillLinkNotice(["a","b"])).not.toMatch(/\u2014/);
 });
 
-it("an earlier pin's link that cannot be removed refuses the turn with a clear message",()=>{
+it("T12d no-addon earlier pin removal failure keeps the working-folder message",()=>{
+  if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);
   const id=bot(),thread="routine-stuck",routine={id:"routine-1",instructionRevision:"a".repeat(64)};learned(id,"Original");
   const first=createProcedurePin(id,thread,[catalogueSkill(id,"alpha")],[],routine,undefined,{ownerTurn:true,shipped:()=>true});preparePinnedProcedures(id,thread,first,true);
   const second=createProcedurePin(id,thread,[catalogueSkill(id,"alpha"),catalogueSkill(id,"beta")],[],routine,undefined,{ownerTurn:true,shipped:()=>true});
@@ -440,4 +442,186 @@ it("an earlier pin's link that cannot be removed refuses the turn with a clear m
   finally{replace("unlinkSync",originals.unlinkSync);replace("rmdirSync",originals.rmdirSync);}
   expect(attempts).toBeGreaterThanOrEqual(2);
   expect(readlinkSync(stuck)).toBe(pinTarget(id,thread,first.bundleId,"checked-method"));
+});
+
+// S5-RELINK: all data and external targets live in the isolated test home.
+import * as linkRemoval from "./link-removal.ts";
+import { vi } from "vitest";
+import { localSetupFailureOf } from "./local-setup-failure.ts";
+afterEach(()=>vi.restoreAllMocks());
+function relinkFixture(){
+  const id=bot(),thread="relink-thread";learned(id,"Original");
+  const pin=createProcedurePin(id,thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});
+  preparePinnedProcedures(id,thread,pin,true);
+  const desk=taskWorkspacePath(DATA_DIR,id,thread),link=join(desk,".claude/skills/checked-method");
+  const target=join(desk,".murage-procedures",pin.bundleId,"skills/checked-method");
+  mkdirSync(join(desk,".murage-procedures/.relink"),{recursive:true});
+  const external=join(DATA_DIR,"external",id,"threads",thread,".murage-procedures","a".repeat(64),"skills/checked-method");
+  owned.push(join(DATA_DIR,"external",id));
+  const put=(text:string)=>{fs.unlinkSync(link);symlinkSync(text,link,"dir");};
+  return {id,thread,pin,desk,link,target,external,put,run:()=>preparePinnedProcedures(id,thread,pin,true)};
+}
+function moveSeam(result:"ok"|"unsupported"="ok"){
+  const moves=(linkRemoval as unknown as {linkMoves: {available():boolean;moveNoReplace(a:string,b:string):string}}).linkMoves;
+  // Absent on the baseline: let behavior assertions, not a missing seam, report the regression.
+  if(!moves)return;
+  vi.spyOn(moves,"available").mockReturnValue(true);
+  vi.spyOn(moves,"moveNoReplace").mockImplementation((a,b)=>{if(result!=="ok")return result;if(fs.lstatSync(b,{throwIfNoEntry:false}))return "exists";fs.renameSync(a,b);return "ok";});
+}
+function codeFrom(run:()=>unknown){try{run();return undefined;}catch(e){return localSetupFailureOf(e);}}
+for(const [testId,live] of [["T1",false],["T2",false],["T3",true],["T6b",true],["T8b",false]] as const){
+  it(`${testId} external own link is replaced without following its old target`,()=>{
+    const f=relinkFixture();moveSeam();
+    let run=f.run,target=f.target;
+    if(testId==="T1"){learned(f.id,"Repinned","update");const next=createProcedurePin(f.id,f.thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});run=()=>preparePinnedProcedures(f.id,f.thread,next,true);target=f.target.replace(f.pin.bundleId,next.bundleId);}
+    let old=f.external;
+    if(testId==="T2")old=old.replace("a".repeat(64),f.pin.bundleId);
+    if(live){mkdirSync(old,{recursive:true});writeFileSync(join(old,"sentinel"),"untouched");}
+    if(testId==="T6b"){const elsewhere=join(DATA_DIR,"external",f.id,"elsewhere");fs.renameSync(old,elsewhere);symlinkSync(elsewhere,old,"dir");}
+    f.put(old);
+    const spies=[vi.spyOn(fs,"statSync"),vi.spyOn(fs,"realpathSync"),vi.spyOn(fs,"openSync")];syncBuiltinESMExports();
+    try{expect(run().linkNotice).toBeUndefined();expect(readlinkSync(f.link)).toBe(target);for(const spy of spies)expect(spy.mock.calls.some(args=>String(args[0]).startsWith(old))).toBe(false);}
+    finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+    if(live)expect(readFileSync(join(old,"sentinel"),"utf8")).toBe("untouched");
+  });
+}
+for(const [testId,make] of [
+  ["T5a",(f:ReturnType<typeof relinkFixture>)=>f.target.replace("/skills/","/skills/x/../")],
+  ["T5b",(f:ReturnType<typeof relinkFixture>)=>f.target.replace("/skills/","/skills/./")],
+  ["T5c",(f:ReturnType<typeof relinkFixture>)=>f.external+"/../../../../evil"],
+  ["T7",(f:ReturnType<typeof relinkFixture>)=>f.external.replace(/checked-method$/,"another")],
+  ["T8 short",(f:ReturnType<typeof relinkFixture>)=>f.external.replace("a".repeat(64),"a".repeat(63))],
+  ["T8 uppercase",(f:ReturnType<typeof relinkFixture>)=>f.external.replace("a".repeat(64),"A".repeat(64))],
+  ["T8 nonhex",(f:ReturnType<typeof relinkFixture>)=>f.external.replace("a".repeat(64),"g".repeat(64))],
+  ["T8 malformed",(f:ReturnType<typeof relinkFixture>)=>f.external.replace("a".repeat(64),"not-a-bundle")],
+  ["T9",(f:ReturnType<typeof relinkFixture>)=>f.external.replace("relink-thread","other-thread")],
+  ["T9b",(f:ReturnType<typeof relinkFixture>)=>`threads/${f.thread}/.murage-procedures/${f.pin.bundleId}/skills/checked-method`],
+] as const){it(`${testId} refuses foreign text without changing it`,()=>{const f=relinkFixture(),text=make(f);f.put(text);expect(codeFrom(f.run)).toBe("skill-link-foreign");expect(readlinkSync(f.link)).toBe(text);});}
+it("T6 a two-hop link to the current target stays foreign",()=>{const f=relinkFixture();const hop=join(DATA_DIR,"external",f.id,"hop");mkdirSync(join(DATA_DIR,"external",f.id),{recursive:true});symlinkSync(f.target,hop,"dir");f.put(hop);expect(codeFrom(f.run)).toBe("skill-link-foreign");expect(readlinkSync(f.link)).toBe(hop);});
+for(const mode of ["addon","absent","unsupported"] as const){
+  it(`T4 ${mode}: an external unpinned link is removed only with safe moves`,()=>{
+    const f=relinkFixture();f.put(f.external);mkdirSync(f.external,{recursive:true});writeFileSync(join(f.external,"sentinel"),"kept");
+    setSkillEnabled(f.id,"checked-method",false);const pin=createProcedurePin(f.id,f.thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});
+    if(mode!=="absent")moveSeam(mode==="unsupported"?"unsupported":"ok");else if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);
+    preparePinnedProcedures(f.id,f.thread,pin,true);
+    expect(Boolean(fs.lstatSync(f.link,{throwIfNoEntry:false}))).toBe(mode!=="addon");expect(readFileSync(join(f.external,"sentinel"),"utf8")).toBe("kept");
+  });
+  it(`T12e ${mode}: external pinned own links require safe moves`,()=>{const f=relinkFixture();f.put(f.external);if(mode!=="absent")moveSeam(mode==="unsupported"?"unsupported":"ok");else if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);expect(codeFrom(f.run)).toBe(mode==="addon"?undefined:"skill-link-staging");});
+}
+for(const bad of ["link","dev","procedures-link"]){it(`T11e S1 refuses ${bad} staging`,()=>{
+  const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink");moveSeam();f.put(f.external);
+  mkdirSync(staging,{recursive:true});
+  if(bad==="dev"){const original=fs.lstatSync;vi.spyOn(fs,"lstatSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{const s=Reflect.apply(original,fs,[p,...args]);if(String(p)===staging)Object.defineProperty(s,"dev",{value:s.dev+1});return s;}) as typeof fs.lstatSync);syncBuiltinESMExports();}
+  else {const p=bad==="link"?staging:join(f.desk,".murage-procedures"),aside=p+"-aside";fs.renameSync(p,aside);symlinkSync(aside,p,"dir");}
+  try{expect(codeFrom(f.run)).toBe("skill-link-staging");}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});}
+it("T11b sweep keeps an entry with foreign text",()=>{const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink");mkdirSync(staging,{recursive:true});const q=join(staging,`claude.checked-method.${randomUUID()}`);symlinkSync("/foreign",q,"dir");expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readlinkSync(q)).toBe("/foreign");});
+it("T15 missing bundle has the pinned-procedures code",()=>{const f=relinkFixture();fs.unlinkSync(join(DATA_DIR,"skill-state",f.id,"task-bundles",f.thread,`${f.pin.bundleId}.json`));expect(codeFrom(f.run)).toBe("pinned-procedures");});
+it("T15 tampered projection has the pinned-procedures code",()=>{const f=relinkFixture(),p=join(f.target,"SKILL.md");fs.chmodSync(p,0o600);writeFileSync(p,"changed");expect(codeFrom(f.run)).toBe("pinned-procedures");});
+it("T11 S1 with zero pinned skills and no discovery folders creates only staging",()=>{const id=bot(),thread="empty",pin=createProcedurePin(id,thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});preparePinnedProcedures(id,thread,pin,true);const desk=taskWorkspacePath(DATA_DIR,id,thread);expect(fs.lstatSync(join(desk,".murage-procedures/.relink")).isDirectory()).toBe(true);for(const dir of [".claude",".agents",".grok"])expect(existsSync(join(desk,dir))).toBe(false);});
+
+for(const mode of ["absent","unsupported"] as const){it(`T12e ${mode} in-desk earlier pins still relink (green regression guard)`,()=>{
+  const f=relinkFixture();if(mode==="absent"){if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);}else moveSeam("unsupported");
+  const old=f.target.replace(f.pin.bundleId,"b".repeat(64));f.put(old);expect(f.run().linkNotice).toBeUndefined();expect(readlinkSync(f.link)).toBe(f.target);
+});}
+for(const code of ["EXDEV","EBUSY","EACCES","ENOENT"]){it(`T11d/T12d R2 ${code} is staging and never copies`,()=>{
+  const f=relinkFixture();f.put(f.external);moveSeam();vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation(()=>{throw Object.assign(new Error(code),{code});});
+  const cp=vi.spyOn(fs,"cpSync"),copy=vi.spyOn(fs,"copyFileSync"),rename=vi.spyOn(fs,"renameSync");syncBuiltinESMExports();
+  try{expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readlinkSync(f.link)).toBe(f.external);expect(cp).not.toHaveBeenCalled();expect(copy).not.toHaveBeenCalled();expect(rename).not.toHaveBeenCalled();}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});}
+it("T12a a taken quarantine name is never replaced",()=>{const f=relinkFixture();f.put(f.external);moveSeam();let q="";vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation((_a,b)=>{q=b;writeFileSync(b,"planted");return "exists";});expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readFileSync(q,"utf8")).toBe("planted");expect(readlinkSync(f.link)).toBe(f.external);});
+for(const phase of ["before-move","after-move"]){it(`T12 ${phase} substitution preserves a real folder and never restores it`,()=>{
+ const f=relinkFixture();f.put(f.external);moveSeam();let q="";
+ vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation((a,b)=>{q=b;if(phase==="before-move"){fs.unlinkSync(a);mkdirSync(a);writeFileSync(join(a,"sentinel"),"bytes");}fs.renameSync(a,b);if(phase==="after-move"){fs.unlinkSync(b);mkdirSync(b);writeFileSync(join(b,"sentinel"),"bytes");}return "ok";});
+ expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readFileSync(join(q,"sentinel"),"utf8")).toBe("bytes");expect(fs.lstatSync(f.link,{throwIfNoEntry:false})).toBeUndefined();
+});}
+for(const kind of ["file","foreign-link"]){it(`T12b ${kind} at R4 is never overwritten`,()=>{
+ const f=relinkFixture();f.put(f.external);moveSeam();let q="";
+ vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation((a,b)=>{q=b;fs.renameSync(a,b);if(kind==="file")writeFileSync(a,"planted");else symlinkSync("/foreign",a,"dir");return "ok";});
+ expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readlinkSync(q)).toBe(f.external);if(kind==="file")expect(readFileSync(f.link,"utf8")).toBe("planted");else expect(readlinkSync(f.link)).toBe("/foreign");
+});}
+for(const mode of ["R5","sweep"]){
+ it(`T12d ${mode} removal I/O error is working-folder and keeps quarantine`,()=>{
+  const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink");f.put(f.external);moveSeam();
+  if(mode==="sweep")symlinkSync(f.external,join(staging,`claude.checked-method.${randomUUID()}`),"dir");
+  vi.spyOn(linkRemoval.nodeLinkFs,"unlink").mockImplementation(()=>{throw Object.assign(new Error("busy"),{code:"EBUSY"});});
+  vi.spyOn(linkRemoval.nodeLinkFs,"rmdir").mockImplementation(()=>{throw Object.assign(new Error("busy"),{code:"EBUSY"});});
+  expect(codeFrom(f.run)).toBe("working-folder");expect(readdirSync(staging)).toHaveLength(1);
+ });
+ it(`T11c ${mode} identity mismatch is staging and keeps quarantine`,()=>{
+  const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink");f.put(f.external);moveSeam();
+  if(mode==="sweep")symlinkSync(f.external,join(staging,`claude.checked-method.${randomUUID()}`),"dir");
+  const original=fs.readlinkSync;let count=0;
+  vi.spyOn(fs,"readlinkSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{if(String(p).startsWith(staging+"/")&&++count===2){fs.unlinkSync(p);symlinkSync("/foreign",p,"dir");}return Reflect.apply(original,fs,[p,...args]);}) as typeof fs.readlinkSync);syncBuiltinESMExports();
+  try{expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readdirSync(staging)).toHaveLength(1);}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+ });
+}
+for(const phase of ["R2","R4","R5"]){it(`T11 crash after ${phase} is swept on restart and a second prepare is a no-op`,()=>{
+ const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink");f.put(f.external);moveSeam();const crash=Object.assign(new Error("CrashSim"),{code:"EIO"});
+ if(phase==="R2")vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation((a,b)=>{fs.renameSync(a,b);throw crash;});
+ if(phase==="R4")vi.spyOn(linkRemoval.nodeLinkFs,"symlink").mockImplementation((target,path,type)=>{symlinkSync(target,path,type);throw crash;});
+ if(phase==="R5")vi.spyOn(linkRemoval.nodeLinkFs,"unlink").mockImplementation(()=>{throw crash;});
+ expect(()=>f.run()).toThrow();expect(readdirSync(staging)).toHaveLength(1);vi.restoreAllMocks();
+ expect(f.run().linkNotice).toBeUndefined();expect(readdirSync(staging)).toEqual([]);expect(readlinkSync(f.link)).toBe(f.target);expect(f.run().linkNotice).toBeUndefined();expect(readdirSync(staging)).toEqual([]);
+});}
+it("T12c moved link creation fails twice: notice, retained quarantine, then recovery",()=>{
+ const f=relinkFixture();f.put(f.external);moveSeam();const original=linkRemoval.nodeLinkFs.symlink;let attempts=0;
+ vi.spyOn(linkRemoval.nodeLinkFs,"symlink").mockImplementation((target,path,type)=>{if(path===f.link){attempts++;throw Object.assign(new Error("busy"),{code:"EBUSY"});}return original(target,path,type);});
+ expect(f.run().linkNotice).toBe(skillLinkNotice(["checked-method"]));expect(attempts).toBe(2);expect(readdirSync(join(f.desk,".murage-procedures/.relink"))).toHaveLength(1);vi.restoreAllMocks();expect(f.run().linkNotice).toBeUndefined();
+});
+it("T15 EACCES on a projection read has the pinned-procedures code",()=>{
+ const f=relinkFixture(),original=fs.openSync;vi.spyOn(fs,"openSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{if(String(p)===join(f.target,"SKILL.md"))throw Object.assign(new Error("denied"),{code:"EACCES"});return Reflect.apply(original,fs,[p,...args]);}) as typeof fs.openSync);syncBuiltinESMExports();try{expect(codeFrom(f.run)).toBe("pinned-procedures");}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});
+it("T10 ino zero still detects a changed text at R3",()=>{
+ const f=relinkFixture();f.put(f.external);moveSeam();const original=fs.lstatSync;vi.spyOn(fs,"lstatSync").mockImplementation(((...args:unknown[])=>{const stat=Reflect.apply(original,fs,args);if(stat?.isSymbolicLink())Object.defineProperty(stat,"ino",{value:0});return stat;}) as typeof fs.lstatSync);syncBuiltinESMExports();
+ vi.spyOn(linkRemoval.linkMoves,"moveNoReplace").mockImplementation((a,b)=>{fs.renameSync(a,b);fs.unlinkSync(b);symlinkSync(f.external.replace("a".repeat(64),"b".repeat(64)),b,"dir");return "ok";});try{expect(codeFrom(f.run)).toBe("skill-link-staging");}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});
+
+const windowsTail=`threads\\relink-thread\\.murage-procedures\\${"a".repeat(64)}\\skills\\checked-method`;
+for(const [label,prefix,valid] of [
+ ["extended drive","\\\\?\\D:\\old\\",true],["NT drive","\\??\\D:\\old\\",true],["slash drive","D:/old/",true],["mixed separators","D:\\old/",true],
+ ["UNC","\\\\srv\\share\\old\\",true],["extended UNC","\\\\?\\UNC\\srv\\share\\old\\",true],["old prefix case","D:\\OLD\\",true],
+ ["drive relative","D:old\\",false],["rooted","\\old\\",false],["bad extended","\\\\?\\foo\\",false],["empty server","\\\\\\share\\",false],["empty share","\\\\srv\\\\x\\",false],
+] as const){it(`T10 prepare Windows ${label}`,()=>{
+ const f=relinkFixture();moveSeam();const text=prefix+windowsTail;
+ // Physical Linux paths stay real; readlink models the text returned by a Windows restore.
+ const original=fs.readlinkSync;vi.spyOn(fs,"readlinkSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{const value=Reflect.apply(original,fs,[p,...args]);return value===f.external?text:value;}) as typeof fs.readlinkSync);syncBuiltinESMExports();
+ for(const dir of [".claude",".agents",".grok"]){const link=join(f.desk,dir,"skills/checked-method");fs.unlinkSync(link);symlinkSync(f.external,link,"dir");}
+ const platform=Object.getOwnPropertyDescriptor(process,"platform")!;Object.defineProperty(process,"platform",{value:"win32"});
+ try{expect(codeFrom(f.run)).toBe(valid?undefined:"skill-link-foreign");}finally{Object.defineProperty(process,"platform",platform);vi.restoreAllMocks();syncBuiltinESMExports();}
+});}
+it("T10 darwin case-changed old home prefix relinks",()=>{const f=relinkFixture();f.put(`/Users/alex/threads/${f.thread}/.murage-procedures/${"a".repeat(64)}/skills/checked-method`);moveSeam();const platform=Object.getOwnPropertyDescriptor(process,"platform")!;Object.defineProperty(process,"platform",{value:"darwin"});try{expect(f.run().linkNotice).toBeUndefined();}finally{Object.defineProperty(process,"platform",platform);}});
+for(const mode of ["absent","unsupported"] as const){it(`T12e ${mode} mismatch immediately before in-desk removal is staging`,()=>{
+ const f=relinkFixture(),old=f.target.replace(f.pin.bundleId,"b".repeat(64));f.put(old);
+ if(mode==="absent"){if(linkRemoval.linkMoves)vi.spyOn(linkRemoval.linkMoves,"available").mockReturnValue(false);}else moveSeam("unsupported");
+ const original=fs.readlinkSync;let reads=0;
+ vi.spyOn(fs,"readlinkSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{if(String(p)===f.link&&++reads===3){fs.unlinkSync(p);symlinkSync("/changed",p,"dir");}return Reflect.apply(original,fs,[p,...args]);}) as typeof fs.readlinkSync);syncBuiltinESMExports();
+ try{expect(codeFrom(f.run)).toBe("skill-link-staging");expect(readlinkSync(f.link)).toBe("/changed");}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});}
+
+for(const bad of ["dev","link","procedures-link"] as const){it(`T11e ${bad} with zero pins and no discovery directories`,()=>{
+ const id=bot(),thread="empty-check",pin=createProcedurePin(id,thread,[],[],undefined,undefined,{ownerTurn:true,shipped:()=>true});preparePinnedProcedures(id,thread,pin,false);
+ const desk=taskWorkspacePath(DATA_DIR,id,thread),procedures=join(desk,".murage-procedures"),staging=join(procedures,".relink");mkdirSync(staging);
+ if(bad==="dev"){const original=fs.lstatSync;vi.spyOn(fs,"lstatSync").mockImplementation(((p:fs.PathLike,...args:unknown[])=>{const stat=Reflect.apply(original,fs,[p,...args]);if(String(p)===staging)Object.defineProperty(stat,"dev",{value:stat.dev+1});return stat;}) as typeof fs.lstatSync);syncBuiltinESMExports();}
+ else {const p=bad==="link"?staging:procedures;fs.renameSync(p,p+"-aside");symlinkSync(p+"-aside",p,"dir");}
+ try{expect(codeFrom(()=>preparePinnedProcedures(id,thread,pin,true))).toBe("skill-link-staging");for(const dir of [".claude",".agents",".grok"])expect(existsSync(join(desk,dir))).toBe(false);}finally{vi.restoreAllMocks();syncBuiltinESMExports();}
+});}
+for(const kind of ["file","directory","malformed-name"] as const){it(`T11b sweep retains ${kind}`,()=>{
+ const f=relinkFixture(),staging=join(f.desk,".murage-procedures/.relink"),q=join(staging,kind==="malformed-name"?"bad-name":`claude.checked-method.${randomUUID()}`);
+ if(kind==="file")writeFileSync(q,"kept");else if(kind==="directory"){mkdirSync(q);writeFileSync(join(q,"sentinel"),"kept");}else symlinkSync(f.external,q,"dir");
+ expect(codeFrom(f.run)).toBe("skill-link-staging");expect(fs.lstatSync(q)).toBeDefined();
+});}
+
+it.each([false, true])("Q3 checks a linked desk before any pin read (native=%s)", native => {
+  const id = bot(), thread = "linked-desk", desk = taskWorkspacePath(DATA_DIR, id, thread);
+  mkdirSync(desk, { recursive: true });
+  const pin = createProcedurePin(id, thread, [], [], undefined, undefined, { ownerTurn: true, shipped: () => true });
+  rmSync(desk, { recursive: true, force: true });
+  symlinkSync(desk + "-missing", desk, "dir");
+  const read = vi.spyOn(fs, "readFileSync");
+  syncBuiltinESMExports();
+  try {
+    expect(() => preparePinnedProcedures(id, thread, pin, native)).toThrowError(expect.objectContaining({ name: "WorkspaceTreeError", code: "link-below-root" }));
+    expect(read).not.toHaveBeenCalled();
+  } finally { read.mockRestore(); syncBuiltinESMExports(); }
 });
