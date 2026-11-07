@@ -1,3 +1,4 @@
+import { structuralPng as png } from "./testing/workspace-image-fixtures.ts";
 // F5-T1: the media routes through the real harness (server/index.ts routing,
 // desktop gate, sendDelegated streaming) against an isolated fake-engine app.
 import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -8,11 +9,7 @@ import { mediaWorkspaceRevision } from "./media-assets.ts";
 import { COMPANION_HEADER } from "./sse-visibility.ts";
 import { MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_ROUTES, redactMediaCapability, type MediaResolveResponse } from "../shared/media-assets.ts";
 
-const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
-const png = (width: number, height: number, tail: number) => Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), u32(13), Buffer.from("IHDR"), u32(width), u32(height), Buffer.from([8, 6, 0, 0, 0]), u32(0),
-  Buffer.alloc(tail, 0x5c), Buffer.from("IEND"),
-]);
+
 
 let fixture: VerificationServer, desktop: Record<string, string> = {};
 const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = desktop) => {
@@ -20,7 +17,12 @@ const api = async (method: string, path: string, body?: unknown, headers: Record
   return { status: response.status, body: await response.json() as any };
 };
 beforeAll(async () => {
-  fixture = await launchVerificationServer();
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    import { existsSync } from 'node:fs';
+    import { join } from 'node:path';
+    const realNow = Date.now;
+    Date.now = () => realNow() + (existsSync(join(process.env.MURAGE_DATA_DIR, 'advance-media-clock')) ? 700000 : 0);
+  ` });
   const proof = await api("GET", "/api/desktop-secret", undefined, {});
   desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
 }, 30000);
@@ -134,3 +136,65 @@ it("resolves saved and workspace media for the desktop only and streams exact ra
   expect(log).not.toContain(token);
   expect(redactMediaCapability(url)).not.toContain(token);
 }, 30000);
+
+it("T2/R32-RESTART and H7-log-sinks: actual restart revokes old URLs and logs hide capabilities", async () => {
+  const bot = (await api("POST", "/api/bots", { name: "Restart fixture" })).body.bot;
+  const scope = { botId: bot.id, threadId: bot.threadId };
+  const root = join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId);
+  mkdirSync(root, { recursive: true });
+  const path = join(root, "restart.png"); writeFileSync(path, png(1, 1));
+  const revision = mediaWorkspaceRevision(realpathSync.native(root), "restart.png", lstatSync(path));
+  const ref = { source: "workspace", scope, relativePath: "restart.png", revision };
+  const original = (await api("POST", MEDIA_ROUTES.resolve, { ref })).body as MediaResolveResponse & { url: string };
+  expect(original.asset.frameCount).toBe(1);
+  const tokens = [new URL(original.url, fixture.info.url).searchParams.get("cap")!];
+  const success = await fetch(new URL(original.url, fixture.info.url)); expect(success.status).toBe(200); await success.arrayBuffer();
+  writeFileSync(path, png(2, 1));
+  const changed = await fetch(new URL(original.url, fixture.info.url)); expect(changed.status).toBe(409); await changed.text();
+  const hidden = await fetch(new URL(original.url, fixture.info.url), { headers: { [COMPANION_HEADER]: "1" } }); expect(hidden.status).toBe(404); await hidden.text();
+  writeFileSync(join(fixture.info.dataDir, "advance-media-clock"), "1");
+  const expired = await fetch(new URL(original.url, fixture.info.url)); expect(expired.status).toBe(403); await expired.text();
+  (await import("node:fs")).unlinkSync(join(fixture.info.dataDir, "advance-media-clock"));
+  // Exercise the client transport in Vitest without adding browser modules to the server build graph.
+  const clientSaveModule = "../src/lib/local-image-save.ts";
+  const { saveLocalImage, localImageSaveBusy } = await import(clientSaveModule);
+  const heldRevision = mediaWorkspaceRevision(realpathSync.native(root), "restart.png", lstatSync(path));
+  const held = (await api("POST", MEDIA_ROUTES.resolve, { ref: { ...ref, revision: heldRevision } })).body as MediaResolveResponse & { url: string };
+  let resume!: () => void; const waiting = new Promise<void>(resolve => { resume = resolve; });
+  let reads = 0, renewals = 0, handed = 0;
+  const saving = saveLocalImage({ shown: { state: 'ready', ...held, canonicalKey: 'restart', generation: 1, relativePath: 'restart.png' }, live: () => true,
+    fetcher: async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => { if (++reads === 1) await waiting; return fetch(new URL(String(url), fixture.info.url), init); },
+    renew: async () => { renewals++; const result = (await api("POST", MEDIA_ROUTES.resolve, { ref: { ...ref, revision: heldRevision } })).body; return { state: 'ready', ...result, canonicalKey: 'restart', generation: 2, relativePath: 'restart.png' }; },
+    native: async () => false, handoff: async (blob: Blob) => { handed++; expect(Buffer.from(await blob.arrayBuffer())).toEqual(png(2, 1)); }, report: (error: unknown) => { throw error; } });
+  expect(localImageSaveBusy()).toBe(true);
+  await fixture.restart();
+  const proof = await api("GET", "/api/desktop-secret", undefined, {});
+  desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+  resume(); expect(await saving.result).toEqual({ state: 'saved' }); expect(reads).toBe(2); expect(renewals).toBe(1); expect(handed).toBe(1);
+  const revoked = await fetch(new URL(original.url, fixture.info.url)); expect(revoked.status).toBe(404); await revoked.text();
+  const nextRevision = mediaWorkspaceRevision(realpathSync.native(root), "restart.png", lstatSync(path));
+  const fresh = (await api("POST", MEDIA_ROUTES.resolve, { ref: { ...ref, revision: nextRevision } })).body as MediaResolveResponse & { url: string };
+  expect(fresh.asset.availability).toBe("ready"); expect(fresh.asset.id).not.toBe(original.asset.id);
+  tokens.push(new URL(fresh.url, fixture.info.url).searchParams.get("cap")!);
+  const freshBytes = await fetch(new URL(fresh.url, fixture.info.url)); expect(freshBytes.status).toBe(200);
+  expect(Buffer.from(await freshBytes.arrayBuffer())).toEqual(png(2, 1));
+  const log = readFileSync(fixture.info.logPath, "utf8");
+  for (const token of tokens) expect(log).not.toContain(token);
+}, 45000);
+
+it('F12 BF-22 both media writes require proof and hide from companions and unproven callers', async () => {
+  const bot = (await api('POST', '/api/bots', { name: 'Authorization fixture' })).body.bot;
+  const scope = { botId: bot.id, threadId: bot.threadId }, root = join(fixture.info.dataDir, 'workspaces', bot.id, 'threads', bot.threadId);
+  mkdirSync(root, { recursive: true }); const path = join(root, 'matrix.png'); writeFileSync(path, png(1, 1));
+  const revision = mediaWorkspaceRevision(realpathSync.native(root), 'matrix.png', lstatSync(path));
+  for (const [route, body] of [
+    [MEDIA_ROUTES.resolve, { ref: { source: 'workspace', scope, relativePath: 'matrix.png', revision } }],
+    [MEDIA_ROUTES.reference, { ...scope, source: { kind: 'workspace', relativePath: 'matrix.png', revision } }],
+  ] as const) {
+    for (const headers of [{}, { 'x-murage-surface': 'desktop' }, { ...desktop, [COMPANION_HEADER]: '1' }] as Record<string, string>[]) {
+      const response = await api('POST', route, body, headers);
+      expect(response.status).toBe(404); expect(response.body).toEqual({ error: 'no such route' });
+    }
+    expect((await api('POST', route, body)).status).toBe(200);
+  }
+});

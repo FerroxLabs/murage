@@ -43,7 +43,9 @@ export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 /** Images a generation provider returns: a 4K PNG can pass 10 MB, so the
  * generated-image path (retained receipt, conversation attachment, Files,
  * the media viewer, Save, and use as a reference) has its own larger cap,
- * the same 25 MiB every one of those accepts. Uploads keep IMAGE_MAX_BYTES. */
+ * the same 25 MiB every one of those accepts. Chat picture uploads
+ * (POST /api/attachments) use the per-engine cap instead
+ * (server/turn-images.ts imageUploadMaxBytes, at most IMAGE_UPLOAD_MAX_BYTES). */
 export const GENERATED_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 /** One image as the provider sends it may be larger; a render over the kept
  * cap is refused with its size, never cut. */
@@ -68,6 +70,31 @@ export function humanBytes(bytes: number): string {
 export const ATTACHMENTS_FULL_MESSAGE = DISK_FULL_MESSAGE;
 export const FILE_TOO_LARGE_MESSAGE = `That file is too large. Files can be up to ${humanBytes(FILE_MAX_BYTES)}.`;
 export const IMAGE_TOO_LARGE_MESSAGE = `That image is too large. Images can be up to ${humanBytes(IMAGE_MAX_BYTES)}.`;
+/** Picture bodies are held in memory while they arrive (the resizer decodes
+ * them whole), so the bytes held by all uploads at once are bounded too, not
+ * only each one: a burst of large uploads waits its turn instead of growing
+ * memory. Four uploads at the largest picture size fit at once. */
+export const IMAGE_UPLOADS_IN_FLIGHT_MAX_BYTES = 4 * 25 * 1024 * 1024;
+export const IMAGE_UPLOADS_BUSY_MESSAGE = "Murage is still receiving other pictures. Try this one again in a moment.";
+export class ImageUploadBudget {
+  private held = 0;
+  private readonly max: number;
+  // No parameter property: the server runs with type stripping, which refuses them.
+  constructor(max = IMAGE_UPLOADS_IN_FLIGHT_MAX_BYTES) { this.max = max; }
+  /** Hold `bytes` for one upload, or null when that would pass the bound.
+   * The returned release is safe to call more than once. */
+  take(bytes: number): (() => void) | null {
+    if (!Number.isSafeInteger(bytes) || bytes < 0 || this.held + bytes > this.max) return null;
+    this.held += bytes;
+    let released = false;
+    return () => { if (!released) { released = true; this.held -= bytes; } };
+  }
+  get inFlight(): number { return this.held; }
+}
+/** The refusal for one picture over `limit`, with the real limit in it. */
+export function imageTooLargeMessage(limit: number): string {
+  return `That image is too large. Images can be up to ${humanBytes(limit)}.`;
+}
 
 /** Interrupted streamed uploads use private partial files. A crash can leave
  * one behind, so future uploads remove only our stale partials — never a
@@ -666,7 +693,7 @@ function checkedImageExtension(bytes: Buffer, mime: string, maxBytes: number): s
   if (!ext) throw Object.assign(new Error("unsupported image type"), { status: 400 });
   if (bytes.byteLength === 0) throw Object.assign(new Error("empty image"), { status: 400 });
   if (bytes.byteLength > maxBytes) {
-    throw Object.assign(new Error(maxBytes === IMAGE_MAX_BYTES ? IMAGE_TOO_LARGE_MESSAGE : `That image is too large. Images can be up to ${humanBytes(maxBytes)}.`), { status: 413 });
+    throw Object.assign(new Error(imageTooLargeMessage(maxBytes)), { status: 413 });
   }
   return ext;
 }
@@ -760,17 +787,18 @@ export async function saveImageUpload(
   bytes: Buffer,
   mime: string,
   requestedUploadId?: string,
+  maxBytes = IMAGE_MAX_BYTES,
 ): Promise<SavedAttachment> {
   const uploadId = validateAttachmentUploadId(requestedUploadId);
   return withUploadLock(uploadId, async () => {
     if (uploadId) cleanupAttachmentPartialsForUpload(uploadId);
-    const ext = checkedImageExtension(bytes, mime, IMAGE_MAX_BYTES);
+    const ext = checkedImageExtension(bytes, mime, maxBytes);
     const same = (path: string) => committedMatches(path, bytes.byteLength, saved => saved.equals(bytes), "uploadId was already used for different image bytes")
       .then(() => ({ path, mime: imageMime(mime), bytes: bytes.byteLength }));
-    if (!uploadId) return saveImage(bytes, mime);
+    if (!uploadId) return saveImage(bytes, mime, maxBytes);
     const existing = await committedUpload(uploadId, ext);
     if (existing) return same(existing);
-    const written = writeImage(bytes, mime, IMAGE_MAX_BYTES, { mode: "upload", id: uploadId });
+    const written = writeImage(bytes, mime, maxBytes, { mode: "upload", id: uploadId });
     return "exists" in written ? same(written.exists) : written;
   });
 }

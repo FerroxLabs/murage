@@ -46,6 +46,6 @@ export function useHealthStatus(checks?: HealthIssueLevel | null): HealthStatus 
   const reading = useEngineReading();
   const { view } = useSetupView();
   const answered = reading.fromServer || state.instances.length > 0;
-  const engines = healthInFirstRun(healthFromEngines(reading.engine, reading.flux, answered), Boolean(view && firstRunOwnsMainView(view)), answered);
+  const engines = healthInFirstRun(healthFromEngines(reading.health, reading.flux, answered), Boolean(view && firstRunOwnsMainView(view)), answered);
   return healthWithChecks(engines, checks);
 }

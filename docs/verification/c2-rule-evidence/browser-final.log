@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (41 tests | 1 failed) 66676ms
+   × RULE path 13 flat routine folds keep titles and marks while snippets are gated 438ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 13 flat routine folds keep titles and marks while snippets are gated
+AssertionError: expected 3 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 3
+
+ ❯ src/lib/chats-previews-browser.test.ts:473:64
+    471|   expect(await page.locator('body').textContent()).not.toContain('rout…
+    472|   expect(await page.getByText('Routine title 0',{exact:true}).count())…
+    473|   expect(await page.getByLabel('Pinned',{exact:true}).count()).toBe(2);
+       |                                                                ^
+    474|   await page.evaluate(gen=>(window as any).fixture.hello(gen),A);
+    475|   await page.getByText('routine secret',{exact:true}).first().waitFor(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 40 passed (41)
+   Start at  21:25:43
+   Duration  71.70s (transform 3.68s, setup 4.56s, import 348ms, tests 66.68s, environment 0ms)
+

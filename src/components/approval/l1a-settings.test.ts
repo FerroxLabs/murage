@@ -84,7 +84,7 @@ describe("3.1, 3.2 and 3.4: the level menu", () => {
   it("renders the table from LEVEL_EXAMPLES with the line under it", () => {
     const html = renderToStaticMarkup(createElement(LevelExamples, { current: "auto" }));
     expect(html.match(/data-level-row=/g)?.length).toBe(OWNER_ROWS.length);
-    expect(html).toContain("What each level does, for a turn with nothing you said yes to before");
+    expect(html).toContain("What each level does when nothing has been approved yet");
     expect(html).toContain("Routines keep their own level and never run above this one.");
     // the table never words a level as "Never"
     expect(html).not.toContain("Never");

@@ -10,7 +10,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { fillSlice, threadKey, verifyDerivedRows } from "./branch-index.ts";
-import { branchTester, withBranchWalkBudget, isPrepared, prepareStats, prepareThread, prepareThreadSync } from "./branch-store.ts";
+import { boundedBranchWalk, branchRows, branchTester, withBranchWalkBudget, isPrepared, prepareStats, prepareThread, prepareThreadSync } from "./branch-store.ts";
 import * as messages from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -189,4 +189,43 @@ it("a search over many unfilled threads walks a flat number of rows, however man
   expect(branchTester(threads[0]!, "m399")("m398")).toBe(true);
   expect(near.mock.calls.length).toBeLessThan(unbudgeted / 12 / 4);
   near.mockRestore();
+});
+
+it("C2-DAMAGED-ANCESTOR: a damaged ancestor row is an unknown, never a false 'not on this branch' or a complete walk", () => {
+  const db = database();
+  for (const damaged of ["null", "42", '"words"', "[1]", "{broken"]) {
+    const t = `dam-${damaged}`;
+    for (let i = 0; i < 6; i++) messages.appendMessage(t, row(`m${i}`, i === 0 ? null : `m${i - 1}`));
+    db.exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+    expect(isPrepared(t)).toBe(false);
+    db.prepare("UPDATE messages SET json = ? WHERE thread_id = ? AND id = 'm2'").run(damaged, t);
+    const test = branchTester(t, "m5");
+    expect(test("m4")).toBe(true);
+    expect(test("m0"), `tester past ${damaged}`).toBeUndefined();
+    const walk = boundedBranchWalk(t, "m5");
+    expect(walk.complete, `walk past ${damaged}`).toBe(false);
+    const anchor = messages.messagePosition(t, "m0")!;
+    const branch = branchRows(t, "m5");
+    expect(branch.contains(anchor), `row membership past ${damaged}`).toBeUndefined();
+    expect(branch.after(messages.messagePosition(t, "m5")!, anchor)).toBe(false);
+    for (const direction of ["before", "after"] as const) {
+      expect(messages.textLinesAlongBranch(t, "m5", "m0", direction, 3), `anchor past ${damaged}`).toEqual({ anchorOnBranch: false, unknown: true, rows: [], more: true });
+    }
+  }
+  // a missing ancestor keeps its old answer: the walk ends there
+  const t = "dam-missing";
+  for (let i = 0; i < 6; i++) messages.appendMessage(t, row(`m${i}`, i === 0 ? null : `m${i - 1}`));
+  db.exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+  db.prepare("DELETE FROM messages WHERE thread_id = ? AND id = 'm2'").run(t);
+  expect(boundedBranchWalk(t, "m5").complete).toBe(true);
+});
+
+it("C2-LOW: a complete unprepared walk rejects a truly off-branch anchor", () => {
+  messages.appendMessage(T, row("root", null));
+  messages.appendMessage(T, row("off", "root"));
+  messages.appendMessage(T, row("leaf", "root"));
+  database().exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+  expect(boundedBranchWalk(T, "leaf").complete).toBe(true);
+  expect(branchRows(T, "leaf").contains(messages.messagePosition(T, "off")!)).toBe(false);
+  expect(messages.textLinesAlongBranch(T, "leaf", "off", "before", 3)).toEqual({ anchorOnBranch: false, rows: [], more: false });
 });

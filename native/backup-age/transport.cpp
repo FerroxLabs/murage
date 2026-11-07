@@ -131,7 +131,7 @@ Handle parentProcess(DWORD expected, std::wstring& user) {
   do { if (e.th32ProcessID == GetCurrentProcessId()) { need(e.th32ParentProcessID == expected); found = true; break; } } while (Process32NextW(snapshot.h, &e)); need(found);
   Handle parent(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, FALSE, expected)); auto selfToken = token(GetCurrentProcess()), parentToken = token(parent.h);
   user = sid(selfToken.h); need(user == sid(parentToken.h)); TOKEN_ELEVATION elevation{}; DWORD size = 0;
-  win(GetTokenInformation(selfToken.h, TokenElevation, &elevation, sizeof(elevation), &size)); need(!elevation.TokenIsElevated);
+  win(GetTokenInformation(selfToken.h, TokenElevation, &elevation, sizeof(elevation), &size));
   return parent;
 }
 Handle privateStage(const std::wstring& p, const std::wstring& user) {

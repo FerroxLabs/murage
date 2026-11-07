@@ -1,0 +1,351 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "pip-flux-schema-codex-eld13",
+  "date": "2026-11-07",
+  "base": "b2588099f96bc6a450b2313782523e6a387662f2",
+  "scope": "PIP-FLUX-SCHEMA-1018",
+  "strings": {
+    "en:settings.l6.paused.doubledFits": {
+      "text": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:memoryPage.ceiling.raised": {
+      "text": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:settings.l6.paused.bodyUnseen": {
+      "text": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:memoryLearning.ceiling.pausedUnseen": {
+      "text": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:settings.l6.paused.resume": {
+      "text": "Resume learning",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:settings.l6.paused.resuming": {
+      "text": "Resuming learning",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "en:settings.l6.paused.resumed": {
+      "text": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:memoryPage.ceiling.raised": {
+      "text": "Limit erhöht. Das Lernen wird fortgesetzt, sobald ein Lauf in dein Limit passt.",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:settings.l6.paused.doubledFits": {
+      "text": "Limit verdoppelt. Das Lernen wird fortgesetzt, sobald ein Lauf in dein Limit passt.",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:settings.l6.paused.bodyUnseen": {
+      "text": "Einige Lernanfragen haben nicht gemeldet, wie viel sie verbraucht haben. Deshalb pausiert das Lernen, um dein Limit zu schützen. Deine Bots antworten weiterhin und erinnern sich an bereits Gelerntes. Murage erfasst weiterhin neue Chats, damit das Lernen dort weitergeht, wo es aufgehört hat.",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:memoryLearning.ceiling.pausedUnseen": {
+      "text": "Das Lernen pausiert, um dein Limit zu schützen: Einige Lernanfragen haben nicht gemeldet, wie viel sie verbraucht haben.",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:settings.l6.paused.resume": {
+      "text": "Lernen fortsetzen",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:settings.l6.paused.resuming": {
+      "text": "Lernen wird fortgesetzt",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "de:settings.l6.paused.resumed": {
+      "text": "Der nicht gemeldete Verbrauch wurde zurückgesetzt. Das Lernen wird fortgesetzt, sobald ein Durchlauf in dein Limit passt.",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:memoryPage.ceiling.raised": {
+      "text": "Límite aumentado. El aprendizaje se reanuda en cuanto una ejecución quepa dentro de tu límite.",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:settings.l6.paused.doubledFits": {
+      "text": "Límite duplicado. El aprendizaje se reanuda en cuanto una ejecución quepa dentro de tu límite.",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:settings.l6.paused.bodyUnseen": {
+      "text": "Algunas solicitudes de aprendizaje no informaron de cuánto consumieron, así que el aprendizaje se ha pausado para proteger tu límite. Tus bots siguen respondiendo y recordando lo que ya han aprendido. Murage sigue registrando los nuevos chats para que el aprendizaje continúe donde se quedó.",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:memoryLearning.ceiling.pausedUnseen": {
+      "text": "El aprendizaje se ha pausado para proteger tu límite: algunas solicitudes de aprendizaje no informaron de cuánto consumieron.",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:settings.l6.paused.resume": {
+      "text": "Reanudar el aprendizaje",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:settings.l6.paused.resuming": {
+      "text": "Reanudando el aprendizaje",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "es:settings.l6.paused.resumed": {
+      "text": "Se ha puesto a cero el consumo no notificado. El aprendizaje se reanudará en cuanto una ejecución quepa dentro de tu límite.",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:memoryPage.ceiling.raised": {
+      "text": "Limite augmentée. L’apprentissage reprend dès qu’une exécution respecte ta limite.",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:settings.l6.paused.doubledFits": {
+      "text": "Limite doublée. L’apprentissage reprend dès qu’une exécution respecte ta limite.",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:settings.l6.paused.bodyUnseen": {
+      "text": "Certaines demandes d’apprentissage n’ont pas communiqué les quantités consommées. L’apprentissage est donc en pause pour protéger ta limite. Tes bots continuent de répondre et de se souvenir de ce qu’ils ont déjà appris. Murage continue de noter les nouvelles discussions pour que l’apprentissage reprenne là où il s’est arrêté.",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:memoryLearning.ceiling.pausedUnseen": {
+      "text": "L’apprentissage est en pause pour protéger ta limite : certaines demandes d’apprentissage n’ont pas communiqué les quantités consommées.",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:settings.l6.paused.resume": {
+      "text": "Reprendre l’apprentissage",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:settings.l6.paused.resuming": {
+      "text": "Reprise de l’apprentissage",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "fr:settings.l6.paused.resumed": {
+      "text": "La consommation non signalée a été remise à zéro. L’apprentissage reprend dès qu’une exécution respecte ta limite.",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "hi:memoryPage.ceiling.raised": {
+      "text": "सीमा बढ़ा दी गई है। जैसे ही सीखने का कोई सत्र आपकी सीमा के भीतर पूरा हो सकेगा, सीखना फिर शुरू होगा।",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "hi:settings.l6.paused.doubledFits": {
+      "text": "सीमा दोगुनी कर दी गई है। जैसे ही सीखने का कोई सत्र आपकी सीमा के भीतर पूरा हो सकेगा, सीखना फिर शुरू होगा।",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "hi:settings.l6.paused.bodyUnseen": {
+      "text": "सीखने से जुड़े कुछ अनुरोधों में कितना उपयोग हुआ, इसकी जानकारी नहीं मिली, इसलिए आपकी सीमा की रक्षा के लिए सीखना रोक दिया गया है। आपके बॉट अब भी जवाब देते हैं और पहले से सीखी गई बातें याद रखते हैं। Murage नई चैट दर्ज करता रहता है, ताकि सीखना वहीं से आगे बढ़े जहाँ रुका था।",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "hi:memoryLearning.ceiling.pausedUnseen": {
+      "text": "आपकी सीमा की रक्षा के लिए सीखना रोक दिया गया है: सीखने से जुड़े कुछ अनुरोधों में कितना उपयोग हुआ, इसकी जानकारी नहीं मिली।",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "hi:settings.l6.paused.resume": {
+      "text": "सीखना फिर शुरू करें",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "hi:settings.l6.paused.resuming": {
+      "text": "सीखना फिर शुरू हो रहा है",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "hi:settings.l6.paused.resumed": {
+      "text": "जिस उपयोग की जानकारी नहीं मिली थी, उसे हटा दिया गया है। जैसे ही सीखने का कोई सत्र आपकी सीमा के भीतर पूरा हो सकेगा, सीखना फिर शुरू होगा।",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "ja:memoryPage.ceiling.raised": {
+      "text": "上限を引き上げました。 1回の実行が上限内に収まり次第、学習を再開します。",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "ja:settings.l6.paused.doubledFits": {
+      "text": "上限を2倍にしました。 1回の実行が上限内に収まり次第、学習を再開します。",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "ja:settings.l6.paused.bodyUnseen": {
+      "text": "一部の学習リクエストで使用量が報告されませんでした。上限を守るため、学習を一時停止しました。ボットは引き続き応答し、すでに学んだことを覚えています。Murageは新しいチャットを記録し続けるので、学習は中断したところから再開します。",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "ja:memoryLearning.ceiling.pausedUnseen": {
+      "text": "上限を守るために学習を一時停止しました。一部の学習リクエストでどれだけ使用したかが報告されませんでした。",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "ja:settings.l6.paused.resume": {
+      "text": "学習を再開",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "ja:settings.l6.paused.resuming": {
+      "text": "学習を再開しています",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "ja:settings.l6.paused.resumed": {
+      "text": "報告されなかった使用量をクリアしました。1回の実行が上限内に収まり次第、学習を再開します。",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:memoryPage.ceiling.raised": {
+      "text": "Limite aumentado. O aprendizado será retomado assim que uma execução couber no seu limite.",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:settings.l6.paused.doubledFits": {
+      "text": "Limite dobrado. O aprendizado será retomado assim que uma execução couber no seu limite.",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:settings.l6.paused.bodyUnseen": {
+      "text": "Algumas solicitações de aprendizado não informaram quanto consumiram, então o aprendizado foi pausado para proteger seu limite. Seus bots continuam respondendo e lembrando o que já aprenderam. O Murage continua registrando novas conversas para que o aprendizado continue de onde parou.",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:memoryLearning.ceiling.pausedUnseen": {
+      "text": "O aprendizado foi pausado para proteger seu limite: algumas solicitações de aprendizado não informaram quanto consumiram.",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:settings.l6.paused.resume": {
+      "text": "Retomar o aprendizado",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:settings.l6.paused.resuming": {
+      "text": "Retomando o aprendizado",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "pt-br:settings.l6.paused.resumed": {
+      "text": "O consumo não informado foi zerado. O aprendizado será retomado assim que uma execução couber no seu limite.",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "zh:memoryPage.ceiling.raised": {
+      "text": "上限已提高。 只要一次运行所需的用量在你的上限内，学习就会恢复。",
+      "en": "Limit raised. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "zh:settings.l6.paused.doubledFits": {
+      "text": "上限已翻倍。 只要一次运行所需的用量在你的上限内，学习就会恢复。",
+      "en": "Limit doubled. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "zh:settings.l6.paused.bodyUnseen": {
+      "text": "部分学习请求未报告用量。为避免超出你的限额，学习已暂停。你的机器人仍会回复，并记得已经学到的内容。Murage 会继续记录新的聊天，让学习从上次暂停的地方继续。",
+      "en": "Some learning requests did not report how much they used. Learning paused to protect your limit. Your bots still answer and remember what they have already learned. Murage keeps noting new chats so learning picks up where it left off.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "zh:memoryLearning.ceiling.pausedUnseen": {
+      "text": "为避免超出你的限额，学习已暂停。部分学习请求未报告用量。",
+      "en": "Learning paused to protect your limit. Some learning requests did not report how much they used.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 3 (after fixes)"
+    },
+    "zh:settings.l6.paused.resume": {
+      "text": "恢复学习",
+      "en": "Resume learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "zh:settings.l6.paused.resuming": {
+      "text": "正在恢复学习",
+      "en": "Resuming learning",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    },
+    "zh:settings.l6.paused.resumed": {
+      "text": "未报告的用量已清除。只要一次运行所需的用量在你的限额内，学习就会恢复。",
+      "en": "Usage that was not reported has been cleared. Learning resumes as soon as a run fits your limit.",
+      "verdict": "pass",
+      "note": "Sol gpt-6.1-sol acct2, read 2, text unchanged since"
+    }
+  },
+  "files": {}
+}

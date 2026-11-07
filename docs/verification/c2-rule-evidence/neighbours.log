@@ -1,0 +1,10 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+[murage-mcp] MCP client initialized session
+
+ Test Files  15 passed (15)
+      Tests  356 passed (356)
+   Start at  21:19:09
+   Duration  335.87s (transform 8.32s, setup 16.24s, import 3.02s, tests 314.94s, environment 1ms)
+
