@@ -1,0 +1,151 @@
+timestamp=2026-11-06T14:37:20.520Z level=INFO run=cc34ba92 message="creating instance" directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.528Z level=INFO run=cc34ba92 message=fromDirectory directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.533Z level=INFO run=cc34ba92 message=bootstrapping directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.537Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/config.json
+timestamp=2026-11-06T14:37:20.537Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/opencode.json
+timestamp=2026-11-06T14:37:20.537Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/opencode.jsonc
+timestamp=2026-11-06T14:37:20.594Z level=INFO run=cc34ba92 message="all LSPs are disabled"
+timestamp=2026-11-06T14:37:20.595Z level=INFO run=cc34ba92 message="all formatters are disabled"
+timestamp=2026-11-06T14:37:20.595Z level=INFO run=cc34ba92 message=init
+timestamp=2026-11-06T14:37:20.706Z level=INFO run=cc34ba92 message="setup connection"
+timestamp=2026-11-06T14:37:20.712Z level=INFO run=cc34ba92 message="global event connected"
+timestamp=2026-11-06T14:37:20.718Z level=INFO run=cc34ba92 message="creating instance" directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.718Z level=INFO run=cc34ba92 message=fromDirectory directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.721Z level=INFO run=cc34ba92 message=bootstrapping directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work
+timestamp=2026-11-06T14:37:20.722Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/config.json
+timestamp=2026-11-06T14:37:20.722Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/opencode.json
+timestamp=2026-11-06T14:37:20.722Z level=INFO run=cc34ba92 message=loading path=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/home/config/opencode/opencode.jsonc
+timestamp=2026-11-06T14:37:20.727Z level=INFO run=cc34ba92 message="all LSPs are disabled"
+timestamp=2026-11-06T14:37:20.727Z level=INFO run=cc34ba92 message="all formatters are disabled"
+timestamp=2026-11-06T14:37:20.727Z level=INFO run=cc34ba92 message=init
+timestamp=2026-11-06T14:37:21.251Z level=INFO run=cc34ba92 message=init count=1
+timestamp=2026-11-06T14:37:21.276Z level=INFO run=cc34ba92 message=created id=ses_e4eb50e03ffesyi3HskFS0uCIy slug=neon-forest version=1.19.5 projectID=global directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work path=root/swarm1018/ENGINES-REST-1018/scratch/opencode/work workspaceID=undefined parentID=undefined title="New session - 2026-11-06T14:37:21.276Z" agent=build model.id=mock model.providerID=fixture metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793975841276 time.updated=1793975841276
+timestamp=2026-11-06T14:37:21.298Z level=INFO run=cc34ba92 message=loop session.id=ses_e4eb50e03ffesyi3HskFS0uCIy step=0
+timestamp=2026-11-06T14:37:21.306Z level=INFO run=cc34ba92 message="shell tool using shell" shell=/usr/bin/bash
+timestamp=2026-11-06T14:37:21.318Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=true agent=title mode=primary
+timestamp=2026-11-06T14:37:21.322Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:21.347Z level=INFO run=cc34ba92 message="watcher backend" directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work platform=linux backend=inotify
+timestamp=2026-11-06T14:37:21.349Z level=INFO run=cc34ba92 message="project copy refresh started" projectID=global
+timestamp=2026-11-06T14:37:21.350Z level=INFO run=cc34ba92 message="project copy refresh done" projectID=global updated=[] removed=[]
+timestamp=2026-11-06T14:37:21.362Z level=INFO run=cc34ba92 message="booting location services" directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work workspaceID=undefined
+timestamp=2026-11-06T14:37:21.616Z level=INFO run=cc34ba92 message=process session.id=ses_e4eb50e03ffesyi3HskFS0uCIy messageID=msg_1b14af214001pUvlJYZ7ooFbjR
+timestamp=2026-11-06T14:37:21.617Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:21.618Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:21.620Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:22.623Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:22.624Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:22.627Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:23.358Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=true agent=title mode=primary error.error="AI_RetryError: Failed after 3 attempts. Last error: Local fixture rate limit"
+timestamp=2026-11-06T14:37:23.628Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:23.630Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:23.632Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:24.634Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:24.636Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:24.639Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:25.641Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:25.643Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:25.645Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:26.647Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:26.649Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:26.652Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:26.654Z level=ERROR run=cc34ba92 message=process session.id=ses_e4eb50e03ffesyi3HskFS0uCIy messageID=msg_1b14af214001pUvlJYZ7ooFbjR error="Local fixture rate limit" stack="AI_APICallError: Local fixture rate limit\n    at <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:14263)\n    at async <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:12773)"
+Error handling request {
+  jsonrpc: "2.0",
+  id: 3,
+  method: "session/prompt",
+  params: {
+    sessionId: "ses_e4eb50e03ffesyi3HskFS0uCIy",
+    prompt: [
+      [Object ...]
+    ],
+  },
+} {
+  code: -32603,
+  message: "Internal error: Local fixture rate limit",
+  data: {
+    service: "session",
+    errorName: "APIError",
+  },
+}
+timestamp=2026-11-06T14:37:26.692Z level=INFO run=cc34ba92 message=created id=ses_e4eb4f8dbffejVaoG73CACh3p0 slug=cosmic-comet version=1.19.5 projectID=global directory=/root/swarm1018/ENGINES-REST-1018/scratch/opencode/work path=root/swarm1018/ENGINES-REST-1018/scratch/opencode/work workspaceID=undefined parentID=undefined title="New session - 2026-11-06T14:37:26.692Z" agent=build model.id=mock model.providerID=fixture metadata=undefined permission=undefined cost=0 tokens.input=0 tokens.output=0 tokens.reasoning=0 tokens.cache.read=0 tokens.cache.write=0 time.created=1793975846692 time.updated=1793975846692
+timestamp=2026-11-06T14:37:26.709Z level=INFO run=cc34ba92 message=loop session.id=ses_e4eb50e03ffesyi3HskFS0uCIy step=0
+timestamp=2026-11-06T14:37:26.713Z level=INFO run=cc34ba92 message=loop session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 step=0
+timestamp=2026-11-06T14:37:26.722Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=true agent=title mode=primary
+timestamp=2026-11-06T14:37:26.723Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:26.725Z level=INFO run=cc34ba92 message=process session.id=ses_e4eb50e03ffesyi3HskFS0uCIy messageID=msg_1b14b0736001av1Y4NLCkFQQuR
+timestamp=2026-11-06T14:37:26.726Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:26.726Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:26.727Z level=INFO run=cc34ba92 message=process session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 messageID=msg_1b14b073a001eYgLFnNst3eZtj
+timestamp=2026-11-06T14:37:26.728Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:26.728Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:26.729Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:26.730Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:27.729Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:27.731Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:27.732Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:27.735Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:27.736Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:27.737Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:28.728Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=true agent=title mode=primary error.error="AI_RetryError: Failed after 3 attempts. Last error: Local fixture rate limit"
+timestamp=2026-11-06T14:37:28.738Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:28.738Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:28.739Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:28.740Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:28.741Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:28.741Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:29.742Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:29.743Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:29.744Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:29.745Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:29.746Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:29.746Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:30.747Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:30.748Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:30.748Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:30.750Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:30.751Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:30.751Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:31.752Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:31.753Z level=INFO run=cc34ba92 message=stream providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary
+timestamp=2026-11-06T14:37:31.753Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:31.756Z level=INFO run=cc34ba92 message="llm runtime selected" llm.runtime=ai-sdk llm.provider=fixture llm.model=mock
+timestamp=2026-11-06T14:37:31.757Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb50e03ffesyi3HskFS0uCIy small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:31.758Z level=ERROR run=cc34ba92 message=process session.id=ses_e4eb50e03ffesyi3HskFS0uCIy messageID=msg_1b14b0736001av1Y4NLCkFQQuR error="Local fixture rate limit" stack="AI_APICallError: Local fixture rate limit\n    at <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:14263)\n    at async <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:12773)"
+timestamp=2026-11-06T14:37:31.764Z level=ERROR run=cc34ba92 message="stream error" providerID=fixture modelID=mock session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 small=false agent=build mode=primary error.error="AI_APICallError: Local fixture rate limit"
+timestamp=2026-11-06T14:37:31.764Z level=ERROR run=cc34ba92 message=process session.id=ses_e4eb4f8dbffejVaoG73CACh3p0 messageID=msg_1b14b073a001eYgLFnNst3eZtj error="Local fixture rate limit" stack="AI_APICallError: Local fixture rate limit\n    at <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:14263)\n    at async <anonymous> (/$bunfs/root/chunk-rf2sreks.js:6:12773)"
+Error handling request {
+  jsonrpc: "2.0",
+  id: 6,
+  method: "session/prompt",
+  params: {
+    sessionId: "ses_e4eb50e03ffesyi3HskFS0uCIy",
+    prompt: [
+      [Object ...]
+    ],
+  },
+} {
+  code: -32603,
+  message: "Internal error: Local fixture rate limit",
+  data: {
+    service: "session",
+    errorName: "APIError",
+  },
+}
+Error handling request {
+  jsonrpc: "2.0",
+  id: 7,
+  method: "session/prompt",
+  params: {
+    sessionId: "ses_e4eb4f8dbffejVaoG73CACh3p0",
+    prompt: [
+      [Object ...]
+    ],
+  },
+} {
+  code: -32603,
+  message: "Internal error: Local fixture rate limit",
+  data: {
+    service: "session",
+    errorName: "APIError",
+  },
+}

@@ -1,0 +1,45 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+stdout | server/inbox.hotpath-r5.test.ts > r5 P1#3: no JSON work under the writer lock > while the worker projects a 128 MiB row, no main-thread message write waits more than 50 ms
+[r5-writes] 179 main-thread writes during the worker projection: worst 169.5 ms
+
+ ❯ server/inbox.hotpath-r5.test.ts (6 tests | 1 failed) 9130ms
+     × while the worker projects a 128 MiB row, no main-thread message write waits more than 50 ms 3404ms
+stdout | server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap
+[r6-lock] 128 MiB bot-text row: locked apply 40.4 ms
+
+ ❯ server/inbox.hotpath-r6.test.ts (5 tests | 1 failed) 58953ms
+     × a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap 3836ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/inbox.hotpath-r5.test.ts > r5 P1#3: no JSON work under the writer lock > while the worker projects a 128 MiB row, no main-thread message write waits more than 50 ms
+AssertionError: expected 169.5184559999998 to be less than 50
+ ❯ server/inbox.hotpath-r5.test.ts:214:19
+    212|     console.log(`[r5-writes] ${waits.length} main-thread writes during…
+    213|     expect(count(db, "SELECT COUNT(*) AS n FROM setup_marks WHERE thre…
+    214|     expect(worst).toBeLessThan(50);
+       |                   ^
+    215|   });
+    216| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap
+AssertionError: expected 40.40964900000108 to be less than or equal to 20
+ ❯ server/inbox.hotpath-r6.test.ts:120:18
+    118|     expect(count(db, "SELECT MAX(length(summary)) AS n FROM inbox_raw"…
+    119|     expect(count(db, "SELECT MAX(length(summary)) AS n FROM inbox_item…
+    120|     expect(hold).toBeLessThanOrEqual(20);
+       |                  ^
+    121|   }, 120_000);
+    122|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 9 passed (11)
+      Tests  2 failed | 89 passed (91)
+   Start at  13:45:16
+   Duration  448.10s (transform 5.89s, setup 11.71s, import 818ms, tests 434.37s, environment 1ms)

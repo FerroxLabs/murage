@@ -267,7 +267,7 @@ describe("skill and routine changes (B7c)", () => {
   const card = { id: "psug-1", version: 2, kind: "procedure" as const, targetKind: "routine" as const, label: "Monday report", text: "Verify first.", summary: "Verify first.", reasons: ["outbound" as const], origin: "suggested" as const, prospectDerived: false, edited: false, proposedHash: "h", createdAt: NOW };
   it("words a card, its reason and its edit limit", () => {
     expect(suggestionLine(card)).toBe('Improve the routine "Monday report": Verify first.');
-    expect(suggestionWhy(card)).toBe("It sends or reaches other people, so it waits for you.");
+    expect(suggestionWhy(card)).toBe("It sends something to other people or contacts them, so it waits for you.");
     expect(suggestionWhy({ ...card, reasons: ["ask-first"] })).toBe("You asked to approve changes first.");
     expect(suggestionEditMax(card)).toBeGreaterThan(280);
   });

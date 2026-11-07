@@ -8,13 +8,14 @@
 // `cursor_login`, and takes `--force` / `--model` as global flags before the
 // `acp` subcommand. `session/set_model` is attempted when the CLI supports it;
 // a missing method falls back to the argv `--model` pin.
-import { existsSync, lstatSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeFileAtomic } from "../../atomic.ts";
 import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog, ProviderErrorCode, SendTurnInput } from "../../contracts.ts";
-import { execCli } from "../../procs.ts";
+import { engineJob, execCli, killCliTree, spawnCli } from "../../procs.ts";
+import { quietChildPipes } from "../../child-pipe-quiet.mjs";
 import { removeLink } from "../../link-removal.ts";
 import { OWN_BUILTINS, OWN_HANDLER_CARDED, OWN_READS } from "../../../shared/own-servers.ts";
 import { EMAIL_TOOLS_ENV } from "../email-tool-schemas.ts";
@@ -329,11 +330,157 @@ export async function probeCursorAuth(
   return undefined;
 }
 
+export type CursorSessionModel = { modelId?: string; name?: string };
+export type CursorSessionProbe = (cli: string, env: Record<string, string | undefined>) => Promise<CursorSessionModel[]>;
+
+const SESSION_PROBE_TIMEOUT_MS = 8_000;
+const SESSION_PROBE_MAX_RECORD_BYTES = 256 * 1024;
+const SESSION_PROBE_MAX_OUTPUT_BYTES = 1024 * 1024;
+let probeFolder: string | null = null;
+
+/** An empty folder of our own, so the probe never opens the owner's home as a Cursor workspace. */
+function cursorProbeFolder(): string {
+  if (probeFolder && existsSync(probeFolder)) return probeFolder;
+  probeFolder = mkdtempSync(join(tmpdir(), "murage-cursor-models-"));
+  return probeFolder;
+}
+
+/** Open a throwaway `cursor-agent acp` session and read the models `session/new` advertises. No prompt, no
+ * set_model; the process tree is stopped as soon as the answer (or the timeout) arrives. Any failure is []:
+ * a catalog probe must never be the reason the engine becomes unselectable. The initialize call matches a
+ * turn session's (no extra client capabilities), so the picker sees the list a turn will see.
+ * Containment is a turn's too: the same `engineJob()` a Cursor turn gets (core.ts hostPowerOptions), so on
+ * Windows every process the CLI starts, the owner's own MCP servers that Cursor loads under ACP included (the
+ * listed residual at the cursorSupport comment), sits in a named job that the stop ends even after the root
+ * has exited. No prompt is sent, so no tool of those servers can run. */
+export function probeCursorSessionModels(
+  cli: string,
+  env: Record<string, string | undefined>,
+  timeoutMs = SESSION_PROBE_TIMEOUT_MS,
+  spawn: typeof spawnCli = spawnCli,
+): Promise<CursorSessionModel[]> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawnCli>;
+    try {
+      child = spawn(cli, ["acp"], { stdio: ["pipe", "pipe", "ignore"], env: env as NodeJS.ProcessEnv, cwd: cursorProbeFolder() }, engineJob());
+    } catch {
+      resolve([]);
+      return;
+    }
+    // A write after the CLI exits must never become an unhandled pipe error (see hermes.ts fetchHermesAcpModels).
+    quietChildPipes(child);
+    let settled = false;
+    const done = (models: CursorSessionModel[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        killCliTree(child);
+      } catch {
+        /* already gone */
+      }
+      resolve(models);
+    };
+    const timer = setTimeout(() => done([]), timeoutMs);
+    child.once("error", () => done([]));
+    child.once("close", () => done([]));
+    let nextId = 0;
+    const send = (method: string, params: unknown): number => {
+      nextId += 1;
+      try {
+        if (!child.stdin?.writable) {
+          done([]);
+          return 0;
+        }
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: nextId, method, params })}\n`, (error) => {
+          if (error) done([]);
+        });
+      } catch {
+        done([]);
+        return 0;
+      }
+      return nextId;
+    };
+    let initId = 0;
+    let newId = 0;
+    let buffer = "";
+    let outputBytes = 0;
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => {
+      if (settled) return;
+      const text = String(chunk);
+      outputBytes += Buffer.byteLength(text);
+      if (outputBytes > SESSION_PROBE_MAX_OUTPUT_BYTES) return done([]);
+      // The retained prefix contains no newline: scan only the new suffix.
+      let scanFrom = buffer.length;
+      buffer += text;
+      let nl: number;
+      while ((nl = buffer.indexOf("\n", scanFrom)) >= 0) {
+        const line = buffer.slice(0, nl);
+        if (Buffer.byteLength(line) > SESSION_PROBE_MAX_RECORD_BYTES) return done([]);
+        scanFrom = 0;
+        buffer = buffer.slice(nl + 1);
+        let message: Record<string, unknown> | null;
+        try {
+          message = asRecord(JSON.parse(line));
+        } catch {
+          continue;
+        }
+        if (!message) continue;
+        if (initId && message.id === initId) {
+          if (!message.result) return done([]);
+          newId = send("session/new", { cwd: cursorProbeFolder(), mcpServers: [] });
+        } else if (newId && message.id === newId) {
+          const listed = asRecord(asRecord(message.result)?.models)?.availableModels;
+          return done(Array.isArray(listed) ? listed.filter((model): model is CursorSessionModel => Boolean(asRecord(model))) : []);
+        }
+      }
+      if (Buffer.byteLength(buffer) > SESSION_PROBE_MAX_RECORD_BYTES) done([]);
+    });
+    initId = send("initialize", {
+      protocolVersion: 1,
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    });
+  });
+}
+
+/** The session's advertised ids are parameterised (`gpt-5.3-codex[reasoning=medium]`, `default[]`); the picker,
+ * `--model` and saved bots use the plain slug, which resolveCursorAcpModelId maps back before each turn. A built-in
+ * entry stays only when the session offers its model, so the picker never lists one this account cannot run. */
+export function cursorCatalogFromSession(advertised: CursorSessionModel[]): ModelCatalog | null {
+  const discovered: ModelCatalog["options"] = [];
+  const bases = new Set<string>();
+  for (const model of advertised) {
+    if (typeof model.modelId !== "string") continue;
+    const raw = model.modelId.split("[")[0]!.trim();
+    const id = raw.toLowerCase() === "default" ? STATIC_CURSOR_MODELS.default : raw;
+    const name = typeof model.name === "string" ? model.name.trim() : "";
+    pushModel(discovered, bases, id, name && name.toLowerCase() !== id.toLowerCase() ? name : undefined);
+  }
+  if (!discovered.length) return null;
+  const offered = STATIC_CURSOR_MODELS.options.filter(
+    (option) => option.id === STATIC_CURSOR_MODELS.default || bases.has(option.id) || (option.id.endsWith("-fast") && resolveCursorAcpModelId(advertised, option.id) !== null),
+  );
+  const options = offered.map((option) => ({ ...option }));
+  const seen = new Set(options.map((option) => option.id));
+  for (const option of discovered) {
+    if (seen.has(option.id)) continue;
+    seen.add(option.id);
+    options.push(option);
+  }
+  return { default: STATIC_CURSOR_MODELS.default, options };
+}
+
+/** `cursor-agent models` (CLI 2026.10.22) prints only `auto` while `session/new` lists every model the account can
+ * use (upstream 80012e69d), so the session answers first; the text list stands in for a CLI that cannot open one. */
 export async function fetchCursorModels(
   cli: string,
   env: Record<string, string | undefined>,
   run: typeof execCli = execCli,
+  probe: CursorSessionProbe = probeCursorSessionModels,
 ): Promise<ModelCatalog> {
+  const fromSession = await probe(cli, env).then(cursorCatalogFromSession, () => null);
+  if (fromSession) return { ...fromSession, source: "live" };
   // Live CLI prints plain text (`slug - Label`); `--format json` is not supported yet.
   for (const args of [["models"], ["--list-models"]] as const) {
     const stdout = await execText(run, cli, [...args], env);
@@ -395,8 +542,10 @@ export function cursorOwnReadAllow(turn: Pick<SendTurnInput, "integrations">): s
   // only on a turn the email mount admitted for sending. Their handler applies the bot's email setting and holds on Murage's own card.
   const agents = turn.integrations?.agents as { serverName?: string; env?: Record<string, string | undefined> } | undefined;
   if (agents?.env?.[EMAIL_TOOLS_ENV] === "send") {
-    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
+    for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && !row.mountEnv) allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
   }
+  // VENUE-POST-1017: a handler-carded tool with its own mount key is allowed only on a turn whose agents mount carries that key
+  for (const row of OWN_HANDLER_CARDED) if (row.mount === "own:agents" && row.mountEnv && agents?.env?.[row.mountEnv] === "1") allow.push(`Mcp(${agents.serverName ?? OWN_BUILTINS.agents}:${row.tool})`);
   return allow;
 }
 

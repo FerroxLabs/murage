@@ -385,3 +385,30 @@ it("B1b probe cannot dispatch its paid fallback after authority closes during ca
  const probe=f.service.probe("openrouter","openai/gpt-image-2",control);await entered;open=false;release();
  const result=await probe;expect(f.fetcher.mock.calls.filter(([,init])=>init?.method === "POST")).toHaveLength(0);expect(result).toMatchObject({ok:false,errorCode:"not-authorized"});
 });
+
+for (const operation of ["generate", "edit"] as const) for (const code of ["key_budget_reached", "premium_locked"]) for (const body of [{ error: { code } }, { error: code }]) it(`Flux ${operation} preserves ${JSON.stringify(body)} without retry`, async () => {
+  const f = fixture("flux");
+  f.fetcher.mockResolvedValueOnce(Response.json(body, { status: 402 }));
+  const refs = operation === "edit" ? [{ bytes: Buffer.from(PNG, "base64"), mime: "image/png" as const }] : [];
+  const error = await f.service.generate({ ...f.request, operation }, f.hooks, refs).catch(e => e);
+  if (code === "key_budget_reached") expect(error.providerError).toMatchObject({ fluxBudget: true, provider: "flux-router" });
+  else expect(error).not.toHaveProperty("providerError");
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(f.publish).not.toHaveBeenCalled();
+  expect(f.finish).toHaveBeenCalledWith("failed");
+});
+it("owner image credentials still work after a Flux refusal", async () => {
+  const flux = fixture("flux"), own = fixture("openai");
+  flux.fetcher.mockResolvedValueOnce(Response.json({ error: "key_budget_reached" }, { status: 402 }));
+  await expect(flux.service.generate(flux.request, flux.hooks)).rejects.toHaveProperty("providerError.fluxBudget", true);
+  await expect(own.service.generate(own.request, own.hooks)).resolves.toHaveProperty("artifact");
+  expect(own.fetcher).toHaveBeenCalledOnce();
+});
+
+it.each([{ error: { code: "key_budget_reached" } }, { error: "key_budget_reached" }])("image stream keeps budget type after partial output: %j", async body => {
+  const f = fixture("flux");
+  f.fetcher.mockResolvedValueOnce(new Response(`data: {"type":"image_generation.partial_image"}\n\ndata: ${JSON.stringify(body)}\n\n`, { headers: { "content-type": "text/event-stream" } }));
+  await expect(f.service.generate(f.request, f.hooks)).rejects.toHaveProperty("providerError.fluxBudget", true);
+  expect(f.fetcher).toHaveBeenCalledOnce();
+  expect(f.publish).not.toHaveBeenCalled();
+});
