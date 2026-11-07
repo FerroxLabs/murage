@@ -1,3 +1,4 @@
+import { t } from "@/lib/i18n";
 // Per-bot voice profile. The key is shared; the voice and autoplay choice
 // belong to the selected bot.
 //
@@ -211,6 +212,7 @@ export function VoiceSettings({
 
   return (
     <div className="rounded-xl bg-card p-4">
+      <p className="text-[13px] text-ink-secondary">{t("settings.fluxSpendLimits")}</p>
       <div className="text-[15px] font-medium text-ink">Voice</div>
       <div className="mt-0.5 text-[13px] text-ink-secondary">
         Give this bot a voice for calls and spoken replies. Each bot has its own voice;

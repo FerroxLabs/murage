@@ -108,9 +108,9 @@ export const HERMES_OWN_UNASKED_TOOLS: readonly string[] = OWN_UNASKED.flatMap((
 const regexLiteral = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The hook's `matcher`: Hermes full-matches it against the tool name. */
-export function hermesAskMatcher(hostComputer: boolean, phoneJobs = false, emailMode?: string): string {
+export function hermesAskMatcher(hostComputer: boolean, phoneJobs = false, emailMode?: string, highlevel = false): string {
   // the email tools are ask-free only on a turn whose email mount listed them (dark launch: no mode, the matcher of the build without email)
-  const own = HERMES_OWN_UNASKED_TOOLS.filter((name) => (phoneJobs || !name.startsWith("mcp__phoneJobs__")) && ownToolListedOnTurn(name.slice(name.lastIndexOf("__") + 2), emailMode)).map(regexLiteral);
+  const own = HERMES_OWN_UNASKED_TOOLS.filter((name) => (phoneJobs || !name.startsWith("mcp__phoneJobs__")) && (highlevel || !name.startsWith("mcp__highlevel__")) && ownToolListedOnTurn(name.slice(name.lastIndexOf("__") + 2), emailMode)).map(regexLiteral);
   const free = hostComputer ? [...HERMES_ASK_FREE_TOOLS, ...own, "mcp__computer__.*"] : [...HERMES_ASK_FREE_TOOLS, ...own];
   return `(?!(?:${free.join("|")})$).+`;
 }
@@ -218,7 +218,7 @@ function hermesAskDir(env: Record<string, string | undefined>): string {
  *  HERMES_ACP_AUTO_APPROVE). An owner's shell export of one would skip the hook gate, so the child never sees them. */
 export const HERMES_AUTO_APPROVE_ENV = ["HERMES_YOLO_MODE", "HERMES_ACP_AUTO_APPROVE"] as const;
 
-export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string }): void {
+export function applyHermesAskHook(env: Record<string, string | undefined>, opts: { hostComputer: boolean; phoneJobs?: boolean; emailMode?: string; highlevel?: boolean }): void {
   for (const name of HERMES_AUTO_APPROVE_ENV) delete env[name];
   const dir = hermesAskDir(env);
   const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -243,7 +243,7 @@ export function applyHermesAskHook(env: Record<string, string | undefined>, opts
     ...held,
     ...Object.fromEntries(HERMES_OWNER_HOOK_EVENTS.map((event) => [event, []])),
     // an administrator's own pre_tool_call hooks stay, after this one
-    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
+    pre_tool_call: [{ matcher: hermesAskMatcher(opts.hostComputer, opts.phoneJobs === true, opts.emailMode, opts.highlevel === true), command, timeout: 10, fail_closed: true }, ...(Array.isArray(held.pre_tool_call) ? held.pre_tool_call as unknown[] : [])],
   };
   const overlay = stringifyYaml({ ...base, hooks });
   const overlayDir = join(dir, `overlay-${hash(overlay)}`);
@@ -995,7 +995,7 @@ const support: AcpSupport = {
   // reasoning block; that chunk is dropped so the reply shows once (upstream 40deb33ce).
   resendsReasoningReply: true,
   spawnArgs: (config, turn, ctx) => {
-    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
+    if (ctx?.env) applyHermesAskHook(ctx.env, { hostComputer: turn?.integrations?.localComputer?.scope === "local-computer", phoneJobs: Boolean(turn?.integrations?.phoneJobs), highlevel: Boolean(turn?.integrations?.highlevel), emailMode: turn?.integrations?.agents?.env?.[EMAIL_TOOLS_ENV] });
     return hermesSpawnArgs(config, ctx?.env);
   },
   /**

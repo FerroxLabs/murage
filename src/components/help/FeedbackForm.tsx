@@ -20,6 +20,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { api } from "@/state/store";
 import {
   buildFeedbackRequest,
+  gateReasonKey,
   checkFeedbackRequest,
   FEEDBACK_CHOICES,
   type FeedbackChoice,
@@ -27,6 +28,9 @@ import {
   type FeedbackSurface,
   type ScreenEnvelope,
 } from "@/lib/screen-envelope";
+import { screenEntry } from "@/lib/screens-index";
+import { useHelpCopy } from "@/lib/help-copy-store";
+import { localeCode } from "@/lib/i18n";
 import { hx } from "./help-copy";
 
 export type FeedbackPhase = "editing" | "sending" | "sent" | "failed" | "too-many";
@@ -73,6 +77,37 @@ export function feedbackRequestAtSend({ envelope, choice, surface, now }: { enve
   return buildFeedbackRequest({ envelope, choice, surface, now: now() });
 }
 
+/** "What we send", in a language other than English (L-COPY r3). The request
+ *  itself stays the fixed English contract the relay checks (screen-envelope.ts);
+ *  the fold shows the same fields in the reader's language: the screen by its
+ *  title from the active Help pack, the choice by its shown label, each gate
+ *  by its localized reason, each control by its localized label, and the
+ *  time. No raw ids (a Settings page is named by the screen title already).
+ *  A line under it says the team receives these same fields in English. A
+ *  {name} in a title is filled with the name the panel shows, else the
+ *  localized word for a chat or a group, never the English fixed word. */
+export function previewFields(request: FeedbackRequest, choice: FeedbackChoice, name = ""): { id: string; text: string }[] {
+  const entry = screenEntry(request.screen);
+  const fallbackName = hx(request.screen.startsWith("group") ? "ux.l4a.feedback.groupWord" : "ux.l4a.feedback.chatWord");
+  const fields = [
+    { id: "screen", text: entry ? hx(entry.title, { name: name.trim() || fallbackName }) : hx("ux.l4a.panel.label") },
+    { id: "choice", text: hx(FEEDBACK_CHOICE_LABEL[choice]) },
+  ];
+  for (const gate of request.state.gates ?? []) {
+    const reason = gateReasonKey(gate.id);
+    if (reason) fields.push({ id: `gate:${gate.id}`, text: hx(reason) });
+  }
+  for (const control of request.controls) {
+    const label = entry?.controls.find((item) => item.id === control.id)?.label;
+    if (label) fields.push({ id: `control:${control.id}`, text: hx(label) });
+  }
+  const when = new Date(request.createdAt);
+  let time = request.createdAt;
+  try { time = when.toLocaleString(localeCode()); } catch { /* an engine without that locale keeps the ISO time */ }
+  fields.push({ id: "createdAt", text: time });
+  return fields;
+}
+
 const button = "min-h-11 rounded-lg px-4 text-[14px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border";
 
 export interface FeedbackFormProps {
@@ -84,10 +119,12 @@ export interface FeedbackFormProps {
   /** Tests start the form in a given state; the app never passes these. */
   initialPhase?: FeedbackPhase;
   initialChoice?: FeedbackChoice;
+  /** The bot or chat name the panel shows, for a {name} title in the localized preview (never sent). */
+  name?: string;
   now?: () => Date;
 }
 
-export function FeedbackForm({ envelope, surface, onCancel, onAskBot, send = postFeedback, initialPhase = "editing", initialChoice, now = () => new Date() }: FeedbackFormProps) {
+export function FeedbackForm({ envelope, surface, onCancel, onAskBot, send = postFeedback, initialPhase = "editing", initialChoice, name = "", now = () => new Date() }: FeedbackFormProps) {
   const ids = useId();
   const [choice, setChoice] = useState<FeedbackChoice | null>(initialChoice ?? null);
   const [phase, setPhase] = useState<FeedbackPhase>(initialPhase);
@@ -98,6 +135,7 @@ export function FeedbackForm({ envelope, surface, onCancel, onAskBot, send = pos
   const [createdAt, setCreatedAt] = useState(now);
   const status = useRef<HTMLParagraphElement>(null);
   const preview = useMemo(() => (choice ? buildFeedbackRequest({ envelope, choice, surface, now: createdAt }) : null), [envelope, choice, surface, createdAt]);
+  const { code } = useHelpCopy();
   useEffect(() => { if (phase !== "editing") status.current?.focus(); }, [phase]);
 
   const submit = async () => {
@@ -154,9 +192,18 @@ export function FeedbackForm({ envelope, surface, onCancel, onAskBot, send = pos
       {nudge && <p id={`${ids}-nudge`} role="alert" className="text-[13px] text-ink">{hx("ux.l4a.feedback.needChoice")}</p>}
       <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
         <summary className="min-h-9 cursor-pointer py-1.5 text-[13px] font-medium text-ink">{hx("ux.l4a.feedback.whatWeSend")}</summary>
-        <pre data-feedback-preview className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-4 text-ink">
-          {preview ? JSON.stringify(preview, null, 2) : hx("ux.l4a.feedback.pickFirst")}
-        </pre>
+        {code === "en" || !preview ? (
+          <pre data-feedback-preview className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap break-words text-[12px] leading-4 text-ink">
+            {preview ? JSON.stringify(preview, null, 2) : hx("ux.l4a.feedback.pickFirst")}
+          </pre>
+        ) : (
+          <div data-feedback-preview className="mt-2 text-[12px] leading-4 text-ink">
+            <ul className="flex flex-col gap-1">
+              {previewFields(preview, choice!, name).map((field) => <li key={field.id} data-field={field.id} className="break-words">{field.text}</li>)}
+            </ul>
+            <p className="mt-2 text-ink-secondary">{hx("ux.l4a.feedback.previewEnglish")}</p>
+          </div>
+        )}
         <p className="mt-2 text-[12px] leading-4 text-ink-secondary">{hx("ux.l4a.feedback.added")}</p>
       </details>
       <p className="text-[13px] leading-5 text-ink-secondary">{hx("ux.l4a.feedback.privacy")}</p>

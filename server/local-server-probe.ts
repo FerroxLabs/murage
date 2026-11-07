@@ -19,6 +19,8 @@ import {
   contextWindowsFromPs,
   decodeInjectId,
   isLlamaCppProps,
+  isLmStudioNativeCatalog,
+  lmStudioNativeCatalog,
   localContextWindow,
   localHost,
   localModelIds,
@@ -51,7 +53,8 @@ export interface LocalServerDetection {
 
 /**
  * What answers at this address. Order matters: each endpoint below is unique
- * to one server (Ollama `/api/version`, LM Studio `/api/v0/models`, llama.cpp
+ * to one server (Ollama `/api/version`, LM Studio `/api/v0/models` or, from
+ * 0.4 and the Bionic app, `/api/v1/models` with chat rows, llama.cpp
  * `/props`, SGLang `/get_model_info`, oMLX `/v1/models/status`); vLLM and
  * SGLang also mark their `/v1/models` rows with `owned_by`.
  */
@@ -63,9 +66,10 @@ export async function detectLocalServerKind(
   const root = anthropicBaseUrl(host);
   const base = host.baseUrl.replace(/\/$/, "");
   const get = (url: string) => localRequestJson(url, env, host, fetchImpl, { timeoutMs: 2_500 });
-  const [version, lmStudio, props, sglangInfo, models, omlxStatus, health] = await Promise.all([
+  const [version, lmStudio, lmStudioNative, props, sglangInfo, models, omlxStatus, health] = await Promise.all([
     get(`${root}/api/version`),
     get(`${root}/api/v0/models`),
+    get(`${root}/api/v1/models`),
     get(`${root}/props`),
     get(`${root}/get_model_info`),
     get(`${base}/models`),
@@ -79,7 +83,7 @@ export async function detectLocalServerKind(
   const kind: LocalServerKind | null =
     version?.ok && typeof record(version.json)?.version === "string"
       ? "ollama"
-      : lmStudio?.ok && Array.isArray(record(lmStudio.json)?.data)
+      : (lmStudio?.ok && Array.isArray(record(lmStudio.json)?.data)) || (lmStudioNative?.ok && isLmStudioNativeCatalog(lmStudioNative.json))
         ? "lmstudio"
         : props?.ok && isLlamaCppProps(props.json)
           ? "llamacpp"
@@ -97,7 +101,10 @@ export async function detectLocalServerKind(
     const tags = await get(`${root}/api/tags`);
     names = tags?.ok ? localModelIds(tags.json) : [];
   }
-  const reachable = [version, lmStudio, props, sglangInfo, models, omlxStatus, health].some((answer) => answer !== null);
+  // LM Studio 0.4 names its chat models natively; /v1/models lists variants.
+  const nativeIds = kind === "lmstudio" && lmStudioNative?.ok ? lmStudioNativeCatalog(lmStudioNative.json)?.ids ?? [] : [];
+  if (nativeIds.length) names = nativeIds;
+  const reachable = [version, lmStudio, lmStudioNative, props, sglangInfo, models, omlxStatus, health].some((answer) => answer !== null);
   return { reachable, kind, models: names };
 }
 
@@ -156,8 +163,11 @@ export async function readLoadedContext(
       break;
     }
     case "lmstudio": {
-      const answer = await get(`${root}/api/v0/models`);
-      reading = (answer?.ok ? contextWindowsFromLmStudio(answer.json).get(model) : undefined) ?? { source: "unknown" };
+      const [native, answer] = await Promise.all([get(`${root}/api/v1/models`), get(`${root}/api/v0/models`)]);
+      reading =
+        (native?.ok ? lmStudioNativeCatalog(native.json)?.contexts.get(model) : undefined) ??
+        (answer?.ok ? contextWindowsFromLmStudio(answer.json).get(model) : undefined) ??
+        { source: "unknown" };
       break;
     }
     case "llamacpp": {

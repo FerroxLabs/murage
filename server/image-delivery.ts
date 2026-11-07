@@ -65,7 +65,7 @@ export interface ImageResultBody { data: Array<{ b64_json: string; size?: string
  * `maxEventBytes` is refused rather than held, and so is a whole stream past
  * `maxTotalBytes` (default: the event cap) or an image past `expected`.
  */
-export async function readImageEventStream(body: ReadableStream<Uint8Array>, options: { onActivity?: () => void; maxEventBytes: number; maxTotalBytes?: number; expected: number }): Promise<ImageResultBody> {
+export async function readImageEventStream(body: ReadableStream<Uint8Array>, options: { onActivity?: () => void; onFrame?: (frame: unknown) => void; maxEventBytes: number; maxTotalBytes?: number; expected: number }): Promise<ImageResultBody> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const images = new Map<number, { b64_json: string; size?: string }>();
@@ -77,6 +77,7 @@ export async function readImageEventStream(body: ReadableStream<Uint8Array>, opt
     if (data.trim() === "[DONE]") { done = true; return; }
     let frame: unknown;
     try { frame = JSON.parse(data); } catch { throw new ImageDeliveryError("invalid-response", "The image provider sent an unreadable stream.", "uncertain"); }
+    options.onFrame?.(frame);
     if (!record(frame)) return;
     const type = typeof frame.type === "string" ? frame.type : "";
     if (type === "error" || record(frame.error)) {

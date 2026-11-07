@@ -63,7 +63,7 @@ const mcpEnableCard = z.object({
 }).strict();
 const card = z.object({
   title: text, options: strings,
-  // bot email cards (server/email/cards.ts): a backup carries them, mail text stripped (sanitizeStagedEmail); a restore rebuilds them
+  // bot email cards (server/email/cards.ts): a backup carries them, mail text stripped (sanitizeStagedEmailRows); a restore rebuilds them
   kind: z.enum(INSTALLATION_CARD_KINDS).optional(), publish: publishCard.optional(), mcpEnable: mcpEnableCard.optional(),
   // Older stored approval cards omit subtitle. Recovery never invents one.
   subtitle: text.optional(), answered: text.optional(), dismissed: boolean.optional(), requestId: text.optional(),

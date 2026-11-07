@@ -45,6 +45,10 @@ export function plainEngineError(message: string, botName: string, options: { de
   if ((status !== undefined && status >= 500) || /\bapi_error\b|internal server error|overloaded/i.test(text)) {
     return `${botName}'s AI service had a problem on its side. Try again in a moment.`;
   }
+  // A 429 is the service asking for a pause, never a refused request: "change the request" would be wrong advice.
+  if (status === 429 || /too many requests|rate[ _-]?limit/i.test(text)) {
+    return `${botName}'s AI service is busy right now. Your message is kept; send it again in a moment.`;
+  }
   return options.details === false
     ? `${botName}'s AI service turned this request down. Change the request or pick another model, then send it again.`
     : `${botName}'s AI service turned this request down. The details below say why. Change the request or pick another model, then send it again.`;
