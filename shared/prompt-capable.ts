@@ -29,6 +29,23 @@ export interface PromptHit { rule: PromptRule; note: string }
 
 /** Bodies inside bodies past this depth are not read; the strict reader holds. */
 const MAX_DEPTH = 6;
+/** How many wrappers deep one command is followed (`sudo env nohup ...`). */
+const MAX_WRAPPER_DEPTH = 32;
+/** How many program names after the first one word list has read for their pins. */
+const MAX_BEHIND_READS = 16;
+/** 1.0.18 (S10): past this many command separators the reader does not follow the text: a line of `a` costs the server's one
+ * thread about 9 microseconds, and 256 KiB holds 127,000 of them. No real command in the data copy comes near it. */
+export const MAX_COMMAND_SEPARATORS = 40_000;
+/** Newlines, `;`, `&` and `|` in the raw text, quoted or not: the count stays cheap and cannot be argued with by quoting. */
+export function overCommandBudget(text: string): boolean {
+  if (text.length <= MAX_COMMAND_SEPARATORS) return false;
+  let count = 0;
+  for (let k = 0; k < text.length; k++) {
+    const c = text.charCodeAt(k);
+    if ((c === 10 || c === 59 || c === 38 || c === 124) && ++count > MAX_COMMAND_SEPARATORS) return true;
+  }
+  return false;
+}
 
 const ROW = new Map<PromptRule, PromptRow>(PROMPT_ROWS.map((row) => [row.rule, row]));
 const hit = (rule: PromptRule, note?: string): PromptHit => ({ rule, note: note ?? ROW.get(rule)!.reason });
@@ -47,7 +64,9 @@ export function promptVerdict(text: string, facts: PromptFacts | undefined): Pro
 export function pinOverrideIn(text: string, pins: ReadonlyMap<string, string>, shell?: "pwsh"): string | null {
   // Section 11 D2: a PowerShell command (Claude's PowerShell tool, Codex and ACP commands under `powershell.exe -Command`) is
   // read with PowerShell's own spellings first, then as every command is
-  return (shell === "pwsh" ? pwshPinTouch(text) : null) ?? pinTouch(text, pins) ?? judgeText(text, { pins }, false, 0)?.note ?? null;
+  // 1.0.18 (S10): past the budget the always-ask reader already could not follow this text and held it, so the structural
+  // read is not spent here; the name scan still runs. What cannot be read is not a pin override (judgeSimple).
+  return (shell === "pwsh" ? pwshPinTouch(text) : null) ?? pinTouch(text, pins) ?? (overCommandBudget(text) ? null : judgeText(text, { pins }, false, 0)?.note) ?? null;
 }
 
 /** The pin mode of the reader: judges only Rule 68f case 1, never a prompt row. */
@@ -209,9 +228,25 @@ function readDouble(text: string, from: number): DoubleRead | null {
   return null;
 }
 
+/** The judge and the pin check read the same long text more than once in one verdict, so a long text is split once: one entry
+ *  per text. Splitting reads only its text, and no caller writes to what it gets. A short text costs less to split than to keep. */
+const SPLIT_MEMO_MIN_CHARS = 1024;
+const SPLIT_MEMO_ENTRIES = 8;
+const splitMemo = new Map<string, Split>();
+
 /** Split text into simple commands at `;`, `&&`, `||`, `|`, `&`, newline, `(`, `)`, `$(`, backtick and `{ }`, with every
  *  command substitution, quoted body and here-document kept for a second reading. */
 function split(text: string): Split {
+  if (text.length < SPLIT_MEMO_MIN_CHARS) return readSplit(text);
+  const kept = splitMemo.get(text);
+  if (kept) return kept;
+  const parts = readSplit(text);
+  if (splitMemo.size >= SPLIT_MEMO_ENTRIES) splitMemo.delete(splitMemo.keys().next().value!);
+  splitMemo.set(text, parts);
+  return parts;
+}
+
+function readSplit(text: string): Split {
   const commands: Simple[] = [];
   const substitutions: string[] = [];
   const quoted: string[] = [];
@@ -459,7 +494,9 @@ const WINDOWS_TOUCH = new RegExp(
 const ENV_KEEPING_LONG = new Set(["--null", "--debug", "--help", "--version", "--list-signal-handling"]);
 const ENV_KEEPING_LONG_PREFIX = ["--chdir=", "--ignore-signal", "--default-signal", "--block-signal"];
 
-const firstName = (text: string): string | undefined => new RegExp(PINNED_NAME.source).exec(text)?.[0];
+// 1.0.18 (S10): compiled once, no `g` so it keeps no position; compiled per word it was the most time on a long line
+const PINNED_NAME_FIRST = new RegExp(PINNED_NAME.source);
+const firstName = (text: string): string | undefined => PINNED_NAME_FIRST.exec(text)?.[0];
 const named = (name: string) => `${name} is set, removed or named on this line, so Murage's pin may not hold`;
 const cleared = (form: string) => `${form} changes the environment the command inherits, so Murage's pin may not hold`;
 
@@ -847,8 +884,8 @@ function commandTouch(words: readonly Word[], exempt: ReadonlySet<Word>): string
     const word = words[k]!;
     if (isDynamic(word)) continue;
     const program = programName(word.text);
-    const args = words.slice(k + 1);
-    const found = program === "env" ? envTouch(args) : program === "exec" ? execTouch(args) : null;
+    // 1.0.18 (S10): from a place in the list, never a copy of it per word: that was 16 s of a blocked server on a 160 KB line
+    const found = program === "env" ? envTouch(words, k + 1) : program === "exec" ? execTouch(words, k + 1) : null;
     if (found) return found;
   }
   return null;
@@ -856,8 +893,8 @@ function commandTouch(words: readonly Word[], exempt: ReadonlySet<Word>): string
 
 /** env's options: any that clears or splits more words holds; a word only known when it runs is passed over and the static
  *  options around it are still read. */
-function envTouch(args: readonly Word[]): string | null {
-  for (let k = 0; k < args.length; k++) {
+function envTouch(args: readonly Word[], from: number): string | null {
+  for (let k = from; k < args.length; k++) {
     const word = args[k]!;
     if (word.assignment !== undefined || isDynamic(word)) continue;
     const text = word.text;
@@ -892,8 +929,8 @@ function envTouch(args: readonly Word[]): string | null {
 
 /** exec's options: `-c` clears the environment (`-a` takes a name). A word only known when it runs ends the scan: in exec's
  *  option place it is the program itself, whose own options follow it. */
-function execTouch(args: readonly Word[]): string | null {
-  for (let k = 0; k < args.length; k++) {
+function execTouch(args: readonly Word[], from: number): string | null {
+  for (let k = from; k < args.length; k++) {
     const word = args[k]!;
     if (isDynamic(word)) return null;
     const text = word.text;
@@ -913,10 +950,22 @@ function judgeText(text: string, facts: Facts, strict: boolean, depth: number, e
   if (parts.cannot && strict) return unreadable();
   // what an earlier command left in the shell (`export`, `unset`, a bare assignment) reaches every later one
   let state = env;
+  // 1.0.18 (S10): a bare `x=1` adds to this loop's own map, one copy for a run of them, not one each. Nothing keeps a state
+  // past the call it was handed to, and every other state after it is a new map.
+  let ownsState = false;
   for (const command of parts.commands) {
     const found = judgeSimple(command.words, command.heredocs, facts, strict, depth, state);
     if (found) return found;
-    state = shellStateAfter(command.words, state, depth);
+    if (command.words.length > 0 && command.words.every((word) => word.assignment !== undefined)) {
+      if (!ownsState) state = { names: new Map(state.names), rest: state.rest };
+      ownsState = true;
+      for (const word of command.words) ownNames(state).set(word.assignment!, assignedValue(word));
+      continue;
+    }
+    // an `export` or `unset` the same way (a state handed back new is this loop's own, except the shared nothing-known one)
+    const next = shellStateAfter(command.words, state, depth, ownsState);
+    if (next !== state) ownsState = next !== NOTHING_KNOWN;
+    state = next;
   }
   // a command substitution is code wherever it stands
   for (const sub of parts.substitutions) {
@@ -952,6 +1001,8 @@ function withAssignments(env: InheritedEnv, words: readonly Word[]): InheritedEn
 }
 
 const NOTHING_KNOWN: InheritedEnv = { names: new Map(), rest: "unknown" };
+/** A state's map, for the loop that made it (S10): every other holder only reads it. */
+const ownNames = (env: InheritedEnv) => env.names as Map<string, InheritedEnv["names"] extends ReadonlyMap<string, infer V> ? V : never>;
 
 /** What `env`'s own options do to the environment it hands on: `-i`/`--ignore-environment`/`-` clear it, `-u NAME`/
  *  `--unset=NAME` remove a name; a word only known when it runs (or a name it removes) is passed over, and the static options
@@ -1003,7 +1054,7 @@ function envOptionsEffect(args: readonly Word[], env: InheritedEnv): InheritedEn
  *  `readonly` (`export -n` and `+x` remove it from the environment), `unset`, and an `eval` of literal words. A name these
  *  set from a value the line does not show is unknown; a word only known when it runs among their arguments is passed over,
  *  and every static name before and after it still applies (U19 reads the line statically). */
-function shellStateAfter(words: readonly Word[], env: InheritedEnv, depth: number): InheritedEnv {
+function shellStateAfter(words: readonly Word[], env: InheritedEnv, depth: number, mine = false): InheritedEnv {
   let i = 0;
   const assigns: Word[] = [];
   for (;;) {
@@ -1017,7 +1068,7 @@ function shellStateAfter(words: readonly Word[], env: InheritedEnv, depth: numbe
   const name = programName(program.text);
   const args = words.slice(i + 1);
   if (["export", "declare", "typeset", "local", "readonly"].includes(name)) {
-    const names = new Map(env.names);
+    const names = mine ? ownNames(env) : new Map(env.names);
     let removes = false;
     for (const arg of args) {
       if (isDynamic(arg) && arg.assignment === undefined) continue;
@@ -1030,17 +1081,17 @@ function shellStateAfter(words: readonly Word[], env: InheritedEnv, depth: numbe
       if (eq > 0) names.set(text.slice(0, eq).replace(/\+$/, ""), removes ? null : assignedValue(arg));
       else if (removes) names.set(text, null);
     }
-    return { names, rest: env.rest };
+    return mine ? env : { names, rest: env.rest };
   }
   if (name === "unset") {
-    const names = new Map(env.names);
+    if (args.some((arg) => !isDynamic(arg) && arg.text === "-f")) return env;
+    const names = mine ? ownNames(env) : new Map(env.names);
     for (const arg of args) {
       if (isDynamic(arg)) continue;
-      if (arg.text === "-f") return env;
       if (arg.text.startsWith("-")) continue;
       names.set(arg.text, null);
     }
-    return { names, rest: env.rest };
+    return mine ? env : { names, rest: env.rest };
   }
   if (name === "eval") {
     if (args.some(isDynamic)) return env;
@@ -1066,22 +1117,26 @@ function judgeSimple(all: readonly Word[], heredocs: readonly Doc[], facts: Fact
   if (pinMode(facts)) strict = false;
   // in pin mode what cannot be read is not a pin override; the prompt reader holds it on its own
   const unreadable = (): PromptHit | null => (pinMode(facts) ? null : unreadableHit());
+  // 1.0.18 (S10): `env env env ...` came back here once per word, each with its own copy of the rest
+  if (depth > MAX_WRAPPER_DEPTH) return strict ? unreadable() : null;
   let i = 0;
-  // the names the command's environment sets: inherited from the line or a wrapper, then its own
-  const assigned: string[] = [...env.names].filter(([, value]) => value !== null).map(([name]) => name);
   const own: Word[] = [];
   for (;;) {
-    while (i < all.length && all[i]!.assignment !== undefined) { own.push(all[i]!); assigned.push(all[i++]!.assignment!); }
+    while (i < all.length && all[i]!.assignment !== undefined) own.push(all[i++]!);
     if (i < all.length && !isDynamic(all[i]!) && !all[i]!.quoted && SHELL_LEADING_WORDS.includes(all[i]!.text)) { i++; continue; }
     break;
   }
-  // what the program hands on: the inherited environment with the command's own assignments over it
-  const child = withAssignments(env, own);
+  // the names the command's environment sets: inherited from the line or a wrapper, then its own. Only a row reads them
+  const assignedNames = () => [...[...env.names].filter(([, value]) => value !== null).map(([name]) => name), ...own.map((word) => word.assignment!)];
+  // what the program hands on: the inherited environment with the command's own assignments over it. Made when it is
+  // first needed: a copy per bare `x=1` was 26 s of a blocked server on 64 KB of them
+  let handedOn: InheritedEnv | undefined;
+  const childEnv = () => (handedOn ??= withAssignments(env, own));
   const lenientDocs = () => {
     // a here-document is never data (build r17 item A): every body is read again
     const docs = docTexts(heredocs);
     for (const doc of docs) {
-      const found = judgeText(doc, facts, false, depth + 1, child);
+      const found = judgeText(doc, facts, false, depth + 1, childEnv());
       if (found) return found;
     }
     return null;
@@ -1091,9 +1146,12 @@ function judgeSimple(all: readonly Word[], heredocs: readonly Doc[], facts: Fact
   // a listed option of a pin-bearing program holds behind any wrapper, listed or not, or a program only known when it runs:
   // every later static word naming such a program is read with its options (r2 amendment item 3)
   if (pinMode(facts)) {
+    let behindRead = 0;
     for (let k = i + 1; k < all.length; k++) {
       const word = all[k]!;
       if (isDynamic(word) || !PIN_PROGRAMS.has(programName(word.text))) continue;
+      // 1.0.18 (S10): each of these reads all the words after it, so `git git git ...` chooses the work. Past this many it holds
+      if (++behindRead > MAX_BEHIND_READS) return { rule: PIN_RULE, note: unclear("A long list of program names") };
       const behind = pinOverride(all.slice(k).map((each) => each.text), facts.pins, KEPT_ENV);
       if (behind) return { rule: PIN_RULE, note: behind.unknown };
     }
@@ -1112,14 +1170,14 @@ function judgeSimple(all: readonly Word[], heredocs: readonly Doc[], facts: Fact
     // the rows, in table order
     for (const row of PROMPT_ROWS) {
       if (!row.programs.includes(name)) continue;
-      const found = judgeRow(row.rule, name, args, argText, assigned, facts);
+      const found = judgeRow(row.rule, name, args, argText, assignedNames(), facts);
       if (found) return found;
     }
   }
 
   // then what the program carries: a wrapper's command, a shell's body, a dispatcher's words
-  const again = (words: readonly Word[], docs: readonly Doc[] = heredocs, handed: InheritedEnv = child) => judgeSimple(words, docs, facts, strict, depth + 1, handed);
-  const body = (text: string, handed: InheritedEnv = child) => judgeText(text, facts, !pinMode(facts), depth + 1, handed);
+  const again = (words: readonly Word[], docs: readonly Doc[] = heredocs, handed: InheritedEnv = childEnv()) => judgeSimple(words, docs, facts, strict, depth + 1, handed);
+  const body = (text: string, handed: InheritedEnv = childEnv()) => judgeText(text, facts, !pinMode(facts), depth + 1, handed);
   if (name === "sudo" || name === "doas") {
     // a user switch: what the wrapped command inherits is not known from the line (its own assignments still are)
     const read = escalatorOptions(name, args);
@@ -1128,7 +1186,7 @@ function judgeSimple(all: readonly Word[], heredocs: readonly Doc[], facts: Fact
   if (WRAPPER_PREFIXES.has(name)) {
     const wrapped = wrapperCommand(name, args);
     if (wrapped === "unreadable") return strict ? unreadable() : null;
-    const handed = name === "env" ? envOptionsEffect(args, child) : child;
+    const handed = name === "env" ? envOptionsEffect(args, childEnv()) : childEnv();
     if (typeof wrapped === "string") return body(wrapped, handed);
     return again(wrapped, heredocs, handed);
   }

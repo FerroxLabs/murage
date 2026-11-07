@@ -95,3 +95,38 @@ describe("NOLIMITS-KEY-TEXT Part A rows", () => {
     expect(sensitiveNameRow("config.toml")).toBeNull();
   });
 });
+
+import { readFileSync } from "node:fs";
+const ENV_DUMP_REFERENCE = /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset|export)\s+-[a-oq-z]*p[a-z]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset)\s+-x+|(?:Get-ChildItem|gci|dir|ls)\s+(?:-Path\s+)?Env:[\\/]?\*?(?!\s*\|)|set)\s*(?=$|[;&|)>`\n])/i;
+const piEnvLine11 = readFileSync(new URL("../server/drivers/pi-permission-gate.ts", import.meta.url), "utf8").split("\n").find(line => line.includes('id: "env-dump"'))!;
+const piEnv11 = new Function("return " + piEnvLine11.slice(piEnvLine11.indexOf("re: ") + 4, piEnvLine11.lastIndexOf(" }")))() as RegExp;
+const envCopies11 = [SENSITIVE_TEXT.find(row => row.id === "env-dump")!.re, piEnv11];
+const envGenerators11 = [(k: number) => "\n".repeat(k-1)+"!", (k: number) => " \n".repeat(Math.floor((k-1)/2))+"!", (k: number) => ";".repeat(k-1)+"!", (k: number) => "\nenv".repeat(Math.floor((k-1)/4))+"x", (k: number) => ";printenv"+" a".repeat(Math.floor((k-10)/2))+"!", (k: number) => ";declare -"+"p".repeat(k-12)+"!"];
+it("H3 env-dump equivalence both copies", () => {
+  const alphabet = ["\n", ";", "|", "&", "(", ")", "$(", "`", ">", " ", "\t", "\u2028", "env", "printenv", "set", "gci", "Env:", "-p", "-x", "-0", "sudo", "declare", "A", "x", "=", "!"];
+  let seed = 11; const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+  for (let n = 0; n < 20000; n++) { let text = ""; const len = next()%41; while (text.length < len) text += alphabet[next()%alphabet.length]; text = text.slice(0,len);
+    for (const re of envCopies11) expect(re.test(text), JSON.stringify(text)).toBe(ENV_DUMP_REFERENCE.test(text)); }
+});
+it("R12 env-dump linear sweeps both copies", () => {
+  for (const re of envCopies11) for (const shape of envGenerators11) {
+    const times = [8192, 32768, 131072].map(k => { const text = shape(k); let best = Infinity;
+      for (let n = 0; n < 3; n++) { const start = performance.now(); re.test(text); best = Math.min(best, performance.now()-start); } return best; });
+    expect(times[2]).toBeLessThan(20); expect(times[2]!).toBeLessThanOrEqual(24*Math.max(times[0]!,1));
+  }
+});
+it("R12b old env-dump is a timing witness", { timeout: 600_000 }, () => {
+  const text = envGenerators11[0]!(131072); let best = Infinity;
+  for (let n = 0; n < 3; n++) { const start = performance.now(); ENV_DUMP_REFERENCE.test(text); best = Math.min(best, performance.now()-start); }
+  expect(best).toBeGreaterThan(20);
+});
+it("A3 fixed-seed 2000 env texts per generator both copies", { timeout: 7_200_000 }, () => {
+  let seed = 11; const next = () => (seed = (Math.imul(seed,1664525)+1013904223) >>> 0);
+  const alphabet = ["=", ":", ".", "\n", "\u2028", "\uFDFA", "İ", "-"];
+  for (const [g, shape] of envGenerators11.entries()) for (let n=0;n<2000;n++) {
+    const suffix = Array.from({length:16},()=>alphabet[next()%alphabet.length]).join("");
+    const text = (shape(131056) + " ".repeat(16)).slice(0,131056) + suffix;
+    for (const re of envCopies11) { const start=performance.now(); re.test(text);
+      expect(performance.now()-start,`generator ${g}, seed ${seed}, ${JSON.stringify(text.slice(0,80))}`).toBeLessThan(20); }
+  }
+});

@@ -59,6 +59,14 @@ import { checkUnplacedWrite, isLoaderName, loadsCodeFirst, namesStartupFile, wri
 /** Nested scripts (`sh -c`, `eval`, a substitution) deeper than this ask. */
 export const MAX_DEPTH = 8;
 const MAX_CANDIDATES = 512;
+const MAX_VALUE_PARTS = 4096;
+/** 1.0.18 (S10): the verdict runs on the server's one thread. Names and files one text may set before the reader stops
+ * following it (a branch copies them all), and wrappers one command may stack. Past either it could not follow the text. */
+const MAX_STATE_KEPT = 512;
+const MAX_WRAPPERS_FOLLOWED = 64;
+function checkStateKept(ctx: WalkContext): void {
+  if (ctx.bound.size > MAX_STATE_KEPT || ctx.written.size > MAX_STATE_KEPT || ctx.links.size > MAX_STATE_KEPT) throw new Unreadable("budget", "more names or files than the reader follows");
+}
 const MAX_NAMES = 16;
 
 /** What a function body does to the state around it, read off the body
@@ -251,6 +259,7 @@ function unseenScript<H>(visitor: Visitor<H>, path: string, ctx: WalkContext, el
 function runnerStarts(ctx: WalkContext, name: string): void {
   markLoaderRunner(ctx.loaders, name);
   checkUnplacedWrite(ctx.loaders, name);
+  checkStateKept(ctx);
   const startup = writtenStartupFile([...ctx.written.keys(), ...ctx.links.keys()]);
   if (startup) throw new Unreadable("opaque", `${name} reads a startup file this text wrote (${startup})`);
 }
@@ -262,6 +271,7 @@ export function newContext(cwd?: string): WalkContext {
 /** A copy for a subshell, a branch or a nested script: what it binds or
  * moves to does not leak back out unless `merge` is asked to. */
 export function fork(ctx: WalkContext, deeper = false): WalkContext {
+  checkStateKept(ctx);
   const next: WalkContext = {
     windowsBash: ctx.windowsBash,
     windowsForeign: ctx.windowsForeign,
@@ -293,7 +303,11 @@ export function braceCandidates(word: Word): Word[] {
   for (const part of word.parts) {
     const options: Part[][] = part.kind === "brace" ? part.alts.map((alt) => alt.parts) : [[part]];
     const next: Part[][] = [];
-    for (const head of candidates) for (const option of options) next.push([...head, ...option]);
+    for (const head of candidates) for (const option of options) {
+      // 1.0.18 (S10): `x=$x$x` doubles a value at each step, 17 s of a blocked server in 16 KB of them
+      if (head.length + option.length > MAX_VALUE_PARTS) throw new Unreadable("expansion", "a value too long to follow");
+      next.push([...head, ...option]);
+    }
     if (next.length > MAX_CANDIDATES) throw new Unreadable("expansion", "too many values");
     candidates = next;
   }
@@ -960,7 +974,11 @@ export function expandWord(word: Word, ctx: WalkContext): Word[] {
   let candidates: Part[][] = [[]];
   const multiply = (options: Part[][]) => {
     const next: Part[][] = [];
-    for (const head of candidates) for (const option of options) next.push([...head, ...option]);
+    for (const head of candidates) for (const option of options) {
+      // 1.0.18 (S10): `x=$x$x` doubles a value at each step, 17 s of a blocked server in 16 KB of them
+      if (head.length + option.length > MAX_VALUE_PARTS) throw new Unreadable("expansion", "a value too long to follow");
+      next.push([...head, ...option]);
+    }
     if (next.length > MAX_CANDIDATES) throw new Unreadable("expansion", "too many values");
     candidates = next;
   };
@@ -1218,8 +1236,10 @@ function unwrap(words: Word[], ctx: WalkContext): Unwrapped {
     const next = resolveFrom(base, only.path);
     cwd = isAnchored(next) ? { path: next } : {};
   };
+  let followed = 0;
   for (;;) {
     if (rest.length === 0) return done();
+    if (++followed > MAX_WRAPPERS_FOLLOWED) throw new Unreadable("budget", "more wrappers than the reader follows");
     const substituted = substituteLead(rest, ctx);
     derived ||= substituted.derived;
     const { lists } = substituted;
@@ -1379,19 +1399,27 @@ function provenanceOfRedirects(redirects: Redirect[], ctx: WalkContext): Provena
 
 /** What a command reads on stdin: its own redirect, else what the command to
  * its left in the pipe writes, else what the enclosing compound was given. */
-function stdinProvenance(command: Command, before: Command[], ctx: WalkContext): Provenance | undefined {
+function stdinProvenance(command: Command, before: Before, ctx: WalkContext, walked = 0): Provenance | undefined {
   const own = provenanceOfRedirects(command.redirects, ctx);
   if (own) return own;
-  if (before.length) return outputOf(before[before.length - 1]!, before.slice(0, -1), ctx);
-  return ctx.stdin;
+  if (before.count === 0) return ctx.stdin;
+  // 1.0.18 (S10): `cat | cat | cat ...` walks left once per command. Past this many steps its input is a value, which holds
+  if (walked >= MAX_PIPE_WALK) return { kind: "value", why: "a pipe longer than the reader follows" };
+  return outputOf(before.commands[before.count - 1]!, { commands: before.commands, count: before.count - 1 }, ctx, walked + 1);
 }
+
+/** The commands to a command's left in its pipeline: a count into the pipeline's own list, never a copy of it per command
+ * (1.0.18 S10: a copy per step was 1.9 s of a blocked server on a 160 KB pipeline). */
+type Before = { readonly commands: readonly Command[]; readonly count: number };
+const NOTHING_BEFORE: Before = { commands: [], count: 0 };
+export const MAX_PIPE_WALK = 16;
 
 /** What a command writes on stdout, computed and never assumed: an emitter
  * with literal words (`echo` without escapes, `printf` without directives),
  * an identity (`cat` with no operand, `tee` to literal files) passing its
  * own input through, `cat` of one literal file, a lister's paths. Every
  * other command's output is a value, whatever its flags. */
-function outputOf(command: Command, before: Command[], ctx: WalkContext): Provenance {
+function outputOf(command: Command, before: Before, ctx: WalkContext, walked = 0): Provenance {
   if (command.kind !== "simple" || command.words.length === 0) return { kind: "value", why: "the output of a compound command" };
   const name = resolveName(command.words[0]!);
   const args = command.words.slice(1);
@@ -1414,13 +1442,13 @@ function outputOf(command: Command, before: Command[], ctx: WalkContext): Proven
     return { kind: "literal", text: joined, words: [] };
   }
   if (name === "cat") {
-    if (args.every((word) => literalText(word) === "-")) return stdinProvenance(command, before, ctx) ?? { kind: "value", why: "cat of input the text does not show" };
+    if (args.every((word) => literalText(word) === "-")) return stdinProvenance(command, before, ctx, walked) ?? { kind: "value", why: "cat of input the text does not show" };
     const only = args.length === 1 ? literalText(args[0]!) : undefined;
     if (only !== undefined && !only.startsWith("-")) return { kind: "file", path: resolvePath(ctx, only) };
     return { kind: "value", why: "cat of several files or a value" };
   }
   if (name === "tee" && args.every((word) => literalText(word) !== undefined && !literalText(word)!.startsWith("-"))) {
-    return stdinProvenance(command, before, ctx) ?? { kind: "value", why: "tee of input the text does not show" };
+    return stdinProvenance(command, before, ctx, walked) ?? { kind: "value", why: "tee of input the text does not show" };
   }
   const roots = name === undefined ? undefined : listerRoots(name, args, ctx);
   if (roots) return { kind: "roots", roots };
@@ -1433,7 +1461,7 @@ function outputOf(command: Command, before: Command[], ctx: WalkContext): Proven
   // of reach as they are (`cat install.sh | tr -d '\r' | sh`). Any other
   // transformer's output is a value
   if (name !== undefined && (lineFilter(name, args) || crStrip(name, args))) {
-    const input = stdinProvenance(command, before, ctx);
+    const input = stdinProvenance(command, before, ctx, walked);
     if (input?.kind === "roots" && lineFilter(name, args)) return input;
     if (input?.kind === "file" && !ctx.written.has(resolveWritten(ctx, input.path))) return input;
     if (input?.kind === "remote") return input;
@@ -2615,7 +2643,7 @@ export function walkForeignExecutor<H>(program: string, args: Word[], ctx: WalkC
   if (!(SHELLS.has(name) || interpreterKey(name) !== undefined || Object.hasOwn(WRAPPERS, name) || ELEVATORS.has(name))) return undefined;
   const words = [lit(name), ...args];
   const command: Extract<Command, { kind: "simple" }> = { kind: "simple", assigns: [], words, redirects: [] };
-  return visitWords(words, command, stdin, ctx, visitor, undefined, false, []);
+  return visitWords(words, command, stdin, ctx, visitor, undefined, false, NOTHING_BEFORE);
 }
 
 /** `wsl [options] [--] words`: the words joined and run by the Linux
@@ -2630,7 +2658,7 @@ function walkWsl<H>(args: Word[], ctx: WalkContext, visitor: Visitor<H>, stdin?:
     if (text === "-e" || text === "--exec") {
       const rest = args.slice(i + 1);
       if (!rest.length) return shell();
-      return walkForeignExecutor(resolveName(rest[0]!) ?? "", rest.slice(1), ctx, visitor, stdin) ?? visitWords(rest, { kind: "simple", assigns: [], words: rest, redirects: [] }, stdin, ctx, visitor, undefined, false, []);
+      return walkForeignExecutor(resolveName(rest[0]!) ?? "", rest.slice(1), ctx, visitor, stdin) ?? visitWords(rest, { kind: "simple", assigns: [], words: rest, redirects: [] }, stdin, ctx, visitor, undefined, false, NOTHING_BEFORE);
     }
     if (text === "--") return walkWslText(args.slice(i + 1), ctx, visitor, stdin) ?? shell();
     if (WSL_VALUES.has(text)) { i++; continue; }
@@ -2696,8 +2724,8 @@ function walkAndOr<H>(andOr: AndOr, ctx: WalkContext, visitor: Visitor<H>): H | 
  * current shell under zsh): what one binds or moves to may or may not reach
  * what follows the pipeline, so each is a branch. */
 function walkPipeline<H>(pipeline: Pipeline, ctx: WalkContext, visitor: Visitor<H>): H | null {
-  if (pipeline.commands.length === 1) return walkCommand(pipeline.commands[0]!, ctx, visitor, []);
-  const runs = pipeline.commands.map((command, index) => (branch: WalkContext) => walkCommand(command, branch, visitor, pipeline.commands.slice(0, index)));
+  if (pipeline.commands.length === 1) return walkCommand(pipeline.commands[0]!, ctx, visitor, NOTHING_BEFORE);
+  const runs = pipeline.commands.map((command, index) => (branch: WalkContext) => walkCommand(command, branch, visitor, { commands: pipeline.commands, count: index }));
   return branches(ctx, runs);
 }
 
@@ -2795,7 +2823,7 @@ function substituteLead(words: Word[], ctx: WalkContext): { lists: Word[][]; der
   return { lists: [...byName.values()], derived: true };
 }
 
-function walkCommand<H>(command: Command, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
+function walkCommand<H>(command: Command, ctx: WalkContext, visitor: Visitor<H>, before: Before): H | null {
   if (command.kind === "simple") return walkSimple(command, ctx, visitor, before);
   // redirects first: a heredoc on a compound is what the commands inside read
   let hit = walkRedirects(command.redirects, ctx, visitor);
@@ -2919,7 +2947,7 @@ function callFunction<H>(called: string, shape: FunctionShape, args: Word[], ctx
   const inner = fork(ctx, true);
   if (inner.depth > MAX_DEPTH) throw new Unreadable("depth");
   bindPositionals(inner, args.map((word) => expandWord(word, ctx)));
-  const hit = walkCommand(shape.body, inner, visitor, []);
+  const hit = walkCommand(shape.body, inner, visitor, NOTHING_BEFORE);
   if (hit) return hit;
   // the state the body ended in (through every function it called) is the
   // caller's state now, merged back as a branch: a name, folder or
@@ -3114,7 +3142,7 @@ function placements(name: string, args: Word[], texts: Array<string | undefined>
  * it made. A literal output redirect records the command's output (`>>`,
  * stderr and an unknown program's output are values); `tee` records its
  * input; `cp`, `mv` and `install` record what the source held. */
-function recordWrites(command: Command, before: Command[], name: string | undefined, args: Word[], ctx: WalkContext, catastrophic?: (text: string) => boolean): void {
+function recordWrites(command: Command, before: Before, name: string | undefined, args: Word[], ctx: WalkContext, catastrophic?: (text: string) => boolean): void {
   const literalTargets = (word: Word): string[] | undefined => {
     const candidates = candidatesOf(word, ctx);
     return candidates.every((c) => c.kind === "literal") ? candidates.map((c) => resolveFrom(ctx.cwd, (c as { text: string }).text)) : undefined;
@@ -3228,7 +3256,7 @@ function recordWrites(command: Command, before: Command[], name: string | undefi
   }
 }
 
-function walkSimple<H>(command: Extract<Command, { kind: "simple" }>, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
+function walkSimple<H>(command: Extract<Command, { kind: "simple" }>, ctx: WalkContext, visitor: Visitor<H>, before: Before): H | null {
   // 1.0.5 r8 lanereview: a startup file named by any word, its quoting taken
   // out (`~/.zshe"nv"`, `$HOME/.bash_pro\file`), with a shell or an interpreter run
   for (const word of [...command.words, ...command.redirects.flatMap((redirect) => redirect.target ? [redirect.target] : []), ...command.assigns.map((assign) => assign.value)]) {
@@ -3402,7 +3430,7 @@ function bindRead(args: Word[], stdin: Provenance | undefined, ctx: WalkContext)
 }
 
 /** One simple command, its first word already fixed to one program. */
-function visitWords<H>(list: Word[], command: Extract<Command, { kind: "simple" }>, given: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, viaXargs: XargsOptions | undefined, viaDerived: boolean, before: Command[], viaElevated = false): H | null {
+function visitWords<H>(list: Word[], command: Extract<Command, { kind: "simple" }>, given: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, viaXargs: XargsOptions | undefined, viaDerived: boolean, before: Before, viaElevated = false): H | null {
   const unwrapped = unwrap(list, ctx);
   // the wrappers' own arguments, before anything they run is read
   if (visitor.wrapperArgs && unwrapped.wrapperArgs.length) {
@@ -3424,7 +3452,7 @@ function visitWords<H>(list: Word[], command: Extract<Command, { kind: "simple" 
 }
 
 /** One simple command after its wrappers. */
-function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kind: "simple" }>, given: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, viaXargs: XargsOptions | undefined, viaDerived: boolean, before: Command[], viaElevated: boolean): H | null {
+function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kind: "simple" }>, given: Provenance | undefined, ctx: WalkContext, visitor: Visitor<H>, viaXargs: XargsOptions | undefined, viaDerived: boolean, before: Before, viaElevated: boolean): H | null {
   let hit: H | null = null;
   let stdin = given;
   const xargs = unwrapped.xargs ?? viaXargs;
@@ -3640,7 +3668,7 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
         ctx.findAction = true;
         try {
           for (const root of roots) {
-            hit = visitWords(action.map((word) => spliceWord(word, "{}", root)), command, undefined, ctx, visitor, undefined, derived, [], elevated);
+            hit = visitWords(action.map((word) => spliceWord(word, "{}", root)), command, undefined, ctx, visitor, undefined, derived, NOTHING_BEFORE, elevated);
             if (hit) return hit;
           }
         } finally {

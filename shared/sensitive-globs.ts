@@ -72,6 +72,20 @@ const ANY_SEGMENT = /^[^/]*$/;
  * holds a
  * bracket (asserted in its test), so it never matches one. It never throws. */
 function segmentPattern(segment: string): { test(value: string): boolean } {
+  // 1.0.18 (S10): each segment was compiled again for every key sample, 0.6 ms per glob on the server's one thread
+  const known = SEGMENT_PATTERNS.get(segment);
+  if (known) return known;
+  const made = compiledSegment(segment);
+  if (SEGMENT_PATTERNS.size >= SEGMENT_PATTERNS_MAX) SEGMENT_PATTERNS.clear();
+  if (segment.length <= SEGMENT_PATTERN_MAX_CHARS) SEGMENT_PATTERNS.set(segment, made);
+  return made;
+}
+
+const SEGMENT_PATTERNS = new Map<string, { test(value: string): boolean }>();
+const SEGMENT_PATTERNS_MAX = 512;
+const SEGMENT_PATTERN_MAX_CHARS = 256;
+
+function compiledSegment(segment: string): { test(value: string): boolean } {
   // many wildcards in one segment make the pattern's work grow fast: past
   // this many it is any segment at all (a superset, never narrower)
   if ((segment.match(/[*?]/g)?.length ?? 0) > 16) return ANY_SEGMENT;
@@ -100,19 +114,54 @@ function segmentPattern(segment: string): { test(value: string): boolean } {
 /** More `**` than this in one glob is read as could-match: the matcher's
  * work grows with each one (Astra r4: `**\/` 20,000 times). */
 const MAX_GLOBSTARS = 8;
+/** More different globs than this in one text are not read: each costs real time, and the text sets the count. */
+const MAX_GLOBS_READ = 128;
+/** A longer glob is not read: `*\/*\/*\/...` costs by its square. */
+export const MAX_GLOB_CHARS = 1024;
+
+// 1.0.18 (S10, MurageMain's ruling 11-07): one work budget per globKeyRead, linear in the text's length. Each segment match
+// spends one unit; a read that spends it all stops and the text is held as a key read (fail closed, with a logged
+// reason). It never passes.
+// A unit is about 0.1 µs on the rig: 128 KiB of text buys about 60 ms, the base about 30 ms (128 everyday globs spend about
+// half of it).
+export const GLOB_WORK_PER_CHAR = 4;
+export const GLOB_WORK_BASE = 1 << 18;
+class GlobBudgetSpent extends Error {}
+let globWorkLeft = Infinity;
+/** Tests only: how many reads the budget stopped. */
+export const globFailClosed = { count: 0 };
+export const GLOB_BUDGET_REASON = "a glob that costs more to read than Murage spends could name a key file";
 
 /** Do the glob's segments match the path's, `**` standing for any number of them? */
 function segmentsMatch(glob: readonly string[], path: readonly string[]): boolean {
-  if (!glob.length) return !path.length;
-  if (glob[0] === "**") {
-    for (let k = 0; k <= path.length; k++) if (segmentsMatch(glob.slice(1), path.slice(k))) return true;
+  return segmentsMatchAt(glob, 0, path, 0);
+}
+/** segmentsMatch on `glob` from `g` and `path` from `p` (indexes, not a slice per step). */
+function segmentsMatchAt(glob: readonly string[], g: number, path: readonly string[], p: number): boolean {
+  if (--globWorkLeft < 0) throw new GlobBudgetSpent();
+  if (g === glob.length) return p === path.length;
+  if (glob[g] === "**") {
+    for (let k = p; k <= path.length; k++) if (segmentsMatchAt(glob, g + 1, path, k)) return true;
     return false;
   }
-  return path.length > 0 && segmentPattern(glob[0]!).test(path[0]!) && segmentsMatch(glob.slice(1), path.slice(1));
+  return p < path.length && segmentPattern(glob[g]!).test(path[p]!) && segmentsMatchAt(glob, g + 1, path, p + 1);
 }
 
 // 1.0.9: any `[` a later `]` closes is a bracket expression (`[]s]`, `[!]x]`)
-const GLOB_CHARS = /[*?]|\[.*\]/;
+// 1.0.18 (S10): one forward scan, not `/[*?]|\[.*\]/`, which backtracks by the square of a run of `[` with no `]` (131,072 of them
+// took the server's one thread about 15 s). Same answer: `*` or `?` anywhere, or a `[` with a `]` after it on the same line
+// (`.` does not cross a line break: newline, carriage return, the line separator or the paragraph separator).
+function hasGlobChars(text: string): boolean {
+  let bracket = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 0x2a || c === 0x3f) return true;
+    if (c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029) { bracket = false; continue; }
+    if (c === 0x5b) bracket = true;
+    else if (c === 0x5d && bracket) return true;
+  }
+  return false;
+}
 
 /** A path token with its home spelled `~` and its separators `/`. */
 function homeForm(token: string): string {
@@ -131,13 +180,14 @@ function globCouldMatch(glob: string[], sample: string[]): boolean {
   const anchored = glob[0] === "" || homeGlob;
   if (anchored && (homeSample || sample[0] === "")) return segmentsMatch(glob, sample);
   // the sample may sit anywhere: the glob's tail is the sample
+  // 1.0.18 (S10): each tail by its index (a slice per tail cost the square of a long glob, outside the budget)
   if (!homeSample && sample[0] !== "") {
-    for (let k = 0; k < glob.length; k++) if (segmentsMatch(glob.slice(k), sample)) return true;
+    for (let k = 0; k < glob.length; k++) if (segmentsMatchAt(glob, k, sample, 0)) return true;
     return false;
   }
   // a relative glob may be read from any folder: it is the sample's tail
   if (!anchored) {
-    for (let k = 1; k < sample.length; k++) if (segmentsMatch(glob, sample.slice(k))) return true;
+    for (let k = 1; k < sample.length; k++) if (segmentsMatchAt(glob, 0, sample, k)) return true;
   }
   return false;
 }
@@ -147,10 +197,31 @@ function globCouldMatch(glob: string[], sample: string[]): boolean {
  * in its Win32 canonical spelling (shared/in-project.ts win32Canonical), so
  * `\\?\C:\Users\me\.aw?\credentials` is the home glob it names. */
 export function globKeyRead(text: string, platform: NodeJS.Platform = process.platform): string | null {
-  if (!text || !GLOB_CHARS.test(text)) return null;
-  for (const raw of text.split(/[\s;|&()<>,"'`‘-„]+/)) {
+  if (!text || !hasGlobChars(text)) return null;
+  if (globWorkLeft !== Infinity) return globKeyReadWithin(text, platform);
+  globWorkLeft = GLOB_WORK_PER_CHAR * text.length + GLOB_WORK_BASE;
+  try {
+    return globKeyReadWithin(text, platform);
+  } catch (error) {
+    if (!(error instanceof GlobBudgetSpent || error instanceof RangeError)) throw error;
+    globFailClosed.count++;
+    console.error(`sensitive-globs: ${error instanceof GlobBudgetSpent ? `work budget spent (${GLOB_WORK_PER_CHAR} per character)` : `RangeError: ${(error as Error).message}`} on a ${text.length}-character text; it is held as a key read`);
+    return GLOB_BUDGET_REASON;
+  } finally {
+    globWorkLeft = Infinity;
+  }
+}
+
+function globKeyReadWithin(text: string, platform: NodeJS.Platform): string | null {
+  let globsRead = 0;
+  for (const raw of new Set(text.split(/[\s;|&()<>,"'`‘-„]+/))) {
+    // The prefix strip and canonical form never add glob syntax or length. Cap raw first: every canonical token then fits too.
+    if (!hasGlobChars(raw)) continue;
+    if (raw.length > MAX_GLOB_CHARS) return "a glob longer than Murage reads could name a key file";
     const token = win32Canonical(raw.replace(/^--?[\w-]+[:=]/, ""), platform);
-    if (!GLOB_CHARS.test(token)) continue;
+    if (!hasGlobChars(token)) continue;
+    // 1.0.18 (S10): this runs on the server's one thread and the text chooses how many there are. Past the budget it asks.
+    if (++globsRead > MAX_GLOBS_READ) return "more globs than Murage reads could name a key file";
     const glob = homeForm(token).replace(/^(\.\/)+/, "").split("/").filter((segment, k) => segment !== "." || k === 0);
     // leading `..` steps reach a folder the reader cannot name: drop them, so the glob is read relative
     while (glob[0] === "..") glob.shift();
@@ -163,13 +234,18 @@ export function globKeyRead(text: string, platform: NodeJS.Platform = process.pl
     // section 5: decided on the raw segment, so a bracket-spelled name such
     // as `[c][r][e][d]…[s].json` is compared whole, as 1.0.8 did)
     const extensionOnly = /^\*+(\.[^*?[\]/]+)?$/.test(last);
+    // 1.0.18: a run of wildcards in a key folder reads what `folder/*` reads, however many `?` it has (`~/.ssh/??????`
+    // is `id_rsa`). Only against a sample whose `x` stands for any file; a named file is compared as written.
+    const folderRun = glob.length > 1 && /^[*?]+$/.test(last) ? [...glob.slice(0, -1), "*"] : null;
+    const namesFolder = (segments: readonly string[]): boolean => {
+      const folders = new Set(segments.slice(0, -1).filter((segment) => segment !== "~" && segment !== "").map((segment) => segment.toLowerCase()));
+      return glob.slice(0, -1).some((segment) => folders.has(segment.toLowerCase()));
+    };
     for (const sample of KEY_SAMPLES) {
+      if (folderRun && sample.segments[sample.segments.length - 1] === "x" && globCouldMatch(folderRun, sample.segments) && namesFolder(sample.segments)) return sample.re.source;
       if (!globCouldMatch(glob, sample.segments)) continue;
       // `*.json`, `*`: only in a folder that names a key folder (`~/.ssh/*.pem`)
-      if (extensionOnly) {
-        const folders = new Set(sample.segments.slice(0, -1).filter((segment) => segment !== "~" && segment !== "").map((segment) => segment.toLowerCase()));
-        if (!glob.slice(0, -1).some((segment) => folders.has(segment.toLowerCase()))) continue;
-      }
+      if (extensionOnly && !namesFolder(sample.segments)) continue;
       return sample.re.source;
     }
   }

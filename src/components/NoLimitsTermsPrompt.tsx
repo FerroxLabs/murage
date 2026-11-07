@@ -3,7 +3,8 @@ import { api, useStore, type Bot } from "@/state/store";
 import { FullAccessWarning } from "./FullAccessWarning";
 
 /** NOLIMITS-MEANS-IT section 6. One Accept on the desktop, for every bot. Until it is pressed every turn reads as today. */
-const NOT_NOW_KEY = "murage.noLimitsTerms.notNow.2";
+// NOLIMITS v1 (copy W): the warning text changed, so an earlier Not now does not hide the new words
+const NOT_NOW_KEY = "murage.noLimitsTerms.notNow.3";
 
 function saidNotNow(): boolean {
   try { return localStorage.getItem(NOT_NOW_KEY) !== null; } catch { return false; }

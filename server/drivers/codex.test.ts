@@ -17,7 +17,7 @@ import * as procs from "../procs.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
-import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -37,6 +37,10 @@ import { isMountRecord } from "../../shared/mount-identity.ts";
 import { autoVerdict } from "../auto-approve.ts";
 import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
+import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "../email/external-marks.ts";
+import { fileOutsideStore } from "../outside-store.ts";
+import { noteEnginePath, noteToolStartOutside } from "../outside-wire.ts";
+import { forgetEngineEnv } from "../outside-scan.ts";
 
 vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
 
@@ -600,7 +604,8 @@ describe("CodexDriver turns (fake app-server)", () => {
 
     const logged = readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
     expect(logged).toContain("imageGeneration");
-    expect(logged).toContain("base64 chars]");
+    // ql2 sink fold (was a "[N base64 chars]" stand-in): the raster field is not written at all
+    expect(logged).not.toContain("base64");
     expect(logged).not.toContain("iVBORw0KGgo");
     expect(logged).not.toContain("provider-owned-path");
   });
@@ -2937,6 +2942,43 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine")).toBe(false);
   });
 
+  // HOOK-LIVENESS-COLD-START (1.0.15 r6 gate): on a freshly unpacked Mac app the first exec of the hook's runtime (Murage Helper as
+  // node) took longer than the 10 s bound and the first Codex turn was refused. The stand-in runtime here is slow on its first start
+  // only (3x the bound), as a program the operating system has not run yet is; every later start is fast.
+  // POSIX: the stand-in is a sh script (Windows runs the hook through its cmd launcher and keeps its wider bound, see above)
+  it.skipIf(process.platform === "win32")("runs the first turn when the hook runtime's first start is slower than the bound, and still refuses a hook that never posts", async () => {
+    const bound = 400;
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(bound);
+    const coldRuntime = (name: string) => {
+      const mark = join(scratch, `${name}.started-once`);
+      const path = join(scratch, `${name}.sh`);
+      writeFileSync(path, `#!/bin/sh\nif [ ! -e '${mark}' ]; then sleep ${(bound * 3) / 1000}; : > '${mark}'; fi\nexec '${process.execPath}' "$@"\n`);
+      chmodSync(path, 0o755);
+      setHookRuntimeForTests(path);
+      return mark;
+    };
+    onTestFinished(() => setHookRuntimeForTests());
+    const sessions = join(scratch, "cold-sessions.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const mark = coldRuntime("cold-runtime");
+    await recreate();
+    const r = await run("t-cold", [{ kind: "shell", id: "c1", command: "echo hi" }], () => ({ behavior: "allow" }));
+    expect(r.done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e: any) => e.type === "runtime.error" && /pre-execution hook did not start/.test(e.message))).toBe(false);
+    expect(existsSync(mark)).toBe(true);
+    expect(readFileSync(sessions, "utf8").split("\n").filter(Boolean)).toHaveLength(1);
+    // the bound itself is unchanged: on a cold runtime a hook that never posts is still refused, at the bound and not before
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    coldRuntime("cold-runtime-dead");
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-cold-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    // the cold first start (3x the bound) runs out before turn/start, and the whole bound runs after it (Astra r1 #3)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(bound * 3 + bound);
+  }, 30_000);
+
   // Astra BLOCK 2: the turn is held until the hook is proven, so a Codex that carries on past a dead hook never ends a turn cleanly
   it("refuses a turn that completes before the SessionStart proof, and stops a call that starts unproven", async () => {
     process.env.FAKE_CODEX_HOOKS = "dead-runs";
@@ -3224,6 +3266,60 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(r.opened[0].toolInputMissing).toBeUndefined();
   });
 
+  // NOLIMITS v1 1.0.19 A4 (U8): the fileChange item carries its changes, so a write on a marked turn registers its path (the
+  // server judges the item exactly as index.ts does: noteToolStartOutside on the item.started event) and a fresh chat's read Matches
+  // NOLIMITS 1.0.18 envfix (Astra acct5 r1 H4): Codex keeps the shell's own folder on the item (input.cwd); the server judges
+  // the item.started event as index.ts does, and the scan's disk hooks are built in THAT folder, not the turn's
+  it("NOLIMITS 1.0.18 envfix H4: a shell item's own folder builds the scan's disk hooks (a bunfig.toml there marks bun)", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const p = mkdtempSync(join(tmpdir(), "codex-h4-"));
+    writeFileSync(join(p, "bunfig.toml"), "preload = ['./hook.ts']\n");
+    expect(wireOutsideStore(fileOutsideStore(join(scratch, "outside-state.jsonl")))).toBe(true);
+    try {
+      beginOutsideTurn("t-h4", "codex-gate", undefined, false);
+      await run("t-h4", [{ kind: "shell", id: "h4", command: "bun app.ts", cwd: p }]);
+      const started = recorder.events.find((e: any) => e.type === "item.started" && e.itemId === "h4") as any;
+      expect(started).toMatchObject({ origin: "engine", input: { command: "bun app.ts", cwd: p } });
+      // the fake app-server's spawn env can turn the env relief off (engineEnvDenied marks every interpreter text, on base
+      // too, which made this row pass on 73d6335ec): cleared, so only the folder the call names decides
+      forgetEngineEnv();
+      noteEnginePath("t-h4", process.env.PATH);
+      noteToolStartOutside("t-h4", started, scratch);
+      expect(turnOutsideRead("t-h4")).toBe("interpreter");
+      // control: the same call naming the turn's own folder (no bunfig.toml there) stays clean
+      beginOutsideTurn("t-h4-turn", "codex-gate", undefined, false);
+      noteEnginePath("t-h4-turn", process.env.PATH);
+      noteToolStartOutside("t-h4-turn", { ...started, input: { ...started.input, cwd: scratch } }, scratch);
+      expect(turnOutsideRead("t-h4-turn")).toBeNull();
+    } finally {
+      forgetOutsideState();
+    }
+  });
+
+  it("NOLIMITS 1.0.19 U8: a fileChange on a marked turn registers its path; a fresh chat's `cat` of it marks downloaded file", async () => {
+    setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
+    await create();
+    const out = join(scratch, "out.md");
+    writeFileSync(out, "x\n");
+    expect(wireOutsideStore(fileOutsideStore(join(scratch, "outside-state.jsonl")))).toBe(true);
+    try {
+      beginOutsideTurn("t-u8", "codex-gate", undefined, false);
+      markTurnOutside("t-u8", "web page");
+      await run("t-u8", [{ kind: "apply_patch", id: "u8", patch: `*** Begin Patch\n*** Update File: ${out}\n+y\n*** End Patch`, escalate: true }]);
+      const started = recorder.events.find((e: any) => e.type === "item.started" && e.itemId === "u8") as any;
+      expect(started).toMatchObject({ origin: "engine", input: { changes: [{ path: out }] }, callKey: "u8" });
+      noteToolStartOutside("t-u8", started, scratch);
+      beginOutsideTurn("t-u8-fresh", "codex-gate", undefined, false);
+      // a fresh chat's engine is spawned (spawnCli notes its PATH for the thread) before any of its tools is judged
+      noteEnginePath("t-u8-fresh", process.env.PATH);
+      noteToolStartOutside("t-u8-fresh", { origin: "engine", title: "cat", toolIdentity: { name: "shell" }, input: { command: `cat ${out}` } }, scratch);
+      expect(turnOutsideRead("t-u8-fresh")).toBe("downloaded file");
+    } finally {
+      forgetOutsideState();
+    }
+  });
+
   it("NOLIMITS-CODEX-EDIT: a native file-change approval nothing announced stays a card that says what it lacks", async () => {
     setCodexFloorsForTests({ retired: [0, 200, 0], gate: [0, 300, 0] });
     process.env.FAKE_CODEX_MODE = "approval";
@@ -3388,8 +3484,11 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
     expect(r.dump().interrupted).toBe(true);
     await flushDecisionLog(DATA_DIR);
-    const rows = readFileSync(join(DATA_DIR, "decisions.ndjson"), "utf8").split("\n").filter((l) => l.includes("cat /etc/hostname")).map((l) => JSON.parse(l));
-    expect(rows.at(-1)).toMatchObject({ threadId: "t-trip", source: "observed", decision: "auto-denied" });
+    // GrokBuild case 19: the decision row names the tool, never the command (the live error above still shows it)
+    const decisions = readFileSync(join(DATA_DIR, "decisions.ndjson"), "utf8");
+    expect(decisions).not.toContain("cat /etc/hostname");
+    const rows = decisions.split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((row) => row.threadId === "t-trip" && row.source === "observed");
+    expect(rows.at(-1)).toMatchObject({ threadId: "t-trip", tool: "shell", summary: "shell", source: "observed", decision: "auto-denied" });
     // the next turn re-runs the handshake on a fresh process and its prompt carries the line
     writeFileSync(log, "");
     const next = await run("t-trip", [], () => null);

@@ -515,7 +515,7 @@ describe("T105: the inlined copies equal their modules", () => {
     return gate.slice(from + begin.length, to);
   };
   it("shared/sensitive-paths.ts and shared/in-project.ts are carried whole", () => {
-    for (const file of ["shared/sensitive-paths.ts", "shared/in-project.ts"]) expect(block(file)).toBe(strip(here(`../../${file}`)));
+    for (const file of ["shared/sensitive-paths.ts", "shared/in-project.ts"]) expect(block(file)).toBe(strip(here(`../../${file}`).replace("export const win32BareNameForTests = win32BareName;\n", "")));
   });
   it("the scan limits the gate uses are the same lines", () => {
     const source = here("../../shared/scan-limits.ts");

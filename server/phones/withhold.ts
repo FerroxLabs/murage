@@ -17,10 +17,12 @@ function nameOf(event: Record<string, unknown>): string | null {
     if (typeof field !== "string") continue;
     for (const hit of field.match(NAME_IN) ?? []) if (NAMES.has(hit)) return hit;
   }
-  // a tool of the phoneJobs server is a phone tool even under a name this build does not know
-  if (identity.namespace === "phoneJobs") return typeof identity.name === "string" && identity.name ? identity.name : "phone tool";
+  // a tool of the phoneJobs server is a phone tool even under a name this build does not know. NOLIMITS 1.0.18 (design L5):
+  // the name is canonical only (a PHONE_TOOL_NAMES entry or the fixed "phone tool"), so the matcher remembers, and the log
+  // row's summary carries, no engine or model text
+  if (identity.namespace === "phoneJobs") return typeof identity.name === "string" && NAMES.has(identity.name) ? identity.name : "phone tool";
   const title = typeof event.title === "string" ? event.title : "";
-  if (/(^|[^a-zA-Z])phoneJobs([^a-zA-Z]|$)/.test(title)) return title.slice(0, 80);
+  if (/(^|[^a-zA-Z])phoneJobs([^a-zA-Z]|$)/.test(title)) return "phone tool";
   return null;
 }
 

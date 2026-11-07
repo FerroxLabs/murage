@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { DATA_DIR, ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { EventBus } from "../harness/bus.ts";
 import { CLAUDE_BROKER_TOOL_TIMEOUT_MS, brokerSocketCandidates, ClaudeDriver, CLAUDE_BUILT_IN_AGENTS, CLAUDE_ISOLATION_CONTRACT, claudeCostSnapshot, claudeIsolation, claudeIsolationSettings, createPermissionBroker, permissionSocketPath, socketNameHasLiveListener, restoredCostBase, turnCostFromRunningTotal, type ClaudeConfig } from "./claude.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { autoVerdict } from "../auto-approve.ts";
@@ -3749,6 +3750,33 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         }
         await recorder.until((e) => e.type === "turn.completed" && e.threadId === threadId);
       }
+    } finally {
+      delete process.env.FAKE_CLAUDE_PERM_TOOL;
+      delete process.env.FAKE_CLAUDE_PERM_INPUT;
+    }
+  });
+
+  // NOLIMITS 1.0.18 logger lane (design NOLIMITS-S1S2-H6-ALLOWLIST.md L1-L4/L6, section 4.4 row 7): a Write start's event
+  // log line keeps its file_path and the tool name, never the file text.
+  it("logs a Write start with its file_path only and title Write (NOLIMITS L4)", async () => {
+    const SECRET = "confidential-plan-text-7f3a";
+    await create(undefined, {}, { permissionMode: "acceptEdits" });
+    const proj = realpathSync.native(mkdtempSync(join(scratch, "proj-log-")));
+    const filePath = join(proj, "plan.md");
+    process.env.FAKE_CLAUDE_PERM_TOOL = "Write";
+    process.env.FAKE_CLAUDE_PERM_INPUT = JSON.stringify({ file_path: filePath, content: SECRET });
+    try {
+      await instance.adapter.sendTurn({ threadId: "t-log-write", text: "__fixture_permission_tool__", cwd: proj });
+      const live = await recorder.until((e) => e.type === "item.started" && e.threadId === "t-log-write" && (e as unknown as { itemType?: string }).itemType === "tool");
+      await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-log-write");
+      expect(JSON.stringify(live)).toContain(SECRET);
+      const writes: string[] = [];
+      const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
+      bus.publish(live);
+      const row = JSON.parse(writes.join("").trim()) as Record<string, unknown>;
+      expect(row.title).toBe("Write");
+      expect(row.input).toEqual({ file_path: filePath });
+      expect(writes.join("")).not.toContain(SECRET);
     } finally {
       delete process.env.FAKE_CLAUDE_PERM_TOOL;
       delete process.env.FAKE_CLAUDE_PERM_INPUT;

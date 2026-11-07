@@ -25,7 +25,7 @@ export type ParsedExport =
 export const LAM_MAX_CHARS = 100_000;
 export const LAM_MAX_LINES = 400;
 export const LAM_MAX_LINE = 1000;
-export const LAM_PROVIDERS = ["chatgpt", "claude", "gemini", "grok", "copilot", "other"] as const;
+export const LAM_PROVIDERS = ["chatgpt", "claude", "gemini", "grok", "copilot", "dots", "duet", "other"] as const;
 export type LamProvider = (typeof LAM_PROVIDERS)[number];
 
 const HEADINGS: Record<string, Exclude<LamSection, "unsorted">> = {

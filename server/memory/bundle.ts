@@ -22,7 +22,8 @@ import { rateLimited } from "../observe.ts";
 import { scopeRow } from "./scope-id.ts";
 import { maskFinancialIdentifiers } from "../../shared/financial-ids.ts";
 import { fenceEmailDerivedLine, recordEmailDerived } from "./email-derived.ts";
-import { markTurnEmailDerived } from "../email/external-marks.ts";
+import { markTurnEmailDerived, markTurnOutside } from "../email/external-marks.ts";
+import { memoryRecordsNotProvenClean } from "./outside-derived.ts";
 
 // Moved to checkpoints.ts (replay-lineage.ts reads it without importing this module).
 export { supersededThreadCheckpoint };
@@ -610,6 +611,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const text = render(selected);
   // bot email (5.4): marks are transitive, so a turn whose frame carries an email-derived memory marks its own replies
   if (selected.some(record => record.emailDerived)) markTurnEmailDerived(access.threadId);
+  // NOLIMITS v1 V1: any selected record not proven clean by test T marks the turn memory (one query; a failed lookup marks)
+  if (selected.length && memoryRecordsNotProvenClean(database(), selected)) markTurnOutside(access.threadId, "memory");
   // Not part of the model text: the owner is told how much of it was brought.
   const continuity = options.continuity && !room ? {brought: identity.filter(record => isPipOwnerKind(record.kind)).length, total: continuityTotal} : undefined;
   const sourceVersions = [...new Map(selected.flatMap(r=>r.evidence).map(e=>[JSON.stringify([e.sourceId,e.revision]),{id:e.sourceId,revision:e.revision}])).values()];

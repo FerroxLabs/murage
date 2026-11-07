@@ -204,6 +204,10 @@ describe("PIP kind list", () => {
       // seed the receipts the RC held bad on content (+2); Astra audit P1 2: +5, the same receipts' cited records are asked for their derivation
       // ancestors' states and their evidence sources (ids, states and revisions). Scope ids and states only, never text.
       "memory/lineage-backfill.ts": 11, "memory/disclosures.ts": 1,
+      // +1 NOLIMITS v1 V1 (outside-derived.ts memoryRecordsNotProvenClean): point lookups by id and version of the records a bundle
+      // already chose (which excluded PIP kinds), joined to their evidence threads and times for test T; only a yes/no leaves it,
+      // never a row, kind or text, so nothing it reads goes to a model or the owner
+      "memory/outside-derived.ts": 1,
       // Memory review lane (reviewed against I-15): review.ts lists waiting candidates with kind NOT IN PIP_ALL_KINDS_SQL and
       // every id+version lookup (keep, edit, undo) rejects isPipKind rows through candidateRow or reads an owner-keep receipt's
       // own record; review-eligibility.ts adds one point lookup of the pinned record a candidate supersedes, returning no text.

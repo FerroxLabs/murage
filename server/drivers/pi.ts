@@ -991,7 +991,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: turn.cwd,
             env: handed.env,
-          }, engineJob());
+          }, engineJob(), undefined, threadId);
         } catch (err) {
           if (mcpTempDir) {
             try {

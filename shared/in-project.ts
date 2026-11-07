@@ -255,12 +255,25 @@ export function placePath(path: string, root: string, opts: PlaceOptions = {}): 
  * `/` form and the rows read case-insensitively. On POSIX the path is
  * returned as given: every one of these is a file name there.
  */
+/** The bare name Windows opens: first cut the part at the first colon that comes after its last line break (a colon before a
+ *  line break stays), then drop the trailing run of dots and spaces. Read once, left to right; held to the old two replaces by
+ *  the hold row in in-project.win32.test.ts. */
+function win32BareName(part: string): string {
+  let last = -1;
+  for (let i = 0; i < part.length; i++) { const c = part.charCodeAt(i); if (c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029) last = i; }
+  const colon = part.indexOf(":", last + 1);
+  let end = colon >= 0 ? colon : part.length;
+  while (end > 0 && (part.charCodeAt(end - 1) === 0x2e || part.charCodeAt(end - 1) === 0x20)) end--;
+  return part.slice(0, end);
+}
+export const win32BareNameForTests = win32BareName;
+
 export function win32Canonical(path: string, platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") return path;
   const unwrapped = win32Unprefixed(path).replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
   const name = (part: string): string => {
     if (part === "." || part === "..") return part;
-    const bare = part.replace(/:.*$/, "").replace(/[. ]+$/, "");
+    const bare = win32BareName(part);
     return bare === "" ? part : bare;
   };
   // split with the separators kept, so `\` and `/` land back where they were

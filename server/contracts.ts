@@ -168,7 +168,9 @@ export type RuntimeEvent = RuntimeEventBase &
          *  calls off, where the chip is hidden. */
         spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
-        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
+        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string };
+        /** NOLIMITS 1.0.19 A3 (server-side): the call's key (Claude tool + sorted input, Codex item id), matched by its ask */
+        callKey?: string }
     | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     /** `detail` is why the tool failed, as the engine reported it. It reaches
@@ -290,6 +292,13 @@ export type RuntimeEvent = RuntimeEventBase &
          * key file (Pi's gate resolves links itself); the rule it named. It
          * only ever adds a hold. Server-side only. */
         localHold?: string;
+        /** Additive (1.0.18, NOLIMITS v1 V5): Claude on a No limits owner turn held this ask 2 s for the engine's own
+         *  item.started of the same tool and input, and it never came. The server marks the turn before judging it. */
+        itemUnseen?: boolean;
+        /** NOLIMITS 1.0.19 A3 (server-side): the asked call's key (ACP toolCallId, Claude tool + sorted input, Codex item id);
+         *  `callKeyAmbiguous`: two started items of this turn share it, so the ask is judged on its marked turn */
+        callKey?: string;
+        callKeyAmbiguous?: boolean;
         /** Additive (1.0.4, F1): the driver runs this command's text under
          * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
          * so the gates read it as PowerShell whatever it starts with. */

@@ -43,6 +43,7 @@ import {
   candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
   UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
+import { overCommandBudget } from "../shared/prompt-capable.ts";
 import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { posix as posixPath } from "node:path";
 import { parse, type Redirect } from "./shell/parse.ts";
@@ -73,6 +74,10 @@ export interface AlwaysAskHit {
    * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
    * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
   readerFailed?: true;
+  /** NOLIMITS-MEANS-IT 2.1.1 (1.0.20): the reader could not follow this text and found nothing in it. The owner No limits
+   * lane waives such a hit on a clean turn when the plain wipe check (outside-scan.ts) also finds nothing. Never set by
+   * `unreadableHit()` itself, so a new `unreadable` hit stays unmarked until someone marks it. */
+  couldNotRead?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -135,13 +140,22 @@ export function unreadableHit(): AlwaysAskHit {
  * something it could not follow. server/shell/walk.ts throws the two catastrophe details. */
 const DELETE_OPTION_VALUE = "a delete option from a value";
 const FOUND_FAILURES = [DELETE_OPTION_VALUE, "runs a catastrophe", "names a catastrophe"];
+/** 2.1.1: what the reader found also in these (walk.ts "names a disk", "deletes and looks up the home folder", "runs
+ * downloaded text"): no `couldNotRead`. Kept apart from FOUND_FAILURES so the 1.0.13 `readerFailed` mark is unchanged. */
+const FOUND_NOT_WAIVED = [...FOUND_FAILURES, "names a disk", "deletes and looks up the home folder", "runs downloaded text"];
 
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
   if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  // a finding thrown is a finding, and a depth stop was never read past: neither carries the mark
-  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail)) || error.reason === "depth" || error.reason === "nesting") return hit("unreadable");
-  return unreadableHit();
+  // a finding thrown is a finding, and a depth stop was never read past: neither carries `readerFailed` (1.0.13);
+  // a depth stop carries `couldNotRead` (2.1.1), so the lane runs it only when the plain wipe check finds nothing
+  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail))) return hit("unreadable");
+  if (error.reason === "depth" || error.reason === "nesting") return { ...hit("unreadable"), couldNotRead: true };
+  if (FOUND_NOT_WAIVED.some((detail) => error.message.endsWith(detail))) return unreadableHit();
+  // MurageMain ruling (S10 relay 4, 11-06): the waiver covers what the reader could not follow in a text it read, never a text
+  // past the reader's length limit. That one keeps its card at every level, No limits included.
+  if (error.reason === "length") return unreadableHit();
+  return { ...unreadableHit(), couldNotRead: true };
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -1275,6 +1289,8 @@ export function alwaysAskCommand(text: string | undefined, cwd?: string, mode: "
 const CMD_RUNS_TEXT = /\s\/[ckr](?=[\s"]|$)|[&%!]|(?<!>)\|/i;
 
 function read(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[]): AlwaysAskHit | null {
+  // 1.0.18 (S10): counted, not timed, so the same text always gets the same answer
+  if (overCommandBudget(text)) throw new Unreadable("budget", "more commands than the reader follows");
   deferred = null;
   unseen = { text, paths: [] };
   try {
@@ -1323,10 +1339,11 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (found || !unseen || unseen.paths.length === 0) return found;
     // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
     // Windows) keeps the 1.0.5 ask; Git Bash's own text is read below
-    if (windowsBash) return unreadableHit();
+    if (windowsBash) return { ...unreadableHit(), couldNotRead: true };
     const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
     if (admits === true) return { ...unreadableHit(), unseenScript: true };
-    return admits === null ? unreadableHit() : { ...unreadableHit(), unseenWhy: admits };
+    if (admits === null) return { ...unreadableHit(), couldNotRead: true };
+    return admits === "relayed" ? { ...unreadableHit(), unseenWhy: admits } : { ...unreadableHit(), unseenWhy: admits, couldNotRead: true };
   } finally {
     unseen = null;
   }
@@ -1339,6 +1356,8 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
 const SHAPE_SHELLS = new Set(["bash", "sh"]);
 const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
 const SHAPE_SOURCES = new Set(["source", "."]);
+/** 1.0.18 (APPROVALS-SIMPLE 5a): -I isolated, -E no PYTHON* env, -s no user site, -B no .pyc, -u unbuffered, -q quiet. */
+const PY_RUN_OPTIONS = /^-[IEsBuq]+$/;
 const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
 /** 1.0.9: the filters a script's output may be piped through
  * (`node tool.mjs | head -c 3000`), each read by `stdinFilter`: only the
@@ -1748,11 +1767,16 @@ function shapeScript(words: string[]): string | null {
   if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
   if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
-  if (!shapePath(path)) return null;
+  // 1.0.18 (APPROVALS-SIMPLE 5a): Python's run-tightening options before the script (`python3 -I x.py`, `-IB`); each
+  // only isolates or quiets the run, none takes code, a module or a path. Whole option words only.
+  let at = 1;
+  if (name === "python" || name === "python3") while (at < words.length - 1 && PY_RUN_OPTIONS.test(words[at]!)) at += 1;
+  const script = words[at];
+  if (!shapePath(script)) return null;
   // php reads its own options after the script too (`php app.php -r code`,
   // `-d auto_prepend_file=x`): any option-shaped word there is outside the shape
   if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
-  return path;
+  return script!;
 }
 
 /** Each script path is spelled once (no other word shares its file name),
