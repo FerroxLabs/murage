@@ -3,7 +3,7 @@
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
-import { BACKUP_UNAVAILABLE_SENTENCES, captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
+import { BACKUP_UNAVAILABLE_SENTENCES, backupWaitSentence, captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
 import { backupSkippedLines } from "../../shared/backup-skipped.mjs";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 
@@ -169,6 +169,8 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   // backup can ever run, so the page says so instead of offering setup.
   if (s?.relaunchBlocked && s.relaunchBlocked !== s.error) attention.push(scheduleError(s.relaunchBlocked));
   if (s?.pending) attention.push("A backup is running. Settings are locked until it finishes.");
+  // 1.0.18: a backup waiting for space or its drive says what it needs, and that it starts by itself.
+  else if (s?.phase === "waiting" && backupWaitSentence(s.waiting)) attention.push(backupWaitSentence(s.waiting));
   else if (s && scheduleNeedsReview(s.phase)) {
     attention.push(schedulePhase(s.phase));
     // Say WHY. Without this the page only ever said a backup had not

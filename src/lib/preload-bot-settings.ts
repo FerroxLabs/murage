@@ -14,11 +14,13 @@ let loading: Promise<typeof import("@/components/BotSettingsDialog")> | null = n
 let loaded: Dialog | null = null;
 const listeners = new Set<() => void>();
 export function loadBotSettings() {
-  return loading ??= import("@/components/BotSettingsDialog").then((module) => {
+  // The opener is thin (one Settings window, S7): the window and the bot page come in before it counts as loaded.
+  return loading ??= import("@/components/BotSettingsDialog").then(async (module) => {
+    await module.loadBotSettingsWindow();
     loaded = module.BotSettingsDialog;
     for (const listener of listeners) listener();
     return module;
-  }, (error) => { loading = null; throw error; });
+  }).catch((error) => { loading = null; throw error; });
 }
 export function preloadBotSettings(): void { void loadBotSettings().catch(() => {}); }
 /** The dialog once its chunk is in. React.lazy suspends on its first render even for a chunk that is

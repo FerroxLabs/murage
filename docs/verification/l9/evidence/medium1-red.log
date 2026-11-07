@@ -1,0 +1,32 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ src/components/EngineSetup.test.ts (18 tests | 2 failed | 14 skipped) 38ms
+     × keeps inject on local-model setup (setUp=false) 29ms
+     × keeps inject on local-model setup (setUp=true) 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/EngineSetup.test.ts > Medium 1: marked Kimi recovery respects setup intent > keeps inject on local-model setup (setUp=false)
+ FAIL  src/components/EngineSetup.test.ts > Medium 1: marked Kimi recovery respects setup intent > keeps inject on local-model setup (setUp=true)
+AssertionError: expected '<div class="rounded-xl border border-…' to contain 'Install the engine once, then you can…'
+
+Expected: "Install the engine once, then you can run it with local models; no cloud sign-in required."
+Received: "<div class="rounded-xl border border-hairline/40 bg-control/30 p-3"><div class="text-[13px] font-semibold text-ink">Set up Kimi</div><p class="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">You look signed in. One short reply shows it works, and uses a small part of your plan.</p><button type="button" class="mt-3 w-full rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50">Check that it works</button></div>"
+
+ ❯ src/components/EngineSetup.test.ts:143:18
+    141|     vi.stubGlobal("window", { muragebox: { platform: "linux", openEngi…
+    142|     const html = renderToStaticMarkup(createElement(EngineSetup, { ins…
+    143|     expect(html).toContain("Install the engine once, then you can run …
+       |                  ^
+    144|     expect(html).toContain("uv tool install kimi-cli");
+    145|     expect(html).toContain("Check again");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed | 14 skipped (18)
+   Start at  17:17:50
+   Duration  6.45s (transform 4.92s, setup 5.46s, import 824ms, tests 38ms, environment 0ms)
+

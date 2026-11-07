@@ -36,9 +36,9 @@ export function selectedMacJobEnabled(stdout,label){
   return !disabled;
 }
 
-function defaultRun({executable,args,input,timeoutMs=10000}){
+function defaultRun({executable,args,input,timeoutMs=10000,home}){
   return new Promise((resolve,reject)=>{
-    const env={HOME:userInfo().homedir,PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"};for(const key of ["XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"])if(typeof process.env[key]==="string")env[key]=process.env[key];
+    const env={HOME:home,PATH:"/usr/bin:/bin",LANG:"C",LC_ALL:"C"};for(const key of ["XDG_RUNTIME_DIR","DBUS_SESSION_BUS_ADDRESS"])if(typeof process.env[key]==="string")env[key]=process.env[key];
     const child=execFile(executable,args,{env,encoding:"utf8",timeout:timeoutMs,maxBuffer:LIMIT,windowsHide:true},(error,stdout)=>{
       if(error&&(error.killed||typeof error.code!=="number")){reject(Object.assign(new Error("Closed backup native command unavailable."),{code:"CLOSED_NATIVE_UNAVAILABLE"}));return;}
       resolve({code:error?.code??0,stdout});
@@ -59,10 +59,24 @@ function properties(stdout,requested){
 
 /** All OS operations are deferred until callbacks are explicitly invoked.
  * Tests inject run and a private fake home; no global/system registration. */
-export function createNativeClosedBackupProvider({platform=process.platform,owner,home,run=defaultRun}={}){
-  const account=userInfo();owner??={uid:account.uid};home??=account.homedir;
-  const supported=["darwin","linux"].includes(platform)&&Number.isSafeInteger(owner.uid)&&owner.uid>0&&owner.uid===account.uid;
-  const root=path.join(home,...(platform==="darwin"?["Library","LaunchAgents"]:[".config","systemd","user"]));
+export function resolveAccount({owner,home,lookup=userInfo,getuid=process.getuid,env=process.env}={}) {
+  try {
+    let account;
+    try { account=lookup(); } catch { /* containers can have no passwd row */ }
+    let uid=account?.uid;
+    if (!Number.isSafeInteger(uid) || uid<=0) { try { uid=getuid?.(); } catch { uid=undefined; } }
+    const resolvedHome=home??account?.homedir??env.HOME;
+    if (!Number.isSafeInteger(uid)||uid<=0||(owner!==undefined&&owner?.uid!==uid)||typeof resolvedHome!=="string"||!path.isAbsolute(resolvedHome)) return null;
+    return {uid,home:resolvedHome};
+  } catch { return null; }
+}
+export function createNativeClosedBackupProvider(options={}) {
+  let {platform=process.platform,owner,home,run}=options;
+  const account=resolveAccount(options);
+  const supported=["darwin","linux"].includes(platform)&&account!==null;
+  owner=account?{uid:account.uid}:null; home=account?.home;
+  run??=request=>defaultRun({...request,home});
+  const root=supported?path.join(home,...(platform==="darwin"?["Library","LaunchAgents"]:[".config","systemd","user"])):null;
   let operation=false;
   function directory(create=false){
     if(!supported||typeof home!=="string"||!path.isAbsolute(home))fail("CLOSED_NATIVE_UNAVAILABLE");

@@ -104,6 +104,7 @@ function fixture() {
   fs.mkdirSync(native, { recursive: true });
   fs.mkdirSync(path.join(server, "memory"), { recursive: true });
   fs.writeFileSync(path.join(server, "memory/worker.js"), "// fixture worker");
+  fs.writeFileSync(path.join(server, "browser-extension-panel-avatar-encoder.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "bot-package-guard-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "engine-history-worker.js"), "// fixture worker");
   fs.writeFileSync(path.join(server, "inbox-fill-worker.js"), "// fixture worker");

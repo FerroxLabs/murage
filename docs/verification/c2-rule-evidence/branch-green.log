@@ -1,0 +1,92 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ server/branching.test.ts (5 tests | 4 failed) 95849ms
+     × forks on edit, replies on the new branch, and switches versions cleanly 25322ms
+     × refuses to rewind a live thread, then edits cleanly once it is stopped 246ms
+     × a refused rerun leaves the conversation exactly as it was, with no orphan fork 25220ms
+     × replays the thread to a fresh engine after a mid-thread model switch 33828ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/branching.test.ts > conversation branching e2e (fake ACP fleet) > forks on edit, replies on the new branch, and switches versions cleanly
+Error: timed out waiting for the first reply. stderr: Murage: PID 1 (MainThread) does not reap orphaned processes. Engine stops cannot be confirmed and warm engines will not be reused. Run the container with --init or tini.
+memory recall skipped thread=d122f048-fc94-4396-b3e2-7c97c5dd4964 engine=happy reason=budget wait=300
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+
+ ❯ waitFor server/branching.test.ts:77:40
+     75|     const deadline = Date.now() + ms;
+     76|     while (!(await predicate())) {
+     77|       if (Date.now() > deadline) throw new Error(`timed out waiting fo…
+       |                                        ^
+     78|       await new Promise((r) => setTimeout(r, 200));
+     79|     }
+ ❯ server/branching.test.ts:167:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  server/branching.test.ts > conversation branching e2e (fake ACP fleet) > refuses to rewind a live thread, then edits cleanly once it is stopped
+AssertionError: expected 200 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 200
+
+ ❯ server/branching.test.ts:239:36
+    237|       const backendBefore = (await getBot(created.id)).cloudBackend;
+    238|       const backendChange = await desktopApi("PATCH", `/api/bots/${cre…
+    239|       expect(backendChange.status).toBe(409);
+       |                                    ^
+    240|       expect(backendChange.body.error).toContain("stop the active turn…
+    241|       expect((await getBot(created.id)).cloudBackend).toBe(backendBefo…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  server/branching.test.ts > conversation branching e2e (fake ACP fleet) > a refused rerun leaves the conversation exactly as it was, with no orphan fork
+Error: timed out waiting for the first reply. stderr: Murage: PID 1 (MainThread) does not reap orphaned processes. Engine stops cannot be confirmed and warm engines will not be reused. Run the container with --init or tini.
+memory recall skipped thread=d122f048-fc94-4396-b3e2-7c97c5dd4964 engine=happy reason=budget wait=300
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+
+ ❯ waitFor server/branching.test.ts:77:40
+     75|     const deadline = Date.now() + ms;
+     76|     while (!(await predicate())) {
+     77|       if (Date.now() > deadline) throw new Error(`timed out waiting fo…
+       |                                        ^
+     78|       await new Promise((r) => setTimeout(r, 200));
+     79|     }
+ ❯ server/branching.test.ts:306:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  server/branching.test.ts > conversation branching e2e (fake ACP fleet) > replays the thread to a fresh engine after a mid-thread model switch
+Error: timed out waiting for the reply from the second engine. stderr: aunch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+memory receipts revoked scope=global cause=memory-settings count=3
+memory receipts revoked scope=global cause=memory-settings count=0
+memory recall skipped thread=ae39b48c-ff93-4677-99c3-8d576584de66 engine=happy reason=budget wait=300
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+[io-budget] writing 15.5 MB/min (budget 1, 1.0 MB/min planned not counted); source: route:POST /api/bots/:id/messages; top statements: 2214ms x11 exec: COMMIT | 162ms x1 UPDATE owner_sends SET status='dispatched', dispatched=1, updated_at=? WHERE seq=? | 157ms x1 INSERT INTO shared_drain_sweep(bot_id, due_at, end_seq) VALUES(?,?,NULL) ON CONFLICT(bot_id) DO UPDATE SET due_at=excluded.due_at, end_seq=NULL; poll rate x1/2; net last 62s: out 2.5 MB; routes: GET /api/bots n=261 2.2MB, GET /api/threads/:x/messages n=124 0.2MB, POST /api/memory/:x n=2 0.0MB, POST /api/bots n=5 0.0MB, PATCH /api/bots/:x n=6 0.0MB; frames: bot n=69 0.0MB, runtime n=36 0.0MB, message n=27 0.0MB, sends n=18 0.0MB, message.patch n=9 0.0MB; suppressed=0
+[procs] engine launch refused for /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/server/testing/fake-acp-cli.ts: the shipped bwrap is missing: run `pnpm build:murage-cage` (needs Docker and the Linux build tools)
+
+ ❯ waitFor server/branching.test.ts:77:40
+     75|     const deadline = Date.now() + ms;
+     76|     while (!(await predicate())) {
+     77|       if (Date.now() > deadline) throw new Error(`timed out waiting fo…
+       |                                        ^
+     78|       await new Promise((r) => setTimeout(r, 200));
+     79|     }
+ ❯ server/branching.test.ts:424:7
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 passed (5)
+   Start at  21:19:55
+   Duration  102.40s (transform 5.18s, setup 6.38s, import 24ms, tests 95.85s, environment 0ms)
+

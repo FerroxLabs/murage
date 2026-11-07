@@ -220,3 +220,11 @@ it("the Windows encryption entry verifies fixed resources and uses the existing 
   expect(mocks.verify.mock.invocationCallOrder[0]).toBeLessThan(mocks.spawn.mock.invocationCallOrder[0]);
   expect(mocks.spawn).toHaveBeenCalledWith(age, ["--encrypt", "--recipient", options.recipient, "--output", "-"], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "" }, windowsHide: true });
 });
+
+it('T-H3: Windows work-folder ENOSPC retains the data-stage diagnosis', async () => {
+  const work=await import('./backup-local-work.ts');
+  const f=fixture();
+  vi.spyOn(work,'createBackupWork').mockImplementation(()=>{throw Object.assign(Error('full'),{code:'ENOSPC'});});
+  await expect(writeEncryptedInstallationBackup(f.data,f.archive,options)).rejects.toMatchObject({code:'BACKUP_DISK_FULL',captureStep:'stage'});
+  expect(events).toContain('private-stage:prepared');
+});

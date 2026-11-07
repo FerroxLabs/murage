@@ -17,6 +17,7 @@ import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
 import { extractCandidates, reportMemoryUsage, type TextOnlyExtractor } from "../memory/extract.ts";
 import { EXTRACTION_CATALOGUE_MODELS, EXTRACTION_SUMMARY_MS, extractionOutcomes, FLUX_PINNED_LEARNING_MODEL } from "../memory/extraction-outcomes.ts";
 import { clearPinQuarantineForTests, FLUX_EXTRACTORS, resolveMemoryExtractor } from "../memory/extractor-connections.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 import { HEALTH_DIR } from "../../shared/health-protocol.mjs";
 import { drainServerWindows, factsOf, freshServerCounters, rows, total } from "./test-support.ts";
 
@@ -26,6 +27,8 @@ const SECRETS = [SOURCE, "PRIVATE_REPLY_SENTINEL", "PRIVATE_KEY_SENTINEL", "PRIV
 beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   extractionOutcomes.clear(); clearPinQuarantineForTests();
+  // The key's own Flux catalog lists the pinned learning model (a paid key), so the learning call asks for it.
+  resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => ["flux-auto", "flux-fast", FLUX_PINNED_LEARNING_MODEL]);
   vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
   vi.setSystemTime(new Date("2026-10-27T00:00:00Z"));
   vi.spyOn(console, "warn").mockImplementation(() => {});
