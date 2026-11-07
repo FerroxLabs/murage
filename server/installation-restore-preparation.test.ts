@@ -1,3 +1,4 @@
+import { DATA_DIR } from "./config.ts";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
@@ -9,12 +10,12 @@ import { ZipFile } from "yazl";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it } from "vitest";
 import { z } from "zod";
 import { newId } from "./contracts.ts";
 import { isReservedBotId, CANARY_BROWSER_ID } from "../shared/bot-identity.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
-import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
+import { prepareInstallationRestore as prepareOfflineRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { trigramQuery } from "./message-search-index.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
@@ -27,6 +28,18 @@ import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+beforeEach(() => servingDatabase.closeDatabase());
+async function prepareInstallationRestore(...args: Parameters<typeof prepareOfflineRestore>) {
+  const closed = servingDatabase.databaseSharedRowsStamp() === undefined;
+  const acquire = vi.spyOn(servingDatabase, "database");
+  const transaction = vi.spyOn(servingDatabase, "transaction");
+  try { return await prepareOfflineRestore(...args); }
+  finally {
+    expect(acquire).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
+    if (closed) expect(servingDatabase.databaseSharedRowsStamp()).toBeUndefined();
+    acquire.mockRestore(); transaction.mockRestore();
+  }
+}
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
 async function fixture(customize?: { bot?: Record<string, unknown>; group?: Record<string, unknown>; db?: (db: DatabaseSync) => void; withoutLegacyQueueFile?: boolean }) {
@@ -340,7 +353,7 @@ it("a restore does not switch customer-message learning back on, and keeps the o
   expect(result.modifications).toContainEqual({ component: "bots.json", action: "Learning from customer and audience messages was turned off; choose it again if you want it." });
 });
 
-it("carries the message search index through a prepared restore and keeps it matching its rows", async () => {
+it("carries search through restore and discards saved summaries for the resumable fill", async () => {
   // The preparation pass rewrites message JSON (expiring open cards) and runs the
   // archive inspector over the database: neither may orphan or refuse the search index.
   const f = await fixture({
@@ -351,6 +364,7 @@ it("carries the message search index through a prepared restore and keeps it mat
         const row = add.run("thread", id, at, "user", "text", text, JSON.stringify({ id, at, role: "user", kind: "text", text, parentId: "browser-setup" }));
         index.run(row.lastInsertRowid, text);
       }
+      db.prepare("INSERT INTO thread_summary(thread_id,last_at,last_role,last_from,snippet) VALUES('thread',11,'user',NULL,'stale restored preview')").run();
     },
   });
   const result = await prepareInstallationRestore(f.archive, f.root);
@@ -359,7 +373,9 @@ it("carries the message search index through a prepared restore and keeps it mat
     const hits = (query: string) =>
       db.prepare("SELECT m.id FROM messages_fts f JOIN messages m ON m.rowid = f.rowid WHERE messages_fts MATCH ? ORDER BY m.id").all(trigramQuery(query)).map((row) => row.id);
     expect(hits("railway")).toEqual(["s1"]);
-        expect(hits("日本語")).toEqual(["s2"]);
+    expect(hits("日本語")).toEqual(["s2"]);
+    expect(db.prepare("SELECT * FROM thread_summary").all()).toEqual([]);
+    expect(db.prepare("SELECT done,cursor FROM transcript_index_state WHERE name='thread_summary'").get()).toEqual({ done: 0, cursor: 0 });
   } finally { db.close(); }
 });
 
@@ -449,3 +465,189 @@ it("a restored conversation drops the old installation's app-made working folder
   const tasks = JSON.parse(readFileSync(join(result.stateDirectory, "bots.json"), "utf8"))[0].tasks;
   expect(tasks.map((task: any) => task.cwd)).toEqual([undefined, undefined, "/home/owner/project", "/old/Murage/workspaces/other/threads/thread-four"]);
 });
+
+import { vi } from "vitest";
+import { initializeChatsPreviewStorage, readChatsGen, remintChatsGen, prepareThreadSummaryBackfill } from "./thread-summary.ts";
+import { RetainedRestorePreparationError } from "./installation-restore-preparation.ts";
+import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
+
+it.each(["absent tables", "absent singleton", "existing singleton"])("T-RESTORE-PREP prepares %s and preserves its epoch on open", async shape => {
+  const f = await fixture({ db: db => {
+    if (shape === "absent tables") db.exec("DROP TABLE IF EXISTS thread_summary");
+    else if (shape === "absent singleton") initializeChatsPreviewStorage(db);
+    else remintChatsGen(db);
+  } });
+  const archive = readFileSync(f.archive);
+  const result = await prepareInstallationRestore(f.archive, f.root);
+  const db = new DatabaseSync(join(result.stateDirectory, "messages.db"));
+  try {
+    const gen = readChatsGen(db);
+    expect(gen).toEqual({ epoch: expect.stringMatching(/^[a-f0-9]{32}$/), rev: 0 });
+    prepareThreadSummaryBackfill(db);
+    expect(readChatsGen(db)).toEqual(gen);
+    inspectInstallationDatabase(db);
+  } finally { db.close(); }
+  expect(readFileSync(f.archive)).toEqual(archive);
+});
+
+it.each(["create", "insert", "update", "commit"])("T-RESTORE-RETAIN keeps a blocked candidate after remint %s failure", async fault => {
+  const f = await fixture();
+  const archive = readFileSync(f.archive);
+  const rawExec = DatabaseSync.prototype.exec, rawPrepare = DatabaseSync.prototype.prepare;
+  let remintHandle: DatabaseSync | undefined;
+  const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (sql.includes("CREATE TABLE IF NOT EXISTS chats_gen")) {
+      remintHandle = this;
+      if (fault === "create") throw new Error("remint injected failure");
+    }
+    if (this === remintHandle && sql === "COMMIT" && fault === "commit") throw new Error("remint injected failure");
+    return rawExec.call(this, sql);
+  });
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (this === remintHandle && (fault === "insert" && sql.startsWith("INSERT OR IGNORE INTO chats_gen") || fault === "update" && sql.startsWith("UPDATE chats_gen"))) throw new Error("remint injected failure");
+    return rawPrepare.call(this, sql);
+  });
+  let error: unknown;
+  try { await prepareInstallationRestore(f.archive, f.root); } catch (caught) { error = caught; }
+  finally { exec.mockRestore(); prepare.mockRestore(); }
+  expect(error).toBeInstanceOf(RetainedRestorePreparationError);
+  const retained = error as RetainedRestorePreparationError;
+  expect(retained.activationAvailable).toBe(false);
+  expect(existsSync(retained.stateDirectory)).toBe(true);
+  expect(JSON.parse(readFileSync(join(retained.stateDirectory, RESTORE_REVIEW_FILE), "utf8")).status).toBe("preparing");
+  expect(() => assertRestoreReviewed(retained.stateDirectory)).toThrow();
+  const db = new DatabaseSync(join(retained.stateDirectory, "messages.db"), { readOnly: true });
+  try { expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='chats_gen'").get()).toBeUndefined(); }
+  finally { db.close(); }
+  expect(readFileSync(f.archive)).toEqual(archive);
+  const retry = await prepareInstallationRestore(f.archive, f.root);
+  expect(retry.stateDirectory).not.toBe(retained.stateDirectory);
+});
+
+import crypto from "node:crypto";
+import { syncBuiltinESMExports } from "node:module";
+import * as servingDatabase from "./database.ts";
+import { registerChatsGenPublisher } from "./thread-summary.ts";
+
+it.each(["absent tables", "absent singleton", "existing singleton"].flatMap(shape => ["create", "insert", "update", "rng", "commit", "close"].map(fault => ({ shape, fault }))))("BF-1 supplied-handle isolation: $shape / $fault", async ({shape, fault}) => {
+  const f = await fixture({ db: db => {
+    if (shape === "absent tables") db.exec("DROP TABLE IF EXISTS thread_summary");
+    else if (shape === "absent singleton") initializeChatsPreviewStorage(db);
+    else remintChatsGen(db);
+  }});
+  const archive = readFileSync(f.archive);
+  mkdirSync(DATA_DIR, { recursive: true });
+  const serving = servingDatabase.database(), servingGen = readChatsGen(serving), send = vi.fn();
+  const dispose = registerChatsGenPublisher(serving, send);
+  const servingExec = vi.spyOn(serving, "exec");
+  const accessor = vi.spyOn(servingDatabase, "database");
+  const rawExec = DatabaseSync.prototype.exec, rawPrepare = DatabaseSync.prototype.prepare, rawClose = DatabaseSync.prototype.close;
+  const snapshot = (db: DatabaseSync) => ({
+    schema: rawPrepare.call(db, "SELECT name,sql FROM sqlite_schema WHERE name IN ('thread_summary','chats_gen') ORDER BY name").all(),
+    gen: rawPrepare.call(db,"SELECT 1 FROM sqlite_schema WHERE name='chats_gen'").get() ? rawPrepare.call(db,"SELECT * FROM chats_gen").all() : null,
+    previews: rawPrepare.call(db,"SELECT 1 FROM sqlite_schema WHERE name='thread_summary'").get() ? rawPrepare.call(db,"SELECT * FROM thread_summary").all() : null,
+  });
+  let candidate: DatabaseSync | undefined, before: ReturnType<typeof snapshot> | undefined, committed = false;
+  const exec = vi.spyOn(DatabaseSync.prototype, "exec").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (sql.includes("CREATE TABLE IF NOT EXISTS chats_gen") && this !== serving) {
+      candidate = this; before = snapshot(this);
+      if (fault === "create") throw Error("C2 injected create");
+    }
+    if (this === candidate && sql === "COMMIT") {
+      if (fault === "commit") throw Error("C2 injected commit");
+      committed = true;
+    }
+    return rawExec.call(this, sql);
+  });
+  const prepare = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function(this: DatabaseSync, sql: string) {
+    if (this === candidate && (fault === "insert" && sql.startsWith("INSERT OR IGNORE INTO chats_gen") || fault === "update" && sql.startsWith("UPDATE chats_gen"))) throw Error("C2 injected mutation");
+    return rawPrepare.call(this,sql);
+  });
+  const close = vi.spyOn(DatabaseSync.prototype,"close").mockImplementation(function(this: DatabaseSync) { rawClose.call(this); if (this === candidate && fault === "close") throw Error("C2 injected close"); });
+  const random = crypto.randomBytes;
+  const rng = vi.spyOn(crypto,"randomBytes").mockImplementation(((...args: Parameters<typeof random>) => { if (candidate && !committed && fault === "rng") throw Error("C2 injected rng"); return (random as Function)(...args); }) as typeof random);
+  syncBuiltinESMExports();
+  let failure: unknown;
+  try { await prepareInstallationRestore(f.archive,f.root); } catch(error) { failure=error; }
+  finally { exec.mockRestore(); prepare.mockRestore(); close.mockRestore(); rng.mockRestore(); syncBuiltinESMExports(); }
+  try {
+    expect(failure).toBeInstanceOf(RetainedRestorePreparationError);
+    const retained = failure as RetainedRestorePreparationError;
+    expect(retained.activationAvailable).toBe(false); expect(existsSync(retained.stateDirectory)).toBe(true);
+    expect(JSON.parse(readFileSync(join(retained.stateDirectory, RESTORE_REVIEW_FILE),"utf8")).status).toBe("preparing");
+    expect(() => assertRestoreReviewed(retained.stateDirectory)).toThrow();
+    const reopened = new DatabaseSync(join(retained.stateDirectory,"messages.db"), { readOnly:true });
+    try { if (fault === "close") { expect(readChatsGen(reopened).rev).toBe(0); expect(snapshot(reopened)).not.toEqual(before); } else expect(snapshot(reopened)).toEqual(before); } finally { reopened.close(); }
+    expect(readFileSync(f.archive)).toEqual(archive);
+    expect(servingExec.mock.calls.filter(([sql]) => /^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|INSERT|UPDATE|DELETE|CREATE|DROP)/i.test(sql))).toEqual([]); expect(accessor).not.toHaveBeenCalled();
+    expect(readChatsGen(serving)).toEqual(servingGen);
+    await new Promise(resolve => setTimeout(resolve, 300)); expect(send).not.toHaveBeenCalled();
+  } finally { dispose(); servingExec.mockRestore(); accessor.mockRestore(); servingDatabase.closeDatabase(); }
+});
+
+import { reviewInstallation, activateInstallation } from "./installation-activation.ts";
+it.each(["before", "inside", "after"])("T-RESTORE-RETAIN: a process crash %s remint retains a blocked candidate and a fresh retry", async point => {
+  const f = await fixture(); const archive = readFileSync(f.archive);
+  const source = `
+    import { DatabaseSync } from 'node:sqlite';
+    import { prepareInstallationRestore } from ${JSON.stringify(new URL("./installation-restore-preparation.ts", import.meta.url).href)};
+    const raw=DatabaseSync.prototype.exec; let preview=false;
+    DatabaseSync.prototype.exec=function(sql) {
+      const candidate = String(this.prepare("PRAGMA database_list").get().file).endsWith("/state/messages.db");
+      if (candidate && ${JSON.stringify(point)}==='before' && sql==='BEGIN IMMEDIATE') process.exit(71);
+      if(candidate && sql.includes('CREATE TABLE IF NOT EXISTS chats_gen')) preview=true;
+      const value=raw.call(this,sql);
+      if(preview && (${JSON.stringify(point)}==='inside' && sql.includes('CREATE TABLE IF NOT EXISTS chats_gen') || ${JSON.stringify(point)}==='after' && sql==='COMMIT')) process.exit(71);
+      return value;
+    };
+    await prepareInstallationRestore(${JSON.stringify(f.archive)},${JSON.stringify(f.root)});
+    process.exit(72);
+  `;
+  await expect(promisify(execFile)(process.execPath,["--input-type=module","-e",source],{timeout:30_000,env:{...process.env,MURAGE_DATA_DIR:join(f.root,"child-private")}}).catch(error => { if(error.code!==71) console.error(error.stderr); throw error; })).rejects.toMatchObject({code:71});
+  const retained = readdirSync(f.root).map(name=>join(f.root,name,"state")).filter(path=>existsSync(join(path,RESTORE_REVIEW_FILE)));
+  expect(retained).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(retained[0],RESTORE_REVIEW_FILE),"utf8")).status).toBe("preparing");
+  expect(()=>assertRestoreReviewed(retained[0])).toThrow(); expect(()=>reviewInstallation(retained[0])).toThrow();
+  const db=new DatabaseSync(join(retained[0],"messages.db"),{readOnly:true});
+  try { if(point==='after') expect(readChatsGen(db).rev).toBe(0); else expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='chats_gen'").get()).toBeUndefined(); } finally {db.close();}
+  expect(readFileSync(f.archive)).toEqual(archive);
+  const retry=await prepareInstallationRestore(f.archive,f.root);
+  expect(retry.stateDirectory).not.toBe(retained[0]); expect(existsSync(retained[0])).toBe(true);
+  const { restoreInstallation } = await import("./installation-restore.ts");
+  const installed = join(f.root, "retry-installed");
+  await restoreInstallation(installed, f.archive, createHash("sha256").update(archive).digest("hex"), { requireNew: true });
+  const review=reviewInstallation(installed);
+  expect(review.activationAvailable).toBe(true);
+  expect(activateInstallation(installed,review.reviewHash).status).toBe("reviewed-engines-disabled");
+});
+
+it.each(["absent tables", "absent singleton", "existing singleton"])("T-RESTORE-PREP cold process prepares %s without a serving construction and real reopen preserves its epoch",async shape=>{
+  const f=await fixture({db:db=>{
+    if(shape==="absent tables")db.exec("DROP TABLE IF EXISTS thread_summary");
+    else if(shape==="absent singleton")initializeChatsPreviewStorage(db);
+    else remintChatsGen(db);
+  }});
+  const forbidden=join(f.root,"must-not-open-serving");
+  const source=`
+    import sqlite from 'node:sqlite';
+    const Original=sqlite.DatabaseSync, opens=[], seen=new Set();
+    const rawExec=Original.prototype.exec, rawPrepare=Original.prototype.prepare;
+    const observe=db=>{if(seen.has(db))return;seen.add(db);const file=String(rawPrepare.call(db,'PRAGMA database_list').get().file)||':memory:';
+      opens.push(file);if(file===${JSON.stringify(join(forbidden,"messages.db"))})throw Error('serving connection during offline preparation');};
+    Original.prototype.exec=function(sql){observe(this);return rawExec.call(this,sql);};
+    Original.prototype.prepare=function(sql){observe(this);return rawPrepare.call(this,sql);};
+    const {prepareInstallationRestore}=await import(${JSON.stringify(new URL("./installation-restore-preparation.ts",import.meta.url).href)});
+    const result=await prepareInstallationRestore(${JSON.stringify(f.archive)},${JSON.stringify(f.root)});
+    const db=new sqlite.DatabaseSync(result.stateDirectory+'/messages.db',{readOnly:true});
+    const gen=db.prepare('SELECT epoch,rev FROM chats_gen WHERE id=1').get();db.close();
+    await new Promise(done=>setTimeout(done,300));
+    console.log('COLD_RESULT '+JSON.stringify({stateDirectory:result.stateDirectory,gen,opens}));
+  `;
+  const child=await promisify(execFile)(process.execPath,["--input-type=module","-e",source],{env:{...process.env,MURAGE_DATA_DIR:forbidden},timeout:30_000});
+  const result=JSON.parse(child.stdout.split("COLD_RESULT ")[1]);
+  expect(result.opens).not.toContain(join(forbidden,"messages.db"));expect(result.opens).toContain(":memory:");
+  expect(result.gen).toEqual({epoch:expect.stringMatching(/^[a-f0-9]{32}$/),rev:0});expect(existsSync(forbidden)).toBe(false);
+  const reopen=`const {database,closeDatabase}=await import(${JSON.stringify(new URL("./database.ts",import.meta.url).href)});const db=database();console.log('OPEN_RESULT '+JSON.stringify(db.prepare('SELECT epoch,rev FROM chats_gen WHERE id=1').get()));closeDatabase();`;
+  const opened=await promisify(execFile)(process.execPath,["--input-type=module","-e",reopen],{env:{...process.env,MURAGE_DATA_DIR:result.stateDirectory},timeout:30_000});
+  expect(JSON.parse(opened.stdout.split("OPEN_RESULT ")[1].split("\n")[0])).toEqual(result.gen);
+},60_000);

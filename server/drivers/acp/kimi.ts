@@ -1,12 +1,15 @@
 // Kimi Code harness support — Moonshot's `kimi` CLI over ACP stdio
 // (`kimi acp`), on the Kimi Code subscription login
-// (~/.kimi-code/credentials/kimi-code.json), not a Moonshot API key.
+// (~/.kimi-code/credentials/kimi-code.json for kimi.com, or
+// kimi-code-env-<hex>.json for kimi.ai; see kimiSignedIn), not a Moonshot API key.
 // The generic protocol runtime lives in acp/core.ts; this file is only the
 // per-harness quirks. Verified against kimi-code 0.29.1: initialize reports
 // loadSession:true (session/load resume works), mcpCapabilities http+sse,
 // and a full session/new → session/prompt roundtrip streams
 // agent_thought_chunk + agent_message_chunk and settles with end_turn.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { constants as fsConstants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstat, open, opendir, type FileHandle } from "node:fs/promises";
+import type { Dir, Stats } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -40,8 +43,174 @@ function kimiDataRoot(env: Record<string, string | undefined>): string {
   return env.KIMI_CODE_HOME || join(env.HOME || env.USERPROFILE || homedir(), ".kimi-code");
 }
 
-function credentialsPath(env: Record<string, string | undefined>) {
-  return join(kimiDataRoot(env), "credentials", "kimi-code.json");
+// Bounded local credential-shape hint, not proof of a valid login. kimi-code
+// keeps credentials/kimi-code.json and kimi-code-env-<hex>.json; revoked
+// logins can leave a tombstone with both tokens "". Only boolean/undefined
+// escapes; content and byte totals stay here. The answer reveals a coarse
+// predicate about parsed content, not zero information.
+// A local writer controlling the credentials entry or an ancestor can redirect
+// reads under the server's filesystem permissions. Planting a token before the
+// initial identity observation, or writing inside that directory, already yields
+// true. A lasting replacement fails sameNode and answers undefined. A redirect
+// before candidate lstat, held through open and restored before folder recheck,
+// can evade every identity observation and yield true from an outside file.
+// These observations detect some changes; they do not bind pathname reads to
+// a directory handle. Final-component O_NOFOLLOW protection is platform-dependent.
+// Operational errors collapse in readKimiCandidate; deadline stops collapse in
+// kimiSignedIn. Caps, deadline and cleanup bound work, not pathname races.
+const KIMI_CREDENTIAL_NAME = /^kimi-code(?:-env-[0-9a-f]{8,64})?\.json$/;
+const KIMI_SCAN_MAX_ENTRIES = 256;
+const KIMI_SCAN_MAX_OPENS = 32;
+const KIMI_CREDENTIAL_MAX_BYTES = 64 * 1024;
+const KIMI_SCAN_DEADLINE_MS = 2000;
+const KIMI_FILE_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_NONBLOCK ?? 0);
+const KIMI_DIR_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0) | (fsConstants.O_DIRECTORY ?? 0);
+const kimiScans = new Map<string, Promise<boolean | undefined>>();
+
+class KimiScanStop extends Error {}
+
+export interface KimiSignedInOptions {
+  /** Test seam: the deadline (default 2 s). */
+  deadlineMs?: number;
+  /** Test seam: awaited between filesystem operations. */
+  pause?: () => Promise<void>;
+  /** Test seam: called once the scan itself has finished and closed its handles. */
+  settled?: () => void;
+}
+
+function errCode(err: unknown): string | undefined {
+  return typeof err === "object" && err !== null && typeof (err as { code?: unknown }).code === "string" ? (err as { code: string }).code : undefined;
+}
+
+function missing(err: unknown): boolean {
+  const code = errCode(err);
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function sameNode(a: { dev: number | bigint; ino: number | bigint }, b: { dev: number | bigint; ino: number | bigint }): boolean {
+  return a.dev === b.dev && a.ino === b.ino;
+}
+
+/** Deliberate exclusions are ignored; filesystem failures cannot prove sign-out. */
+async function readKimiCandidate(path: string, dir: string, pin: { dev: number | bigint; ino: number | bigint }, step: () => Promise<void>): Promise<"held" | "ignored" | "moved" | "uncertain"> {
+  let pre: Stats;
+  try { pre = await lstat(path); } catch { return "uncertain"; }
+  if (!pre.isFile() || pre.nlink !== 1 || pre.size > KIMI_CREDENTIAL_MAX_BYTES) return "ignored";
+  await step();
+  let handle: FileHandle;
+  try { handle = await open(path, KIMI_FILE_FLAGS); } catch { return "uncertain"; }
+  try {
+    await step();
+    const st = await handle.stat();
+    if (!st.isFile() || st.nlink !== 1 || st.size > KIMI_CREDENTIAL_MAX_BYTES) return "ignored";
+    if (!sameNode(pre, st)) return "uncertain";
+    // Identity observation only: a transient parent substitution can evade it.
+    const now = await lstat(dir);
+    if (!now.isDirectory() || !sameNode(now, pin)) return "moved";
+    await step();
+    const buf = Buffer.alloc(KIMI_CREDENTIAL_MAX_BYTES + 1);
+    let total = 0;
+    while (total < buf.length) {
+      const { bytesRead } = await handle.read(buf, total, buf.length - total, total);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+    }
+    if (total > KIMI_CREDENTIAL_MAX_BYTES) return "ignored";
+    let parsed: unknown;
+    try { parsed = JSON.parse(buf.subarray(0, total).toString("utf8")); } catch { return "ignored"; }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "ignored";
+    const token = parsed as { access_token?: unknown; refresh_token?: unknown };
+    if (token.access_token === "" && token.refresh_token === "") return "ignored";
+    return [token.access_token, token.refresh_token].some(value => typeof value === "string" && value.trim())
+      ? "held" : "uncertain";
+  } catch (err) {
+    if (err instanceof KimiScanStop) throw err;
+    return "uncertain";
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
+async function scanKimiCredentials(root: string, stop: { stopped: boolean }, pause?: () => Promise<void>): Promise<boolean | undefined> {
+  const step = async () => {
+    if (pause) await pause();
+    if (stop.stopped) throw new KimiScanStop();
+  };
+  const dir = join(root, "credentials");
+  let first: Stats;
+  try { first = await lstat(dir); } catch (err) { return missing(err) ? false : undefined; }
+  if (!first.isDirectory()) return false;
+  await step();
+
+  // Observe folder identity through fstat where supported; no relative opens.
+  let pin: { dev: number | bigint; ino: number | bigint } = first;
+  if (process.platform !== "win32") {
+    let dh: FileHandle;
+    try { dh = await open(dir, KIMI_DIR_FLAGS); } catch { return undefined; }
+    try { pin = await dh.stat(); } finally { await dh.close().catch(() => {}); }
+    if (!sameNode(pin, first)) return undefined;
+    await step();
+  }
+
+  const names: string[] = [];
+  let capHit = false;
+  let handle: Dir;
+  try { handle = await opendir(dir); } catch { return undefined; }
+  try {
+    for (let seen = 0; ; seen++) {
+      const entry = await handle.read();
+      if (!entry) break;
+      if (seen >= KIMI_SCAN_MAX_ENTRIES) { capHit = true; break; }
+      if (KIMI_CREDENTIAL_NAME.test(entry.name)) names.push(entry.name);
+    }
+  } finally {
+    await handle.close().catch(() => {});
+  }
+  // Identity observation after listing, not a binding of the listed folder.
+  const listed = await lstat(dir);
+  if (!listed.isDirectory() || !sameNode(listed, pin)) return undefined;
+  await step();
+
+  names.sort((a, b) => (a === "kimi-code.json" ? -1 : b === "kimi-code.json" ? 1 : a < b ? -1 : a > b ? 1 : 0));
+  if (names.length > KIMI_SCAN_MAX_OPENS) { capHit = true; names.length = KIMI_SCAN_MAX_OPENS; }
+  let held = false;
+  for (const name of names) {
+    const verdict = await readKimiCandidate(join(dir, name), dir, pin, step);
+    if (verdict === "moved" || verdict === "uncertain") return undefined;
+    if (verdict === "held") held = true;
+    await step();
+  }
+  const final = await lstat(dir);
+  if (!final.isDirectory() || !sameNode(final, pin)) return undefined;
+  return held ? true : capHit ? undefined : false;
+}
+
+/** Local credential-shape hint for this env. Undefined: could not tell. */
+export function kimiSignedIn(env: Record<string, string | undefined>, options: KimiSignedInOptions = {}): Promise<boolean | undefined> {
+  const root = kimiDataRoot(env);
+  const running = kimiScans.get(root);
+  if (running) return running;
+  const stop = { stopped: false };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => { stop.stopped = true; resolve(undefined); }, options.deadlineMs ?? KIMI_SCAN_DEADLINE_MS);
+    timer.unref?.();
+  });
+  let scan: Promise<boolean | undefined>;
+  try {
+    scan = scanKimiCredentials(root, stop, options.pause).catch(() => undefined);
+  } catch {
+    scan = Promise.resolve(undefined);
+  }
+  const result = Promise.race([scan, deadline]).catch(() => undefined);
+  kimiScans.set(root, result);
+  // Later callers share this answer until the scan itself has closed everything.
+  void scan.finally(() => {
+    clearTimeout(timer);
+    if (kimiScans.get(root) === result) kimiScans.delete(root);
+    try { options.settled?.(); } catch { console.debug("[kimi] sign-in scan settled callback failed"); }
+  });
+  return result;
 }
 
 /** Quote a TOML string value. */
@@ -610,7 +779,11 @@ const support: AcpSupport = {
   authFailure: "continue",
   // Match the child CLI's own data-root precedence. A custom instance HOME or
   // KIMI_CODE_HOME must not be checked against the server user's home instead.
-  isAuthenticated: (env) => existsSync(credentialsPath(env)),
+  isAuthenticated: (env) => kimiSignedIn(env),
+  // kimiSignedIn's undefined means the check could not tell (unreadable folder,
+  // a cap or the deadline): show unverified, never signed in.
+  authUnknownIsUnverified: true,
+  signInAnswerIsLocalHint: true,
 
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };

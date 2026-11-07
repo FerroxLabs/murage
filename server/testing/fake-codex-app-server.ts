@@ -772,6 +772,14 @@ process.stdin.on("data", (chunk) => {
           });
           break;
         }
+        if (mode.startsWith("flux-budget-")) {
+          const code = mode.slice("flux-budget-".length);
+          out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
+          const error = { message: `unexpected status 402: ${JSON.stringify({ error: code })}`, codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 402 } } };
+          notify("error", { error });
+          notify("turn/completed", { turn: { status: "failed", error } });
+          break;
+        }
         if (mode === "terminal-error" || mode === "terminal-error-duplicate") {
           out({ jsonrpc: "2.0", id: msg.id, result: turnResult() });
           const message = "Provider rejected the request";

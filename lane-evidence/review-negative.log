@@ -1,0 +1,146 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+ ❯ scripts/security-dependencies.test.mjs (11 tests | 4 failed) 1917ms
+   × keeps Electron file matching compatible with the patched minimatch and brace expansion 6ms
+   × rejects extraction through an existing symlink (all) 3ms
+   × rejects extraction through an existing symlink (entry) 2ms
+   × rejects extraction through an existing symlink (async) 7ms
+ ❯ scripts/security-lockfiles.test.mjs (5 tests | 5 failed) 85ms
+   × patches Zod in both standalone runtime manifests and locks 25ms
+   × patches the complete standalone Vitest family in apps/mobile 18ms
+   × patches the complete standalone Vitest family in cloudflare/push-relay 22ms
+   × patches the standalone Capacitor → rimraf → glob → minimatch path 16ms
+   × accounts for all eight incidental workspace resolutions and their consumers 1ms
+
+ Test Files  2 failed (2)
+      Tests  9 failed | 7 passed (16)
+   Start at  15:14:24
+   Duration  8.91s (transform 4.58s, setup 6.33s, import 319ms, tests 2.00s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  scripts/security-dependencies.test.mjs > keeps Electron file matching compatible with the patched minimatch and brace expansion
+AssertionError: expected '10.2.6' to be '11.0.1' // Object.is equality
+
+Expected: "11.0.1"
+Received: "10.2.6"
+
+ ❯ scripts/security-dependencies.test.mjs:55:147
+     53|   const builder = packageRoot("app-builder-lib", packageRoot("electron…
+     54|   const require = createRequire(join(builder, "package.json"));
+     55|   expect(require("/root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/node_mo…
+       |                                                                                                                                                   ^
+     56|   const matcherRequire = createRequire(join(packageRoot("minimatch", b…
+     57|   expect(matcherRequire("brace-expansion/package.json").version).toBe(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  scripts/security-dependencies.test.mjs > rejects extraction through an existing symlink (all)
+ FAIL  scripts/security-dependencies.test.mjs > rejects extraction through an existing symlink (entry)
+AssertionError: expected [Function] to throw an error
+ ❯ scripts/security-dependencies.test.mjs:116:74
+    114|   } else {
+    115|     expect(() => mode === "all" ? archive.extractAllTo(target, true)
+    116|       : archive.extractEntryTo("link/sentinel.txt", target, true, true…
+       |                                                                          ^
+    117|   }
+    118|   expect(readFileSync(join(outside, "sentinel.txt"), "utf8")).toBe("un…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  scripts/security-dependencies.test.mjs > rejects extraction through an existing symlink (async)
+AssertionError: promise resolved "undefined" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+undefined
+
+ ❯ scripts/security-dependencies.test.mjs:113:46
+    111|   if (mode === "async") {
+    112|     await expect(new Promise((resolve, reject) => archive.extractAllTo…
+    113|       err => err ? reject(err) : resolve()))).rejects.toThrow();
+       |                                              ^
+    114|   } else {
+    115|     expect(() => mode === "all" ? archive.extractAllTo(target, true)
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > patches Zod in both standalone runtime manifests and locks
+AssertionError: expected '4.4.3' to be '4.6.7' // Object.is equality
+
+Expected: "4.6.7"
+Received: "4.4.3"
+
+ ❯ scripts/security-lockfiles.test.mjs:14:71
+     12| it('patches Zod in both standalone runtime manifests and locks', () =>…
+     13|   const relay = lock('cloudflare/push-relay/pnpm-lock.yaml');
+     14|   expect(json('cloudflare/push-relay/package.json').dependencies.zod).…
+       |                                                                       ^
+     15|   expect(relay.importers['.'].dependencies.zod).toEqual({ specifier: '…
+     16|   expect(Object.keys(relay.packages).filter(key => key.startsWith('zod…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > patches the complete standalone Vitest family in apps/mobile
+AssertionError: expected '^4.1.10' to be '4.1.12' // Object.is equality
+
+Expected: "4.1.12"
+Received: "^4.1.10"
+
+ ❯ scripts/security-lockfiles.test.mjs:27:62
+     25| it.each(['apps/mobile', 'cloudflare/push-relay'])('patches the complet…
+     26|   const data = lock(`${dir}/pnpm-lock.yaml`);
+     27|   expect(json(`${dir}/package.json`).devDependencies.vitest).toBe('4.1…
+       |                                                              ^
+     28|   expect(data.importers['.'].devDependencies.vitest.specifier).toBe('4…
+     29|   expect(data.importers['.'].devDependencies.vitest.version).toMatch(/…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > patches the complete standalone Vitest family in cloudflare/push-relay
+AssertionError: expected '^4.1.11' to be '4.1.12' // Object.is equality
+
+Expected: "4.1.12"
+Received: "^4.1.11"
+
+ ❯ scripts/security-lockfiles.test.mjs:27:62
+     25| it.each(['apps/mobile', 'cloudflare/push-relay'])('patches the complet…
+     26|   const data = lock(`${dir}/pnpm-lock.yaml`);
+     27|   expect(json(`${dir}/package.json`).devDependencies.vitest).toBe('4.1…
+       |                                                              ^
+     28|   expect(data.importers['.'].devDependencies.vitest.specifier).toBe('4…
+     29|   expect(data.importers['.'].devDependencies.vitest.version).toMatch(/…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > patches the standalone Capacitor → rimraf → glob → minimatch path
+TypeError: Cannot read properties of undefined (reading 'overrides')
+ ❯ scripts/security-lockfiles.test.mjs:46:71
+     44| it('patches the standalone Capacitor → rimraf → glob → minimatch path'…
+     45|   const data = lock('apps/mobile/pnpm-lock.yaml');
+     46|   expect(data.overrides).toEqual(json('apps/mobile/package.json').pnpm…
+       |                                                                       ^
+     47|   expect(data.overrides['minimatch@>=7 <11.0.1']).toBe('11.0.1');
+     48|   expect(Object.keys(data.packages).filter(key => key.startsWith('mini…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > accounts for all eight incidental workspace resolutions and their consumers
+Error: ENOENT: no such file or directory, open '/root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/lane-evidence/incidental-resolutions.json'
+ ❯ json scripts/security-lockfiles.test.mjs:8:45
+      6| import { parse } from 'yaml';
+      7|
+      8| const json = path => JSON.parse(readFileSync(resolve(path), 'utf8'));
+       |                                             ^
+      9| const lock = path => parse(readFileSync(resolve(path), 'utf8'));
+     10| const root = lock('pnpm-lock.yaml');
+ ❯ scripts/security-lockfiles.test.mjs:58:16
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+

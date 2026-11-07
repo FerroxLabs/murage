@@ -1,3 +1,4 @@
+import { ProviderBudgetReached, speechFetch, type SpeechPolicy } from "./speech-policy.ts";
 // Speech with xAI's own voices (Grok voices), on an owner's xAI key.
 //
 // xAI's text-to-speech (POST /v1/tts) returns mp3 for one piece of text in
@@ -63,7 +64,9 @@ export async function synthesize(text: string, voice: string | undefined, endpoi
 }
 
 /** `streamed`: hand the audio on as it arrives; xAI sends it as it is made. */
-export async function synthesizeClip(text: string, voice: string | undefined, endpoint: XaiSpeechEndpoint | null, streamed: boolean, call: typeof fetch = fetch): Promise<Clip> {
+export async function synthesizeClip(text: string, voice: string | undefined, endpoint: XaiSpeechEndpoint | null, streamed: boolean, call: typeof fetch = fetch, policy: SpeechPolicy = {}): Promise<Clip> {
+  policy.signal?.throwIfAborted();
+  call = speechFetch(call, policy);
   if (!endpoint) throw new Error("Connect an xAI key in Settings on the computer to use xAI voices.");
   // a voice from another service falls back to xAI's default voice
   const chosen = voice && IDS.has(voice) ? voice : "eve";
@@ -86,6 +89,7 @@ export async function synthesizeClip(text: string, voice: string | undefined, en
     // The body is never read: a remote error can echo the key or the text.
     await res.body?.cancel().catch(() => undefined);
     if (res.status === 401 || res.status === 403) throw new Error("xAI rejected the saved key. Paste a fresh one in Settings.");
+    if (res.status === 402 && policy.attempts === 1) throw new ProviderBudgetReached();
     if (res.status === 402) throw new Error("Your xAI account is out of credits. Add credits with xAI, then try again.");
     if (res.status === 404) throw new Error("xAI couldn't find that voice. Pick a different voice in Settings.");
     if (res.status === 429) throw new RateLimitedError("xAI is rate-limiting this account. Wait a moment and try again.", retryAfterMs(res.headers.get("retry-after")));

@@ -65,7 +65,7 @@ const RECORD_SQL: Record<MemoryReadMode, string> = {
   historical: "SELECT * FROM memory_records WHERE id=? AND version=? AND state IN ('active','archived','superseded')",
 };
 /** A source captured in a thread the owner excluded from memory (settings.ts configure: excludedThreadIds). */
-const EXCLUDED_THREAD_SOURCE = (alias: string) => `EXISTS (SELECT 1 FROM memory_scope_bindings xb,json_each(xb.intent,'$.excludedThreadIds') xt WHERE xb.id='memory-owner-settings' AND xt.value=${alias}.thread_id)`;
+export const EXCLUDED_THREAD_SOURCE = (alias: string) => `EXISTS (SELECT 1 FROM memory_scope_bindings xb,json_each(xb.intent,'$.excludedThreadIds') xt WHERE xb.id='memory-owner-settings' AND xt.value=${alias}.thread_id)`;
 const FAILED_KINDS = new Set(["source", "fact", "checkpoint"]);
 /** Evidence handles read per page, and the rows one source lookup reads (the source, its version, its tombstone): what the
  * allowance pays for before each read. */

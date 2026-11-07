@@ -35,6 +35,7 @@ import { activateBulkRevoke, commitRevoke, openBulkRevoke } from "./revoke-commi
 import { threadCheckpointId } from "./checkpoints.ts";
 import { rootSetMembers } from "./schema.ts";
 import { noteReceiptOutput } from "./receipt-outputs.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 
 export interface LineageCertProgress { phase: string; done: number; total: number; ready: boolean }
 
@@ -485,7 +486,7 @@ class Work {
     const generated = m.role !== "user";
     let fold = this.prevFold(m.thread, lsn);
     let parsed: { copyOf?: { threadId?: unknown; messageIds?: unknown }; turnId?: unknown; withheldFromBots?: unknown } = {};
-    try { parsed = JSON.parse(m.json) ?? {}; } catch { parsed = {}; }
+    try { parsed = rowToMessage({ json: m.json }) ?? {}; } catch { parsed = {}; }
     const carries: Array<{ thread: string; lsn: number }> = [];
     if (resume) fold = mergeFold(fold, { mem: resume.mem, scopes: resume.scopes === null || resume.scopes === "star" ? resume.scopes : new Set(resume.scopes) });
     let lost = resume?.lost === true;

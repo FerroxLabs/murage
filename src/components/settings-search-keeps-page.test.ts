@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const modal = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "SettingsModal.tsx"), "utf8");
 const pane = modal.slice(modal.indexOf("<BoxBody ref={paneRef}"));
@@ -29,6 +29,25 @@ describe("the Settings focus trap while a search hides the page", () => {
   // A stand-in for a control: `closest` answers from the ancestors listed for it.
   const control = (ancestors: Record<string, object>, tagName = "BUTTON", parentElement: object | null = null) =>
     ({ tagName, parentElement, closest: (selector: string) => ancestors[selector] ?? null }) as unknown as Element;
+  // Stand-ins carry their computed display as `display`, for the engines with no checkVisibility.
+  beforeEach(() => vi.stubGlobal("getComputedStyle", (element: { display?: string }) => ({ display: element.display ?? "block" })));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("skips what styles alone hide, with checkVisibility", async () => {
+    const { inSettingsTabOrder } = await import("./SettingsModal");
+    const unused = () => { throw new Error("computed styles read although the browser has checkVisibility"); };
+    vi.stubGlobal("getComputedStyle", unused);
+    expect(inSettingsTabOrder(Object.assign(control({}), { checkVisibility: () => false }))).toBe(false);
+    expect(inSettingsTabOrder(Object.assign(control({}), { checkVisibility: () => true }))).toBe(true);
+  });
+
+  it("skips what styles alone hide without checkVisibility (iOS before 17.4), on the control or any ancestor", async () => {
+    const { inSettingsTabOrder } = await import("./SettingsModal");
+    expect(inSettingsTabOrder(Object.assign(control({}), { display: "none" }))).toBe(false);
+    const strip = { display: "none", parentElement: null };
+    expect(inSettingsTabOrder(control({}, "BUTTON", { display: "block", parentElement: strip }))).toBe(false);
+    expect(inSettingsTabOrder(control({}, "BUTTON", { display: "block", parentElement: { display: "contents", parentElement: null } }))).toBe(true);
+  });
 
   it("skips controls inside the hidden page, so Tab cannot leave the dialog", async () => {
     const { inSettingsTabOrder } = await import("./SettingsModal");
