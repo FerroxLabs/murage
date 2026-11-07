@@ -3,7 +3,7 @@
 //
 // The 0.1.60 Mac pass copy flags, held by their exact product strings: no em
 // dash in Settings, General and Settings, Engines, and no "safe" or "safely"
-// in Bot settings, Permissions, Review routine approvals.
+// in Bot settings, Permissions, Review ordinary approvals.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { peerContactHint } from "@/lib/permission-mode";
@@ -35,13 +35,13 @@ describe("0.1.60 copy flags", () => {
     expect(screen).not.toMatch(/window is safe/);
   });
 
-  it("Review routine approvals never says safe", () => {
+  it("Review ordinary approvals never says safe", () => {
     // The card's copy lives in the language pack (settings.bot.review.*).
     const panel = source("./components/SettingsPanel.tsx");
     expect(panel).toContain('t("settings.bot.review.title")');
     expect(panel).toContain('t("settings.bot.review.unsupported")');
     const block = Object.entries(en).filter(([key]) => key.startsWith("settings.bot.review.")).map(([, value]) => value);
-    expect(block).toContain("Review routine approvals");
+    expect(block).toContain("Review ordinary approvals");
     for (const line of block) expect(line).not.toMatch(/\bsafe(ly|ty)?\b/i);
     expect(en["settings.bot.review.unsupported"]).toBe("This engine cannot run a separate review, so approval cards keep waiting for you.");
   });

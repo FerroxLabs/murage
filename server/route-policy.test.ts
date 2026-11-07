@@ -438,3 +438,19 @@ describe("the restore-hold routes are listed by name as desktop-only", () => {
     for (const [method, route] of moment) expect(cloudRouteDecision(method, route, "browser", {}), route).toBe("allow");
   });
 });
+
+describe('F12 BF-22 exact Cloud media write authorization matrix', () => {
+  for (const route of ['/api/media/resolve', '/api/media/reference']) {
+    it.each([
+      ['owner-desktop', 'allow'], ['owner-phone', 'allow'], ['owner-browser', 'allow'],
+      ['browser', 'deny'], ['remembered-owner', 'deny'], ['service', 'deny'], ['anonymous', 'deny'],
+    ] as const)(route + ' admits %s as %s with or without step up', (caller, expected) => {
+      expect(routePolicy('POST', route)).toMatchObject({ class: 'desktop', cloudWrite: 'ordinary' });
+      for (const steppedUp of [false, true]) expect(cloudRouteDecision('POST', route, caller, {}, steppedUp)).toBe(expected);
+    });
+    it.each(['companion', 'door', 'bot', 'unproven'] as const)(route + ' refuses local %s proof', caller => {
+      const proof = { desktop: false, companion: false, door: false, bot: false, ...(caller === 'unproven' ? {} : { [caller]: true }) };
+      expect(routeAdmits(routeClass('POST', route), proof)).toBe(false);
+    });
+  }
+});

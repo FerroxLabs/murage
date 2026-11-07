@@ -64,8 +64,9 @@ function seeded() {
 }
 
 /** The answer without the cursor base never had. */
-// `snoozedOwed` is new over base (UX L2B) and held by its own assertion below.
-const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined });
+// `snoozedOwed` is new over base (UX L2B) and held by its own assertion below; `snoozedHere` (FUNCTION-SWEEP-1018) by
+// server/inbox-needs-you-count.test.ts.
+const plain = (page: InboxPage) => ({ ...page, next: undefined, snoozedOwed: undefined, snoozedHere: undefined });
 
 describe("Inbox projection against base", () => {
   const db = seeded();

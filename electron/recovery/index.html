@@ -42,7 +42,7 @@
       <button data-action="choose-separate-backup" class="primary">Choose backup</button>
     </section>
     <p class="location"><code id="retained-destination" hidden></code></p>
-    <section aria-labelledby="backup-heading">
+    <section id="legacy-recovery" aria-labelledby="backup-heading">
       <h2 id="backup-heading">Older recovery files (.zip)</h2>
       <p>Murage used to make unencrypted .zip recovery files that hold less than a backup. You can still restore one. Your current data is kept, and restored bots stay paused.</p>
       <button data-action="choose-backup" class="primary">Choose .zip file</button>
@@ -57,7 +57,7 @@
         <button data-action="restore-encrypted-new" id="restore-encrypted-new" hidden>Restore this backup</button>
       </div>
     </section>
-    <section aria-labelledby="activation-heading">
+    <section id="activation-section" aria-labelledby="activation-heading">
       <h2 id="activation-heading">Review the restored copy</h2>
       <p>Murage checks the restored copy and shows what comes back switched off. If anything changes after you review it, you review it again.</p>
       <button data-action="review-installation">Review restored installation</button>

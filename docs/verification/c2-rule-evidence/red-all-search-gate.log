@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (43 tests | 1 failed | 42 skipped) 1199ms
+   × RULE search holder all-page preserves reconnect, drops changed rows, fails once and rejects late answers 779ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder all-page preserves reconnect, drops changed rows, fails once and rejects late answers
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/lib/chats-previews-browser.test.ts:362:33
+    360|   const count=await page.evaluate(()=>(window as any).fixture.starts()…
+    361|   await page.evaluate(()=>(window as any).fixture.wake());
+    362|   expect(await shown().count()).toBe(0);
+       |                                 ^
+    363|   await page.evaluate(gen=>(window as any).fixture.hello(gen),A);
+    364|   await shown().waitFor();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 skipped (43)
+   Start at  21:39:34
+   Duration  7.01s (transform 4.24s, setup 5.35s, import 347ms, tests 1.20s, environment 0ms)
+

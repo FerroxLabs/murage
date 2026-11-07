@@ -1,4 +1,7 @@
+import { cliFluxBudget } from "./cli-flux-budget.ts";
+import { nativeTurnModel } from "../default-engine.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
+import { phoneAskLine } from "./phone-tool-schemas.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { engineFailure, withCliMemoryLearning, type MemorySessionRunner } from "./cli-memory-learning.ts";
@@ -30,7 +33,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
-import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
+import { CLAUDE_UPDATE_MESSAGE, claudeExecutableIdentity, claudeLaunchRefusal, claudeLaunchRefusalError, ClaudeUpdateRequired, ClaudeProbeMissing, claudeVersionVerdict, knownClaudeCliVersion, requireClaudeCliVersion, type ClaudeLaunchRefusal } from "./claude-guards.ts";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, dirname, win32 } from "node:path";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
@@ -434,7 +437,7 @@ export interface ClaudeConfig {
 
 // model catalog ported from upstream packages/contracts/src/model.ts
 export const STATIC_CLAUDE_MODELS: ModelCatalog = {
-  default: "claude-sonnet-5",
+  default: "claude-sonnet-5-5",
   options: [
     { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
     { id: "claude-fable-5", label: "Claude Fable 5" },
@@ -520,7 +523,12 @@ export function readClaudeModelCatalog(env: Record<string, string | undefined> =
   // spawn, so a row for it would be a phantom (see "ambient ANTHROPIC_MODEL" test).
   extras.push(...claudeModelExtras(nestedEnv, CLAUDE_MODEL_ID));
 
-  return withClaudeExtras(extras);
+  const catalog = withClaudeExtras(extras);
+  // Saved aliases and future IDs remain effective even when the picker does not list them.
+  if (typeof settings.model === "string" && CLAUDE_MODEL_ID.test(settings.model)) {
+    catalog.default = settings.model;
+  }
+  return catalog;
 }
 
 function withClaudeExtras(extras: Array<{ id: string; label: string }>) {
@@ -659,6 +667,8 @@ function askSummary(ask: Ask): string {
   const input = ask.input;
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (!input) return "";
+  const phone = phoneAskLine(ask.tool, input as Record<string, unknown>);
+  if (phone) return phone;
   if (typeof input.question === "string") return input.question.slice(0, 300);
   if (typeof input.command === "string") return approvalSummary(input.command);
   if (typeof input.url === "string") return input.url.slice(0, 200);
@@ -2714,7 +2724,7 @@ export function acquireClaudeOverlay(text: string, store: Pick<ClaudeOverlayStor
     // The app log's only line for this: the code and where the helper was looked for (an install path), never the overlay's content.
     const helperPath = (error as { helperPath?: unknown }).helperPath;
     console.warn(`claude private folder setup refused: ${code} helper=${typeof helperPath === "string" ? JSON.stringify(helperPath) : "unknown"}`);
-    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.`, { cause: error });
+    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Fuigo and Codex keep working.`, { cause: error });
   }
 }
 
@@ -3570,6 +3580,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     const lastTurns = createTurnMemory<SendTurnInput>();
     const prewarming = createPrewarmGate();
     const sendTurn = async (turn: SendTurnInput, relaunch?: { turnId: string }) => {
+      turn = { ...turn, model: nativeTurnModel({ driverKind: "claudeAgent", models }, turn.model) };
       const { threadId } = turn;
       if (turn.background) backgroundThreads.add(threadId); else backgroundThreads.delete(threadId);
       if (!turn.background && !relaunch) {
@@ -3640,6 +3651,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: `wake-${turnId}`, ok: true });
           }
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: true, stopReason: "cancelled", cost: null });
+          return { turnId };
+        }
+        if (error instanceof ClaudeProbeMissing && !turn.prewarm) {
+          if (active.get(threadId)?.turnId === turnId) forgetActive(threadId);
+          retryState.delete(threadId);
+          if (!relaunch) emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "spawn_error", cost: null });
           return { turnId };
         }
         // A Claude Code older than the qualified minimum: the same update offer a refused model gets.
@@ -3762,7 +3781,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       };
       const turnModel = turn.providerRoute ? turn.providerRoute.model : await resolveClaudeTurnModel(turn.model, turnEnvironment);
       assertSoleDispatch();
-      // The isolation flags were qualified from 2.1.280 up (the floor 1.0.1 already had); an older CLI is refused before anything
+      // Sonnet 5.5 is qualified from 2.1.292; an older CLI is refused before anything
       // is written or launched (claude-guards.ts CLAUDE_MIN_VERSION). Held per executable identity;
       // a Stop during the probe ends the wait and assertSoleDispatch reports it.
       const probeStop = new AbortController();
@@ -3858,6 +3877,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phoneJobs = { ...turn.integrations.phoneJobs };
         allowed.push(...claudeOwnUnaskedTools("phoneJobs"));
       }
+      // native HighLevel (HL-S2, read only): its read tools are pre-allowed; the host checks the grant on every call and
+      // lists no change tool.
+      if (turn.integrations?.highlevel) {
+        mcpServers.highlevel = { ...turn.integrations.highlevel };
+        allowed.push(...claudeOwnUnaskedTools("highlevel"));
+      }
       if (turn.integrations?.browser) {
         mcpServers.browser = claudeBrowserMount(turn);
         allowed.push(...claudeOwnUnaskedTools("browser"));
@@ -3929,6 +3954,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // in the warm key below and forces a respawn. The usage tags (bot, feature, conversation) ride the same header value.
       const fluxMemory = fluxTurnDecision(turn);
       const env = claudeEnvironment(turnModel, turnEnvironment, turn.providerRoute, fluxMemory);
+      const budgetRoute = turn.providerRoute ? (turn.providerRoute.preset === "flux" ? { key: turn.providerRoute.apiKey, baseUrl: turn.providerRoute.baseUrl } : null) : isFluxModel(turnModel) ? { key: env.ANTHROPIC_AUTH_TOKEN ?? env.ANTHROPIC_API_KEY ?? "", baseUrl: env.ANTHROPIC_BASE_URL ?? "https://api.fluxrouter.ai/v1" } : null;
       // MCP start-up is Murage's to wait for (gateMcpServers, before the prompt):
       // the CLI's own first-prompt hold is off, and a connect or reconnect ends
       // at the reconnect bound, so neither can hold a turn past the budgets in
@@ -4975,6 +5001,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           case "assistant": {
             const msg = o.message ?? {};
             const text = firstText(msg.content);
+            const providerError = o.is_api_error_message ? cliFluxBudget({ ...o, message: text }, budgetRoute) : undefined;
+            if (providerError) {
+              emit({ ...base(threadId, currentTurnId()), type: "runtime.error", message: "This Flux key has reached its budget.", providerError });
+              break;
+            }
             if (claudeAuthFailure(o, text)) {
               if (session.turn) session.turn.authFailed = true;
               emit({ ...base(threadId, currentTurnId()), type: "runtime.error",
@@ -5729,7 +5760,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
       const { version } = probe;
       // Below the qualified minimum a turn would be refused: offer the update, not a sign-in.
-      if (claudeVersionVerdict(version) === "below") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
+      if (claudeVersionVerdict(version) !== "ok") return { state: "unavailable", version, reason: CLAUDE_UPDATE_MESSAGE };
       // The probe runs with the flags a turn gets, so it judges the login a turn will have.
       // (A Cloud home's launcher refuses the inline isolation flags; its rendered settings carry the same policy.)
       const auth = await claudeAuthStatus(config.cli, probeEnv, execCli, process.env.MURAGE_CLOUD_ROLE === "home" ? [] : ["--mcp-config", '{"mcpServers":{}}', ...claudeIsolation(env, process.cwd())]);
