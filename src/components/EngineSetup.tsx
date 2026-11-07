@@ -53,8 +53,8 @@ export function setupStep(instance: InstanceInfo, options: { authRequired?: bool
 
 type ReplyCheck = { result: "ready" | "signin" | "limit" | "refused"; line?: string };
 
-/** Signed in, so one short real reply decides: `authenticated` can be true while a turn fails. Runs on this press alone. */
-function SetUpCheck({ instance, className, onReady }: { instance: InstanceInfo; className?: string; onReady?: () => void }) {
+/** One short real reply decides whether the engine works, even when a local sign-in hint is true. Runs on this press alone. */
+function SetUpCheck({ instance, className, onReady, replyCheckOnly = false }: { instance: InstanceInfo; className?: string; onReady?: () => void; replyCheckOnly?: boolean }) {
   const [phase, setPhase] = useState<"idle" | "checking">("idle");
   const [answer, setAnswer] = useState<ReplyCheck | null>(null);
   const [failed, setFailed] = useState(false);
@@ -78,7 +78,7 @@ function SetUpCheck({ instance, className, onReady }: { instance: InstanceInfo; 
         <EngineSignInButton className="mt-3" instanceId={instance.instanceId} name={name} command={instance.install?.signInCommand} onDone={() => setAnswer(null)} />
       ) : (
         <>
-          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t("engineCheck.line")}</p>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">{t(replyCheckOnly ? "engineCheck.replyLine" : "engineCheck.line")}</p>
           <button type="button" disabled={phase === "checking"} onClick={() => void press()}
             className="mt-3 w-full rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50">
             {phase === "checking" ? t("engineCheck.checking") : t("engineCheck.press")}
@@ -279,6 +279,12 @@ export function EngineSetup({
 
   const desktop = canOpenSetupTerminal(window.muragebox, typeof document === "undefined" ? undefined : document);
   if (setUp && desktop && intent === "cloud" && setupStep(instance, { authRequired }) === "check") return <SetUpCheck instance={instance} className={className} onReady={onReady} />;
+
+  // A local hint leaves a rejection in place. Offer the existing real-reply
+  // Check even while the marked snapshot still reads signed out.
+  if (desktop && intent === "cloud" && instance.snapshot.signInAnswerIsLocalHint && instance.snapshot.authenticated === false && instance.snapshot.reason) {
+    return <SetUpCheck instance={instance} className={className} onReady={onReady} replyCheckOnly />;
+  }
 
   // Some engines are configured elsewhere (for example, a cloud computer
   // token) and intentionally have no install descriptor.

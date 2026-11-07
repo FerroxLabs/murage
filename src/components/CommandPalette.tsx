@@ -15,6 +15,7 @@ import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
+import { imeComposing } from "@/lib/composer-enter";
 
 type PaletteEntry =
   | { kind: "bot"; bot: Bot }
@@ -44,6 +45,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   // modifier chord never collides with typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (imeComposing(e)) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         setOpen((o) => !o);
@@ -150,6 +152,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (imeComposing(e.nativeEvent)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       // shield the window listeners other modals hang their own Esc on
