@@ -20,6 +20,7 @@ async function fixture(profileIds: string[], browser: BrowserExtensionHello["bro
   const bindings = new Map<string, { generation: number; state: string; tabs: Tab[] }>();
   const hello = (profileId: string): BrowserExtensionHello => ({ version: 1, type: "hello", profileId, browser, extensionVersion: "1.0", capabilities: ["scoped_cdp", "durable_stop", "explicit_share", "manual_pause", "engine_cdp_v1", "unexpected_input_pause", "ordered_requests_v1"] });
   const broker = {
+    drop: () => false,
     profiles: () => connected ? profiles.map(hello) : [],
     async request(_profile: string, command: BrowserExtensionCommand): Promise<BrowserExtensionResponse> {
       if (!connected) throw Object.assign(Error("host_offline"), { code: "host_offline" });
@@ -209,5 +210,67 @@ describe("a leftover setup problem goes away once the browser connects", () => {
     stale(f.value);
     f.value.handleBrokerMessage("profile_a", { type: "event", event: "notice", bindingId: "none", data: {} } as never);
     expect(f.value.setupProblem()).toBe("");
+  });
+});
+
+describe("EXT-RESTART 14, 15, 28, 28b: restart reports before the service exists, and the hello after start (FAILS on base)", () => {
+  const uncertain = (bindingId: string) => ({ version: 1, type: "response", id: "lost", bindingId, generation: 1, error: { code: "uncertain", message: "uncertain" } }) as never;
+  const unopened = (f: Awaited<ReturnType<typeof fixture>>, profiles: string[]) => {
+    const lines: { text: string; bindingId: string }[] = [];
+    const value = new BrowserExtensionIntegration({ dataDir: "/unused", socketDir: "/unused", workspaceId: "workspace", approvalBus: { store: { bots: [], groups: [], messagesFor: () => [] } } as never, bot: () => bot({ name: "Dax" } as Partial<BotRecord>), protectedOrigins: [],
+      outcomeUnknown: (info: { text: string; context: { bindingId: string } }) => { lines.push({ text: info.text, bindingId: info.context.bindingId }); } } as never);
+    const open = async () => { (value as unknown as { service: unknown }).service = f.service; await (value as unknown as { afterOpen(s: unknown, b: unknown): Promise<void> }).afterOpen(f.service, { profiles: () => profiles.map(profileId => ({ profileId })) }); };
+    return { value, lines, open };
+  };
+  const view = (f: Awaited<ReturnType<typeof fixture>>, bindingId: string) => f.service.status().bindings.find(item => item.bindingId === bindingId) as Record<string, unknown> | undefined;
+  it("14 and 15: a report before open() is replayed once after start (line, mark), then onHello runs once per live profile", async () => {
+    const f = await fixture(["profile_a"]);
+    const b = await f.service.ensureBinding({ botId: "bot", threadId: "thread", profileId: "profile_a" });
+    const i = unopened(f, ["profile_a"]);
+    const order: string[] = [];
+    const handle = f.service.handleMessage.bind(f.service);
+    vi.spyOn(f.service, "handleMessage").mockImplementation(async (profileId, message) => { order.push("report"); return handle(profileId, message); });
+    vi.spyOn(f.service, "onHello").mockImplementation(profileId => { order.push(`hello:${profileId}`); });
+    i.value.handleBrokerMessage("profile_a", uncertain(b.bindingId));
+    expect(i.lines).toEqual([]); expect(view(f, b.bindingId)?.outcomeUnknown).toBeFalsy();
+    await i.open();
+    expect(i.lines.map(line => line.text)).toEqual([expect.stringMatching(/may not have finished/)]);
+    expect(view(f, b.bindingId)).toMatchObject({ state: "paused", pausedReason: "uncertain", outcomeUnknown: true });
+    expect(order).toEqual(["report", "hello:profile_a"]);
+    vi.restoreAllMocks();
+  });
+  it("Astra M2: a hello that arrives live during the replay is not run a second time by the startup loop", async () => {
+    const f = await fixture(["profile_a", "profile_b"]);
+    const b = await f.service.ensureBinding({ botId: "bot", threadId: "thread", profileId: "profile_a" });
+    const i = unopened(f, ["profile_a", "profile_b"]);
+    const hellos: string[] = [];
+    const handle = f.service.handleMessage.bind(f.service);
+    const live = (profileId: string) => (i.value as unknown as { liveHello(p: string): void }).liveHello(profileId);
+    vi.spyOn(f.service, "handleMessage").mockImplementation(async (profileId, message) => { live("profile_a"); return handle(profileId, message); });
+    vi.spyOn(f.service, "onHello").mockImplementation(profileId => { hellos.push(profileId); });
+    i.value.handleBrokerMessage("profile_a", uncertain(b.bindingId));
+    await i.open();
+    expect(hellos).toEqual(["profile_a", "profile_b"]);
+    live("profile_a"); expect(hellos).toEqual(["profile_a", "profile_b", "profile_a"]);
+    vi.restoreAllMocks();
+  });
+  it("28b: 65 reports before open(): the 65th's profile has every non-stopped binding marked, one line each", async () => {
+    const f = await fixture(["profile_a", "profile_b"]);
+    const a = await f.service.ensureBinding({ botId: "bot", threadId: "thread", profileId: "profile_a" });
+    const b1 = await f.service.ensureBinding({ botId: "bot", threadId: "t1", profileId: "profile_b" });
+    const b2 = await f.service.ensureBinding({ botId: "bot", threadId: "t2", profileId: "profile_b" });
+    const i = unopened(f, []);
+    for (let n = 0; n < 64; n++) i.value.handleBrokerMessage("profile_a", uncertain(a.bindingId));
+    i.value.handleBrokerMessage("profile_b", uncertain(b1.bindingId));
+    await i.open();
+    for (const id of [b1.bindingId, b2.bindingId]) expect(view(f, id)).toMatchObject({ pausedReason: "uncertain", outcomeUnknown: true });
+    expect(i.lines.filter(line => line.bindingId === b1.bindingId)).toHaveLength(1);
+    expect(i.lines.filter(line => line.bindingId === b2.bindingId)).toHaveLength(1);
+  });
+  it("28: a connection_lost pause gives the bot its own sentence", async () => {
+    const f = await fixture(["profile_a"]);
+    f.value.start = async () => ({ status: () => ({ profiles: [{ profileId: "profile_a", browser: "chromium" }], bindings: [{ bindingId: "b", state: "paused", pausedReason: "connection_lost" }] }), ensureBinding: async () => ({ bindingId: "b" }) }) as never;
+    const error = await f.value.bind(bot({ browserExtensionProfileId: "profile_a" }), "thread").catch(e => e);
+    expect(error.message).toMatch(/Chrome or Murage closed/); expect(error.message).toMatch(PLAIN);
   });
 });

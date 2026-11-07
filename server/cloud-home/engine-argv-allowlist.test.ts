@@ -160,3 +160,8 @@ it("accepts the Codex memories-off override and Grok's --no-memory exactly as th
   const grok = ["--permission-mode", "default", "--no-memory", "agent", "--no-leader", "stdio"];
   expect(rig.plan(rig.request("grokAgent", { args: grok })).ok?.args).toEqual(grok);
 });
+
+it("admits only the exact OpenCode ACP print-log form", () => {
+  expect(rig.plan(rig.request("opencodeGo", { args: ["acp", "--print-logs"] })).ok?.args).toEqual(["acp", "--print-logs"]);
+  for (const args of [["--print-logs", "acp"], ["acp", "--print-logs=true"], ["acp", "--print-logs", "--log-level", "DEBUG"], ["acp", "--print-logs", "--print-logs"]]) expect(rig.plan(rig.request("opencodeGo", { args })).error).toBeDefined();
+});

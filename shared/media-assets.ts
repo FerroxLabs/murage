@@ -40,6 +40,9 @@ export type MediaAsset = {
   revision?: string;
   width?: number;
   height?: number;
+  /** Validated full-canvas frame cost for workspace image admission. */
+  frameCount?: number;
+  decodedBytes?: number;
   durationSeconds?: number;
   availability: MediaAssetAvailability;
   capabilities: { preview: boolean; download: boolean; open: boolean; reveal: boolean; imageReference: boolean };
@@ -148,6 +151,19 @@ export const TURN_IMAGE_LIMITS = {
   maxTotalBytes: 15 * 1024 * 1024,
   maxReadBytes: 40 * 1024 * 1024,
 } as const;
+
+/** The largest picture a chat upload may be (SEAN-ASK-ATTACH-CAP, 1.0.19).
+ * It follows what a turn can deliver, not a separate flat number: with the
+ * resizer, every engine gets the picture shrunk to what it takes, so the
+ * limit is what Murage reads to shrink one, bounded by the attachment read
+ * ceiling (server/attachment-read.ts ATTACHMENT_READ_CEILING, 25 MB). Without
+ * the resizer the server lowers it to what the conversation's engine takes
+ * as it is (server/turn-images.ts imageUploadMaxBytes) and says that number.
+ * The composer checks this before it reads the file. */
+export const IMAGE_UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
+/** Pictures a turn can show a bot. A GIF is stored, but no turn inlines it,
+ * so the composer attaches a GIF as a file instead of as a picture. */
+export const TURN_IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp"] as const;
 
 /** One discriminated source. The server derives bot/thread/cwd from the
  * internal capability claim; no root, absolute path or URL is accepted. */

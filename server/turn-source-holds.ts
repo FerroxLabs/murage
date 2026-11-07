@@ -16,6 +16,7 @@
 //   - and for each of these, every copy of that line (turn_source_copies, kept by the triggers as copies are written, every original of a
 //     copy of a copy included), so a copy in T whose original elsewhere is withheld, forgotten or deleted holds T's range too.
 // X itself must still be stored: a deleted conversation takes the range with it. Owner lines are never sources and never logged.
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { database } from "./database.ts";
 import { copyFieldsChanged } from "./message-copy-fields.ts";
@@ -92,7 +93,7 @@ export function turnSourceCopiesBackfilled(db: DatabaseSync): boolean {
  * every stored row once, so server/database.ts runs it inside the reported upgrade work; the marker is written in the same transaction. */
 export function backfillTurnSourceCopies(db: DatabaseSync): void {
   if (turnSourceCopiesBackfilled(db)) return;
-  db.exec("SAVEPOINT turn_source_copies_backfill");
+  beginWrite(db, "turn_source_copies_backfill");
   try {
     db.exec(`INSERT OR REPLACE INTO turn_source_copies(origin_thread, origin_id, thread_id, id, position)
       SELECT json_extract(m.json,'$.copyOf.threadId'), j.value, m.thread_id, m.id, m.rowid FROM messages m, json_each(m.json,'$.copyOf.messageIds') j
@@ -104,8 +105,8 @@ export function backfillTurnSourceCopies(db: DatabaseSync): void {
       if (Number(added.changes) === 0) break;
     }
     db.prepare("INSERT INTO transcript_index_state(name, done, cursor, skipped) VALUES (?, 1, 0, 0) ON CONFLICT(name) DO UPDATE SET done=1").run(BACKFILL_MARKER);
-    db.exec("RELEASE turn_source_copies_backfill");
-  } catch (error) { db.exec("ROLLBACK TO turn_source_copies_backfill"); db.exec("RELEASE turn_source_copies_backfill"); throw error; }
+    endWrite(db, "turn_source_copies_backfill");
+  } catch (error) { undoWrite(db, "turn_source_copies_backfill"); throw error; }
 }
 
 /** The newest hold-log entry: a turn that begins now is unaffected by every entry up to it. */

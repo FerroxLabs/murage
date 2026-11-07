@@ -7,7 +7,7 @@
 // person's thread started (the task humanTask binds to that person), and in
 // an owner thread whose chain a channel person started.
 import { sharedLoadPrompt } from "./shared-bots-roster.ts";
-import { emailPrimer } from "./capabilities-primer.ts";
+import { emailPrimer, phonePrimer } from "./capabilities-primer.ts";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
@@ -88,6 +88,7 @@ const SURFACE_TEXT: Record<OwnerAudienceSurface, (bot: { id: string; section?: s
   "project-roster-apps": (bot, owner) => projectRosterLine({ id: bot.id, name: "Dax", tags: ["app:gmail"], apps: ["gmail"], limits: [], role: "member" }, owner).includes("gmail") ? "apps" : "",
   "shared-load": (_bot, owner) => sharedLoadPrompt(owner, { name: "Iris", home: "Design", team: "Sales", waiting: 2 }),
   "email-primer": (_bot, owner) => emailPrimer("send", null, owner),
+  "phone-primer": (_bot, owner) => phonePrimer("Phone calls are set up, but this engine cannot use them.", owner),
   "working-context": (bot, owner) => {
     // the bot's own reply in its direct chat, the thread the block always looks at (a thread it is not in is never read; S6 rule 1 quotes no
     // Murage line, so the canary is the only reply the block can carry)

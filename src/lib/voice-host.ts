@@ -71,6 +71,18 @@ export const BRIEF_OVER_CHARS = 450;
  *  asking the host and let the engine take every turn, as calls did before. */
 export const HOST_OFF_FOR_CALL = new Set(["key", "auth", "premium", "unavailable"]);
 
+/** L-COPY call.budgetStop: said once when a turn on a call fails because the
+ *  key's budget or balance is used up; the call then ends (VOICE-402-STOP). */
+export const CALL_BUDGET_STOP = "The call ended because this Flux key has reached its budget. It starts again when the budget resets or changes.";
+
+/** Only a typed refusal from a known Flux adapter ends a call for budget.
+ * Owner billing failures, premium access and ordinary prose are not this signal. */
+export function isBudgetFailure(info: unknown): boolean {
+  if (!info || typeof info !== "object") return false;
+  const value = info as { fluxBudget?: unknown; provider?: unknown };
+  return value.fluxBudget === true && value.provider === "flux-router";
+}
+
 /** Wake the model when a call starts. Fire and forget. */
 export function warmHost(botId: string): void {
   void fetch(`/api/bots/${botId}/voice-host`, {
@@ -107,7 +119,10 @@ export async function hostTurn(
   }
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({}));
-    onEvent({ type: "error", reason: "upstream", message: body?.error ?? `the harness returned ${res.status}` });
+    const code = body?.error?.code ?? body?.code ?? body?.error;
+    const message = typeof body?.error === "string" ? body.error : body?.error?.message ?? body?.message;
+    const reason = res.status === 402 ? (code === "premium_locked" ? "premium" : "budget") : "upstream";
+    onEvent({ type: "error", reason, message: typeof message === "string" ? message : `the harness returned ${res.status}` });
     return;
   }
   const reader = res.body.getReader();
@@ -124,15 +139,25 @@ export async function hostTurn(
         buffer = buffer.slice(end + 2);
         const data = frame.startsWith("data:") ? frame.slice(5).trim() : "";
         if (!data) continue;
+        let event: HostEvent;
         try {
-          onEvent(JSON.parse(data) as HostEvent);
+          event = JSON.parse(data) as HostEvent;
         } catch {
           // a malformed frame is skipped, not fatal
+          continue;
         }
+        // A terminal refusal must retire the reader even if the UI callback throws.
+        if (event?.type === "error" && event.reason === "budget") {
+          try { onEvent(event); } finally { return; }
+        }
+        onEvent(event);
       }
     }
   } catch {
     if (!signal?.aborted) onEvent({ type: "error", reason: "upstream", message: "The reply was cut off." });
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

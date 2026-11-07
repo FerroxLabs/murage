@@ -14,6 +14,7 @@
 // by messages.rowid, never a second copy of the text. The DDL lives in
 // message-tables.ts so the offline archive inspector builds its reference
 // schema from it.
+import { rebuildThreadSummaries } from "./thread-summary.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { beginBackground, isDatabaseBusy } from "./db-busy.ts";
 import { readIndexState, writeIndexState } from "./transcript-backfill.ts";
@@ -103,6 +104,34 @@ export function mergeMessageSearchIndex(db: DatabaseSync): void {
   catch (error) { degrade(db, error); }
 }
 
+/** A database a pre-release build opened with the checkpointer-worker merge carries what that build left: automerge=0 and deletemerge=0
+ * in the index config, and perhaps a `search_merge` marker row (done=0: a merge is owed; done=1: only a WAL scrub is). Settled at open:
+ * the SQLite defaults (automerge 4, deletemerge 10) come back, the owed merge is paid with `optimize`, and the WAL is scrubbed before the marker goes. A
+ * failure keeps the marker and costs time only: the next open tries again. Never throws. */
+export function settleInheritedSearchMerge(db: DatabaseSync): void {
+  try {
+    const marker = db.prepare("SELECT done FROM transcript_index_state WHERE name = ?").get("search_merge") as { done?: unknown } | undefined;
+    const config = new Map<string, number>();
+    for (const row of db.prepare(`SELECT k, v FROM ${MESSAGE_SEARCH_TABLE}_config WHERE k IN ('automerge', 'deletemerge')`).all()) config.set(String(row.k), Number(row.v));
+    // a missing row is the default; only a stored value that differs is written back (literals: a bound parameter fails)
+    if (config.has("automerge") && config.get("automerge") !== 4) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('automerge', 4)`);
+    if (config.has("deletemerge") && config.get("deletemerge") !== 10) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('deletemerge', 10)`);
+    if (!marker) return;
+    if (Number(marker.done) === 0) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('optimize')`);
+    const timeout = Number(db.prepare("PRAGMA busy_timeout").get()!.timeout);
+    try {
+      db.exec("PRAGMA busy_timeout=0");
+      const checkpoint = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      if (checkpoint?.busy !== 0) throw new Error("inherited merge WAL scrub did not complete");
+    } finally {
+      db.exec(`PRAGMA busy_timeout=${timeout}`);
+    }
+    db.prepare("DELETE FROM transcript_index_state WHERE name = ?").run("search_merge");
+  } catch (error) {
+    console.warn("[message-search] the inherited merge settings could not be settled; the next open tries again:", error instanceof Error ? error.message : error);
+  }
+}
+
 /** Index every searchable row above what the index already covers. Rows are
  * indexed in ascending rowid order, so the highest indexed rowid is a resume
  * point: a fresh/restored-from-older-release database starts at 0, an
@@ -146,6 +175,7 @@ export function backfillMessageSearchIndex(db: DatabaseSync, options: { onProgre
 
 /** Throw the index away and rebuild it from messages (repair path). */
 export function rebuildMessageSearchIndex(db: DatabaseSync): number {
+  rebuildThreadSummaries(db);
   ready.delete(db);
   db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('delete-all')`);
   return backfillMessageSearchIndex(db);
