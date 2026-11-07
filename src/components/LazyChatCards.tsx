@@ -11,10 +11,13 @@ import type { PublishCard as PublishCardView } from "./PublishCard";
 import type { BrowserSetupCard as BrowserSetupCardView } from "./BrowserSetupCard";
 import type { McpSignInCard as McpSignInCardView } from "./McpSignInCard";
 import type { McpEnableCard as McpEnableCardView } from "./McpEnableCard";
+import type { RoomShareAsk as RoomShareAskView, RoomShareCard as RoomShareCardView } from "./RoomShareCard";
 
 const Publish = retryableLazy(() => import("./PublishCard").then((module) => ({ default: module.PublishCard })));
 const McpSignIn = retryableLazy(() => import("./McpSignInCard").then((module) => ({ default: module.McpSignInCard })));
 const McpEnable = retryableLazy(() => import("./McpEnableCard").then((module) => ({ default: module.McpEnableCard })));
+const RoomShare = retryableLazy(() => import("./RoomShareCard").then((module) => ({ default: module.RoomShareCard })));
+const RoomShareEntry = retryableLazy(() => import("./RoomShareCard").then((module) => ({ default: module.RoomShareAsk })));
 const BrowserSetup = retryableLazy(() => import("./BrowserSetupCard").then((module) => ({ default: module.BrowserSetupCard })));
 
 export function PublishCard(props: ComponentProps<typeof PublishCardView>) {
@@ -31,4 +34,13 @@ export function McpEnableCard(props: ComponentProps<typeof McpEnableCardView>) {
 
 export function McpSignInCard(props: ComponentProps<typeof McpSignInCardView>) {
   return <LazyBoundary inline onRetry={McpSignIn.retry}><Suspense fallback={null}><McpSignIn.Component {...props} /></Suspense></LazyBoundary>;
+}
+
+// CROSS-CHAT-READ-1019: a share request card and the composer entry, loaded the first time a room shows one
+export function RoomShareCard(props: ComponentProps<typeof RoomShareCardView>) {
+  return <LazyBoundary inline onRetry={RoomShare.retry}><Suspense fallback={null}><RoomShare.Component {...props} /></Suspense></LazyBoundary>;
+}
+
+export function RoomShareAsk(props: ComponentProps<typeof RoomShareAskView>) {
+  return <LazyBoundary inline onRetry={RoomShareEntry.retry}><Suspense fallback={null}><RoomShareEntry.Component {...props} /></Suspense></LazyBoundary>;
 }

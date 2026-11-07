@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CONTINUATION_WAIT_MS } from "./call-turns";
 import { OwnerLine, routeSpokenGroupMessage } from "./group-call";
 import { RoomReplyVoice } from "./group-call-stream";
-import { GROUP_GOAL_CONTROL_OPEN } from "../../server/group-goal-run";
 import type { Bot } from "@/state/store";
 
 const members = [{ id: "b1", name: "Sable" }, { id: "b2", name: "Moss" }] as Bot[];
@@ -67,95 +66,40 @@ describe("OwnerLine: the held line waits the window from the final, not the 6 s 
   });
 });
 
-describe("RoomReplyVoice", () => {
-  const sable = members[0];
-  const setup = () => {
-    const opened: string[][] = [];
-    const ended: boolean[] = [];
-    const voice = new RoomReplyVoice<Bot>(() => {
-      const spoken: string[] = [];
-      opened.push(spoken);
-      const index = ended.push(false) - 1;
-      return { push: (s) => spoken.push(s), end: () => { ended[index] = true; } };
-    });
-    const said = () => opened.flat();
-    return { voice, opened, ended, said };
-  };
-
-  it("an interrupt mid-reply: no restart, no further sentences, however many deltas follow", () => {
-    const { voice, opened, said } = setup();
-    voice.update(sable, "First sentence is here. Second sentence follows it. Thi");
-    expect(said()).toEqual(["First sentence is here.", "Second sentence follows it."]);
-    voice.interrupt(true);
-    voice.update(sable, "First sentence is here. Second sentence follows it. Third sentence arrives. Fourth ");
-    voice.update(sable, "First sentence is here. Second sentence follows it. Third sentence arrives. Fourth one too. Fi");
-    voice.settle(sable, "First sentence is here. Second sentence follows it. Third sentence arrives. Fourth one too.");
-    expect(said()).toEqual(["First sentence is here.", "Second sentence follows it."]);
-    expect(opened).toHaveLength(1); // no second speaker stream: nothing closed the mic again
+describe("RoomReplyVoice server audio identities", () => {
+  const reply = (id: string, botId = "b1") => ({ callSessionId: "call", replyId: id, botId, threadId: "thread", messageId: id, bootId: "boot" });
+  const setup = () => { const play = vi.fn(); return { play, voice: new RoomReplyVoice<Bot>(play) }; };
+  it("an interrupt prevents late reply admission", () => {
+    const { voice, play } = setup(); voice.ready(members[0], reply("first")); voice.interrupt(true); voice.ready(members[0], reply("late"));
+    expect(play).toHaveBeenCalledExactlyOnceWith(members[0], reply("first"));
   });
-
-  it("the next turn speaks again once the interrupted one is over", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "One sentence is enough. Two");
-    voice.interrupt(true);
-    voice.turnOver();
-    voice.update(sable, "A brand new answer. More");
-    expect(said()).toEqual(["One sentence is enough.", "A brand new answer."]);
+  it("the next turn speaks after the interrupted one ends", () => {
+    const { voice, play } = setup(); voice.interrupt(true); voice.ready(members[0], reply("late")); voice.turnOver(); voice.ready(members[0], reply("next"));
+    expect(play).toHaveBeenCalledExactlyOnceWith(members[0], reply("next"));
   });
-
-  it("an interrupt while nothing is being worked on does not silence the next reply", () => {
-    const { voice, said } = setup();
-    voice.interrupt(false);
-    voice.update(sable, "Hello again, owner. More");
-    expect(said()).toEqual(["Hello again, owner."]);
+  it("an idle interrupt does not silence the next reply", () => {
+    const { voice, play } = setup(); voice.interrupt(false); voice.ready(members[0], reply("next")); expect(play).toHaveBeenCalledOnce();
   });
-
-  it("settle speaks only the unspoken remainder when the final continues the stream", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "The deploy is green. I checked the log");
-    voice.settle(sable, "The deploy is green. I checked the logs and the alerts.");
-    expect(said()).toEqual(["The deploy is green.", "I checked the logs and the alerts."]);
+  it("a duplicate ready never repeats a reply", () => {
+    const { voice, play } = setup(); voice.ready(members[0], reply("first")); voice.ready(members[0], reply("first")); expect(play).toHaveBeenCalledOnce();
   });
-
-  it("settle with a stripped, trimmed final still matches the stream's prefix", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "\nThe deploy is green. Next");
-    voice.settle(sable, "The deploy is green. Next steps are ready.");
-    expect(said()).toEqual(["The deploy is green.", "Next steps are ready."]);
+  it("admission uses identity regardless of display text", () => {
+    const { voice, play } = setup(); voice.ready(members[0], reply("first")); expect(play.mock.calls[0][1]).toEqual(reply("first"));
+    expect("update" in voice).toBe(false); expect("settle" in voice).toBe(false);
   });
-
-  it("a final that differs from what streamed adds nothing more", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "The deploy is green. I checked the log");
-    voice.settle(sable, "Sable: a different answer altogether, from another line.");
-    expect(said()).toEqual(["The deploy is green."]);
+  it("another member cannot claim a reply", () => {
+    const { voice, play } = setup(); voice.ready(members[1], reply("first")); voice.ready(undefined, reply("first")); expect(play).not.toHaveBeenCalled();
   });
-
-  it("never speaks a goal control envelope, streamed or at settle", () => {
-    const { voice, said } = setup();
-    voice.update(sable, `Plan is set for today. ${GROUP_GOAL_CONTROL_OPEN}{"goal":"secret words"}`);
-    voice.update(sable, `Plan is set for today. ${GROUP_GOAL_CONTROL_OPEN}{"goal":"secret words"}</murage-goal> Next up.`);
-    voice.settle(sable, "Plan is set for today. Next up is the review.");
-    const all = said().join(" ");
-    expect(all).not.toContain("secret");
-    expect(all).not.toContain("murage-goal");
-    expect(all).toContain("Plan is set for today.");
-    expect(all).toContain("Next up is the review.");
+  it("raw goal envelopes and code never enter the audio callback", () => {
+    const { voice, play } = setup(); voice.ready(members[0], reply("first")); expect(play.mock.calls[0][1]).not.toHaveProperty("text");
+    expect(play.mock.calls[0][1]).not.toHaveProperty("source");
   });
-
-  it("merges a tiny sentence with the next, like the 1:1 path, and flushes a lone one at settle", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "Sure. I will check the deploy now. Ok");
-    expect(said()).toEqual(["Sure. I will check the deploy now."]);
-    voice.settle(sable, "Sure. I will check the deploy now. Ok.");
-    expect(said()).toEqual(["Sure. I will check the deploy now.", "Ok."]);
+  it("different members retain server ready order", () => {
+    const { voice, play } = setup(); voice.ready(members[0], reply("first")); voice.ready(members[1], reply("second", "b2"));
+    expect(play.mock.calls.map(args => args[1].replyId)).toEqual(["first", "second"]);
   });
-
-  it("does not say a settled block again when its stream is still on screen", () => {
-    const { voice, said } = setup();
-    voice.update(sable, "All done with the work. Tail");
-    voice.settle(sable, "All done with the work. Tail end.");
-    voice.update(sable, "All done with the work. Tail end. ");
-    expect(said()).toEqual(["All done with the work.", "Tail end."]);
+  it("a muted identity cannot replay after turnOver", () => {
+    const { voice, play } = setup(); voice.interrupt(true); voice.ready(members[0], reply("old")); voice.turnOver(); voice.ready(members[0], reply("old"));
+    expect(play).not.toHaveBeenCalled();
   });
 });

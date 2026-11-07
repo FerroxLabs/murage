@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  playerResolution,
   canPlayMedia,
   claimMediaPlayback,
   formatMediaBytes,
@@ -84,7 +85,7 @@ describe("saying why, rather than going quiet", () => {
     const messages = [1, 2, 3, 4].map(mediaErrorMessage);
     expect(new Set(messages).size).toBe(4);
     for (const message of messages) expect(message.length).toBeGreaterThan(10);
-    expect(mediaErrorMessage(3)).toMatch(/decoded/i);
+    expect(mediaErrorMessage(3)).toMatch(/could not read this media file/i);
     expect(mediaErrorMessage(2)).toMatch(/could not be read/i);
   });
 
@@ -290,4 +291,12 @@ describe("a path in a transcript", () => {
     const html = render(createElement(LocalMedia, { scope: undefined, path: "/desk/outputs/take-2.wav", fallback, resolve: never }));
     expect(html).toBe('<span data-testid="fallback">take-2.wav</span>');
   });
+});
+
+it("B4/R31-PLAYER refuses images, files, malformed and exhausted results at every player gate", () => {
+  for (const state of ["ready", "unplayable"]) for (const kind of ["image", "file"]) {
+    expect(playerResolution({ state, asset: { ...audioAsset, kind } } as any)).toBe(false);
+  }
+  for (const value of [{ state: "exhausted" }, { state: "unavailable" }, {}, { state: "ready", asset: null }, { state: "ready", asset: { kind: "audio" }, url: "x" }]) expect(playerResolution(value as any)).toBe(false);
+  expect(playerResolution({ state: "unplayable", asset: audioAsset, reason: "unsupported" })).toBe(true);
 });

@@ -1,5 +1,6 @@
 export declare const SPAWNED_PROXY_FILES: Readonly<{
   memory: string;
+  panelAvatarEncoder: string;
   memoryWorker: string;
   whatsappBridge: string;
   importGuardWorker: string;
@@ -18,6 +19,7 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   remoteMcp: string;
   phone: string;
   phoneJobs: string;
+  highlevel: string;
   browser: string;
   headlessBrowser: string;
   unifiedBrowser: string;

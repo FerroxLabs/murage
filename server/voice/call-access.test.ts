@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { InboxRosterStore } from "../inbox-access.ts";
-import { callAccess } from "./call-access.ts";
+import { callAccess, callTargetAccess, callSourceVisible } from "./call-access.ts";
 
 function world(): InboxRosterStore {
   const bots = [
@@ -39,4 +39,39 @@ describe("call access", () => {
     expect(callAccess(world(), "unproven", "open")).toBe("forbidden");
     expect(callAccess(world(), "unproven", "nobody")).toBe("forbidden");
   });
+});
+
+describe("D24 P-call-admission", () => {
+  it("binds direct sessions to their real thread and retains phone direct access", () => {
+    for (const door of ["desktop", "companion"] as const) {
+      expect(callTargetAccess(world(), door, "open", "t-open")).toBe("allowed");
+      expect(callTargetAccess(world(), door, "open", "t-secret")).toBe("not-found");
+    }
+    expect(callTargetAccess(world(), "unproven", "open", "t-open")).toBe("forbidden");
+  });
+  it("rejects phone room calls and forged room threads on direct sessions", () => {
+    const group = { id: "room", name: "Room", threadId: "t-room", memberIds: ["open"], hidden: false };
+    const store = { ...world(), groups: [group] };
+    store.group = id => id === "room" ? group : undefined;
+    store.groupByThread = id => id === "t-room" ? group : undefined;
+    expect(callTargetAccess(store, "desktop", "room", "t-room")).toBe("allowed");
+    expect(callTargetAccess(store, "companion", "room", "t-room")).toBe("not-found");
+    expect(callTargetAccess(store, "desktop", "room", "t-room", false)).toBe("not-found");
+    expect(callTargetAccess(store, "desktop", "open", "t-room")).toBe("not-found");
+    expect(callTargetAccess(store, "companion", "open", "t-room")).toBe("not-found");
+    expect(callTargetAccess(store, "desktop", "room", "t-open")).toBe("not-found");
+    store.group = () => ({ ...group, hidden: true });
+    expect(callTargetAccess(store, "desktop", "room", "t-room")).toBe("not-found");
+  });
+});
+
+
+it("D24 live source authorization follows phone visibility while retaining desktop hidden-bot access", () => {
+  const store = world();
+  const phone = { targetId: "open", threadId: "t-open", desktop: false };
+  expect(callSourceVisible(store, phone, "open")).toBe(true);
+  Object.assign(store.bot("open")!, { hidden: true });
+  expect(callSourceVisible(store, phone, "open")).toBe(false);
+  expect(callSourceVisible(store, { ...phone, desktop: true }, "open")).toBe(true);
+  expect(callSourceVisible(store, { ...phone, desktop: true }, "secret")).toBe(false);
 });

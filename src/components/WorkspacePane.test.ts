@@ -52,7 +52,7 @@ describe("first paint", () => {
     const expanded = render({ pane: pane([{ type: "show" }, { type: "setExpanded", expanded: true }]) });
     expect(expanded).toContain('data-layout="expanded"');
     expect(expanded).not.toContain('role="separator"');
-    expect(expanded).toContain('aria-label="Show chat beside"');
+    expect(expanded).toContain('aria-label="Show chat beside the file"');
 
     const compact = render({ pane: pane([{ type: "show" }]), narrow: true });
     expect(compact).toContain('data-layout="compact"');
@@ -105,7 +105,7 @@ describe("first paint", () => {
 
   it("never shows a blank for a file it cannot read", () => {
     expect(readErrorMessage("too-large", "big.md")).toBe("This file is larger than the preview limit. Open it in its app or show it in its folder.");
-    expect(readErrorMessage("unsupported-encoding", "x.txt")).toContain("not UTF-8 text");
+    expect(readErrorMessage("unsupported-encoding", "x.txt")).toContain("not saved as UTF-8");
     expect(readErrorMessage("not-found", "gone.md")).toBe("This file is no longer at that location.");
     expect(readErrorMessage("unknown", "a.md", "Disk on fire")).toBe("Disk on fire");
     expect(readErrorMessage(null, "a.md")).toBe("a.md could not be read.");
