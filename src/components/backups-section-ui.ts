@@ -3,7 +3,8 @@
 import type { BackupRemoteStatus } from "../../server/backup-remote-host";
 import { CLOSED_VOLUME_SENTENCES, closedVolumeSentence } from "../../shared/closed-volume-sentences.mjs";
 import { DEFAULT_BACKUP_TIME, enabledSchedule, scheduleDraft, scheduleError, scheduleNeedsReview, schedulePhase } from "./backup-schedule-ui";
-import { BACKUP_UNAVAILABLE_SENTENCES, captureFailureSentence } from "../../shared/backup-capture-failure.mjs";
+import { BACKUP_UNAVAILABLE_SENTENCES, backupWaitSentence, captureFailureSentence, type BackupTranslate } from "../../shared/backup-capture-failure.mjs";
+import { t } from "@/lib/i18n";
 import { backupSkippedLines } from "../../shared/backup-skipped.mjs";
 import { backupWaitingSentence, type BackupWaitingBot } from "../../shared/backup-waiting";
 
@@ -137,8 +138,10 @@ export function withoutRepeats(lines: readonly string[]): string[] {
 export interface BackupSummary { last: string; schedule: string; offsite: string; attention: string[]; skipped?: string[] }
 
 /** One plain summary for the "Your backups" card. `formatTime` is injected so
- * the helper stays deterministic under test. */
-export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number) => string = (ms) => new Date(ms).toLocaleString()): BackupSummary {
+ * the helper stays deterministic under test. `translate` (the catalogue's `t`
+ * by default) says the translated backup sentences (BACKUP_SENTENCE_KEYS) in
+ * the active language; every other line is unchanged. */
+export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number) => string = (ms) => new Date(ms).toLocaleString(), translate: BackupTranslate = t): BackupSummary {
   const { schedule: s, remote: r } = input;
   const last = s?.lastVerified
     ? `${formatTime(s.lastVerified.verifiedAt)} · ${formatBackupSize(s.lastVerified.bytes)}`
@@ -169,11 +172,13 @@ export function backupSummary(input: BackupSummaryInput, formatTime: (ms: number
   // backup can ever run, so the page says so instead of offering setup.
   if (s?.relaunchBlocked && s.relaunchBlocked !== s.error) attention.push(scheduleError(s.relaunchBlocked));
   if (s?.pending) attention.push("A backup is running. Settings are locked until it finishes.");
+  // 1.0.18: a backup waiting for space or its drive says what it needs, and that it starts by itself.
+  else if (s?.phase === "waiting" && backupWaitSentence(s.waiting)) attention.push(backupWaitSentence(s.waiting, translate));
   else if (s && scheduleNeedsReview(s.phase)) {
     attention.push(schedulePhase(s.phase));
     // Say WHY. Without this the page only ever said a backup had not
     // finished, which left the person with nothing to act on.
-    if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure, { folderName: s.refs?.destinationLabel }));
+    if (s.captureFailure) attention.push(captureFailureSentence(s.captureFailure, { folderName: s.refs?.destinationLabel, translate }));
   }
   else if (s?.phase === "skipped" && !held && !unavailable) attention.push("Backup skipped. Murage was busy, so no backup was taken. Finish current work, then try again.");
   // The owner finished setup and the page still read "No verified backup on

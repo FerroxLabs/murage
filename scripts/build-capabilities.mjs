@@ -43,6 +43,8 @@ const toolSlice = proxy.slice(toolsStart, toolsEnd);
 for (const match of toolSlice.matchAll(/^ {2}\{\s*name: "([a-z_]+)"/gm)) add("tool", match[1], match[1], "server/drivers/agents-proxy.ts");
 for (const match of proxy.matchAll(/const PROJECT_PROPOSE_TOOL = \{\s*name: "([a-z_]+)"/g)) add("tool", match[1], match[1], "server/drivers/agents-proxy.ts");
 for (const match of read("server/drivers/project-tool-schemas.ts").matchAll(/^ {2}\{\s*name: "([a-z_]+)"/gm)) add("tool", match[1], match[1], "server/drivers/project-tool-schemas.ts");
+// The phone call tools live in their own schema file and are listed only on owner turns with phone calls set up (BOT-CALLS-1020).
+for (const match of read("server/drivers/phone-tool-schemas.ts").matchAll(/^ {2}\{\s*name: "([a-z_]+)"/gm)) add("tool", match[1], match[1], "server/drivers/phone-tool-schemas.ts");
 
 // 2. App settings pages: the id is a contract, the label is what people read.
 // The sidebar shows settingsPageLabel() = settings.page.<id> for each
@@ -128,6 +130,8 @@ const ROUTE_TERMS = {
   "flux-connection": "Flux",
   "folder-trust": "working folder",
   groups: "channels",
+  // /api/highlevel: Settings > HighLevel token, location and per-bot read access (HL-S2 read only, 1.0.18)
+  highlevel: "HighLevel",
   "house-rules": "house rules",
   images: "image generation",
   inbox: "inbox",
@@ -141,8 +145,12 @@ const ROUTE_TERMS = {
   news: "Murage news",
   owner: "time zone",
   packages: "templates",
+  // /api/phone-calls: Settings > Bots > Phone calls, where the owner sets up and reads the calls bots place (1.0.20 BOT-CALLS-1020)
+  "phone-calls": "phone calls",
   // /api/phones: the phone tools card, Share to Murage targets and Ask Murage (1.0.9 phone tools, 9f6b1e18f)
   phones: "phone tools",
+  // Settings > Usage shows the plan use last reported by an engine.
+  "plan-usage": "usage",
   projects: "projects",
   "provider-connections": "engines",
   "routine-runs": "routines",
@@ -160,6 +168,7 @@ const ROUTE_TERMS = {
   teams: "teams",
   telegram: "Telegram",
   "thread-snoozes": "snooze",
+  // Includes /api/tts/call/reply and desktop /api/tts/reply with session, cancel and target metadata.
   tts: "voice",
   voice: "voice",
   "whats-new": "what's new",
@@ -168,7 +177,7 @@ const ROUTE_TERMS = {
 };
 const ROUTE_PLUMBING = new Set([
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
-  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
+  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);
 const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);

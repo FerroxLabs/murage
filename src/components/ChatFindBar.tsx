@@ -1,58 +1,40 @@
+import { useChatResource, type HitsPage } from "@/lib/chat-previews";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
 import { landOnSearchHit } from "@/lib/focus-message";
-import type { SearchHit } from "@/lib/search-hit";
-import { api, useStore } from "@/state/store";
+import { imeComposing } from "@/lib/composer-enter";
+import { useStore } from "@/state/store";
+
+const EMPTY_HITS: import("@/lib/search-hit").SearchHit[] = [];
 
 export function ChatFindBar({ threadId, onClose }: { threadId: string; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const inputRef = useRef<HTMLInputElement>(null);
-  const requestRef = useRef(0);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchHit[]>([]);
+
   const [index, setIndex] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const trimmed = query.trim();
+  const resource = useChatResource<HitsPage>(trimmed ? `/api/search?q=${encodeURIComponent(trimmed)}&limit=100&threadId=${encodeURIComponent(threadId)}` : null, undefined, 180);
+  const hits = resource.eligible ? resource.data?.hits ?? EMPTY_HITS : EMPTY_HITS;
+  const loading = !!trimmed && resource.loading;
+
+  useEffect(() => {
+    if (resource.error) {
+      dispatch({ type: "error", message: resource.error instanceof Error ? resource.error.message : "Search failed" });
+    }
+  }, [dispatch, resource.error]);
 
   useEffect(() => {
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
 
-  useEffect(() => {
-    const trimmed = query.trim();
-    const request = ++requestRef.current;
-    if (!trimmed) {
-      setHits([]);
-      setIndex(0);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    const timer = window.setTimeout(() => {
-      void api(`/api/search?q=${encodeURIComponent(trimmed)}&limit=100&threadId=${encodeURIComponent(threadId)}`)
-        .then((body) => {
-          if (request !== requestRef.current) return;
-          setHits(Array.isArray(body?.hits) ? body.hits : []);
-          setIndex(0);
-        })
-        .catch((error) => {
-          if (request !== requestRef.current) return;
-          setHits([]);
-          dispatch({ type: "error", message: error instanceof Error ? error.message : "Search failed" });
-        })
-        .finally(() => {
-          if (request === requestRef.current) setLoading(false);
-        });
-    }, 180);
-    return () => window.clearTimeout(timer);
-  }, [dispatch, query, threadId]);
-
   const land = (next: number) => {
     const hit = hits[next];
     if (!hit) return;
     setIndex(next);
-    void landOnSearchHit(hit, state, dispatch).catch((error) =>
+    void landOnSearchHit(hit, state, dispatch, resource.listGen).catch((error) =>
       dispatch({ type: "error", message: error instanceof Error ? error.message : "That message is unavailable" }),
     );
   };
@@ -77,6 +59,7 @@ export function ChatFindBar({ threadId, onClose }: { threadId: string; onClose: 
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
+            if (imeComposing(event.nativeEvent)) return;
             if (event.key === "Escape") {
               event.preventDefault();
               onClose();
@@ -90,7 +73,7 @@ export function ChatFindBar({ threadId, onClose }: { threadId: string; onClose: 
           className="min-w-0 flex-1 bg-transparent px-1 text-[13px] text-ink outline-none placeholder:text-ink-secondary/70"
         />
         <span className="min-w-[58px] text-right text-[11.5px] tabular-nums text-ink-secondary">
-          {loading ? "Searching…" : query.trim() ? (hits.length ? `${index + 1} of ${hits.length}` : "No results") : ""}
+          {loading ? "Searching…" : resource.error ? "" : query.trim() ? (hits.length ? `${index + 1} of ${hits.length}` : "No results") : ""}
         </span>
         <button
           type="button"

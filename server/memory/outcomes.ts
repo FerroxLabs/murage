@@ -26,6 +26,7 @@ export type { OutcomeState, OutcomeView };
 import { readBotLearning } from "../bot-learning.ts";
 import { classifyEdit, planEditLesson, type EditKind, type LessonPlan } from "./feedback.ts";
 import type { LearningRouteAnswer } from "../bot-learning-routes.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 
 export const PROPOSAL_TTL_MS = 14 * 24 * 3600_000;
 export const WEAK_SIGNAL_TTL_MS = 30 * 24 * 3600_000;
@@ -150,7 +151,7 @@ function botReply(db: DatabaseSync, botId: string, threadId: string, messageId: 
   if (!row) return fail(404, "MESSAGE_NOT_FOUND", "no such message in that conversation");
   if (row.role !== "bot" || row.kind !== "text") return fail(422, "NOT_A_REPLY", "only a bot's reply can be marked");
   let from: string | undefined;
-  try { from = (JSON.parse(row.json) as { from?: { botId?: string } }).from?.botId; } catch { /* a damaged row has no sender */ }
+  try { from = (rowToMessage({ json: row.json }) as { from?: { botId?: string } }).from?.botId; } catch { /* a damaged row has no sender */ }
   if (from && from !== botId) fail(404, "MESSAGE_NOT_FOUND", "no such message for this bot");
 }
 
@@ -158,7 +159,7 @@ function botReply(db: DatabaseSync, botId: string, threadId: string, messageId: 
 export function conversationIsBots(db: DatabaseSync, bot: LearningBotLike, threadId: string, messageId: string): boolean {
   if (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)) return true;
   const row = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, messageId) as { json: string } | undefined;
-  try { return Boolean(row) && (JSON.parse(row!.json) as { from?: { botId?: string } }).from?.botId === bot.id; } catch { return false; }
+  try { return Boolean(row) && (rowToMessage({ json: row!.json }) as { from?: { botId?: string } }).from?.botId === bot.id; } catch { return false; }
 }
 
 // ---------------------------------------------------------------- the mark

@@ -1345,9 +1345,12 @@ export function botsEyebrowLine(count: number): string {
   return `${SPELLED[whole] ?? String(whole)} ${words.botsEyebrowMany}`;
 }
 
-/** "Claude Code", "Claude Code and Codex", "Claude Code, Codex and Fuigo". */
+/** "Claude Code", "Claude Code and Codex", "Fuigo, Claude Code and Codex". Fuigo and Flux lead any list they are in
+ * (Sean's copy rule); the other names keep their order. */
 export function joinNames(names: readonly string[]): string {
-  const clean = names.map((name) => name.trim()).filter(Boolean);
+  const trimmed = names.map((name) => name.trim()).filter(Boolean);
+  const ours = (name: string) => /^(?:Fuigo|Flux)\b/.test(name);
+  const clean = [...trimmed.filter(ours), ...trimmed.filter((name) => !ours(name))];
   if (clean.length === 0) return "";
   if (clean.length === 1) return clean[0];
   return `${clean.slice(0, -1).join(", ")} and ${clean[clean.length - 1]}`;

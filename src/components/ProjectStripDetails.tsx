@@ -179,7 +179,7 @@ export function ProjectStripDetails({ groupId, project }: { groupId: string; pro
     <p aria-label={t("projects.details.usageAria")}>{total.tokensReported ? t("projects.details.usageReported", { minutes: Math.round(total.workMs / 60000), tokens: (total.input + total.output).toLocaleString() }) : t("projects.details.usageUnreported", { minutes: Math.round(total.workMs / 60000) })}</p>
     {usage?.notReported.map(id=><p key={id}>{t("projects.details.notReportedBy",{name:members.find(bot=>bot.id===id)?.name??t("projects.common.thisMember")})}</p>)}
     {(usage?.interrupted || total.interrupted)&&<p>{t("projects.details.interrupted")}</p>}
-    {total.charge!==null&&<p>{t("projects.details.cost",{cost:`$${total.charge.toFixed(4)}`})}</p>}
+    {total.charge!==null&&<p>{t(total.chargeIsLowerBound?"projects.details.costAtLeast":"projects.details.cost",{cost:`$${total.charge.toFixed(4)}`})}</p>}
     <Suspense fallback={<p>{t("projects.details.loadingSettings")}</p>}><WorkSettings groupId={groupId} project={project}/></Suspense>
     {requestNote && <p>{requestNote}</p>}
     {requests.length > 0 && <ul aria-label={t("projects.details.requestsAria")} className="space-y-1">{requests.map((request) => <li key={request.id} className="flex flex-wrap items-center gap-2">

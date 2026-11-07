@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "7g-r14-charge-unknown",
+  "date": "2026-11-07",
+  "base": "48a4b1784",
+  "scope": "CHARGE-UNKNOWN-1018 lower-bound charge lines",
+  "strings": {
+    "en:projects.details.costAtLeast": {
+      "text": "Reported cost: at least {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Adds the lower bound while preserving the sibling wording and placeholder."
+    },
+    "en:projects.budget.chargeAtLeast": {
+      "text": "Reported charge: at least ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Adds the lower bound while preserving the sibling wording and dollar placeholder."
+    },
+    "de:projects.details.costAtLeast": {
+      "text": "Gemeldete Kosten: mindestens {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural German that preserves the sibling and correctly adds the lower bound."
+    },
+    "de:projects.budget.chargeAtLeast": {
+      "text": "Gemeldete Kosten: mindestens ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural German that preserves the sibling and correctly adds the lower bound."
+    },
+    "es:projects.details.costAtLeast": {
+      "text": "Costo informado: al menos {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural Spanish that preserves the sibling and correctly adds the lower bound."
+    },
+    "es:projects.budget.chargeAtLeast": {
+      "text": "Coste informado: al menos ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural Spanish that preserves the sibling and correctly adds the lower bound."
+    },
+    "fr:projects.details.costAtLeast": {
+      "text": "Coût signalé : au moins {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural French that preserves the sibling and correctly adds the lower bound."
+    },
+    "fr:projects.budget.chargeAtLeast": {
+      "text": "Coût signalé : au moins ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural French that preserves the sibling and correctly adds the lower bound."
+    },
+    "hi:projects.details.costAtLeast": {
+      "text": "रिपोर्ट की गई लागत: कम से कम {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural Hindi that preserves the sibling and correctly adds the lower bound."
+    },
+    "hi:projects.budget.chargeAtLeast": {
+      "text": "रिपोर्ट की गई लागत: कम से कम ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural Hindi that preserves the sibling and correctly adds the lower bound."
+    },
+    "ja:projects.details.costAtLeast": {
+      "text": "報告されたコスト: 少なくとも {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Clear Japanese that preserves the sibling and correctly adds the lower bound."
+    },
+    "ja:projects.budget.chargeAtLeast": {
+      "text": "報告されたコスト: 少なくとも ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Clear Japanese that preserves the sibling and correctly adds the lower bound."
+    },
+    "pt-br:projects.details.costAtLeast": {
+      "text": "Custo informado: pelo menos {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural Brazilian Portuguese that preserves the sibling and correctly adds the lower bound."
+    },
+    "pt-br:projects.budget.chargeAtLeast": {
+      "text": "Custo informado: pelo menos ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural Brazilian Portuguese that preserves the sibling and correctly adds the lower bound."
+    },
+    "zh:projects.details.costAtLeast": {
+      "text": "上报的费用：至少 {cost}",
+      "en": "Reported cost: at least {cost}",
+      "verdict": "pass",
+      "note": "Natural Chinese that preserves the sibling and correctly adds the lower bound."
+    },
+    "zh:projects.budget.chargeAtLeast": {
+      "text": "上报的费用：至少 ${amount}",
+      "en": "Reported charge: at least ${amount}",
+      "verdict": "pass",
+      "note": "Natural Chinese that preserves the sibling and correctly adds the lower bound."
+    }
+  },
+  "files": {}
+}

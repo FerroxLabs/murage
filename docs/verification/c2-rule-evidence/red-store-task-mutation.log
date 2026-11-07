@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (44 tests | 1 failed | 43 skipped) 850ms
+   × RULE path 4 store task rows cannot supply preview text even after a proven empty page 434ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 4 store task rows cannot supply preview text even after a proven empty page
+AssertionError: expected 'Storm chat1SortLast activityCreatedAl…' not to contain 'store backed secret'
+
+Expected: "store backed secret"
+Received: "Storm chat1SortLast activityCreatedAllYoursRoutinesFrom other botsUnreadJanuary 1970Storm chatstore backed secretJan 1, 1970Export conversation (Markdown)Current conversation only. Not an importable bot package. New chat"
+
+ ❯ src/lib/chats-previews-browser.test.ts:575:56
+    573|   await rawAnswer(page,'threads=main0',{gen:A,total:0,chats:[],next:nu…
+    574|   await page.waitForFunction(()=>!document.body.textContent?.includes(…
+    575|   expect(await page.locator('body').textContent()).not.toContain('stor…
+       |                                                        ^
+    576|   expect(await page.getByText('Storm chat',{exact:true}).count()).toBe…
+    577|   await page.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 43 skipped (44)
+   Start at  21:41:15
+   Duration  6.73s (transform 4.35s, setup 5.42s, import 336ms, tests 850ms, environment 0ms)
+

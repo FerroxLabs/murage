@@ -3093,6 +3093,9 @@ FUIGO_PINS = "[plugins]\nauto_discover = false\n[claude_compat]\nimported = true
 FUIGO_REQUIREMENTS = "[plugins]\nauto_discover = false\n[cli]\nuse_leader = false\n[claude_compat]\nimported = true\n"
 FUIGO_MANAGED_CONFIG = "# managed by the Murage launcher\n"
 FUIGO_MEMORY_TOOLS = ("memory_search", "memory_get", "memory_save", "memory_propose_correction")
+# Fuigo rule names that always ask Murage (rules.rs tool_name_to_filter). Kept equal to the desktop launch policy,
+# server/drivers/acp/fuigo-policy.ts FUIGO_POLICY_ASK; engine-render-launcher.test.ts checks the two match.
+FUIGO_ASK = ("Bash", "Read", "Edit", "Grep", "MCPTool")
 OPENCODE_BASE = {"$schema": "https://opencode.ai/config.json", "autoupdate": False}
 OPENCODE_COMPAT_NPM = "@ai-sdk/openai-compatible"
 CLAUDE_BROKER_TOOL_TIMEOUT_MS = 1728000000
@@ -3144,15 +3147,17 @@ def fuigo_config_text(render):
             "\nenv_key = \"MURAGE_PROVIDER_API_KEY\"\napi_backend = \"" + ROUTE_PROTOCOLS[route["protocol"]] + "\"\nauth_scheme = \"" + \
             ("x_api_key" if route["protocol"] == "anthropic" else "bearer") + "\"\n[model.murage_selected]\nmodel = " + toml_string(route["model"]) + \
             "\nmodel_provider = \"" + name + "\"\n"
-    # Fuigo 1.0.32: `ask = ["Bash"]` sends every shell command to Murage as a permission request, past the
-    # engine's own read-only auto-allow. Rules are order-independent (deny > ask > allow; resolution.rs), so
-    # no workspace allow or bypass defaultMode lifts it, and this file is mounted read-only for the turn.
+    # Fuigo 1.0.32: an `ask` sends every matching call to Murage as a permission request, past the engine's own
+    # read-only auto-allow. Rules are order-independent (deny > ask > allow; resolution.rs), so no workspace allow,
+    # memory `allow` below or bypass defaultMode lifts it, and this file is mounted read-only for the turn.
+    # FUIGO-SCOPE (1.0.18): the same five names as the desktop launch policy (fuigo-policy.ts FUIGO_POLICY_ASK), so
+    # a Cloud bot's reads, edits, searches and MCP calls reach Murage too, not only its shell commands.
     # A render without the flag (the template check) asks too.
     ask = render.get("bashAsk", True)
     if ask or render["memoryTools"]:
         text += "\n[permission]\n"
         if ask:
-            text += "ask = [\"Bash\"]\n"
+            text += "ask = [" + ", ".join("\"" + name + "\"" for name in FUIGO_ASK) + "]\n"
         if render["memoryTools"]:
             rules = ",\n".join("{ action = \"allow\", tool = \"mcp\", pattern = \"murage-memory__" + tool + "\" }" for tool in FUIGO_MEMORY_TOOLS)
             text += "rules = [\n" + rules + "\n]\n"
@@ -3599,6 +3604,7 @@ ARGV_PROBES = {
 # Second forms an engine is started in: Claude's one-shot approval review (claude.ts
 # generateReview), prompt on stdin, no tools, no MCP servers, no session file.
 ARGV_ALTERNATIVES = {
+    "opencodeGo": (ArgvRule({"--print-logs": None}, required=("--print-logs",), literals=("acp",), tail=("--print-logs",), first="acp"),),
     "claudeAgent": (ArgvRule({"-p": None, "--model": MODEL_ID, "--output-format": one_of("text"), "--tools": TOOL_LIST, "--strict-mcp-config": None, "--no-session-persistence": None},
                              required=("-p", "--output-format", "--strict-mcp-config", "--no-session-persistence")),),
 }

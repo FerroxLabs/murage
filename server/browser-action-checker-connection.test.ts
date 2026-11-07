@@ -11,11 +11,12 @@ import type { ProviderInstance } from "./contracts.ts";
 import { checkAction } from "./browser-action-checker.ts";
 import { FLUX_NO_RETAIN_DEPLOYED } from "./browser-extension-check-availability.ts";
 import { resolveCheckerConnection, DEFAULT_CHECKER_MODELS, isPinnedFluxModel, NO_RETAIN_HEADER, type CheckerConnectionEvent } from "./browser-action-checker-connection.ts";
+import { FLUX_MODEL_REFUSAL_MS, fluxKeyMayCall, noteFluxModelRefused, resetFluxKeyModelsForTests, setFluxKeyCatalog } from "./flux-key-models.ts";
 
 const FLUX_KEY = "flux_test_key_not_real";
 const signal = new AbortController().signal;
 const bot = (over: Record<string, unknown> = {}) => ({ instanceId: "bot-1", driverKind: "x", displayName: "Bot", enabled: true, ...over }) as unknown as ProviderInstance;
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); resetFluxKeyModelsForTests(); });
 
 function stubFetch(content: string, status = 200, applied: string | null = "applied") {
   const fn = vi.fn(async (_url: unknown, _init?: RequestInit) => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content } }] }), { status, headers: applied === null ? {} : { [NO_RETAIN_HEADER]: applied } }));
@@ -39,6 +40,8 @@ describe("resolveCheckerConnection", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
   it("flux switch that is live uses Flux, with no fallback flag", () => {
+    // The key's catalog lists both pins (a missing catalog sends the check to the engine).
+    setFluxKeyCatalog(() => [DEFAULT_CHECKER_MODELS.stage1, DEFAULT_CHECKER_MODELS.stage2]);
     const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [bot({ reviewPermission: async () => "ALLOW" })], readKey: () => FLUX_KEY })!;
     expect(conn.source).toBe("flux");
     expect(conn.fallback).toBeUndefined();
@@ -238,5 +241,102 @@ describe("the browser checker's bot-engine fallback goes through its own learnin
     const error = await conn.transport({ model: "m", system: "SYS", user: "USR", maxTokens: 4, signal }).catch((e: unknown) => e);
     expect(isMemorySendFenced(error)).toBe(true);
     expect(seen).toHaveLength(0);
+  });
+});
+
+// FLUX-FREE-MODEL 1.0.18: a never-paid Flux key may call flux-fast and flux-auto only. The checker never sends it a pinned id Flux will
+// refuse when the bot's own engine can check instead; a paid key keeps its pinned checker models.
+describe("a Flux free-plan key and the browser checker", () => {
+  const FREE_CATALOG = ["flux-auto", "flux-fast"];
+  const PAID_CATALOG = ["flux-auto", "flux-fast", "flux-standard", "flux-reasoning", DEFAULT_CHECKER_MODELS.stage1, DEFAULT_CHECKER_MODELS.stage2];
+  // Recorded from Flux (flux-router src/model_access_message.py): LiteLLM's allowlist refusal, as FluxMain saw it in the Flux logs.
+  const RECORDED_403 = (m: string) => ({ error: { message: `key not allowed to access model. This key can only access models=['flux-auto', 'flux-fast']. Tried to access ${m}`, type: "auth_error", param: "model", code: "403" } });
+  const engine = () => bot({ reviewPermission: vi.fn(async () => "ALLOW") });
+  afterEach(() => resetFluxKeyModelsForTests());
+  it("a free key's catalog: the bot's own engine checks and Flux is never asked for a pinned id", async () => {
+    setFluxKeyCatalog(() => FREE_CATALOG);
+    const fn = stubFetch("ALLOW");
+    const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [engine()], readKey: () => FLUX_KEY })!;
+    expect(conn).toMatchObject({ source: "bot", fallback: true });
+    expect(await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage1, system: "s", user: "u", maxTokens: 4, signal })).toBe("ALLOW");
+    expect(fn).not.toHaveBeenCalled();
+  });
+  it("a paid key's catalog: unchanged, Flux with the pinned checker models", async () => {
+    setFluxKeyCatalog(() => PAID_CATALOG);
+    const fn = stubFetch("ALLOW");
+    const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [engine()], readKey: () => FLUX_KEY })!;
+    expect(conn.source).toBe("flux");
+    expect(conn.models).toEqual(DEFAULT_CHECKER_MODELS);
+    await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage1, system: "s", user: "u", maxTokens: 4, signal });
+    expect(JSON.parse(String((fn.mock.calls[0] as unknown as [unknown, RequestInit])[1].body)).model).toBe(DEFAULT_CHECKER_MODELS.stage1);
+  });
+  it("after Flux's recorded 403 the key is not asked for that pinned id again: the next check runs on the bot's engine", async () => {
+    setFluxKeyCatalog(() => PAID_CATALOG);
+    const fn = vi.fn(async () => new Response(JSON.stringify(RECORDED_403(DEFAULT_CHECKER_MODELS.stage2)), { status: 403 }));
+    vi.stubGlobal("fetch", fn);
+    const first = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [engine()], readKey: () => FLUX_KEY })!;
+    expect(first.source).toBe("flux");
+    await expect(first.transport({ model: DEFAULT_CHECKER_MODELS.stage2, system: "s", user: "u", maxTokens: 4, signal })).rejects.toMatchObject({ code: "CHECKER_MODEL_NOT_PERMITTED", status: 403 });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [engine()], readKey: () => FLUX_KEY })).toMatchObject({ source: "bot", fallback: true });
+    expect(resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [engine()], readKey: () => "another_key_not_real" })!.source).toBe("flux");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+  it("a connection made earlier asks again at dispatch: after a refusal, and after the key is replaced by a free one, the engine checks", async () => {
+    setFluxKeyCatalog(() => PAID_CATALOG);
+    const fn = vi.fn(async () => new Response(JSON.stringify(RECORDED_403(DEFAULT_CHECKER_MODELS.stage1)), { status: 403 }));
+    vi.stubGlobal("fetch", fn);
+    const review = vi.fn(async () => "ALLOW");
+    let key = FLUX_KEY;
+    const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [bot({ reviewPermission: review })], readKey: () => key })!;
+    expect(conn.source).toBe("flux");
+    await expect(conn.transport({ model: DEFAULT_CHECKER_MODELS.stage1, system: "s", user: "u", maxTokens: 4, signal })).rejects.toMatchObject({ status: 403 });
+    expect(await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage1, system: "s", user: "u", maxTokens: 4, signal })).toBe("ALLOW");
+    expect(fn).toHaveBeenCalledTimes(1);
+    key = "free_key_not_real";
+    setFluxKeyCatalog(k => k === key ? FREE_CATALOG : null);
+    expect(await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage2, system: "s", user: "u", maxTokens: 4, signal })).toBe("ALLOW");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(review).toHaveBeenCalledTimes(2);
+    expect(conn.calls()).toBe(3);
+  });
+  it("a refusal rests six hours per key and model, then the key's catalog decides again", () => {
+    let now = 1_000;
+    resetFluxKeyModelsForTests(() => now);
+    setFluxKeyCatalog(() => PAID_CATALOG);
+    noteFluxModelRefused(FLUX_KEY, DEFAULT_CHECKER_MODELS.stage1);
+    expect(fluxKeyMayCall(FLUX_KEY, DEFAULT_CHECKER_MODELS.stage1)).toBe("no");
+    expect(fluxKeyMayCall(FLUX_KEY, DEFAULT_CHECKER_MODELS.stage2)).toBe("yes");
+    expect(fluxKeyMayCall("another_key_not_real", DEFAULT_CHECKER_MODELS.stage1)).toBe("yes");
+    expect(fluxKeyMayCall(FLUX_KEY, "flux-auto")).toBe("yes");
+    now += FLUX_MODEL_REFUSAL_MS + 1;
+    expect(fluxKeyMayCall(FLUX_KEY, DEFAULT_CHECKER_MODELS.stage1)).toBe("yes");
+    setFluxKeyCatalog(() => { throw new Error("catalog unreadable"); });
+    expect(fluxKeyMayCall(FLUX_KEY, DEFAULT_CHECKER_MODELS.stage1)).toBe("unknown");
+  });
+  it("with no engine that can check, the Flux path stays so the owner is asked with the plan's own reason", () => {
+    setFluxKeyCatalog(() => FREE_CATALOG);
+    expect(resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [], readKey: () => FLUX_KEY })!.source).toBe("flux");
+  });
+  it("a missing or unreadable catalog never sends a pinned id when the bot's engine can check: at resolve and at dispatch", async () => {
+    const fn = stubFetch("ALLOW");
+    const review = vi.fn(async () => "ALLOW");
+    for (const reader of [() => null, () => { throw new Error("catalog unreadable"); }]) {
+      setFluxKeyCatalog(reader);
+      const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [bot({ reviewPermission: review })], readKey: () => FLUX_KEY })!;
+      expect(conn).toMatchObject({ source: "bot", fallback: true });
+      expect(await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage1, system: "s", user: "u", maxTokens: 4, signal })).toBe("ALLOW");
+    }
+    // Made while the paid catalog was readable, then the catalog becomes unreadable before the call.
+    setFluxKeyCatalog(() => PAID_CATALOG);
+    const conn = resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [bot({ reviewPermission: review })], readKey: () => FLUX_KEY })!;
+    expect(conn.source).toBe("flux");
+    setFluxKeyCatalog(() => { throw new Error("catalog unreadable"); });
+    expect(await conn.transport({ model: DEFAULT_CHECKER_MODELS.stage2, system: "s", user: "u", maxTokens: 4, signal })).toBe("ALLOW");
+    expect(fn).not.toHaveBeenCalled();
+    expect(review).toHaveBeenCalledTimes(3);
+    // With no engine that can check, the Flux path stays (the owner is asked with Flux's own reason).
+    setFluxKeyCatalog(() => null);
+    expect(resolveCheckerConnection({ switch: "flux", noRetainDeployed: true, instances: [], readKey: () => FLUX_KEY })!.source).toBe("flux");
   });
 });
