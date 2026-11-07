@@ -17,6 +17,7 @@ import { correctMemory, ownerMemoryTicket } from "./authority.ts";
 import { extractCandidates, groundMemoryClaim, type TextOnlyExtractor } from "./extract.ts";
 import { clearPinQuarantineForTests, pinnedCall, resolveLearningConnection } from "./extractor-connections.ts";
 import { FLUX_PINNED_LEARNING_MODEL } from "./extraction-outcomes.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 import { forgetMemory } from "./forget.ts";
 import { isMemorySendFenced } from "./learning-send-fence.ts";
 import { learningGate, sampleLearningFence, type HeldRefs, type LearningGate, type LearningPurpose } from "./learning-send.ts";
@@ -30,7 +31,7 @@ import { leasedFeedbackClassifier } from "./learning-wiring.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); clearPinQuarantineForTests(); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); clearPinQuarantineForTests(); resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => ["flux-auto", "flux-fast", FLUX_PINNED_LEARNING_MODEL]); });
 afterEach(() => { vi.restoreAllMocks(); });
 
 const owner = ownerMemoryTicket();

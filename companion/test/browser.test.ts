@@ -1086,6 +1086,25 @@ describe("stream upgrade", () => {
     return { cookie: `${cookieName("http")}=${set.slice(set.indexOf("=") + 1, set.indexOf(";"))}`, sessionId: [...sessions.values()].at(-1)!.id };
   };
 
+  it("D24 pairs the call channel to the same cookie principal without consuming the microphone slot", async () => {
+    const { cookie, sessionId } = await signedInCookie();
+    const audio = connect("ticket=voice", { cookie });
+    await new Promise<void>((resolve, reject) => { audio.once("open", resolve); audio.once("error", reject); });
+    const channel = new WebSocket(`ws://127.0.0.1:${upgradePort}/api/calls/sessions/call/live?ticket=call`, {
+      origin: `http://${hostName()}`, headers: { host: hostName(), "sec-fetch-site": "same-origin", cookie },
+    });
+    try {
+      await new Promise<void>((resolve, reject) => { channel.once("open", resolve); channel.once("error", reject); });
+      expect(upgraded?.headers["x-murage-stream-principal"]).toBe(`companion:${DEVICE.id}:${sessionId}`);
+      expect(upgraded?.headers["x-murage-companion-token"]).toBe(proof);
+      expect(upgraded?.headers.cookie).toBeUndefined();
+      expect(upgraded?.headers.origin).toBeUndefined();
+    } finally {
+      const closed = Promise.all([audio, channel].map(ws => new Promise<void>(resolve => ws.once("close", () => resolve()))));
+      audio.close(); channel.close(); await closed;
+    }
+  });
+
   it("refuses a foreign Origin at the gate, before anything reaches the harness, and logs no ticket", async () => {
     const before = upgradeCount;
     const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -1176,6 +1195,23 @@ describe("stream upgrade", () => {
     });
     expect(answer.status).toBe(200);
     expect(seen?.url).toBe("/api/voice/stream/ticket");
+    expect(seen?.headers["x-murage-stream-principal"]).toBe(`companion:${DEVICE.id}:${sessionId}`);
+    expect(seen?.headers["x-murage-companion-token"]).toBe(proof);
+  });
+  it.each(["/api/calls/sessions", "/api/calls/sessions/call/ticket", "/api/tts/call/reply", "/api/bots/bot/voice-host"])("D24 stamps call authority on %s", async path => {
+    const { cookie, sessionId } = await signedInCookie();
+    const answer = await new Promise<Answer>((resolve, reject) => {
+      const req = request(
+        { hostname: "127.0.0.1", port: upgradePort, path, method: "POST",
+          headers: { host: hostName(), "sec-fetch-site": "same-origin", origin: `http://${hostName()}`, "content-type": "application/json", "x-murage-stream-principal": "desktop", "x-murage-call-id": "server-call", cookie } },
+        (res) => { res.resume(); res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: "" })); },
+      );
+      req.on("error", reject);
+      req.end("{}");
+    });
+    expect(answer.status).toBe(200);
+    expect(seen?.url).toBe(path);
+    expect(seen?.headers["x-murage-call-id"]).toBe("server-call");
     expect(seen?.headers["x-murage-stream-principal"]).toBe(`companion:${DEVICE.id}:${sessionId}`);
     expect(seen?.headers["x-murage-companion-token"]).toBe(proof);
   });

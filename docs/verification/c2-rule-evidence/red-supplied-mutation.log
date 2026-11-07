@@ -1,0 +1,30 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (41 tests | 1 failed | 40 skipped) 973ms
+   × RULE unproven supplied rows never borrow current proof: archive-supplied-old-open 541ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE unproven supplied rows never borrow current proof: archive-supplied-old-open
+AssertionError: expected 'Archived · 7Archive owner·Supplied ar…' not to contain 'Supplied archived title'
+
+Expected: "Supplied archived title"
+Received: "Archived · 7Archive owner·Supplied archived title"
+
+ ❯ src/lib/chats-previews-browser.test.ts:320:56
+    318|   const page=await browser.newPage(); await page.goto(url);
+    319|   await page.evaluate(mode=>{const f=(window as any).fixture;f.unmount…
+    320|   expect(await page.locator("body").textContent()).not.toContain("Supp…
+       |                                                        ^
+    321|   await page.waitForFunction(()=>(window as any).fixture.pending().som…
+    322|   expect(await page.locator('[data-chats-section="archived"]').textCon…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 40 skipped (41)
+   Start at  21:27:45
+   Duration  6.95s (transform 4.51s, setup 5.49s, import 372ms, tests 973ms, environment 0ms)
+

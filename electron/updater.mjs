@@ -91,6 +91,7 @@ function setState(patch) {
   if (patch.status === "available" && patch.releaseNotesText === undefined) delete state.releaseNotesText;
   if (patch.status && patch.status !== "error" && patch.message === undefined) delete state.message;
   if (patch.status && patch.action === undefined) delete state.action;
+  if (patch.status && patch.downloadUrl === undefined) delete state.downloadUrl;
   if ("staleCheckSince" in patch && patch.staleCheckSince === undefined) delete state.staleCheckSince;
   try {
     win?.webContents?.send("update:state", publicState());
@@ -122,7 +123,14 @@ export function attachUpdaterWindow(mainWindow) {
   win = mainWindow;
 }
 
-export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {}) {
+// `installerFallback` (macOS only, from main.mjs: electron/mac-install-guard.mjs) offers the dmg when Squirrel.Mac
+// cannot replace this copy, and brings the app back if an install stalls after the server stopped.
+export function startUpdater({ beforeInstall = null, scheduleChecks = true, installerFallback = null, returnAuthority = null } = {}) {
+  const publishOffer = () => {
+    if (!scheduleChecks || !installerFallback || !updaterCoordinator) return;
+    const pending = installerFallback.peekPendingOffer?.(runningVersion());
+    if (pending && updaterCoordinator.showInstallerOffer(pending.version,pending.reason)) installerFallback.acknowledgePendingOffer?.(pending);
+  };
   const enableChecks = () => {
     if (!scheduleChecks || checksScheduled) return;
     checksScheduled = true;
@@ -130,6 +138,7 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
     setInterval(() => void updaterCoordinator?.check(), 60 * 60 * 1000).unref?.();
   };
   if (updaterCoordinator) {
+    publishOffer();
     enableChecks();
     return updaterCoordinator;
   }
@@ -153,6 +162,9 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
   // This is prevention, not cancellation of an already-staged native update.
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = updaterLogger();
+  if (returnAuthority) autoUpdater.nativeUpdater?.on?.("before-quit-for-update",()=>{
+    returnAuthority.nativeQuit=true;queueMicrotask(()=>{returnAuthority.nativeQuit=false;});
+  });
   // Windows: the update's signature is checked natively (WinVerifyTrust through the engine-exclusion addon), never by
   // electron-updater's PowerShell check (murage-releases #1). Without the addon the vendored default refuses every update.
   installWindowsUpdateVerifier(autoUpdater);
@@ -166,11 +178,14 @@ export function startUpdater({ beforeInstall = null, scheduleChecks = true } = {
     nativeUpdater: autoUpdater.autoInstallOnAppQuit ? autoUpdater.nativeUpdater : null,
     handOffInstall: handOff ? handOffDownloadedPackage(packageType) : null,
     beforeInstall,
+    returnAuthority,
     fallbackFeed: createGithubFallbackFeed(autoUpdater, { log: (line) => autoUpdater.logger.info(line) }),
     // Every platform checks the download against something signed, whichever feed (the normal one or the latest-release
     // fallback) named it: Linux a signed SHA256SUMS, macOS and Windows the version the signed build itself carries.
     verifyDownload: createUpdateDownloadVerifier({ currentVersion: runningVersion(), packageType }),
+    ...(installerFallback ? { installerFallback: { ...installerFallback, events: autoUpdater.nativeUpdater ?? null } } : {}),
   });
+  publishOffer();
 
   // first check ~15s after launch (let the app settle), then hourly — both
   // silent on failure, hence the arrow: a bare `check` would receive the

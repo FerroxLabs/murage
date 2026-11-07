@@ -187,8 +187,8 @@ describe("opening and viewing", () => {
     expect(session.getState().mode).toBe("source");
     expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: ["unsupported-syntax"], unsupportedSyntax: ["table:extra-cells"] });
     const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
-    expect(html).toContain("Rich editing is off: this file uses Markdown the rich editor would change (table:extra-cells). Source mode keeps every byte.");
-    expect(html).toMatch(/<button[^>]*aria-pressed="false"[^>]*disabled=""[^>]*>Rich<\/button>/);
+    expect(html).toContain("Formatted editing is off: this file uses Markdown formatting that the formatted editor would change (table:extra-cells). Markdown text mode preserves the file&#x27;s contents exactly.");
+    expect(html).toMatch(/<button[^>]*aria-pressed="false"[^>]*disabled=""[^>]*>Formatted<\/button>/);
     expect(html).toContain(`>| a | b |\n| - | - |\n| 1 | 2 | 3 |\n</textarea>`);
   });
 
@@ -304,7 +304,7 @@ describe("editing and saving", () => {
     expect(session.getState().draft).toContain("# Quarterly report!");
     expect(backend.records()).toHaveLength(1);
     const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller }));
-    expect(html).toContain("File not saved: a stopped bot turn is still closing in this workspace. Your changes are still here; wait a moment and save again.");
+    expect(html).toContain("File not saved: the bot is still finishing up after being stopped in this workspace. Your changes are still here; wait a moment and save again.");
     expect(html).not.toContain("File not saved. Your changes are still here.");
     expect(html).not.toContain("File saved");
   });
@@ -738,7 +738,7 @@ describe("recovered drafts and closing (fix round 1)", () => {
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
     scheduler.flush();
     expect(controller.getSnapshot().view).toMatchObject({ richBlockedBy: [], unsupportedSyntax: [] });
-    expect(renderToStaticMarkup(createElement(MarkdownEditor, { controller }))).not.toMatch(/disabled=""[^>]*>Rich<\/button>/);
+    expect(renderToStaticMarkup(createElement(MarkdownEditor, { controller }))).not.toMatch(/disabled=""[^>]*>Formatted<\/button>/);
     controller.editSource("| a | b |\n| --- | --- |\n| 1 | 2 | 3 |\n");
     scheduler.flush();
     expect(controller.getSnapshot().view.richBlockedBy).toEqual(["unsupported-syntax"]);
@@ -800,7 +800,7 @@ describe("markup", () => {
     const { controller } = setup(readCorpus("rich-basic.md"));
     const html = renderToStaticMarkup(createElement(MarkdownEditor, { controller, title: "Quarterly report" }));
     expect(html).toContain('aria-label="Quarterly report"');
-    expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>Rich<\/button>/);
+    expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>Formatted<\/button>/);
     expect(html).toContain("No unsaved changes");
     expect(html).not.toContain("Draft preserved");
     expect(html).not.toContain("<textarea");

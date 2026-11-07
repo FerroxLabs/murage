@@ -425,17 +425,40 @@ test("remote profile is readable and does not submit a configuration write", asy
 test("remote calendar preserves Run now while hiding schedule administration", async ({ page }, testInfo) => {
   await mount(page, "calendar");
   await expect(page.getByRole("heading", { name: "Routines" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "New routine", exact: true })).toHaveCount(0);
+  // The remote phone offers one chat-only New routine button (UX L7). It prefills
+  // the bot's chat draft without sending or writing a schedule, and is driven
+  // below. A desktop-width remote shows none.
+  const phone = testInfo.project.name === "mobile";
+  await expect(page.getByRole("button", { name: "New routine", exact: true })).toHaveCount(phone ? 1 : 0);
   await expect(page.getByRole("button", { name: "Create", exact: true })).toHaveCount(0);
   await expect(page.locator("[data-event-card]").first()).toHaveAttribute("draggable", "false");
   await page.keyboard.press("c");
   await expect(page.getByPlaceholder("Add title")).toHaveCount(0);
-  await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  if (phone) {
+    const writes: string[] = [];
+    page.on("request", (request) => {
+      const path = new URL(request.url()).pathname;
+      if (request.method() !== "GET" && path.startsWith("/api/")) writes.push(`${request.method()} ${path}`);
+    });
+    const words = "Every weekday at 8, send me a fixture brief";
+    await page.getByRole("button", { name: "New routine", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "New routine", exact: true });
+    await sheet.getByRole("textbox", { name: "Say what to do and when" }).fill(words);
+    await expect(sheet.getByRole("button", { name: "Pick a time", exact: true })).toHaveCount(0);
+    await expect(page.getByPlaceholder("Add title")).toHaveCount(0);
+    await sheet.getByRole("button", { name: "Ask Fixture bot to set it up", exact: true }).click();
+    await expect(sheet).toHaveCount(0);
+    await expect(page.getByPlaceholder("Add title")).toHaveCount(0);
+    await expect.poll(() => page.evaluate((text) => Object.values(localStorage).some((value) => value.includes(text)), words)).toBe(true);
+    expect(writes).toEqual([]);
+  }
+  // A phone lists routines by day instead of the grid, so it opens one from its row.
+  await (phone ? page.locator("[data-phone-routine-row]").first() : page.locator("[data-event-card]").first()).click();
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await expect(details.getByRole("button", { name: "Run now", exact: true })).toBeVisible();
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Pause routine" })).toHaveCount(0);
-  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toHaveCount(0);
+  await expect(details.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
   for (const skin of ["light", "dark"]) {
     await page.evaluate((value) => document.documentElement.dataset.skin = value, skin);
     await page.screenshot({ path: testInfo.outputPath(`remote-calendar-${skin}.png`) });
@@ -484,13 +507,14 @@ test("confirmed desktop retains persistent approvals, MCP and routine editing", 
   await page.getByRole("tab", { name: "Connected tools" }).click();
   await expect(page.getByRole("tab", { name: "Connected tools" })).toHaveAttribute("aria-selected", "true");
   await mount(page, "calendar", true);
-  // The sidebar's Create below lg is the floating "New routine" button.
-  await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ })).toBeVisible();
+  // The sidebar's Create below lg is the floating "New routine" button; the
+  // header's New routine shows beside it from sm up (UX L5B).
+  await expect(page.getByRole("button", { name: /^(?:Create(?: event)?|New routine)$/ }).first()).toBeVisible();
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await expect(details.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Pause routine" })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Delete routine", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toBeVisible();
+  await expect(details.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 });
 
 test("desktop profile rejects malformed success payloads", async ({ page }) => {
@@ -508,11 +532,11 @@ test("desktop profile rejects malformed success payloads", async ({ page }) => {
 test("desktop routine pause reports API failure and retains the event", async ({ page }) => {
   await mount(page, "calendar", true);
   await page.locator("[data-event-card]").first().click();
-  const details = page.getByRole("dialog", { name: "Routine details" });
+  const details = page.getByRole("dialog", { name: "Fixture routine", exact: true });
   await page.route("**/api/routines/routine-a", (route) => route.fulfill({ status: 503, json: { error: "Fixture pause unavailable" } }));
-  await details.getByRole("button", { name: "Pause routine" }).click();
+  await details.getByRole("button", { name: "Pause", exact: true }).click();
   await expect(details.getByRole("alert")).toHaveText("Fixture pause unavailable");
-  await expect(details.getByRole("button", { name: "Pause routine" })).toBeEnabled();
+  await expect(details.getByRole("button", { name: "Pause", exact: true })).toBeEnabled();
   expect(await page.evaluate("window.dispatched.filter(action => action.type === 'routinePatched')")).toEqual([]);
 });
 

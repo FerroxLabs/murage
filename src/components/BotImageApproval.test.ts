@@ -38,7 +38,7 @@ describe("the Images setting", () => {
     expect(radio(markup, "Follow the level")).toContain('title="Full access and No limits make images without asking; Ask and Auto ask first."');
     expect(radio(markup, "Ask before each image")).toContain('title="Every image waits for your answer, whatever the level."');
     expect(radio(markup, "Make images without asking")).toContain('title="');
-    expect(markup).toContain("Contacts and anyone else still get the card.");
+    expect(markup).toContain("Requests from contacts and anyone else still need your approval.");
   });
 
   it("has no Always allow button", () => {

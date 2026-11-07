@@ -37,6 +37,7 @@ export function ComposerAttachments({
   onAudioFile,
   threadId,
   frozen = false,
+  intake = true,
 }: {
   items: Attachment[];
   onAdd: (attachments: Attachment[]) => void;
@@ -51,6 +52,8 @@ export function ComposerAttachments({
   threadId?: string;
   /** A send is out: the chips are read-only and a dropped file is not taken until it is settled. */
   frozen?: boolean;
+  /** Chips only (Today's Tell box): no window drop handlers, so a file dropped anywhere on Today is never taken. */
+  intake?: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   const frozenRef = useRef(frozen);
@@ -61,6 +64,7 @@ export function ComposerAttachments({
   const depth = useRef(0);
 
   useEffect(() => {
+    if (!intake) return;
     let active = true;
     const carriesFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
@@ -120,7 +124,7 @@ export function ComposerAttachments({
       window.removeEventListener("dragover", onOver);
       window.removeEventListener("drop", onDrop);
     };
-  }, [onAdd, allowImages, onNotice, onAudioFile, threadId]);
+  }, [intake, onAdd, allowImages, onNotice, onAudioFile, threadId]);
 
   return (
     <>
