@@ -1,3 +1,4 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { isLearnableSource } from "./learnable.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
@@ -406,7 +407,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     if((state.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return {done:skipSlice(db,source,state,length,persist)};
     const generation=randomUUID(),meta=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     persist(source.scope_id,{...state,status:"running",generation,expiresAt:Date.now()+65000});
-    return {source,state,generation,meta,text,length,at:work.at,learningRevision:readMemoryLearning(db).revision};
+    return {source,state,generation,meta,text,length,at:work.at,deletionFence:learningDeletionEpoch(db),learningRevision:readMemoryLearning(db).revision};
   });
   if(claim.done)return claim.done;
   const {source,state,generation,meta,text,length,at,learningRevision}=claim;
@@ -472,7 +473,7 @@ export async function consolidateMemorySource(completedJobId:string,extractor:Te
     const current=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
     completedSource(completedJobId);
     const intent=JSON.parse(String(db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id)!.intent));
-    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+    if(readMemoryLearning(db).revision!==learningRevision||intent.generation!==generation||(Number(intent.queueRevision)||0)!==(Number(state!.queueRevision)||0)||current.policy_revision!==meta!.policy_revision||current.deletion_epoch!==meta!.deletion_epoch||learningDeletionEpoch(db)!==claim.deletionFence||sourceIsWithheldMessage(LineageAllowance.tool(),source!)||writetimeSourceState(source!)!=="shown")throw new Error("MEMORY_CONSOLIDATION_REVOKED");
     // the counters as the reserve transactions left them
     // a call that never reached the provider gives back what it charged: a network failure is no mark against the slice
     const refund="noReply" in result&&result.noReply===true;

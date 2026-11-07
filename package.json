@@ -47,10 +47,10 @@
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "typecheck": "tsc -b && tsc -p tsconfig.server.json && tsc -p tools/flux-stream-conformance/tsconfig.json",
     "test": "pnpm catalog:check && pnpm models:check && pnpm check:contrast && vitest run && pnpm broker:test && pnpm test:electron && pnpm test:packaged-server",
-    "test:electron": "node --import ./server/testing/safe-wipe-preload.mjs --test \"electron/*.node-test.mjs\"",
+    "test:electron": "node --import ./server/testing/safe-wipe-preload.mjs --test \"electron/*.node-test.mjs\" \"shared/*.node-test.mjs\"",
     "test:browser-extension-node": "node scripts/run-extension-node-tests.mjs",
     "test:installer": "node --test \"installer/test/*.test.mjs\"",
-    "test:browser-extension-scripts": "node --test scripts/prepare-browser-extension.node-test.mjs scripts/browser-extension-build.node-test.mjs scripts/browser-extension-host-registration.node-test.mjs scripts/browser-extension-fixture-site/browser-extension-fixture-site.node-test.mjs",
+    "test:browser-extension-scripts": "node --test scripts/prepare-browser-extension.node-test.mjs scripts/browser-extension-build.node-test.mjs scripts/browser-extension-host-registration.node-test.mjs scripts/browser-extension-fixture-site/browser-extension-fixture-site.node-test.mjs scripts/browser-extension-x1.node-test.mjs scripts/browser-extension-idle.node-test.mjs extensions/murage-browser/sidepanel/sidepanel.node-test.mjs",
     "test:human": "playwright test src/e2e/*.human.spec.ts",
     "test:human:guard": "playwright test -c src/e2e/page-error-guard.config.ts",
     "bench:observation": "node --experimental-strip-types scripts/bench-observation.ts",
@@ -114,6 +114,7 @@
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",
+    "@muse-code/sdk": "1.4.14",
     "@slack/socket-mode": "3.0.1",
     "@slack/web-api": "8.1.1",
     "@tiptap/core": "3.31.3",
@@ -151,7 +152,7 @@
     "remark-gfm": "^4.0.1",
     "shiki": "^4.4.3",
     "tailwind-merge": "^3.3.1",
-    "undici": "7.29.1",
+    "undici": "7.30.1",
     "ws": "8.21.3",
     "yaml": "^2.9.0",
     "yauzl": "3.4.0",
@@ -169,7 +170,7 @@
     "@types/yazl": "3.3.1",
     "@vitejs/plugin-react": "^4.7.0",
     "axe-core": "4.13.0",
-    "electron": "^43.5.0",
+    "electron": "^43.8.1",
     "electron-builder": "^26.15.3",
     "electron-updater": "^6.8.9",
     "esbuild": "^0.28.2",
@@ -178,7 +179,7 @@
     "typebox": "1.3.7",
     "typescript": "^5.8.3",
     "vite": "^7.3.7",
-    "vitest": "^4.1.10",
+    "vitest": "4.1.12",
     "wrangler": "4.123.0"
   }
 }

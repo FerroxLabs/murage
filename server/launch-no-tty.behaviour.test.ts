@@ -76,8 +76,8 @@ describe.skipIf(!posix || !INNER)("engine processes have no controlling terminal
     "#!/bin/sh",
     "out=\"$FAKE_OUT\"",
     "python3 -c 'import os,sys; print(os.getsid(int(sys.argv[1])))' $$ > \"$out.sid\"",
-    "sh -c 'exec 3<>/dev/tty' 2>/dev/null; echo $? > \"$out.tty\"",
-    "sh -c 'sh -c \"exec 3<>/dev/tty\"' 2>/dev/null; echo $? > \"$out.desc\"",
+    "sh -c 'exec 3<>/dev/tty' 2>\"$out.tty-stderr\"; echo $? > \"$out.tty\"",
+    "sh -c 'sh -c \"exec 3<>/dev/tty\"' 2>\"$out.desc-stderr\"; echo $? > \"$out.desc\"",
     "",
   ].join("\n"));
   chmodSync(engine, 0o755);

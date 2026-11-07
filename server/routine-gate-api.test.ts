@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 const PROJECT_CLOSED = "This project is closed. Reopen it to run its routines.";
-const CLOUD = "Cloud runs begin when Cloud approvals arrive. Run this routine on this computer for now.";
+const CLOUD = "Cloud runs will be available when Cloud approvals are supported. Run this routine on this computer for now.";
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>, model: string;
 const api = async (method: string, path: string, body?: unknown) => {

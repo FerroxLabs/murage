@@ -20,11 +20,23 @@ export function assertBackupAgeTool(executable: string, operation: "encrypt"|"de
     throw Object.assign(new InstallationSnapshotError("AGE_TOOL_UNVERIFIED"),diagnostic?{backupAgeAttestation:diagnostic}:{});
   }
 }
+/** Test-only seam (WIN-BACKUP-RT-1018): a vitest on a Windows runner has no signed
+ * installed app, so it may point the resolver at a fixture resources folder and
+ * replace ONLY the signature check. Honoured only under vitest; null by default,
+ * so production behaviour is unchanged. */
+let windowsRuntimeTestSeam: { host: { resourcesPath: string; currentExecutable: string }; overrides: Parameters<typeof createWindowsBackupResourceResolver>[1] } | null = null;
+export function setWindowsBackupRuntimeTestSeam(seam: typeof windowsRuntimeTestSeam) {
+  if (!process.env.VITEST) throw new Error("TEST_SEAM_ONLY");
+  windowsRuntimeTestSeam = seam;
+}
 /** Private host policy: derived only from the actual installed process, never
  * a renderer resource root, trust flag, or injected verification callback. */
 export async function resolveWindowsBackupRuntime(requestedAge: string) {
   if (process.platform !== "win32" || process.arch !== "x64") fail("AGE_TOOL_PLATFORM_UNQUALIFIED");
-  const verifyHelper = createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
+  const seam = windowsRuntimeTestSeam;
+  const verifyHelper = seam
+    ? createWindowsBackupResourceResolver(seam.host, seam.overrides)
+    : createWindowsBackupResourceResolver({ resourcesPath: win32.join(win32.dirname(process.execPath), "resources"), currentExecutable: process.execPath });
   const { executable } = await verifyHelper();
   const ageExecutable = win32.join(win32.dirname(executable), "age.exe");
   if (typeof requestedAge !== "string" || requestedAge.toLowerCase() !== ageExecutable.toLowerCase()) fail("AGE_TOOL_UNVERIFIED");

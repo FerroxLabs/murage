@@ -27,7 +27,7 @@ const STATE: VoiceHostState = {
 function sse(frames: unknown[], init: { status?: number; seen?: (body: any) => void } = {}): typeof fetch {
   return (async (_url: string, request: RequestInit) => {
     init.seen?.(JSON.parse(String(request.body)));
-    if (init.status && init.status !== 200) return new Response(JSON.stringify({ error: { message: "no" } }), { status: init.status });
+    if (init.status && init.status !== 200) return new Response(JSON.stringify({ error: { message: "no", ...(init.status === 402 ? { code: "premium_locked" } : {}) } }), { status: init.status });
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -507,11 +507,19 @@ describe("voice host: no filler sound opening a reply (Sean 11-04)", () => {
     expect(dropLeadingFiller("Okay, give me a moment.")).toBe("Okay, give me a moment.");
     expect(dropLeadingFiller("Um")).toBe("Um");
     expect(dropLeadingFiller("Hmm, iOS supports that.")).toBe("iOS supports that.");
+    expect(dropLeadingFiller("Hmm, macOS supports that.")).toBe("macOS supports that.");
+    expect(dropLeadingFiller("Hmm, eBay has it.")).toBe("eBay has it.");
+    expect(dropLeadingFiller("Hmm, okay.")).toBe("Okay.");
   });
 
   it("checks the first sentence actually said, and still says a doubled reply once", async () => {
     expect(await spoken(["It is almost done. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
     expect(await spoken(["Hmm, revenue is up four percent. ", "Hmm, revenue is up four percent."])).toEqual(["Revenue is up four percent."]);
+  });
+
+  it("a first clause said without its filler is said once when the reply comes again without it", async () => {
+    expect(await spoken(["Hmm, so I can pull that ", "together for you, ", "and send it ", "after lunch. ", "So I can pull that together for you, and send it after lunch."]))
+      .toEqual(["So I can pull that together for you,", "and send it after lunch."]);
   });
 });
 

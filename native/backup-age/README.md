@@ -1,6 +1,6 @@
 # Windows backup transport source packet
 
-This adapter is **not wired into Windows platform admission or packaging**. No native Windows compile/runtime proof is recorded. The controlling record is `.planning/post-0152-review/B20-WINDOWS-TRANSPORT-CONTRACT.md`.
+This adapter **is wired in**: `electron/backup-mode.mjs` admits Windows backups through it, `server/installation-encrypted-backup.ts` creates and restores through `runWindowsBackupTransport`, and `electron-builder.yml` packages `murage-backup-age.exe` with the pinned `age.exe`. Native runtime proof: `server/installation-windows-backup-roundtrip.test.ts` (windows-latest CI) and `real-main-qualification/run.ps1` (packaged app, desktop session). The controlling record is `.planning/post-0152-review/B20-WINDOWS-TRANSPORT-CONTRACT.md`.
 
 `protocol.mjs` encodes the trusted caller request and validates helper control state. `transport.cpp` is the unelevated adapter. It accepts only `--parent <actual PID>`; all request values travel over private inherited stdin. The helper never accepts an executable argument. Its fixed sibling `age.exe` must match the recorded upstream SHA256. Signing/attestation policy and trusted installed-helper resolution remain a separate integration gate; this source does not enable an unsigned-release exception.
 

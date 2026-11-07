@@ -40,6 +40,7 @@ import { type ExecutionAudience } from "./work-admission.ts";
 import { type HumanPrincipal } from "./human-principals.ts";
 import { type ProjectCard } from "./project-records.ts";
 import { APP_CHILD_NOT_ALLOWED, assertNotAppChild, refuseAppChild } from "./app-trigger-zero.ts";
+import { readDoneWhen } from "./done-when.ts";
 
 export type EventReply = { status: number; body: unknown };
 
@@ -1029,6 +1030,10 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   const toBotId = resolveCoordinationTarget(senderForResolution, store.bots, String(body.toBotId ?? ""), (peer) => { const allowed = authorizeStatus({ edge: "peer", requesterBotId: senderForResolution.id, requesterThreadId: String(body.fromThreadId ?? defaultThreadId(senderForResolution)), targetBotId: peer.id, verb: "ask", tag: sourceExecutionAudience(senderForResolution.id, String(body.fromThreadId ?? defaultThreadId(senderForResolution))), ownerAudience: internalClaim.notOwnerAudience !== true, parentRequestId: roomAskParent(senderForResolution.id, String(body.fromThreadId ?? defaultThreadId(senderForResolution)))?.id }); if (!allowed.ok) refusals.set(peer.id, allowed.lineText); return allowed.ok || allowed.code === "shared_paused"; }, (peer) => refusals.get(peer.id)).id;
   const message = String(body.message ?? "").trim();
   const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : undefined;
+  // U4 S3: too long is refused before anything is queued; a value redaction would change is dropped (server/done-when.ts)
+  const doneWhenRead = readDoneWhen(body.doneWhen);
+  if (!doneWhenRead.ok) return sendBot(res, 400, botBody({ error: status("done_when_invalid") }));
+  const doneWhen = doneWhenRead.value;
   const depth = Number(body.depth ?? 0) || 0;
   if (!toBotId || !message) return sendBot(res, 400, botBody({ error: status("fields_required") }));
   const from = store.bot(fromBotId);
@@ -1073,7 +1078,7 @@ export async function delegateBotRoute(bx: DelegateBotRouteContext): Promise<voi
   assertNotAppChild(fromThreadId, "delegate");
   const queued = comms.queueDelegation(
     from,
-    { toBotId, message, reason, depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: (() => { try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId); } catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; } })() },
+    { toBotId, message, reason, ...(doneWhen ? { doneWhen } : {}), depth, ...(peerCardWaived ? { fullAccessWaived: true } : {}), ...(ownerSurfacesByThread.get(internalClaim.threadId) === false ? { notOwnerAudience: true } : {}), ...(isUnattended(fromThreadId) ? { unattended: true } : {}), routineAuthority: routinePeerSource(fromThreadId, fromBotId), executionAudience: sourceExecutionAudience(fromBotId, fromThreadId, true) ?? undefined, eventId: internalEventId, coordination: (() => { try { return coordinationBudget.advance(internalOwner.coordination, fromBotId, toBotId); } catch (error) { if (coordinationRefusalText(error) !== undefined) unrun(); throw error; } })() },
     MAX_COMMS_DEPTH,
     fromThreadId,
   );

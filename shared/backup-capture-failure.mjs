@@ -429,3 +429,74 @@ export function describeCaptureError(error, step) {
     ...tool,
   });
 }
+
+// 1.0.18 BACKUP-WAIT-SPACE (designs/BACKUP-PRUNE-LOCATION-1104.md D7, D8).
+// Every capture code has one class. A cause that passes by itself (a full disk,
+// an unplugged drive, a busy file, an interrupted step) makes the backup WAIT and
+// start again by itself; every other code stops for review with one reason and
+// "Try again". A wait never deletes anything to make room.
+export const BACKUP_WAIT_CAUSES = Object.freeze({
+  BACKUP_DISK_FULL: "space",
+  BACKUP_FOLDER_MISSING: "drive",
+  BACKUP_FILE_IN_USE: "busy",
+  BACKUP_WORKSPACE_CLOSING: "busy",
+  SNAPSHOT_CANCELLED: "interrupted",
+  AGE_TOOL_TIMEOUT: "interrupted",
+});
+
+/** "space" | "drive" | "busy" | "interrupted" for a code that waits, null for one that stops for review. */
+export function backupWaitCause(code) {
+  return typeof code === "string" && Object.hasOwn(BACKUP_WAIT_CAUSES, code) ? BACKUP_WAIT_CAUSES[code] : null;
+}
+
+/** "wait" or "review": the class of every capture code. */
+export function backupFailureClass(code) {
+  return backupWaitCause(code) ? "wait" : "review";
+}
+
+/** What starts a waiting backup again, by cause. Each one is checked on every scheduler tick. */
+export const BACKUP_WAIT_TRIGGERS = Object.freeze({
+  space: "space on the drives the backup uses reaches what the run needs",
+  drive: "the backup folder is there again",
+  busy: "the wait time passes",
+  interrupted: "the wait time passes",
+});
+
+/** How long a run that stopped waits before it tries again: 15 minutes, then an hour, then every hour. */
+export function backupWaitDelayMs(attempts) {
+  const n = Number.isSafeInteger(attempts) && attempts > 0 ? attempts : 0;
+  return n === 0 ? 15 * 60_000 : 60 * 60_000;
+}
+
+/** Bytes said as the size a person reads: "1.4 GB", "350 MB". */
+export function backupSizeWords(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes >= 1e9) return `${(Math.ceil(bytes / 1e8) / 10).toFixed(1)} GB`;
+  return `${Math.max(1, Math.ceil(bytes / 1e6))} MB`;
+}
+
+/** [COPY] The words for a waiting backup, on the Backups page, in the Inbox and in a notification.
+ * src/locales/en.json carries the same lines under backup.waiting.*; a test keeps them equal. */
+export const BACKUP_WAIT_SENTENCES = Object.freeze({
+  space: "Backups are waiting for space. Murage needs about {size} more on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+  data: "Backups are waiting for space. Murage needs about {size} more on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+  dataUnknown: "Backups are waiting for space on this computer's drive, where Murage keeps its data. Remove some files. The backup starts by itself when there's room.",
+  spaceUnknown: "Backups are waiting for space on the drive with your backup folder. Remove some files or choose a different folder. The backup starts by itself when there's room.",
+  drive: "Your backup drive isn't connected. Connect it and Murage backs up right away.",
+  busy: "Backups are waiting because a file Murage needs was in use. Murage tries again by itself soon.",
+  interrupted: "The last backup was interrupted before it finished. Murage tries again by itself soon.",
+});
+
+/** One sentence for a waiting backup (the coordinator's `waiting`), or "" when it isn't one. */
+export function backupWaitSentence(wait) {
+  const cause = wait && typeof wait === "object" ? wait.cause : null;
+  if (cause === "space") {
+    const size = backupSizeWords(wait.neededBytes);
+    const key = wait.drive === "data" ? "data" : "space";
+    return size ? BACKUP_WAIT_SENTENCES[key].replace("{size}", size) : BACKUP_WAIT_SENTENCES[`${key}Unknown`];
+  }
+  return typeof cause === "string" && Object.hasOwn(BACKUP_WAIT_SENTENCES, cause) && cause !== "spaceUnknown" ? BACKUP_WAIT_SENTENCES[cause] : "";
+}
+
+/** Stored stop counts include the first stop; the carried helper takes an index. */
+export const delayForStops = stops => backupWaitDelayMs(Math.max(0, stops - 1));

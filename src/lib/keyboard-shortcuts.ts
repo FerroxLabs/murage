@@ -1,7 +1,6 @@
 // Display-only reference inspired by upstream #946; no global key listener.
 // Each entry corresponds to the named handler in the current Murage source.
 import { t } from "@/lib/i18n";
-import { hx } from "@/components/help/help-copy";
 export interface Shortcut { id: string; description: string; keys: string[]; context: string }
 export interface ShortcutGroup { title: string; items: Shortcut[] }
 export const SHORTCUT_GROUPS: ShortcutGroup[] = [
@@ -17,8 +16,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     { id: "find", description: "Find in the current conversation", keys: ["Mod", "F"], context: "Bot or channel" },
     { id: "close", description: "Close the focused dialog or search", keys: ["Escape"], context: "Dialog, palette or find bar" },
     // 1.0.12 UX slice 4: the help panel (src/components/help/HelpPanel.tsx).
-    { id: "help", get description() { return hx("ux.l4a.shortcut.help"); }, keys: ["Mod", "/"], get context() { return hx("ux.l4a.shortcut.helpContext"); } },
-    { id: "help-question", get description() { return hx("ux.l4a.shortcut.helpQuestion"); }, keys: ["?"], get context() { return hx("ux.l4a.shortcut.helpQuestionContext"); } },
+    { id: "help", get description() { return t("ux.l4a.shortcut.help"); }, keys: ["Mod", "/"], get context() { return t("ux.l4a.shortcut.helpContext"); } },
+    { id: "help-question", get description() { return t("ux.l4a.shortcut.helpQuestion"); }, keys: ["?"], get context() { return t("ux.l4a.shortcut.helpQuestionContext"); } },
   ] },
   { title: "Composer", items: [
     { id: "send", description: "Send the draft", keys: ["Enter"], context: "When ready; suggestion menu closed" },

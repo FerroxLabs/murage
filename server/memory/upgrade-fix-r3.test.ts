@@ -427,6 +427,9 @@ it("R2-06: every connection that opens messages.db for writing installs the revi
   // revision can move. transcript-read-worker.ts (rc11-prune, 2c42e8927) is the event-log prune's forgotten-message lookup off the main thread.
   // memory/worker.ts (1.0.3 lane 2): the memory helper's handle on the key table for the age fill of the search index.
   const readOnlyOpeners = new Set(["transcript-read-worker.ts", "memory/worker.ts"]);
+  // settle-copy.ts (SMOOTH-FTS-MERGE, 1.0.16) writes only PRIVATE copies of messages.db (a partial being settled, never the live file);
+  // each copy site that later replaces or restores messages.db from one already writes its own epoch.
+  otherFiles.add("settle-copy.ts");
   for (const { file, text } of found) {
     if (otherFiles.has(file)) continue;
     if (healthOwnFiles.has(file)) {

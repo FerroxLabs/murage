@@ -63,7 +63,9 @@ it("words the conversation does not contain, or a line this bot may not read, ar
 });
 
 function say(id: string, at: number, role: "user" | "bot", text: string) {
-  appendMessage("thread", { id, at, role, origin: "desktop", kind: "text", text });
+  // Normal conversation appends extend the selected leaf (Store.addMessage).
+  const parentId = database().prepare("SELECT active_leaf_id FROM thread_state WHERE thread_id=?").get("thread")?.active_leaf_id as string | null;
+  appendMessage("thread", { id, at, role, origin: "desktop", kind: "text", text, parentId });
   for (let job = claimMemoryJob("fixture"); job; job = claimMemoryJob("fixture")) publishMemoryWork(job, "fixture", captureWork(job));
 }
 
