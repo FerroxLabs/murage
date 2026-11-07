@@ -200,9 +200,11 @@ export interface StreamRouteDeps {
  *  which is 4502 for every non-503 handshake failure. */
 function pageErrorFor(e: FluxStreamRefused | null): StreamError {
   if (!e) return fatal("capability_unavailable", "Couldn't reach Flux");
-  switch (failureForClose(e.closeCode)) {
+  switch (failureForClose(e.closeCode, e.error)) {
     case "auth":
       return fatal("unauthorized", "Flux did not accept the workspace key");
+    case "budget":
+      return fatal("key_budget_reached", "This Flux key has reached its budget");
     case "premium":
       return fatal("premium_locked", "streaming voice needs a paid Flux plan");
     case "rate_limit":

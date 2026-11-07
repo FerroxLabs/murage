@@ -162,11 +162,11 @@ async function open(page: Page, { width = 1440, skin = "light" } = {}) {
 }
 const tabs = (page: Page) => page.getByTestId("workspace-tab");
 const tabNamed = (page: Page, name: string) => page.getByTestId("workspace-tab").filter({ has: page.getByRole("tab", { name: new RegExp(`^${name.replace(".", "\\.")}`) }) });
-const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown source" });
+const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown text" });
 async function editInSource(page: Page) {
   await page.getByRole("button", { name: "Edit report.md" }).click();
   await expect(page.getByTestId("workspace-document")).toHaveAttribute("data-mode", "edit");
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("button", { name: "Markdown text", exact: true }).click();
   await expect(sourceBox(page)).toHaveValue(REPORT);
 }
 
@@ -421,7 +421,7 @@ test("a Save right after Stop waits for the stopped turn to close, and names the
   await request.get(`${origin}/__control/turn/stop`);
   await sourceBox(page).fill("# Weekly report\n\nEdited after a slow Stop.\n");
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByTestId("markdown-save-error")).toHaveText("File not saved: a stopped bot turn is still closing in this workspace. Your changes are still here; wait a moment and save again.");
+  await expect(page.getByTestId("markdown-save-error")).toHaveText("File not saved: the bot is still finishing up after being stopped in this workspace. Your changes are still here; wait a moment and save again.");
   await expect(page.getByTestId("markdown-file-status")).toHaveText("File not saved");
   await expect(sourceBox(page)).toHaveValue("# Weekly report\n\nEdited after a slow Stop.\n");
   expect(disk("report.md")).toBe("# Weekly report\n\nEdited while the bot worked.\n");

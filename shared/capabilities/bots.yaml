@@ -19,7 +19,7 @@ entries:
     doc: features/settings-guide#bot-settings
 
   - id: bots.channel-turns
-    name: Channel turn timeout
+    name: Time limit for bot activity in channels
     status: can
     questions:
       - How long does a bot keep working in a quiet channel?
@@ -30,7 +30,7 @@ entries:
       A bot's reply in a channel stops after a set number of minutes with no activity. A reply that
       keeps working runs as long as it needs, and time spent waiting on you does not count. The No
       activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.
-    settings_path: Settings → Bots → Advanced → Channel turn timeout
+    settings_path: Settings → Bots → Advanced → Time limit for bot activity in channels
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
@@ -39,5 +39,5 @@ entries:
       - file:src/lib/room-turn-timeout.ts#DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20
     verified: 1.0.10
     doc: features/chat-and-teams#rooms
-    internal: The card label is "Channel turn timeout" (settings.l1.card.botDefaults.channel-turns), not "Channel turns".
+    internal: The card label is "Time limit for bot activity in channels" (settings.l1.card.botDefaults.channel-turns), not "Channel turns".
 retired: []

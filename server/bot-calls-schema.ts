@@ -119,7 +119,7 @@ export const BOT_CALLS_109_OBJECTS: readonly string[] = Object.freeze([...BOT_CA
 export const LEGACY_SESSION_PRINCIPAL = "legacy:none";
 /** The only shapes a call principal takes (bot-calls-caller.ts): the desktop, or a Cloud device. LEGACY_SESSION_PRINCIPAL is
  *  neither, so no caller can ever be it. */
-export const CALL_PRINCIPAL = /^(?:desktop|cloud:[\w.:-]{1,200})$/;
+export const CALL_PRINCIPAL = /^(?:desktop|cloud:[\w.:-]{1,200}|companion:[\w-]+:[\w-]+)$/;
 
 export function initializeBotCalls(db: DatabaseSync): void {
   db.exec(RULES_DDL);

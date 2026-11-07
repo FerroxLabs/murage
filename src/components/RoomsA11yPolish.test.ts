@@ -11,7 +11,8 @@ describe("a room with Tool calls off (upstream 62f1c0264)", () => {
   it("hides a failed step like a 1:1 chat, and still shows a failed turn", () => {
     const room = read("./GroupView.tsx");
     expect(room).not.toContain('m.tool.ok === false || m.tool.name.startsWith("error:") || showToolCalls');
-    expect(room).toContain(') : m.tool.name.startsWith("error:") || showToolCalls ? (');
+    // U4 S3 also shows a step that carries a done-when line
+    expect(room).toContain(') : m.tool.name.startsWith("error:") || showToolCalls || hasDoneWhenLine(m.tool.doneWhen) ? (');
   });
 });
 

@@ -25,6 +25,7 @@ import {
 import { configureHandoffDispatch, configureSharedHandoffs } from "./handoff-dispatch.ts";
 import { drainDelegations, drainDelegationsRaw, fakeHost, rememberRun, runOf, startLikeIndex, writePrompt } from "./testing/handoff-turn.ts";
 import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
+import { discardInboxProjection } from "./inbox.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { _resetOwnerMigration, delegationAdmissionHeld, ensureHandoffPairGuard, delegationTurnKey, initializePendingDelegations, onDelegationAdmissionOpen, runOwnerHandoffMigration } from "./pending-delegations-schema.ts";
 import { recordOwnerDeletion } from "./owner-deletions.ts";
@@ -548,19 +549,22 @@ describe("F7. the idle release looks at one bounded page per pass, whatever the 
 
 // ── F8 ────────────────────────────────────────────────────────────────────────────────
 describe("F8. a 1.0.1 table that 1.0.2 grew is rebuilt from the executable original", () => {
-  it.skipIf(!haveV101)("room_requests with an appended column downgrades, keeps its rows, and the real 1.0.1 inspector accepts the file", async () => {
+  it.skipIf(!haveV101)("room_requests with an appended column downgrades, keeps its rows, and the real 1.0.1 inspector accepts the file without the inbox projection", async () => {
     const s = setup("room");
     queueDelegation(s.b, s.from, { toBotId: s.target.id, message: "keep me", depth: 0 }, 9);
     const rows = count("SELECT COUNT(*) AS n FROM room_requests");
     database().exec("ALTER TABLE room_requests ADD COLUMN grown_by_a_later_build TEXT");
     closeDatabase();
-    const result = downgradeInstallationMemorySchema(DATA_DIR, 6) as { status: string };
+    const result = downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true }) as { status: string };
     expect(result.status).toBe("downgraded");
     const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
     try {
       expect(db.prepare("SELECT COUNT(*) AS n FROM room_requests").get()).toMatchObject({ n: rows });
       expect((db.prepare("PRAGMA table_info(room_requests)").all() as Array<{ name: string }>).some((c) => c.name === "grown_by_a_later_build")).toBe(false);
       const { inspectInstallationDatabase } = await realV101();
+      // the inbox projection stays in a stepped file, 1.0.2's own step included; the rebuilt table is what is judged here
+      expect(() => inspectInstallationDatabase(db)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
+      discardInboxProjection(db);
       expect(() => inspectInstallationDatabase(db)).not.toThrow();
     } finally { db.close(); }
   }, 120_000);

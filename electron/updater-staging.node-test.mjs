@@ -17,7 +17,7 @@ function initialize(platform,env={},startOptions){
   updater.quitAndInstall=()=>installs++;
   let state={},options,timeouts=0,intervals=0;
   const context=vm.createContext({
-    updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:true},process:{platform,env},
+    queueMicrotask,updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:true},process:{platform,env},
     require:()=>({autoUpdater:updater}),updaterLogger:()=>({}),
     linuxPackageType:()=>null,HAND_OFF_TYPES:new Set(),createUpdateDownloadVerifier:()=>async()=>({recheck:async()=>{}}),createGithubFallbackFeed:()=>({activate:async()=>false,reset(){}}),installWindowsUpdateVerifier:()=>false,runningVersion:()=>"1.0.0",
     setState:patch=>{state={...state,...patch};},
@@ -72,4 +72,22 @@ test("shipped MacUpdater explicit false-policy path still stages then installs",
   Object.assign(instance,vm.runInNewContext(`({${method("quitAndInstall")},${method("handleUpdateDownloaded")}})`));
   instance.quitAndInstall();assert.deepEqual(order,["native-stage"]);
   native.emit("update-downloaded");assert.deepEqual(order,["native-stage","native-install","close-proxy"]);
+});
+test("T5 T14 actual wiring uses separate native events and publishes only on normal startup before ack",()=>{
+ const order=[],nativeOffer={version:"2.0.0",reason:"install-requested"};
+ const fallback={blocked:()=>null,offer:version=>{order.push("publish");return {status:"error",version};},peekPendingOffer:()=>{order.push("peek");return nativeOffer;},acknowledgePendingOffer:offer=>{assert.equal(offer,nativeOffer);order.push("ack");}};
+ const h=initialize("darwin",{},{scheduleChecks:false,installerFallback:fallback});
+ assert.deepEqual(order,[]);assert.deepEqual(h.timers(),{timeouts:0,intervals:0});
+ assert.equal(h.options.installerFallback.events,h.updater.nativeUpdater);assert.equal(h.options.nativeUpdater,null);
+ h.start({scheduleChecks:true,installerFallback:fallback});assert.deepEqual(order,["peek","publish","ack"]);
+});
+test("T14 failed publication retains the exact offer",()=>{
+ let ack=0;
+ const fallback={offer:()=>{throw Error("publication failed");},peekPendingOffer:()=>({version:"2.0.0"}),acknowledgePendingOffer:()=>{ack++;}};
+ const h=initialize("darwin",{},{scheduleChecks:false,installerFallback:fallback});
+ assert.throws(()=>h.start({scheduleChecks:true,installerFallback:fallback}),/publication failed/);assert.equal(ack,0);
+});
+test("T11 native quit classification expires before a later explicit Quit",async()=>{
+ const authority={generation:0,userQuitRequested:false};const h=initialize("darwin",{},{scheduleChecks:false,returnAuthority:authority});
+ h.updater.nativeUpdater.emit("before-quit-for-update");assert.equal(authority.nativeQuit,true);await Promise.resolve();assert.equal(authority.nativeQuit,false);
 });

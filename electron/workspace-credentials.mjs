@@ -24,6 +24,7 @@ export const WORKSPACE_CREDENTIALS = [
   { section: "webSearch", field: "tavilyApiKey", name: "tavilySearchApiKey", env: "MURAGE_TAVILY_SEARCH_KEY" },
   { section: "webSearch", field: "exaApiKey", name: "exaSearchApiKey", env: "MURAGE_EXA_SEARCH_KEY" },
   { section: "webSearch", field: "firecrawlApiKey", name: "firecrawlSearchApiKey", env: "MURAGE_FIRECRAWL_SEARCH_KEY" },
+  { section: "highlevel", field: "privateToken", name: "highlevelPrivateToken", env: "MURAGE_HIGHLEVEL_PRIVATE_TOKEN" },
 ];
 
 /** One boot-time sweep of config.json: move every plaintext workspace secret

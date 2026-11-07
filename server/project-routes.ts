@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { beginRead, beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { scopedTx } from "./tx-scope.ts";
 import { cardRequestIsReview } from "./project-card-executor.ts";
 import { roomRequest } from "./room-requests.ts";
@@ -142,14 +143,14 @@ export function handleProjectRoute(db: DatabaseSync, input: ProjectRouteInput): 
     return brief ? ok({ lifecycle, brief }) : error(404, "no such brief version");
   }
   return scopedTx(() => {
-    db.exec("SAVEPOINT project_route");
+    beginWrite(db, "project_route");
     try {
       const result = write();
       if (result.status >= 400) db.exec("ROLLBACK TO project_route");
-      db.exec("RELEASE project_route");
+      endWrite(db, "project_route");
       return result;
     } catch (cause) {
-      db.exec("ROLLBACK TO project_route; RELEASE project_route");
+      undoWrite(db, "project_route");
       throw cause;
     }
   }, (result) => result.status >= 400);
@@ -366,11 +367,14 @@ export async function handleProjectRouteWithInterrupt(db: DatabaseSync, input: P
     cardAction = !!(parsed.success && card && card.groupId === input.group?.id && ["interrupt", "cancel", "reassign", "take_over", "done"].includes(effectiveAction!));
     if (cardAction && card?.requestId && ["doing", "waiting"].includes(card.state)) liveCard = card;
   }
-  return applyProjectChangeWithInterrupt(db, apply, interrupt, { stopping: stopping || cardAction, liveCard, roomThreadId: input.group?.threadId });
+  // A GET (project, board, activity, versions, usage) only reads: it keeps one snapshot without the writer lock, so it never
+  // waits behind an owner write or a search-index merge slice (DBBUSY-1018).
+  const readOnly = input.method === "GET" && !end;
+  return applyProjectChangeWithInterrupt(db, apply, interrupt, { stopping: !readOnly && (stopping || cardAction), liveCard, roomThreadId: input.group?.threadId, readOnly });
 }
 
 export async function applyProjectChangeWithInterrupt<T extends { status: number } | null>(db: DatabaseSync, apply: () => T,
-  interrupt: ProjectInterrupt, options: { stopping: boolean; liveCard?: ProjectInterruptTarget | null; roomThreadId?: string }): Promise<T> {
+  interrupt: ProjectInterrupt, options: { stopping: boolean; liveCard?: ProjectInterruptTarget | null; roomThreadId?: string; readOnly?: boolean }): Promise<T> {
   const prepared: PreparedProjectInterrupt[] = [];
   let committed = false;
   try {
@@ -382,7 +386,7 @@ export async function applyProjectChangeWithInterrupt<T extends { status: number
       let liveChanged = false;
       // Preview every row effect, including descendant cancellations, then roll
       // back before touching engines. Failed validation never interrupts a run.
-      db.exec("SAVEPOINT project_preview");
+      beginWrite(db, "project_preview");
       let preview: T;
       try {
         preview = apply();
@@ -395,7 +399,7 @@ export async function applyProjectChangeWithInterrupt<T extends { status: number
               deskThreadId: request.target_thread_id as string | null ?? (request.verb === "assign" ? card?.deskThreadId ?? null : null) ?? options.roomThreadId ?? null });
           }
         }
-      } finally { db.exec("ROLLBACK TO project_preview; RELEASE project_preview"); }
+      } finally { undoWrite(db, "project_preview"); }
       if (!preview || preview.status >= 400) return preview;
       if (liveChanged && liveCard && !targets.some(target => target.deskThreadId === liveCard!.deskThreadId && target.assigneeBotId === liveCard!.assigneeBotId)) {
         const request = liveCard.requestId ? records.roomRequestById(db, liveCard.requestId) : null;
@@ -417,15 +421,15 @@ export async function applyProjectChangeWithInterrupt<T extends { status: number
       }
     }
     return scopedTx(() => {
-      db.exec("SAVEPOINT project_interrupt_apply");
+      if (options.readOnly) beginRead(db, "project_interrupt_apply"); else beginWrite(db, "project_interrupt_apply");
       try {
         const result = apply();
         if (result && result.status >= 400) db.exec("ROLLBACK TO project_interrupt_apply");
-        db.exec("RELEASE project_interrupt_apply");
+        endWrite(db, "project_interrupt_apply");
         committed = !!result && result.status < 400;
         return result;
       } catch (cause) {
-        db.exec("ROLLBACK TO project_interrupt_apply; RELEASE project_interrupt_apply");
+        undoWrite(db, "project_interrupt_apply");
         throw cause;
       }
     }, (result) => !!result && result.status >= 400);
@@ -449,12 +453,12 @@ function queuedCardReason(refusal: string): string {
 /** Owner goal transitions that issue a wake commit both effects together. */
 export function handleProjectGoalRouteWithWake(db: DatabaseSync, input: ProjectRouteInput, wake: () => void): ProjectRouteResult | null {
   return scopedTx(() => {
-    db.exec('SAVEPOINT project_goal_wake');
+    beginWrite(db, "project_goal_wake");
     try {
       const result = handleProjectRoute(db,input);
       if (result && result.status < 400) wake();
-      db.exec('RELEASE project_goal_wake');
+      endWrite(db, "project_goal_wake");
       return result;
-    } catch (error) { db.exec('ROLLBACK TO project_goal_wake; RELEASE project_goal_wake'); throw error; }
+    } catch (error) { undoWrite(db, "project_goal_wake"); throw error; }
   });
 }

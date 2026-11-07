@@ -1,1 +1,10 @@
-{}
+{
+  "ux.l6b.rail.more": "{n} more",
+  "ux.l6b.rail.moreShort": "+{n}",
+  "ux.l6b.rail.working": "{n} working",
+  "ux.l6b.rail.needYouOne": "1 needs you",
+  "ux.l6b.rail.needYouMany": "{n} need you",
+  "ux.l6b.rail.unread": "{n} unread",
+  "ux.l6b.rail.showMore": "Show {n} more bots",
+  "ux.l6b.rail.less": "Show less"
+}
