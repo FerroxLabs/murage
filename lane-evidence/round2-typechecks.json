@@ -1,0 +1,4 @@
+[
+  { "project": "tsconfig.json", "exitCode": 0, "diagnostics": "" },
+  { "project": "tsconfig.server.json", "exitCode": 0, "diagnostics": "" }
+]

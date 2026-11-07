@@ -3,6 +3,7 @@ import type { ProviderConnectionsService } from "../provider-connections.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { fluxKey } from "../flux-config.ts";
 import { FLUX_OPENAI_BASE } from "../flux-routing.ts";
+import { fluxKeyMayCall } from "../flux-key-models.ts";
 import { isCliLearningInstance } from "../drivers/cli-memory-learning.ts";
 import { healthEngineKind } from "../health/engine-kind.ts";
 import { isNetworkFailure, requestMemoryExtraction, requestMemoryInference, requestMemoryGrounding, type TextOnlyExtractor } from "./extract.ts";
@@ -21,7 +22,9 @@ const pinQuarantine=new Map<string,number>();
 let pinAnswered:string|null=null;
 export function clearPinQuarantineForTests(){pinQuarantine.clear();}
 function learningLine(line:string){try{console.info(`[memory] ${line}`);}catch{/* logging is best effort */}}
-const pinOpen=(key:string)=>(pinQuarantine.get(keyRevision(key))??0)<=clock();
+/** The pin is asked for only when the key's own Flux catalog lists it: a free-plan key (flux-fast and flux-auto only) and a key with
+ *  no catalog yet never send it (FLUX-FREE-MODEL 1.0.18), and a refused pin rests for six hours as before. */
+const pinOpen=(key:string)=>(pinQuarantine.get(keyRevision(key))??0)<=clock()&&fluxKeyMayCall(key,FLUX_PINNED_LEARNING_MODEL)==="yes";
 function quarantinePin(key:string,label:string){
   if(pinQuarantine.size>=PIN_MEMORY)pinQuarantine.delete(pinQuarantine.keys().next().value!);
   pinQuarantine.set(keyRevision(key),clock()+PIN_QUARANTINE_MS);

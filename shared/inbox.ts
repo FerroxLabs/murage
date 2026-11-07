@@ -117,6 +117,12 @@ export interface InboxItem {
   /** Nothing is owed on it, so the owner may clear it away (InboxStateUpdate
    *  `cleared`). It comes back only if it happens again. */
   clearable?: true;
+  /** APPROVALS-SIMPLE-1018 section 3: on a request row of `GET /api/inbox`, whether Approve all would answer it now
+   *  ("ok") or the reason it stays one at a time (a BulkReasonKey). The same verdict the preview and respond run. */
+  bulk?: string;
+  /** APPROVALS-SIMPLE-1018 section 1: on an approval row, its plain kind from the tool name (shared/bulk-kind.ts), for
+   *  the grey line "Runs a command · Petra · waiting since 06:39". Murage's fact, never the bot's words. */
+  toolKind?: "command" | "edit" | "app" | "other";
   link: InboxLink;
 }
 /** `after`: the `next` of the page before, to continue the list from there
@@ -136,6 +142,7 @@ export interface InboxMemoryWaiting {
 /** Learning stopped for the rest of the month because it reached the monthly learning limit (L6). Derived on every read from the
  *  memory ledger against the stored ceiling, never stored: it is gone after a raise or at the next month. Tokens only. */
 export interface InboxLearningPaused {
+  pausedBy?: "limit" | "unseen";
   month: string; input: number; output: number; inputUsed: number; outputUsed: number;
   /** the learning settings revision the "Double the limit and resume" request must carry */
   learningRevision: number;
@@ -168,6 +175,9 @@ export interface InboxPage {
   /** Owed items snoozed right now (UX L2B). They are left out of `decisions` and the segments, and they are still
    *  owed: snoozing is not answering, so the Needs you badge and the umbrella tab add this back. Absent when zero. */
   snoozedOwed?: number;
+  /** On a segment view (approvals, questions, connections): that segment's owed items snoozed right now, what its tab's
+   *  "N snoozed" line says. Absent when zero and on every other view. */
+  snoozedHere?: number;
   /** Unread news, on the same basis. */
   toRead: number;
   /** Permission owed on a specific drafted act. */
@@ -195,8 +205,11 @@ export interface InboxPage {
    *  follows the failure; the sentence says what failed and what to do.
    *  Desktop only, counted in `decisions` (backups stay paused until it is
    *  cleared, so it is owed) and in no segment, gone once the review is
-   *  cleared. See server/inbox-backup-notices.ts. */
-  backupFailed?: { sentence: string; at: number };
+   *  cleared. See server/inbox-backup-notices.ts. `code` is the capture code
+   *  (a closed set): for a translated whole-sentence code the Inbox shows the
+   *  locale sentence (shared/backup-capture-failure.mjs backupNoticeSentence);
+   *  `sentence` is the English fallback. */
+  backupFailed?: { sentence: string; at: number; code?: string };
   /** Health on the owner's read only: the quiet level, and `needs`, each one an ordinary Needs you item counted in
    *  `decisions` and in no segment, gone by itself once the problem clears. Everything else is on the Health screen. */
   health?: HealthInbox;

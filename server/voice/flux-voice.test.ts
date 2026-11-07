@@ -1,3 +1,4 @@
+import { resetUnavailable } from "./voice-routes.ts";
 // Flux transcription, driven against a stub rather than the live service —
 // same rule as tts.test.ts: what we send, and how a refusal is reported,
 // are the things that break.
@@ -68,6 +69,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
+  resetUnavailable();
   seen.length = 0;
   refuse = null;
 });
@@ -177,9 +179,9 @@ describe("refusals", () => {
     expect((await reasonFor(400, {})).retryable).toBe(false);
     // an account out of credit is a plan problem, not a rate limit
     const broke = await reasonFor(429, { error: { message: "You have no credits remaining. Add credits to continue.", code: "insufficient_quota" } });
-    expect(broke.reason).toBe("premium");
+    expect(broke.reason).toBe("budget");
     expect(broke.retryable).toBe(false);
-    expect(broke.message).toContain("no credits");
+    expect(broke.message).toContain("budget");
   });
 
   it("never puts the key in a message it could show someone", async () => {
@@ -225,4 +227,15 @@ describe("refusals decided locally", () => {
     });
     expect(seen).toHaveLength(0);
   });
+});
+
+for (const body of [{ error: { code: "key_budget_reached" } }, { error: "key_budget_reached" }]) it(`transcription keeps budget distinct: ${JSON.stringify(body)}`, async () => {
+  refuse = { status: 402, body };
+  await expect(transcribe({ bytes: CLIP, filename: "clip.ogg" }, { env: env() })).rejects.toMatchObject({ reason: "budget", retryable: false });
+});
+
+it("a spent transcription key sends no second upstream request", async () => {
+  refuse = { status: 402, body: { error: "key_budget_reached" } };
+  for (let i = 0; i < 2; i++) await expect(transcribe({ bytes: CLIP, filename: "clip.ogg", mime: "audio/ogg" }, { env: env() })).rejects.toMatchObject({ reason: "budget" });
+  expect(seen).toHaveLength(1);
 });

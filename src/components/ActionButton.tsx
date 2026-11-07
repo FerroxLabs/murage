@@ -23,7 +23,7 @@ export function progressLine(progress: Feedback["progress"]): string {
  * reader hears the line when it appears; a failure is announced as an alert.
  * `slowHint` is the sentence shown after the action has run for a while.
  */
-export function ActionStatus({ action, slowHint = "Still working. This can take a moment.", className = "" }: { action: Feedback; slowHint?: string; className?: string }) {
+export function ActionStatus({ action, slowHint = "Still working. This can take a moment.", retryLabel = "Retry", className = "" }: { action: Feedback; slowHint?: string; retryLabel?: string; className?: string }) {
   const progress = progressLine(action.progress);
   return (
     <div aria-live="polite" className={`min-w-0 text-[13px] ${className}`} data-action-status>
@@ -44,7 +44,7 @@ export function ActionStatus({ action, slowHint = "Still working. This can take 
       {action.error && !action.pending && (
         <p role="alert" className="flex flex-wrap items-center gap-2 text-danger" data-action-error>
           <span>{action.error}</span>
-          <button type="button" className="rounded px-1 underline hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => { void action.retry(); }}>Retry</button>
+          <button type="button" className="rounded px-1 underline hover:no-underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent" onClick={() => { void action.retry(); }}>{retryLabel}</button>
         </p>
       )}
     </div>
@@ -56,13 +56,14 @@ export interface ActionButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonE
   /** the idle label; falls back to the hook's `idle` option */
   children?: ReactNode;
   slowHint?: string;
+  retryLabel?: string;
   /** where the status line goes; "below" stacks it under the button */
   layout?: "beside" | "below";
   /** extra disabling from the caller (the button is always disabled while pending) */
   blocked?: boolean;
 }
 
-export function ActionButton({ action, children, slowHint, layout = "beside", blocked = false, className = "", type = "button", ...rest }: ActionButtonProps) {
+export function ActionButton({ action, children, slowHint, retryLabel, layout = "beside", blocked = false, className = "", type = "button", ...rest }: ActionButtonProps) {
   const label = action.pending ? action.label || children : children ?? action.label;
   return (
     <span className={`inline-flex min-w-0 gap-2 ${layout === "below" ? "flex-col items-start" : "flex-wrap items-center"}`}>
@@ -77,7 +78,7 @@ export function ActionButton({ action, children, slowHint, layout = "beside", bl
         {action.pending && <Loader2 size={13} className="mr-1.5 inline animate-spin" aria-hidden="true" />}
         {label}
       </button>
-      <ActionStatus action={action} slowHint={slowHint} />
+      <ActionStatus action={action} slowHint={slowHint} retryLabel={retryLabel} />
     </span>
   );
 }

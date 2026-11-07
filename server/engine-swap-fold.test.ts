@@ -666,3 +666,15 @@ describe("replyForStagedImages (a widget row never takes the turn's images)", ()
     expect(replyForStagedImages([row("a", "t0"), row("w", "t1", true)], "t1")).toBeUndefined();
   });
 });
+
+it.each(["direct", "room"])("OpenCode quiet notice persists in a %s thread without engine output", (kind) => {
+  const { fold, store, bot, scope } = foldFixture();
+  const threadId = kind === "room" ? store.createGroup("Quiet room", [bot.id]).threadId : bot.threadId;
+  if (kind === "room") (scope.groupSpeakers as Map<string, unknown>).set(threadId, { botId: bot.id, name: bot.name });
+  fold({ threadId, turnId: "quiet-turn", eventId: "quiet", type: "turn.diagnostic", category: "rate_limit", quietMs: 60000 });
+  const row = store.activePath(threadId).find(row => row.tool?.name === "OpenCode reported a rate limit. No reply for 60 seconds.");
+  expect(row).toBeDefined();
+  expect(row?.murageLine).toBe(true);
+  expect(row?.tool?.ok).toBe(true);
+  expect(isEngineOutput(row!)).toBe(false);
+});

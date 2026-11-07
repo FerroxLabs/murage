@@ -7,6 +7,7 @@ import { isSegmentLimitError } from "./segment-limit.ts";
 import { answerQuery } from "./worker-query.ts";
 import { MemoryEmbeddings,type ModelManifest } from "./embeddings.ts";
 import { MAINTENANCE_POLL_MS,maintenanceMayRun,maintenanceRetryDelayMs,type MaintenanceClock } from "./maintenance-schedule.ts";
+import { osWriteBlocks } from "../io-written.ts";
 import { DatabaseSync } from "node:sqlite";
 import { statfsSync } from "node:fs";
 import { dirname } from "node:path";
@@ -22,17 +23,23 @@ const yieldToMessages=()=>new Promise<void>(resolve=>setImmediate(resolve));
 /** What this process has written so far, as the parent reads its own writes (io-budget.ts readProcess): the index lives in this
  * process, so its writes are reported to the parent, which charges them to the io-budget under "memory-worker" and paces index
  * work like any other writer. Every index acknowledgement carries the count; idle maintenance reports it on its own
- * (reportIo), at most once per IO_REPORT_MS while it runs and once when a loop ends, so a merge paid between batches is budgeted. */
-const writtenBlocks=()=>process.resourceUsage().fsWrite;
+ * (reportIo), at most once per IO_REPORT_MS while it runs and once when a loop ends, so a merge paid between batches is budgeted.
+ * Two counts ride together: fsWriteBlocks (the OS floor; 0 on win32, where fsWrite counts pipe and IPC writes too) and ioBytes, the
+ * index's WAL frames (cumulative, this process). The parent charges the larger growth of the two, so Windows still sees index writes. */
+const writtenBlocks=()=>osWriteBlocks();
+/** The index's own log reader (MemoryIndex.ioBytes): it is opened after the index handle and closed only after db.close(), so the
+ * worker never opens or closes a descriptor on the shm itself (closing one drops the process's locks on it, io-written.ts). */
+const walBytes=()=>{try{return index?.ioBytes?.()??0;}catch{return 0;}};
 const IO_REPORT_MS=10_000;
-let ioReportedAt=0,ioReportedBlocks=0;
+let ioReportedAt=0,ioReportedBlocks=0,ioReportedBytes=0;
 function reportIo(force=false){
   const now=Date.now();
+  const bytes=walBytes();// sampled on every call, before the throttle: a checkpoint between reports must not drop frames
   if(!force&&now-ioReportedAt<IO_REPORT_MS)return;
   const blocks=writtenBlocks();
-  if(blocks===ioReportedBlocks&&!force)return;
-  ioReportedAt=now;ioReportedBlocks=blocks;
-  process.send?.({type:"io",fsWriteBlocks:blocks});
+  if(blocks===ioReportedBlocks&&bytes===ioReportedBytes&&!force)return;
+  ioReportedAt=now;ioReportedBlocks=blocks;ioReportedBytes=bytes;
+  process.send?.({type:"io",fsWriteBlocks:blocks,ioBytes:bytes});
 }
 const cancelled=new Set<string>();
 const scopeParts=new ScopeAssembler();
@@ -101,8 +108,8 @@ async function drain(){
         // (index.ts upsert) and is drained by the scrub timer, one merge for every deletion so far; no batch waits on it (MEMDEL-SIMPLIFY-109).
         const scrubOwed=Boolean(index.deletionScrubPending?.());
         if(scrubOwed&&!scrubTimer)armDeletionScrub(SCRUB_STEP_GAP_MS);
-        // the batch's writes, charged by the parent to the io-budget (fsWriteBlocks: see reportIo)
-        process.send?.({type:"index-result",requestId:batch.requestId,embeddingStatus,scrubOwed,records:batch.records.map(r=>({id:r.id,version:r.version,deleted:r.deleted})),fsWriteBlocks:writtenBlocks()});
+        // the batch's writes, charged by the parent to the io-budget (fsWriteBlocks and ioBytes: see reportIo)
+        process.send?.({type:"index-result",requestId:batch.requestId,embeddingStatus,scrubOwed,records:batch.records.map(r=>({id:r.id,version:r.version,deleted:r.deleted})),fsWriteBlocks:writtenBlocks(),ioBytes:walBytes()});
         queryBatchServed=false;
       }
     }
@@ -286,7 +293,8 @@ process.on("message",input=>{
       if(typeof message.wasmIdleExitMs==="number"&&message.wasmIdleExitMs>=50)wasmIdleExitMs=message.wasmIdleExitMs;
       startIdleCheck();
       if(index||typeof message.indexPath!=="string"||typeof message.modelDirectory!=="string"||(!message.manifest||typeof message.authorityPath!=="string"))throw new Error("invalid initialization");
-      eligibility=new MemoryEligibility(message.authorityPath!);index=new MemoryIndex(message.indexPath);
+      eligibility=new MemoryEligibility(message.authorityPath!);
+      index=new MemoryIndex(message.indexPath);// the index owns its log reader (opened after its handle, closed after it)
       authorityPath=message.authorityPath!;indexPath=message.indexPath;
       // An index an earlier build left at FTS5's segment limit takes no writes at all: compact it before anything else writes.
       try{index.recoverSegments?.();}catch(error){console.error(`index compaction failed: ${describe(error)}`);}
