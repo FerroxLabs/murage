@@ -16,6 +16,7 @@ import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, isDatabaseBusy, noteBusy, setBusy 
 import { txScopeBegin, txScopeEnd } from "../tx-scope.ts";
 import { noteIdentityEpoch } from "./provenance-stamp.ts";
 import { NOISY_SYSTEM_SUBJECTS, bumpLearningFence } from "./authority-epoch.ts";
+import { memoryLookup } from "./deny-read.ts";
 import { MemorySendFenced } from "./learning-send-fence.ts";
 
 /** The lock was held by another connection past the background budget: nothing was released, the call is deferred, not dropped. */
@@ -171,6 +172,8 @@ export function heldRefsCurrent(db: DatabaseSync, refs: HeldRefs): boolean {
     if (ref.digest !== undefined && digestOf(String(row.text)) !== ref.digest) return false;
     if (db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(ref.id, ref.version)) return false;
   }
+  const sources=(refs.sources??[]).map(ref=>({kind:"source" as const,id:ref.id,version:ref.revision}));
+  for(const verdict of memoryLookup(db,sources,{audience:null,ownFlag:true}).values())if(verdict.state!=="shown")return false;
   for (const ref of refs.sources ?? []) {
     const row = db.prepare("SELECT s.revision,s.state,v.payload FROM memory_sources s LEFT JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=?").get(ref.id);
     if (!row || Number(row.revision) !== ref.revision || row.state !== "active") return false;
@@ -194,7 +197,9 @@ export type LearningPurpose = "extraction" | "grounding" | "evaluation" | "refle
 export interface LearningGateOptions {
   /** Non-row state checks (the PIP stamp, settingsCurrent, the GEPA assertCurrent): any throw refuses. */
   checks?: ReadonlyArray<() => void>;
-  /** Runs under the lock after the check and before the release (PIP's paid-call charge); a throw refuses with nothing released. */
+  /** Durably charge before BEGIN; return a best-effort refund for a refusal before release. */
+  preSend?: () => (() => void);
+  /** Runs under the lock after the check and before the release; a throw refuses with nothing released. */
   onAdmit?: () => void;
   /** The refusal to throw (PIP's readMoved); MemorySendFenced by default. */
   refuse?: () => Error;
@@ -251,9 +256,11 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
     const db = database();
     // 0: a caller's own transaction could roll back what the check rests on
     if (db.isTransaction) fail();
-    let began = false, committed = false, scoped = false;
+    let began = false, committed = false, scoped = false, started = false;
+    let refund: (() => void) | undefined;
     const start = performance.now();
     try {
+      try { refund = options.preSend?.(); } catch (error) { if (isDatabaseBusy(error)) throw new MemorySendBusy(); throw error; }
       setBusy(db, BACKGROUND_BUSY_MS);
       noteIdentityEpoch(db);
       try { db.exec("BEGIN IMMEDIATE"); began = true; }
@@ -266,6 +273,7 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
       checkHeld(db);           // 2
       options.onAdmit?.();     // 3 (nests as a SAVEPOINT through transaction())
       released++;              // 4
+      started = true;
       let out: R | undefined;
       try { out = then?.(); }
       finally {
@@ -285,6 +293,7 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
       if (began) { try { if (db.isTransaction) db.exec("ROLLBACK"); } catch { /* reported by the caller's error */ } }
       if (scoped) txScopeEnd(committed);
       gateOwnsTransaction = false;
+      if (!started && refund) { try { refund(); } catch { /* a failed refund keeps the durable charge */ } }
       try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ }
     }
   };

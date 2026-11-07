@@ -54,6 +54,11 @@ describe("ActionButton", () => {
 });
 
 describe("ActionStatus", () => {
+  it("accepts a translated retry label through ActionButton", () => {
+    const out = renderToStaticMarkup(createElement(ActionButton, { action: { ...idle, error: "Fehlgeschlagen." }, retryLabel: "Erneut versuchen" }));
+    expect(out).toContain(">Erneut versuchen<");
+    expect(out).not.toContain(">Retry<");
+  });
   it("stands alone for a control that is not a button", () => {
     const out = renderToStaticMarkup(createElement(ActionStatus, { action: { ...idle, error: "No." } }));
     expect(out).toContain('role="alert"');
