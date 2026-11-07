@@ -54,7 +54,7 @@ describe.skipIf(!have101 || process.platform === "win32")("the real 1.0.1 server
     } finally { db.close(); }
 
     // ── the step "Prepare to reinstall Murage 1.0.1" ──
-    const result = downgradeInstallationMemorySchema(a.info.dataDir, 6) as { handoffs?: number };
+    const result = downgradeInstallationMemorySchema(a.info.dataDir, 6, { testOnlyBefore102: true }) as { handoffs?: number };
     expect(result.handoffs).toBe(2);
     const exported = new DatabaseSync(join(a.info.dataDir, "messages.db"), { readOnly: true });
     try { expect(exported.prepare("SELECT state FROM room_requests WHERE id='busy-b'").get()).toMatchObject({ state: "queued" }); } finally { exported.close(); }

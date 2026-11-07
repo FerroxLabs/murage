@@ -43,3 +43,20 @@ export function threadDenied(db: DatabaseSync, threadId: string): boolean {
 export function sourceDenied(db: DatabaseSync, id: string): boolean {
   return Boolean(db.prepare(`SELECT 1 FROM memory_sources s WHERE s.id=? AND ${DENIED_SOURCE("s")}`).get(id));
 }
+
+/** Background work keeps a conservative publication fence across conversation deletions.
+ * This durable counter is deliberately separate from the foreground authority epoch.
+ * One primary-key lookup, independent of the number of deleted conversations. */
+export function learningDeletionEpoch(db: DatabaseSync): number {
+  return Number(db.prepare("SELECT deletion_epoch + COALESCE((SELECT revision FROM memory_scope_bindings WHERE id='thread-deletion-clock'),0) AS epoch FROM memory_meta WHERE id=1").get()!.epoch);
+}
+export function noteThreadDeletion(db: DatabaseSync): void {
+  // Prefer the roster's workspace (one key lookup). Offline/empty files may have
+  // no roster yet; a private bookkeeping scope keeps this counter out of bot deletion.
+  let scope = db.prepare("SELECT scope_id FROM memory_scope_bindings WHERE id='memory-roster-policy'").get()?.scope_id;
+  if (!scope) {
+    scope = "system:thread-deletion-clock";
+    db.prepare("INSERT OR IGNORE INTO memory_scopes VALUES(?,'workspace','system:thread-deletion-clock','[]',0)").run(scope);
+  }
+  db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES('thread-deletion-clock',?,'system','thread-deletion-clock',1,'granted','{}') ON CONFLICT(id) DO UPDATE SET revision=revision+1").run(scope);
+}

@@ -13,7 +13,7 @@ import { connectionId, database, transaction } from "../database.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { ensureScope } from "./policy.ts";
-import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, type TextOnlyExtractor } from "./extract.ts";
+import { withContinuityInferenceLease, continuityDay, reportMemoryUsage, reconcileRecentMonths, type TextOnlyExtractor } from "./extract.ts";
 import { digestOf, isMemorySendBusy, learningGate, sampleLearningFence } from "./learning-send.ts";
 import { admissibleActionSources, admissibleOwnerSources, admissionStamp, admissionVector, eachPageNow, forEachThreadSourcePage, hasAdmissibleAfter, hasAdmissibleAfterSliced, livedRowAdmissible, livedRowStillShown, newestThreadSource, readShownNow, readShownSliced, settingsGen, compareAdmitted, stampMoved, THREAD_SOURCE_PAGE_ROWS, visitAdmittedActionSourcesSliced, visitAdmittedOwnerSourcesSliced, admissibleOwnerSourcesSliced, admissibleActionSourcesSliced, type AdmissionStamp, type AdmittedSource, type StampCheck, type WalkAnswer } from "./pip-admission.ts";
 import { heldStep } from "../observe.ts";
@@ -38,6 +38,8 @@ export const WINDOW_BYTES = 24 * 1024;
 export const REQUEST_BYTES = 60_000;
 export const SYSTEM_BYTES = 4096;
 export const TRANSIENT_RETRY_MS = [3_600_000, 4 * 3_600_000, 24 * 3_600_000] as const;
+// Cooldown is per bot: enabling more families makes one family pause them all for two hours.
+// Whoever enables them must decide whether that shared cooldown should stand.
 export const FAMILIES = ["lived"] as const;
 /** Reads of one family in one run that may move (PIP-REDESIGN 2.4) before it is refused as unstable: a moved read is not a provider
  *  failure, so it never spends a transport attempt; the fourth move refuses with the cooldown, and nothing is ever published from a read
@@ -746,15 +748,24 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
   // An adapter that never calls its fence is charged when its call returns (the next attempt's cap check sees it).
   let charged = false;
   const fence = (): AdmissionFenceAnswer => { const answer = check(); if (answer !== "none") return answer; const paid = chargePaidCall(bot.id, runId, family, attempt); charged = paid === "none"; return paid; };
-  // The call's one gate (r8 section 1): the stamp check and the counter under the write lock, then the paid charge (onAdmit, a SAVEPOINT
-  // inside the gate's transaction), then the release at the adapter's physical write. A refusal names the move that caused it.
+  // Charge durably before the send transaction; the stamp and held rows remain the release fence.
   let movedKind: Exclude<AdmissionFenceAnswer, "none"> = "moved";
   // Holds every `current` row the envelope shows (id, version, read-time digest: an owner edit supersedes it, identity.ts:120) and every
   // shown source at its revision (Astra code r1 H1); the admission stamp stays as the extra check.
   const shownRefs = { records: rows.map(r => ({ id: r.id, version: r.version, digest: r.digest })), sources: snap.sources.map(x => ({ id: x.sourceId, revision: x.revision })) };
   const gate = learningGate("continuity", fenceAt, shownRefs, {
     checks: [() => { const answer = check(); if (answer !== "none") { movedKind = answer; throw readMoved(answer); } }],
-    onAdmit: () => { const paid = chargePaidCall(bot.id, runId, family, attempt); if (paid !== "none") throw readMoved(paid); charged = true; },
+    preSend: () => {
+      const paid = chargePaidCall(bot.id, runId, family, attempt);
+      if (paid !== "none") throw readMoved(paid);
+      charged = true;
+      return () => {
+        mutateReflect(bot.id, s => {
+          const f = s.run?.families[family];
+          if (s.run?.runId === runId && f?.attempt === attempt) f.paidCalls = Math.max(attempt - 1, (f.paidCalls ?? 0) - 1);
+        });
+      };
+    },
     refuse: () => readMoved(movedKind),
   });
   const turn = async (call: TextOnlyTurnInput): Promise<TextOnlyTurnResult> => {
@@ -788,7 +799,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
         const probe = await turn({ ...input, system: requestSystem, text: requestText, outputSchema: { type: "object", properties: { ok: { const: true } }, required: ["ok"], additionalProperties: false } });
         mutateReflect(bot.id, s => {
           const f = s.run?.families[family];
-          if (s.run?.runId !== runId || f?.attempt !== attempt) return;
+          if (s.run?.runId !== runId || f?.attempt !== attempt || !probe.isolation.exited) return;
           const entry = s.support[route.fingerprint] ?? { status: "ok" as const, reason: "", at: nowOf(deps) };
           s.support[route.fingerprint] = { ...entry, probe: { at: nowOf(deps), verdict: probe.verdict } };
         });
@@ -839,7 +850,7 @@ async function attemptFamily(deps: ReflectDeps, bot: ReflectBot, runId: string, 
     if (box.transportError.kind === "paid-cap") return refusePaidCap(deps, bot.id, runId, family, attempt);
     return noteReadMove(deps, bot, runId, family, attempt, rec0.state, withDeadline.deadlineAt);
   }
-  if (box.probe && box.captured?.verdict.state === "validated") {
+  if (box.probe && box.captured?.isolation.exited && box.captured.verdict.state === "validated") {
     mutateReflect(bot.id, s => { if (box.captured?.reportedOverLimit) s.reportedOverLimit = true; const f = s.run?.families[family]; if (s.run?.runId === runId && f?.attempt === attempt) { f.state = "pending"; f.transport = undefined; } });
     return { status: "idle", runId, botId: bot.id };
   }
@@ -887,6 +898,7 @@ function noteReadMove(deps: ReflectDeps, bot: ReflectBot, runId: string, family:
 /** Charges one paid call of `family` (the adapter's fence, immediately before dispatch): "none" lets the call go, "paid-cap" refuses it with
  *  nothing sent, "moved" when the attempt is no longer the run's. */
 function chargePaidCall(botId: string, runId: string, family: Family, attempt: number, after = false): AdmissionFenceAnswer {
+  if (database().isTransaction) throw new Error("PAID_CHARGE_IN_TRANSACTION");
   return mutateReflect(botId, (s): AdmissionFenceAnswer => {
     const r = s.run, f = r?.families[family];
     if (!r || r.runId !== runId || !f || f.attempt !== attempt) return "moved";
@@ -925,9 +937,11 @@ function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Fam
     if (!r || r.runId !== runId || !f || f.attempt !== attempt || !["requested", "uncertain-transport"].includes(f.state)) return { status: "idle" };
     if (got.leaseRefusal) {
       // Certain not-started: nothing was spent beyond a refused reservation.
+      f.transport = undefined;
       const reason = got.leaseRefusal;
-      f.state = reason === "budget-exhausted" || reason === "spend-ceiling" ? "refused:cap" : "refused:transient"; f.reason = reason;
-      if (reason === "extractor-busy" || reason === "request-busy") { f.state = "pending"; return { status: "idle", reason, runId, botId: bot.id }; }
+      const states: Record<string, FamilyStateName> = { "spend-ceiling": "refused:monthly-limit", "unseen-calls": "refused:unseen-calls", "call-pace": "refused:call-pace", "daily-bytes": "refused:cap", "budget-exhausted": "refused:cap" };
+      f.state = states[reason] ?? "refused:transient"; f.reason = reason;
+      if (reason === "extractor-busy" || reason === "request-busy" || reason === "cancelled") { f.state = "pending"; return { status: "idle", reason, runId, botId: bot.id }; }
       noteRefusal(s, now, runId, f.state, reason);
       return { status: "refused", reason, runId, botId: bot.id };
     }
@@ -944,6 +958,10 @@ function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Fam
     if (result.reportedOverLimit || (result.usage?.outputTokens ?? 0) > 3000) { f.reportedOverLimit = true; s.reportedOverLimit = true; }
     const verdict: Verdict = result.verdict;
     s.support[route.fingerprint] = { ...(s.support[route.fingerprint] ?? { status: "ok", reason: "", at: now }), history: recordMiss(got.history, verdict) };
+    if (!result.isolation.exited) {
+      f.state = "uncertain-transport"; f.reason = verdict.state === "uncertain-transport" ? verdict.reason : "unconfirmed-exit";
+      return { status: "uncertain", reason: f.reason, runId, botId: bot.id };
+    }
     switch (verdict.state) {
       case "validated": {
         let parsed: unknown;
@@ -979,7 +997,8 @@ function conclude(deps: ReflectDeps, bot: ReflectBot, runId: string, family: Fam
           return { status: "refused", reason: "transient", runId, botId: bot.id };
         }
         noteRefusal(s, now, runId, `refused:${verdict.reason}`, verdict.detail);
-        if (verdict.counted) return retryOrStop(s, f, `${verdict.reason}:${verdict.detail}`, "unstable");
+        if (verdict.counted && paidCallsOf(s, s.run!, f) < MAX_PAID_CALLS) return retryOrStop(s, f, `${verdict.reason}:${verdict.detail}`, "unstable");
+        if (verdict.counted) s.cooldownUntil = now + COOLDOWN_MS;
         f.state = `refused:${verdict.reason}`; f.reason = verdict.detail;
         return { status: "refused", reason: verdict.reason, runId, botId: bot.id };
     }
@@ -1362,6 +1381,7 @@ export function sweepUnadmittedResults(deps: ReflectDeps): number {
 /** Startup and bounded maintenance ticks run without inference eligibility. */
 const nextOrphanDiscovery = new WeakMap<ReflectDeps, number>();
 export async function maintainPip(deps: ReflectDeps, options: { startup?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+  reconcileRecentMonths();
   const between = sliceBetween(), signal = options.signal;
   // a stop ends maintenance at the next page, directory entry or 25 ms poll of whatever it is awaiting (2.5)
   if (signal?.aborted) return;

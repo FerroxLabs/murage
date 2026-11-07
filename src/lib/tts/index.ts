@@ -14,6 +14,7 @@
 // transcripts, and keeping it in one place is the same reasoning as the
 // server-computed approval key.
 
+import { t } from "../i18n";
 import { desktopCallerHeaders } from "../live-events";
 
 export type SpeechStatus = "idle" | "preparing" | "speaking";
@@ -34,6 +35,9 @@ export interface SpeechSnapshot {
 }
 
 interface SpeakOptions {
+  call?: boolean;
+  budgetClosing?: boolean;
+  onBudget?: () => void;
   voiceId?: string;
   botId?: string;
   messageId?: string;
@@ -42,7 +46,14 @@ interface SpeakOptions {
 }
 
 type TtsPrepareBody = { ready?: boolean; utterances?: string[]; error?: string };
-type TtsErrorBody = { error?: string };
+type TtsErrorBody = { error?: string; code?: string };
+
+/** How long a "budget reached" answer holds this window's voice: the harness
+ *  holds the key the same ten minutes (VOICE-402-STOP). */
+export const VOICE_BUDGET_HOLD_MS = 10 * 60_000;
+/** The harness said the Flux key's budget is used up: the reply ends here,
+ *  and the next messages are not sent for speech until the hold ends. */
+export class VoiceBudgetPaused extends Error {}
 
 const IDLE: SpeechSnapshot = { status: "idle" };
 
@@ -465,6 +476,21 @@ export class Speaker {
    * that should take a caller's turn down with it.
    */
   async speak(text: string, opts: SpeakOptions = {}): Promise<void> {
+    if (!opts.budgetClosing) return this.speakOnce(text, opts);
+    const done = this.speakOnce(text, opts);
+    const mine = this.token;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([done, new Promise<void>(resolve => {
+        timer = setTimeout(() => {
+          if (this.token === mine) this.stop();
+          resolve();
+        }, 5000);
+      })]);
+    } finally { clearTimeout(timer); }
+  }
+
+  private async speakOnce(text: string, opts: SpeakOptions): Promise<void> {
     this.stop();
     const mine = this.token;
     const controller = new AbortController();
@@ -475,7 +501,7 @@ export class Speaker {
     this.set({ status: "preparing", botId: opts.botId, messageId: opts.messageId });
     let utterances: string[];
     try {
-      utterances = await this.prepare(text, opts.voiceId, controller.signal, opts.botId);
+      utterances = opts.budgetClosing ? [text.trim()].filter(Boolean) : await this.prepare(text, opts.voiceId, controller.signal, opts.botId);
     } catch (e) {
       if (live()) this.set({ ...IDLE, botId: opts.botId, messageId: opts.messageId, error: e instanceof Error ? e.message : String(e) });
       if (this.request === controller) this.request = null;
@@ -493,7 +519,7 @@ export class Speaker {
     // turn — the only gap the listener hears is the first.
     type Rendered = { blob: Audible; error?: never } | { blob?: never; error: unknown };
     const render = (utterance: string): Promise<Rendered> =>
-      this.render(utterance, opts.voiceId, controller.signal, opts.botId, player, undefined, isPreview(opts.messageId)).then(
+      this.render(utterance, opts.voiceId, controller.signal, opts.botId, player, undefined, isPreview(opts.messageId), opts).then(
         (blob) => ({ blob }),
         (error: unknown) => ({ error }),
       );
@@ -511,8 +537,9 @@ export class Speaker {
         const message = rendered.error instanceof Error ? rendered.error.message : String(rendered.error);
         failures += 1;
         if (!live()) return;
-        if (failures >= MAX_CLIPS_FAILED_IN_A_ROW || i + 1 >= utterances.length) {
+        if (rendered.error instanceof VoiceBudgetPaused || failures >= MAX_CLIPS_FAILED_IN_A_ROW || i + 1 >= utterances.length) {
           this.fail(opts, message, mine);
+          if (rendered.error instanceof VoiceBudgetPaused) opts.onBudget?.();
           if (this.request === controller) this.request = null;
           // the sentence after this one may already be downloading: nobody
           // will play it, so stop it here (stop() cannot reach it any more)
@@ -630,7 +657,7 @@ export class Speaker {
     let firstKind: PlayerKind | null = null;
     const render = (text: string): Promise<Rendered> => {
       const clipTiming = firstTiming ? undefined : (firstTiming = { requestedAt: Date.now(), headersAt: null, firstByteAt: null });
-      return this.render(text, opts.voiceId, controller.signal, opts.botId, player, clipTiming).then(
+      return this.render(text, opts.voiceId, controller.signal, opts.botId, player, clipTiming, false, opts).then(
         (blob) => {
           if (clipTiming) firstKind = blob instanceof Incoming ? (player.streams ? "native" : "mse") : "blob";
           return { text, blob };
@@ -695,8 +722,9 @@ export class Speaker {
           const error = rendered.error;
           const message = error instanceof Error ? error.message : String(error ?? "the voice failed");
           failures += 1;
-          if (failures >= MAX_CLIPS_FAILED_IN_A_ROW || (!next && !queue.length && ended)) {
+          if (error instanceof VoiceBudgetPaused || failures >= MAX_CLIPS_FAILED_IN_A_ROW || (!next && !queue.length && ended)) {
             this.fail(opts, message, mine);
+            if (error instanceof VoiceBudgetPaused) opts.onBudget?.();
             controller.abort();
             return false;
           }
@@ -793,19 +821,35 @@ export class Speaker {
   }
 
   /** The whole clip for `text`, from /api/tts/speak. For short fixed phrases (the call's cue clips). */
-  async fetchClip(text: string, opts: { botId?: string; voiceId?: string; signal?: AbortSignal }): Promise<Blob> {
+  async fetchClip(text: string, opts: SpeakOptions & { signal?: AbortSignal }): Promise<Blob> {
+    const generation = this.budgetGeneration;
+    const live = () => generation === this.budgetGeneration && !opts.signal?.aborted;
+    if (!live()) throw new DOMException("Aborted", "AbortError");
+    if (this.now() < this.budgetHeldUntil) {
+      opts.onBudget?.();
+      throw new VoiceBudgetPaused(this.budgetLine);
+    }
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
-      body: JSON.stringify({ text, voiceId: opts.voiceId, botId: opts.botId }),
+      body: JSON.stringify({ text, voiceId: opts.voiceId, botId: opts.botId, ...(opts.call ? { call: true } : {}) }),
       signal: opts.signal,
     });
     if (!res.ok) {
       const body: TtsErrorBody = await res.json().catch(() => ({}));
+      if (!live()) throw new DOMException("Aborted", "AbortError");
+      if (res.status === 402 && body.code === "voice_budget_reached") {
+        this.budgetHeldUntil = this.now() + VOICE_BUDGET_HOLD_MS;
+        this.budgetLine = t("voice.budgetReached");
+        opts.onBudget?.();
+        throw new VoiceBudgetPaused(this.budgetLine);
+      }
       throw new Error(voiceFailure(res.status, body.error));
     }
-    return res.blob();
+    const clip = await res.blob();
+    if (!live()) throw new DOMException("Aborted", "AbortError");
+    return clip;
   }
 
   // botId: the harness speaks with that agent's own voice service
@@ -826,19 +870,36 @@ export class Speaker {
   }
 
   /** Resolves as soon as the audio starts arriving; see Incoming. */
-  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId: string | undefined, player: ClipPlayer, timing?: ClipTiming, preview = false): Promise<Audible> {
+  /** Until when the Flux key's budget holds speech (0: not held). A picker
+   *  preview still asks: that is the owner checking again. */
+  resetBudgetHold(): void { ++this.budgetGeneration; this.budgetHeldUntil = 0; this.budgetLine = ""; }
+  private budgetGeneration = 0;
+  private budgetHeldUntil = 0;
+  private budgetLine = "";
+
+  private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId: string | undefined, player: ClipPlayer, timing?: ClipTiming, preview = false, opts: SpeakOptions = {}): Promise<Audible> {
+    const generation = this.budgetGeneration;
+    if (!preview && !opts.budgetClosing && this.now() < this.budgetHeldUntil) throw new VoiceBudgetPaused(this.budgetLine);
     const askedAt = this.now();
     const res = await fetch("/api/tts/speak", {
       method: "POST",
       redirect: "error",
       headers: { "content-type": "application/json", ...desktopCallerHeaders() },
-      body: JSON.stringify({ text, voiceId, botId, ...(preview ? { preview: true } : {}) }),
+      body: JSON.stringify({ text, voiceId, botId, ...(opts.call ? { call: true } : {}), ...(opts.budgetClosing ? { budgetClosing: true } : {}), ...(preview ? { preview: true } : {}) }),
       signal,
     });
     if (!res.ok) {
       const body: TtsErrorBody = await res.json().catch(() => ({}));
+      if (signal.aborted || generation !== this.budgetGeneration) throw new DOMException("Aborted", "AbortError");
+      if (res.status === 402 && body.code === "voice_budget_reached") {
+        this.budgetHeldUntil = this.now() + VOICE_BUDGET_HOLD_MS;
+        this.budgetLine = t("voice.budgetReached");
+        throw new VoiceBudgetPaused(this.budgetLine);
+      }
       throw new Error(voiceFailure(res.status, body.error));
     }
+    if (signal.aborted || generation !== this.budgetGeneration) throw new DOMException("Aborted", "AbortError");
+    if (preview) this.budgetHeldUntil = 0;
     if (timing) timing.headersAt = Date.now();
     // the first byte as this window saw it, next to the harness's and the
     // gateway's own (x-murage-ttfb-ms, x-murage-flux-ttfb-ms): one line, times only
@@ -863,3 +924,25 @@ export class Speaker {
 }
 
 export const speaker = new Speaker();
+
+let stopSpeakerBudgetReset: (() => void) | undefined;
+
+/** Start with the app so importing speech helpers does not require browser events.
+ * Repeated installs share one registration. Any returned cleanup stops it;
+ * cleanup is safe to repeat, and a later install starts a fresh registration.
+ */
+export function installSpeakerBudgetReset(): () => void {
+  if (stopSpeakerBudgetReset) return stopSpeakerBudgetReset;
+  const target = window;
+  const reset = () => speaker.resetBudgetHold();
+  target.addEventListener("murage:provider-connections-changed", reset);
+  let stopped = false;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    target.removeEventListener("murage:provider-connections-changed", reset);
+    stopSpeakerBudgetReset = undefined;
+  };
+  stopSpeakerBudgetReset = stop;
+  return stop;
+}

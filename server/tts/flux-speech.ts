@@ -1,3 +1,4 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // Speech through Flux Router, or an owner's own OpenAI key.
 //
 // Voice is Flux by default: a workspace with a Flux key needs no second
@@ -18,12 +19,25 @@
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 import { fluxCallHeaders } from "../flux-memory-headers.ts";
-import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
+import { voiceRefusalCode, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 import { XAI_VOICES } from "./xai-speech.ts";
 
 /** The provider answered, but speech is not switched on for this account
  *  (Flux while its speech capability is dark). The next source can take over. */
 export class SpeechUnavailable extends VoiceUnavailable {}
+
+/** L-COPY voice.budgetReached: what an owner sees when the Flux key's budget
+ *  is used up. */
+export const VOICE_BUDGET_REACHED = "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.";
+
+/** Flux answered 402 for a budget or balance on the key (not premium_locked).
+ *  Every Flux voice on this key would get the same answer, so the caller
+ *  stops asking until the key or the budget changes (VOICE-402-STOP). */
+export class SpeechBudgetReached extends SpeechUnavailable {
+  constructor() {
+    super(VOICE_BUDGET_REACHED);
+  }
+}
 
 /** Flux's alias for xAI's voices (2026-09-23): the same Flux request, xAI's
  *  voice names. Flux translates it to xAI's own schema. */
@@ -192,8 +206,8 @@ async function refusal(res: Response): Promise<{ message: string; code: string; 
     const body: any = await res.json();
     const error = body?.error ?? body;
     return {
-      message: (typeof error?.message === "string" && error.message.trim()) || "",
-      code: (typeof error?.code === "string" && error.code) || "",
+      message: (typeof error?.message === "string" && error.message.trim()) || (typeof body?.message === "string" ? body.message : ""),
+      code: voiceRefusalCode(body),
       param: (typeof error?.param === "string" && error.param) || "",
     };
   } catch {
@@ -284,9 +298,9 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   if (res.status === 402) {
     // Flux: premium_locked is a plan without voices; any other 402 is the
     // balance or a budget on the key, which a plan change would not fix.
-    const { message, code } = await refusal(res);
-    if (endpoint.via !== "flux" || code === "premium_locked") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
-    throw new Error(`${provider} couldn't charge for speech${message ? `: ${message}` : ""}. Check the account's balance and the key's budget.`);
+    const { code } = await refusal(res);
+    if (endpoint.via !== "flux" || classifyFluxRefusal(res.status, { code }) !== "budget") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
+    throw new SpeechBudgetReached();
   }
   if (res.status === 429) throw new RateLimitedError((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`, retryAfterMs(res.headers.get("retry-after")));
   if (eleven && res.status === 400) {

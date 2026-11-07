@@ -31,5 +31,5 @@ export function loopNotice(name: string | undefined | null): LoopNotice | undefi
 export function loopNoticeDisplayName(name: string | undefined | null): string | undefined {
   const notice = loopNotice(name);
   if (!notice) return undefined;
-  return notice.code === "nudged" ? "Nudged after 5 identical failures" : `Same call repeated ${notice.count}×: ${notice.call} (it may be stuck)`;
+  return notice.code === "nudged" ? "Sent the bot a follow-up after 5 identical failures" : `Same action repeated ${notice.count}×: ${notice.call} (it may be stuck)`;
 }

@@ -1,0 +1,80 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-main, user line
+[sqlite] slow op=exec: PRAGMA auto_vacuum=INCREMENTAL ms=130 source=exec:PRAGMA auto_vacuum=INCREMENTAL
+[sqlite] slow op=exec: PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;  ms=62 source=exec:PRAGMA journal_mode=WAL; PRAGMA synchron
+[memory] index build before listen name=memory_records_pinned ms=1
+[sqlite] storage file=2 wal=2 freelist=0
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-main, bot line
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=54 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-task, user line
+[sqlite] slow op=exec: DROP INDEX IF EXISTS room_requests_shared_owed; CREATE TABLE IF NOT EXISTS ms=69 source=exec:DROP INDEX IF EXISTS room_requests_share
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-main, bot line
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS bot_call_owed ( fact_key TEXT PRIMARY KEY, bot_ ms=53 source=exec:CREATE TABLE IF NOT EXISTS bot_call_owed
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-task, user line
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS bot_call_settings (key TEXT PRIMARY KEY, value  ms=111 source=exec:CREATE TABLE IF NOT EXISTS bot_call_sett
+
+stdout | server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-task, bot line
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS bot_call_rules ( id TEXT PRIMARY KEY, bot_id TE ms=59 source=exec:CREATE TABLE IF NOT EXISTS bot_call_rule
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS bot_calls ( id TEXT PRIMARY KEY, bot_id TEXT NO ms=279 source=exec:CREATE TABLE IF NOT EXISTS bot_calls ( i
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS bot_call_sessions ( id TEXT PRIMARY KEY, call_i ms=58 source=exec:CREATE TABLE IF NOT EXISTS bot_call_sess
+[sqlite] slow op=exec: COMMIT ms=70 source=exec:COMMIT
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=245 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+
+ ❯ server/thread-recall.test.ts (137 tests | 12 failed | 125 skipped) 7050ms
+     × thread_search: tombstone, lineage live false, thread t-main, user line 749ms
+     × thread_search: tombstone, lineage live false, thread t-main, bot line 532ms
+     × thread_search: tombstone, lineage live false, thread t-task, user line 591ms
+     × thread_search: tombstone, lineage live false, thread t-task, bot line 673ms
+     × thread_search: stamp, lineage live false, thread t-main, user line 533ms
+     × thread_search: stamp, lineage live false, thread t-main, bot line 487ms
+     × thread_search: stamp, lineage live false, thread t-task, user line 587ms
+     × thread_search: stamp, lineage live false, thread t-task, bot line 1351ms
+     × thread_search: deleted, lineage live false, thread t-main, user line 414ms
+     × thread_search: deleted, lineage live false, thread t-main, bot line 427ms
+     × thread_search: deleted, lineage live false, thread t-task, user line 348ms
+     × thread_search: deleted, lineage live false, thread t-task, bot line 353ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-main, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-main, bot line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-task, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: tombstone, lineage live false, thread t-task, bot line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-main, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-main, bot line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-task, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: stamp, lineage live false, thread t-task, bot line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: deleted, lineage live false, thread t-main, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: deleted, lineage live false, thread t-main, bot line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: deleted, lineage live false, thread t-task, user line
+ FAIL  server/thread-recall.test.ts > a line the owner forgot is never returned (106 recall-forgotten) > thread_search: deleted, lineage live false, thread t-task, bot line
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ server/thread-recall.test.ts:769:25
+    767|     const { status, body } = await r.call("thread_search", { query: "n…
+    768|     expect(status).toBe(200);
+    769|     expect(leaks(body)).toBe(false);
+       |                         ^
+    770|     expect(r.state.released.has("g1")).toBe(false);
+    771|     expect(body.checking + body.unavailable).toBe(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  12 failed | 125 skipped (137)
+   Start at  21:27:21
+   Duration  14.22s (transform 5.88s, setup 6.89s, import 170ms, tests 7.05s, environment 0ms)
+

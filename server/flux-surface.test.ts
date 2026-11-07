@@ -439,7 +439,7 @@ describe("the gate as each driver actually builds its catalog", () => {
       "flux::flux-standard",
       "flux::flux-fast",
     ]);
-    expect(withKey.default).toBe("gpt-5.6-sol");
+    expect(withKey.default).toBe("gpt-6.1-sol");
   });
 
   it("codex keeps the gate on the no-config.toml path too", async () => {
@@ -465,7 +465,7 @@ describe("the gate as each driver actually builds its catalog", () => {
     });
     try {
       expect(instance.models.options.slice(0, 4).map((option) => option.label)).toEqual(TIER_LABELS);
-      expect(instance.models.default).toBe("claude-sonnet-5");
+      expect(instance.models.default).toBe("claude-sonnet-5-5");
       // and the custom row the user configured is still there, after them
       expect(instance.models.options.some((option) => option.id === "local-glm")).toBe(true);
     } finally {
