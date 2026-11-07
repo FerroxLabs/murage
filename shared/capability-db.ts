@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "ea031914b5680189bd36054dbbc8a9f72d8a158a44d9edeb8037f4acbffec4e9";
+export const CAPABILITY_DB_REV = "8f5f6ac6760721a594f293dded1ddf29060b9f3d57b360e13caefd5d2b6ccfd3";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -161,11 +161,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   },
   {
     "id": "cap:bots.channel-turns",
-    "title": "Channel turn timeout",
+    "title": "Time limit for bot activity in channels",
     "description": "Murage can do this.",
     "heading": "How long does a bot keep working in a quiet channel? / Change the channel turn timeout / A bot's reply in a channel stopped after a while / Set the no activity limit for channel replies",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Bots → Advanced → Channel turn timeout",
+    "where": "Settings → Bots → Advanced → Time limit for bot activity in channels",
     "url": "https://murage.ai/docs/features/chat-and-teams#rooms",
     "text": "A bot's reply in a channel stops after a set number of minutes with no activity. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count. The No activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.",
     "capability": "bots.channel-turns",
@@ -182,7 +182,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "42eb98fad7cbed2936cf75e916dfc22a898fec473421cd873a547565e3faabb6"
+    "rev": "368117e49f1e66f01e7056137b16250c43007a86d1ef25dfb09a567509950c7b"
   },
   {
     "id": "cap:engines.continue-with-chatgpt-grok",

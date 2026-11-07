@@ -15,7 +15,7 @@
 //
 // The turn lineage is only ever `host.lineage()` (the turnOutputRoots entry of the authenticated generation): nothing here looks a turn up by
 // thread (no currentTurnLineage, runningTurnFor, writerTurnFor or memberOf).
-import { emailDerivedText, markTurnEmailDerived } from "./email/external-marks.ts";
+import { emailDerivedText, markTurnEmailDerived, recallRowsOutside } from "./email/external-marks.ts";
 import { Buffer } from "node:buffer";
 import { z } from "zod";
 import { database, transaction } from "./database.ts";
@@ -537,6 +537,12 @@ export async function threadRecallRoute(tool: ThreadRecallTool, body: unknown, a
       addRootsToRunningTurn(host.claim.threadId, lineage, shownLinesRoots(LineageAllowance.tool(), lines, undefined, host.claim.threadId));
       for (const { threadId, row } of released) state.released.set(row.id, threadId);
     }
+    // NOLIMITS v1 1.0.19 4.2 r3: the reading turn is marked by what leaves, on evidence (a row, or a listed thread's newest
+    // line, of a turn that was marked), never by the call (outside-own.ts no longer marks recall at the gate)
+    const rows = tool === "thread_list"
+      ? (outcome.body.threads as ListedThread[]).map((thread) => ({ threadId: thread.threadId, at: Date.parse(thread.lastAt) }))
+      : released.map(({ threadId, row }) => ({ threadId, at: row.at }));
+    recallRowsOutside(host.claim.threadId, rows);
   }
   host.respond(200, outcome.body);
 }

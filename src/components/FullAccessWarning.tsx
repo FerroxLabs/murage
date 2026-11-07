@@ -35,9 +35,8 @@ export const FULL_ACCESS_ASKS_UNLESS_ALLOWED =
 export const FULL_ACCESS_ON_THIS_COMPUTER =
   "On this computer that includes your own screen, mouse and keyboard.";
 
-/** Shown once per bot before No limits is switched on. */
-export const NO_LIMITS_WARNING =
-  "In conversations you start at the Murage app or your paired phone, this bot runs commands and uses tools without asking. That includes reading and sending your keys and passwords and deleting files outside its folder, so one of those could do anything, even wipe this computer. A page or message it reads can steer it. It still asks before a wipe it can read, before an unknown program touches your home folder or a whole disk, before a command names the files that shape how commands run, and before text downloaded from an https address goes to an administrator run. Publishing, browser payments and steps, and new email recipients keep their own approvals. Follow-on work after you answer a sign-in or setup card can still ask. Messages from other people, group chats, other bots, webhooks, routines, and your own Telegram, Slack and Discord messages keep the cards they have now.";
+/** Shown once per bot before No limits is switched on (NOLIMITS v1 copy W; every pack has `noLimits.v1.warning`). */
+export const NO_LIMITS_WARNING = t("noLimits.v1.warning");
 
 /** The line above the warning when an owner who already had No limits reads the new terms (NOLIMITS-MEANS-IT section 6). */
 export const NO_LIMITS_TERMS_LINE = "No limits changed. Read this once and it applies to every bot.";
@@ -49,9 +48,12 @@ export function FullAccessWarning({
   scope,
   onThisComputer,
   terms = false,
+  openClaw = false,
   onCancel,
   onConfirm,
 }: {
+  /** the bot runs on OpenClaw, which runs commands without asking Murage (copy O) */
+  openClaw?: boolean;
   open: boolean;
   botName: string;
   /** which level this confirms: Full access, or No limits above it */
@@ -105,7 +107,9 @@ export function FullAccessWarning({
         <BoxBody className="pl-[50px] pr-5">
             <div id="full-access-warning-body" className="mt-1.5 flex flex-col gap-1.5 text-[13px] leading-relaxed text-ink-secondary">
               {terms && <p className="font-medium text-ink">{NO_LIMITS_TERMS_LINE}</p>}
-              <p className="font-medium text-ink">{level === "unlimited" ? NO_LIMITS_WARNING : FULL_ACCESS_WARNING}</p>
+              <p className="font-medium text-ink">{level === "unlimited" ? t("noLimits.v1.warning") : FULL_ACCESS_WARNING}</p>
+              {level === "unlimited" && openClaw && <p>{t("noLimits.v1.openclaw")}</p>}
+              {level === "unlimited" && <p>{t("noLimits.v1.windows")}</p>}
               {level === "full" && <p>{FULL_ACCESS_STOP_LINE}</p>}
               {onThisComputer && <p>{FULL_ACCESS_ON_THIS_COMPUTER}</p>}
               {scope && <p>{fullAccessScopeNote(scope)}</p>}

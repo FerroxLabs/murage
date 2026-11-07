@@ -13,7 +13,7 @@
 // label cannot carry what the owner typed. The desktop relay and the control
 // plane check the same shape again and refuse unknown fields.
 import { en } from "@/locales";
-import "./help-screen-copy";
+import { enHelp } from "./help-copy-store";
 import { SCREENS, screenEntry, type ScreenIndexEntry } from "./screens-index";
 
 export interface ScreenGate { id: string; reason: string }
@@ -278,8 +278,11 @@ export function resolveHelpScreen(input: HelpScreenInput): HelpScreen {
 // records, no search query, no DOM text. Every text field is a member of the
 // tables below, and checkFeedbackRequest refuses anything that is not.
 // Screen titles with a {name} take a fixed word in its place.
+// English is read from where each key lives: screen titles from English Help
+// (enHelp, the help chunk's own table, never merged into a pack), control
+// labels and gate reasons from the English main pack. Never the active language.
 const english = (key: string): string | undefined =>
-  Object.hasOwn(en, key) ? (en as Record<string, string>)[key] : undefined;
+  Object.hasOwn(enHelp, key) ? enHelp[key] : Object.hasOwn(en, key) ? (en as Record<string, string>)[key] : undefined;
 const FIXED_NAME: Readonly<Record<string, string>> = { chat: "Chat", group: "Group chat" };
 /** A key with no index entry is named as the general help page, a real screen, never "unknown": a report that names no
  *  screen cannot be acted on, and the tables hold no "unknown" for a caller to send. */
@@ -295,6 +298,11 @@ const GATE_REASON_KEY: Readonly<Record<string, string>> = {
   "no-engine": "ux.l4a.gate.noEngine",
   ...Object.fromEntries(SCREENS.filter((entry) => entry.key.startsWith("first-run:")).map((entry) => [entry.key, "ux.l4a.gate.firstRunBlocked"])),
 };
+
+/** The copy key of a gate's reason, for the localized "What we send" (FeedbackForm.tsx). */
+export function gateReasonKey(gateId: string): string | undefined {
+  return Object.hasOwn(GATE_REASON_KEY, gateId) ? GATE_REASON_KEY[gateId] : undefined;
+}
 
 /** Every value a feedback request's text fields may hold. */
 export const FEEDBACK_FIXED = (() => {
@@ -318,7 +326,7 @@ export const FEEDBACK_FIXED = (() => {
 })();
 
 /** The envelope the feedback form sends, built from the fixed tables only. */
-export function feedbackEnvelopeForScreen(screen: Pick<HelpScreen, "key" | "page" | "gates" | "feedbackKey">): ScreenEnvelope {
+export function feedbackEnvelopeForScreen(screen: Pick<HelpScreen, "key" | "gates"> & Partial<Pick<HelpScreen, "feedbackKey">>): ScreenEnvelope {
   const entry = (screen.feedbackKey ? screenEntry(screen.feedbackKey) : undefined) ?? screenEntry(screen.key) ?? screenEntry(FALLBACK_SCREEN);
   if (!entry) throw new Error("the screens index has no general help page");
   const key = entry.key;
@@ -338,6 +346,11 @@ export function feedbackEnvelopeForScreen(screen: Pick<HelpScreen, "key" | "page
 }
 
 /** Which field of a feedback envelope holds a value outside the fixed tables, or null. */
+/** A search result opened in the panel: its own fixed feedback envelope, carrying nothing of the screen behind it. */
+export function feedbackEnvelopeForPicked(entry: Pick<ScreenIndexEntry, "key">): ScreenEnvelope {
+  return feedbackEnvelopeForScreen({ key: entry.key, gates: [] });
+}
+
 export function checkFeedbackFixed(value: { screen: unknown; title: unknown; state: unknown; controls: unknown }): string | null {
   if (typeof value.screen !== "string" || !FEEDBACK_FIXED.screens.has(value.screen)) return "screen";
   if (value.title !== FEEDBACK_FIXED.titles.get(value.screen)) return "title";

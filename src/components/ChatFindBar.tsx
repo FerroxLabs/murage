@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 
 import { landOnSearchHit } from "@/lib/focus-message";
+import { imeComposing } from "@/lib/composer-enter";
 import type { SearchHit } from "@/lib/search-hit";
 import { api, useStore } from "@/state/store";
 
@@ -77,6 +78,7 @@ export function ChatFindBar({ threadId, onClose }: { threadId: string; onClose: 
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={(event) => {
+            if (imeComposing(event.nativeEvent)) return;
             if (event.key === "Escape") {
               event.preventDefault();
               onClose();

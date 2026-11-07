@@ -66,7 +66,7 @@ function foldFixture() {
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
     internalCapabilities: { activeGeneration: () => undefined },
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
-    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), routineCardFields, grantRequestFor,
+    noteStartupFileEvent, handedPinsOf, promptFactsOf, commandCwdFromToolInput, commandFromToolInput, turnCwdByThread: new Map(), turnDriverByThread: new Map(), routineCardFields, grantRequestFor,
     // the window's copy of every runtime event (runtime-event-out.ts), the real one, as in production
     windowRuntimeEvent,
     // turns that started a tool (OPENAI-TOOLS-109 s5.2: never rebuilt after a late memory refusal)
@@ -665,4 +665,16 @@ describe("replyForStagedImages (a widget row never takes the turn's images)", ()
     expect(replyForStagedImages([row("w", "t1", true)], "t1")).toBeUndefined();
     expect(replyForStagedImages([row("a", "t0"), row("w", "t1", true)], "t1")).toBeUndefined();
   });
+});
+
+it.each(["direct", "room"])("OpenCode quiet notice persists in a %s thread without engine output", (kind) => {
+  const { fold, store, bot, scope } = foldFixture();
+  const threadId = kind === "room" ? store.createGroup("Quiet room", [bot.id]).threadId : bot.threadId;
+  if (kind === "room") (scope.groupSpeakers as Map<string, unknown>).set(threadId, { botId: bot.id, name: bot.name });
+  fold({ threadId, turnId: "quiet-turn", eventId: "quiet", type: "turn.diagnostic", category: "rate_limit", quietMs: 60000 });
+  const row = store.activePath(threadId).find(row => row.tool?.name === "OpenCode reported a rate limit. No reply for 60 seconds.");
+  expect(row).toBeDefined();
+  expect(row?.murageLine).toBe(true);
+  expect(row?.tool?.ok).toBe(true);
+  expect(isEngineOutput(row!)).toBe(false);
 });

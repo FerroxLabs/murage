@@ -26,7 +26,7 @@ import { applyProviderRoute, type ProviderTurnRoute } from "../provider-routing.
 import { claudeTextOnlyTurn } from "./headless-text-only.ts";
 import { claudeBrowserMount } from "./claude-browser-mount.ts";
 import { execFile, execFileSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { parseDocument as parseYamlDocument } from "yaml";
 import { createConnection as createNetConnection, createServer as createNetServer } from "node:net";
@@ -124,6 +124,8 @@ import type { McpMountRecord } from "../../shared/mount-identity.ts";
 import { OWN_BUILTINS, OWN_UNASKED, ownToolListedOnTurn, type OwnBuiltin } from "../../shared/own-servers.ts";
 import { EMAIL_TOOLS_ENV } from "./email-tool-schemas.ts";
 import { inProjectCheck, realDir, realPathInOrder, walkRoot } from "../../shared/in-project.ts";
+import { gateHit } from "../../shared/gate-files.ts";
+import { relative as relativePath } from "node:path";
 import { SENSITIVE_TEXT, claudeSensitiveAskRules } from "../../shared/sensitive-paths.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
 import { gitBashDiscovery, type GitBashFound, type GitBashMiss } from "../tool-discovery.ts";
@@ -1006,6 +1008,8 @@ export async function createPermissionBroker(opts: {
     },
     /** Cards this turn's engine is waiting on. */
     openAsks: () => pending.size,
+    /** NOLIMITS v1 V5: the ask is still waiting (not answered, not ended by a stop or a close). */
+    isPending: (askId: string): boolean => pending.has(askId),
     pause() {
       drain();
     },
@@ -2593,6 +2597,162 @@ export const CLAUDE_BARE_ASK_TOOLS = ["Read", "Edit", "Write", "MultiEdit", "Not
 
 const CLAUDE_SEARCH_TOOLS = new Set(["Grep", "Glob"]);
 
+// ---------------------------------------------------------------------------------------------------------------------
+// NOLIMITS v1 V5 (designs/NOLIMITS-V1-CUT.md; r4 3.6): Claude's items come on stdout and its asks through the broker, two
+// channels with no order between them. On a No limits owner turn (the lane) the broker holds an ask until stdout has
+// delivered the item.started of the same tool and input, at most CLAUDE_ASK_ITEM_WAIT_MS; past that the ask opens with
+// `itemUnseen` and the turn is marked. Off the lane nothing waits and nothing changes.
+
+/** off: not an owner No limits turn (today's path, byte for byte); clean / marked: the lane, and its mark. */
+export type ClaudeLaneState = "off" | "clean" | "marked";
+export interface ClaudeLaneHooks {
+  laneMarked(threadId: string, turnId: string | undefined): ClaudeLaneState;
+  /** the ask's item did not arrive in time: mark the turn now (also when the in-project shortcut settles the ask) */
+  itemUnseen(threadId: string): void;
+}
+let laneHooks: ClaudeLaneHooks | null = null;
+/** index.ts sets these at boot; tests set and clear them. None set: every turn is off the lane. */
+export function setClaudeLaneHooks(hooks: ClaudeLaneHooks | null): void { laneHooks = hooks; }
+const laneStateOf = (threadId: string, turnId: string | undefined): ClaudeLaneState => {
+  if (!laneHooks) return "off";
+  try { return laneHooks.laneMarked(threadId, turnId); } catch { return "marked"; }
+};
+
+export const CLAUDE_ASK_ITEM_WAIT_MS = 2_000;
+/** NLMI-MARKS 6: the hold counts readable time, ticks of this length that each pass a poll phase before they count. */
+export const CLAUDE_ASK_ITEM_TICK_MS = 50;
+/** NLMI-MARKS 6: the wall-clock ceiling from the first tick; a loop stalled past it ends the hold as unseen. */
+export const CLAUDE_ASK_ITEM_WALL_MS = 10_000;
+/** What one ask hold measured, for its log line (fixed numbers, never the call). */
+export interface AskHold { seen: boolean; readableMs: number; wallMs: number; ticks: number; ceiling: boolean }
+
+const stableJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") return JSON.stringify(value ?? null);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+};
+/** Astra r1 H1: the key's secret for this process (never stored, never sent), so a key names a call without carrying it. */
+const CALL_KEY_SECRET = randomBytes(32);
+/** One engine call: an opaque digest (keyed HMAC-SHA256) of its tool name and its input with sorted keys. Equal for the
+ *  same call, so the ask and its item meet; it holds neither the name nor the input, and stays in the server. */
+export function claudeToolKey(tool: unknown, input: unknown): string {
+  return createHmac("sha256", CALL_KEY_SECRET).update(`${typeof tool === "string" ? tool : ""}\u0000${stableJson(input)}`).digest("base64url");
+}
+
+/** Per thread: the tool keys stdout has started on the running turn, and the asks waiting for one. */
+interface KeyWaiter { key: string; done: (seen: boolean) => void }
+/** 1.0.19 A3 (Opus r3 M): a per-key count, so an ask whose key two started items share is known to be ambiguous */
+interface KeySlot { turn: string | undefined; keys: Map<string, number>; waiters: Set<KeyWaiter>; unseen: Set<string> }
+class StartedToolKeys {
+  private readonly threads = new Map<string, KeySlot>();
+  private slot(threadId: string, turn: string | undefined): KeySlot {
+    let slot = this.threads.get(threadId);
+    if (!slot || slot.turn !== turn) {
+      if (!slot && this.threads.size >= 1024) this.forget(this.threads.keys().next().value!);
+      const waiters: Set<KeyWaiter> = slot?.waiters ?? new Set<KeyWaiter>();
+      slot = { turn, keys: new Map<string, number>(), waiters, unseen: new Set() };
+      this.threads.set(threadId, slot);
+    }
+    return slot;
+  }
+  note(threadId: string, turn: string | undefined, key: string): void {
+    const slot = this.slot(threadId, turn);
+    if (slot.keys.size >= 512 && !slot.keys.has(key)) slot.keys.delete(slot.keys.keys().next().value!);
+    slot.keys.set(key, (slot.keys.get(key) ?? 0) + 1);
+    for (const waiter of [...slot.waiters]) if (waiter.key === key) { slot.waiters.delete(waiter); waiter.done(true); }
+  }
+  has(threadId: string, turn: string | undefined, key: string): boolean {
+    const slot = this.threads.get(threadId);
+    return slot !== undefined && slot.turn === turn && slot.keys.has(key);
+  }
+  late(threadId: string, turn: string | undefined, key: string): boolean {
+    const slot = this.threads.get(threadId);
+    return slot?.turn === turn && slot?.unseen.has(key) === true;
+  }
+  /** how many items of the running turn started with this key */
+  count(threadId: string, turn: string | undefined, key: string): number {
+    const slot = this.threads.get(threadId);
+    return slot !== undefined && slot.turn === turn ? slot.keys.get(key) ?? 0 : 0;
+  }
+  /** NLMI-MARKS 6: hold until stdout started this key, for `ms` of READABLE time: a tick of CLAUDE_ASK_ITEM_TICK_MS counts
+   *  only after a poll phase has run (setTimeout, then setImmediate), so an item already in the pipe when the loop comes
+   *  back from a stall is read before any tick is counted, whichever phase the stall was in. A wall-clock ceiling of
+   *  `wallMs` from the first tick ends the hold too. Either end runs one more poll and a final check before `seen: false`. */
+  wait(threadId: string, turn: string | undefined, key: string, ms: number, wallMs = CLAUDE_ASK_ITEM_WALL_MS, tickMs = CLAUDE_ASK_ITEM_TICK_MS): Promise<AskHold> {
+    const started = performance.now();
+    if (this.has(threadId, turn, key)) return Promise.resolve({ seen: true, readableMs: 0, wallMs: 0, ticks: 0, ceiling: false });
+    const slot = this.slot(threadId, turn);
+    return new Promise((resolve) => {
+      let readable = 0, ticks = 0, settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let immediate: ReturnType<typeof setImmediate> | undefined;
+      const finish = (seen: boolean, ceiling: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (immediate) clearImmediate(immediate);
+        slot.waiters.delete(waiter);
+        if (!seen) slot.unseen.add(key);
+        resolve({ seen, readableMs: readable, wallMs: Math.round(performance.now() - started), ticks, ceiling });
+      };
+      const waiter: KeyWaiter = { key, done: (seen: boolean) => { finish(seen, false); } };
+      const end = (ceiling: boolean) => {
+        // the re-check after a poll: an item that landed in the same loop turn as the last tick is still seen
+        immediate = setImmediate(() => { finish(this.has(threadId, turn, key), ceiling); });
+      };
+      const tick = () => {
+        timer = setTimeout(() => {
+          immediate = setImmediate(() => {
+            if (settled) return;
+            ticks += 1;
+            readable += tickMs;
+            const ceiling = performance.now() - started >= wallMs;
+            if (readable >= ms || ceiling) end(ceiling && readable < ms);
+            else tick();
+          });
+        }, tickMs);
+        timer.unref?.();
+      };
+      slot.waiters.add(waiter);
+      tick();
+    });
+  }
+  forget(threadId: string): void {
+    const slot = this.threads.get(threadId);
+    if (!slot) return;
+    for (const waiter of [...slot.waiters]) waiter.done(false);
+    this.threads.delete(threadId);
+  }
+}
+const startedToolKeys = new StartedToolKeys();
+
+/** NLMI-MARKS 6: one server line per held ask, fixed words and numbers only (no tool, no input). */
+function logAskHold(threadId: string, hold: AskHold): void {
+  try {
+    const thread = /^[\w-]{1,128}$/.test(threadId) ? threadId : "unknown";
+    console.info(`approvals: v5-hold thread=${thread} seen=${hold.seen ? 1 : 0} readableMs=${hold.readableMs} wallMs=${hold.wallMs} ticks=${hold.ticks} ceiling=${hold.ceiling ? 1 : 0}`);
+  } catch { /* the hold stands */ }
+}
+
+/** V5 (b): on a marked lane turn the in-project shortcut does not take a call whose path has a segment, inside the
+ *  working folder, that starts with `.`, a path outside the folder, or a gate file (the 6.1.3 test). */
+export function claudeLaneShortcutSkip(tool: unknown, input: unknown, cwd: string): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return true;
+  const call = input as Record<string, unknown>;
+  const named = ["file_path", "notebook_path", "path"].map((key) => call[key]).filter((value): value is string => typeof value === "string" && value !== "");
+  if (named.length === 0 && (tool === "Grep" || tool === "Glob")) return false;
+  if (named.length === 0) return true;
+  const root = cwd.replace(/[\\/]+$/, "") || "/";
+  for (const p of named) {
+    if (!isAbsolute(p)) return true;
+    const rel = relativePath(root, p);
+    if (rel.startsWith("..") || isAbsolute(rel)) return true;
+    if (rel.split(/[\\/]+/).some((part) => part.startsWith("."))) return true;
+  }
+  return gateHit(named) !== null;
+}
+
 /** Rule 63 / 69 for the broker: a Read, Edit, Write, MultiEdit, NotebookEdit, Grep or Glob ask
  * whose every path passes the in-project check (placement by real path, the sensitive list, the
  * template carve-out, the content read whole and free of secret shapes) runs with no card. Any
@@ -2714,7 +2874,7 @@ export function acquireClaudeOverlay(text: string, store: Pick<ClaudeOverlayStor
     // The app log's only line for this: the code and where the helper was looked for (an install path), never the overlay's content.
     const helperPath = (error as { helperPath?: unknown }).helperPath;
     console.warn(`claude private folder setup refused: ${code} helper=${typeof helperPath === "string" ? JSON.stringify(helperPath) : "unknown"}`);
-    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.`, { cause: error });
+    throw new LocalSetupError("windows-helper", `Claude needs Murage's Windows helper (murage-browser-host.exe) to start (${code}). If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Fuigo and Codex keep working.`, { cause: error });
   }
 }
 
@@ -4380,9 +4540,45 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
               askTools.set(ask.id, typeof ask.tool === "string" ? ask.tool : undefined);
               if (ask.kind === "permission") askCalls.set(`${threadId}\u0000${ask.id}`, { turn: eventTurnId, tool: ask.tool ?? "", text: JSON.stringify(ask.input ?? null) });
+              // NOLIMITS v1 V5 (a): on the lane, hold the ask until stdout delivered this call's own item.started, at
+              // most CLAUDE_ASK_ITEM_WAIT_MS; past that the call is judged on a marked turn. Off the lane: no wait.
+              const key = ask.kind === "permission" ? claudeToolKey(ask.tool, ask.input) : undefined;
+              if (key !== undefined && laneStateOf(threadId, eventTurnId) !== "off" && !startedToolKeys.has(threadId, eventTurnId, key)) {
+                void startedToolKeys.wait(threadId, eventTurnId, key, CLAUDE_ASK_ITEM_WAIT_MS).then((hold) => {
+                  logAskHold(threadId, hold);
+                  // the turn ended or the ask was answered meanwhile: nothing to open
+                  if (!broker?.isPending(ask.id)) return;
+                  // NLMI-MARKS 6: an unseen item marks THIS ask (request.opened carries itemUnseen), not the turn; a late
+                  // item marks the turn through the ordinary item path when its tool is outside
+                  if (!hold.seen) {
+                    try { laneHooks?.itemUnseen(threadId); } catch { /* the ask is judged marked by itemUnseen either way */ }
+                  }
+                  judgeAsk(ask, eventTurnId, !hold.seen);
+                });
+                return;
+              }
+              judgeAsk(ask, eventTurnId, false);
+            },
+            onResolve: (resolved) => {
+              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
+              emit({
+                ...base(threadId, eventTurnId),
+                type: "request.resolved",
+                requestId: resolved.id,
+                behavior: resolved.behavior,
+                source: resolved.source,
+                approvalScope:
+                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
+              });
+              askTools.delete(resolved.id);
+            },
+          });
+          function judgeAsk(ask: Ask, eventTurnId: string, itemUnseen: boolean): void {
               // Rule 63: an ordinary in-project file call runs with no card and no verdict round
               // trip; the decision log records it. Anything else goes on to the verdict.
-              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd)) {
+              // V5 (b): on a marked lane turn (or one whose ask item never came) a dot path or a gate file is not taken.
+              const laneMarked = ask.kind === "permission" && (itemUnseen || laneStateOf(threadId, eventTurnId) === "marked");
+              if (ask.kind === "permission" && claudeInProjectAllow(ask.tool, ask.input, cwd) && !(laneMarked && claudeLaneShortcutSkip(ask.tool, ask.input, cwd))) {
                 appendDecision(DATA_DIR, { threadId, requestId: ask.id, tool: ask.tool, summary: askSummary(ask), decision: "auto-approved", source: "own-workspace" });
                 if (broker?.settle(ask.id, "allow", undefined, "auto", ask.input)) return;
               }
@@ -4402,6 +4598,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 type: "request.opened",
                 requestId: ask.id,
                 ...(localHold ? { localHold: localHold.slice(0, 80) } : {}),
+                ...(itemUnseen ? { itemUnseen: true } : {}),
+                // 1.0.19 A3: the call's key, and whether two started items of this turn share it
+                ...(ask.kind === "permission" ? (() => {
+                  const key = claudeToolKey(ask.tool, ask.input);
+                  return { callKey: key, ...(startedToolKeys.count(threadId, eventTurnId, key) > 1 ? { callKeyAmbiguous: true } : {}) };
+                })() : {}),
                 requestType: ask.kind,
                 tool: ask.tool ?? "",
                 summary: askSummary(ask),
@@ -4438,21 +4640,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
               else if (ask.kind === "permission" && (ask.tool === "Bash" || ask.tool === "PowerShell")) void execEnvNow(threadId, shellForm, childHanded, cwd).then((record) => open(withManaged(record)), () => open(undefined));
               else if (ask.kind === "permission") open(withManaged(execEnvHanded(childHanded, cwd, shellForm)));
               else open(undefined);
-            },
-            onResolve: (resolved) => {
-              const eventTurnId = sessions.get(threadId)?.turn?.turnId ?? turnId;
-              emit({
-                ...base(threadId, eventTurnId),
-                type: "request.resolved",
-                requestId: resolved.id,
-                behavior: resolved.behavior,
-                source: resolved.source,
-                approvalScope:
-                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
-              });
-              askTools.delete(resolved.id);
-            },
-          });
+          }
           // A fallback bind means the deterministic pipe is still held by an
           // earlier process's child. The proxy learns its path from argv, so
           // point it at the pipe we actually bound. argsKey deliberately keeps
@@ -4556,7 +4744,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           stdio: ["pipe", "pipe", "pipe"],
           // S4 power (design section 2): the Windows job and the privilege removal; no hostPower on Mac or Linux, where the
           // block does not nest with the CLI's own command sandbox.
-        }, engineJob({ posixHostPower: false }));
+        }, engineJob({ posixHostPower: false }), undefined, threadId);
       } catch (error) {
         // The fence above released the prompt to a write that will not happen (turn-attribution.ts, I14).
         turn.notWritten?.();
@@ -5004,7 +5192,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
             for (const b of Array.isArray(msg.content) ? msg.content : []) {
               if (b.type === "tool_use") {
                 if (typeof b.id === "string" && typeof b.name === "string" && toolNameByUse.size < 512) toolNameByUse.set(b.id, b.name);
-                emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input });
+                const callKey = claudeToolKey(b.name, b.input);
+                emit({ ...base(threadId, currentTurnId()), type: "item.started", itemType: "tool", origin: "engine", itemId: b.id, title: b.name, input: b.input, callKey, ...(startedToolKeys.late(threadId, currentTurnId(), callKey) ? { lateFrame: true } : {}) });
+                // V5: after the item is emitted (its mark is set in that handler), release an ask waiting for it
+                startedToolKeys.note(threadId, currentTurnId(), callKey);
               }
             }
             if (msg.usage) {

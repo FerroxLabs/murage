@@ -115,6 +115,8 @@ export interface EmailToolDeps {
   onRefusal?(code: string): void;
   /** A code with no line of its own, for the log (never a body). */
   onUnknownCode?(code: string): void;
+  /** NOLIMITS v1 V6 (b): this turn is a marked No limits lane turn, so a send the policy would clear waits on the owner. */
+  holdForOwner?(threadId: string, botId: string, generation: string): boolean;
 }
 
 const ADDR_SPEC = /^[^\s@<>(),;:"[\]\\]{1,64}@[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)+$/;
@@ -337,7 +339,9 @@ export class EmailTools {
   }
 
   private async submit(record: EmailTurnRecord, generation: string, draft: EmailDraft, replySource: Parameters<EmailSendService["submit"]>[0]["replySource"] = null): Promise<EmailToolResult> {
-    const result = await this.deps.send.submit({ botId: record.botId, generation: emailGeneration(generation), threadId: record.threadId, draft, replySource });
+    let holdForOwner = true;
+    try { holdForOwner = this.deps.holdForOwner?.(record.threadId, record.botId, generation) ?? false; } catch { /* unknown: held (fail closed) */ }
+    const result = await this.deps.send.submit({ botId: record.botId, generation: emailGeneration(generation), threadId: record.threadId, draft, replySource, ...(holdForOwner ? { holdForOwner } : {}) });
     if (result.status === "no_inbox") return fail(sendStateRefusal(this.deps.store.getBinding(record.botId)) ?? EMAIL_UNAVAILABLE);
     if (result.status === "duplicate") return fail(EMAIL_LINES.duplicate);
     if (result.row.state === "refused" && result.row.code) {

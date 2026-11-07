@@ -10,9 +10,10 @@ import { DatabaseSync } from "node:sqlite";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { downgradeMemorySchema, suffixedSessionKeys, type MemoryDowngradeTarget } from "./memory/schema.ts";
 import { downgradeMemoryIndexFile } from "./memory/age-index.ts";
-import { assertNoPendingPhoneWork, downgradeApplicationSchemaTo101, downgradePhoneObjectsTo108 } from "./installation-app-schema-downgrade.ts";
+import { assertNoHeldVenuePosts, assertNoPendingPhoneWork, downgradeApplicationSchemaTo101, downgradeCardTablesTo117, downgradePhoneObjectsTo108 } from "./installation-app-schema-downgrade.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { foldRoutineStateForDowngrade } from "./routine-runs-journal.ts";
+import { deleteFtsOrphans, expectPragma, ftsSettled, optimizeUntilSettled } from "./settle-copy.ts";
 
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 
@@ -119,9 +120,10 @@ export const DATA_DIR_NAMES_AFTER_102 = ["claude-private", "claude-signin-answer
 /** Owner-kept notes written after 1.0.2 (backed up, so they are not in the derived list above), that 1.0.2's backup does not classify
  * either. The follow-model marker (thread-follow-model.ts) only records that the one-time chat model cleanup ran; 1.0.2 never reads
  * it. Removing it lets 1.0.2 take a backup; a later upgrade runs the cleanup once more, which drops only pins proved equal to the
- * bot's model and keeps every different pick. The owner's cross-device prefs (owner-prefs.json, 1.0.17 owner-prefs.ts) hold only the
- * Approve all caution's "Don't show this again"; 1.0.2 has no Approve all and never reads it. Removing it lets 1.0.2 take a backup, and
- * a later upgrade reads the missing file as the defaults, so the caution shows once more and nothing else changes. */
+ * bot's model and keeps every different pick. The owner's cross-device prefs (owner-prefs.json, 1.0.17 owner-prefs.ts) hold the
+ * Approve all caution's "Don't show this again" and (1.0.18) Today's Calm | Detailed choice; 1.0.2 has neither and never reads the file.
+ * Removing it lets 1.0.2 take a backup, and a later upgrade reads the missing file as the defaults: the caution shows once more and
+ * Today opens Calm, and nothing else changes. */
 export const DATA_DIR_OWNER_NOTES_AFTER_102 = [".threads-follow-model-v1", "owner-prefs.json"] as const;
 /** Removes those names from the data folder (a link is removed, never followed). Idempotent; returns the names removed. */
 export function removeDataDirNamesAfter102(root: string): string[] {
@@ -140,15 +142,73 @@ export function removeDataDirNamesAfter102(root: string): string[] {
 /** One-shot maintenance for reinstalling an older build on a data dir that a
  * later Murage already migrated to a newer memory schema. Takes the same
  * exclusive lease as the running app (so it refuses while Murage is open),
- * rewrites the memory objects to the frozen shape of `to` (1: 0.1.53 and
+ * rewrites the memory objects to the frozen shape of `to` (the command refuses 6 and below, refuseStepBefore102; 1: 0.1.53 and
  * older; 2: 0.1.54 to 0.1.60; 3 and 4: development builds; 5: before the 1.0 lineage tables; 6: 1.0.0 and 1.0.1; 7: before the 1.0.2 revocation index; 8: before the 1.0.2 cold-lineage indexes; 9: the 1.0.2 RC; 10: 1.0.2, which refuses the derived objects 1.0.3 adds; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6, before the 1.0.7 source stamps) and folds the WAL so the file stands alone.
  * Chat history and memory rows are kept; only derived or learning-only
  * objects are dropped. The pre-upgrade copies are left untouched. Routine
  * state lines are folded into routines.json first (foldRoutineStateForDowngrade),
  * also when there is no memory database yet. */
-/** The memory schema versions `memory-downgrade --to` accepts (10: 1.0.2; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6). */
+/** Where a test stops the downgrade, as a crash there would (each point is after a committed step). */
+export type DowngradeSearchPoint = "optimized" | "config-restored" | "checkpointed" | "marker-deleted";
+
+const hasTable = (db: DatabaseSync, name: string) => db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(name) !== undefined;
+
+/** The live file's search index settles before the older build sees it (SMOOTH-FTS-MERGE R6 section 4): after every
+ * `DELETE FROM messages_fts` of this command (trimUnfinishedSearchFill inside downgradeApplicationSchemaTo101, already committed).
+ * secure_delete read back; orphans out; optimize until settled (3 rounds, else fail: the earlier commit stays and rerunning the
+ * command is the recovery); one VACUUM, the one place the live file is vacuumed, offline under the lease; the probe again. The older
+ * build's merge defaults (automerge 4, deletemerge 10, literals) are written back on the success path and on the failure path. */
+function settleSearchIndexForDowngrade(db: DatabaseSync, at: (point: DowngradeSearchPoint) => void) {
+  expectPragma(db, "PRAGMA secure_delete=ON", 1);
+  const fts = hasTable(db, "messages_fts");
+  let failure: unknown;
+  try { if (fts) { deleteFtsOrphans(db); optimizeUntilSettled(db); } }
+  catch (error) { failure = error; }
+  if (failure === undefined) {
+    at("optimized");
+    try {
+      db.exec("VACUUM");
+      if (ftsSettled(db) !== "settled") fail("SEARCH_INDEX_NOT_SETTLED");
+    } catch (error) { failure = error; }
+  }
+  if (fts) {
+    try {
+      db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('automerge', 4)");
+      db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('deletemerge', 10)");
+    } catch (error) { if (failure === undefined) failure = error; }
+  }
+  if (failure !== undefined) {
+    const code = (failure as { code?: unknown }).code;
+    if (typeof code === "string" && code !== "FTS_COPY_NOT_SETTLED" && /^[A-Z][A-Z0-9_]{0,100}$/.test(code)) throw failure;
+    throw Object.assign(new Error("SEARCH_INDEX_NOT_SETTLED"), { code: "SEARCH_INDEX_NOT_SETTLED", cause: failure });
+  }
+  at("config-restored");
+}
+
+/** The WAL fold is checked (R6 section 4): busy 0 and every frame of the log checkpointed, else the downgrade fails. */
+function checkedTruncate(db: DatabaseSync) {
+  let row: { busy?: unknown; log?: unknown; checkpointed?: unknown } | undefined;
+  // a reader holding the log can surface as SQLITE_BUSY instead of busy=1: the same unfinished fold
+  try { row = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as typeof row; }
+  catch (error) { throw Object.assign(new Error("WAL_CHECKPOINT_INCOMPLETE"), { code: "WAL_CHECKPOINT_INCOMPLETE", cause: error }); }
+  if (!row || Number(row.busy) !== 0 || Number(row.log) !== Number(row.checkpointed)) fail("WAL_CHECKPOINT_INCOMPLETE");
+}
+
+/** The memory schema versions `memory-downgrade --to` recognizes. 7 to 12 run (10: 1.0.2; 11: 1.0.3 before the lineage door epoch; 12: 1.0.3 to 1.0.6);
+ * 1 to 6, like no target at all, get the one sentence below. */
 export const MEMORY_DOWNGRADE_TARGETS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const satisfies readonly MemoryDowngradeTarget[];
-export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget = 1) {
+export const MEMORY_DOWNGRADE_GO_THROUGH_102 = "MEMORY_DOWNGRADE_GO_THROUGH_102";
+export const MEMORY_DOWNGRADE_GO_THROUGH_102_LINE = "To go back to Murage 1.0.1 or older, first go through Murage 1.0.2: create a backup in this version, run this command with --to 10, install 1.0.2, then go back further from there. Murage 1.0.1's backup and restore tools can't read your data after these steps. Your backup from this version restores in this version.";
+/** A step to 1.0.1's shape or older belongs to 1.0.2's own command: this build's files hold objects that shape does not name, so 1.0.1's inspector would not
+ * accept the result. Thrown before the lease, the routine folding and any open of the file. */
+export function refuseStepBefore102(): never {
+  throw Object.assign(new Error(MEMORY_DOWNGRADE_GO_THROUGH_102_LINE), { code: MEMORY_DOWNGRADE_GO_THROUGH_102 });
+}
+/** `testOnlyBefore102` is the tests' route to a target of 6 or below, for the rewind code and the checks against the real 1.0.1: only test files pass it
+ * (installation-recovery-command.test.ts scans for that), and the command takes strings, so neither the hand-run command nor the app can set it. */
+export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDowngradeTarget, testing: { at?: (point: DowngradeSearchPoint) => void; testOnlyBefore102?: true } = {}) {
+  if (to <= 6 && !testing.testOnlyBefore102) refuseStepBefore102();
+  const at = testing.at ?? (() => {});
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   const file = join(root, "messages.db");
   const stat = existsSync(file) ? lstatSync(file) : null;
@@ -157,12 +217,12 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
   if (!hasDatabase && !existsSync(routines)) fail("MEMORY_DATABASE_MISSING");
   const lease = acquireDataDirLeaseForProcess(root);
   try {
-    // A phone line still waiting to send is refused before any change: nothing below may have run when the owner is told to send or cancel it
-    // (the routine folding, the push and transcript columns and the memory step all change the file).
+    // A phone line still waiting to send, or a held Post in… post, is refused before any change: nothing below may have run when the owner
+    // is told to send or cancel it (the routine folding, the push and transcript columns and the memory step all change the file).
     if (hasDatabase) {
       const probe = new DatabaseSync(file, { readOnly: true });
       // the same wait the main connection gets: a connection still leaving the file holds it for a moment, and the probe waits it out rather than failing
-      try { probe.exec("PRAGMA busy_timeout=5000"); assertNoPendingPhoneWork(probe); } finally { probe.close(); }
+      try { probe.exec("PRAGMA busy_timeout=5000"); assertNoPendingPhoneWork(probe); assertNoHeldVenuePosts(probe); } finally { probe.close(); }
     }
     // Routines first (1.0.2 bgwork): an older release reads only routines.json and plain journal lines, so every
     // cursor a routine state line moved is folded in before it can see the schedule (no occurrence runs twice).
@@ -179,6 +239,8 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       downgradeBotCallsTo108(db);
       // every older build lacks the connected-app trigger tables (1.0.12): they leave first, whatever the target (app-trigger-store.ts)
       downgradeAppTriggers(db);
+      // every older build lacks the 1.0.18 card tables (venue_posts, room_shares): they leave first, whatever the target (installation-app-schema-downgrade.ts)
+      downgradeCardTablesTo117(db);
       downgradeTranscriptSeqTo102(db);
       // every older build lacks the push retention indexes (1.0.3): they leave first, whatever the target (mobile-push-store.ts)
       downgradePushRetentionIndexesTo102(db);
@@ -195,8 +257,19 @@ export function downgradeInstallationMemorySchema(dataDir: string, to: MemoryDow
       if (to < 10 && reclaimHasRun(db)) resetRetainedSessionCursors(dirname(file));
       // every build before memory schema 12 resumes by the raw cursor (rule 27): a session with a later incarnation never resumes there
       if (to < 12) resetIncarnatedSessionCursors(dirname(file), db);
+      settleSearchIndexForDowngrade(db, at);
       const result = downgradeMemorySchema(db, to);
-      db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      checkedTruncate(db);
+      at("checkpointed");
+      // The live merge marker (search-merge-runner) leaves only after that checkpoint, and only while its table is still there
+      // (to>=10 keeps it, memory/schema.ts DERIVED_TABLES_KEPT_FOR_102). A failed checkpoint keeps it, in either state, and the next
+      // start of a build that knows it pays it. By name only.
+      if (hasTable(db, "transcript_index_state") && Number(db.prepare("DELETE FROM transcript_index_state WHERE name='search_merge'").run().changes) > 0) {
+        at("marker-deleted");
+        // the file stands alone again only when that one row's frame folded: checked like the first, a held log fails the downgrade
+        // (the marker is gone and every step before it reruns as a no-op, so the rerun's first checked TRUNCATE folds it)
+        checkedTruncate(db);
+      }
       // 1.0.3 lane 2: the search index file goes back to what 1.0.2 wrote (its second word table and the lane's markers leave; a renamed
       // word table with age rowids stays, 1.0.2 reads it by rowid and by rank and is correct either way).
       downgradeMemoryIndexFile(join(root, "memory-index.db"));

@@ -1041,6 +1041,20 @@ const playTurn = (prompt: JsonValue) => {
   if ((mode === "hang" && !finishNow) || fixtureRequested(promptText(prompt), "__fixture_hold_authority__")) {
     // stay alive until killed — lets tests exercise interrupt + the
     // permission broker while a turn is officially in flight
+    // V5 stall test: write this call's tool_use to stdout once the test touches the file, then note when it was written.
+    const itemWhen = process.env.FAKE_CLAUDE_ITEM_WHEN_FILE;
+    if (itemWhen) {
+      const poll = setInterval(() => {
+        if (!existsSync(itemWhen)) return;
+        clearInterval(poll);
+        const input = JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT ?? "{}") as Record<string, unknown>;
+        // FAKE_CLAUDE_ITEM_DELAY_MS: write the item this long after the test touched the file (a CLI that reports late)
+        setTimeout(() => {
+          out({ type: "assistant", message: { content: [{ type: "tool_use", id: `toolu_fake_stall_${process.pid}`, name: process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash", input }] } });
+          writeFileSync(`${itemWhen}.written`, String(Date.now()));
+        }, Number(process.env.FAKE_CLAUDE_ITEM_DELAY_MS ?? 0));
+      }, 10);
+    }
     if (promptText(prompt).includes("__fixture_error_result_on_stop__")) {
       // A CLI that reports its own interruption: on SIGTERM it writes an
       // error result for the running turn, then exits.

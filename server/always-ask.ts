@@ -37,13 +37,14 @@
 // `unison`, a cloud CLI's delete-sync) removes from its destination whatever
 // the source lacks: the destination is read as `rm -rf` reads its paths.
 
+import { Doubt, type DoubtReason } from "./shell/marks.ts";
 import { isPlain, lex, literalText, renderWord, Unreadable, type Part, type Quote, type Word } from "./shell/lex.ts";
 import { looksLikePowerShell, nestedProgram, POWERSHELLS, PWSH_READ_ONLY, walkCmd, walkNestedInput, walkPwsh } from "./shell/pwsh.ts";
 import {
-  candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, REMOTE_ELEVATED, resolveFrom,
+  canonPath, candidatesOf, deviceInWord, deviceReadPosition, fork, HOME, HOME_PARENT, homeSpelled, interpreterKey, isAnchored, isDeviceWrite, newContext, normalizePath, procTraversal, protectedClimb, REMOTE_ELEVATED, resolveFrom,
   UNKNOWN_MARK, unmarked, walkScript, type Candidate, type SimpleCommand, type Visitor, type WalkContext,
 } from "./shell/walk.ts";
-import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { posix as posixPath } from "node:path";
 import { parse, type Redirect } from "./shell/parse.ts";
 
@@ -54,6 +55,7 @@ export type ProtectedClass = "root" | "home" | "system" | "volume";
 
 export interface AlwaysAskHit {
   rule: AlwaysAskRule;
+  doubt?: DoubtReason;
   /** Plain words for the card: what this would do. */
   what: string;
   /** `protected-path` only: the class of the path, and the program pointed at it */
@@ -73,6 +75,10 @@ export interface AlwaysAskHit {
    * only where that is proven, so a new `unreadable` hit stays unmarked until someone marks it. No verdict reads it in
    * 1.0.13: every such hit keeps its card, and the mark is what a later whole-text check tests. The `what` is not read. */
   readerFailed?: true;
+  /** NOLIMITS-MEANS-IT 2.1.1 (1.0.20): the reader could not follow this text and found nothing in it. The owner No limits
+   * lane waives such a hit on a clean turn when the plain wipe check (outside-scan.ts) also finds nothing. Never set by
+   * `unreadableHit()` itself, so a new `unreadable` hit stays unmarked until someone marks it. */
+  couldNotRead?: true;
 }
 
 const WHAT: Record<AlwaysAskRule, string> = {
@@ -135,13 +141,22 @@ export function unreadableHit(): AlwaysAskHit {
  * something it could not follow. server/shell/walk.ts throws the two catastrophe details. */
 const DELETE_OPTION_VALUE = "a delete option from a value";
 const FOUND_FAILURES = [DELETE_OPTION_VALUE, "runs a catastrophe", "names a catastrophe"];
+/** 2.1.1: what the reader found also in these (walk.ts "names a disk", "deletes and looks up the home folder", "runs
+ * downloaded text"): no `couldNotRead`. Kept apart from FOUND_FAILURES so the 1.0.13 `readerFailed` mark is unchanged. */
+const FOUND_NOT_WAIVED = [...FOUND_FAILURES, "names a disk", "deletes and looks up the home folder", "runs downloaded text"];
 
 /** Preserve security-bearing exceptions even when they share the unreadable rule. */
 function readerFailure(error: Unreadable): AlwaysAskHit {
+  if (error instanceof Doubt) return { ...unreadableHit(), doubt: error.doubt };
   if (error.message.endsWith(REMOTE_ELEVATED)) return { rule: "unreadable", what: REMOTE_ELEVATED_WHAT };
-  // a finding thrown is a finding, and a depth stop was never read past: neither carries the mark
-  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail)) || error.reason === "depth" || error.reason === "nesting") return hit("unreadable");
-  return unreadableHit();
+  // A finding remains a finding. An incomplete closed-list read is never waived.
+  if (FOUND_FAILURES.some((detail) => error.message.endsWith(detail))) return hit("unreadable");
+  if (error.reason === "depth" || error.reason === "nesting") return { ...unreadableHit(), doubt: "tokenizer" };
+  if (FOUND_NOT_WAIVED.some((detail) => error.message.endsWith(detail))) return unreadableHit();
+  // MurageMain ruling (S10 relay 4, 11-06): the waiver covers what the reader could not follow in a text it read, never a text
+  // past the reader's length limit. That one keeps its card at every level, No limits included.
+  if (error.reason === "length") return unreadableHit();
+  return { ...unreadableHit(), doubt: error.reason === "folder" || error.reason === "expansion" ? "value-path" : "tokenizer" };
 }
 
 /** Top-level folders the system runs from (macOS, Linux). A delete of one of
@@ -196,8 +211,12 @@ const MORE_SYSTEM = new Set(["/nix", "/snap", "/cores"]);
 /** The protected class a path names, or null: the drive root, a home folder
  * (`~`, `/Users/x`, `/home/x`, `/var/root`), a folder the system runs from
  * (macOS `/private/etc` is `/etc`), or one whole mounted volume
- * (`/Volumes/x`, `/mnt/x`, `/media/u/x`). Anything deeper is ordinary. */
+ * (`/Volumes/x`, `/mnt/x`, `/media/u/x`), including their descendants. */
 export function protectedClass(raw: string): ProtectedClass | null {
+  if (procTraversal(homeSpelled(raw)) || protectedClimb(raw)) return "system"; // M-FIX3-class
+  const canonical = normalizePath(homeSpelled(raw)).toLowerCase();
+  if ([...SYSTEM_FOLDERS, ...MORE_SYSTEM, ...MOUNT_PARENTS].some(root => canonical.startsWith(`${root}/`))
+    || /^[a-z]:\/(?:windows|program files(?: \(x86\))?|programdata|users)\//.test(canonical)) return "system"; // M-FIX2-protected
   switch (classifyPath(raw)) {
     case "delete-root": return "root";
     case "delete-home": return "home";
@@ -245,8 +264,8 @@ function classifyCandidate(candidate: Candidate, ctx: WalkContext): AlwaysAskRul
   switch (candidate.kind) {
     case "literal": return classifyPath(resolveFrom(cwd, candidate.path));
     case "glob": return classifyPath(resolveFrom(cwd, candidate.path)) ?? (catastrophicAnchor(candidate.anchor) ? "unknown-target" : null);
-    // an item of a list file on disk: the same trust as a script on disk
-    case "fromFile": return null;
+    // an item from an unread list cannot be proved to name an allowed path
+    case "fromFile": throw new Doubt("file-fed-args"); // M-PR-6: always-ask.ts, not walk.ts
     case "value": {
       // Splitting/globbing can mark a resolved assignment as a value.
       // Its known literal landing still takes the catastrophe rule.
@@ -594,7 +613,7 @@ const DISK_WRITERS = new Set(["mke2fs", "newfs", "wipefs", "diskutil", "format",
 /** Commands that delete, move, overwrite or change who may use a file: the
  * Unix ones and PowerShell's (cmd's `rd`, `del` and `move` too). */
 const RISKY = new Set([
-  "rm", "rmdir", "unlink", "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee", "dd", "shred",
+  "rm", "rmdir", "mkdir", "touch", "unlink", "mv", "cp", "ln", "install", "rsync", "truncate", "chmod", "chown", "chgrp", "chflags", "setfacl", "tee", "dd", "shred",
   "rd", "del", "erase", "move", "copy", "xcopy", "robocopy", "icacls", "takeown", "attrib", "ren",
   "remove-item", "ri", "move-item", "mi", "copy-item", "cpi", "rename-item", "rni", "set-content", "sc", "add-content", "ac", "clear-content", "clc", "out-file", "set-acl",
 ]);
@@ -625,11 +644,16 @@ function diskHit(name: string, texts: Array<string | undefined>): boolean {
 /** Devices ask wherever they are spelled: a device path in any candidate of
  * any operand, unless the command is a device reader and the operand sits
  * where it reads. */
-function deviceHit(cmd: SimpleCommand): boolean {
+function deviceHit(cmd: SimpleCommand, ctx: WalkContext): boolean {
   const texts = cmd.operands.map(flagText);
   for (const [index, list] of cmd.operands.entries()) {
     for (const candidate of list) {
-      if (candidate.kind === "fromFile" || deviceInWord(candidate.path) === undefined) continue;
+      if (RISKY.has(cmd.name) && !deviceReadPosition(cmd.name, texts, index) && candidate.kind !== "literal") throw new Doubt("value-path"); // M-R1-uncertain
+      if (candidate.kind === "fromFile") continue;
+      if (!deviceReadPosition(cmd.name, texts, index) && candidate.kind === "literal"
+        && (/^(?:\/|~|[a-z]:)/i.test(candidate.path) || (RISKY.has(cmd.name) || cmd.name === "touch") && !candidate.path.startsWith("-"))
+        && canonPath(candidate.path, ctx, "write").value) throw new Doubt("value-path");
+      if (deviceInWord(candidate.path) === undefined) continue;
       if (!deviceReadPosition(cmd.name, texts, index)) return true;
     }
   }
@@ -639,6 +663,7 @@ function deviceHit(cmd: SimpleCommand): boolean {
 /** Where output goes (policy A): a device is a disk write, a stream under
  * `/dev/` is not a file, and a value asks. */
 function outputTarget(target: Word, candidates: Candidate[], ctx: WalkContext): AlwaysAskHit | null {
+  for (const candidate of candidates) if (candidate.kind === "literal" && canonPath(candidate.path, ctx, "write").value) throw new Doubt("value-path");
   if (candidates.some((candidate) => candidate.kind !== "fromFile" && isDeviceWrite(candidate.path))) return hit("disk-erase");
   if (candidates.every((candidate) => candidate.kind === "literal" && candidate.text.startsWith("/dev/"))) return null;
   if (candidates.some((candidate) => candidate.kind === "value")) valueTargetIn(true, "expansion", "where output goes has a value", REDIRECT_TOOL, targetExpression(target));
@@ -804,7 +829,7 @@ function protectedLiteral(path: string, ctx: WalkContext, assignments = true): P
   for (const one of prefix ? [path, path.slice(path.indexOf("=") + 1)] : [path]) {
     if (one === "") continue;
     if (!isAnchored(homeSpelled(unmarked(one))) && (ctx.cwdConflict || !ctx.cwd)) continue;
-    const found = protectedClass(resolveFrom(ctx.cwd, one));
+    const found = protectedClass(one) ?? protectedClass(resolveFrom(ctx.cwd, one));
     if (found) return found;
   }
   return null;
@@ -1095,7 +1120,7 @@ const visitor: Visitor<AlwaysAskHit> = {
       return pwsh ? walkPwsh(text, nested, visitor) : walkCmd(text, nested, visitor);
     }
     // a device spelled anywhere outside a reader's read position
-    if (deviceHit(cmd)) return hit("disk-erase");
+    if (deviceHit(cmd, ctx)) return hit("disk-erase");
     if (diskHit(name, texts)) return hit("disk-erase");
     // the operands name a catastrophe: that is the card
     // the routine carve-out covers the targets of rm, find -delete and the
@@ -1111,7 +1136,7 @@ const visitor: Visitor<AlwaysAskHit> = {
     if (isRisky(name, texts) || mirrorTargets(cmd) !== undefined) {
       for (const [index, list] of operands.entries()) {
         for (const candidate of list) {
-          // `fromFile` (a list on disk) is ordinary here, as a script on disk is
+          if (candidate.kind === "fromFile") throw new Doubt("file-fed-args");
           if (candidate.kind === "value") valueTargetIn(carvable === "all" || carvable?.has(candidate) === true, "expansion", `a value in ${name}'s arguments`, tool, targetExpression(args[index]));
           if (candidate.kind === "glob" && catastrophicAnchor(candidate.anchor)) return hit("unknown-target");
         }
@@ -1317,8 +1342,11 @@ export function alwaysAskRoutineCommand(text: string | undefined, cwd?: string, 
 /** `home` (1.0.9): the HOME the requesting engine's shell was handed, from
  * its own environment record (server/engine-env.ts promptFactsOf); without
  * it, a `~` keeps the text outside the allowed shape. */
+let activeSessionFiles: UnseenOptions | undefined;
+
 function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", windowsBash?: string[], home?: string, options: UnseenOptions = {}): AlwaysAskHit | null {
   try {
+    activeSessionFiles = options;
     const found = read(text, cwd, shell, windowsBash);
     if (found || !unseen || unseen.paths.length === 0) return found;
     // a `bash -c` payload PowerShell hands on (Codex and ACP engines on
@@ -1326,9 +1354,11 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
     if (windowsBash) return unreadableHit();
     const admits = unseenShapeAdmits(text, unseen.paths, cwd, shell, home, options);
     if (admits === true) return { ...unreadableHit(), unseenScript: true };
-    return admits === null ? unreadableHit() : { ...unreadableHit(), unseenWhy: admits };
+    if (admits === null) return unreadableHit();
+    return { ...unreadableHit(), unseenWhy: admits };
   } finally {
     unseen = null;
+    activeSessionFiles = undefined;
   }
 }
 
@@ -1339,6 +1369,8 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
 const SHAPE_SHELLS = new Set(["bash", "sh"]);
 const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
 const SHAPE_SOURCES = new Set(["source", "."]);
+/** 1.0.18 (APPROVALS-SIMPLE 5a): -I isolated, -E no PYTHON* env, -s no user site, -B no .pyc, -u unbuffered, -q quiet. */
+const PY_RUN_OPTIONS = /^-[IEsBuq]+$/;
 const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
 /** 1.0.9: the filters a script's output may be piped through
  * (`node tool.mjs | head -c 3000`), each read by `stdinFilter`: only the
@@ -1447,10 +1479,31 @@ export interface UnseenFs {
 }
 export interface UnseenOptions {
   fs?: UnseenFs;
+  sessionEdits?: ReadonlySet<string>;
+  sessionFile?: (path: string) => { text: string } | "unavailable";
   /** The shell the text runs in: a POSIX shell, or Git Bash on Windows.
    * Unset, Windows when the server runs there or the folder has a drive. */
   platform?: "posix" | "win32";
 }
+/** Bounded, regular-file-only read. Bytes are inspected, never executed. */
+function readSessionFile(path: string): { text: string } | "unavailable" {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!stat.isFile() || stat.size > 131_072) return "unavailable";
+    const bytes = Buffer.alloc(131_073);
+    let used = 0;
+    while (used < bytes.length) {
+      const count = readSync(fd, bytes, used, bytes.length - used, used);
+      if (count === 0) break;
+      used += count;
+    }
+    return used > 131_072 ? "unavailable" : { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, used)) };
+  } catch { return "unavailable"; }
+  finally { if (fd !== undefined) closeSync(fd); }
+}
+
 const DISK: UnseenFs = {
   realpath: (path) => realpathSync.native(path),
   stat: (path) => statSync(path),
@@ -1748,11 +1801,16 @@ function shapeScript(words: string[]): string | null {
   if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
   if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
-  if (!shapePath(path)) return null;
+  // 1.0.18 (APPROVALS-SIMPLE 5a): Python's run-tightening options before the script (`python3 -I x.py`, `-IB`); each
+  // only isolates or quiets the run, none takes code, a module or a path. Whole option words only.
+  let at = 1;
+  if (name === "python" || name === "python3") while (at < words.length - 1 && PY_RUN_OPTIONS.test(words[at]!)) at += 1;
+  const script = words[at];
+  if (!shapePath(script)) return null;
   // php reads its own options after the script too (`php app.php -r code`,
   // `-d auto_prepend_file=x`): any option-shaped word there is outside the shape
   if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
-  return path;
+  return script!;
 }
 
 /** Each script path is spelled once (no other word shares its file name),
@@ -1843,6 +1901,8 @@ function venvTool(words: string[]): boolean {
 
 function readRules(text: string, cwd: string | undefined): AlwaysAskHit | null {
   const ctx = newContext(cwd || undefined);
+  ctx.sessionEdits = activeSessionFiles?.sessionEdits;
+  ctx.sessionFile = activeSessionFiles?.sessionFile ?? readSessionFile;
   // `robocopy` is Windows' own: a line it opens is read as a POSIX shell,
   // PowerShell and cmd would each read it (`C:\Users\x` is a path to the
   // last two), and the first hit wins

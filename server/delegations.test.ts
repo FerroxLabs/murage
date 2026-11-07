@@ -22,6 +22,7 @@ import {
   MAX_BUSY_ATTEMPTS,
   pendingDelegationInfo,
   pendingDelegationSnapshot,
+  SNAPSHOT_LIMIT,
   queueDelegation,
   recordDelegationReceipt,
   releaseDelegationsWaitingOn,
@@ -326,6 +327,58 @@ describe("drainDelegations", () => {
     });
     await waitFor(() => runTargetCalls.length === 1);
     expect(runTargetCalls[0]!.message).toContain("[Reason: next step]");
+  });
+
+  // U4 S3 (upstream D39): what "finished" means rides on the hand-off row, under its chip, and in the teammate's brief
+  it("carries done_when under the hand-off chip and into the teammate's brief", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", doneWhen: "  the report\n is in Files  ", depth: 0 }, 1);
+    const chip = store.messagesFor(from.threadId).find((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chip?.tool?.doneWhen).toBe("the report is in Files");
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.message).toContain("[Done when: the report is in Files]");
+  });
+
+  it("keeps done_when across a restart and reads a stored over-long value as none", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "do this", doneWhen: "the PR is open", depth: 0 }, 1);
+    _simulateRestart();
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.message).toContain("[Done when: the PR is open]");
+  });
+
+  it("never writes a done_when over 280 characters or one that redaction changes", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "long one", doneWhen: "x".repeat(281), depth: 0 }, 1);
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "secret one", doneWhen: `the key ${"AKIA"}${"ABCDEFGHIJKLMNOP"} works`, depth: 0 }, 1); // secret-scan: fixture
+    const chips = store.messagesFor(from.threadId).filter((m) => m.tool?.name.startsWith("Delegated to @Helper"));
+    expect(chips).toHaveLength(2);
+    for (const chip of chips) expect(chip.tool?.doneWhen).toBeUndefined();
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length >= 1);
+    for (const call of runTargetCalls) {
+      expect(call.message).not.toContain("Done when");
+      expect(call.message).not.toContain("AKIA");
+    }
+  });
+
+  it("never briefs a secret-looking done_when planted in a saved queue row", async () => {
+    queueDelegation(commsBus, from, { toBotId: target.id, message: "planted one", doneWhen: "the PR is open", depth: 0 }, 1);
+    // planted past the write check (a restored backup, an older build, a hand edit), then read back on a new process
+    database().prepare("UPDATE pending_delegations SET item=json_set(item,'$.doneWhen',?) WHERE source_thread_id=?").run(`the key ${"AKIA"}${"ABCDEFGHIJKLMNOP"} works`, from.threadId); // secret-scan: fixture
+    _simulateRestart();
+    drainDelegations(commsBus, approvalBus, from.threadId, (toBotId, message, commsDepth) => {
+      runTargetCalls.push({ toBotId, message, commsDepth });
+    });
+    await waitFor(() => runTargetCalls.length === 1);
+    expect(runTargetCalls[0]!.message).toContain("planted one");
+    expect(runTargetCalls[0]!.message).not.toContain("Done when");
+    expect(runTargetCalls[0]!.message).not.toContain("AKIA");
   });
 
   it("drains and mirrors a detached routine delegation on its source thread", async () => {
@@ -1752,6 +1805,22 @@ describe("a parked handoff whose wake-up already passed", () => {
     expect(pendingDelegationSnapshot()).toHaveLength(1);
     releaseDelegationsWaitingOn(target.id);
     expect(hasActiveDelegationWork()).toBe(true);
+  });
+
+  it("lists only busy handoffs for phase busy, found in the SQL even behind a full page of fresh ones (Today 1.0.18)", async () => {
+    // A full snapshot page of fresh handoffs from another conversation, queued BEFORE the busy one, so a filter
+    // applied after the LIMIT would never see it.
+    const insert = database().prepare("INSERT INTO pending_delegations (id, source_thread_id, to_bot_id, from_bot_id, phase, item, origin) VALUES (?, ?, ?, ?, 'fresh', ?, 'owner')");
+    for (let index = 0; index < SNAPSHOT_LIMIT; index += 1) insert.run(`fill-${index}`, "thread-elsewhere", target.id, from.id, JSON.stringify({ toBotId: target.id, message: "x", depth: 0 }));
+    expect(pendingDelegationSnapshot({ phase: "busy" })).toEqual([]);
+    const runTarget = vi.fn();
+    await parkTwice(runTarget);
+    expect(pendingDelegationSnapshot()).toHaveLength(SNAPSHOT_LIMIT);
+    expect(pendingDelegationSnapshot().some((row) => row.sourceThreadId === from.threadId), "the unfiltered page is full before it").toBe(false);
+    expect(pendingDelegationSnapshot({ phase: "busy" })).toEqual([{ sourceThreadId: from.threadId, toBotId: target.id }]);
+    // Released to run, it is no longer busy and leaves the busy list.
+    expect(releaseDelegationsWaitingOn(target.id)).toEqual([from.threadId]);
+    expect(pendingDelegationSnapshot({ phase: "busy" })).toEqual([]);
   });
 
   it("offers Stop on the waiting line, and Stop drops the handoff with a receipt and a plain line", async () => {

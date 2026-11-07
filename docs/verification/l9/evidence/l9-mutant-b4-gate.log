@@ -1,0 +1,65 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ server/drivers/acp/kimi-signin-regression.test.ts (4 tests | 1 failed | 3 skipped) 387ms
+   × L9 B4/G6: true, false and unknown attempt identical fresh session/new refusals 384ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/kimi-signin-regression.test.ts > L9 B4/G6: true, false and unknown attempt identical fresh session/new refusals
+AssertionError: expected [ …(3) ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   ObjectContaining {
+-     "message": StringMatching /auth|sign.in/i,
++ [
++   {
++     "createdAt": "2026-11-06T16:56:23.292Z",
++     "eventId": "ev-mw57v30c-3",
++     "provider": "kimiAgent",
++     "threadId": "l9-trace",
++     "turnId": "f5d0e8a4-ae55-46d1-8b68-dd39eb65f135",
++     "type": "turn.started",
++   },
++   {
++     "createdAt": "2026-11-06T16:56:23.292Z",
++     "eventId": "ev-mw57v30c-4",
++     "message": "Kimi Code CLI is not signed in. Outside mainland China: kimi login --region global. Mainland China: kimi login --region mainland-cn. Run one in a terminal.",
++     "provider": "kimiAgent",
++     "setup": true,
++     "threadId": "l9-trace",
++     "turnId": "f5d0e8a4-ae55-46d1-8b68-dd39eb65f135",
+      "type": "runtime.error",
++   },
++   {
++     "cost": null,
++     "createdAt": "2026-11-06T16:56:23.292Z",
++     "eventId": "ev-mw57v30c-5",
++     "ok": false,
++     "provider": "kimiAgent",
++     "stopReason": "auth_required",
++     "threadId": "l9-trace",
++     "turnId": "f5d0e8a4-ae55-46d1-8b68-dd39eb65f135",
++     "type": "turn.completed",
+    },
+  ]
+
+ ❯ server/drivers/acp/kimi-signin-regression.test.ts:57:33
+     55|         const { turnId } = await instance.adapter.sendTurn({ threadId:…
+     56|         await recorder.until(e => e.type === "turn.completed" && e.tur…
+     57|         expect(recorder.events).toEqual(expect.arrayContaining([expect…
+       |                                 ^
+     58|         refusals.push(recorder.events.filter(e => e.type === "runtime.…
+     59|         const protocol = await readFile(rpc, "utf8");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  16:56:16
+   Duration  7.00s (transform 5.13s, setup 5.41s, import 1.10s, tests 387ms, environment 0ms)
+

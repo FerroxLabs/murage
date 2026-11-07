@@ -115,6 +115,7 @@ export type ItemOrigin = "engine" | "murage";
 
 export type RuntimeEvent = RuntimeEventBase &
   (
+    | { type: "turn.diagnostic"; category: "authentication" | "rate_limit" | "unavailable" | "tool_count"; quietMs: number }
     | { type: "session.started"; sessionId: string | null; model?: string | null;
         /** The driver's session contract this session was made under (ProviderInstance.sessionContract). */
         sessionContract?: number }
@@ -168,7 +169,9 @@ export type RuntimeEvent = RuntimeEventBase &
          *  calls off, where the chip is hidden. */
         spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
-        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
+        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string };
+        /** NOLIMITS 1.0.19 A3 (server-side): the call's key (Claude tool + sorted input, Codex item id), matched by its ask */
+        callKey?: string; lateFrame?: boolean }
     | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     /** `detail` is why the tool failed, as the engine reported it. It reaches
@@ -290,6 +293,13 @@ export type RuntimeEvent = RuntimeEventBase &
          * key file (Pi's gate resolves links itself); the rule it named. It
          * only ever adds a hold. Server-side only. */
         localHold?: string;
+        /** Additive (1.0.18, NOLIMITS v1 V5): Claude on a No limits owner turn held this ask 2 s for the engine's own
+         *  item.started of the same tool and input, and it never came. The server marks the turn before judging it. */
+        itemUnseen?: boolean;
+        /** NOLIMITS 1.0.19 A3 (server-side): the asked call's key (ACP toolCallId, Claude tool + sorted input, Codex item id);
+         *  `callKeyAmbiguous`: two started items of this turn share it, so the ask is judged on its marked turn */
+        callKey?: string;
+        callKeyAmbiguous?: boolean;
         /** Additive (1.0.4, F1): the driver runs this command's text under
          * PowerShell (`powershell.exe -Command`, Codex and ACP on Windows),
          * so the gates read it as PowerShell whatever it starts with. */
@@ -338,7 +348,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -803,6 +813,8 @@ export interface ProviderSnapshot {
   authenticated?: boolean;
   /** The sign-in check ran and did not answer (a timeout or a crash), so the engine is neither signed in nor signed out yet. */
   authUnverified?: true;
+  /** A local credential-shape answer, not evidence that a rejection is over. */
+  signInAnswerIsLocalHint?: true;
   version?: string | null;
   /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
   versionNote?: string;
