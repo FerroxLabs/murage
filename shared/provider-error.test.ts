@@ -33,7 +33,7 @@ describe("safe provider error details", () => {
     const info = classifyProviderError(error)!;
     expect(info).toEqual({ kind: "credits", provider: "flux-router", httpStatus: 402 });
     const display = providerErrorPresentation(info);
-    expect(display.billingUrl).toBe("https://fluxrouter.ai/home/billing");
+    expect(display.billingUrl).toBe("https://fluxrouter.ai/auth/sign-in?return_to=%2Fhome%2Fbilling");
     expect(display.resolution).toContain("already added credits");
     expect(JSON.stringify({ info, display })).not.toContain("fake-secret-canary");
   });
@@ -116,4 +116,11 @@ describe("safe provider error details", () => {
     expect(presentation.billingUrl).toBeUndefined();
     expect(JSON.stringify(presentation)).not.toMatch(/fake-secret-canary|evil\.invalid/);
   });
+});
+
+it.each([{ error: { code: "key_budget_reached" } }, { error: "key_budget_reached" }, { code: "key_budget_reached" }])("keeps a typed Flux budget at the adapter boundary: %j", body => {
+  const error = { data: { http_status: 402, body, message: "spent" } };
+  expect(classifyProviderError(error, true)).toMatchObject({ provider: "flux-router", fluxBudget: true });
+  expect(classifyProviderError(error)).not.toHaveProperty("fluxBudget");
+  expect(classifyProviderError({ data: { http_status: 402, body: { error: "premium_locked" } } }, true)).not.toHaveProperty("fluxBudget");
 });

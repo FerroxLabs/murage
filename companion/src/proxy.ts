@@ -26,8 +26,8 @@ import {
   MAX_COMPANION_ENDPOINTS,
   type CompanionEndpoint,
 } from "./endpoints.ts";
-import { approvalDeviceHeaders, hasLaunchCredential, denyReason, deviceProofHeaders, doorForwardHeaders, isCloudDesktopJoin, isRoutineWrite, isStreamTicket } from "./routes.ts";
-import { STREAM_UPGRADE_PATH, forwardStreamUpgrade, rejectUpgrade } from "./stream-upgrade.ts";
+import { approvalDeviceHeaders, hasLaunchCredential, denyReason, deviceProofHeaders, doorForwardHeaders, isCloudDesktopJoin, isRoutineWrite, callSourceHeaders, isCallSourceRoute, isStreamTicket } from "./routes.ts";
+import { CALL_CHANNEL_UPGRADE, STREAM_UPGRADE_PATH, forwardStreamUpgrade, rejectUpgrade } from "./stream-upgrade.ts";
 import { createSseScrubber, isJson, scrub } from "./wire.ts";
 
 /** What the forwarding handler needs from the process around it. */
@@ -348,7 +348,7 @@ export function createProxyHandler(options: ProxyOptions) {
         error: "Cloud desktop access is off for this phone. Turn it on in Murage → Settings → Phone and other devices.",
       });
     }
-    if (isStreamTicket(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
+    if ((isStreamTicket(method, path) || isCallSourceRoute(method, path)) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
       return sendJson(res, 503, { error: "calls require Murage and its companion to be started together by the desktop app or murage start" });
     }
     if (isCloudDesktopJoin(method, path) && (options.companionToken?.length !== 64 || !/^[a-f0-9]{64}$/.test(options.companionToken))) {
@@ -493,11 +493,12 @@ export function createProxyHandler(options: ProxyOptions) {
             ...deviceProofHeaders(method, path, options.companionToken),
             // Not owner proof: tells the harness this came through the door (audit C5).
             ...doorForwardHeaders(options.companionToken),
+            ...callSourceHeaders(method, path, req.headers["x-murage-call-id"]),
             // SEC-006: which device is answering, from the registry, beside the launch proof only.
             ...(hasLaunchCredential(options.companionToken) && device?.id && options.approvalIdentity ? approvalDeviceHeaders(method, path, options.approvalIdentity(device.id)) : {}),
             // the streaming ticket is bound to this device; forwardHeaders is an
             // allowlist, so a client's own copy of the header never passes
-            ...(isStreamTicket(method, path) && device?.id ? { "x-murage-stream-principal": `companion:${device.id}:bearer` } : {}),
+            ...((isStreamTicket(method, path) || isCallSourceRoute(method, path)) && device?.id ? { "x-murage-stream-principal": `companion:${device.id}:bearer` } : {}),
           },
         },
         (harness) => {
@@ -813,11 +814,13 @@ export function createProxyHandler(options: ProxyOptions) {
  *  the door's own rules, a bearer and no Origin, tracked like a live stream. */
 export function createDeviceStreamUpgrade(options: ProxyOptions) {
   const slots = new Map<string, number>();
+  const callSlots = new Map<string, number>();
   return (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
     // Node takes its own error listener off an upgrade socket
     socket.on("error", () => socket.destroy());
     const path = (req.url ?? "/").split("?")[0];
-    if (path !== STREAM_UPGRADE_PATH) return void socket.destroy();
+    const callChannel = CALL_CHANNEL_UPGRADE.test(path);
+    if (path !== STREAM_UPGRADE_PATH && !callChannel) return void socket.destroy();
     if (req.headers.origin) return rejectUpgrade(socket, 403, "forbidden: cross-origin request");
     const token = bearerToken(req.headers.authorization);
     const device = options.authenticate(token);
@@ -831,7 +834,8 @@ export function createDeviceStreamUpgrade(options: ProxyOptions) {
       harnessPort: options.harnessPort,
       companionToken: options.companionToken,
       principal: `companion:${deviceId}:bearer`,
-      slots,
+      callChannel,
+      slots: callChannel ? callSlots : slots,
       maxOpen: replace ? 2 : 1,
       onOpen: (disconnect) => options.connected?.(deviceId, disconnect) ?? (() => {}),
       live: () => options.authenticate(token) !== null,

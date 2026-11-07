@@ -28,6 +28,7 @@ Anything the panel does not find, it leaves out; it never invents state.
 |---|---|---|
 | `bindingId`, `botName` | string | identity; `botName` is shown as text only |
 | `botColor` | `#rrggbb`? | optional avatar colour |
+| `botAvatarId` | string? | the id (16 hex characters) of the bot's picture, when it has one (app 1.0.18+, extension 1.0.1+). The status carries the id only, never the bytes. The panel asks for the bytes once per id with the action `avatar` (`{ action: 'avatar', bindingId }` returns `{ botAvatarId, botAvatar }`, where `botAvatar` is a base64 `data:image/webp`, `png` or `jpeg` URL of at most 16384 characters, or `{}`), and draws it as an `<img>` in the avatar circle. Absent, or anything else, shows the letter. GIF pictures show the letter |
 | `conversation` | string? | conversation name for the bot line |
 | `state` | `active` / `paused` / `stopped` | `stopped` bindings are not offered in the switcher |
 | `pausedReason` | `'handoff'`? | with `state: 'paused'`, the bot handed the page to the owner (Your turn) |
@@ -52,3 +53,5 @@ Anything the panel does not find, it leaves out; it never invents state.
 5. Owner actions answer with `{ error: code }`; the panel words these codes: `host_offline`, `site_denied`, `human_handover`, `binding_inactive`, `tab_owned`, `unknown_binding`, `binding_stopped`, `handoff_use_continue`, `not_handoff`, `incognito_denied`, `persistence_failed`, `update_required`, `storage_unavailable`. Any other code shows a general sentence.
 6. One action runs at a time. While it is pending the panel turns its action buttons off and shows "Working on it"; a second press sends nothing. Stop and Pause are the exception: they stay available and always go through.
 7. `setMode` only tightens (the panel never offers a looser mode, and never `full`); `turnoff` leaves Full permissive. Both appear only when listed in `panelActions`.
+
+Avatar pictures are memory only: the letter shows after a browser restart until the app binds again. GIF remains letter only.

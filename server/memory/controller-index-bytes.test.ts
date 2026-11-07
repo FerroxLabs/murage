@@ -60,6 +60,28 @@ it("a helper that starts again counts from zero: its first report is charged who
   expect(charged() - before).toBe(1110 * BLOCK_BYTES);
 });
 
+it("WIN-IOB-QUICK: a win32 helper (blocks 0) is charged its index WAL bytes; with both counts the larger growth is charged once", async () => {
+  const before = charged();
+  internals.onWorkerMessage(internals.child, { type: "index-result", requestId: "none", records: [], embeddingStatus: "indexed", fsWriteBlocks: 0, ioBytes: 300_000 });
+  await settle();
+  expect(charged() - before).toBe(300_000);
+  internals.onWorkerMessage(internals.child, { type: "io", fsWriteBlocks: 0, ioBytes: 500_000 });
+  expect(charged() - before).toBe(500_000);
+  // blocks grew more than the WAL (a checkpoint the WAL count cannot see): the larger, never the sum
+  internals.onWorkerMessage(internals.child, { type: "io", fsWriteBlocks: 1000, ioBytes: 600_000 });
+  expect(charged() - before).toBe(500_000 + 1000 * BLOCK_BYTES);
+  // a new helper's WAL count starts again from zero and is charged whole
+  const next = { kill() {}, on() {}, send() {} };
+  internals.child = next;
+  internals.onWorkerMessage(next, { type: "io", fsWriteBlocks: 0, ioBytes: 7000 });
+  expect(charged() - before).toBe(500_000 + 1000 * BLOCK_BYTES + 7000);
+  // a fallen WAL count on the same helper is a fresh count too
+  internals.onWorkerMessage(next, { type: "io", fsWriteBlocks: 0, ioBytes: 10 });
+  expect(charged() - before).toBe(500_000 + 1000 * BLOCK_BYTES + 7010);
+  internals.onWorkerMessage(next, { type: "io", ioBytes: "lots" });
+  expect(charged() - before).toBe(500_000 + 1000 * BLOCK_BYTES + 7010);
+});
+
 it("a report that is not a finite count is ignored", async () => {
   const before = charged();
   internals.onWorkerMessage(internals.child, { type: "io", fsWriteBlocks: "many" });

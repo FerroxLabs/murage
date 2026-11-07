@@ -42,9 +42,9 @@ export const NOISY_SYSTEM_SUBJECTS: readonly string[] = [
   "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "consolidation-skip-due", "consolidation-skip-cursor", "parked-sweep", "parked-reconcile", "origin-backfill",
   "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
   // The roster binding is rewritten on every save that adds a bot, a task or a room (a widening: nothing a hold rests on changes); what a
-  // save WITHDRAWS is bumped by policy.ts itself (bumpAuthorityHard on a removal, the policy revision on an audience change). A notebook
+  // save WITHDRAWS is bumped by policy.ts itself (thread dependencies on a conversation removal, hard on a container removal, the policy revision on an audience change). A notebook
   // link records what was imported and when it was last looked at; a changed import's own revoke moves the epoch, a first import nothing.
-  "roster", "notebook-link",
+  "roster", "notebook-link", "thread-deletion-clock",
 ];
 const NOISY = (row: "NEW" | "OLD") => `${row}.subject_type='system' AND ${row}.subject_id IN (${NOISY_SYSTEM_SUBJECTS.map(subject => `'${subject}'`).join(",")})`;
 // A thread's checkpoint rolls to a new version on every captured message and the old version is archived; a receipt that cites
@@ -68,6 +68,9 @@ const GROWN_SUCCESSOR = "EXISTS (SELECT 1 FROM main.memory_disclosures s WHERE s
 // is not, so it counts.
 const REBOUND = "OLD.native_session IS NOT NEW.native_session AND (OLD.native_session IS NOT NULL OR NEW.native_session IS NULL OR NEW.rowid < COALESCE((SELECT max(x.rowid) FROM main.memory_disclosures x WHERE x.thread_id=NEW.thread_id AND x.driver_instance=NEW.driver_instance AND x.native_session=NEW.native_session),0))";
 const TRIGGERS: string[] = [
+  // Thread deny insertion/removal logs its dependency; arbitrary edits and scope denial keep the hard fallback.
+  ...ALL_EVENTS.map(event => trigger(`memory_deny_${event[0].toLowerCase()}`, event, "memory_deny", undefined,
+    event === "UPDATE" ? `${BUMP}` : `${SOFT_BUMP}; ${softLog("'thread:'||" + (event === "INSERT" ? "NEW" : "OLD") + ".id")}; UPDATE authority_epoch SET hard=hard+1 WHERE ${event === "INSERT" ? "NEW" : "OLD"}.kind!='thread'`)),
   ...writes("memory_records", ["UPDATE"], RECORD_CHANGED),
   trigger("memory_records_soft", "UPDATE", "memory_records", RECORD_ACTIVATED, `${SOFT_BUMP}; ${softLog("'record:'||NEW.id")}`), ...writes("memory_records", ["DELETE"]),
   // A source's new revision or content, and a source joining the active branch (retired to active), are SOFT: they take nothing away from a
@@ -88,8 +91,9 @@ const TRIGGERS: string[] = [
   trigger("bindings_u", "UPDATE", "memory_scope_bindings", `NOT (${NOISY("NEW")}) OR NOT (${NOISY("OLD")})`),
   trigger("bindings_d", "DELETE", "memory_scope_bindings", `NOT (${NOISY("OLD")})`),
   // A receipt matters when it is revoked or its contents change; becoming delivered, or getting its session bound, does not.
-  ...writes("memory_disclosures", ["UPDATE"], "OLD.thread_id IS NOT NEW.thread_id OR OLD.driver_instance IS NOT NEW.driver_instance OR (" + REBOUND + ") OR NEW.state='revoked' AND OLD.state IS NOT 'revoked' OR OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch"),
-  trigger("memory_disclosures_d", "DELETE", "memory_disclosures", `NOT ${GROWN_SUCCESSOR}`),
+  ...writes("memory_disclosures", ["UPDATE"], "OLD.thread_id IS NOT NEW.thread_id OR OLD.driver_instance IS NOT NEW.driver_instance OR (" + REBOUND + ") OR OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch"),
+  trigger("memory_disclosures_revoked", "UPDATE", "memory_disclosures", "NEW.state='revoked' AND OLD.state IS NOT 'revoked'", `${SOFT_BUMP}; ${softLog("'thread:'||NEW.thread_id")}`),
+  trigger("memory_disclosures_d", "DELETE", "memory_disclosures", `NOT ${GROWN_SUCCESSOR}`, `${SOFT_BUMP}; ${softLog("'thread:'||OLD.thread_id")}`),
   trigger("memory_disclosures_d_grown", "DELETE", "memory_disclosures", GROWN_SUCCESSOR, SOFT_BUMP),
   // Output links and roots are added for the reply a turn just produced, a new message nothing existing rests on; the lineage
   // cache treats them as dirty for that one message. Changing or removing one is what counts here.
@@ -100,7 +104,7 @@ const TRIGGERS: string[] = [
   ...writes("memory_lineage_meta", ["UPDATE", "DELETE"]),
   trigger("meta_u", "UPDATE", "memory_meta", "OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode"),
   trigger("messages_u", "UPDATE", "messages", "OLD.json IS NOT NEW.json AND (instr(OLD.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)"),
-  trigger("messages_d", "DELETE", "messages"),
+  trigger("messages_d", "DELETE", "messages", undefined, `${SOFT_BUMP}; ${softLog("'thread:'||OLD.thread_id")}`),
   // INSERT OR REPLACE (writeMessage) deletes and re-inserts without firing the UPDATE or DELETE triggers (recursive triggers are off):
   // the row being replaced is looked at before it goes, with the condition of messages_u.
   `CREATE TEMP TRIGGER IF NOT EXISTS authority_messages_r BEFORE INSERT ON main.messages WHEN EXISTS (SELECT 1 FROM main.messages o WHERE o.thread_id=NEW.thread_id AND o.id=NEW.id AND o.json IS NOT NEW.json AND (instr(o.json,'copyOf')>0 OR instr(NEW.json,'copyOf')>0)) BEGIN ${BUMP}; END;`,
@@ -145,6 +149,15 @@ export function authorityEpochInstalled(): boolean { return install(database());
 /** A hard move of the epoch for a withdrawal no trigger can see (a thread leaving the roster whose receipts are already gone): every session
  * hold and checked stamp is dropped. A no-op where the triggers could not be installed (every write moves the stamp there). */
 export function bumpAuthorityHard(db: DatabaseSync): void { bumpLearningFence(db); if (install(db)) db.exec(BUMP); }
+/** A roster removal logs its thread so unrelated cached sessions keep their proof. */
+export function bumpAuthorityThreads(db: DatabaseSync, threads: readonly string[]): void {
+  bumpLearningFence(db);
+  if (!install(db)) return;
+  db.exec(SOFT_BUMP);
+  const insert = db.prepare("INSERT INTO temp.authority_soft(id) VALUES(?)");
+  for (const thread of threads) insert.run(`thread:${thread}`);
+  db.exec(`DELETE FROM temp.authority_soft WHERE seq<(SELECT max(seq) FROM temp.authority_soft)-${SOFT_LOG_MAX}`);
+}
 /** The learning send counter (learning-send.ts) for the same withdrawals: the roster is a quiet binding there too, so its removals move the
  * counter here, first and whether or not the authority triggers are installed. A no-op where the counter is missing (its check fails closed). */
 export function bumpLearningFence(db: DatabaseSync): void {

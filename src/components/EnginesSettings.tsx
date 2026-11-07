@@ -14,7 +14,7 @@ import { EngineManagement } from "./EngineManagement";
 import { ClaudeAccountsSettings } from "./ClaudeAccountsSettings";
 import { EngineGroupLabel } from "./EngineGroupLabel";
 import { EngineSetup, needsCli, needsSignIn } from "./EngineSetup";
-import { ProviderMark } from "./ProviderIcons";
+import { InstanceProviderMark } from "./ProviderIcons";
 import { engineFamilies, engineFamilyHeader } from "@/lib/provider-model-picker";
 import { engineLocalLine, LOCAL_MODELS_TITLE, OPEN_LOCAL_MODELS_EVENT } from "@/lib/local-models-view";
 import { localEngineSupport } from "../../shared/local-models";
@@ -250,11 +250,23 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
     finally { engineChangeGate.delete(instance.instanceId); setSwitching(false); }
   };
 
+  /** U22 G20 (upstream #4159): out of every model list until Unhide; the CLI and its sign-in stay. The server refuses it while
+   *  something uses the engine, and Fuigo never offers it. */
+  const hide = async () => {
+    if (engineChangeGate.has(instance.instanceId) || switching) return;
+    engineChangeGate.add(instance.instanceId); setSwitching(true); setError(null); setSaved(null);
+    try {
+      await api(`/api/instances/${encodeURIComponent(instance.instanceId)}`, { method: "PATCH", body: JSON.stringify({ hidden: true }) });
+      await Promise.resolve(refreshInstances()).catch(() => {});
+    } catch (error) { setError(error instanceof Error ? error.message : "Could not update engine"); }
+    finally { engineChangeGate.delete(instance.instanceId); setSwitching(false); }
+  };
+
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
         <span className={cn("size-1.5 shrink-0 rounded-full", instance.cli ? "bg-accent" : "bg-raised-hover")} />
-        <ProviderMark driverKind={instance.driverKind} size={14} />
+        <InstanceProviderMark instance={instance} size={14} />
         <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
         {instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>
@@ -266,6 +278,18 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
           )
         )}
         <span className="flex-1" />
+        {instance.driverKind !== "fuigoAgent" && (
+          <button
+            type="button"
+            data-hide-engine={instance.instanceId}
+            onClick={() => void hide()}
+            disabled={switching}
+            title={t("engines.hideHint")}
+            className="shrink-0 text-[12px] text-ink-secondary hover:text-ink disabled:opacity-50"
+          >
+            {t("engines.hide")}
+          </button>
+        )}
         <button
           data-setting-control={settingControl}
           onClick={() => { setConfirmationOpen(value => !value); setSaved(null); }}
@@ -291,6 +315,10 @@ function EngineRow({ instance, settingControl }: { instance: InstanceInfo; setti
       {/* A line about the detected version (OpenClaw below its Ask floor), the same one a refused Ask turn shows. */}
       {instance.enabled !== false && instance.snapshot.state === "available" && instance.snapshot.versionNote && (
         <p role="status" className="mt-1 text-[12px] text-warning">{instance.snapshot.versionNote}</p>
+      )}
+      {/* The person's own Copilot CLI and plan; GitHub's ACP mode is a public preview. */}
+      {instance.driverKind === "copilotAgent" && (
+        <p className="mt-1 text-[12px] text-ink-secondary">{t("engines.copilot.preview")}</p>
       )}
       {instance.snapshot.renewSignIn === true && (
         <p role="status" className="mt-1 text-[12px] text-ink">{ENGINE_RENEW_COPY}</p>
@@ -359,7 +387,7 @@ function EngineCommandLine({ instance, settingControl }: { instance: InstanceInf
   return (
     <div>
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
-        <ProviderMark driverKind={instance.driverKind} size={14} />
+        <InstanceProviderMark instance={instance} size={14} />
         <span className="min-w-0 max-w-full truncate text-ink" title={instance.displayName}>{instance.displayName}</span>
         {instance.cli ? (
           <span className="truncate font-mono text-[11.5px] text-accent" title={instance.cli}>{instance.cli}</span>
@@ -428,6 +456,57 @@ export function shellEnvironmentLine(env: ShellEnvironment | null | undefined, l
   return `Murage could not read your shell startup; commands run with the app's own environment${cause}`;
 }
 
+/** U22 G20 (upstream #4159): engines someone hid, listed apart and folded, each one click from coming back. */
+export function HiddenEngines() {
+  const { state, refreshInstances } = useStore();
+  const [hidden, setHidden] = useState<Array<{ instanceId: string; displayName: string }>>([]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // An older server has no such route: nothing is hidden there.
+    api("/api/instances/hidden")
+      .then((result: { instances?: Array<{ instanceId: string; displayName: string }> } | undefined) => { if (alive) setHidden(Array.isArray(result?.instances) ? result.instances : []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [state.instances]);
+  const unhide = (instanceId: string) => {
+    setBusy(instanceId);
+    setError(null);
+    api(`/api/instances/${encodeURIComponent(instanceId)}`, { method: "PATCH", body: JSON.stringify({ hidden: false }) })
+      .then(() => Promise.resolve(refreshInstances()).catch(() => {}))
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : "Could not update engine"))
+      .finally(() => setBusy(null));
+  };
+  return <HiddenEnginesList hidden={hidden} busy={busy} error={error} onUnhide={unhide} />;
+}
+
+/** The list itself (EnginesSettings folds it under Advanced); nothing at all while no engine is hidden. */
+export function HiddenEnginesList({ hidden, busy, error, onUnhide }: {
+  hidden: ReadonlyArray<{ instanceId: string; displayName: string }>; busy: string | null; error: string | null; onUnhide: (instanceId: string) => void;
+}) {
+  if (hidden.length === 0) return null;
+  const unhide = onUnhide;
+  return (
+    <section data-hidden-engines className="px-1">
+      <p data-hidden-engines-title className="text-[13px] font-medium text-ink-secondary">{t("engines.hiddenTitle", { count: String(hidden.length) })}</p>
+      <p className="mt-2 text-[12px] text-ink-secondary">{t("engines.hiddenHint")}</p>
+      <div className="mt-2 flex flex-col gap-1.5">
+        {hidden.map((entry) => (
+          <div key={entry.instanceId} className="flex items-center justify-between gap-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2">
+            <span className="min-w-0 truncate text-[13px] text-ink">{entry.displayName}</span>
+            <button type="button" data-unhide-engine={entry.instanceId} disabled={busy !== null} onClick={() => unhide(entry.instanceId)}
+              className="shrink-0 text-[12px] font-medium text-accent hover:underline disabled:opacity-50">
+              {busy === entry.instanceId ? t("engines.unhiding") : t("engines.unhide")}
+            </button>
+          </div>
+        ))}
+      </div>
+      {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
+    </section>
+  );
+}
+
 export function EnginesSettings() {
   const { state, refreshInstances } = useStore();
   // every KNOWN-driver instance has cliDefault; unknown-driver shadows have
@@ -440,6 +519,7 @@ export function EnginesSettings() {
 
   return (
     <div className="flex flex-col gap-5">
+      <p className="text-[13px] text-ink-secondary">{t("settings.fluxSpendLimits")}</p>
       {shellLine && (
         <div role="status" className="flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/5 p-3 text-[12px] leading-relaxed text-ink">
           <TriangleAlert size={14} className="mt-0.5 shrink-0 text-warning" aria-hidden="true" />
@@ -468,6 +548,8 @@ export function EnginesSettings() {
         {primary.driverKind === "claudeAgent" && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
       </section>)}
       {!rows.some(instance => instance.driverKind === "claudeAgent") && <InAdvanced><ClaudeAccountsSettings onChanged={refreshInstances} /></InAdvanced>}
+      {/* Folded under Advanced: Settings holds no fold of its own outside it (SettingsShell.test.ts). */}
+      <InAdvanced><HiddenEngines /></InAdvanced>
       <InAdvanced><EngineCommandLines rows={rows} /></InAdvanced>
     </div>
   );

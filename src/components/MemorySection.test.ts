@@ -5,15 +5,15 @@ import { fileURLToPath } from "node:url";
 import { createElement, Children, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { EventRow, MemorySectionContent } from "./MemorySection";
-import { AdvancedSection } from "./SettingsPrimitives";
+import { EventRow, MemorySectionContent, renderActionBtnResult } from "./MemorySection";
+import { AdvancedHost, AdvancedSection } from "./SettingsPrimitives";
 import {
   ceilingState, formatTokens, learnAsWeTalk, learnAsWeTalkPatch, raisedCeiling, requestLearningAction, skippedSliceRetry,
   type LearningEvent, type MemoryLearning,
 } from "@/lib/memory-learning";
 import { ceilingStatusLine, learningStatusLine, memoryStatusLine } from "@/lib/memory-learning-text";
 
-const ceilingRow = { month: "2026-10", input: 100_000_000, output: 15_000_000, inputUsed: 2_100_000, outputUsed: 300_000, paused: false };
+const ceilingRow: import("../../shared/memory-learning-contract.ts").LearningCeilingStatus = { month: "2026-10", input: 100_000_000, output: 15_000_000, inputUsed: 2_100_000, outputUsed: 300_000, paused: false };
 const learning: MemoryLearning = {
   revision: 4,
   settings: { version: 3, automaticFacts: true, automaticProcedures: true, reviewMode: false, perCallOutputTokens: { extraction: 2000, grounding: 64, reflection: 8000 }, ceiling: { input: 100_000_000, output: 15_000_000 }, callsPerMinute: 6, learnFrom: { chats: true, channels: true }, botsPaused: [] },
@@ -59,7 +59,7 @@ describe("the Memory page, first screen", () => {
     const p = props(); p.status.semantic = { state: "indexing", done: 10, total: 25 };
     expect(html(p)).toContain("Indexing for smart search, 10 of 25.");
     const q = props(); q.status.semantic = { state: "keyword-only", done: 0, total: 0 };
-    expect(html(q)).toContain("Keyword memory until smart search is ready.");
+    expect(html(q)).toContain("Memory search uses keywords until smart search is ready.");
   });
 
   it("explains a paused month with a Raise it action, and an off limit with a way to Advanced", () => {
@@ -210,7 +210,7 @@ describe("history", () => {
 describe("Advanced", () => {
   it("holds mode, the monthly limit and the learning connection, with the limit's usage", () => {
     const out = html();
-    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "Resets on the 1st.", "Change limit", "Learning connection"]) expect(out).toContain(text);
+    for (const text of ["Memory mode", "Capture only", "Monthly learning limit", "Read: 2.1M of 100M tokens", "Written: 0.3M of 15M tokens", "The limit resets on the 1st of each month.", "Change limit", "Learning connection"]) expect(out).toContain(text);
     expect(out).toContain("Flux Fast (default)");
     expect(out).toContain('value="native" disabled=""');
     expect(out).toContain("Native sign-in: This connection does not provide text-only learning.");
@@ -238,4 +238,63 @@ describe("Advanced", () => {
     const source = ["MemorySection", "MemorySettings", "MemoryLearningControls", "ProcedureEvaluationAdmissions"].map(file => read(`./${file}.tsx`)).join("\n") + read("./SettingsModal.tsx");
     for (const anchor of ["memory-heading", "memory-how-heading", "memory-bots-heading", "memory-learned-heading", "memory-people-heading", "memory-import-heading", "memory-mode-heading", "memory-limit-heading", "memory-connection-heading", "memory-audience-heading", "memory-procedures-heading", "memory-health-heading"]) expect(source, anchor).toContain(`id="${anchor}"`);
   });
+});
+
+it.each([
+  { input: 1000, output: 500, inputUsed: 2000, outputUsed: 1, pausedBy: "limit" as const },
+  { input: 1000, output: 500, inputUsed: 1, outputUsed: 1001, pausedBy: "limit" as const },
+  { input: 1e12, output: 10000, inputUsed: 1e12, outputUsed: 1, pausedBy: "limit" as const },
+  { input: 10000, output: 1e12, inputUsed: 10, outputUsed: 1e12, pausedBy: "limit" as const },
+  { input: 1e12, output: 1e12, inputUsed: 1e12, outputUsed: 1, pausedBy: "limit" as const },
+  { input: 1e12, output: 1e12, inputUsed: 10, outputUsed: 1, pausedBy: "unseen" as const },
+])("31: the Memory page renders no ineffective raise: %j", ceiling => {
+  const p = props();
+  p.status.learning = { ...learning, ceiling: { ...ceilingRow, ...ceiling, paused: true } };
+  const closed=renderToStaticMarkup(createElement(AdvancedHost,null,createElement(MemorySectionContent,p)));
+  expect(closed).not.toContain("Raise it");
+  expect(closed).not.toContain("Resets on the 1st.");
+  expect(closed).not.toContain("Change limit");
+  // The real page portals the limit editor into Advanced. The separate Needs you card is the way out.
+  expect(closed).toContain("Needs you");
+  expect(closed).toContain(ceilingStatusLine(p.status.learning.ceiling).text.replaceAll("'","&#x27;"));
+  expect(tree(p).some(node => node.label === "Raise it")).toBe(false);
+  expect(ceilingStatusLine(p.status.learning.ceiling).follow).toBe("none");
+});
+
+it("F: raising caps the output side near the maximum", () => {
+  expect(raisedCeiling({input:1,output:900_000_000_000})).toEqual({input:2,output:1_000_000_000_000});
+});
+
+import * as actionHooks from "@/lib/use-action";
+it.each([false,true])("A4: Raise uses returned paused=%s before showing its result", async paused => {
+  const p=props();p.status.learning={...learning,ceiling:{...ceilingRow,paused:true}};
+  const response={learning:{ceiling:{paused}}};p.onAction.mockResolvedValue(response);
+  const actions=vi.spyOn(actionHooks,"useAction");
+  try {
+    html(p);
+    const [press,options]=actions.mock.calls.find(([,opts])=>opts?.idle==="Raise it")!;
+    expect((options!.success as (value:unknown)=>string)(await press())).toBe(paused?"Learning paused for the rest of the month":"Limit raised. Learning resumes as soon as a run fits your limit.");
+    const source=read("./MemorySection.tsx");
+    expect(source).toContain("if (pauseOnResult) setStillPaused(learningStillPaused(result))");
+    expect(source).toContain('if (stillPaused) return <span role="status">');
+    expect(source).toContain("return answer;");
+  } finally {actions.mockRestore();}
+});
+
+import { learningStillPaused } from "@/lib/learning-limit";
+it("A4: a still-paused Raise result renders the month title without another raise or success line", async () => {
+  const p = props(); p.status.learning = { ...learning, ceiling: { ...ceilingRow, paused: true } };
+  p.onAction.mockResolvedValue({ learning: { ceiling: { paused: true } } });
+  const actions = vi.spyOn(actionHooks, "useAction");
+  try {
+    html(p);
+    const [press] = actions.mock.calls.find(([, opts]) => opts?.idle === "Raise it")!;
+    const result = await press();
+    const button = createElement("button", null, "Raise it", createElement("span", null, "Limit raised."));
+    expect(renderToStaticMarkup(renderActionBtnResult(false, button))).toContain("Raise it");
+    const out = renderToStaticMarkup(renderActionBtnResult(learningStillPaused(result), button));
+    expect(out).toContain("Learning paused for the rest of the month");
+    expect(out).not.toContain("Raise it");
+    expect(out).not.toContain("Limit raised.");
+  } finally { actions.mockRestore(); }
 });

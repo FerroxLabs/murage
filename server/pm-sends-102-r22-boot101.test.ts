@@ -55,7 +55,7 @@ describe.skipIf(!have101 || process.platform === "win32")("the real 1.0.1 server
     } finally { db.close(); }
 
     // ── the step "Prepare to reinstall Murage 1.0.1" ──
-    const result = downgradeInstallationMemorySchema(a.info.dataDir, 6) as { handoffs?: number; handoffsStarted?: number };
+    const result = downgradeInstallationMemorySchema(a.info.dataDir, 6, { testOnlyBefore102: true }) as { handoffs?: number; handoffsStarted?: number };
     expect(result).toMatchObject({ handoffs: 1, handoffsStarted: 1 });
     expect(JSON.parse(readFileSync(join(a.info.dataDir, "delegation-receipts.json"), "utf8"))).toEqual([expect.objectContaining({ id: "taken-1", result: "interrupted by the reinstall" })]);
 

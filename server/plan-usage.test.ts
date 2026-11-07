@@ -504,6 +504,19 @@ describe("PlanUsageService (PL-02, PL-05, PL-06)", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("reports queue deferral even with a fresh retained reading, until a new event satisfies it", () => {
+    const svc = new PlanUsageService(fakeClock());
+    const handles = Array.from({ length: 140 }, (_, i) => manualHandle(`s${i}`, svc.spawnStamp(`s${i}`)));
+    for (const h of handles) svc.register(h.handle);
+    const last = handles[139].handle;
+    svc.publishEvent(last.subjectKey, last.credentialRevision, last.generation, report(win(72)));
+    const keys = handles.map((h) => h.handle.subjectKey);
+    for (let i = 0; i < keys.length; i += 32) svc.demand(keys.slice(i, i + 32), { owner: true });
+    expect(svc.observation(last.subjectKey)).toMatchObject({ status: "deferred", reason: "queue-budget", windows: [{ usedPercent: 72 }] });
+    svc.publishEvent(last.subjectKey, last.credentialRevision, last.generation, report(win(81)));
+    expect(svc.observation(last.subjectKey)).toMatchObject({ status: "current", reason: null, windows: [{ usedPercent: 81 }] });
+  });
+
   it("never exceeds two concurrent reads or the start budget, and defers past the queue bound", async () => {
     const clock = fakeClock();
     const svc = new PlanUsageService(clock);
