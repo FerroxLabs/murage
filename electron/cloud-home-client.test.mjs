@@ -249,10 +249,200 @@ describe("step-up, entirely in main", () => {
     expect(reached.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
+  it("the engine check sends and signs the very value the dialog showed", async () => {
+    const cli = "/opt/tools/My Engine/run $$ {path}";
+    const shown = [];
+    const dialogBox = { showMessageBox: vi.fn(async (options) => { shown.push(options); return { response: 0 }; }) };
+    const ctx = await setup({ confirm: createNativeStepUpConfirm({ systemPreferences: {}, dialog: dialogBox, platform: "linux" }) }); await pairHome(ctx);
+    const response = await ctx.client.fetch(HOME, "/api/cli-test", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cli, driver: "claude" }) });
+    expect(response.status).toBe(200);
+    expect(shown[0].detail.split("\n")).toContain(`Program: ${cli}`);
+    const posts = reached.filter((r) => r.url === "/api/cli-test");
+    expect(posts).toHaveLength(1); expect(posts[0].body.cli).toBe(cli);
+  });
+
+  it.each([
+    ["a duplicate key, last one shown", '{"cli":"/opt/first","cli":"/opt/last"}', "/opt/last"],
+  ])("the engine check reads the body as the home does: %s", async (_name, raw, expected) => {
+    const shown = [];
+    const dialogBox = { showMessageBox: vi.fn(async (options) => { shown.push(options); return { response: 0 }; }) };
+    const ctx = await setup({ confirm: createNativeStepUpConfirm({ systemPreferences: {}, dialog: dialogBox, platform: "linux" }) }); await pairHome(ctx);
+    expect((await ctx.client.fetch(HOME, "/api/cli-test", { method: "POST", headers: { "content-type": "application/json" }, body: raw })).status).toBe(200);
+    expect(shown[0].detail.split("\n")).toContain(`Program: ${expected}`);
+    expect(reached.filter((r) => r.url === "/api/cli-test")[0].body.cli).toBe(expected);
+  });
+
+  it.each([
+    ["a right-to-left override", { "content-type": "application/json" }, JSON.stringify({ cli: "/opt/‮run" })],
+    ["no cli", { "content-type": "application/json" }, JSON.stringify({ driver: "claude" })],
+    ["a body not marked as JSON", { "content-type": "text/plain" }, JSON.stringify({ cli: "/opt/run" })],
+  ])("the engine check is refused for %s: nothing signed, nothing runs", async (_name, headers, body) => {
+    const dialogBox = { showMessageBox: vi.fn(async () => ({ response: 0 })) };
+    const ctx = await setup({ confirm: createNativeStepUpConfirm({ systemPreferences: {}, dialog: dialogBox, platform: "linux" }) }); await pairHome(ctx);
+    const error = await rejects(ctx.client.fetch(HOME, "/api/cli-test", { method: "POST", headers, body }), "step-up-refused");
+    expect(error.message).toBe(COPY.stepUpRefused);
+    expect(dialogBox.showMessageBox.mock.calls[0][0].buttons).toEqual(["Close"]);
+    expect(reached.filter((r) => r.url === "/api/cli-test")).toHaveLength(0);
+  });
+
+  it("the engine check with a body that is not JSON: the proxy's step-up refuses it, and the home never asks to approve it", async () => {
+    const dialogBox = { showMessageBox: vi.fn(async () => ({ response: 0 })) };
+    const ctx = await setup({ confirm: createNativeStepUpConfirm({ systemPreferences: {}, dialog: dialogBox, platform: "linux" }) }); await pairHome(ctx);
+    const headers = { "content-type": "application/json" };
+    await rejects(ctx.client.stepUpRetry(HOME, "/api/cli-test", { method: "POST", headers, body: "/opt/run" }), "step-up-refused");
+    expect(dialogBox.showMessageBox.mock.calls[0][0].buttons).toEqual(["Close"]);
+    dialogBox.showMessageBox.mockClear();
+    expect((await ctx.client.fetch(HOME, "/api/cli-test", { method: "POST", headers, body: "/opt/run" })).status).not.toBe(200);
+    expect(dialogBox.showMessageBox).not.toHaveBeenCalled();
+    expect(reached.filter((r) => r.url === "/api/cli-test")).toHaveLength(0);
+  });
+
+  it.each(["darwin", "win32", "linux"])("the engine check with an ampersand is refused on %s, and nothing runs", async (platform) => {
+    const dialogBox = { showMessageBox: vi.fn(async () => ({ response: 0 })) };
+    const promptTouchID = vi.fn(async () => {});
+    const ctx = await setup({ confirm: createNativeStepUpConfirm({ systemPreferences: { canPromptTouchID: () => true, promptTouchID }, dialog: dialogBox, platform }) }); await pairHome(ctx);
+    const body = JSON.stringify({ cli: "C:\\Tools\\My & Engine\\run.exe" });
+    const error = await rejects(ctx.client.fetch(HOME, "/api/cli-test", { method: "POST", headers: { "content-type": "application/json" }, body }), "step-up-refused");
+    expect(error.message).toBe(COPY.stepUpRefused);
+    expect(promptTouchID).not.toHaveBeenCalled();
+    expect(dialogBox.showMessageBox.mock.calls[0][0].buttons).toEqual(["Close"]);
+    expect(dialogBox.showMessageBox.mock.calls[0][0].message).toContain("Hebrew or Arabic");
+    expect(reached.filter((r) => r.url === "/api/cli-test")).toHaveLength(0);
+  });
+
   it("a plain write needs no confirmation", async () => {
     const ctx = await setup(); await pairHome(ctx);
     expect((await ctx.client.fetch(HOME, "/api/bots")).status).toBe(200);
     expect(ctx.confirmSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("STEPUP-LOCALES: the confirm's bot-name lookup (fetchHomeInfo) never steps up", () => {
+  const IMPORT = ["/api/skills/import", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ link: "https://github.com/example/skill" }) }];
+  it("a home answering the lookup with 403 \"step-up required\" never opens a second confirm or asks for a step-up challenge", async () => {
+    let client, looked;
+    const ctx = await setup({ confirm: async ({ homeId }) => { looked = await client.fetchHomeInfo(homeId, "/api/bots?messages=0"); return true; } });
+    client = ctx.client; await pairHome(ctx);
+    await ctx.client.getAccessToken(HOME); // the session is open and fresh before counting
+    answerOverride = { path: "/api/bots", status: 403, body: { error: "step-up required" } };
+    const before = ctx.net.homeCalls().length;
+    expect((await ctx.client.fetch(HOME, ...IMPORT)).status).toBe(200);
+    expect(ctx.confirmSpy).toHaveBeenCalledTimes(1);
+    expect(looked).toBeUndefined();
+    const during = ctx.net.homeCalls().slice(before).map((call) => call.path);
+    expect(during.filter((path) => path === "/api/bots?messages=0")).toHaveLength(1);
+    expect(during.filter((path) => path === "/api/cloud/challenge")).toHaveLength(1); // the import's own step-up
+    expect(during.filter((path) => path === "/api/cloud/refresh")).toHaveLength(0);
+  });
+
+  it("answers the bot list with the token in memory, in one GET, and nothing for anything else", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    await ctx.client.getAccessToken(HOME);
+    answerOverride = { path: "/api/bots", status: 200, body: { bots: [{ id: "b1", name: "Ember" }] } };
+    const before = ctx.net.homeCalls().length;
+    expect(await ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0")).toEqual({ bots: [{ id: "b1", name: "Ember" }] });
+    expect(ctx.net.homeCalls().slice(before)).toEqual([{ origin: ORIGIN, method: "GET", path: "/api/bots?messages=0" }]);
+    for (const status of [302, 401, 403, 500]) {
+      answerOverride = { path: "/api/bots", status, body: { error: "Sign in required" } };
+      const start = ctx.net.homeCalls().length;
+      expect(await ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0"), String(status)).toBeUndefined();
+      expect(ctx.net.homeCalls().length - start, `${status}: no refresh, no retry`).toBe(1);
+    }
+    answerOverride = { path: "/api/bots", status: 200, body: { pad: "x".repeat(300 * 1024) } };
+    const bigStart = ctx.net.homeCalls().length;
+    expect(await ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0")).toBeUndefined();
+    expect(ctx.net.homeCalls().length - bigStart, "300 KB: one request, no retry").toBe(1);
+    for (const path of ["/api/config", "/api/bots", "/api/bots?messages=1"]) await expect(ctx.client.fetchHomeInfo(HOME, path)).rejects.toThrow(TypeError);
+  });
+
+  it("sends the session's current token, never follows a redirect, and passes the confirm's abort on", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    const seen = [];
+    const spyClient = createCloudHomeClient({ store: ctx.store, appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig, cpEnvironment: "staging",
+      fetch: async (url, init = {}) => { if (String(url).endsWith("/api/bots?messages=0")) { seen.push(init); return Response.json({ bots: [] }); } return ctx.net.fetchImpl(url, init); } });
+    const token = await spyClient.getAccessToken(HOME);
+    const controller = new AbortController();
+    expect(await spyClient.fetchHomeInfo(HOME, "/api/bots?messages=0", { signal: controller.signal })).toEqual({ bots: [] });
+    expect(seen).toHaveLength(1);
+    expect(new Headers(seen[0].headers).get("authorization")).toBe(`Bearer ${token}`);
+    expect([seen[0].method, seen[0].redirect]).toEqual(["GET", "manual"]);
+    expect(seen[0].signal.aborted).toBe(false);
+    controller.abort();
+    expect(seen[0].signal.aborted).toBe(true);
+  });
+
+  it("makes no request without an open session or with an aborted signal, and drops an answer after the session changed", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    const before = ctx.net.homeCalls().length;
+    expect(await ctx.client.fetchHomeInfo("home-unknown", "/api/bots?messages=0")).toBeUndefined();
+    expect(ctx.net.homeCalls().length).toBe(before);
+    await ctx.client.getAccessToken(HOME);
+    const aborted = new AbortController(); aborted.abort();
+    const start = ctx.net.homeCalls().length;
+    expect(await ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0", { signal: aborted.signal })).toBeUndefined();
+    expect(ctx.net.homeCalls().length).toBe(start);
+    answerOverride = { path: "/api/bots", status: 200, body: { bots: [] } };
+    const pending = ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0");
+    await ctx.client.unpair(HOME);
+    expect(await pending).toBeUndefined();
+  });
+
+  it("makes no request for a session that is open but holds no token", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    const before = ctx.net.homeCalls().length;
+    // A new app run: a fresh client opens the session from the store, with no token yet.
+    const fresh = createCloudHomeClient({ store: ctx.store, fetch: ctx.net.fetchImpl, appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig, cpEnvironment: "staging" });
+    await fresh.pinnedOrigin(HOME);
+    expect(await fresh.fetchHomeInfo(HOME, "/api/bots?messages=0")).toBeUndefined();
+    expect(ctx.net.homeCalls().length).toBe(before);
+    await ctx.client.getAccessToken(HOME);
+    ctx.client.deactivate(HOME); // the token is dropped, the session stays
+    const start = ctx.net.homeCalls().length;
+    expect(await ctx.client.fetchHomeInfo(HOME, "/api/bots?messages=0")).toBeUndefined();
+    expect(ctx.net.homeCalls().length).toBe(start);
+    expect(ctx.net.homeCalls().slice(before).filter((call) => call.path === "/api/bots?messages=0")).toHaveLength(0);
+  });
+
+  it("drops an answer when the home is re-pinned (a higher signed generation) while the lookup runs", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    let release, reachedLookup, lookupSignal;
+    const arrived = new Promise((resolve) => { reachedLookup = resolve; });
+    const held = new Promise((resolve) => { release = resolve; });
+    const realFetch = ctx.net.fetchImpl;
+    // A 1 ms refresh window on the real clock (the fixture home uses real time too): every connect checks the pin again.
+    const pinClient = createCloudHomeClient({ store: ctx.store, appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig, cpEnvironment: "staging", refreshAfterMs: 1, schedule: () => undefined,
+      fetch: async (url, init) => { if (String(url).endsWith("/api/bots?messages=0")) { lookupSignal = init.signal; reachedLookup(); await held; return Response.json({ bots: [{ id: "b1", name: "Ember" }] }); } return realFetch(url, init); } });
+    await pinClient.getAccessToken(HOME);
+    const pending = pinClient.fetchHomeInfo(HOME, "/api/bots?messages=0");
+    await arrived;
+    try {
+      identityClaims = claimsFor({ generation: 2, homeKey: "home-key-B" });
+      await new Promise((resolve) => setTimeout(resolve, 5)); // past the refresh window
+      await pinClient.getAccessToken(HOME);
+      expect(await ctx.store.load(HOME)).toMatchObject({ generation: 2, homeKey: "home-key-B" }); // the re-pin happened
+    } finally { release(); }
+    expect(await pending).toBeUndefined();
+    expect(lookupSignal.aborted, "dropped for the re-pin, not for the 2 s timeout").toBe(false);
+  });
+
+  it("a body that stalls mid-read is abandoned at once when the confirm's signal aborts", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    const realFetch = ctx.net.fetchImpl;
+    let cancelled = false, readPending;
+    const waiting = new Promise((resolve) => { readPending = resolve; });
+    // One chunk, then a read that never completes: the abort must cancel that pending read. The cancel itself never
+    // settles either, so the lookup only returns if it never waits for the cancel.
+    const stalled = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("{\"bots\":")); }, pull() { readPending(); return new Promise(() => {}); }, cancel() { cancelled = true; return new Promise(() => {}); } }, { highWaterMark: 0 });
+    const stallClient = createCloudHomeClient({ store: ctx.store, fetch: async (url, init) => (String(url).includes("/api/bots?messages=0") ? new Response(stalled, { status: 200 }) : realFetch(url, init)),
+      appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig, cpEnvironment: "staging" });
+    await stallClient.getAccessToken(HOME);
+    const controller = new AbortController();
+    const pending = stallClient.fetchHomeInfo(HOME, "/api/bots?messages=0", { signal: controller.signal });
+    await waiting; // fetchHomeInfo is now inside reader.read()
+    controller.abort();
+    const settled = await Promise.race([pending.then((value) => ({ value })), new Promise((resolve) => setTimeout(() => resolve("still waiting"), 500))]);
+    expect(settled).toEqual({ value: undefined });
+    expect(cancelled).toBe(true);
   });
 });
 
@@ -402,16 +592,22 @@ describe("native step-up confirmation", () => {
   const dialog = (response) => ({ showMessageBox: vi.fn(async () => ({ response })) });
   it("uses Touch ID on a Mac that can prompt; the reason names the action in words, never the query or the body", async () => {
     const systemPreferences = { canPromptTouchID: () => true, promptTouchID: vi.fn(async () => undefined) };
-    const confirm = createNativeStepUpConfirm({ systemPreferences, dialog: dialog(1), platform: "darwin" });
-    expect(await confirm({ method: "POST", path: "/api/x?secret=1", body: { token: "s3cret" } })).toBe(true);
-    expect(systemPreferences.promptTouchID.mock.calls[0][0]).toBe("Make a change on your Cloud home");
+    const d = dialog(1);
+    const confirm = createNativeStepUpConfirm({ systemPreferences, dialog: d, platform: "darwin" });
+    // An unknown action always uses the dialog (Touch ID cannot show its request line); Cancel is the default.
+    expect(await confirm({ method: "POST", path: "/api/x?secret=1", body: { token: "s3cret" } })).toBe(false);
+    expect(systemPreferences.promptTouchID).not.toHaveBeenCalled();
+    const options = d.showMessageBox.mock.calls[0][0];
+    expect(options.message).toBe("Make a change on your Cloud home");
+    expect(options.detail.endsWith("POST /api/x?...")).toBe(true);
+    expect(JSON.stringify(options)).not.toMatch(/secret|s3cret/);
     expect(await confirm({ method: "POST", path: "/api/routines/r-1/run" })).toBe(true);
-    expect(systemPreferences.promptTouchID.mock.calls[1][0]).toBe("Run a routine now");
+    expect(systemPreferences.promptTouchID.mock.calls[0][0]).toBe("Run a routine now");
     expect(JSON.stringify(systemPreferences.promptTouchID.mock.calls)).not.toMatch(/secret|s3cret/);
   });
   it("a cancelled Touch ID is a no", async () => {
     const systemPreferences = { canPromptTouchID: () => true, promptTouchID: async () => { throw new Error("cancelled"); } };
-    expect(await createNativeStepUpConfirm({ systemPreferences, dialog: dialog(0), platform: "darwin" })({ method: "POST", path: "/a" })).toBe(false);
+    expect(await createNativeStepUpConfirm({ systemPreferences, dialog: dialog(0), platform: "darwin" })({ method: "POST", path: "/api/routines/r-1/run" })).toBe(false);
   });
   it("falls back to a confirm dialog without Touch ID and elsewhere; Cancel is a no", async () => {
     const yes = dialog(0), no = dialog(1);

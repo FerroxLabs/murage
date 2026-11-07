@@ -14,7 +14,7 @@
 // and the announced key say all of it.
 import {readFileSync,writeFileSync,renameSync} from "node:fs";
 import path from "node:path";
-import {normalizeCaptureFailure} from "../shared/backup-capture-failure.mjs";
+import {backupSentenceKey,normalizeCaptureFailure} from "../shared/backup-capture-failure.mjs";
 
 const FILE="backup-failure-announced.json";
 
@@ -56,15 +56,23 @@ export function writeAnnouncedFailure(userData,key){
  writeFileSync(temporary,JSON.stringify({version:1,key}),{mode:0o600});renameSync(temporary,file);
 }
 
+/** The notification's words: for a translated whole-sentence code, the
+ * mirrored sentence for the app's locale (`words`, from
+ * update-recovery-copy.mjs backupSentenceWords); otherwise the server's. */
+export function backupFailureNoticeSentence(code,serverSentence,words){
+ const mirrored=backupSentenceKey(code)&&words&&typeof words[code]==="string"?words[code]:null;
+ return mirrored??serverSentence;
+}
+
 /** Tell the server once it is up. Never throws: an announcement is never
  * worth a failed start. */
-export async function announceBackupFailure({status,folderName,userData,post,showNotice=()=>{}}){
+export async function announceBackupFailure({status,folderName,userData,post,showNotice=()=>{},words}){
  try{
   const {body,key}=backupFailureNotice(status,readAnnouncedFailure(userData),folderName);
   const answer=await post(body);
   if(body.action==="report"&&body.notify&&answer?.reported===true&&typeof answer.sentence==="string"&&answer.sentence.length<=1000){
    writeAnnouncedFailure(userData,key);
-   try{showNotice(answer.sentence);}catch{/* the Inbox row still says it */}
+   try{showNotice(backupFailureNoticeSentence(body.code,answer.sentence,words));}catch{/* the Inbox row still says it */}
   }
   return body;
  }catch{return null;}

@@ -4,13 +4,14 @@
 import { t } from "@/lib/i18n";
 import type { AckKey } from "@/lib/call-ack";
 
+type CueLifecycle = { signal?: AbortSignal; onBudget?: () => void };
 type CueVoice = { botId: string; voiceId?: string; locale: string };
 
 export class CueCache {
   private readonly clips = new Map<string, Blob>();
 
   constructor(
-    private readonly fetchClip: (text: string, o: { botId: string; voiceId?: string }) => Promise<Blob>,
+    private readonly fetchClip: (text: string, o: { botId: string; voiceId?: string } & CueLifecycle) => Promise<Blob>,
     private readonly max = 16,
   ) {}
 
@@ -20,13 +21,16 @@ export class CueCache {
 
   /** Fetches each key in turn (never in parallel: a call start must not
    *  burst the speech provider). Never rejects. */
-  async prewarm(o: CueVoice & { keys: AckKey[] }): Promise<void> {
+  async prewarm(o: CueVoice & CueLifecycle & { keys: AckKey[] }): Promise<void> {
+    let stopped = false;
+    const onBudget = () => { stopped = true; if (!o.signal?.aborted) o.onBudget?.(); };
     for (const key of o.keys) {
+      if (stopped || o.signal?.aborted) return;
       const id = this.keyOf({ ...o, key });
       if (this.clips.has(id)) continue;
       try {
-        const clip = await this.fetchClip(t(key), { botId: o.botId, voiceId: o.voiceId });
-        this.store(id, clip);
+        const clip = await this.fetchClip(t(key), { botId: o.botId, voiceId: o.voiceId, signal: o.signal, onBudget });
+        if (!o.signal?.aborted && !stopped) this.store(id, clip);
       } catch {
         // no cue for this phrase; nothing to show
       }

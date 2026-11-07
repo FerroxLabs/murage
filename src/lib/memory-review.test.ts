@@ -20,9 +20,9 @@ describe("the words", () => {
     expect(cardTitle("Sable", 1)).toBe("Sable would like to remember 1 thing");
     expect(headline(11)).toBe("11 waiting for you");
     expect(headline(0)).toBe("Nothing waiting for you.");
-    expect(keepTogetherLine(8, 11)).toBe("8 everyday things can be kept together. 3 need you one by one.");
+    expect(keepTogetherLine(8, 11)).toBe("8 everyday things can be kept together. 3 items need individual review.");
     expect(keepTogetherLine(11, 11)).toBe("11 everyday things can be kept together.");
-    expect(keepTogetherLine(0, 3)).toBe("Each of these needs you one by one.");
+    expect(keepTogetherLine(0, 3)).toBe("Review each of these individually.");
     expect(keepTogetherLine(0, 0)).toBe("");
   });
 
@@ -31,8 +31,8 @@ describe("the words", () => {
     expect(batchSentence([...r("kept", 8)])).toBe("8 kept.");
     expect(batchSentence([...r("kept", 7), ...r("changed", 1)])).toBe("7 kept. 1 changed while you were looking, so it is still here.");
     expect(batchSentence([...r("kept", 6), ...r("changed", 2)])).toBe("6 kept. 2 changed while you were looking, so they are still here.");
-    expect(batchSentence([...r("kept", 8), ...r("needs-you", 3)])).toBe("8 kept. 3 need you one by one.");
-    expect(batchSentence([...r("needs-you", 3)])).toBe("Each of these needs you one by one.");
+    expect(batchSentence([...r("kept", 8), ...r("needs-you", 3)])).toBe("8 kept. 3 items need individual review.");
+    expect(batchSentence([...r("needs-you", 3)])).toBe("Review each of these individually.");
   });
 
   it("gives every reason a plain sentence, asks before origins", () => {

@@ -17,8 +17,32 @@ function notesPatch(info) {
   return text === undefined ? {} : { releaseNotesText: text };
 }
 
-export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null, fallbackFeed = null, now = Date.now, staleAfterMs } = {}) {
+// The native updater's events that show Squirrel.Mac is still moving after quitAndInstall.
+const NATIVE_STAGED = "update-downloaded";
+const NATIVE_QUITTING = "before-quit-for-update";
+
+export function createInstallWitness(events) {
+  let staged = false, quitting = false;
+  const listeners = new Set();
+  const state = () => Object.freeze({staged,quitting});
+  const emit = () => { for (const listener of listeners) listener(state()); };
+  const stage = () => { if (!staged) {staged=true; emit();} };
+  const quit = () => { if (!quitting) {staged=true; quitting=true; emit();} };
+  events?.on?.(NATIVE_STAGED, stage); events?.on?.(NATIVE_QUITTING, quit);
+  return {state, subscribe(listener) { listeners.add(listener); listener(state()); return () => listeners.delete(listener); },
+    detach() {events?.removeListener?.(NATIVE_STAGED,stage); events?.removeListener?.(NATIVE_QUITTING,quit); listeners.clear();}};
+}
+
+// `installerFallback` (macOS, electron/mac-install-guard.mjs) replaces the dead-end install timeout:
+//   blocked()            reason this copy cannot be replaced in place, or null; checked before anything stops
+//   offer(version)       the state that offers the dmg instead
+//   recover({version, reason, staged})  bring the app back after the install stopped it (main.mjs relaunches)
+//   events               the native updater; its "update-downloaded" restarts the wait, "before-quit-for-update" ends it
+//   stallMs              how long Squirrel may stay silent after quitAndInstall
+export function createUpdaterCoordinator(updater, setState, { handOffInstall = null, nativeUpdater = null, beforeInstall = null, verifyDownload = null, fallbackFeed = null, installerFallback = null, returnAuthority = null, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now, staleAfterMs } = {}) {
   let checkOperation = null;
+  // The version the staged download carries; the installer offer names it.
+  let downloadedVersion = null;
   const logCheckFailure = (error, stage) => {
     try { updater.logger?.warn?.(describeCheckFailure(error, stage)); } catch { /* logging never blocks updating */ }
   };
@@ -46,7 +70,82 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   let actionOwnsState = false;
   const routedErrors = new WeakSet();
 
+  const logWarn = (line) => {
+    try { updater.logger?.warn?.(line); } catch { /* logging never blocks updating */ }
+  };
+
+  // The dmg offer owns the card until the person asks for a fresh check.
+  function offerInstaller(version, reason) {
+    actionOwnsState = true;
+    retryAction = "check";
+    logWarn(`installer offered (${reason}) for ${version ?? "unknown version"}`);
+    setState(installerFallback.offer(version));
+  }
+
+  // quitAndInstall was called and the app is still here: the server is stopped, so never leave it like this.
+  function stallInstall(operation, reason) {
+    operation.staged = operation.witness?.state().staged ?? operation.staged;
+    operation.failed = true;
+    clearTimer(operation.timer);
+    operation.detachWatch?.();
+    if (installOperation === operation) installOperation = null;
+    if (returnAuthority?.userQuitRequested) return;
+    try { operation.onFailure?.(new Error(`Update installation needs review: ${reason}`)); } catch { /* the startup observer owns fallback */ }
+    offerInstaller(operation.version, reason);
+    try {
+      void Promise.resolve(installerFallback.recover({ version: operation.version, reason, staged: operation.staged === true, ...(operation.backedUp?{backedUp:true}:{}) }))
+        .catch((error) => logWarn(`install recovery failed: ${updateErrorMessage(error)}`));
+    } catch (error) { logWarn(`install recovery failed: ${updateErrorMessage(error)}`); }
+  }
+
+  // Squirrel.Mac reports nothing when it stops at an admin password prompt. Wait stallMs after quitAndInstall; a
+  // native "update-downloaded" restarts the wait (the native quit comes next), "before-quit-for-update" ends it.
+  function armInstallWatch(operation, timeoutError) {
+    if (!installerFallback) {
+      operation.timer = setTimeout(() => {
+        if (installOperation === operation) routeError(true, timeoutError());
+      }, 2 * 60 * 1000);
+      operation.timer.unref?.();
+      return;
+    }
+    operation.witness ??= createInstallWitness(installerFallback.events);
+    const start = state => {
+      operation.staged = state.staged;
+      clearTimer(operation.timer);
+      const ms = state.quitting ? 30_000 : installerFallback.stallMs ?? 180_000;
+      operation.timer = setTimer(() => {
+        if (installOperation === operation) stallInstall(operation, "install-stalled");
+      }, ms);
+      operation.timer?.unref?.();
+    };
+    operation.detachWatch = () => operation.witness.detach();
+    operation.witness.subscribe(start);
+  }
+  const revoked = operation => returnAuthority && (returnAuthority.userQuitRequested || operation.generation !== returnAuthority.generation);
+  const stop = operation => {
+    if(!operation.launched)returnAuthority?.releasePendingInstall?.();
+    clearTimer(operation.timer); operation.witness?.detach(); operation.detachWatch?.();
+    if (installOperation === operation) installOperation = null;
+    return {status:"stopped"};
+  };
+  function prepareLaunch(operation, backedUp = false) {
+    operation.backedUp=backedUp;
+    if (installerFallback) {
+      if (!backedUp) installerFallback.persist?.({version:operation.version});
+      operation.witness = createInstallWitness(installerFallback.events);
+      operation.detachWatch = () => operation.witness.detach();
+    }
+  }
+
   const routeError = (manual, error) => {
+    // After quitAndInstall the server is already stopped; an install error must bring the app back, not strand it.
+    if (installerFallback && installOperation?.launched) {
+      logWarn(`install failed after the restart was requested: ${updateErrorMessage(error)}`);
+      if (error instanceof Error) routedErrors.add(error);
+      stallInstall(installOperation, "install-error");
+      return;
+    }
+    if(installOperation&&!installOperation.launched)returnAuthority?.releasePendingInstall?.();
     const message = installOperation?.prepared && !isUpdateVerificationError(error)
       ? `Murage has finished closing. Retry the update, or quit and reopen Murage. ${updateErrorMessage(error)}`
       : updateErrorMessage(error);
@@ -56,11 +155,14 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
     if (error instanceof Error) routedErrors.add(error);
     if (downloadOperation) downloadOperation.failed = true;
     if (checkOperation) checkOperation.failed = true;
+    const continuationFailure = installOperation?.onFailure;
     if (installOperation) {
       installOperation.failed = true;
       clearTimeout(installOperation.timer);
+      installOperation.detachWatch?.();
       installOperation = null;
     }
+    try { continuationFailure?.(error); } catch { /* the startup observer owns fallback */ }
     if (!manual) {
       setState({ status: "idle" });
       return;
@@ -268,6 +370,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
             try { downloadedCandidate = await captureUpdateCandidate(updater, { downloadedFiles }); } catch { /* optional identity */ }
           }
           if (!operation.failed && operation.downloadedInfo) {
+            downloadedVersion = typeof operation.downloadedInfo.version === "string" ? operation.downloadedInfo.version : null;
             actionOwnsState = true;
             setState({ status: "downloaded", version: operation.downloadedInfo?.version });
           }
@@ -288,6 +391,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   function install() {
+    if (returnAuthority?.userQuitRequested) return Promise.resolve({status:"stopped"});
     if (installOperation) return installOperation.promise;
     if (downloadOperation) return downloadOperation.promise;
     retryAction = "install";
@@ -302,13 +406,25 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       handOff();
       return;
     }
-    const operation = { failed: false, timer: null };
+    // Before anything stops: a copy this person cannot replace goes straight to the dmg, and the server keeps running.
+    if (installerFallback) {
+      let problem = null;
+      try { problem = installerFallback.blocked(); } catch (error) { logWarn(`install pre-check failed: ${updateErrorMessage(error)}`); }
+      if (problem) {
+        offerInstaller(downloadedVersion, problem);
+        return;
+      }
+    }
+    const operation = { failed: false, timer: null, launched: false, version: downloadedVersion, generation:returnAuthority?.generation };
     installOperation = operation;
+    returnAuthority?.markInstallPending?.();
     setState({ status: "installing" });
     const launch = (decision) => {
       if (installOperation !== operation || operation.failed) return;
+      if (decision?.status === "stopped") return stop(operation);
       if (decision?.status === "deferred") {
         operation.deferred = true;
+        returnAuthority?.releasePendingInstall?.();
         setState({ status: "deferred", message: decision.message ?? "The update is waiting for its pre-upgrade backup." });
         return decision;
       }
@@ -316,15 +432,15 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
         throw new Error("Update installation was not explicitly admitted.");
       }
       operation.prepared = Boolean(beforeInstall);
+      prepareLaunch(operation);
+      returnAuthority?.markNativeLaunch?.();
+      if (revoked(operation)) return stop(operation);
+      operation.launched = true;
       try { updater.quitAndInstall(true, true); }
       catch (error) { routeError(true, error); return; }
       // Start this bound only after readiness and owned shutdown have completed.
       if (installOperation === operation) {
-        operation.timer = setTimeout(() => {
-          if (installOperation !== operation) return;
-          routeError(true, new Error("The update could not be installed. Try restarting the update again."));
-        }, 2 * 60 * 1000);
-        operation.timer.unref?.();
+        armInstallWatch(operation, () => new Error("The update could not be installed. Try restarting the update again."));
       }
     };
     if (beforeInstall || verifyDownload) {
@@ -340,30 +456,36 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
         }
         return beforeInstall?.(candidate);
       }).then(verifyDownload ? async (decision) => {
+        if (decision?.status === "stopped") return stop(operation);
         if (decision?.status !== "deferred") await recheckDownload();
         return launch(decision);
       } : launch).catch((error) => routeError(true, error));
       return operation.promise;
     }
-    launch();
+    return launch();
   }
 
-  function resumeInstall(value, { beforeInstall: admit } = {}) {
+  function resumeInstall(value, { beforeInstall: admit, assertActive = () => {}, onFailure } = {}) {
     let candidate;
     try {
       candidate = validateUpdateCandidate(value);
+      if (returnAuthority?.userQuitRequested) return Promise.resolve({status:"stopped"});
       if (typeof admit !== "function" || handOffInstall || nativeUpdater) throw new Error("This update cannot resume a pre-upgrade installation.");
       if (installOperation?.candidateId === candidate.candidateId) return installOperation.promise;
       if (resumeRequested) throw new Error("The update installation was already requested. Review its outcome.");
       if (installOperation || downloadOperation || checkOperation) throw new Error("Another updater operation is active.");
     } catch (error) { return Promise.reject(error); }
-    const operation = { candidateId: candidate.candidateId, failed: false, timer: null, promise: null };
+    if(installerFallback){const problem=installerFallback.blocked();if(problem){offerInstaller(candidate.version,problem);return Promise.resolve({status:"installer-offered"});}}
+    const operation = { generation:returnAuthority?.generation, candidateId: candidate.candidateId, failed: false, timer: null, promise: null, onFailure, launched: false, version: candidate.version };
     installOperation = operation;
+    returnAuthority?.markInstallPending?.();
     actionOwnsState = true;
     const active = () => {
+      assertActive();
       if (operation.failed || installOperation !== operation) throw new Error("The update continuation was interrupted.");
     };
     operation.promise = Promise.resolve().then(async () => {
+      active();
       const checked = await updater.checkForUpdates();
       active();
       if (checked?.isUpdateAvailable !== true) throw new Error("The pending update is unavailable.");
@@ -379,6 +501,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       }
       if (!Array.isArray(files) || files.length < 1 || files.some((file) => typeof file !== "string")) throw new Error("The pending update download did not return verified files.");
       const actual = await captureUpdateCandidate(updater, { downloadedFiles: files });
+      active();
       if (actual.candidateId !== candidate.candidateId) throw new Error("The selected update artifact changed.");
       const decision = await admit(actual);
       active();
@@ -390,15 +513,18 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
       operation.prepared = true;
       resumeRequested = true;
       setState({ status: "installing", version: candidate.version });
+      prepareLaunch(operation, true);
+      returnAuthority?.markNativeLaunch?.();
+      if (revoked(operation)) return stop(operation);
+      operation.launched = true;
       updater.quitAndInstall(true, true);
+      if (operation.failed && operation.launched) return { status: "install-requested" };
       active();
-      operation.timer = setTimeout(() => {
-        if (installOperation === operation) routeError(true, new Error("The update installation outcome is unknown. Review the pending installation."));
-      }, 2 * 60 * 1000);
-      operation.timer.unref?.();
+      armInstallWatch(operation, () => new Error("The update installation outcome is unknown. Review the pending installation."));
       return { status: "install-requested" };
     }).catch((error) => {
       if (!operation.failed) routeError(true, error);
+      if (operation.launched && installerFallback) return { status: "install-requested" };
       throw error;
     });
     return operation.promise;
@@ -410,6 +536,7 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   function handOff() {
     const operation = { failed: false, timer: null };
     installOperation = operation;
+    returnAuthority?.markInstallPending?.();
     setState({ status: "installing" });
     operation.promise = Promise.resolve()
       .then(verifyDownload ? async () => {
@@ -430,5 +557,11 @@ export function createUpdaterCoordinator(updater, setState, { handOffInstall = n
   }
 
   const retry = () => retryAction === "download" ? download() : retryAction === "install" ? install() : check(true);
-  return Object.freeze({ check, download, install, retry, resumeInstall, supportsInstallContinuation: !handOffInstall && !nativeUpdater });
+  // The relaunched app shows the offer its previous run made (installerFallback.takePendingOffer).
+  const showInstallerOffer = (version, reason = "previous-run") => {
+    if (!installerFallback || installOperation || downloadOperation) return false;
+    offerInstaller(version, reason);
+    return true;
+  };
+  return Object.freeze({ check, download, install, retry, resumeInstall, showInstallerOffer, supportsInstallContinuation: !handOffInstall && !nativeUpdater });
 }

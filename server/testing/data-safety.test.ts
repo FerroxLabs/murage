@@ -28,6 +28,8 @@ const NOT_A_DELETE = /\b(?:mkdirSync|mkdir|readdirSync|readdir|cpSync|cp|copySyn
  * entry only with a reason a reviewer can check against the file.
  */
 const ALLOWLIST: Record<string, string> = {
+  "server/drivers/muse-code.ts": "refreshModels removes only its const murage-muse-models- mkdtemp folder; finally rechecks the temp parent and basename prefix; production never imports the test-only wipe helper",
+  "server/testing/fake-muse-cli.ts": "'rm -rf build' is an approval-request subject sent by the fake engine, never executed",
   "server/testing/safe-wipe.mjs": "the helper itself: rmSync/rm run only after assertSafeToWipe admits the path",
   "server/testing/cleanup.ts": "removeTempDir calls assertSafeToWipe before its rmSync retry loop",
   "server/browser-sandbox-linux-engine.ts": "LINUX_ENGINE_ENABLE_SCRIPT, run as root by the Linux Enable browser step (27fd46da6), removes only its own staging copy, its .copy-* leftovers and superseded Chrome version folders under the fixed root-owned LINUX_ENGINE_ROOT; never a data directory, and safe-wipe would refuse a path outside temp",
@@ -102,6 +104,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/engine-fs.ts": "the mutOps.removeTree member is the one recursive delete of the engine-history executor: engine-exec.ts calls it only through removeConfined, for a deleted conversation's folders strictly inside a known root and reached without a symlink; never a root itself",
   "server/installation-archive.ts": "removes the mkdtemp write scratch and inspection stage of a backup archive",
   "server/installation-damaged-export.ts": "removes the mkdtemp scratch of a damaged-installation export",
+  "server/settle-copy.ts": "SMOOTH-FTS T7 sweepStaleCopyScratch: removes only a direct child of a backup or export destination's parent whose name matches STALE_SCRATCH (.murage-{state-snapshot,database-snapshot,damaged-export,archive-write}-XXXXXX, made by those writers with mkdtemp) and only after scratchIsStale proves its owner run gone; never the data folder",
   "server/installation-database-snapshot.ts": "removes the mkdtemp scratch beside the snapshot target",
   "server/installation-memory-downgrade.ts": "removeDataDirNamesAfter102 removes only the folders named in DATA_DIR_NAMES_AFTER_102 (env/, the kept login-shell environment, claude-private/, a Claude turn's settings overlays, health/, the rebuildable 1.0.9 health metadata, and the files claude-signin-answers.json and health-key) directly inside the data folder Prepare to reinstall was given, after lstatSync shows each is a real directory (a link is unlinked, never followed); never the data folder itself; production code does not import the wipe helper of the test tree",
   "server/backup-local-work.ts": "removes only run-<pid>-XXXXXX folders it made under its own .murage-backup-work/<hash> root (sweep matches the run-name pattern; removeBackupWork refuses any other path); never the data folder",
@@ -146,6 +149,9 @@ const ALLOWLIST: Record<string, string> = {
   "deploy/cloud-home/qualify/hz-live.py": "the rm -rf is inside a command string sent over ssh to the image builder VM before its snapshot (fixed builder paths: /build, root's dotfiles, host keys, journal), never run on this machine",
   "server/cloud-home/home-commands.fixture.py": "'customer; rm -rf /' is a reason string the fixture submits to prove the home command queue refuses it; nothing executes it",
   "server/cloud-home/own-server.ts": "removeConnection deletes only <data dir>/own-server/bin, the fixed wrapper folder writeWrapper made; the path is rebuilt from the data dir, never from a caller or request, and never the data dir itself",
+  "src/e2e/function-sweep-fixture.ts": "'rm -rf ~/Documents/old-drafts' is the subtitle text of a fixture Needs-you card the sweep spec looks for on screen; no command string here is ever run",
+  "src/e2e/function-sweep-needs.human.spec.ts": "'rm -rf ~/Documents/old-drafts' is the visible row text the spec finds and asserts on in the browser page; nothing executes it",
+  "src/e2e/needs-inline-approve.human.spec.ts": "'rm -rf ~/Documents/old-drafts' is the subtitle of a fixture approval card the spec draws in the browser; nothing executes it",
 };
 
 // VITEST_INCLUDE (the files that run under server/testing/setup.ts and its installSafeWipeGuard) lives in test-file-scope.ts,
