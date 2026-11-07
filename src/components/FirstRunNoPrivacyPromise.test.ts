@@ -137,8 +137,10 @@ describe("first run makes no promise that typed text stays on this computer", ()
     const collect = (at: string): void => {
       for (const name of readdirSync(at)) {
         const full = join(at, name);
-        if (statSync(full).isDirectory()) collect(full);
-        else if (name.endsWith(".json") && name !== "source-hashes.json") files.push(full);
+        // copy-lint holds review records and lists, which quote copy as evidence and never ship.
+        if (statSync(full).isDirectory()) {
+          if (name !== "copy-lint") collect(full);
+        } else if (name.endsWith(".json") && name !== "source-hashes.json") files.push(full);
       }
     };
     collect(dir);

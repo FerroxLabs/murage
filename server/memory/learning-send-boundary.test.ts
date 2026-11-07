@@ -545,6 +545,19 @@ describe("the learning send boundary (section 4)", () => {
       expect(bad).not.toBe(text);
       expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*await on the hook chain/);
     }, 600_000);
+    it("Muse admission cannot move ahead of an await, outside the write function or into a timer", () => {
+      const file = "server/drivers/muse-code.ts", text = read(file);
+      const awaited = text.replace("admitted = true;", "await Promise.resolve(); admitted = true;");
+      expect(awaited).not.toBe(text);
+      expect(planted({ [file]: awaited }).join("\n")).toMatch(/muse: .*await on the hook chain/);
+      const moved = text.replace("p.beforeSubmit?.();", "(() => { p.beforeSubmit?.(); })();");
+      expect(planted({ [file]: moved }).join("\n")).toMatch(/muse: .*outside the hook's function/);
+      const deferred = text.replace('child.stdin.write(chunk, "utf8", (error) => {',
+        'setTimeout(() => child.stdin.write(chunk, "utf8", (error) => {')
+        .replace('if (error) reject(error); else resolve();\n        });', 'if (error) reject(error); else resolve();\n        }));');
+      expect(deferred).not.toBe(text);
+      expect(planted({ [file]: deferred }).join("\n")).toMatch(/muse: .*deferred function/);
+    }, 600_000);
     it("a new unpinned timer on the ACP prompt path", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
       const bad = text.replace("send({ jsonrpc: \"2.0\", id, method, params });", "setImmediate(() => undefined); send({ jsonrpc: \"2.0\", id, method, params });");

@@ -1,3 +1,6 @@
+import { checkFluxBudget, FluxBudgetReached } from "../voice/flux-budget.ts";
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
+import { markBudgetReached } from "../voice/voice-routes.ts";
 import { NO_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTurn, type McpToolSurface } from "../murage-tool-surface.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
@@ -20,6 +23,8 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 import { classifyError, computeBackoff, interruptibleDelay, RETRY_MAX_ATTEMPTS } from "./retry.ts";
 import { classifyProviderError, isEndpointUnreachable, neverConnected, unreachableEndpointMessage } from "../../shared/provider-error.ts";
+import { withProviderSaid } from "../provider-said.ts";
+import { fluxRefusalCode, type FluxRefusalCode } from "../flux-refusal.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
 import { httpTextOnlyTurn } from "./http-text-only.ts";
@@ -242,10 +247,14 @@ class StreamOutcomeError extends Error {
  * another vendor's branding and URLs, into the chat bubble (F5). The body is
  * kept as `details` for the Technical details disclosure. */
 class ProviderHttpError extends Error {
-  readonly data: { http_status: number; message: string };
+  readonly data: { http_status: number; message: string; body: string; flux_code?: FluxRefusalCode };
+  readonly flux: boolean;
   readonly details: string;
 
-  constructor(status: number, rawBody: string, label: string) {
+  /** `flux`: the answer came from Flux (its preset or a Flux host), so a budget refusal in `body` stops the key.
+   *  `fluxCode`: read from the whole body and the X-Flux-Hold-Reason header when the answer came in (1.0.18 f), because the
+   *  detail kept below is one sentence and the headers are not kept at all. */
+  constructor(status: number, rawBody: string, label: string, flux = false, fluxCode?: FluxRefusalCode) {
     // rawBody is already redacted. The Technical details carry the provider's
     // own sentence (and its machine code), not the first bytes of its JSON.
     const body = httpErrorDetail(rawBody, 500);
@@ -254,7 +263,8 @@ class ProviderHttpError extends Error {
     const why = status === 402 || status === 403 ? providerSentence(rawBody) : undefined;
     super(why ? `${providerHttpMessage(status)} The provider says: ${why}` : providerHttpMessage(status));
     this.name = "ProviderHttpError";
-    this.data = { http_status: status, message: body };
+    this.data = { http_status: status, message: body, body: rawBody, ...(fluxCode ? { flux_code: fluxCode } : {}) };
+    this.flux = flux;
     this.details = `${label} HTTP ${status}${body ? `: ${body}` : ""}`;
   }
 }
@@ -765,12 +775,19 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       if (!round.noReasoningReplay && messages.some((message) => message.reasoning_content !== undefined) && rejectsReasoningReplay(response.status, body)) {
         throw new UnsupportedReasoningReplayError(response.status, body, label);
       }
-      throw new ProviderHttpError(response.status, body, label);
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret && classifyFluxRefusal(response.status, rawBody) === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: providerRoute?.baseUrl ?? new URL(".", endpoint).toString().replace(/\/$/, ""), key: secret, model: "" });
+      // Flux's refusal code, read here while the whole body and the headers are still in hand: a free_cap_reached 429 keeps it in
+      // error.state, and a metered credit_exhausted 402 sends it only as the X-Flux-Hold-Reason header (1.0.18 f). Only an answer
+      // from a Flux host is read this way: another provider's 429 keeps the shared retry, whatever words its body holds.
+      const holdReason = isFluxUrl(endpoint) ? response.headers.get("x-flux-hold-reason") : null;
+      const fluxCode = isFluxUrl(endpoint) ? fluxRefusalCode(body, holdReason === null ? undefined : { "x-flux-hold-reason": holdReason.slice(0, 200) }) : undefined;
+      throw new ProviderHttpError(response.status, body, label, providerRoute?.preset === "flux" || isFluxUrl(endpoint), fluxCode);
     }
     if (secret) noteKeyAccepted(providerRoute?.baseUrl ?? options.apiUrl, secret);
 
     if (!stream) {
       const json = (JSON.parse(await readBoundedBody(response, requestSignal, MAX_RESPONSE_BYTES, false, idle.renew)) ?? {}) as CompletionJson;
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, json, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(json);
       if (errorDetail !== null) throw new Error(redact(`${label} error: ${errorDetail}`).slice(0, 300));
       const choice = json.choices?.[0];
@@ -837,6 +854,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
         unreadableFrames++;
         return false;
       }
+      if ((providerRoute?.preset === "flux" || isFluxUrl(endpoint)) && secret) checkFluxBudget(0, chunk, providerRoute?.baseUrl ?? options.apiUrl, secret);
       const errorDetail = inBandErrorDetail(chunk);
       if (errorDetail !== null) {
         throw failure("The model server reported an error part-way through the answer.", `stream error: ${errorDetail}`, "provider_error");
@@ -1289,7 +1307,9 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                 if (outcome.partial.usage && total) emit({ ...base(threadId, turnId), type: "thread.token-usage.updated", ...total });
               }
               const details = (error as { details?: unknown }).details;
-              const providerError = classifyProviderError(error);
+              const classified = error instanceof FluxBudgetReached ? undefined : classifyProviderError(error, error instanceof ProviderHttpError && error.flux);
+              // A budget stop keeps its own record: it is Murage's refusal, so no provider sentence is attached to it.
+              const providerError = error instanceof FluxBudgetReached ? error.providerError : classified ? withProviderSaid(classified, error) : undefined;
               if (!aborted) {
                 // s10: a size refusal after tool rounds says the steps already ran.
                 const message = seenCalls.size ? `${error.message} ${STEPS_ALREADY_RAN}` : error.message;
@@ -1299,6 +1319,7 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
                   message: scrub(message),
                   ...(typeof details === "string" && details ? { details: scrub(details) } : {}),
                   ...(providerError ? { providerError } : {}),
+                  ...(isFluxUrl(endpointUrl) && fluxRefusalCode(error, details) ? { gatewayCode: fluxRefusalCode(error, details) } : {}),
                 });
               }
               // An abort is Murage stopping the turn (interruptTurn, stopAll): settled as cancelled like every other driver (STOP1).

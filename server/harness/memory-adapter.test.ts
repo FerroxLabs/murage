@@ -165,6 +165,7 @@ const FAKE_ACP = join(TESTING, "fake-acp-cli.ts");
 const FAKE_GROK = join(TESTING, "fake-grok-provider-cli.ts");
 const FAKE_AGY = join(TESTING, "fake-agy-cli.ts");
 const FAKE_PI = join(TESTING, "fake-pi-cli.ts");
+const FAKE_MUSE = join(TESTING, "fake-muse-cli.ts");
 const SYSTEM = "You are Fixture Bot.";
 const REQUEST = "What did we decide about backups?";
 const FRAME = [MEMORY_REFERENCE_PREAMBLE, MEMORY_REFERENCE_OPEN, '- m1 (the owner said; fact) "Use nightly backups."', MEMORY_REFERENCE_CLOSE].join("\n");
@@ -182,7 +183,9 @@ const FUIGO_SOURCE = [
   '  const ok = (r) => send({ jsonrpc: "2.0", id: m.id, result: r });',
   '  if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }] });',
   '  else if (m.method === "authenticate") ok({});',
-  '  else if (m.method === "session/new") ok({ sessionId: "fake-fuigo-session" });',
+  // Fuigo 1.0.36+ acknowledges Murage's launch policy on every session open; without it the turn fails (FUIGO-SCOPE).
+  '  else if (m.method === "session/new") { const sha = m.params && m.params._meta && m.params._meta["fuigo/permissionPolicySha256"];',
+  '    ok({ sessionId: "fake-fuigo-session", ...(sha ? { _meta: { "fuigo/permissionPolicy": { sha256: sha } } } : {}) }); }',
   '  else if (m.method === "session/prompt") { writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));',
   '    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fake-fuigo-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ok" } } } });',
   '    ok({ stopReason: "end_turn" }); }',
@@ -268,8 +271,19 @@ const DISPATCH: Record<string, Dispatch> = {
   openclawAgent: acp("openclawAgent"),
   // Signed in by a key in the environment (the settings file is never opened then).
   clineAgent: acp("clineAgent", {}, scratch => ({ HOME: scratch, CLINE_API_KEY: "cline-fixture-key" })),
+  // U22 F9: the person's own Copilot CLI over ACP; its login is never checked offline, so the fake answers.
+  copilotAgent: acp("copilotAgent"),
   opencodeGo: { ...acp("opencodeGo", {}, scratch => ({ HOME: scratch, XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "opencode-fixture-key", FAKE_ACP_MODELS: "opencode/fixture-model" })),
     turn: { model: "opencode/fixture-model" } },
+  // MSP over `muse serve`: the fake logs every request, so the turn/start input is read back.
+  museCode: {
+    entry: scratch => ({ driver: "museCode", config: { cli: FAKE_MUSE }, environment: { HOME: scratch, META_API_KEY: "meta-fixture-key", FAKE_MUSE_LOG: join(scratch, "muse.jsonl") } }),
+    observe: scratch => {
+      const start = readFileSync(join(scratch, "muse.jsonl"), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.method === "turn/start").at(-1);
+      if (!Array.isArray(start?.params?.input)) throw Error("Muse fixture did not capture turn/start");
+      return { payload: text(start.params.input) };
+    },
+  },
   antigravityAgent: {
     entry: scratch => ({ driver: "antigravityAgent", config: { cli: FAKE_AGY, fullAuto: true }, environment: { HOME: scratch, FAKE_AGY_DUMP: join(scratch, "dump.json") } }),
     observe: scratch => ({ payload: json(join(scratch, "dump.json")).prompt }),
@@ -322,7 +336,7 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
     const scratch = mkdtempSync(join(tmpdir(), `murage-memory-dispatch-${kind}-`));
     const calls: Http = [];
     ensureDirs();
-    for (const fake of [FAKE_CLAUDE, FAKE_CODEX, FAKE_ACP, FAKE_GROK, FAKE_AGY, FAKE_PI]) chmodSync(fake, 0o755);
+    for (const fake of [FAKE_CLAUDE, FAKE_CODEX, FAKE_ACP, FAKE_GROK, FAKE_AGY, FAKE_PI, FAKE_MUSE]) chmodSync(fake, 0o755);
     for (const [key, value] of Object.entries(spec.processEnv?.(scratch) ?? {})) {
       if (!saved.has(key)) saved.set(key, process.env[key]);
       process.env[key] = value;

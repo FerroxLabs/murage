@@ -103,8 +103,7 @@ export function relaunchDesktop({ app, args, platform = process.platform, env = 
   const appDir = env.APPDIR;
   // The helper must not keep the old mount busy, and the new copy should start
   // where the person started the first one.
-  const inMount = dir => dir === appDir || dir.startsWith(appDir + "/");
-  const start = [env.OWD, cwd, os.homedir()].find(dir => typeof dir === "string" && path.isAbsolute(dir) && !inMount(dir) && isDirectory(dir)) ?? "/";
+  const start = relaunchDirectory(env, cwd, os.homedir);
   const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
     detached: true, stdio: "ignore", cwd: start, env: appImageRelaunchEnv(env, appDir),
   });
@@ -115,3 +114,59 @@ export function relaunchDesktop({ app, args, platform = process.platform, env = 
 }
 
 function isDirectory(dir) { try { return fs.statSync(dir).isDirectory(); } catch { return false; } }
+
+function relaunchDirectory(env, cwd, homedir) {
+  for (const candidate of [() => env.OWD, () => cwd, homedir]) {
+    try {
+      const dir = candidate();
+      if (typeof dir === "string" && path.isAbsolute(dir) && dir !== env.APPDIR && !dir.startsWith(env.APPDIR + "/") && isDirectory(dir)) return dir;
+    } catch { /* try the next usable directory */ }
+  }
+  return "/";
+}
+
+// Registration is synchronous, before any acknowledgment wait. Only observed
+// exit (or an error before a pid was assigned) releases this ownership.
+export function ownRelaunchHelper(child, { stopMs = 2500 } = {}) {
+  let exited = false;
+  const listeners = new Set();
+  const confirm = () => { exited = true; for (const resolve of listeners) resolve(); listeners.clear(); };
+  child.once("exit", confirm);
+  child.on("error", () => { if (!child.pid) confirm(); });
+  return {
+    async stop() {
+      if (exited) return;
+      await new Promise((resolve, reject) => {
+        const done = () => { clearTimeout(timer); listeners.delete(done); resolve(); };
+        const timer = setTimeout(() => {
+          listeners.delete(done);
+          reject(Object.assign(new Error("Relaunch helper termination unconfirmed"), { code: "HANDOFF_HELPER_ALIVE" }));
+        }, stopMs);
+        listeners.add(done);
+        try { child.kill("SIGKILL"); } catch { /* only exit confirms termination */ }
+        if (exited) done();
+      });
+    },
+  };
+}
+
+export async function acknowledgedRelaunchHandoff({ app, args, platform = process.platform, env = process.env,
+  execPath = process.execPath, pid = process.pid, spawn = nodeSpawn, cwd = process.cwd(), homedir = os.homedir,
+  register, ackMs = 2500, stopMs = 2500 }) {
+  const file = runningAppImage({ platform, env, execPath });
+  if (!file) { app.relaunch({ args }); return true; }
+  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
+    detached: true, stdio: "ignore", cwd: relaunchDirectory(env, cwd, homedir), env: appImageRelaunchEnv(env, env.APPDIR),
+  });
+  const owned = ownRelaunchHelper(child, { stopMs });
+  register(owned);
+  const accepted = await new Promise(resolve => {
+    const finish = result => { clearTimeout(timer); child.removeListener("spawn", yes); child.removeListener("error", no); resolve(result); };
+    const yes = () => finish(true), no = () => finish(false);
+    const timer = setTimeout(no, ackMs);
+    child.once("spawn", yes); child.once("error", no);
+  });
+  if (!accepted) { await owned.stop(); return false; }
+  child.unref?.();
+  return true;
+}

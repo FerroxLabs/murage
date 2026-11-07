@@ -8,7 +8,7 @@ describe("workspace memory activity", () => {
   it("separates processing, retrieval and supplied references without claiming configured learning works", () => {
     const html = renderToStaticMarkup(createElement(MemoryHealth, { status }));
     expect(html).toContain("3 sources stored"); expect(html).toContain("1 sources processed");
-    expect(html).toContain("Supplied to turns"); expect(html).toContain("No activity recorded");
+    expect(html).toContain("Memory references sent to bots"); expect(html).toContain("No activity recorded");
     expect(html).toContain("successful learning is not confirmed by configuration alone");
     expect(html).toContain("whole workspace"); expect(html).toContain("Last activity:");
   });

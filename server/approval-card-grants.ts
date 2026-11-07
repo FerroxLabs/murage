@@ -20,6 +20,7 @@ import type { ApprovalGrantRequest } from "../shared/approval-grant-request.ts";
 import { foldScopes, type CardClass, type CardKeyField, type CardKeys } from "../shared/fold-scopes.ts";
 import { durableGrantAllowed } from "../shared/durable-grant-allowed.ts";
 import { stopFindings, stopLineKey, type StopHit } from "./stop-line.ts";
+import { unreadableHardRead } from "./unreadable-hard-read.ts";
 
 export interface CardGrantInput {
   /** a permission ask, not a question */
@@ -33,7 +34,9 @@ export interface CardGrantInput {
   summary: string;
   exactAllowKey?: string;
   routineAllowCard: { routineAllowKey?: string; routineId?: string };
-  verdict?: Pick<AutoVerdict, "source"> | null;
+  verdict?: Pick<AutoVerdict, "source" | "rule"> | null;
+  /** APPROVALS-SIMPLE-1018: the whole text an `unreadable` card's hard read takes (the engine's command, else the summary) */
+  hardText?: string;
   /** the engine's call, so "Always allow" is never read off a cut call */
   call?: GrantCall;
   /** the per-action grant data (Rules 78, 81, 82) the card carries */
@@ -72,8 +75,18 @@ export function cardClassFor(input: CardGrantInput, keys: CardKeys): CardClass {
     automated: input.automated === true,
     ...(input.approvalScope ? { scope: input.approvalScope } : {}),
     ...(input.origin ? { origin: input.origin } : {}),
+    ...readerRuleOf(input),
     keys: fields,
   };
+}
+
+/** APPROVALS-SIMPLE-1018 section 4 (Astra r1 H1): only an `unreadable` always-ask hit is stamped, and only a clear
+ *  hard read stamps the rule Approve all admits. The stop line counts as a hit here too; fail closed. */
+function readerRuleOf(input: CardGrantInput): Pick<CardClass, "rule" | "ruleHeld"> {
+  if (input.verdict?.source !== "always-ask" || input.verdict.rule !== "unreadable" || input.questionAsk) return {};
+  if (input.stopHit) return { rule: "unreadable-held", ruleHeld: "stop" };
+  const held = unreadableHardRead(input.hardText ?? input.summary);
+  return held ? { rule: "unreadable-held", ruleHeld: held } : { rule: "unreadable" };
 }
 
 /** The keys as today's rules would put them on the card, before the fold. */

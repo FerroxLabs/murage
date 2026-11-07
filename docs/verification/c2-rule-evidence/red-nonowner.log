@@ -1,0 +1,40 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ server/message-search-forgotten.test.ts (7 tests | 2 failed) 14827ms
+   × RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=false 684ms
+   × RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=true 595ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=false
+ FAIL  server/message-search-forgotten.test.ts > RULE path 16 non-owner excludes every forgotten source and deleted row, indexed=true
+AssertionError: expected [ 'deleted', 'kept', 'other', …(2) ] to deeply equal [ 'kept' ]
+
+- Expected
++ Received
+
+  [
++   "deleted",
+    "kept",
++   "other",
++   "owner-forget",
++   "supporting",
+  ]
+
+ ❯ server/message-search-forgotten.test.ts:105:74
+    103|   if (indexed) rebuildMessageSearchIndex(database()); else closeMessag…
+    104|   database().prepare("DELETE FROM messages WHERE id='removed'").run();
+    105|   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {})…
+       |                                                                          ^
+    106|   expect(ids(searchMessagesWithMeta("austin lease", 40, undefined, {ow…
+    107| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 5 passed (7)
+   Start at  21:13:25
+   Duration  23.23s (transform 7.00s, setup 8.27s, import 14ms, tests 14.83s, environment 0ms)
+
