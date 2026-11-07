@@ -93,6 +93,7 @@
 // line's id, and the startup reconciliation (completeUnresolved) finishes any
 // "dispatched" or "unconfirmed" row that has no line yet.
 
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { murageLine } from "./murage-line.ts";
 import { DatabaseSync } from "node:sqlite";
 import { createHash, randomUUID } from "node:crypto";
@@ -447,6 +448,9 @@ export interface RecoveryIo {
 }
 
 export class SendStore {
+  private speechAccepted?: (input: AcceptInput) => void;
+  /** Runs in the acceptance transaction, including queued owner sends. */
+  setSpeechAccepted(hook: (input: AcceptInput) => void): void { this.speechAccepted = hook; }
   private getDb: () => DatabaseSync;
   private fallback: DatabaseSync | null = null;
   private ready = new WeakSet<DatabaseSync>();
@@ -519,15 +523,15 @@ export class SendStore {
   private atomically<T>(work: (db: DatabaseSync) => T): T {
     const db = this.db();
     const point = `owner_sends_${randomUUID().replace(/-/g, "")}`;
-    db.exec(`SAVEPOINT ${point}`);
+    beginWrite(db, point);
     txScopeBegin();
     try {
       const out = work(db);
-      db.exec(`RELEASE ${point}`);
+      endWrite(db, point);
       txScopeEnd(true);
       return out;
     } catch (error) {
-      try { db.exec(`ROLLBACK TO ${point}; RELEASE ${point}`); } catch { /* the handle is already gone */ }
+      try { undoWrite(db, point); } catch { /* the handle is already gone */ }
       txScopeEnd(false);
       throw error;
     }
@@ -631,6 +635,7 @@ export class SendStore {
         input.restoreHeld ? 1 : 0, heldGeneration, input.resend && input.actionId ? input.actionId : null,
         via, queueOnly ? 1 : 0, viaDevice, attachments ? JSON.stringify(attachments) : null,
       );
+      this.speechAccepted?.({ ...input, origin: origin ?? undefined });
       return { kind: "new", row: this.one(db, "SELECT * FROM owner_sends WHERE queue_id=?", queueId)! };
     });
     if (result.kind === "new") this.notify(input.threadId);

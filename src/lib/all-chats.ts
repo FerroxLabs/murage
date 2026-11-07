@@ -1,3 +1,6 @@
+import { t } from "./i18n";
+import { api } from "@/state/store";
+import { chatsGenAnswer, chatsGenSession, chatsGenSnapshot, compareGen, type ChatsGen } from "./chats-gen";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -15,6 +18,9 @@ export interface ChatRow {
   title: string;
   createdAt: number;
   lastActivityAt?: number;
+  snippet?: string;
+  lastRole?: string | null;
+  lastFrom?: string | null;
   botId?: string;
   groupId?: string;
   place?: { kind: "project" | "channel"; groupId: string; name: string };
@@ -25,13 +31,18 @@ export interface ChatRow {
 }
 
 export interface ChatPage {
+  gen?: ChatsGen;
   chats: ChatRow[];
   pinned?: ChatRow[];
   next: string | null;
   total: number;
+  partial?: boolean;
 }
 
 export interface ChatFilters {
+  date?: "today" | "week" | "month" | "custom";
+  dateFrom?: number;
+  dateTo?: number;
   botId?: string;
   /** a channel or project id, or "direct" */
   groupId?: string;
@@ -57,6 +68,8 @@ export function chatsRequestPath(filters: ChatFilters, before: string | null, q 
   const params = new URLSearchParams();
   params.set("limit", String(limit));
   if (before) params.set("before", before);
+  if (filters.dateFrom !== undefined) params.set("date_from", String(filters.dateFrom));
+  if (filters.dateTo !== undefined) params.set("date_to", String(filters.dateTo));
   if (filters.botId) params.set("bot", filters.botId);
   if (filters.groupId) params.set("group", filters.groupId);
   if (filters.pinned) params.set("pinned", "1");
@@ -69,9 +82,11 @@ export function chatsRequestPath(filters: ChatFilters, before: string | null, q 
 }
 
 /** The message search for All chats: the existing /api/search, asked for the chats view so a forgotten line is never a hit. */
-export function chatsSearchPath(q: string, filters: ChatFilters = {}, limit = CHAT_SEARCH_LIMIT): string {
+export function chatsSearchPath(q: string, filters: ChatFilters = {}, limit = CHAT_SEARCH_LIMIT, before?: string | null): string {
   const params = new URLSearchParams(chatsRequestPath(filters, null, "", limit).split("?")[1]);
   params.delete("limit");
+  params.set("group_by", "thread");
+  if (before) params.set("before", before);
   const suffix = params.toString();
   return `/api/search?q=${encodeURIComponent(q.trim())}&limit=${limit}&view=chats${suffix ? `&${suffix}` : ""}`;
 }
@@ -82,6 +97,7 @@ export interface HeldChats {
   chats: ChatRow[];
   next: string | null;
   total: number;
+  partial?: boolean;
 }
 
 export const NO_CHATS: HeldChats = { pinned: [], chats: [], next: null, total: 0 };
@@ -104,7 +120,7 @@ export function appendChatPage(held: HeldChats, page: ChatPage, first: boolean):
     seen.add(row.threadId);
     chats.push(row);
   }
-  return { pinned, chats, next: page.next, total: page.total };
+  return { pinned, chats, next: page.next, total: page.total, partial: page.partial };
 }
 
 export const chatTime = (row: Pick<ChatRow, "lastActivityAt" | "createdAt">) => row.lastActivityAt ?? row.createdAt;
@@ -167,6 +183,7 @@ export interface ChatHitRow {
   threadId: string;
   hit: SearchHit;
   count: number;
+  countComplete?: boolean;
 }
 
 /** What the view knows about a thread it did not load as a row: the marks the client already holds (pinned and unread chats always ride
@@ -196,12 +213,74 @@ export function foldChatHits(hits: readonly SearchHit[], filters: ChatFilters, f
       const place = hit.groupId ?? known.groupId;
       if (filters.groupId === "direct" ? place !== undefined : place !== filters.groupId) continue;
     }
-    rows.set(hit.threadId, { threadId: hit.threadId, hit, count: 1 });
+    rows.set(hit.threadId, { threadId: hit.threadId, hit, count: hit.hits ?? 1, countComplete: hit.countComplete === true });
   }
   return [...rows.values()];
 }
 
 /** How many filters are on, for the "Clear filters" control. */
 export function activeFilterCount(filters: ChatFilters): number {
-  return [filters.botId, filters.groupId, filters.pinned, filters.unread, filters.archived, filters.routines].filter(Boolean).length;
+  return [filters.botId, filters.groupId, filters.pinned, filters.unread, filters.archived, filters.routines, filters.date].filter(Boolean).length;
 }
+
+/** Calendar dates use local midnight; the upper bound is exclusive, including
+ * the entire last day even across a daylight-saving transition. */
+export function chatDateRange(date: ChatFilters["date"], now: number): Pick<ChatFilters, "date" | "dateFrom" | "dateTo"> {
+  if (!date || date === "custom") return { date, dateFrom: undefined, dateTo: undefined };
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  if (date === "week") start.setDate(start.getDate() - 6);
+  if (date === "month") {
+    const day = start.getDate(); start.setDate(1); start.setMonth(start.getMonth() - 1);
+    start.setDate(Math.min(day, new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate()));
+  }
+  const end = new Date(now); end.setHours(24, 0, 0, 0);
+  return { date, dateFrom: start.getTime(), dateTo: end.getTime() };
+}
+export function chatDateInput(value: string, end = false): number | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
+  const at = new Date(`${value}T00:00:00`);
+  if (end) at.setDate(at.getDate() + 1);
+  return Number.isFinite(at.getTime()) ? at.getTime() : undefined;
+}
+export function chatDateValue(at: number | undefined, end = false): string {
+  if (at === undefined) return "";
+  const day = new Date(at); if (end) day.setDate(day.getDate() - 1);
+  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+}
+export function chatSnippet(row: Pick<ChatRow, "snippet" | "lastRole" | "lastFrom" | "groupId">): string {
+  if (!row.snippet) return "";
+  if (row.lastRole === "user") return t("chats.preview.you", { text: row.snippet });
+  const prefix = row.groupId ? row.lastFrom : undefined;
+  return prefix ? `${prefix}: ${row.snippet}` : row.snippet;
+}
+
+/** Answers never grant stream proof. Validate even if the requesting view left. */
+export async function fetchChats<T extends { gen?: ChatsGen }>(path: string, expect: ChatsGen | null = null, request: (path: string) => Promise<T> = api): Promise<(T & { listGen: ChatsGen | null }) | null> {
+  const session = chatsGenSession();
+  const body = await request(path);
+  const verdict = chatsGenAnswer(body.gen, session);
+  if (verdict === "stale" || verdict === "newer") return null;
+  if (expect && (verdict !== "ok" || !chatsGenSnapshot().known || compareGen(expect, chatsGenSnapshot().known!) !== "same")) return null;
+  return { ...body, listGen: body.gen ?? null };
+}
+export const REFETCH_GAP_MS = 500;
+/** One flight and one trailing request, with a fixed minimum start gap. */
+export function scheduleRefetch(run: () => Promise<void>, delay = 0) {
+  let active = true, flight = false, again = false, last = -Infinity;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = () => {
+    if (!active) return;
+    again = true;
+    if (flight || timer) return;
+    timer = setTimeout(async () => {
+      timer = undefined;
+      if (!active) return;
+      again = false; flight = true; last = Date.now();
+      try { await run(); } finally { flight = false; if (active && again) schedule(); }
+    }, Math.max(delay, last + REFETCH_GAP_MS - Date.now(), 0));
+  };
+  return { schedule, dispose() { active = false; again = false; flight = false; if (timer) clearTimeout(timer); timer = undefined; } };
+}
+
+export const incompleteChatCount = (count: number) => t(count === 1 ? "chats.matches.atLeastOne" : "chats.matches.atLeast", { count });

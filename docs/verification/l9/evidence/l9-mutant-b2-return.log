@@ -1,0 +1,35 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ server/drivers/acp/kimi-signin.test.ts (20 tests | 2 failed | 18 skipped) 22ms
+   × L9 B2/G1: early parent swap reads outside; malformed=false 14ms
+   × L9 B2/G1: early parent swap reads outside; malformed=true 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/kimi-signin.test.ts > L9 B2/G1: early parent swap reads outside; malformed=false
+ FAIL  server/drivers/acp/kimi-signin.test.ts > L9 B2/G1: early parent swap reads outside; malformed=true
+AssertionError: expected 'L9_ACCESS_SENTINEL' to be false // Object.is equality
+
+- Expected:
+false
+
++ Received:
+"L9_ACCESS_SENTINEL"
+
+ ❯ server/drivers/acp/kimi-signin.test.ts:164:56
+    162|   const actual = await vi.importActual<typeof fs>("node:fs/promises");
+    163|   await fs.writeFile(path, '{"access_token":"","refresh_token":""}');
+    164|   expect(await kimiSignedIn({ KIMI_CODE_HOME: root })).toBe(false);
+       |                                                        ^
+    165|   const access = "L9_ACCESS_SENTINEL", refresh = "L9_REFRESH_SENTINEL";
+    166|   const body = JSON.stringify({ access_token: access, refresh_token: r…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 18 skipped (20)
+   Start at  16:56:02
+   Duration  6.81s (transform 5.23s, setup 5.55s, import 1.11s, tests 22ms, environment 0ms)
+

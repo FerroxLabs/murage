@@ -178,7 +178,9 @@ export function startOwnerTailIndexBuild(db: DatabaseSync, options: OwnerTailInd
     try { await admit(); } catch { /* a gate that fails holds nothing back */ }
     if (stopped) return;
     // A transaction some other code left open on this connection is not ours to join: try again shortly.
-    if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; }
+    // A connection closed under the wait (shutdown, a restore) ends the build as stop() does, never an unhandled rejection; the next start carries on.
+    try { if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; } }
+    catch { if (state === "waiting" || state === "building") state = "absent"; end(false); return; }
     state = "building";
     try {
       if (tableReady) {

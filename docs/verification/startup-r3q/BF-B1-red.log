@@ -1,0 +1,52 @@
+✖ BF-B1: slow load keeps splash until first paint (quiet=false) (2.64398ms)
+✖ BF-B1: slow load keeps splash until first paint (quiet=true) (1.615518ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 75.447589
+
+✖ failing tests:
+
+test at electron/startup-paint.node-test.mjs:10:36
+✖ BF-B1: slow load keeps splash until first paint (quiet=false) (2.64398ms)
+  AssertionError [ERR_ASSERTION]: 15 seconds without content must retain splash
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///root/swarm1018/SPEC-STARTUP-SILENT-1018/repo/electron/startup-paint.node-test.mjs:36:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at electron/startup-paint.node-test.mjs:10:36
+✖ BF-B1: slow load keeps splash until first paint (quiet=true) (1.615518ms)
+  AssertionError [ERR_ASSERTION]: 15 seconds without content must retain splash
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///root/swarm1018/SPEC-STARTUP-SILENT-1018/repo/electron/startup-paint.node-test.mjs:36:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

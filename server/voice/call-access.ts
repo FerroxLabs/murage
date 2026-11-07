@@ -15,3 +15,24 @@ export function callAccess(store: InboxRosterStore, door: InboxDoor, botId: stri
   if (door === "desktop") return "allowed";
   return visibleToCompanion(store, { scope: "bot", botId }) ? "allowed" : "not-found";
 }
+
+/** Session and subscription admission share the real target/thread binding. */
+export function callTargetAccess(store: InboxRosterStore, door: InboxDoor, targetId: string, threadId: string, roomDesktop = door === "desktop"): CallAccess {
+  if (door === "unproven") return "forbidden";
+  const room = store.group(targetId);
+  if (room) {
+    if (!roomDesktop || door !== "desktop" || room.hidden || !store.groups.some(group => "id" in group && group.id === targetId && group.threadId === threadId)) return "not-found";
+    return "allowed";
+  }
+  if (store.groupByThread(threadId) || !store.bots.some(bot => bot.id === targetId && (bot.threadId === threadId || bot.tasks?.some(task => task.threadId === threadId)))) return "not-found";
+  return callAccess(store, door, targetId);
+}
+
+/** Recheck the admitted call's current audience before every source/model/audio continuation. */
+export function callSourceVisible(store: InboxRosterStore, session: { targetId: string; threadId: string; desktop?: boolean }, botId: string): boolean {
+  const door = session.desktop ? "desktop" : "companion";
+  if (callTargetAccess(store, door, session.targetId, session.threadId, session.desktop === true) !== "allowed") return false;
+  const group = store.group(session.targetId);
+  if (!group) return session.targetId === botId;
+  return "memberIds" in group && Array.isArray(group.memberIds) && group.memberIds.includes(botId) && Boolean(store.bot(botId) && !store.bot(botId)?.hidden);
+}

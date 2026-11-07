@@ -67,6 +67,7 @@ it("v3 settings are current: a fresh install reads the default ceiling and no le
   expect(readMemoryLearning(database())).toMatchObject({ version: 3, ceiling: DEFAULT_LEARNING_CEILING });
   expect(spend()).toBeUndefined();
   expect(learningCeilingStatus(database(), DEFAULT_LEARNING_CEILING)).toEqual({ month: learningSpendMonth(), ...DEFAULT_LEARNING_CEILING, inputUsed: 0, outputUsed: 0, paused: false });
+  expect(learningCeilingStatus(database(), DEFAULT_LEARNING_CEILING)).not.toHaveProperty("pausedBy");
 });
 
 it("charges the month row and the day row together, the input at one token per byte plus the allowance", async () => {
@@ -242,7 +243,7 @@ it("unmetered recovery: a raise clears unmetered replies and learning resumes; m
   // two unmetered replies pause every purpose
   reserveExtraction(MESSAGES, 2000).settle({});
   reserveExtraction(MESSAGES, 2000).settle({ completion_tokens: 1 });
-  expect(everyPurpose()).toEqual(["spend-ceiling", "spend-ceiling", "spend-ceiling", "spend-ceiling", "spend-ceiling"]);
+  expect(everyPurpose()).toEqual(["spend-ceiling", "spend-ceiling", "spend-ceiling", "spend-ceiling", "unseen-calls"]);
   expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(true);
   // the owner's raise (Needs you "Double the limit and resume") clears them
   const settings = readMemoryLearning(database());
@@ -358,4 +359,139 @@ it("explicit-false-with-flux-key: an explicit learningDefaultOn wins over the Fl
   expect(learningDefaultOnFor({ learningDefaultOn: true }, false)).toBe(true);
   expect(learningDefaultOnFor({}, true)).toBe(true);
   expect(learningDefaultOnFor(undefined, false)).toBe(false);
+});
+
+it("30: a reservation below the ceiling can refuse, then reopen after an outstanding reservation settles lower",()=>{
+  configure({ceiling:{input:RESERVE*2-1,output:10000}});
+  const first=reserveExtraction(MESSAGES,100);expect(first.reserved).toBe(true);
+  expect(reserveExtraction(MESSAGES,100,undefined,"continuity",lived()).reserved).toBe("spend-ceiling");
+  expect(learningCeilingStatus(database(),readMemoryLearning(database()).ceiling).paused).toBe(false);
+  first.settle({prompt_tokens:0,completion_tokens:0});const next=reserveExtraction(MESSAGES,100,undefined,"continuity",lived());expect(next.reserved).toBe(true);next.finish();
+});
+it("30: Continuity-only pace and unseen reasons leave every other purpose's contract unchanged",()=>{
+  configure({callsPerMinute:0});expect(everyPurpose()).toEqual(["budget-exhausted","budget-exhausted","budget-exhausted","budget-exhausted","call-pace"]);
+  configure({callsPerMinute:60});scopeReady();const row={input:0,output:0,unmetered:2};database().prepare("INSERT INTO memory_scope_bindings VALUES(?,(SELECT id FROM memory_scopes LIMIT 1),'system','learning-spend',0,'granted',?)").run(month(),JSON.stringify(row));
+  expect(everyPurpose()).toEqual(["spend-ceiling","spend-ceiling","spend-ceiling","spend-ceiling","unseen-calls"]);
+});
+
+// Test 31: real owner saves and reservation admission, with no provider calls.
+import { doubleLimitRequest } from "../../src/lib/learning-limit-request.ts";
+import { leaveLearningPaused, learningPausedRow, resetLeftLearningPaused } from "../inbox-learning-paused.ts";
+const pauseRoster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
+const unseenPause = (input: number, output: number, inputUsed = 10, outputUsed = 1) => {
+  reconcileMemoryRoster(pauseRoster);
+  configure({ callsPerMinute: 60, ceiling: { input, output } });
+  setSpend(inputUsed, outputUsed);
+  database().prepare("UPDATE memory_scope_bindings SET intent=json_set(intent,'$.unmetered',2) WHERE id=?").run(month());
+  expect(learningCeilingStatus(database(), { input, output }).paused).toBe(true);
+  expect(reserveExtraction(MESSAGES, 100).reserved).toBe("spend-ceiling");
+};
+const ownerSave = (patch: Record<string, unknown>) => memoryOwnerRoute("/api/memory/action",
+  { action: "configure", learningRevision: readMemoryLearning(database()).revision, ...patch }, ownerMemoryTicket(), pauseRoster);
+const admits = () => {
+  const call = reserveExtraction(MESSAGES, 100);
+  expect(call.reserved).toBe(true);
+  call.settle({ prompt_tokens: 1, completion_tokens: 1 });
+  call.finish();
+};
+const heldSource = () => {
+  const due = Date.now() + 35 * 86400000;
+  database().prepare("INSERT INTO memory_scope_bindings VALUES('test-31-held',(SELECT id FROM memory_scopes LIMIT 1),'system','consolidation-pending',0,'granted',?)")
+    .run(JSON.stringify({ status: "deferred", reason: "spend-ceiling", retryAfter: due }));
+  return due;
+};
+
+it.each([[1e12, 10000], [10000, 1e12], [1e12, 1e12]])("31: owner's press at maxima (%s, %s) clears unseen, frees held sources and admits", async (input, output) => {
+  unseenPause(input, output);
+  heldSource();
+  const request = doubleLimitRequest({ input, output }, readMemoryLearning(database()).revision);
+  await memoryOwnerRoute("/api/memory/action", request, ownerMemoryTicket(), pauseRoster);
+  expect(spend().unmetered).toBeUndefined();
+  expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(false);
+  expect(learningPausedRow(database())).toBeNull();
+  expect(row("test-31-held").retryAfter).toBeLessThanOrEqual(Date.now());
+  admits();
+});
+
+it("31: month rollover without a press ends unseen hold and leaves the old row untouched", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 10, 30, 12));
+  unseenPause(10000, 10000);
+  const oldId = month(), old = row(oldId);
+  vi.setSystemTime(new Date(2026, 11, 1, 12));
+  expect(learningPausedRow(database())).toBeNull();
+  expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(false);
+  admits();
+  expect(row(oldId)).toEqual(old);
+});
+
+it("31: after Leave paused an unchanged maximum limit-editor save clears unseen and releases deferrals", async () => {
+  unseenPause(1e12, 1e12);
+  heldSource();
+  expect(leaveLearningPaused(database())).toBe(learningSpendMonth());
+  expect(learningPausedRow(database())).toBeNull();
+  expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(true);
+  expect(reserveExtraction(MESSAGES, 100).reserved).toBe("spend-ceiling");
+  await ownerSave({ ceiling: { input: 1e12, output: 1e12 } });
+  expect(spend().unmetered).toBeUndefined();
+  expect(row("test-31-held").retryAfter).toBeLessThanOrEqual(Date.now());
+  admits();
+});
+
+it("31: Leave paused hides the card only until next month", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(2026, 10, 30, 12));
+  unseenPause(1e12, 1e12);
+  leaveLearningPaused(database());
+  expect(learningPausedRow(database())).toBeNull();
+  vi.setSystemTime(new Date(2026, 11, 1, 12));
+  admits();
+  setSpend(1e12, 1);
+  expect(learningPausedRow(database())?.pausedBy).toBe("limit");
+});
+
+it.each([
+  { name: "unchanged below maximum", ceiling: { input: 10000, output: 10000 }, patch: { ceiling: { input: 10000, output: 10000 } }, releases: false },
+  { name: "input-only raise, output below maximum", ceiling: { input: 10000, output: 10000 }, patch: { ceiling: { input: 20000, output: 10000 } }, releases: true },
+  { name: "output-only raise, input below maximum", ceiling: { input: 10000, output: 10000 }, patch: { ceiling: { input: 10000, output: 20000 } }, releases: true },
+  { name: "learning only at both maxima", ceiling: { input: 1e12, output: 1e12 }, patch: { learning: { reviewMode: true } }, releases: false },
+])("31: save clears nothing: $name", async ({ ceiling, patch, releases }) => {
+  unseenPause(ceiling.input, ceiling.output);
+  const due = heldSource();
+  await ownerSave(patch);
+  expect(spend().unmetered).toBe(2);
+  expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).pausedBy).toBe("unseen");
+  expect(reserveExtraction(MESSAGES, 100).reserved).toBe("spend-ceiling");
+  if (releases) expect(row("test-31-held").retryAfter).toBeLessThanOrEqual(Date.now());
+  else expect(row("test-31-held").retryAfter).toBe(due);
+});
+
+it("31: an explicit maximum save clears unseen but an exhausted limit still waits for the month", async () => {
+  unseenPause(1e12, 1e12, 1e12, 1);
+  await ownerSave({ ceiling: { input: 1e12, output: 1e12 } });
+  expect(spend().unmetered).toBeUndefined();
+  expect(learningPausedRow(database())?.pausedBy).toBe("limit");
+  expect(reserveExtraction(MESSAGES, 100).reserved).toBe("spend-ceiling");
+});
+
+it("31: cleared unseen status cannot promise a reservation larger than the remaining room", async () => {
+  unseenPause(1e12, 1e12, 1e12 - RESERVE + 1, 1);
+  await ownerSave({ ceiling: { input: 1e12, output: 1e12 } });
+  expect(spend().unmetered).toBeUndefined();
+  expect(learningCeilingStatus(database(), readMemoryLearning(database()).ceiling).paused).toBe(false);
+  expect(reserveExtraction(MESSAGES, 100).reserved).toBe("spend-ceiling");
+  const smaller = reserveExtraction([], 100);
+  expect(smaller.reserved).toBe(true);
+  smaller.settle({ prompt_tokens: 1, completion_tokens: 1 });
+  smaller.finish();
+});
+afterEach(() => resetLeftLearningPaused());
+
+it.each([20000,20001])("A4: stale doubled configure persists the ceiling and returns a truthful pause at usage %s", async used => {
+  unseenPause(10000,10000,used,1);
+  const result=await ownerSave({ceiling:{input:20000,output:20000}});
+  expect(result).toMatchObject({learning:{ceiling:{input:20000,output:20000,inputUsed:used,paused:true,pausedBy:"limit"}}});
+  expect(readMemoryLearning(database()).ceiling).toEqual({input:20000,output:20000});
+  expect(learningPausedRow(database())?.pausedBy).toBe("limit");
+  expect(reserveExtraction(MESSAGES,100).reserved).toBe("spend-ceiling");
 });

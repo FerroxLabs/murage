@@ -1,0 +1,36 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ server/chats-api.test.ts (10 tests | 1 failed | 9 skipped) 4458ms
+   × RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation 1024ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/chats-api.test.ts > RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation
+AssertionError: expected undefined to match object { Object (epoch, rev) }
+
+- Expected:
+{
+  "epoch": Any<String>,
+  "rev": Any<Number>,
+}
+
++ Received:
+undefined
+
+ ❯ server/chats-api.test.ts:295:28
+    293|     }
+    294|     const phone=await phoneApi('GET','/api/search?q=rule-search');
+    295|     expect(phone.body.gen).toMatchObject({epoch:expect.any(String),rev…
+       |                            ^
+    296|     const door=await api('GET','/api/search?q=rule-search');
+    297|     expect(door.body.hits.map((h:any)=>h.messageId)).toEqual(['kept']);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 skipped (10)
+   Start at  21:34:04
+   Duration  9.55s (transform 3.92s, setup 4.79s, import 148ms, tests 4.46s, environment 0ms)
+

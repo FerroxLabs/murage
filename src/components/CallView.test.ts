@@ -168,13 +168,13 @@ describe("native call audio: the path, the hold and the lifecycle", () => {
 
   it("gates speech on outputReady and held", () => {
     // (a line held for the rest of the owner's sentence gates too: review I-1)
-    expect(source).toMatch(/const gated = \(\) => !outputReady\.current \|\| heldRef\.current( \|\| Boolean\(heldLine\.current\?\.holding\))?;/);
+    expect(source).toMatch(/const gated = \(\) => budgetStopped\.current \|\| !outputReady\.current \|\| heldRef\.current( \|\| Boolean\(heldLine\.current\?\.holding\))?;/);
     const say = slice("const say = useCallback(", "const sayThenListen = useCallback(");
     expect(say).toContain("if (gated()) return false;");
     const sayThenListen = slice("const sayThenListen = useCallback(", "const sayThenListenRef");
     expect(sayThenListen).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(text\);/);
     const tellReply = slice("const tellReply = useCallback(", "const tellNext = useRef(tellReply);");
-    expect(tellReply).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(text\);/);
+    expect(tellReply).toMatch(/if \(gated\(\)\) \{\s*deferredReplies\.current\.unshift\(reply\);/);
     const listen = slice("const listen = useCallback(", "// Whenever the bot starts to speak");
     expect(listen).toContain("if (heldRef.current) return;");
   });
@@ -310,7 +310,7 @@ describe("a held line and the owner's utterance start", () => {
   const onLine = slice("const handleLine = (line: MicLine) => {", "offEnd = mic.onEnd(");
 
   it("I-1: the call counts as busy while a line is held, so nothing is said over it", () => {
-    expect(source).toContain("const gated = () => !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);");
+    expect(source).toContain("const gated = () => budgetStopped.current || !outputReady.current || heldRef.current || Boolean(heldLine.current?.holding);");
   });
 
   it("I-1: the rest of a held line never answers a card, and no line answers a card whose prompt is owed", () => {
@@ -650,10 +650,10 @@ describe("the engine turn's timing stamp belongs to the engine's reply only", ()
   it("tellReply takes it, after the gate, before either way of speaking, and hands it to the short path", () => {
     const gate = tellReply.indexOf("if (gated())");
     const take = tellReply.indexOf("takeEngineTurn()");
-    const short = tellReply.indexOf("return sayThenListen(");
+    const short = tellReply.indexOf("playback = speaker.playCallReply(");
     expect(take).toBeGreaterThan(gate);
     expect(take).toBeLessThan(short);
-    expect(tellReply).toMatch(/sayThenListen\(text, undefined, /);
+    expect(tellReply).toMatch(/playCallReply\(identity, \{ botId: bot.id, voiceId: voiceRef.current, call: true, onBudget: stopForBudget, onPlaying \}/);
     expect(tellReply.match(/takeEngineTurn\(\)/g)).toHaveLength(1);
   });
 
@@ -853,4 +853,17 @@ describe("bot calls: no recognition during the opener (Astra r3 Medium)", () => 
     expect(openTurn).toMatch(/if \(openerPlaying\.current\) return;/);
     expect(source).toMatch(/await sayOpener\(\(\) => sayRef\.current\(text\), openerPlaying\);/);
   });
+});
+
+it("budget stops host fallback and closes once using only the closing speech route", () => {
+  const stop = slice("const stopForBudget = useCallback", "/** Speak. With an echo-cancelled");
+  expect(stop).toContain("if (budgetStopped.current ||");
+  expect(stop).toContain("budgetStopped.current = true;");
+  expect(stop).toContain("hostAbort.current?.abort()");
+  expect(stop).toContain("speaker.stop()");
+  expect(stop).toContain("budgetClosing: true");
+  expect(stop).toContain('endCall(bot.id, "budget")');
+  const host = slice("const hostReply = useCallback", '// "Still on it"');
+  expect(host.indexOf('event.reason === "budget"')).toBeLessThan(host.indexOf("if (failed && !handed && !spoken)"));
+  expect(host).toContain("if (budgetStopped.current) return;");
 });
