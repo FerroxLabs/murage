@@ -5,6 +5,11 @@ import { FUIGO_TARGETS, fuigoVersionNewer, latestFuigoVersion, managedFuigoRecei
 import { execCli } from "./procs.ts";
 
 export { versionFrom };
+/** The installed Fuigo's version for Health (HEALTH-DOCTOR-FUIGO-VERSION): the managed install's receipt first, else the
+ * version the engine reports ("fuigo 1.0.39" reads as "1.0.39"). Never a pinned or qualified number. */
+export async function installedFuigoVersion(root: string, instance: { instanceId: string; cli?: string; snapshot: { version?: string | null } }): Promise<string | null> {
+  return (await managedFuigoReceipt(root, instance.instanceId, instance.cli))?.version ?? versionFrom(instance.snapshot.version);
+}
 
 export interface ManagedEngineInstance {
   instanceId: string; driverKind: string; cli?: string;

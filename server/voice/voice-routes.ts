@@ -118,13 +118,29 @@ export function markUnavailable(endpoint: VoiceEndpoint, now = Date.now()): void
 export function isUnavailable(endpoint: VoiceEndpoint, now = Date.now()): boolean {
   return (unavailable.get(sourceId(endpoint)) ?? 0) > now;
 }
-/** Forget one source's refusal, for an owner asking to check again now. */
+/** Keys whose budget Flux said is used up (a 402 that is not premium_locked),
+ *  and until when to stop asking. Held per key, not per model: every voice on
+ *  the key gets the same answer, and without this each sentence of every
+ *  message paid a refused request (VOICE-402-STOP). A new key is never held;
+ *  "Check again" and a route change clear it; it is rechecked after ten minutes. */
+const budgetReached = new Map<string, number>();
+const keyId = (e: VoiceEndpoint) => `${e.via} ${e.baseUrl} ${e.key}`;
+export function markBudgetReached(endpoint: VoiceEndpoint, now = Date.now()): void {
+  budgetReached.set(keyId(endpoint), now + UNAVAILABLE_MS);
+}
+export function isBudgetReached(endpoint: VoiceEndpoint, now = Date.now()): boolean {
+  return (budgetReached.get(keyId(endpoint)) ?? 0) > now;
+}
+/** Forget one source's refusal, and its key's budget stop, for an owner
+ *  asking to check again now. */
 export function clearUnavailable(endpoint: VoiceEndpoint): void {
   unavailable.delete(sourceId(endpoint));
+  budgetReached.delete(keyId(endpoint));
 }
-/** Test seam: forget every refusal. */
+/** Forget every refusal (routes re-wired, and the test seam). */
 export function resetUnavailable(): void {
   unavailable.clear();
+  budgetReached.clear();
 }
 
 /** What the app may know: which provider serves each part, nothing more. */

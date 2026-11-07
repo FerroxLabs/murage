@@ -666,6 +666,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/data-dir",
+    "term": "data folder",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/decisions",
     "term": "decisions",
     "source": "server/index.ts"

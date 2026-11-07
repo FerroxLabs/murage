@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import snapshot from "../data/model-metadata.json";
 import {
@@ -15,7 +15,11 @@ import {
   isRoutingAlias,
   lookupModelMetadata,
   providerHint,
+  preloadModelMetadata,
 } from "./model-metadata.ts";
+
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
 
 const SNAPSHOT_PATH = fileURLToPath(new URL("../data/model-metadata.json", import.meta.url));
 const FIELDS = ["name", "inputPerMillion", "outputPerMillion", "contextWindow", "vision", "tools", "reasoning"];

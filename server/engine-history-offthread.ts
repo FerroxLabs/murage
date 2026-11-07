@@ -132,12 +132,19 @@ function runOne(job: EngineHistoryJob, options: EngineHistoryOptions): { result:
     return { result: Promise.resolve(failedResult(job, "worker-unavailable")), exited: Promise.resolve() };
   }
   let markExited!: () => void;
-  // Only the worker's own `exit` event counts: an `error` event is a failure notice, not proof the thread has left.
+  // Only the worker's own `exit` event counts: an `error` event is a failure notice, not proof the thread has left. The exit listener
+  // comes first, so no throw below can leave a live worker nobody hears leave.
   const exited = new Promise<void>(resolve => { markExited = resolve; });
+  try { worker.on("exit", () => markExited()); }
+  catch {
+    // not a real Node Worker: ended and treated as exited
+    try { void Promise.resolve(worker.terminate()).catch(() => {}); } catch { /* already gone */ }
+    markExited();
+    return { result: Promise.resolve(failedResult(job)), exited };
+  }
   const mine = { worker, exited };
   current = mine;
   void exited.then(() => { if (current === mine) current = null; });
-  worker.on("exit", () => markExited());
   const result = new Promise<EngineHistoryResult>(resolve => {
     let settled = false;
     let timer: NodeJS.Timeout | undefined;
@@ -145,16 +152,16 @@ function runOne(job: EngineHistoryJob, options: EngineHistoryOptions): { result:
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      void Promise.resolve(worker.terminate()).catch(() => {});
+      try { void Promise.resolve(worker.terminate()).catch(() => {}); } catch { /* already gone */ }
       resolve(value);
     };
-    worker.on("message", (message: { type?: string; result?: EngineHistoryResult; key?: string; index?: number }) => {
-      if (message.type === "step" && typeof message.key === "string" && typeof message.index === "number") options.onStep?.(message.key, message.index);
-      else if (message.type === "result" && message.result) finish(message.result);
-    });
-    worker.on("error", () => finish(failedResult(job)));
-    worker.on("exit", () => finish(failedResult(job)));
     try {
+      worker.on("message", (message: { type?: string; result?: EngineHistoryResult; key?: string; index?: number }) => {
+        if (message.type === "step" && typeof message.key === "string" && typeof message.index === "number") options.onStep?.(message.key, message.index);
+        else if (message.type === "result" && message.result) finish(message.result);
+      });
+      worker.on("error", () => finish(failedResult(job)));
+      worker.on("exit", () => finish(failedResult(job)));
       options.onWorker?.(worker);
       worker.postMessage(job);
     } catch { finish(failedResult(job)); return; }
@@ -167,26 +174,39 @@ function runOne(job: EngineHistoryJob, options: EngineHistoryOptions): { result:
 /** Queues the job behind any job already running (until that worker has really exited) and resolves with its result. Never
  * rejects. After stopEngineHistory() every job is reported failed at once. */
 export function runEngineHistoryOffThread(job: EngineHistoryJob, given: EngineHistoryOptions = {}): Promise<EngineHistoryResult> {
+  return startEngineHistoryJob(job, given).result;
+}
+
+/** The same job, with `exited`: settles only after every job queued before this one has really exited, and this job's worker too if
+ * one was started (on every path: refused while closing, given up waiting for the one before, failed, or run). A holder releases its
+ * hold only after it, so no worker of its own still writes in a home once the gate is down (DELETE-HOLDS-ENGINE r3.2). */
+export function startEngineHistoryJob(job: EngineHistoryJob, given: EngineHistoryOptions = {}): { result: Promise<EngineHistoryResult>; exited: Promise<void> } {
   const options = { ...engineHistoryTestHooks, ...given };
-  if (closing) return Promise.resolve(failedResult(job));
+  // no new slot is queued: the tail already covers every earlier worker, a timed-out one still in native code included
+  if (closing) return { result: Promise.resolve(failedResult(job)), exited: tailExit };
   const previous = tailExit;
   let release!: () => void;
-  tailExit = new Promise<void>(resolve => { release = resolve; });
-  return (async () => {
+  const slot = new Promise<void>(resolve => { release = resolve; });
+  tailExit = slot;
+  let started: Promise<void> | undefined;
+  const result = (async () => {
     try {
       const free = await settlesWithin(previous, options.exitWaitMs ?? 5 * 60_000);
       if (!free || closing) { void previous.then(release); return failedResult(job); }
       // Tests: a slow engine folder, planted. The job holds the queue for this long, on a timer, as a real slow job would.
       const testHoldMs = Number(process.env.MURAGE_TEST_ENGINE_JOB_HOLD_MS) || 0;
       if (testHoldMs > 0) await new Promise<void>(resolve => { setTimeout(resolve, testHoldMs); });
-      const { result, exited } = runOne(job, options);
-      void exited.then(release);
-      return await result;
+      const one = runOne(job, options);
+      started = one.exited;
+      void one.exited.then(release);
+      return await one.result;
     } catch {
-      release();
+      // once a worker exists the slot opens from its exit; before any worker, never ahead of the job before this one
+      if (started) void started.then(release); else void previous.then(release);
       return failedResult(job);
     }
   })();
+  return { result, exited: slot };
 }
 
 /** Shutdown: no new job starts, the running one gets `graceMs` to finish and is then ended, and this resolves true only once

@@ -1,0 +1,29 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+stdout | server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap
+[r6-lock] 128 MiB bot-text row: locked apply 24.7 ms
+
+ ❯ server/inbox.hotpath-r6.test.ts (5 tests | 1 failed) 57390ms
+     × a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap 3066ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/inbox.hotpath-r6.test.ts > r6 #2: the projection stores a capped preview of summary and title > a 128 MiB bot-text row with an artifact id: the locked apply is <= 20 ms and the stored summary is the cap
+AssertionError: expected 24.718604000001505 to be less than or equal to 20
+ ❯ server/inbox.hotpath-r6.test.ts:120:18
+    118|     expect(count(db, "SELECT MAX(length(summary)) AS n FROM inbox_raw"…
+    119|     expect(count(db, "SELECT MAX(length(summary)) AS n FROM inbox_item…
+    120|     expect(hold).toBeLessThanOrEqual(20);
+       |                  ^
+    121|   }, 120_000);
+    122|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 10 passed (11)
+   Start at  15:15:24
+   Duration  72.41s (transform 4.44s, setup 6.03s, import 32ms, tests 66.14s, environment 0ms)
+

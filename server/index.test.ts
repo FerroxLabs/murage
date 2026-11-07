@@ -17,7 +17,8 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { persistentAgentsClient } from "./testing/persistent-agents-client.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
-import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
+import { FILE_MAX_BYTES } from "./attachments.ts";
+import { IMAGE_UPLOAD_MAX_BYTES } from "../shared/media-assets.ts";
 import { redactSecretsInText } from "./redact.ts";
 // This file fires many revokes within a minute (bots and conversations deleted test after test). The revoke marker's per-minute write
 // budget (server/memory/revoke-budget.ts) has its own tests (revoke-budget.test.ts); here it is lifted in the server child, as index-2
@@ -2303,12 +2304,18 @@ describe("harness HTTP API", () => {
     const unknown = await fetch(`${BASE}/api/attachments/00000000-0000-0000-0000-000000000000.png`);
     expect(unknown.status).toBe(404);
 
+    // SEAN-ASK-ATTACH-CAP: the upload cap follows the engine (server/turn-images.ts imageUploadMaxBytes) and is never
+    // above IMAGE_UPLOAD_MAX_BYTES, so one byte over that is refused on every engine, with the limit in the answer.
     const tooBig = await fetch(`${BASE}/api/attachments`, {
       method: "POST",
       headers: { "content-type": "image/png" },
-      body: Buffer.alloc(IMAGE_MAX_BYTES + 1),
+      body: Buffer.alloc(IMAGE_UPLOAD_MAX_BYTES + 1),
     });
     expect(tooBig.status).toBe(413);
+    const tooBigBody = (await tooBig.json()) as { error: string; limitBytes: number };
+    expect(tooBigBody.limitBytes).toBeGreaterThan(0);
+    expect(tooBigBody.limitBytes).toBeLessThanOrEqual(IMAGE_UPLOAD_MAX_BYTES);
+    expect(tooBigBody.error).toContain("Images can be up to");
 
     const uploadId = "11111111-1111-4111-8111-111111111111";
     const idempotent = await fetch(`${BASE}/api/attachments?uploadId=${uploadId}`, {

@@ -1,3 +1,4 @@
+import { FLUX_BILLING_PAGE } from "./flux-links.ts";
 /** Safe structured facts about a provider rejection. No request/response text. */
 export interface ProviderErrorInfo {
   kind: "credits" | "spend-cap" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
@@ -96,6 +97,10 @@ export const LOCAL_SETUP_FAILURES = [
   // Windows: Murage's native helper (murage-browser-host.exe) that makes Claude's owner-only folders is missing or could not run
   // (antivirus quarantine is the usual cause). Fail-closed: the turn does not start. Worded from the code (runtimeError.local.windows-helper.*).
   "windows-helper",
+  // S5-DATADIR-PATHS r4.1 section 6: a stored folder from an earlier data-folder location that could not be matched (data-dir-moved),
+  // and a linked workspaces or Claude accounts folder that now points somewhere else (data-root-changed). Worded from the code.
+  "data-dir-moved", "data-root-changed", "data-root-changed-providers",
+  "skill-link-foreign", "skill-link-staging", "pinned-procedures",
 ] as const;
 export type LocalSetupFailure = (typeof LOCAL_SETUP_FAILURES)[number];
 /** The failures worded from their code in the owner's language with the engine named (runtimeError.local.<code>.*). */
@@ -105,7 +110,9 @@ export const ENGINE_FOLDER_FAILURES = [
 export type EngineFolderFailure = (typeof ENGINE_FOLDER_FAILURES)[number];
 export const isEngineFolderFailure = (value: unknown): value is EngineFolderFailure => (ENGINE_FOLDER_FAILURES as readonly unknown[]).includes(value);
 /** The failures whose card body is worded from the code (runtimeError.local.<code>.message), not the recorded English line. */
-export const isWordedLocalFailure = (value: unknown): value is EngineFolderFailure | "windows-helper" => isEngineFolderFailure(value) || value === "windows-helper";
+export const DATA_FOLDER_FAILURES = ["data-dir-moved", "data-root-changed", "data-root-changed-providers"] as const satisfies readonly LocalSetupFailure[];
+export const SKILL_LINK_FAILURES = ["skill-link-foreign", "skill-link-staging", "pinned-procedures"] as const satisfies readonly LocalSetupFailure[];
+export const isWordedLocalFailure = (value: unknown): value is (typeof SKILL_LINK_FAILURES)[number] | EngineFolderFailure | "windows-helper" | (typeof DATA_FOLDER_FAILURES)[number] => (SKILL_LINK_FAILURES as readonly unknown[]).includes(value) || isEngineFolderFailure(value) || value === "windows-helper" || (DATA_FOLDER_FAILURES as readonly unknown[]).includes(value);
 
 /** The browser engine's own failure copy (server/browser-engine.ts), as
  * earlier builds recorded it when a browser check failed the whole turn.
@@ -140,7 +147,7 @@ export function providerErrorPresentation(info: ProviderErrorInfo): { title: str
       title: `${provider} needs credits`,
       summary: "Your AI service says the account has run out of credit, so this reply could not finish.",
       resolution: "If you have already added credits, try again once the new balance shows. You can also pick another AI in Models & engines.",
-      ...(info.provider === "flux-router" ? { billingUrl: "https://fluxrouter.ai/home/billing" } : {}),
+      ...(info.provider === "flux-router" ? { billingUrl: FLUX_BILLING_PAGE } : {}),
     };
     case "authentication": return { title: `${provider} did not accept the sign-in`, summary: "Your AI service did not accept the sign-in or key used for this request.", resolution: "Check this AI's sign-in or key in Models & engines, then try again." };
     case "permission": return { title: `${provider} denied access`, summary: "Your AI service refused this request. You may still be signed in.", resolution: "Check that your account can use the model you picked, or pick another AI in Models & engines." };
