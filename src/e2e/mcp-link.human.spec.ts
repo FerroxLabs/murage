@@ -94,7 +94,7 @@ test.beforeEach(({ page }) => {
 });
 test.afterEach(async () => { await removeAll(); });
 
-const paste = async (page: Page, text: string) => { await page.getByLabel("Paste a link, a command, or a config snippet").fill(text); await page.getByRole("button", { name: "Continue", exact: true }).click(); };
+const paste = async (page: Page, text: string) => { await page.getByLabel("Paste a link, a command, or a short piece of settings text").fill(text); await page.getByRole("button", { name: "Continue", exact: true }).click(); };
 const noOverflow = (page: Page) => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
 
 for (const viewport of VIEWPORTS) {
@@ -121,7 +121,7 @@ for (const viewport of VIEWPORTS) {
     await expect(page.getByRole("button", { name: "Use a key instead" })).toBeVisible();
     // no desktop shell in a browser: the button says why it cannot be used
     await expect(page.getByRole("button", { name: `Sign in to ${host}` })).toBeDisabled();
-    await expect(page.getByText("Sign in needs the Murage desktop app.")).toBeVisible();
+    await expect(page.getByText("Signing in needs the Murage desktop app.")).toBeVisible();
     await page.screenshot({ path: info.outputPath(`mcp-${viewport.name}-3-both-ways.png`), fullPage: true });
 
     await page.getByRole("button", { name: "Use a key instead" }).click();
@@ -161,7 +161,7 @@ test("a pasted command with a secret becomes a labelled field, and is added off,
   await expect(page.getByText("NOTES_TOKEN", { exact: true })).toBeVisible();
   await expect(page.locator("input[type=password]")).toHaveCount(1);
   // the paste box is emptied, and the secret sits only in its password field
-  await expect(page.getByLabel("Paste a link, a command, or a config snippet")).toHaveValue("");
+  await expect(page.getByLabel("Paste a link, a command, or a short piece of settings text")).toHaveValue("");
   await expect(page.getByText("The secret you pasted is hidden now. It is filled in below.")).toBeVisible();
   await expect(page.locator("input[type=password]")).toHaveValue("abc123");
   expect(await page.evaluate(() => document.body.innerText)).not.toContain("abc123");

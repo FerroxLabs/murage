@@ -16,6 +16,7 @@ import {
 import { resetRevokeWriteBudget } from "./revoke-budget.ts";
 import { ensureRevokeLateObjects, migrateMemorySchema } from "./schema.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { learningDeletionEpoch } from "./deny.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 
 const roots: string[] = [], connections: DatabaseSync[] = [];
@@ -236,9 +237,11 @@ it("a deny without its write-time receipt still admits cleanup", async () => {
   transaction(db, () => captureThreadDeletion(db, THREAD));
   await drain(db);
   db.prepare("DELETE FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").run(THREAD, FIRST_LSN);
-  const epoch = scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1");
+  const epoch = learningDeletionEpoch(db);
+  const foregroundEpoch = scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1");
   transaction(db, () => captureThreadDeletion(db, THREAD));
-  expect(scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1")).toBe(epoch + 1);
+  expect(learningDeletionEpoch(db)).toBe(epoch + 1);
+  expect(scalar(db, "SELECT deletion_epoch FROM memory_meta WHERE id=1")).toBe(foregroundEpoch);
   expect(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation'").get(THREAD, FIRST_LSN)).toBeTruthy();
   await drain(db);
 }, 50_000);

@@ -40,5 +40,10 @@ const result = await build({
 // Throws when upstream's shape moved, so a bundle that would silently break
 // AppImage launchers never reaches a release.
 const patched = patchWindowsSignatureVerifier(patchAppImageUpdater(result.outputFiles[0].text));
-await writeFile(outfile, patched);
+// Keep internal updater quits distinct from an unmarked native Dock Quit.
+const quitSites = [...patched.matchAll(/^(\s*)this\.app\.quit\(\);/gm)];
+if (quitSites.length !== 3) throw new Error("Updater quit sites changed; review shutdown causes before bundling");
+const withQuitCauses = patched.replace(/^(\s*)this\.app\.quit\(\);/gm,
+  '$1this.app.murageShutdownCause = "automatic";\n$1this.app.quit();');
+await writeFile(outfile, withQuitCauses);
 console.log("patched AppImage install and fail-closed Windows signature verification");

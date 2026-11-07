@@ -151,8 +151,8 @@ test("the upgrade screen can be closed (that quits), a wait that ran out mid-upg
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
   const screen = main.slice(main.indexOf("function showMemoryUpgradeProgress"), main.indexOf("function syncBrowserConnection"));
   assert.doesNotMatch(screen, /closable: false/, "Windows and Linux have no other way out of this screen");
-  assert.match(screen, /onUserClose: \(\) => app\.quit\(\)/);
-  assert.match(main, /icon: APP_ICON, language: app\.getLocale\?\.\(\), onUserClose: \(\) => app\.quit\(\), note:/, "the packaged splash quits on close too");
+  assert.match(screen, /onUserClose: requestOwnerQuit/);
+  assert.match(main, /icon: APP_ICON, language: app\.getLocale\?\.\(\), onUserClose: requestOwnerQuit, note:/, "the packaged splash quits on close too");
   const start = main.slice(main.indexOf("async function startServerOn("), main.indexOf("async function startServerPackaged("));
   assert.match(start, /identity\.outcome === "timeout" && upgradeSeen/);
   assert.match(start, /clearMemoryUpgradeStatus\(desktopDataDir\)/);

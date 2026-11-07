@@ -5,18 +5,25 @@
   "type": "module",
   "dependencies": {
     "@peculiar/x509": "^1.12.3",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260825.1",
     "@types/node": "^26.2.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.11",
+    "vitest": "4.1.12",
     "wrangler": "4.125.0"
   },
   "scripts": {
     "check": "tsc -p tsconfig.json",
     "test": "vitest run",
     "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc"
+  },
+  "pnpm": {
+    "overrides": {
+      "sharp": ">=0.35.5",
+      "source-map-js@<1.2.2": "1.2.2",
+      "undici@>=7 <7.30.1": "7.30.1"
+    }
   }
 }

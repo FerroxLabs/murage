@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance } from "../contracts.ts";
 import { memoryExtractorConnections, resolveMemoryExtractor } from "./extractor-connections.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { resetFluxKeyModelsForTests, setFluxKeyCatalog } from "../flux-key-models.ts";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); resetFluxKeyModelsForTests(); });
 
 describe("memory extractor connections", () => {
   it("offers Flux tiers using the existing key, without treating native login as extraction", () => {
@@ -26,6 +27,8 @@ describe("memory extractor connections", () => {
   });
 
   it("makes one capped tool-free request to Flux and rereads the key before sending", async () => {
+    // A key whose own Flux catalog lists the pinned learning model (a paid key) is asked for it.
+    setFluxKeyCatalog(() => ["flux-auto", "flux-fast", "flux-pinned-gpt-5-nano"]);
     let key: string | null = "initial-fixture-key";
     const extract = resolveMemoryExtractor("@murage/flux-fast", [], () => key)!;
     const request = vi.fn(async () => new Response(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "[]" } }] })));

@@ -75,6 +75,9 @@ export const FIXTURE_ENGINE_OVERRIDES = {
   hermes: { driver: "fixture-unavailable" },
   pi: { driver: "fixture-unavailable" },
   cline: { driver: "fixture-unavailable" },
+  muse: { driver: "fixture-unavailable" },
+  // U22 F9: the product fleet adds the owner's Copilot CLI; the fixture never probes a developer's own copy.
+  githubCopilot: { driver: "fixture-unavailable" },
 };
 
 /** Packaged-shape fixtures receive the renderer proof through their private
@@ -463,6 +466,10 @@ beforeAll(async () => {
   staticDir = join(home, "static");
   fakeClaudeDump = join(home, "fake-claude-dump.json");
   mkdirSync(join(home, "finish-fake"));
+  // Keep this API fixture's model stable across product default updates. These
+  // tests exercise retries and inheritance of an existing owner's selection.
+  mkdirSync(join(home, ".claude"));
+  writeFileSync(join(home, ".claude", "settings.json"), JSON.stringify({ model: "claude-sonnet-5" }));
   // Only the local fake Claude can run; every other fixture slot is a shadow.
   mkdirSync(join(home, ".murage"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -695,6 +702,7 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
+      TMPDIR: tmpdir(),
       MURAGE_PORT: String(PORT),
       MURAGE_WEBHOOK_PORT: String(WEBHOOK_PORT),
       MURAGE_BOX_API: `http://127.0.0.1:${boxStubPort}`,

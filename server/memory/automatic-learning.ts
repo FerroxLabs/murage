@@ -14,7 +14,7 @@ export function learningReviewReason(reason:string):string {
     // only a Keep made before Keep stored the reason, then undone: Undo puts the stored reason back, and this row has none to put back
     "owner_confirmed":SOURCE_DID_NOT_SUPPORT,
     "needs-owner-approval":"This memory needs you before it is used.",
-    "external-mail":"This came from a reply written after reading email from outside your workspace. Review it before using it.",
+    "external-mail":"This came from a reply written after reading email or CRM records from outside your workspace. Review it before using it.",
     "private-into-shared":"This memory came from a private chat. Review it before sharing it here.",
     "cross-partition":"The cited sources belong to different audiences. Review this memory before using it.",
     "cross-scope":"The source belongs to another audience. Review this memory before using it.",

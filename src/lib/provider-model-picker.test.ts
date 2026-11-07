@@ -6,7 +6,7 @@
 // running the rail vanished entirely, which is how a feature that exists in
 // Murage, and in upstream, stayed unknown to everyone who did not already have
 // a server on the exact loopback port Murage guessed.
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   CHOOSE_ENGINE_OPTION,
@@ -42,7 +42,10 @@ import {
 import type { PublicProviderConnection } from "../../shared/provider-connections";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-const pickerSource = readFileSync(fileURLToPath(new URL("../components/ModelPicker.tsx", import.meta.url)), "utf8");
+import { preloadModelMetadata } from "./model-metadata";
+// The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
+beforeAll(() => preloadModelMetadata());
+const pickerSource =readFileSync(fileURLToPath(new URL("../components/ModelPicker.tsx", import.meta.url)), "utf8");
 
 function fluxConnection(): PublicProviderConnection {
   const ids=["flux-auto","flux-reasoning","flux-standard","flux-fast","flux-pinned-glm-5-3","future-vendor-choice"];
@@ -537,5 +540,21 @@ describe("the picker's headings never repeat", () => {
 
   it("is the same fold the picker itself runs", () => {
     expect(pickerSource).toContain("const zone=pickerZone(row,prefs.favorites,prefs.recent);const heading=zone!==previousGroup;previousGroup=zone;");
+  });
+});
+
+
+describe("catalog recommendations", () => {
+  it.each([
+    ["claudeAgent", "claude-sonnet-5", "claude-sonnet-5-5"],
+    ["codex", "gpt-5.6-sol", "gpt-6.1-sol"],
+  ])("marks only the current %s catalog default", (driverKind, oldModel, nextModel) => {
+    const engine: PickerEngine = { instanceId: "native", driverKind, displayName: driverKind,
+      snapshot: { state: "available" }, models: { default: nextModel,
+        options: [oldModel, nextModel].map(id => ({ id, label: id })) } };
+    expect(pickerModels(engine, []).filter(row => row.recommended).map(row => row.selection.model)).toEqual([nextModel]);
+    // A live CLI's default wins, even when it differs from the offline recommendation.
+    engine.models.default = oldModel;
+    expect(pickerModels(engine, []).filter(row => row.recommended).map(row => row.selection.model)).toEqual([oldModel]);
   });
 });
