@@ -70,6 +70,8 @@ export interface InstanceConfig {
   accentColor?: string;
   environment?: Record<string, string>;
   enabled?: boolean;
+  /** Left out of every model list, picker and automatic choice; the engine itself (its CLI and sign-in) is untouched. */
+  hidden?: boolean;
   config?: unknown;
 }
 
@@ -115,6 +117,7 @@ export type ItemOrigin = "engine" | "murage";
 
 export type RuntimeEvent = RuntimeEventBase &
   (
+    | { type: "turn.diagnostic"; category: "authentication" | "rate_limit" | "unavailable" | "tool_count"; quietMs: number }
     | { type: "session.started"; sessionId: string | null; model?: string | null;
         /** The driver's session contract this session was made under (ProviderInstance.sessionContract). */
         sessionContract?: number }
@@ -338,7 +341,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -500,6 +503,10 @@ export interface SendTurnInput {
     /** The owner's own phone (calendar, reminders, ...) through the harness, only for a turn that holds a live phone authority (1.0.9).
      * Mounted under the server name "phoneJobs"; never the ADB "phone" server above. */
     phoneJobs?: { command: string; args: string[]; env: Record<string, string> };
+    /** Native HighLevel CRM (HL-S2, GAP-HIGHLEVEL-109): a stdio proxy (server/drivers/highlevel-proxy.ts) to the
+     * harness's /api/internal/highlevel/mcp with a per-turn internal token. Mounted under the server name "highlevel"
+     * only for a direct owner turn whose bot holds a native grant on a confirmed location. */
+    highlevel?: { command: string; args: string[]; env: Record<string, string> };
     /** The app's built-in browser: an MCP proxy (server/drivers/browser-proxy)
      * that forwards to the Electron-owned WebContentsView the Browser tab
      * shows. One tab per bot, in its own persistent session partition. */
@@ -803,6 +810,8 @@ export interface ProviderSnapshot {
   authenticated?: boolean;
   /** The sign-in check ran and did not answer (a timeout or a crash), so the engine is neither signed in nor signed out yet. */
   authUnverified?: true;
+  /** A local credential-shape answer, not evidence that a rejection is over. */
+  signInAnswerIsLocalHint?: true;
   version?: string | null;
   /** A line shown beside the detected version (OpenClaw below its Ask floor: ASK_STOP_OPENCLAW_OLD_NOTE). */
   versionNote?: string;

@@ -1,0 +1,130 @@
+{
+  "version": "1.0.40",
+  "source": "28e8e198558e199896fd04a7ca164d92d9406d49",
+  "registry": "https://registry.npmjs.org",
+  "verifiedAt": "2026-11-05T22:09:43.130Z",
+  "installScriptsExecuted": false,
+  "nativeExecutablesRun": false,
+  "packages": [
+    {
+      "target": "wrapper",
+      "name": "fuigo",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/fuigo/-/fuigo-1.0.40.tgz",
+      "tarballSha256": "3f81228b5ff259f187039505a9bd71c8a84f8c33b96a4334eeee1828db1279cc",
+      "integrity": "sha512-wBmgsSWQ0TniiVNkuaOySsJE9swm+3yUy0vYXDi3KO6+D5jHUl3K+j8CujkqgmWT7jwDIWUGZp/Xia5xTCPlAQ==",
+      "shasum": "598cf1e0cfd4490fd7e4bceda1b759106184d13b",
+      "archiveBytes": 105466,
+      "optionalDependencies": {
+        "@fuigo/linux-x64": "1.0.40",
+        "@fuigo/win32-x64": "1.0.40",
+        "@fuigo/darwin-x64": "1.0.40",
+        "@fuigo/linux-arm64": "1.0.40",
+        "@fuigo/win32-arm64": "1.0.40",
+        "@fuigo/darwin-arm64": "1.0.40"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "name": "@fuigo/darwin-arm64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.40.tgz",
+      "tarballSha256": "0240936620b533ba7b73f24bff6e057f1e528f6f0d577689edf7ba10fa0a9df8",
+      "integrity": "sha512-WgV0rKAwKGutvOuP8P3AtTE9UXe5Sn0ECCfyfGPOseQek5xMVhhX6Mm7f62jgPYlUPgXaxCfJhekFuaL2JsZGQ==",
+      "shasum": "7ca3cc65bd9b2fb236a96e52f0f844044ec4c523",
+      "archiveBytes": 38500488,
+      "header": {
+        "format": "Mach-O64",
+        "machine": 16777228,
+        "target": "darwin-arm64"
+      },
+      "binarySha256": "2955034fe0fd8dcd3520815e030b589183f54995e15f9c84de4a7f92c1ec031c",
+      "binaryBytes": 137703024
+    },
+    {
+      "target": "darwin-x64",
+      "name": "@fuigo/darwin-x64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-x64/-/darwin-x64-1.0.40.tgz",
+      "tarballSha256": "4a161ec5baf43597a7e2ab135a0bcd37e50130ab22de5813b6b329a4211979c0",
+      "integrity": "sha512-csnKWXqkzlByVdjappzfWz313GRA7XKWYOERMCRq8XlDE7A1Q9ZbzYwIMOCCIVifqqFQVzzT7JGexcgJADosoA==",
+      "shasum": "b1fc850e72f7d561633d816ab24d5724e2222feb",
+      "archiveBytes": 44305856,
+      "header": {
+        "format": "Mach-O64",
+        "machine": 16777223,
+        "target": "darwin-x64"
+      },
+      "binarySha256": "831c99f876656f2d9ec0578d0fb6942e0ecbf9f6c7e5c1fcc8452269c9b7060e",
+      "binaryBytes": 151847968
+    },
+    {
+      "target": "linux-arm64",
+      "name": "@fuigo/linux-arm64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-arm64/-/linux-arm64-1.0.40.tgz",
+      "tarballSha256": "65d450da8c5d4aa15e67ff98332e5a32a02e31b36f76f92662668dd4a54325fb",
+      "integrity": "sha512-h6PRB+rA2I7d+IytiRmdhmeTjH9hyIfn/H6oGIglLoICZcNlxy/3Px05an3YCCNWgWb/tNEdEJQRphoSRg4vnA==",
+      "shasum": "9b7e27aafa5ed195f876093883b3a381d6591469",
+      "archiveBytes": 41423317,
+      "header": {
+        "format": "ELF64",
+        "machine": 183,
+        "target": "linux-arm64"
+      },
+      "binarySha256": "1d3dc91951300f6fc41d562b035a753b4aaf583b63f6986166ddda710861a3d0",
+      "binaryBytes": 143297112
+    },
+    {
+      "target": "linux-x64",
+      "name": "@fuigo/linux-x64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-x64/-/linux-x64-1.0.40.tgz",
+      "tarballSha256": "b904e88ce22ddd55508e207ea0c5bb135ac1fb8efc8d17201330ff9b5def17a0",
+      "integrity": "sha512-xxBQmI4H4lVlI7afI+dSGEcJ9TB0XnsI/TsK3mDsk53sfPMwT2ZpMfjk/D4tKNEHGV4WqK4N2Pqpy2PXQYfDtA==",
+      "shasum": "8b96aa6701ef12e4fdfb6568c1bb354b1ed0a64a",
+      "archiveBytes": 45526461,
+      "header": {
+        "format": "ELF64",
+        "machine": 62,
+        "target": "linux-x64"
+      },
+      "binarySha256": "420798b0c18abd475513a51914fb85663086676037356c1d35477c9f1e97c6fd",
+      "binaryBytes": 166984368
+    },
+    {
+      "target": "win32-arm64",
+      "name": "@fuigo/win32-arm64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-arm64/-/win32-arm64-1.0.40.tgz",
+      "tarballSha256": "092d69704bc5f21d72b8d9907b1fed5a8b88883a99eba31e08034a0f586e2cc3",
+      "integrity": "sha512-Thlu0UT9GIpd25Ww1ECadw9l627PNjF1NcT8ckMhOMr6m7FSDPfPn9KdBu+jQvFML4WZCwYjQzWpifheArFSmw==",
+      "shasum": "ee6b20272736491fb728e8a913e6ca9987fee176",
+      "archiveBytes": 36153621,
+      "header": {
+        "format": "PE",
+        "machine": 43620,
+        "target": "win32-arm64"
+      },
+      "binarySha256": "b486fa43eb0ef54c9020707cce14358426e027e8d95102ddf444f3ae0d072878",
+      "binaryBytes": 123895176
+    },
+    {
+      "target": "win32-x64",
+      "name": "@fuigo/win32-x64",
+      "gitHead": "28e8e198558e199896fd04a7ca164d92d9406d49",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-x64/-/win32-x64-1.0.40.tgz",
+      "tarballSha256": "8e979957d45acfc65f8de204cf2def366abfef34f4be07f6711dbd88176c68d6",
+      "integrity": "sha512-XeVbKJkbE0hREUzR1NvvKFnF6F2ufChSPnM+KGsN9py4BB8TQYPXG7NWtATWKEqunsgP3Qb8vgwooS5/7V2AvA==",
+      "shasum": "8083e39f2d19f553e468005cc9c3d535119cc0fc",
+      "archiveBytes": 40285163,
+      "header": {
+        "format": "PE",
+        "machine": 34404,
+        "target": "win32-x64"
+      },
+      "binarySha256": "8e976d0c8f0c63598a33f3330b627f556ad448daac986a8a7b83500fc62545ed",
+      "binaryBytes": 141992336
+    }
+  ]
+}

@@ -1,11 +1,12 @@
 import { authoredTurnPieces } from "../reply-action-guard.ts";
-import { isEmailReadToolName } from "../email/external-marks.ts";
+import { isEmailReadToolName, isHighLevelChangeToolName } from "../email/external-marks.ts";
 import { threadHumanPrincipal, isWorkspaceOwner } from "../human-principals.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { memoryCaptures } from "./capture-gate.ts";
 import { memoryGate } from "./memory-gate.ts";
 import { turnFirstRowid } from "../transcript-backfill.ts";
+import { rowToMessage } from "../transcript-seq.ts";
 import type { Message } from "../store.ts";
 import { isMurageVoice } from "../murage-voice.ts";
 import { redactSecretsInText } from "../redact.ts";
@@ -24,7 +25,7 @@ import { hasWritetime } from "./revoke-marker.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
-import { threadExcluded } from "./deny.ts";
+import { threadExcluded, noteThreadDeletion } from "./deny.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
 import { looksLikeExport } from "../../shared/learn-about-me/detect.ts";
 
@@ -130,7 +131,7 @@ function turnPath(db: DatabaseSync, threadId: string, message: Message): Message
     const row = read.get(threadId, at);
     if (!row) return null;
     if (first !== null && Number(row.position) < first) break;
-    const parsed = JSON.parse(String(row.json)) as Message;
+    const parsed = rowToMessage({ json: String(row.json) });
     if (parsed.turnId && parsed.turnId !== message.turnId) break;
     seen.add(at); rows.push(parsed);
     at = parsed.parentId;
@@ -148,7 +149,7 @@ function boundedBranchPath(db: DatabaseSync, threadId: string, message: Message)
     SELECT id,json_extract(json,'$.parentId'),json,0 FROM messages WHERE thread_id=? AND id=(SELECT active_leaf_id FROM thread_state WHERE thread_id=?)
     UNION ALL SELECT m.id,json_extract(m.json,'$.parentId'),m.json,p.depth+1 FROM messages m JOIN path p ON m.id=p.parent WHERE m.thread_id=? AND m.rowid>=? AND p.depth<10000
   ) SELECT json FROM path ORDER BY depth DESC`).all(threadId,threadId,threadId,first.first ?? 0);
-  const path = rows.map(row => JSON.parse(String(row.json)) as Message);
+  const path = rows.map(row => rowToMessage({ json: String(row.json) }));
   return path;
 }
 
@@ -180,6 +181,8 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   if (isMurageVoice(message)) return;
   // A widget the bot showed (QW Q4) is a form, not something said; the owner's answer to it is their own message.
   if (message.widget) return;
+  // CROSS-CHAT-READ-1019 4: a line the owner shared into a room is never a memory source of the room scope (nor its share request row)
+  if (message.sharedFrom || message.roomShareId) return;
   const userText = message.kind === "text" && message.role === "user" && !message.queued;
   const finalText = message.kind === "text" && message.role === "bot" && (message.turnTerminal || !message.turnId);
   // Engine notices and Murage's own status rows (the held queue) are not tool outcomes.
@@ -190,9 +193,10 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
   // An export pasted into chat is left out of memory, and so is the bot's answer to it (PASTE-CAPTURE-FIX 3.2): the row keeps its metadata
   // and an empty payload, retired, its job born complete. Learn about me is where such notes are kept, a line at a time.
   // Bot email (BOT-EMAIL-MURAGE-109 5.4): what email_read and email_list returned is outside mail, so the row keeps its metadata and an
-  // empty payload, never a source text and never a tool-observation.
+  // empty payload, never a source text and never a tool-observation. HighLevel's reads, changes and status (HL-S2-RO 1.0.18) answer with
+  // HighLevel's own records and are left out the same way.
   const leftOut = userText && isExportPaste(message) ? "export-paste" : finalText && answersExportPaste(db, threadId, message) ? "export-paste-reply"
-    : tool && isEmailReadToolName(message.tool!.name) ? "external-mail" : undefined;
+    : tool && (isEmailReadToolName(message.tool!.name) || isHighLevelChangeToolName(message.tool!.name)) ? "external-mail" : undefined;
   // A completed tool row that carries nothing but the tool's name (read_file with no text) has nothing to learn from (MEMORY-TOOL-NAME-JUNK):
   // its payload text is empty and its job is born complete (captureSource), so no source text is ever just a tool name. It keeps its
   // metadata and its `action` label and stays active, so what the bot did is still admitted as an action (pip-admission.ts actionRow).
@@ -234,8 +238,8 @@ export function captureBranchChange(db: DatabaseSync, threadId: string, leafId: 
  * the memory mode is now: sources captured while memory was on are still on
  * disk after it is turned off. The rows stay (tombstones, epochs and the
  * evidence graph point at them) but the conversation's words do not.
- * The commit writes one deny row for the conversation (deny.ts: every reader refuses its sources from here on) and the epoch
- * bump; its sources are tombstoned, ended and blanked by the durable job's thread phase, a page at a time. */
+ * The commit writes one deny row for the conversation (deny.ts: every reader refuses its sources from here on) as a scoped
+ * fact; its sources are tombstoned, ended and blanked by the durable job's thread phase, a page at a time. */
 export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
   // deleteThread's BEGIN IMMEDIATE serializes this check with admission. The deny row and the FIRST_LSN receipt are written in the
   // transaction that admits the deletion's cleanup job (below), and that job row is never parked or dropped: it runs until it ends, an
@@ -244,9 +248,9 @@ export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
   const committed = Boolean(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(threadId)) && hasWritetime(db)
     && Boolean(db.prepare("SELECT 1 FROM memory_deny_line WHERE thread_id=? AND lsn=? AND reason='delete-conversation' LIMIT 1").get(threadId, FIRST_LSN));
   if (committed) return;
-  // The deny row and the epoch bump are written whatever memory captured from the conversation (revbound r3 A1, Fable P1-2): a line
+  // The deny row is written whatever memory captured from the conversation (revbound r3 A1, Fable P1-2): a line
   // carried out of it, or a lesson citing one of its messages, has no source row to be refused by, only the conversation's deny.
-  db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1 WHERE id=1");
+  noteThreadDeletion(db);
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
   db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(threadId, epoch, Date.now());
   // write-time: the thread's lines denied, its carries out and captures walked by the marker (revoke-commit.ts). One revoke per deletion

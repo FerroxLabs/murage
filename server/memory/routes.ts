@@ -1,3 +1,4 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { isProjectCloseLesson, isCloseTurnRequest } from "../project-close.ts";
 import { roomRequest } from "../room-requests.ts";
 import { z } from "zod";
@@ -127,7 +128,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       const fenceAt=sampleLearningFence();
       const targetBefore=db.prepare("SELECT text,state,owner_pinned,scope_id FROM memory_records WHERE id=? AND version=?").get(target.id,target.version)!;
       const policyBefore=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
-      const learningBefore=readMemoryLearning(db).revision;
+      const learningBefore=readMemoryLearning(db).revision, deletionFence=learningDeletionEpoch(db);
       // Persist the provisional proposal before optional evaluation. A quote
       // proves the owner's words, not their intent to replace this target.
       assertMemoryCaptureComplete(input.evidence,access);
@@ -157,7 +158,7 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       return transaction(db=>{
         assertMemoryAccess(access);assertGenericMemoryTarget(db,target.id,target.version);
         const policyAfter=db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta").get()!;
-        if(policyAfter.policy_revision!==policyBefore.policy_revision||policyAfter.deletion_epoch!==policyBefore.deletion_epoch||readMemoryLearning(db).revision!==learningBefore)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
+        if(learningDeletionEpoch(db)!==deletionFence||policyAfter.policy_revision!==policyBefore.policy_revision||policyAfter.deletion_epoch!==policyBefore.deletion_epoch||readMemoryLearning(db).revision!==learningBefore)throw new Error("MEMORY_CONSOLIDATION_REVOKED");
         const latest=database().prepare("SELECT max(version) AS version FROM memory_records WHERE id=?").get(target.id);
         if(latest?.version!==target.version)throw new Error("MEMORY_VERSION_CONFLICT");
         const candidateId=saveMemoryCandidate(input.replacement,input.evidence,input.idempotencyKey,access);

@@ -34,7 +34,7 @@ describe("the I0 learning contract", () => {
     expect(semanticStatusPhrase({ state: "indexing", done: 1240, total: 3412 })).toBe("Indexing for smart search, 1,240 of 3,412.");
     expect(semanticStatusPhrase({ state: "indexing", done: 0, total: 0 })).toBe("Getting smart search ready.");
     expect(semanticStatusPhrase({ state: "ready", done: 3412, total: 3412 })).toBe("Smart search ready.");
-    expect(semanticStatusPhrase({ state: "keyword-only", done: 0, total: 0 })).toBe("Keyword memory until smart search is ready.");
+    expect(semanticStatusPhrase({ state: "keyword-only", done: 0, total: 0 })).toBe("Memory search uses keywords until smart search is ready.");
     for (const state of ["ready", "indexing", "keyword-only"] as const) expect(semanticStatusPhrase({ state, done: 1, total: 2 })).not.toMatch(/—|\bsafe\b|\bunsafe\b/i);
   });
 });

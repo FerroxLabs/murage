@@ -1,0 +1,47 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ src/components/EngineSetup.test.ts (20 tests | 2 failed | 18 skipped) 99ms
+     × describes the marked check and preserves ordinary signed-in copy in en 38ms
+     × describes the marked check and preserves ordinary signed-in copy in de 54ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/components/EngineSetup.test.ts > B3(d): marked reply-check copy > describes the marked check and preserves ordinary signed-in copy in en
+AssertionError: expected '<div class="rounded-xl border border-…' to contain 'Send a short message to check that th…'
+
+Expected: "Send a short message to check that the engine can reply."
+Received: "<div class="rounded-xl border border-hairline/40 bg-control/30 p-3"><div class="text-[13px] font-semibold text-ink">Set up Kimi</div><p class="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">You look signed in. One short reply shows it works, and uses a small part of your plan.</p><button type="button" class="mt-3 w-full rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50">Check that it works</button></div>"
+
+ ❯ src/components/EngineSetup.test.ts:172:20
+    170|     for (const setUp of [false, true]) {
+    171|       const html = renderToStaticMarkup(createElement(EngineSetup, { i…
+    172|       expect(html).toContain(line);
+       |                    ^
+    173|       expect(html).not.toContain(signedIn);
+    174|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/components/EngineSetup.test.ts > B3(d): marked reply-check copy > describes the marked check and preserves ordinary signed-in copy in de
+AssertionError: expected '<div class="rounded-xl border border-…' to contain 'Sende eine kurze Nachricht, um zu prü…'
+
+Expected: "Sende eine kurze Nachricht, um zu prüfen, ob die Engine antworten kann."
+Received: "<div class="rounded-xl border border-hairline/40 bg-control/30 p-3"><div class="text-[13px] font-semibold text-ink">Kimi einrichten</div><p class="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">Du scheinst angemeldet zu sein. Eine kurze Antwort zeigt, dass es funktioniert, und verbraucht einen kleinen Teil deines Tarifs.</p><button type="button" class="mt-3 w-full rounded-lg bg-accent px-3 py-2 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50">Prüfen, ob es funktioniert</button></div>"
+
+ ❯ src/components/EngineSetup.test.ts:172:20
+    170|     for (const setUp of [false, true]) {
+    171|       const html = renderToStaticMarkup(createElement(EngineSetup, { i…
+    172|       expect(html).toContain(line);
+       |                    ^
+    173|       expect(html).not.toContain(signedIn);
+    174|     }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 18 skipped (20)
+   Start at  17:26:04
+   Duration  6.88s (transform 5.40s, setup 5.84s, import 836ms, tests 99ms, environment 0ms)
+

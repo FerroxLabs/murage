@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (23 tests | 23 skipped) 258ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts [ src/lib/chats-previews-browser.test.ts ]
+Error: browserType.launch: Executable doesn't exist at /tmp/murage-test-home-wxfyq6/.cache/ms-playwright/chromium_headless_shell-1200/chrome-headless-shell-linux64/chrome-headless-shell
+╔═════════════════════════════════════════════════════════════════════════╗
+║ Looks like Playwright Test or Playwright was just installed or updated. ║
+║ Please run the following command to download new browsers:              ║
+║                                                                         ║
+║     npx playwright install                                              ║
+║                                                                         ║
+║ <3 Playwright Team                                                      ║
+╚═════════════════════════════════════════════════════════════════════════╝
+ ❯ src/lib/chats-previews-browser.test.ts:12:28
+     10|   await new Promise<void>(done => server.listen(0, "127.0.0.1", done));
+     11|   url = `http://127.0.0.1:${(server.address() as { port: number }).por…
+     12|   browser = await chromium.launch({ headless: true, args: ["--no-sandb…
+       |                            ^
+     13| }, 120_000);
+     14| afterAll(async () => { await browser?.close(); await new Promise<void>…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  9 passed | 23 skipped (32)
+   Start at  21:12:53
+   Duration  8.63s (transform 5.84s, setup 6.80s, import 1.31s, tests 296ms, environment 0ms)
+
