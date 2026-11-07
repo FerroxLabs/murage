@@ -23,6 +23,7 @@ import { revokeRecordDisclosures } from "./revocation.ts";
 import { resolveQuotedEvidence } from "./quote-evidence.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { fenceEmailDerivedRecords } from "./email-derived.ts";
+import { markRecallRecords } from "./outside-derived.ts";
 
 /** Resolves the turn-local handles of the dispatch this capability belongs to
  * (MemoryDispatchReceipt.resolveHandle). Absent when no dispatch is live. */
@@ -75,6 +76,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       const found=await searchMemory(input.query,access,bridge,{...input,allowance:LineageAllowance.search(recallHydrationLimitMs("tool")),withheldMessage:readerWithheldMessage(access),caller:"tool"});
       // bot email (5.4): a hit resting on a source from a marked row is fenced, kind email-derived, and marks this turn
       const result=bounded({...found,hits:fenceEmailDerivedRecords(database(),found.hits,access.threadId)});
+      // NOLIMITS v1 1.0.19 4.2 r3: the reading turn marks memory only when a returned record is not proven clean
+      markRecallRecords(database(),access.threadId,result.hits.map(hit=>({id:hit.id,version:hit.version})));
       handles?.noteLookup?.(result.hits.map(hit=>({id:hit.id,version:hit.version,evidence:hit.evidence.map(handle=>({sourceId:String(handle.sourceId),revision:Number(handle.revision)}))})),access);
       options.onRead?.(result.hits.flatMap(hit=>hit.evidence.map(handle=>String(handle.sourceId))));
       return result;
@@ -94,6 +97,8 @@ export async function memoryAgentRoute(path:string,body:unknown,access:MemoryAcc
       });
       assertMemoryAccess(access);
       const result=bounded({records:fenceEmailDerivedRecords(database(),records,access.threadId)});
+      // NOLIMITS v1 1.0.19 4.2 r3: as memory_search, on every record this read hydrated
+      markRecallRecords(database(),access.threadId,records.map(record=>({id:record.id,version:record.version})));
       handles?.noteLookup?.(records.map(record=>({id:record.id,version:record.version,evidence:record.evidence.map(handle=>({sourceId:handle.sourceId,revision:handle.revision}))})),access);
       options.onRead?.(records.flatMap(record=>record.evidence.map(handle=>String(handle.sourceId))));
       return result;

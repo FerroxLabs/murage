@@ -22,7 +22,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpFailedPromptLine, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
@@ -527,8 +527,9 @@ describe("ACP turns (fake CLI)", () => {
 
     const log = readFileSync(join(NATIVE_DIR, "t-image-log.ndjson"), "utf8");
     expect(log).toContain("agent_message_chunk");
-    expect(log).toContain("[image data: ");
+    // ql2 sink fold (was a "[image data: N base64 chars]" stand-in): a chunk's content is not written at all
     expect(log).not.toContain("iVBOR");
+    expect(log).not.toContain("base64");
   });
 
   it.each(["root", "fuigo"])("banks two prompt totals once (%s), never Fuigo last-call counts", async (shape) => {
@@ -541,9 +542,36 @@ describe("ACP turns (fake CLI)", () => {
       }
       const completed = recorder.events.filter(e => e.type === "turn.completed");
       expect(completed).toHaveLength(2);
-      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5, ...(shape === "fuigo" ? { cachedInput: 30 } : {}) } });
       if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
     } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  // upstream #1993: OpenCode keeps cache reads out of inputTokens. Counting
+  // only inputTokens as the whole prompt, with the cache reads named as its
+  // cached part, made the fresh figure zero on a cached turn.
+  it.each([
+    ["cache-beside", { input: 100, output: 5, cachedInput: 90 }],
+    ["cache-inside", { input: 100, output: 5, cachedInput: 90 }],
+  ] as const)("counts cache reads as part of the whole prompt (%s)", async (shape, want) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create();
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-cache-${shape}`, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject(want);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ usage: want });
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  it("splits cache reads: no total means beside, absent or bad is not zero, Fuigo counts inside", () => {
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 90 }, false)).toEqual({ input: 100, cachedInput: 90 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 0 }, false)).toEqual({ input: 10, cachedInput: 0 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: -1 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 2.5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 100, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 100, cachedInput: 30 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 10, cachedInput: 10 });
   });
 
   it("reads token usage from the root of the prompt result", async () => {
@@ -918,7 +946,7 @@ describe("ACP turns (fake CLI)", () => {
       const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
       expect(opened.toolInputTruncated === true, id).toBe(cut);
       if (cut) {
-        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, inputCut: true, inputTruncated: true });
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true });
         expect(verdict.approve).toBeNull();
       }
       await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
@@ -2083,7 +2111,9 @@ createInterface({ input: process.stdin }).on("line", line => {
       .map((line) => JSON.parse(line) as { dir: string; msg: Record<string, any> })
       .filter((row) => row.msg?.engineStderr !== undefined);
 
-  it("an engine failure writes its last stderr lines to the native log as one bounded, redacted record", async () => {
+  // ql2 sink fold (MurageMain ruling 11-06, one sink allowlist): engine stderr is free text, so the record keeps its stop reason,
+  // how many lines and whether it was cut, never the lines (was: the last 100 redacted lines)
+  it("an engine failure writes one bounded stderr record to the native log: its counts, never its lines", async () => {
     await create(GrokAgentDriver, "stderr-rpc-error");
     const threadId = `t-stderr-rpc-error-${Date.now()}`;
     const { turnId } = await instance.adapter.sendTurn({ threadId, text: "fixture only" });
@@ -2092,12 +2122,11 @@ createInterface({ input: process.stdin }).on("line", line => {
     const records = engineStderrRecords(threadId);
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ dir: "in", msg: { engineStderr: { stopReason: "rpc_error", truncated: true } } });
-    const lines: string[] = records[0].msg.engineStderr.lines;
-    expect(lines.at(-1)).toBe("STDERR_LAST_LINE retry 15/15 gave up");
-    expect(lines.at(-2)).toMatch(/^auth header «redacted \d+ chars»$/);
-    expect(lines.length).toBeLessThanOrEqual(100);
+    expect(records[0].msg.engineStderr.lineCount).toBeGreaterThan(1);
+    expect(records[0].msg.engineStderr.lineCount).toBeLessThanOrEqual(100);
+    expect(Object.hasOwn(records[0].msg.engineStderr, "lines")).toBe(false);
     const encoded = JSON.stringify(records[0]);
-    expect(encoded).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_EVICTED_FIRST_LINE/);
+    expect(encoded).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_EVICTED_FIRST_LINE|STDERR_LAST_LINE|auth header/);
     expect(Buffer.byteLength(encoded)).toBeLessThanOrEqual(16 * 1024);
   });
 
@@ -2109,8 +2138,9 @@ createInterface({ input: process.stdin }).on("line", line => {
     const records = engineStderrRecords(threadId);
     expect(records).toHaveLength(1);
     expect(records[0].msg.engineStderr).toMatchObject({ stopReason: "exit_before_result", truncated: false });
-    expect(records[0].msg.engineStderr.lines).toContain("STDERR_VISIBLE_END");
-    expect(JSON.stringify(records[0])).not.toMatch(/\\u001b|SYNTHETICKEYCANARY/);
+    // ql2 sink fold (was: its lines held STDERR_VISIBLE_END): the record counts the lines and writes none
+    expect(records[0].msg.engineStderr.lineCount).toBeGreaterThan(0);
+    expect(JSON.stringify(records[0])).not.toMatch(/\\u001b|SYNTHETICKEYCANARY|STDERR_VISIBLE_END/);
   });
 
   it("a successful turn keeps its stderr out of the native log", async () => {
@@ -2409,10 +2439,14 @@ createInterface({ input: process.stdin }).on("line", line => {
     await recorder.until(event => event.type === "turn.completed");
     await instance.adapter.awaitTurnTeardown!(threadId,turnId);
     const records=readFileSync(join(NATIVE_DIR,`${threadId}.ndjson`),"utf8").trim().split("\n").map(line=>JSON.parse(line));
-    const stderr=records.filter(row=>row.msg?.type==="engine_stderr").map(row=>row.msg.text).join("");
-    expect(stderr).toContain("STDERR_EARLY_CANARY");expect(stderr).toContain("STDERR_VISIBLE_END");
-    expect(stderr.length).toBeGreaterThan(8192);expect(stderr).not.toContain("SYNTHETICKEYCANARY");
-    expect(stderr.length).toBeLessThanOrEqual(256*1024);
+    // ql2 sink fold (was: the records' text held STDERR_EARLY_CANARY and STDERR_VISIBLE_END): one record counts what was captured,
+    // past the 8KiB tail, and writes none of it
+    const stderrRows=records.filter(row=>row.msg?.type==="engine_stderr");
+    expect(stderrRows).toHaveLength(1);
+    const chars:number=stderrRows[0].msg.chars;
+    expect(chars).toBeGreaterThan(8192);expect(chars).toBeLessThanOrEqual(256*1024);
+    const written=JSON.stringify(records);
+    expect(written).not.toContain("STDERR_EARLY_CANARY");expect(written).not.toContain("STDERR_VISIBLE_END");expect(written).not.toContain("SYNTHETICKEYCANARY");
   });
 
   it("cancellation-close regression: unsolicited prompt exit remains a failure", async () => {
@@ -3189,6 +3223,51 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
     expect(recorder.events.filter(event => event.type === "runtime.error"))
       .toEqual([expect.objectContaining({ message: "fixture provider rejected the request" })]);
+  });
+
+  describe("a failed session/prompt leaves its code and text in Murage's own log (1.0.18 S10)", () => {
+    const failedLines = async (mode: string, threadId: string): Promise<string[]> => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await create(GrokAgentDriver, mode);
+        await instance.adapter.sendTurn({ threadId, text: "fixture only" });
+        expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+        return warn.mock.calls.map(call => String(call[0])).filter(line => line.startsWith("acp turn failed"));
+      } finally {
+        warn.mockRestore();
+      }
+    };
+
+    it("logs an ordinary failure without a turn trace", async () => {
+      const lines = await failedLines("engine-error-message:plain", "t-failed-log-plain");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toMatch(/^acp turn failed thread=t-failed-log-plain turn=\S+ method=session\/prompt code=-32603 message="fixture provider rejected the request"$/);
+    });
+
+    it("keeps the engine's error data and typed kind", async () => {
+      const lines = await failedLines("engine-error-data:object", "t-failed-log-data");
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("code=-32603 kind=empty_response");
+      expect(lines[0]).toContain("empty response from model (reasoning_only)");
+    });
+
+    it.each(["engine-error-message:hostile", "engine-error-data:hostile"])("keeps no secret-shaped value from %s", async (mode) => {
+      const lines = await failedLines(mode, `t-failed-log-${mode.slice(13, 20)}`);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("code=-32603");
+      expect(lines[0]).toContain("upstream");
+      expect(lines[0]).not.toMatch(/fake-secret-canary|billing\.invalid|proxy\.invalid|proxyuser|SYNTHETICKEYCANARY|\u001b|\r|\n/);
+    });
+
+    it("reads every failure shape as one line of named facts", () => {
+      const key = `sk-ant-api03-${"SYNTHETICKEYCANARY".repeat(3)}`;
+      const line = acpFailedPromptLine("t", "u", Object.assign(new Error(`refused with ${key}\nFORGED line`), { code: "not-a-number", data: { token: key, http_status: 429, message: `over limit ${key}` } }));
+      expect(line).not.toContain("SYNTHETICKEYCANARY");
+      expect(line).not.toContain("\n");
+      expect(line).toContain("code=none http=429");
+      expect(acpFailedPromptLine("t", "u", undefined)).toBe(`acp turn failed thread=t turn=u method=session/prompt code=none message="none"`);
+      expect(acpFailedPromptLine("t", "u", new Error("engine stopped"))).toContain(`message="engine stopped"`);
+    });
   });
 
   it.each(["initialize", "session/new", "session/prompt"])("correlates failed %s through the CLI without exposing provider data", async (method) => {

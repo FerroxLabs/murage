@@ -21,6 +21,8 @@ const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const KEY_READ = "cat .env";
 const GATE_READ = "cat ~/.ssh/config";
+// ruling 3 (11-06): a text naming cmd or PowerShell is a Windows shell call, which keeps today's gate card on any turn
+const GATE_READ_WIN = "cmd /c type ~/.ssh/config";
 const CHIP = "Approved 1 step (No limits)";
 
 let port: number;
@@ -48,6 +50,7 @@ const liveCard = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId && m.card?.answered === undefined) ?? null;
 const chip = async (threadId: string) => (await threadMessages(threadId)).find((m) => m.tool?.name === CHIP) ?? null;
 const cards = async (threadId: string) => (await threadMessages(threadId)).filter((m) => m.kind === "options" && m.card?.requestId);
+const decisions = async (threadId: string) => (((await desktopApi("GET", "/api/decisions?limit=500")).body?.decisions ?? []) as any[]).filter((r) => r.threadId === threadId);
 
 async function poll<T>(read: () => Promise<T | null>, ms = 20_000): Promise<T | null> {
   const deadline = Date.now() + ms;
@@ -114,11 +117,19 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     home = makeTestHome("murage-owner-started-");
     expect(() => assertSafeToWipe(home)).not.toThrow();
     mkdirSync(join(home, ".murage"), { recursive: true });
-    const engine = (driver: string, command: string) => ({ driver, environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: command }, config: { cli: FAKE_CLI, fullAuto: false } });
+    // FAKE_ACP_TOOL_KIND think: the fake's scripted tool row is a local one, so the owner's turn is a clean turn (an unknown
+    // tool kind marks the turn and its session, M2 / M5b)
+    const engine = (driver: string, command: string) => ({ driver, environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: command }, config: { cli: FAKE_CLI, fullAuto: false } });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
         keys: engine("grokAgent", KEY_READ), gate: engine("grokAgent", GATE_READ), queued: engine("customAcp", KEY_READ),
-        late: { ...engine("grokAgent", KEY_READ), environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: KEY_READ, FAKE_ACP_SESSION_NEW_GATE: join(home, "late-gate") } },
+        // S1 queues lines while a turn runs, so it needs an engine with no steer (Grok and Fuigo take them into the running turn)
+        // that Murage sees in full (v1 V7: customAcp is not, so every one of its turns is marked and its batch rightly cards)
+        queuedSeen: engine("geminiAgent", KEY_READ), queuedCursor: engine("cursorAgent", KEY_READ),
+        gateWin: engine("grokAgent", GATE_READ_WIN),
+        // no FAKE_ACP_TOOL_KIND: the scripted tool row is a kindless (outside) tool, so the owner's turn is a marked turn (M2)
+        gateMarked: { ...engine("grokAgent", GATE_READ), environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: GATE_READ } },
+        late: { ...engine("grokAgent", KEY_READ), environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: KEY_READ, FAKE_ACP_SESSION_NEW_GATE: join(home, "late-gate") } },
         setup: { driver: "claudeAgent", environment: { FAKE_CLAUDE_PERM_TOOL: "Bash", FAKE_CLAUDE_PERM_INPUT: JSON.stringify({ command: KEY_READ }) }, config: { cli: FAKE_CLAUDE } },
       },
     }));
@@ -142,11 +153,34 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect(stdout).not.toMatch(new RegExp(`approvals: resolved bot=${id8}\\S* request=\\S+ behavior=allow source=user`));
   }, 60_000);
 
-  it("a gate file still cards on the owner's own line", async () => {
+  // design 2.3: on a clean owner turn a gate file runs with no card and is recorded by its row; a marked turn keeps the card
+  it("2.3: a gate file on the owner's clean line runs with no card and is logged held=gate:<row>", async () => {
     const bot = await makeBot("Gate", "gate");
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
+    expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(await cards(bot.threadId)).toHaveLength(0);
+    expect(await chip(bot.threadId)).not.toBeNull();
+    const held = await poll(async () => (await decisions(bot.threadId)).find((r) => r.decision === "auto-approved") ?? null);
+    expect(held, "no auto-approved decision was logged").not.toBeNull();
+    expect(held.rule).toMatch(/^held=gate:[\w-]+$/);
+  }, 60_000);
+
+  it("2.3: a gate file on a marked owner turn still cards", async () => {
+    const bot = await makeBot("Gate marked", "gateMarked");
+    // the engine's kindless (outside) tool row marks the turn, so the gate file keeps the key guard's card
+    expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
     const card = await poll(() => liveCard(bot.threadId));
-    expect(card, "a gate file ran with no card").not.toBeNull();
+    expect(card, "a gate file on a marked turn ran with no card").not.toBeNull();
+    expect(stdout).toMatch(new RegExp(`approvals: asked bot=${bot.id.slice(0, 8)}\\S* [^\\n]* outside=[a-z-]+`));
+    await deny(bot.threadId, card.card.requestId);
+    await waitIdle(bot.id, bot.threadId);
+  }, 60_000);
+
+  it("ruling 3: a gate file named through cmd keeps its card on the owner's clean line", async () => {
+    const bot = await makeBot("Gate cmd", "gateWin");
+    expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
+    const card = await poll(() => liveCard(bot.threadId));
+    expect(card, "a Windows shell gate call ran with no card").not.toBeNull();
     await deny(bot.threadId, card.card.requestId);
     await waitIdle(bot.id, bot.threadId);
   }, 60_000);
@@ -197,8 +231,8 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
   }, 60_000);
 
   /** A not-proven turn holds the thread at its card while `queue` lines wait, then is answered so they drain. */
-  async function drained(name: string, queue: (bot: { id: string; threadId: string }) => Promise<void>) {
-    const bot = await makeBot(name, "queued");
+  async function drained(name: string, queue: (bot: { id: string; threadId: string }) => Promise<void>, instanceId = "queuedSeen") {
+    const bot = await makeBot(name, instanceId);
     expect((await sendUnproven(bot.id, bot.threadId, "hold the thread")).status).toBe(202);
     const held = await poll(() => liveCard(bot.threadId));
     expect(held, `the first turn raised no card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
@@ -215,6 +249,28 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect(await poll(() => chip(bot.threadId)), `the queued turn raised a card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     await waitIdle(bot.id, bot.threadId);
     expect(await cards(bot.threadId)).toHaveLength(1);
+  }, 60_000);
+
+  it("S1 on Cursor: a batch of the owner's own lines runs with no card", async () => {
+    const bot = await drained("Queued cursor", async ({ id, threadId }) => {
+      expect((await send(id, threadId, "read it")).status).toBe(202);
+      expect((await send(id, threadId, "and this")).status).toBe(202);
+    }, "queuedCursor");
+    expect(await poll(() => chip(bot.threadId)), `the queued turn raised a card. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    await waitIdle(bot.id, bot.threadId);
+    expect(await cards(bot.threadId)).toHaveLength(1);
+  }, 60_000);
+
+  // KNOWN GAP (MurageMain 11-06, fix owed): v1 V7 marks every turn of an engine Murage does not see in full (customAcp), and
+  // the owner's batch after it carries that turn (`earlier turn`), so a customAcp owner on No limits gets a card on every line
+  // after the first. That is a product bug, not the wanted behaviour: this row states the wanted behaviour and is expected to
+  // fail until the fix lands (then drop .fails).
+  it.fails("KNOWN GAP: on an engine not seen in full (customAcp) the owner's batch should still run with no card", async () => {
+    const bot = await drained("Queued unseen", async ({ id, threadId }) => {
+      expect((await send(id, threadId, "read it")).status).toBe(202);
+      expect((await send(id, threadId, "and this")).status).toBe(202);
+    }, "queued");
+    expect(await poll(() => chip(bot.threadId), 15_000), "the owner's batch carded (outside-turn, earlier turn)").not.toBeNull();
   }, 60_000);
 
   it("S1: one line with no proof keeps the whole batch's card", async () => {

@@ -42,7 +42,14 @@ interface SpeakOptions {
 }
 
 type TtsPrepareBody = { ready?: boolean; utterances?: string[]; error?: string };
-type TtsErrorBody = { error?: string };
+type TtsErrorBody = { error?: string; code?: string };
+
+/** How long a "budget reached" answer holds this window's voice: the harness
+ *  holds the key the same ten minutes (VOICE-402-STOP). */
+export const VOICE_BUDGET_HOLD_MS = 10 * 60_000;
+/** The harness said the Flux key's budget is used up: the reply ends here,
+ *  and the next messages are not sent for speech until the hold ends. */
+export class VoiceBudgetPaused extends Error {}
 
 const IDLE: SpeechSnapshot = { status: "idle" };
 
@@ -511,7 +518,7 @@ export class Speaker {
         const message = rendered.error instanceof Error ? rendered.error.message : String(rendered.error);
         failures += 1;
         if (!live()) return;
-        if (failures >= MAX_CLIPS_FAILED_IN_A_ROW || i + 1 >= utterances.length) {
+        if (rendered.error instanceof VoiceBudgetPaused || failures >= MAX_CLIPS_FAILED_IN_A_ROW || i + 1 >= utterances.length) {
           this.fail(opts, message, mine);
           if (this.request === controller) this.request = null;
           // the sentence after this one may already be downloading: nobody
@@ -695,7 +702,7 @@ export class Speaker {
           const error = rendered.error;
           const message = error instanceof Error ? error.message : String(error ?? "the voice failed");
           failures += 1;
-          if (failures >= MAX_CLIPS_FAILED_IN_A_ROW || (!next && !queue.length && ended)) {
+          if (error instanceof VoiceBudgetPaused || failures >= MAX_CLIPS_FAILED_IN_A_ROW || (!next && !queue.length && ended)) {
             this.fail(opts, message, mine);
             controller.abort();
             return false;
@@ -826,7 +833,13 @@ export class Speaker {
   }
 
   /** Resolves as soon as the audio starts arriving; see Incoming. */
+  /** Until when the Flux key's budget holds speech (0: not held). A picker
+   *  preview still asks: that is the owner checking again. */
+  private budgetHeldUntil = 0;
+  private budgetLine = "";
+
   private async render(text: string, voiceId: string | undefined, signal: AbortSignal, botId: string | undefined, player: ClipPlayer, timing?: ClipTiming, preview = false): Promise<Audible> {
+    if (!preview && this.now() < this.budgetHeldUntil) throw new VoiceBudgetPaused(this.budgetLine);
     const askedAt = this.now();
     const res = await fetch("/api/tts/speak", {
       method: "POST",
@@ -837,8 +850,14 @@ export class Speaker {
     });
     if (!res.ok) {
       const body: TtsErrorBody = await res.json().catch(() => ({}));
+      if (res.status === 402 && body.code === "voice_budget_reached") {
+        this.budgetHeldUntil = this.now() + VOICE_BUDGET_HOLD_MS;
+        this.budgetLine = voiceFailure(res.status, body.error);
+        throw new VoiceBudgetPaused(this.budgetLine);
+      }
       throw new Error(voiceFailure(res.status, body.error));
     }
+    if (preview) this.budgetHeldUntil = 0;
     if (timing) timing.headersAt = Date.now();
     // the first byte as this window saw it, next to the harness's and the
     // gateway's own (x-murage-ttfb-ms, x-murage-flux-ttfb-ms): one line, times only

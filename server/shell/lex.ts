@@ -12,7 +12,7 @@
 export type UnreadableReason =
   | "length" | "quote" | "heredoc" | "substitution" | "expansion" | "operator" | "syntax" | "escape"
   | "wrapper-option" | "dynamic-name" | "dynamic-eval" | "branch" | "pwsh" | "depth" | "nesting"
-  | "folder" | "indirect" | "opaque" | "dialect" | "cmd" | "shadow" | "device";
+  | "folder" | "indirect" | "opaque" | "dialect" | "cmd" | "shadow" | "device" | "budget";
 
 /** Thrown when the text cannot be read with certainty. The reader asks. */
 export class Unreadable extends Error {
@@ -798,10 +798,34 @@ function ansiUnescape(text: string): string {
   return out;
 }
 
+/** One verdict hands the same long text to several readers (the walk, the executor check, the dequoter), so a long text is
+ *  lexed once: one entry per text, the outcome kept whole, a refusal too. Lexing reads only its text, and each caller gets
+ *  its own copy of the array (s10-lex-memo-1018.test.ts). A short text costs less to lex than to keep. */
+const LEX_MEMO_MIN_CHARS = 1024;
+const LEX_MEMO_ENTRIES = 8;
+const lexMemo = new Map<string, Token[] | Unreadable>();
+function rememberLex(text: string, outcome: Token[] | Unreadable): void {
+  if (lexMemo.size >= LEX_MEMO_ENTRIES) lexMemo.delete(lexMemo.keys().next().value!);
+  lexMemo.set(text, outcome);
+}
+
 /** Tokens for a whole script. */
 export function lex(text: string): Token[] {
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
-  return new Lexer(text).run();
+  if (text.length < LEX_MEMO_MIN_CHARS) return new Lexer(text).run();
+  // each caller gets its own array: the parser replaces a `))` slot with `)` in place (parse.ts expectOp), so a kept array
+  // handed out twice would read differently the second time (Astra r7 #2). The tokens themselves are never written.
+  const kept = lexMemo.get(text);
+  if (kept instanceof Unreadable) throw kept;
+  if (kept) return kept.slice();
+  try {
+    const tokens = new Lexer(text).run();
+    rememberLex(text, tokens.slice());
+    return tokens;
+  } catch (error) {
+    if (error instanceof Unreadable) rememberLex(text, error);
+    throw error;
+  }
 }
 
 /** One word lexed on its own (the operand of `${X:-word}`, an item xargs or

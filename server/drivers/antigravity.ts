@@ -770,7 +770,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           cwd,
           env: turnEnv,
           stdio: ["pipe", "pipe", "pipe"],
-        }, engineJob());
+        }, engineJob(), undefined, threadId);
       } catch (error) {
         restoreMcp();
         pending.delete(threadId);

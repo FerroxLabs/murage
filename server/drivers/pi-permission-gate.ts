@@ -112,7 +112,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "keys-and-cluster-configs",
-    re: /id_ecdsa|\.ssh[\\/][^\s"']*\.(pem|ppk)\b|\.kube[\\/]config\b|\.git-credentials\b|\.pgpass\b|\bcredentials\.db\b/i,
+    re: /id_ecdsa|\.ssh[\\/][^\s"']{0,4096}\.(pem|ppk)\b|\.kube[\\/]config\b|\.git-credentials\b|\.pgpass\b|\bcredentials\.db\b/i,
     read: ["**/id_ecdsa*", "~/.ssh/*.pem", "~/.ssh/*.ppk", "~/.kube/config", "~/.git-credentials", "~/.pgpass", "**/credentials.db"],
     bash: ["*id_ecdsa*", "*.ssh/*.pem*", "*.ssh/*.ppk*", "*.kube/config*", "*.git-credentials*", "*.pgpass*", "*credentials.db*"],
   },
@@ -203,7 +203,9 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     id: "fuigo-engine-config",
     // Read as text, so it holds any call that names Fuigo's home (`.fuigo`, `$FUIGO_HOME`) and one of these files anywhere
     // in it, in either order: `~/.fuigo/./config.toml`, `.fuigo.\config.toml` and `cd ~/.fuigo && printf … >> config.toml` too.
-    re: /(?:\.fuigo(?![\w-])|FUIGO_HOME)[\s\S]*?(?:(?:config|managed_config|requirements|sandbox)\.toml|permission[^\\/\s"']*\.toml)(?![\w-])|(?:config|managed_config|requirements|sandbox)\.toml(?![\w-])[\s\S]*?(?:\.fuigo(?![\w-])|FUIGO_HOME)/i,
+    // 1.0.18 (S10): each name reads on only to the next one, which finds the same matches: `FUIGO_HOME FUIGO_HOME ...` cost the
+    // server's one thread 58 s in 255 KB of them. A file name is at most 255 characters.
+    re: /(?:\.fuigo(?![\w-])|FUIGO_HOME)(?:(?!\.fuigo(?![\w-])|FUIGO_HOME)[\s\S])*?(?:(?:config|managed_config|requirements|sandbox)\.toml|permission[^\\/\s"']{0,255}\.toml)(?![\w-])|(?:config|managed_config|requirements|sandbox)\.toml(?![\w-])(?:(?!(?:config|managed_config|requirements|sandbox)\.toml(?![\w-]))[\s\S])*?(?:\.fuigo(?![\w-])|FUIGO_HOME)/i,
     read: ["~/.fuigo/config.toml", "~/.fuigo/managed_config.toml", "~/.fuigo/requirements.toml", "~/.fuigo/sandbox.toml", "~/.fuigo/sessions/*/permission*.toml", ".fuigo/config.toml"],
     bash: ["*.fuigo/config.toml*", "*.fuigo/managed_config.toml*", "*.fuigo/requirements.toml*", "*.fuigo/sandbox.toml*", "*.fuigo/sessions/*/permission*"],
   },
@@ -217,15 +219,19 @@ const SENSITIVE_TEXT: readonly SensitiveTextRow[] = [
   { id: "bearer", re: /\bBearer\s+\$\{?[A-Za-z_]/i },
   // NOLIMITS-KEY-TEXT A7: a key has length, so `pip install sk-learn` names none
   { id: "key-literal", re: /\bsk-(?:proj|ant|or)?[-_]?[A-Za-z0-9_-]{16,}/ },
-  { id: "env-grep", re: /\benv\b[^|;&]*\|\s*grep\b/i },
+  // 1.0.18 (S10): each `env` reads on only to the next one, which finds the same matches: `env env env ...` cost the server's
+  // one thread 1.5 s in 16 KB of them
+  { id: "env-grep", re: /\benv\b(?:(?!\benv\b)[^|;&])*\|\s*grep\b/i },
   // A command that prints the whole environment (or one variable's value): `env`, `printenv`, `export -p`, `declare -p`, `set` alone,
   // and (NOLIMITS-KEY-TEXT A8) `declare -p NAME`, `typeset -p NAME`, `export -p NAME`, `Get-ChildItem Env:`, `gci env:`, `dir env:` alone. Piped, the
   // PowerShell listing keeps its 1.0.3 standing: Claude's own gate lists the environment that way at Full access.
   // Only at the start of a command, so `env VAR=x cmd`, `export FOO=1` and a word like "environment" are ordinary.
-  { id: "env-dump", re: /(?:^|[;&|(`\n]|\$\()\s*(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset|export)\s+-[a-oq-z]*p[a-z]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset)\s+-x+|(?:Get-ChildItem|gci|dir|ls)\s+(?:-Path\s+)?Env:[\\/]?\*?(?!\s*\|)|set)\s*(?=$|[;&|)>`\n])/i },
+  // S10: attempt the tail only at a command's first letter, then read back its single preceding whitespace run.
+  // Letter candidates cannot share that run; the tail stops at the next command start. Both copies have a hold row.
+  { id: "env-dump", re: /(?=[bcdeglpst])(?<=(?:^|[;&|(`\n])\s*)(?:(?:sudo|command|builtin)\s+)?(?:env(?:\s+-[0aiuS]+)*|printenv(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset|export)\s+-[a-oq-z]*p[a-z]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*|(?:declare|typeset)\s+-x+|(?:Get-ChildItem|gci|dir|ls)\s+(?:-Path\s+)?Env:[\\/]?\*?(?!\s*\|)|set)\s*(?=$|[;&|)>`\n])/i },
   // Rule 74b: cmd's AutoRun runs on every cmd start; a change to it is a
   // sensitive write.
-  { id: "cmd-autorun", re: /Command Processor[\s\S]*\bAutoRun\b/i },
+  { id: "cmd-autorun", re: /Command Processor(?:(?!Command Processor)[\s\S])*\bAutoRun\b/i },
 ];
 
 /** The order the verdict has always matched in: the six original path rows
@@ -553,12 +559,24 @@ function placePath(path: string, root: string, opts: PlaceOptions = {}): Placeme
  * `/` form and the rows read case-insensitively. On POSIX the path is
  * returned as given: every one of these is a file name there.
  */
+/** The bare name Windows opens: first cut the part at the first colon that comes after its last line break (a colon before a
+ *  line break stays), then drop the trailing run of dots and spaces. Read once, left to right; held to the old two replaces by
+ *  the hold row in in-project.win32.test.ts. */
+function win32BareName(part: string): string {
+  let last = -1;
+  for (let i = 0; i < part.length; i++) { const c = part.charCodeAt(i); if (c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029) last = i; }
+  const colon = part.indexOf(":", last + 1);
+  let end = colon >= 0 ? colon : part.length;
+  while (end > 0 && (part.charCodeAt(end - 1) === 0x2e || part.charCodeAt(end - 1) === 0x20)) end--;
+  return part.slice(0, end);
+}
+
 function win32Canonical(path: string, platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") return path;
   const unwrapped = win32Unprefixed(path).replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
   const name = (part: string): string => {
     if (part === "." || part === "..") return part;
-    const bare = part.replace(/:.*$/, "").replace(/[. ]+$/, "");
+    const bare = win32BareName(part);
     return bare === "" ? part : bare;
   };
   // split with the separators kept, so `\` and `/` land back where they were
@@ -836,7 +854,7 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "project_propose", "propose_outcome", "propose_routine", "propose_routine_action", "request_bot_access", "request_credential", "ask_user", "show_widget", "update_widget",
     "request_browser_connection", "project_done", "add_mcp_server",
     "create_bot", "update_bot", "archive_bot", "restore_bot", "move_bot", "set_team_lead",
-    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "save_prompt_block", "save_reference_pack",
+    "send_voice_note", "generate_image", "email_send", "email_reply", "email_trust_offer", "venue_post", "save_prompt_block", "save_reference_pack",
   ]],
   ["own:dweb", ["dweb_status", "dweb_repo_status", "dweb_opencode_models"]],
   // the gate imports nothing of Murage's, so the names are spelled here (a test pins them to PHONE_TOOL_NAMES through OWN_UNASKED)

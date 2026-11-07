@@ -169,3 +169,30 @@ describe.runIf(process.platform === "win32")("the Win32 spellings of a hook file
     for (const form of formsOf(source)) expect(ask("write_to_file", { TargetFile: form, CodeContent: "x" }).toolInputMissing, form).toBeUndefined();
   });
 });
+
+
+// H2/H2b and R5 also exercise the local pi copy without exporting its internals.
+import { readFileSync } from "node:fs";
+import ts from "typescript";
+import * as project11 from "./in-project.ts";
+const piSource11 = readFileSync(new URL("../server/drivers/pi-permission-gate.ts", import.meta.url), "utf8");
+const piAst11 = ts.createSourceFile("pi.ts", piSource11, ts.ScriptTarget.Latest, true);
+const piFunctions11 = piAst11.statements.filter(n => ts.isFunctionDeclaration(n) && ["win32Unprefixed", "win32BareName", "win32Canonical"].includes(n.name?.text ?? "")).map(n => n.getText(piAst11)).join("\n");
+const piWin11 = new Function(ts.transpile(piFunctions11) + "; return { canonical: win32Canonical, bare: typeof win32BareName === 'function' ? win32BareName : undefined };")() as { canonical: typeof win32Canonical; bare: (p: string) => string };
+const WIN32_BARE_NAME_REFERENCE = (p: string): string => p.replace(/:.*$/, "").replace(/[. ]+$/, "");
+for (const copy of ["shared", "pi"] as const) {
+  it(`${copy === "shared" ? "H2" : "H2b"} bare-name equivalence ${copy}`, () => {
+    let seed = 11; const next = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+    const alphabet = "a.: \n\r\u2028\u2029x";
+    for (let n = 0; n < 20000; n++) { let text = ""; const len = next() % 33; for (let k = 0; k < len; k++) text += alphabet[next() % alphabet.length];
+      expect((copy === "shared" ? project11.win32BareNameForTests : piWin11.bare)(text), JSON.stringify(text)).toBe(WIN32_BARE_NAME_REFERENCE(text)); }
+  });
+  it(`R5 direct Windows timing ${copy}`, () => {
+    for (const shape of [(k: number) => ".".repeat(k - 1) + "x", (k: number) => ":".repeat(k - 2) + "\nx"]) {
+      const times = [8192, 32768, 131072].map(k => { let best = Infinity; for (let run = 0; run < 3; run++) {
+        const text = shape(k); const start = performance.now(); (copy === "shared" ? win32Canonical : piWin11.canonical)(text, "win32"); best = Math.min(best, performance.now() - start);
+      } return best; });
+      expect(times[2]).toBeLessThan(5); expect(times[2]!).toBeLessThanOrEqual(24 * Math.max(times[0]!, 1));
+    }
+  });
+}

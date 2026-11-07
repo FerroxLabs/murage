@@ -12,7 +12,8 @@ vi.resetModules();
 const { autoVerdict } = await import("./auto-approve.ts");
 
 const NO_LIMITS = { id: "owned", autoApprove: true, fullAccess: true, noLimits: true };
-const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null } as const;
+// 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
+const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, noPreRunSeamAtNoLimits: true } as const;
 const verdict = (cmd: string) => autoVerdict(NO_LIMITS, "Bash", cmd, { ...OWNER, commandText: cmd });
 
 const SUB = "$(rm -rf /)";

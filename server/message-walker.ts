@@ -11,6 +11,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { beginBackground } from "./db-busy.ts";
 import { isOpenCardJson, keyedCardsOf, newestRowid, readIndexState, writeIndexState, BACKFILL_CHUNK_ROWS } from "./transcript-backfill.ts";
 import { isPendingBrowserCheck } from "./message-tables.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 export const WALKED = ["open_card", "keyed_card", "browser_check", "turn_first"] as const;
 type Walked = (typeof WALKED)[number];
@@ -71,7 +72,7 @@ export function walkMessagesChunk(db: DatabaseSync, bounds: number | WalkBounds 
       handled++;
       if (row.json !== null) {
         let parsed: Record<string, unknown> | null | undefined;
-        const message = () => { if (parsed === undefined) { try { parsed = JSON.parse(row.json!) as Record<string, unknown>; } catch { parsed = null; } } return parsed; };
+        const message = () => { if (parsed === undefined) { try { parsed = rowToMessage({ json: row.json! }) as unknown as Record<string, unknown>; } catch { parsed = null; } } return parsed; };
         for (const name of pending) {
           if (row.position <= states.get(name)!.cursor) continue;
           if (name === "open_card") {

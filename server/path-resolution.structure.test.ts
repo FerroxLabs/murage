@@ -161,7 +161,9 @@ describe("path resolution structure (APP-GRANT-FIXPLAN-r6 (b))", () => {
     const from = gate.indexOf(INLINE_BEGIN);
     const to = gate.indexOf(INLINE_END);
     expect(from).toBeGreaterThan(-1);
-    expect(gate.slice(from + INLINE_BEGIN.length, to)).toBe(strip(read("shared/in-project.ts")));
+    // S10 A1: only the shared module exports the test oracle; every production reader stays identical.
+    const shared = read("shared/in-project.ts").replace("export const win32BareNameForTests = win32BareName;\n", "");
+    expect(gate.slice(from + INLINE_BEGIN.length, to)).toBe(strip(shared));
   });
 
   it("a RealPath is minted only by realPathInOrder and realDir", () => {

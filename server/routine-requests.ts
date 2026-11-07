@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
+import { plainClock, plainTimeZone, plainWeekdays } from "../shared/plain-time-zone.ts";
 import { newId } from "./contracts.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
@@ -47,7 +48,6 @@ const WEEKDAY_NUMBER = {
   saturday: 6,
 } as const;
 
-const WEEKDAY_LABEL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const RFC3339_WITH_OFFSET =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/i;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
@@ -598,15 +598,32 @@ function formatInstant(at: number, timeZone: string): string {
   }
 }
 
-function scheduleText(schedule: RoutineRequestSchedule, timeZone: string): string {
-  if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone)} (${timeZone})`;
+/** 1.0.18 U6 E32: "Mon, Nov 9, 9:00 AM", the way the first or next run is said. */
+function formatRunAt(at: number, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(at));
+  } catch {
+    return formatInstant(at, timeZone);
+  }
+}
+
+// 1.0.18 U6 E32 (upstream 698cef40c): the zone in plain words ("India time"), never the IANA id.
+export function scheduleText(schedule: RoutineRequestSchedule, timeZone: string): string {
+  const zone = plainTimeZone(timeZone);
+  if (schedule.type === "once") return `${formatInstant(schedule.at, timeZone)} ${zone}`;
   if (schedule.type === "interval") {
     return schedule.anchorAt === undefined
       ? `Every ${schedule.everyMinutes} minutes, starting one interval after confirmation`
-      : `Every ${schedule.everyMinutes} minutes, anchored at ${formatInstant(schedule.anchorAt, timeZone)} (${timeZone})`;
+      : `Every ${schedule.everyMinutes} minutes, anchored at ${formatInstant(schedule.anchorAt, timeZone)} ${zone}`;
   }
-  const days = schedule.weekdays.map((day) => WEEKDAY_LABEL[day]).join(", ");
-  return `${days} at ${schedule.time} (${timeZone})`;
+  return `${plainWeekdays(schedule.weekdays)} at ${plainClock(schedule.time)} ${zone}`;
 }
 
 function effectiveDefinition(operation: RoutineRequestOperation, manager: RoutineManager): RoutineRequestDefinition | null {
@@ -668,13 +685,17 @@ function cardCopy(
     : deferredInterval
       ? "One interval after confirmation"
       : nextRunAt !== null
-        ? formatInstant(nextRunAt, timeZone)
+        ? `${formatRunAt(nextRunAt, timeZone)} ${plainTimeZone(timeZone)}`
         : operation.action === "pause"
           ? "None: this routine will be paused"
           : operation.action === "delete"
             ? "None: this routine will be deleted"
             : "None";
   const status = remainsPaused ? " · Remains paused" : "";
+  // 1.0.18 U6 E32: a routine that has never started a run says so ("First run Mon, Nov 9, 9:00 AM India time").
+  const neverRun = operation.action === "create" || (current !== null && !manager.hasStartedRun(current.id));
+  // A new interval with no anchor has a first run too: one interval after confirmation (Astra r1 M2).
+  const nextLabel = neverRun && (nextRunAt !== null || deferredInterval) && !remainsPaused ? "First run" : "Next run";
   // Existing routines may predate nested-card redaction. The approval still
   // shows every instruction, but credential-shaped values never travel back
   // through the bot's MCP response or into the transcript.
@@ -684,7 +705,7 @@ function cardCopy(
     const detail = [`Action: ${actionCopy.detail} (read-only file watch)`, `Name: ${name}`,
       ...(forBot ? [`Working folder: @${redactSecretsInText(forBot.name)}`] : []),
       `Selected file: ${watch.source.sourceId}`, `Schedule: ${when}`, `Next check: ${nextDescription}`,
-      `Expires: ${formatInstant(watch.expiresAt, timeZone)} (${timeZone})`, `Maximum checks: ${watch.maxChecks}`,
+      `Expires: ${formatInstant(watch.expiresAt, timeZone)} ${plainTimeZone(timeZone)}`, `Maximum checks: ${watch.maxChecks}`,
       "Only changes are reported in Inbox. The first check records a baseline. Quiet hours follow notification settings.",
       "This watch only reads this file. It cannot run an agent, send messages to others, spend, or change files."].join("\n");
     return { title, summary: `${actionLabel} file watch “${name}”${forSuffix} · ${when} · ${watch.maxChecks} checks`, detail,
@@ -701,7 +722,7 @@ function cardCopy(
       `Name: ${name}`,
       ...(forBot ? [`For: @${redactSecretsInText(forBot.name)} (each run uses that bot's engine and permissions)`] : []),
       `Schedule: ${when}`,
-      `Next run: ${nextDescription}`,
+      `${nextLabel}: ${nextDescription}`,
       `Runs on: ${destination}`,
       `Run limit: ${definition.timeoutMinutes === undefined ? "No limit" : `${definition.timeoutMinutes} minutes`}`,
       ...(definition.schedule.type !== "once" && (operation.action === "create" || current?.carryLastReport === true)

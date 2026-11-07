@@ -27,6 +27,7 @@ import { partitionFileRefusal } from "./partition-files.ts";
 import { autoVerdict, isCommandTool } from "./auto-approve.ts";
 import { windowRuntimeEvent } from "./runtime-event-out.ts";
 import { noteStartupFileEvent } from "./engine-env.ts";
+import { noteAskItemUnseen } from "./outside-wire.ts";
 import { denyAutomaticApproval, watchApprovalRequest } from "./drivers/acp/approval-delivery.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -161,6 +162,8 @@ it("R2.7 real permission event denies cross-partition writes before Full access 
   const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
     noteStartupFileEvent,
+    // index.ts imports it from outside-wire.ts and calls it for every request (NOLIMITS v1 V5): the real one, as in production
+    noteAskItemUnseen,
     // 1.0.8 #19: an automatic denial is tied to its request and turn (approval-delivery.ts), the real ones over a bus that never fires
     watchApprovalRequest, denyAutomaticApproval, bus: { subscribe: () => () => {} },
     // the window's copy of every runtime event and the command-tool test, the real ones, as index.ts imports them
