@@ -4,12 +4,9 @@
 //  b. the legacy import tells a failed read (retry) from a file that reads but is not a queue (quarantine);
 //  c. every handoff has its durable ask:delegation record, owner-conversation ones included, so none starts twice;
 //  d. going back to 1.0.1 returns the waiting handoffs to delegations.json in the shape 1.0.1 loads, and a later upgrade imports them once.
-import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -26,6 +23,7 @@ import { ROUTINE_PERMISSION_MODES } from "./routine-permissions.ts";
 import { ownerDeletedThread, recordOwnerDeletion } from "./owner-deletions.ts";
 import { importLegacyDelegations, initializePendingDelegations, queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
+import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { listRoomRequests, reconcileRoomRequestsAtBoot, roomRequestByKey } from "./room-requests.ts";
 import { Store } from "./store.ts";
 import { status } from "./murage-status.ts";
@@ -33,8 +31,6 @@ import { handoffReplyId, replayOwedReply } from "./handoff-reply.ts";
 import { released } from "./testing/released.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const exec = promisify(execFile);
-const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 async function until(done: () => boolean, ms = 30_000): Promise<void> {
   const deadline = Date.now() + ms;
@@ -383,7 +379,8 @@ describe("d. going back to 1.0.1 keeps the waiting handoffs", () => {
     expect(readdirSync(join(DATA_DIR, "recovery-quarantine")).some((name) => name.startsWith("delegations.unreadable-"))).toBe(true);
     expect(Object.values(loadAs101(legacyFile())).flat()).toHaveLength(3);
   });
-  it("the real command: memory-downgrade --to 6 writes delegations.json and removes the 1.0.2-only tables; a later start imports it", async () => {
+  // the command itself refuses this target now (installation-recovery-command.test.ts); the rewind stays proved through the tests' route
+  it("the step to schema 6 writes delegations.json and removes the 1.0.2-only tables; a later start imports it", async () => {
     importQueue();
     const root = mkdtempSync(join(tmpdir(), "murage-handoff-downgrade-"));
     try {
@@ -403,8 +400,8 @@ describe("d. going back to 1.0.1 keeps the waiting handoffs", () => {
       prep.exec("CREATE TABLE IF NOT EXISTS messages(thread_id TEXT NOT NULL,id TEXT NOT NULL,at INTEGER NOT NULL,role TEXT NOT NULL,kind TEXT NOT NULL,text TEXT,json TEXT NOT NULL,PRIMARY KEY(thread_id,id));");
       migrateMemorySchema(prep, "active");
       prep.close();
-      const result = JSON.parse((await exec(process.execPath, [cli, "memory-downgrade", "--data-dir", copy, "--to", "6"], { timeout: 60_000 })).stdout);
-      expect(result).toMatchObject({ ok: true, operation: "memory-downgrade", status: "downgraded", to: 6, handoffs: 3 });
+      const result = downgradeInstallationMemorySchema(copy, 6, { testOnlyBefore102: true });
+      expect(result).toMatchObject({ status: "downgraded", to: 6, handoffs: 3 });
       expect(Object.values(loadAs101(join(copy, "delegations.json"))).flat().map((i) => i.id).sort()).toEqual(["h1", "h2", "h3"]);
       const after = new DatabaseSync(join(copy, "messages.db"));
       try {

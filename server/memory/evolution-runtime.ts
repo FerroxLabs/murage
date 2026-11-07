@@ -1,3 +1,4 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { randomUUID } from "node:crypto";
 import { database, transaction } from "../database.ts";
 import { gepaCallNotStarted, type GepaWorkerCommand } from "../gepa-worker.ts";
@@ -110,7 +111,7 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
         const extractor=options.resolveExtractor(selected);if(!extractor){wait("MEMORY_EVOLUTION_MODEL_UNAVAILABLE");return;}
         const job=transaction(()=>{const latest=current();if(latest.snapshot)return latest;
           const policy=readMemoryEvolutionPolicy(),state=memoryState();
-          const snapshot:ProcedureReviewSnapshot={requestId:id,scopeId:latest.scopeId,target:{kind:"memory-policy",scopeId:latest.scopeId,ownerId:"workspace-owner",artifactId:"memory-policy",threadId:"memory-policy",baseRevision:policy.revision,bundleId:hash(policy)},policyRevision:state.policyRevision,deletionEpoch:state.deletionEpoch,learningRevision:readMemoryLearning(database()).revision,evidence:[],evidenceDigest:hash([]),outcomeBasis:"source-reported"};
+          const snapshot:ProcedureReviewSnapshot={requestId:id,scopeId:latest.scopeId,target:{kind:"memory-policy",scopeId:latest.scopeId,ownerId:"workspace-owner",artifactId:"memory-policy",threadId:"memory-policy",baseRevision:policy.revision,bundleId:hash(policy)},policyRevision:state.policyRevision,deletionEpoch:learningDeletionEpoch(database()),learningRevision:readMemoryLearning(database()).revision,evidence:[],evidenceDigest:hash([]),outcomeBasis:"source-reported"};
           const next={...latest,snapshot,seedInstruction:JSON.stringify(memoryEvolutionFieldsSchema.parse({extraction:policy.extraction,retrieval:policy.retrieval})),workerDigest:resource.workerDigest,modelIdentity:selected,runtimeIdentity:options.availabilityIdentity()};save(next);return next;});
         // sampled after the job row write (memory-evolution-runtime is not a quiet subject); the snapshot carries the policy revision and
         // deletion epoch it was read at, and assertCurrent rechecks them, so a move between that read and this sample still drops the call
@@ -118,7 +119,7 @@ export function createMemoryEvolutionRuntime(options:EvolutionRuntimeOptions){
         const snapshot=job.snapshot!,seed=memoryEvolutionFieldsSchema.parse(JSON.parse(job.seedInstruction!));
         const assertCurrent=(value:ProcedureReviewSnapshot)=>{
           const latest=current(),state=memoryState();
-          if(!permits()||!resumeMemoryEvolutionAdmission(job.grantId)||hash(value)!==hash(latest.snapshot)||options.modelIdentity()!==job.modelIdentity||options.availabilityIdentity()!==job.runtimeIdentity||readMemoryEvolutionPolicy().revision!==snapshot.target.baseRevision||state.policyRevision!==snapshot.policyRevision||state.deletionEpoch!==snapshot.deletionEpoch||readMemoryLearning(database()).revision!==snapshot.learningRevision)throw Error("MEMORY_EVOLUTION_AUTHORITY_CHANGED");
+          if(!permits()||!resumeMemoryEvolutionAdmission(job.grantId)||hash(value)!==hash(latest.snapshot)||options.modelIdentity()!==job.modelIdentity||options.availabilityIdentity()!==job.runtimeIdentity||readMemoryEvolutionPolicy().revision!==snapshot.target.baseRevision||state.policyRevision!==snapshot.policyRevision||learningDeletionEpoch(database())!==snapshot.deletionEpoch||readMemoryLearning(database()).revision!==snapshot.learningRevision)throw Error("MEMORY_EVOLUTION_AUTHORITY_CHANGED");
         };
         assertCurrent(snapshot);
         const receipt=await (options.evaluate??evaluateProcedureWithGepa)(snapshot,{

@@ -82,13 +82,13 @@ describe("a secret in a pasted command's arguments (review L5)", () => {
     const state = newCardState(draftOf("npx -y @x/server --api-key abc123secret"));
     const html = card(state);
     expect(html).toContain('data-view="ready"');
-    expect(html).toContain("This command has a secret in its arguments");
-    expect(html).toContain("Move to an environment value");
+    expect(html).toContain("This command includes a secret among the values passed to it");
+    expect(html).toContain("Move to a server startup setting");
     expect(html).toContain("API_KEY");
     expect(html).not.toContain("abc123secret");
   });
   it("shows no warning for a command without a secret", () => {
-    expect(card(newCardState(draftOf("npx -y @x/server --port 8080")))).not.toContain("Move to an environment value");
+    expect(card(newCardState(draftOf("npx -y @x/server --port 8080")))).not.toContain("Move to a server startup setting");
   });
 });
 
@@ -280,14 +280,14 @@ describe("every card state", () => {
   it("cannot start a sign-in without the desktop app, and says why", () => {
     vi.stubGlobal("window", { muragebox: {} });
     const html = card(comfy(COMFY_401));
-    expect(html).toContain("Sign in needs the Murage desktop app.");
+    expect(html).toContain("Signing in needs the Murage desktop app.");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Sign in to cloud\.comfy\.org/);
   });
 
   it("puts a tooltip where a person may wonder", () => {
     const html = card(comfy(COMFY_401));
     expect(html).toContain('title="Opens your browser so you can sign in to cloud.comfy.org.');
-    expect(card(comfy(COMFY_401, { useKey: true }))).toContain('title="The name of the header the server reads your key from.');
+    expect(card(comfy(COMFY_401, { useKey: true }))).toContain('title="The name of the header (a named field sent with a request) that carries your key to the server.');
   });
 
   it("follows the chosen language", async () => {

@@ -328,6 +328,29 @@ describe("thread_list (rule 7)", () => {
 });
 
 describe("thread_read (rule 8)", () => {
+  it.each(["around", "before", "after"] as const)("C2-LOW: %s keeps an anchor above a corrupt ancestor checking", async (direction) => {
+    for (let i = 0; i < 6; i++) put("t-task", `m${i}`, `chain ${i}`, 1000 + i, { role: "user" });
+    const r = rig();
+    r.state.released.set("m0", "t-task");
+    db().exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+    db().prepare("UPDATE messages SET json = ? WHERE thread_id = ? AND id = 'm2'").run("{broken", "t-task");
+    const { body } = await r.call("thread_read", { message_id: "m0", direction });
+    expect(body.status).not.toBe("not-reachable");
+    expect(body).toEqual({ rows: [], more: true, checking: 1, unavailable: 0, notes: [CHECKING_LINE] });
+    expect(r.events).not.toContain("seal");
+    expect(r.state.released.size).toBe(1);
+  });
+  it("C2-LOW: a complete unprepared branch reports an off-branch anchor not-reachable", async () => {
+    put("t-task", "root", "root", 1000, { role: "user" });
+    put("t-task", "off", "off branch", 1001, { role: "user" });
+    put("t-task", "leaf", "active", 1002, { role: "user", parentId: "root" });
+    const r = rig();
+    r.state.released.set("off", "t-task");
+    db().exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
+    for (const direction of ["around", "before", "after"] as const) {
+      expect((await r.call("thread_read", { message_id: "off", direction })).body).toEqual({ rows: [], status: "not-reachable" });
+    }
+  });
   function conversation() {
     for (let i = 0; i < 12; i++) put("t-task", `r${String(i).padStart(2, "0")}`, `line ${i} about needle`, 1000 + i, { role: i % 2 ? "bot" : "user" });
   }

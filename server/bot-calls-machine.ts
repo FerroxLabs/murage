@@ -10,6 +10,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { CALL_PROTOCOL, type AnswerRefusal } from "../shared/bot-calls-contract.ts";
 import { CALL_PRINCIPAL, inTransaction, insertCallRule } from "./bot-calls-schema.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 /** One constant for freshness (4.1): a fact older than this when admitted or decided is late, never a late ring. */
 export const FRESH_MS = 10 * 60_000;
@@ -66,6 +67,10 @@ type IntentRow = {
   session_id: string | null; seen_at: number | null; created_at: number; ended_at: number | null; outcome: CallOutcome | null; receipt: string;
 };
 const num = (value: unknown): number | null => value === null || value === undefined ? null : Number(value);
+/** A stored messages row, decoded through the one row decoder (rowToMessage, U4 S3); anything but an object is damaged. */
+function storedObject(json: string): Record<string, unknown> | null {
+  try { const parsed: unknown = rowToMessage({ json }); return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
+}
 function parseObject(text: string): Record<string, unknown> | null {
   try { const parsed = JSON.parse(text) as unknown; return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null; } catch { return null; }
 }
@@ -526,7 +531,7 @@ export function matchChannelOwed(db: DatabaseSync, row: OwedRow, senderOf: (thre
   if (!row.sourceId) return [];
   const message = db.prepare("SELECT json, at, role FROM messages WHERE thread_id=? AND id=?").get(row.threadId, row.sourceId) as { json: string; at: number; role: string } | undefined;
   if (!message || message.role !== "user") return [];
-  const json = parseObject(message.json);
+  const json = storedObject(message.json);
   if (!json) return "damaged";
   const automation = json.automation as { kind?: unknown } | undefined;
   if (!automation || typeof automation !== "object" || (automation.kind !== "channel" && automation.kind !== "webhook")) return [];

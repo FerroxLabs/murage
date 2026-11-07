@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
-import { check, deriveOses, readLists, select } from "./ci-test-tiers.mjs";
+import { check, deriveOses, nodeGateFiles, readLists, select } from "./ci-test-tiers.mjs";
 
 describe("WhatsApp final release evidence", () => {
   const jobs = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8")).jobs;
@@ -780,6 +780,20 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     const count = os => (os === "windows" ? 12 : 10);
     const shards = os => Array.from({ length: count(os) }, (_, i) => select({ tier: "gate", os, shard: `${i + 1}/${count(os)}` }).files).flat();
     const all = new Set(["linux", "mac", "windows"].flatMap(shards));
+    // Node GATE files run in quality, not in Vitest shards. Prove that
+    // runner is blocking and covers every declared OS before counting them.
+    const quality = load("ci.yml").jobs.quality;
+    expect(quality["continue-on-error"]).toBeUndefined();
+    expect(quality.strategy.matrix.os).toBe(`\${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}`);
+    const nodeStep = quality.steps.find(step => step.run === "pnpm test:electron");
+    expect(nodeStep).toBeDefined();
+    expect(nodeStep.if).toBeUndefined();
+    expect(nodeStep["continue-on-error"]).toBeUndefined();
+    expect(load("ci.yml").jobs.required.needs).toContain("quality");
+    for (const file of nodeGateFiles().filter(file => gate.has(file))) {
+      expect(all.has(file), `${file} must not run in Vitest`).toBe(false);
+      all.add(file);
+    }
     expect(all).toEqual(new Set(gate.keys()));
     const linux = shards("linux");
     expect(new Set(linux).size).toBe(linux.length);
