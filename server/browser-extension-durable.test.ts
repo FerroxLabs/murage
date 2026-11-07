@@ -94,7 +94,7 @@ const stateOf = async (f: F) => JSON.parse(await fs.readFile(f.options.stateFile
 const restart = async (f: F, extra: Record<string, unknown> = {}) => track(await createBrowserExtensionService({ ...f.options, ...extra } as never));
 const resume = async (f: F, service: Awaited<ReturnType<typeof restart>>) => {
   const b = f.bindings.get(f.id)!; b.state = 'active'; b.generation++;
-  await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: {} } as never);
+  await service.handleMessage('profile', { version: 1, type: 'event', bindingId: f.id, generation: b.generation, event: 'resumed', data: { resumedAt: b.generation } } as never);
 };
 
 describe('T22 state.json version 2', () => {

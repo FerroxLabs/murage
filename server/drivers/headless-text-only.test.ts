@@ -169,7 +169,8 @@ posix("headless text-only: stub binary (group 1)", () => {
   it("a cancelled result and a schema failure are refused bad-output; nothing is replayed", async () => {
     const c = await headlessTextOnlyTurn(input(), cfg("cancelled"));
     expect(c.verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "cancelled", counted: true });
-    const b = await headlessTextOnlyTurn(input(), cfg("bad-schema"));
+    // a non-Flux route: a Flux one answers a schema miss once more (headless-text-only.flux-schema.test.ts)
+    const b = await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("bad-schema"));
     expect(b.verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect(records()).toHaveLength(2); // one spawn per call, no replay
   });
@@ -457,12 +458,13 @@ posix("audit findings 6, 7 and 15: the per-run gate", () => {
     expect((await headlessTextOnlyTurn(input(), cfg("result-first"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "result-before-init" });
   });
   it("Fuigo and Grok must answer in structured_output; only Claude's result text is a fallback", async () => {
-    expect((await headlessTextOnlyTurn(input(), cfg("text-result"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "no-structured-output" });
+    // under --json-schema (every route but Flux, whose schema rides in the prompt: headless-text-only.flux-schema.test.ts)
+    expect((await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("text-result"))).verdict).toMatchObject({ state: "refused", reason: "bad-output", detail: "no-structured-output" });
     expect((await headlessTextOnlyTurn(input(), cfg("text-result", { engine: "grok", parentGrokHome: grokParent() }))).verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect((await claudeTextOnlyTurn(input(), claudeCfg("text-result"))).verdict).toEqual({ state: "validated", structured: { ok: true } });
   });
   it("a rejected attempt keeps its reported usage while its content is discarded (A.3)", async () => {
-    const r = await headlessTextOnlyTurn(input(), cfg("bad-schema"));
+    const r = await headlessTextOnlyTurn(input({ providerRoute: route }), cfg("bad-schema"));
     expect(r.verdict).toMatchObject({ state: "refused", reason: "bad-output" });
     expect(r.text).toBe("");
     expect(r.usage).toEqual({ inputTokens: 10, outputTokens: 5 });
@@ -640,7 +642,8 @@ describe("Astra audit2 transport regressions", () => {
 
   it("23: delivers a large reflection prompt verbatim through the production argv", async () => {
     const text = "You are reliable. ".repeat(2000);
-    const got = await headlessTextOnlyTurn(input({ text }), cfg("require-verbatim"));
+    // the A.1 argv and plain prompt: a non-Flux route (a Flux one ends the prompt with the schema, headless-text-only.flux-schema.test.ts)
+    const got = await headlessTextOnlyTurn(input({ text, providerRoute: route }), cfg("require-verbatim"));
     expect(got.verdict.state).toBe("validated");
     expect(records()[0].argv).toContain("--verbatim");
     expect(records()[0].prompt).toBe("SYS\n\n" + text);

@@ -10,6 +10,7 @@
 // 5. Long writers declare themselves and bracket themselves in the log (VACUUM, CREATE INDEX): a start line, holdWritersForIndexBuild(true), an end line.
 // 6. Per-pass work stays bounded: an idle visit writes at most one receipt and one mark; a slice holds the lock for at most its budget plus
 //    one chunk; nothing here scales with history.
+import { prepareThreadSummaryBackfill, withChatsPreviewTransaction } from "./thread-summary.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { chmodSync, closeSync, existsSync, openSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -42,9 +43,11 @@ import { initializeMessageTables } from "./message-tables.ts";
 import { startTranscriptBackfill, transcriptBackfillWorking, yieldTranscriptBackfillTo } from "./transcript-backfill.ts";
 import { txScopeBegin, txScopeEnd } from "./tx-scope.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
-import { prepareMessageSearchBackfill } from "./message-search-index.ts";
+import { initializeRoomShares } from "./room-shares-schema.ts";
+import { prepareMessageSearchBackfill, settleInheritedSearchMerge } from "./message-search-index.ts";
 import { startupMark } from "./startup-trace.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { upgradeRoomRequestOwed } from "./room-request-owed.ts";
@@ -341,7 +344,9 @@ export function database(): DatabaseSync {
       loadBackgroundFlags(db); if (firstOpen) startupMark("database.flags");
       // The search index tail is noted here (a seek), filled in the background; the log's high-water mark is cut back while the note is
       // still up, so a long checkpoint after a big migration is never silent.
+      withChatsPreviewTransaction(db, local => prepareThreadSummaryBackfill(local));
       prepareMessageSearchBackfill(db); if (firstOpen) startupMark("database.search");
+      settleInheritedSearchMerge(db); // a pre-release build's merge settings and owed-merge marker (message-search-index.ts)
       if (migrating) {
         let beat: BlockingHeartbeat | undefined;
         try { beat = upgrade.blocking("committing", from ?? undefined); } catch { /* a status write never stops an upgrade */ }
@@ -382,7 +387,7 @@ export function database(): DatabaseSync {
     initializeInbox(db);
     initializeThreadSnooze(db);
     initializeArtifacts(db);
-    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); if (firstOpen) startupMark("database.tablesAll");
+    initializeProjectTables(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeVenuePosts(db); initializeRoomShares(db); if (firstOpen) startupMark("database.tablesAll");
     runOwnerHandoffMigration(db);   // admission of hand-offs is held until it succeeds (pending-delegations-schema.ts)
     // Every counted write from here on moves the counter the upgrade screen's figures are keyed to (app-write-revision.ts).
     installWriteRevisionTriggers(db);

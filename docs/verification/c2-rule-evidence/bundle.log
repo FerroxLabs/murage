@@ -1,0 +1,8 @@
+
+> murage@1.0.17 check:bundle-budget /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+> node scripts/check-bundle-budget.mjs
+
+      1.6 KiB br      4.7 KiB raw  index.html
+     23.2 KiB br    185.8 KiB raw  assets/index-3f4-SL1u.css
+    578.6 KiB br   2341.0 KiB raw  assets/index-BcIEvfZl.js
+First paint: 603.4 KiB brotli, budget 670.0 KiB.

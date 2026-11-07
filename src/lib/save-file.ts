@@ -200,7 +200,7 @@ export const SAVE_FAILED_EVENT = "murage:save-failed";
 
 export function saveFailureMessage(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code;
-  if (error instanceof Error && (code === "too-large" || code === "damaged" || code === "elsewhere")) return error.message;
+  if (error instanceof Error && (code === "too-large" || code === "damaged" || code === "elsewhere" || code === "local-image-busy")) return error.message;
   return "Couldn't save that file. Try again.";
 }
 

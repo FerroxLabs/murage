@@ -170,6 +170,8 @@ describe("BrowserYourTurnCard", () => {
     ["credentials", "shop.example needs your password, a code or personal details."],
     ["payment", "Dax reached the last step of the order on shop.example."],
     ["account", "Dax stopped at an account or security change on shop.example"],
+    // SABLE-B test 54: a new site's grant was not confirmed by the browser.
+    ["siteNotSet", "Dax paused before using shop.example. Murage for Chrome did not confirm the new site, so the step did not run. Press Continue to try again, or Stop task to end it."],
   ] as const)("%s body", (category, text) => {
     const markup = render2({ category, onContinue: () => {}, onStop: () => {} });
     expect(markup).toContain("Your turn");

@@ -1,0 +1,64 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-STARTUP-SILENT-1018/repo
+
+ ❯ electron/quit-causes.test.mjs (2 tests | 1 failed) 597ms
+   × DQ-2: every internal app.quit call sets a cause immediately before quitting 593ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  electron/quit-causes.test.mjs > DQ-2: every internal app.quit call sets a cause immediately before quitting
+AssertionError: Expected values to be strictly deep-equal:
++ actual - expected
+
++ [
++   'electron/backup-offline-return.mjs:35',
++   'electron/fixtures/browser-closed-shadow.cjs:458',
++   'electron/main.mjs:550',
++   'electron/main.mjs:1000',
++   'electron/main.mjs:3095',
++   'electron/main.mjs:4305',
++   'electron/main.mjs:4835',
++   'electron/main.mjs:5235',
++   'electron/main.mjs:5478',
++   'electron/vendor/electron-updater.cjs:12117',
++   'electron/vendor/electron-updater.cjs:14706',
++   'electron/vendor/electron-updater.cjs:15543'
++ ]
+- []
+
+
+- Expected
++ Received
+
+- []
++ [
++   "electron/backup-offline-return.mjs:35",
++   "electron/fixtures/browser-closed-shadow.cjs:458",
++   "electron/main.mjs:550",
++   "electron/main.mjs:1000",
++   "electron/main.mjs:3095",
++   "electron/main.mjs:4305",
++   "electron/main.mjs:4835",
++   "electron/main.mjs:5235",
++   "electron/main.mjs:5478",
++   "electron/vendor/electron-updater.cjs:12117",
++   "electron/vendor/electron-updater.cjs:14706",
++   "electron/vendor/electron-updater.cjs:15543",
++ ]
+
+ ❯ electron/quit-causes.test.mjs:35:10
+     33| test('DQ-2: every internal app.quit call sets a cause immediately befo…
+     34|   const files = sources('electron');
+     35|   assert.deepEqual(files.flatMap(file => missingCauses(readFileSync(fi…
+       |          ^
+     36| });
+     37| test('DQ-2: scanner rejects unmarked calls in callbacks and ignores co…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  23:47:52
+   Duration  6.43s (transform 4.44s, setup 5.43s, import 283ms, tests 597ms, environment 0ms)
+

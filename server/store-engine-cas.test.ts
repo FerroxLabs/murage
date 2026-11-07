@@ -359,8 +359,9 @@ describe("1.0.15 Astra M8: every selection writer in server/ is inventoried", ()
     expect(count(/\.modelSelection\s*=[^=]|delete [\w.!]+\.modelSelection\b/g)).toEqual({
       "server/bot-management.ts": 1, "server/index.ts": 2, "server/store.ts": 2, "server/thread-follow-model.ts": 1,
     });
-    // Store writes that carry a selection literal: the limit failover apply, its boot re-apply and its restore (index.ts).
-    expect(count(/\.(patchTask|patchBot)\([^;]{0,160}modelSelection/g)).toEqual({ "server/index.ts": 3 });
+    // Store writes that carry a selection literal: the limit failover apply, its boot re-apply and its restore (index.ts), and (U22 G20 #9)
+    // a recovered failover the backup gate refuses, which puts the chat back on the pick it had before the failover.
+    expect(count(/\.(patchTask|patchBot)\([^;]{0,160}modelSelection/g)).toEqual({ "server/index.ts": 4 });
     // The engine-only writers: the pass (casEngineMove), the owner tap (casEngineMove), the stale-model repair and Use the bot's model.
     expect(count(/\.(followBotModel|repairStaleModel|casEngineMove)\(/g)).toEqual({ "server/engine-repick.ts": 1, "server/index.ts": 3 });
   });

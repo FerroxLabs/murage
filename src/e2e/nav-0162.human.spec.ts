@@ -83,6 +83,8 @@ async function scrollShape(page: Page) {
       dialogClips: style.overflowX === "clip" && style.overflowY === "clip",
       dialogFits: element.getBoundingClientRect().bottom <= innerHeight + 1 && element.getBoundingClientRect().top >= -1,
       navScrolls: nav.scrollHeight > nav.clientHeight + 1,
+      // The Bots group stays closed until asked, so the app's own list (title, search, groups and pages) does not grow with the bots.
+      botRows: nav.querySelectorAll("[data-settings-bot]").length,
       navOverflowY: getComputedStyle(nav).overflowY,
       navOverflowX: getComputedStyle(nav).overflowX,
       pageOverflowY: getComputedStyle(page).overflowY,
@@ -130,7 +132,16 @@ for (const [width, height] of [[1440, 900], [1280, 720], [1280, 560]] as const) 
   await expect(nav.getByRole("group", { name: "Reach" }).getByRole("button")).toHaveText(["Connected apps", "Messaging apps", "Devices"]);
   const shape = await scrollShape(page);
   expect(shape).toMatchObject({ dialogClips: true, dialogFits: true, navOverflowY: "auto", pageOverflowY: "auto" });
+  // the ten fixture bots plus the one starter bot every fresh data dir gets (Store.seedIfEmpty, server/index.ts) wait behind a
+  // closed toggle, so with eleven bots the whole list now fits at 1440x900 with no scrolling at all
+  expect(shape.botRows).toBe(0);
   if (width === 1440) expect(shape.navScrolls).toBe(false);
+  const botsToggle = nav.getByRole("button", { name: "11 bots", exact: true });
+  await expect(botsToggle).toHaveAttribute("aria-expanded", "false");
+  await botsToggle.click();
+  await expect(nav.locator("[data-settings-bot]")).toHaveCount(11);
+  await botsToggle.click();
+  await expect(nav.locator("[data-settings-bot]")).toHaveCount(0);
   // no label is cut off: every section name and every door label fits
   const clipped = await page.evaluate(() => [...document.querySelectorAll('[data-settings-section] span, [data-door] > span:nth-child(2)')]
     .filter((el) => (el as HTMLElement).scrollWidth > (el as HTMLElement).clientWidth + 1).map((el) => el.textContent));
