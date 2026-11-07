@@ -8,13 +8,21 @@
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
+import { BACKGROUND_PAUSE_MS } from "./memory/upgrade-background.ts";
 import { closeDatabase, database } from "./database.ts";
 import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+/** The loop that runs the fill gives the event loop the turn the product gives it. upgrade-background.ts (tick, the end of startBackgroundUpgradeWork) runs one slice
+ * (the "search-index" job is stepMessageSearchBackfill) and sets the next tick after max(BACKGROUND_PAUSE_MS, the slice's own time) with setTimeout: the pause is at
+ * least as long as the slice. The merge worker (automerge is off, search-merge-runner.ts) merges the segments each step commits during those turns, kicked by the
+ * step itself (kickSearchMerge) after its default delay. A loop that never yields starves it, the level-0 segments pile up to crisismerge (16), and one step's
+ * COMMIT pays for the merge: a steady ~100 ms step at cursor 138,000 here, which the real loop does not see. The yield below is no longer than the product's. */
+const productPause = (stepMs: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(BACKGROUND_PAUSE_MS, Math.round(stepMs))));
+
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
-it("each step of the search fill over a 200,000-row history stays short, crosses a long run of rows with nothing to index, and indexes every searchable row", { tags: ["perf-budget"], timeout: 120_000 }, () => {
+it("each step of the search fill over a 200,000-row history stays short, crosses a long run of rows with nothing to index, and indexes every searchable row", { tags: ["perf-budget"], timeout: 120_000 }, async () => {
   const db = database();
   db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   // rows 1..200000 in one thread: text rows, an activity row every 7th, and rows 100001..110000 frames with nothing to index
@@ -29,9 +37,11 @@ it("each step of the search fill over a 200,000-row history stays short, crosses
   for (;;) {
     const began = performance.now();
     const step = stepMessageSearchBackfill(db);
-    worst = Math.max(worst, performance.now() - began);
+    const took = performance.now() - began;
+    worst = Math.max(worst, took);
     steps++;
     if (!step.more || worst > 250) break; // the old read would take minutes over this history: stop at the first long step
+    await productPause(took);
   }
   console.log("search fill over 200,000 rows", { steps, worstStepMs: Math.round(worst) });
   expect(worst).toBeLessThan(100);
@@ -45,7 +55,7 @@ it("each step of the search fill over a 200,000-row history stays short, crosses
   expect(Number(state.cursor)).toBe(200000);
 });
 
-it("a step counts its indexing and its commit in its time: long rows (a pasted document each) never hold the loop past the bound", () => {
+it("a step counts its indexing and its commit in its time: long rows (a pasted document each) never hold the loop past the bound", async () => {
   const db = database();
   db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   // 400 rows of ~200,000 characters each (80 MB of text, every trigram distinct enough to cost its indexing), with a short row between some
@@ -60,6 +70,7 @@ it("a step counts its indexing and its commit in its time: long rows (a pasted d
     const step = stepMessageSearchBackfill(db);
     times.push(performance.now() - began);
     if (!step.more || times.at(-1)! > 1_000) break; // the old step read and indexed up to 100 such rows at once: stop at the first long one
+    await productPause(times.at(-1)!);
   }
   const sorted = [...times].sort((a, b) => a - b);
   console.log("search fill over 400 rows of 200,000 characters", { steps: times.length, worstStepMs: Math.round(sorted.at(-1)!), p50Ms: Math.round(sorted[Math.floor(sorted.length / 2)]!) });

@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
 import { openSidebarPlace } from "./sidebar-nav";
+import { openQuickForm } from "./routine-grid";
 
 interface VerificationServer { info: { url: string; dataDir: string }; close(): Promise<void> }
 type LaunchVerificationServer = (environment: NodeJS.ProcessEnv, signal?: AbortSignal, options?: { instrumentationSource?: string }) => Promise<VerificationServer>;
@@ -69,9 +70,9 @@ test("the quick form repeats, and saving says what it saved and goes there", asy
 
   // The quick form, with Repeat on it — not two clicks away under "More
   // options".
-  await page.keyboard.press("c");
-  const quick = page.getByRole("dialog", { name: "Quick create" });
-  await expect(quick).toBeVisible();
+  // C now opens New routine from a sentence (UX L5B); an empty slot opens
+  // the quick form.
+  const quick = await openQuickForm(page);
   await expect(quick.getByText("New routine", { exact: true })).toBeVisible();
   const repeat = quick.getByRole("combobox", { name: "Repeat", exact: true });
   await expect(repeat).toBeVisible();

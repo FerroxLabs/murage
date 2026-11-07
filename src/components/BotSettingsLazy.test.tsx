@@ -29,7 +29,7 @@ describe("bot settings tabs mount lazily", () => {
     expect(html).toContain("VOICE-BODY");
   });
   it("the dialog still routes intents into the section prop that mounts the tab", () => {
-    const dialog = read("./BotSettingsDialog.tsx");
+    const dialog = read("./BotSettingsPane.tsx");
     expect(dialog).toContain("setSection(state.botSettingsIntent.section)");
     expect(dialog).toContain("section={section}");
     expect(read("./BotSkillsPanel.tsx")).toContain("useState(Boolean(state.botSettingsIntent?.addSkill))");
