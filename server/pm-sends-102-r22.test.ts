@@ -25,6 +25,7 @@ import {
 import { dispatchHandoffRequest, drainDelegations, drainDelegationsRaw, runOf, startLikeIndex, writePrompt } from "./testing/handoff-turn.ts";
 import { dispatchHandoff } from "./handoff-dispatch.ts";
 import { APP_SCHEMA_102_ADDITIONS, DOWNGRADE_WORK_PENDING, downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
+import { discardInboxProjection } from "./inbox.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { delegationTurnKey, importLegacyDelegations, legacyImportSkipped, migrateOwnerHandoffRecords } from "./pending-delegations-schema.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
@@ -369,9 +370,9 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     initializeImageOperations(db); initializeImageLibrary(db);
     return { s, ids };
   }
-  const run = (to: 6 = 6) => downgradeInstallationMemorySchema(DATA_DIR, to);
+  const run = (to: 6 = 6) => downgradeInstallationMemorySchema(DATA_DIR, to, { testOnlyBefore102: true });
 
-  it.skipIf(!haveV101)("the downgraded file is accepted by the real 1.0.1 inspector; any one 1.0.2 object left behind is rejected", async () => {
+  it.skipIf(!haveV101)("without the inbox projection the stepped file is accepted by the real 1.0.1 inspector; any one 1.0.2 object left behind is rejected", async () => {
     await populated();
     closeDatabase(); await stopWalMaintenance(); /* closeDatabase stops the checkpointer without waiting (wal3); a second connection must wait for it */
     const result = run();
@@ -380,7 +381,12 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     const file = join(DATA_DIR, "messages.db");
     const open = () => new DatabaseSync(file);
     const accepted = open();
-    try { expect(() => inspectInstallationDatabase(accepted)).not.toThrow(); } finally { accepted.close(); }
+    try {
+      // the inbox projection stays in a stepped file, 1.0.2's own step included; every other 1.0.2 object is gone
+      expect(() => inspectInstallationDatabase(accepted)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
+      discardInboxProjection(accepted);
+      expect(() => inspectInstallationDatabase(accepted)).not.toThrow();
+    } finally { accepted.close(); }
     // each kind of leftover is rejected: a table, an index, a trigger (and the same object under a 1.0.1 name with another shape)
     for (const sql of [
       "CREATE TABLE owner_deleted_threads (thread_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL)",

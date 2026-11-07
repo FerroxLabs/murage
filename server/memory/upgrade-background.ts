@@ -7,6 +7,7 @@
 // writers never work the lineage tables together), each in slices of a few tens of milliseconds with the event loop handed back between them and the
 // writer gate (awaitWriterGate) honoured before each. Every job keeps its place in the file, so a stopped server carries on where it was.
 // A job's feature stays held (replay withheld, the card index read the long way, pending browser notes left as they were) until the job is done.
+import { threadSummaryPending, stepThreadSummaryBackfill } from "../thread-summary.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { readIntegrityPass, integrityHoldOf, integrityRunning, INTEGRITY_TOTAL, type IntegrityPassRow } from "./integrity-state.ts";
 import { memoryHeldCode } from "./memory-gate.ts";
@@ -111,7 +112,7 @@ export function backgroundJobsPending(db: DatabaseSync): BackgroundJob[] {
   // (a certificate that is ready while the marker still walks the revokes its seed opened keeps the job, so the strip says so)
   try { const cert = lineageCertProgress(db); if (cert.phase !== "absent" && (!cert.ready || upgradeMarkerJobs(db) > 0)) jobs.push("writetime"); } catch { /* absent */ }
   // (the v6 -> v7 root-set conversion, "storage", is off from v10: no root set is written again, STORAGE-AUDIT 2)
-  try { if (messageSearchFillPending(db)) jobs.push("search-index"); } catch { /* absent */ }
+  try { if (messageSearchFillPending(db) || threadSummaryPending(db)) jobs.push("search-index"); } catch { /* absent */ }
   return jobs;
 }
 
@@ -267,8 +268,8 @@ function runners(db: DatabaseSync, hooks: BackgroundHooks): Map<BackgroundJob, J
     return { more: step.more, done: step.done, total: step.total, counted: step.rowsWalked };
   } });
   out.set("search-index", { id: "search-index", slice() {
-    const step = stepMessageSearchBackfill(db);
-    return { more: step.more, done: step.done, total: step.total };
+    const step = threadSummaryPending(db) ? stepThreadSummaryBackfill(db) : stepMessageSearchBackfill(db);
+    return { more: step.more || messageSearchFillPending(db) || threadSummaryPending(db), done: step.done, total: step.total };
   } });
   return out;
 }

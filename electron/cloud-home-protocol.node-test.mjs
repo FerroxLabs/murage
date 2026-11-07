@@ -124,6 +124,28 @@ function harness({ home = { homeId: "h-abc", origin: ORIGIN, getAccessToken: () 
   return { handler, calls };
 }
 
+test("a step-up main refuses reaches the page as the refusal, not as the home's step-up required; a cancel stays the home's 403", async () => {
+  const run = async (onStepUp) => {
+    const posts = [];
+    const handler = createCloudHomeHandler({
+      homeId: "h-abc",
+      home: () => ({ homeId: "h-abc", origin: ORIGIN, getAccessToken: () => "TOK" }),
+      netFetch: async (url, init) => { posts.push(url); return new Response(JSON.stringify({ error: "step-up required" }), { status: 403, headers: { "content-type": "application/json" } }); },
+      readAsset: async () => null,
+      onStepUp,
+    });
+    const response = await handler(req("murage-home://h-abc/api/cli-test", { method: "POST", headers: { "content-type": "application/json" }, body: new Response("{}").body }));
+    return { response, posts };
+  };
+  const failing = (code, message) => async () => { throw Object.assign(new Error(message), { code }); };
+  const refused = await run(failing("step-up-refused", "This can't be confirmed, so nothing was run."));
+  assert.equal(refused.response.status, 403);
+  assert.deepEqual(await refused.response.json(), { error: "This can't be confirmed, so nothing was run.", code: "step-up-refused" });
+  assert.equal(refused.posts.length, 1, "nothing is sent after the refusal");
+  const cancelled = await run(failing("step-up-cancelled", "You cancelled"));
+  assert.deepEqual(await cancelled.response.json(), { error: "step-up required" });
+});
+
 test("handler serves static files from dist and never calls the home for them", async () => {
   const { handler, calls } = harness();
   const r = await handler(req("murage-home://h-abc/assets/a.js"));

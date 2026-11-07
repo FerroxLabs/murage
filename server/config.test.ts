@@ -1607,3 +1607,33 @@ describe("Flux Memory switches in config", () => {
     expect(() => saveConfig({ flux: { memory: { bogus: true } } } as never)).toThrow();
   });
 });
+
+describe("automations pause is stored with the config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+
+  it("writes automationsPaused to config.json so a reload keeps it (a reload otherwise resumes automations)", () => {
+    saveConfig({ automationsPaused: true });
+    expect(JSON.parse(readFileSync(file, "utf8")).automationsPaused).toBe(true);
+    expect(loadConfig().automationsPaused).toBe(true);
+    saveConfig({ automationsPaused: false });
+    expect(loadConfig().automationsPaused).toBe(false);
+  });
+});
+
+describe("engineDiscovery is stored with the config", () => {
+  const file = join(DATA_DIR, "config.json");
+  beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+  afterEach(() => { rmSync(file, { force: true }); });
+
+  it("writes engineDiscovery to config.json so a reload keeps it, and an unset patch preserves it", () => {
+    saveConfig({ engineDiscovery: "explicit" });
+    expect(JSON.parse(readFileSync(file, "utf8")).engineDiscovery).toBe("explicit");
+    expect(loadConfig().engineDiscovery).toBe("explicit");
+    saveConfig({ automationsPaused: true });
+    expect(loadConfig().engineDiscovery).toBe("explicit");
+    saveConfig({ engineDiscovery: "automatic" });
+    expect(loadConfig().engineDiscovery).toBe("automatic");
+  });
+});

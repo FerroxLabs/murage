@@ -151,7 +151,22 @@ it("test 36: the bot read writes nothing (deny marks, revoke jobs, deny generati
 
 it("rule 23: the anchor seek is a leaf module (no import cycle with the door), and bot-read.ts re-exports it", () => {
   const leaf = readFileSync(join(here, "..", "murage-anchor.ts"), "utf8");
-  expect(leaf.match(/^import .* from "(.*)";$/gm)?.map(line => line.replace(/^.* from "(.*)";$/, "$1")).sort()).toEqual(["./murage-voice.ts", "node:sqlite"]);
+  // U4 S3: the leaf decodes rows through the one checked decoder (transcript-seq.ts rowToMessage).
+  expect(leaf.match(/^import .* from "(.*)";$/gm)?.map(line => line.replace(/^.* from "(.*)";$/, "$1")).sort()).toEqual(["./murage-voice.ts", "./transcript-seq.ts", "node:sqlite"]);
+  // No import cycle: nothing the leaf reaches at run time, at any depth, imports the door or bot-read.ts
+  // (`import type` lines are erased before run time, so they cannot make a cycle).
+  const serverDir = join(here, "..");
+  const from = new Map<string, string>([[join(serverDir, "murage-anchor.ts"), ""]]);
+  const queue = [join(serverDir, "murage-anchor.ts")];
+  while (queue.length) {
+    const file = queue.shift()!;
+    for (const [, spec] of readFileSync(file, "utf8").matchAll(/^(?:import|export) (?!type )[^;]*? from "(\.{1,2}\/[^"]+\.ts)";$/gm)) {
+      const next = join(dirname(file), spec!);
+      if (!from.has(next)) { from.set(next, file); queue.push(next); }
+    }
+  }
+  const chain = (file: string): string[] => (file ? [...chain(from.get(file)!), file.slice(serverDir.length + 1)] : []);
+  expect([join(here, "deny-read.ts"), join(serverDir, "bot-read.ts")].filter(file => from.has(file)).map(file => chain(file).join(" -> "))).toEqual([]);
   expect(readFileSync(join(here, "deny-read.ts"), "utf8")).toMatch(/from "\.\.\/murage-anchor\.ts"/);
   expect(readFileSync(join(here, "deny-read.ts"), "utf8")).not.toMatch(/from "\.\.\/bot-read\.ts"/);
   expect(readFileSync(join(here, "..", "bot-read.ts"), "utf8")).toMatch(/export \{ anyMurageAnchor, murageAnchor \} from "\.\/murage-anchor\.ts"/);

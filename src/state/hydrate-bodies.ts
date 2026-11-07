@@ -38,14 +38,21 @@ export function routinesReply<R, U>(body: unknown): { routines: R[]; runs: U[] }
   return { routines: list<R>(path, reply, "routines"), runs: list<U>(path, reply, "runs") };
 }
 
-export function instancesReply<I>(body: unknown): { instances: I[]; shellEnvironment: unknown; engineNote: string | undefined } {
+export function instancesReply<I>(body: unknown): { instances: I[]; shellEnvironment: unknown; engineNote: string | undefined; localOnlyEngines: string[] } {
   const path = "/api/instances";
   const reply = objectBody(path, body);
   return {
     instances: list<I>(path, reply, "instances"),
     shellEnvironment: reply.shellEnvironment,
     engineNote: typeof reply.engineNote === "string" ? reply.engineNote : undefined,
+    localOnlyEngines: localOnlyEngineNames(reply.localOnlyEngines),
   };
+}
+
+/** The engine names a Cloud home says run only on the person's computer. Anything that is
+ *  not a list of names reads as none, so an older home or the desktop shows no line. */
+export function localOnlyEngineNames(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((name): name is string => typeof name === "string" && name.trim() !== "") : [];
 }
 
 /** Every /api/config answer, desktop or scoped, names the surface and carries the connected apps block the Settings pages read;

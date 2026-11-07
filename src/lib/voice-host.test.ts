@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { openingOf, plainFailure } from "./voice-host";
+import { CALL_BUDGET_STOP, isBudgetFailure, plainFailure } from "./voice-host";
 
 describe("an engine failure, said on a call", () => {
   it.each([
@@ -16,11 +16,19 @@ describe("an engine failure, said on a call", () => {
   });
 });
 
-describe("the opening of a long answer, when it cannot be told briefly", () => {
-  it("reads the first paragraph of prose and points at the chat", () => {
-    const answer = "It is 1:34pm in Bangkok. Nothing else is booked after 2:00.\n\n**Still on the day**\n\n- All day: Home\n- 1:30 buffer";
-    expect(openingOf(answer)).toBe("It is 1:34pm in Bangkok. Nothing else is booked after 2:00. The rest is in the chat.");
-    expect(openingOf("## Heading\n\n- one\n- two\n\nPlain words here.")).toBe("Plain words here. The rest is in the chat.");
+describe("server-owned brief selection", () => {
+  it("submits the reply identity without a client-selected raw paragraph", async () => {
+    const { vi } = await import("vitest");
+    const { hostTurn } = await import("./voice-host");
+    const fetchMock = vi.fn(async () => new Response('data: {"type":"audio","callSessionId":"call","threadId":"thread","replyId":"selected"}\n\n'));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const events: unknown[] = [];
+      await hostTurn("bot", { text: "", brief: true, replyId: "engine", threadId: "thread", history: [] }, event => events.push(event));
+      const body = JSON.parse((fetchMock.mock.calls as unknown as Array<[string, { body: string }]>)[0][1].body);
+      expect(body).toEqual({ text: "", brief: true, replyId: "engine", threadId: "thread", history: [] });
+      expect(events).toEqual([{ type: "audio", callSessionId: "call", threadId: "thread", replyId: "selected" }]);
+    } finally { vi.unstubAllGlobals(); }
   });
 });
 
@@ -42,4 +50,74 @@ describe("the host request body", () => {
       vi.unstubAllGlobals();
     }
   });
+});
+
+describe("a turn that failed for the key's budget ends the call (VOICE-402-STOP)", () => {
+  it.each([
+    "error: API error (status 402 Payment Required): Key budget exceeded",
+    "Flux returned 402: insufficient_balance",
+    "You exceeded your current quota, please check your plan and billing details.",
+    "This key has reached its budget.",
+  ])("does not infer from prose: %s", (details) => expect(isBudgetFailure(details)).toBe(false));
+
+  it.each([
+    "API error (status 429 Too Many Requests): slow down",
+    "Grok CLI is not signed in: run `grok login` in a terminal",
+    "error: The model took too long.",
+  ])("not %s", (details) => expect(isBudgetFailure(details)).toBe(false));
+
+  it("accepts only the typed Flux signal", () => {
+    expect(isBudgetFailure({ provider: "flux-router", fluxBudget: true })).toBe(true);
+    expect(isBudgetFailure({ kind: "payment", httpStatus: 402 })).toBe(false);
+  });
+
+  it("says one plain line", () => {
+    expect(CALL_BUDGET_STOP).not.toMatch(/—|\bsafe\b|\bfree\b/i);
+  });
+});
+
+it("a terminal budget event cancels the host stream before any following hand-down", async () => {
+  const { vi } = await import("vitest");
+  const { hostTurn } = await import("./voice-host");
+  const cancel = vi.fn();
+  vi.stubGlobal("fetch", async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('data: {"type":"error","reason":"budget","message":"spent"}\n\ndata: {"type":"hand_down","request":"work"}\n\n')); }, cancel,
+  })));
+  try {
+    const events: unknown[] = [];
+    await hostTurn("bot", { text: "hi", history: [] }, e => events.push(e));
+    expect(events).toEqual([{ type: "error", reason: "budget", message: "spent" }]);
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it.each([
+  [{ error: { code: "budget_exceeded", message: "spent" } }, "budget"],
+  [{ error: "budget_exceeded", message: "spent" }, "budget"],
+  [{ error: { code: "premium_locked", message: "plan" } }, "premium"],
+  [{ error: "premium_locked", message: "plan" }, "premium"],
+])("classifies an HTTP 402 before opening a host stream: %j", async (body, reason) => {
+  const { vi } = await import("vitest");
+  const { hostTurn } = await import("./voice-host");
+  vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { status: 402 }));
+  try {
+    const events: unknown[] = [];
+    await hostTurn("bot", { text: "hi", history: [] }, e => events.push(e));
+    expect(events).toEqual([expect.objectContaining({ type: "error", reason, message: expect.any(String) })]);
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it("retires a terminal stream even when its budget callback throws", async () => {
+  const { vi } = await import("vitest");
+  const { hostTurn } = await import("./voice-host");
+  const cancel = vi.fn();
+  vi.stubGlobal("fetch", async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode('data: {"type":"error","reason":"budget","message":"spent"}\n\ndata: {"type":"hand_down","request":"work"}\n\n')); }, cancel,
+  })));
+  const callback = vi.fn(() => { throw new Error("UI failed"); });
+  try {
+    await hostTurn("bot", { text: "hi", history: [] }, callback);
+    expect(callback).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllGlobals(); }
 });

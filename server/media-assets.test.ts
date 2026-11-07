@@ -1,3 +1,4 @@
+import { structuralPng as png, pngChunk, be32 } from "./testing/workspace-image-fixtures.ts";
 // F5-T1 (media design M1): scoped MediaAsset resolver and the authorized byte
 // route. Every type below comes from validated bytes, never from a suffix.
 import { createHash } from "node:crypto";
@@ -7,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { initializeArtifacts, registerArtifact, type ArtifactScope } from "./artifacts.ts";
@@ -26,15 +27,41 @@ import {
 } from "../shared/media-assets.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+// Controlled filesystem seams model an otherwise indistinguishable large-file rewrite.
+const snapshotFault = vi.hoisted(() => ({ path: "", stat: undefined as import("node:fs").Stats | undefined, read: "", constructor: false, afterRead: undefined as undefined | (() => Promise<void>) }));
+vi.mock("node:stream", async importOriginal => {
+  const streams = await importOriginal<typeof import("node:stream")>();
+  return { ...streams, Readable: class extends streams.Readable {
+    constructor(options?: import("node:stream").ReadableOptions) { if (snapshotFault.constructor) throw new Error("injected stream constructor failure"); super(options); }
+  } };
+});
+vi.mock("node:fs", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, lstatSync: (...args: Parameters<typeof fs.lstatSync>) => String(args[0]) === snapshotFault.path && snapshotFault.stat ? snapshotFault.stat : fs.lstatSync(...args) };
+});
+vi.mock("node:fs/promises", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...fs, open: async (...args: Parameters<typeof fs.open>) => {
+    const handle = await fs.open(...args);
+    if (String(args[0]) !== snapshotFault.path) return handle;
+    const stat = handle.stat.bind(handle), read = handle.read.bind(handle);
+    handle.stat = ((...values: Parameters<typeof handle.stat>) => snapshotFault.stat ? Promise.resolve(snapshotFault.stat) : stat(...values)) as typeof handle.stat;
+    handle.read = ((...values: any[]) => {
+      if (snapshotFault.read === "throw") return Promise.reject(new Error("injected read failure"));
+      if (snapshotFault.read === "short") return Promise.resolve({ bytesRead: 0, buffer: values[0] });
+      return (async () => { const result = await (read as (...args: any[]) => Promise<unknown>)(...values); if (values[2] > 2_000_000 && snapshotFault.afterRead) { const hook = snapshotFault.afterRead; snapshotFault.afterRead = undefined; await hook(); } return result; })();
+    }) as typeof handle.read;
+    return handle;
+  } };
+});
+afterEach(() => { snapshotFault.path = ""; snapshotFault.stat = undefined; snapshotFault.read = ""; snapshotFault.constructor = false; snapshotFault.afterRead = undefined; });
+
 // ── byte fixtures ──────────────────────────────────────────────────────────
 const u32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(value); return b; };
 const u16 = (value: number) => { const b = Buffer.alloc(2); b.writeUInt16BE(value); return b; };
 const le16 = (value: number) => { const b = Buffer.alloc(2); b.writeUInt16LE(value); return b; };
 const le32 = (value: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(value); return b; };
-const png = (width = 3, height = 2, tail = 64) => Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), u32(13), Buffer.from("IHDR"), u32(width), u32(height), Buffer.from([8, 6, 0, 0, 0]), u32(0),
-  Buffer.alloc(tail, 0x11), Buffer.from("IEND"),
-]);
+
 const jpeg = (width = 5, height = 4) => Buffer.concat([
   Buffer.from([0xff, 0xd8]),
   Buffer.from([0xff, 0xe1]), u16(2 + 6), Buffer.from("Exif\0\0"),
@@ -638,4 +665,157 @@ describe("byte route through sendDelegated", () => {
     for (const response of settled) await (response.status === 200 ? response.body!.cancel() : response.text());
     await expect.poll(mediaActiveStreamCount, { timeout: 5000 }).toBe(0);
   });
+});
+
+// D-LOCAL-IMAGE B0: admission and issued metadata are workspace-only.
+describe("local workspace image admission", () => {
+  async function imageFixture(bytes = png()) {
+    const f = fixture(), root = join(f.workspaces, f.botId), path = join(root, "picture.png");
+    const fs = await import("node:fs"); writeFileSync(path, bytes);
+    const ref = { source: "workspace", scope: { botId: f.botId, threadId: f.threadId }, relativePath: "picture.png", revision: mediaWorkspaceRevision(fs.realpathSync.native(root), "picture.png", fs.lstatSync(path)) };
+    return { f, root, path, ref };
+  }
+  it("S2/T3 refuses an IHDR-only stopped writer before issuing a capability", async () => {
+    const { f, ref } = await imageFixture(png().subarray(0, 33));
+    const result = (await resolve(f, ref)).body as MediaResolveResponse;
+    expect(result.asset.availability).toBe("unsupported"); expect(result.url).toBeUndefined();
+  });
+  it("R31-BOUND returns full decoded metadata and enforces the inclusive hard cap", async () => {
+    for (const [width, expected] of [[4_000_000, "ready"], [4_000_001, "ready"], [24_000_000, "ready"], [24_000_001, "unsupported"]] as const) {
+      const { f, ref } = await imageFixture(png(width, 1));
+      const result = (await resolve(f, ref)).body as MediaResolveResponse;
+      expect(result.asset.availability).toBe(expected);
+      if (expected === "ready") expect(result.asset).toMatchObject({ width, height: 1, frameCount: 1, decodedBytes: width * 4 });
+      else expect(result.url).toBeUndefined();
+    }
+  });
+  it("S1 refuses the data root, attachments child, ancestor and failed canonicalization", async () => {
+    const { f, ref } = await imageFixture();
+    for (const root of [f.deps.dataDir, f.attachments, join(f.deps.dataDir, "..")]) {
+      const deps = { ...f.deps, artifactScopes: () => [{ botId: f.botId, botName: "b", threadId: f.threadId, workspaceRoot: root }] };
+      expect((await mediaAssetsRoute(request("POST", MEDIA_ROUTES.resolve, { body: { ref } }), deps)).body).toMatchObject({ asset: { availability: "denied" } });
+    }
+    const deps = { ...f.deps, dataDir: join(f.deps.dataDir, "absent") };
+    expect((await mediaAssetsRoute(request("POST", MEDIA_ROUTES.resolve, { body: { ref } }), deps)).body).toMatchObject({ asset: { availability: "denied" } });
+    expect((await resolve(f, ref)).body).toMatchObject({ asset: { availability: "ready" } });
+  });
+  it("S3 snapshots before sending and releases range refusal and disconnect slots", async () => {
+    const original = png(3, 2, 800_000), { f, path, ref } = await imageFixture(original);
+    const first = ready(await resolve(f, ref));
+    for (let i = 0; i < 12; i++) { expect((await fetchBytes(f, first.url, { headers: { range: "bytes=99999999-" } })).status).toBe(416); expect(mediaActiveStreamCount()).toBe(0); }
+    const result = await fetchBytes(f, first.url);
+    writeFileSync(path, png(3, 2, 900_000));
+    expect(await drain(result)).toEqual(original);
+    await new Promise(resolve => setImmediate(resolve)); expect(mediaActiveStreamCount()).toBe(0);
+  });
+  it("R2-G1 releases every reserved slot after undefined or thrown snapshot reads", async () => {
+    const { f, path, ref } = await imageFixture();
+    const first = ready(await resolve(f, ref)); snapshotFault.path = path;
+    for (const mode of ["throw", "short"]) {
+      snapshotFault.read = mode;
+      for (let i = 0; i < 10; i++) { expect((await fetchBytes(f, first.url)).status).toBe(409); expect(mediaActiveStreamCount()).toBe(0); }
+    }
+    snapshotFault.read = "";
+    expect(await drain(await fetchBytes(f, first.url))).toEqual(png());
+    await new Promise(resolve => setImmediate(resolve)); expect(mediaActiveStreamCount()).toBe(0);
+  });
+  it("R2-G1 bounds eight held workspace snapshots and releases constructor and disconnect failures", async () => {
+    const { f, ref } = await imageFixture(); const first = ready(await resolve(f, ref));
+    snapshotFault.constructor = true;
+    expect((await fetchBytes(f, first.url)).status).toBe(409); expect(mediaActiveStreamCount()).toBe(0);
+    snapshotFault.constructor = false;
+    const held = await Promise.all(Array.from({ length: 8 }, () => fetchBytes(f, first.url)));
+    expect(held.every(result => result.status === 200)).toBe(true); expect(mediaActiveStreamCount()).toBe(8);
+    expect((await fetchBytes(f, first.url)).status).toBe(503);
+    expect((await fetchBytes(f, first.url, { method: "HEAD" })).status).toBe(200); expect(mediaActiveStreamCount()).toBe(8);
+    for (const result of held) { result.stream!.destroy(); result.stream!.destroy(); }
+    await new Promise(resolve => setImmediate(resolve)); expect(mediaActiveStreamCount()).toBe(0);
+    expect(await drain(await fetchBytes(f, first.url))).toEqual(png());
+  });
+  it("R32-ID/S3 compares immutable tuples across an indistinguishable large-file rewrite", async () => {
+    const a = png(1, 1, 2_100_000), b = png(2, 1, 2_100_000);
+    // Equal encoded lengths and frozen stat model the explicitly retained revision residual.
+    const size = Math.max(a.length, b.length);
+    const pad = (bytes: Buffer) => Buffer.concat([bytes, Buffer.alloc(size - bytes.length)]);
+    const { f, path, ref } = await imageFixture(pad(a));
+    const fs = await import("node:fs"); snapshotFault.stat = fs.lstatSync(path); snapshotFault.path = path;
+    const first = ready(await resolve(f, ref)); writeFileSync(path, pad(b));
+    const second = ready(await resolve(f, ref));
+    expect(first.asset.revision).toBe(second.asset.revision); expect(first.asset.id).not.toBe(second.asset.id);
+    for (let i = 0; i < 10; i++) { const refused = await fetchBytes(f, first.url); expect(refused.status).toBe(409); expect(refused.stream).toBeUndefined(); expect(mediaActiveStreamCount()).toBe(0); }
+    expect(await drain(await fetchBytes(f, second.url))).toEqual(pad(b));
+    writeFileSync(path, pad(a)); const recreated = ready(await resolve(f, ref)); expect(recreated.asset.id).toBe(first.asset.id);
+    writeFileSync(path, pad(b)); expect((await fetchBytes(f, recreated.url)).status).toBe(409);
+  });
+  it.each([false, true])("R32-ID concurrent completion order A-first=%s and a paused byte snapshot keep their own tuples", async (aFirst) => {
+    const a = png(1, 1, 2_100_000), b = png(2, 1, 2_100_000), size = Math.max(a.length, b.length);
+    const pad = (value: Buffer) => Buffer.concat([value, Buffer.alloc(size - value.length)]);
+    const { f, path, ref } = await imageFixture(pad(a));
+    const fs = await import("node:fs"); snapshotFault.stat = fs.lstatSync(path); snapshotFault.path = path;
+    let release!: () => void, reached!: () => void;
+    const paused = new Promise<void>(r => { reached = r; });
+    snapshotFault.afterRead = async () => { reached(); await new Promise<void>(r => { release = r; }); };
+    const pendingA = resolve(f, ref); await paused; writeFileSync(path, pad(b));
+    if (aFirst) release();
+    const second = ready(await resolve(f, ref)); if (!aFirst) release();
+    const first = ready(await pendingA);
+    expect(first.asset.revision).toBe(second.asset.revision); expect(first.asset.id).not.toBe(second.asset.id);
+    expect(first.asset.decodedBytes).toBe(4); expect(second.asset.decodedBytes).toBe(8);
+    expect((await fetchBytes(f, first.url)).status).toBe(409);
+    expect(await drain(await fetchBytes(f, second.url))).toEqual(pad(b));
+    writeFileSync(path, pad(a));
+    let releaseBytes!: () => void, bytesRead!: () => void;
+    const snapshot = new Promise<void>(r => { bytesRead = r; });
+    snapshotFault.afterRead = async () => { bytesRead(); await new Promise<void>(r => { releaseBytes = r; }); };
+    const pendingBytes = fetchBytes(f, first.url); await snapshot;
+    writeFileSync(path, pad(b)); const again = ready(await resolve(f, ref)); expect(again.asset.id).toBe(second.asset.id);
+    releaseBytes(); expect(await drain(await pendingBytes)).toEqual(pad(a)); expect(mediaActiveStreamCount()).toBe(0);
+  });
+  it("R32-ID frame-count changes at fixed dimensions bind distinct immutable identities", async () => {
+    const base = png(1, 1), control = (seq: number) => pngChunk('fcTL', Buffer.concat([be32(seq), be32(1), be32(1), Buffer.alloc(14)]));
+    const animated = (frames: number) => Buffer.concat([base.subarray(0, 33), pngChunk('tEXt', Buffer.alloc(2_100_000)), pngChunk('acTL', Buffer.concat([be32(frames), be32(0)])), control(0), pngChunk('IDAT', Buffer.from([1])), ...(frames === 2 ? [control(1), pngChunk('fdAT', Buffer.concat([be32(2), Buffer.from([1])]))] : []), pngChunk('IEND', Buffer.alloc(0))]);
+    const a = animated(1), b = animated(2), pad = (value: Buffer) => Buffer.concat([value, Buffer.alloc(b.length - value.length)]);
+    const { f, path, ref } = await imageFixture(pad(a)); const fs = await import('node:fs'); snapshotFault.stat = fs.lstatSync(path); snapshotFault.path = path;
+    const first = ready(await resolve(f, ref)); writeFileSync(path, b); const second = ready(await resolve(f, ref));
+    expect(first.asset.revision).toBe(second.asset.revision); expect(first.asset.id).not.toBe(second.asset.id);
+    expect(first.asset.frameCount).toBe(1); expect(second.asset.frameCount).toBe(2);
+    expect((await fetchBytes(f, first.url)).status).toBe(409); expect(await drain(await fetchBytes(f, second.url))).toEqual(b); expect(mediaActiveStreamCount()).toBe(0);
+  });
+  it("R32-ID eviction never falls back to a different tuple and recreation preserves identity", async () => {
+    const { f, root, path, ref } = await imageFixture(png(1, 1)); const fs = await import('node:fs');
+    const first = ready(await resolve(f, ref)); writeFileSync(path, png(2, 1));
+    const secondRef = { ...ref, revision: mediaWorkspaceRevision(fs.realpathSync.native(root), 'picture.png', fs.lstatSync(path)) };
+    const second = ready(await resolve(f, secondRef));
+    for (let i = 0; i < 2047; i++) {
+      const relativePath = `filler-${i}.wav`, file = join(root, relativePath); writeFileSync(file, wav());
+      ready(await resolve(f, { ...ref, relativePath, revision: mediaWorkspaceRevision(fs.realpathSync.native(root), relativePath, fs.lstatSync(file)) }));
+    }
+    expect((await fetchBytes(f, first.url)).status).toBe(404);
+    const recreatedB = ready(await resolve(f, secondRef)); expect(recreatedB.asset.id).toBe(second.asset.id);
+    expect((await fetchBytes(f, first.url)).status).toBe(404); expect(await drain(await fetchBytes(f, recreatedB.url))).toEqual(png(2, 1)); expect(mediaActiveStreamCount()).toBe(0);
+    writeFileSync(path, png(1, 1)); const recreatedA = ready(await resolve(f, { ...ref, revision: mediaWorkspaceRevision(fs.realpathSync.native(root), 'picture.png', fs.lstatSync(path)) }));
+    expect(recreatedA.asset.id).toBe(first.asset.id); writeFileSync(path, png(2, 1)); expect((await fetchBytes(f, recreatedA.url)).status).toBe(409); expect(mediaActiveStreamCount()).toBe(0);
+  });
+  it("R32-ID binds identity to validated dimensions and keeps issued metadata immutable", async () => {
+    const { f, path, ref } = await imageFixture(png(3, 2));
+    const first = ready(await resolve(f, ref));
+    first.asset.width = 9000; first.asset.decodedBytes = 1;
+    expect((await drain(await fetchBytes(f, first.url))).length).toBeGreaterThan(0);
+    const fs = await import("node:fs"); writeFileSync(path, png(4, 2));
+    const second = ready(await resolve(f, { ...ref, revision: mediaWorkspaceRevision(fs.realpathSync.native(join(f.workspaces, f.botId)), "picture.png", fs.lstatSync(path)) }));
+    expect(second.asset.id).not.toBe(first.asset.id);
+    expect((await fetchBytes(f, first.url)).status).toBe(409);
+    expect(await drain(await fetchBytes(f, second.url))).toEqual(png(4, 2));
+  });
+});
+
+it("T1-key-recreation replaces the process key, unlike registry reset", async () => {
+  const id = "ma1_" + "a".repeat(32), now = Date.now();
+  const old = issueMediaCapability(id, "r1.revision", now);
+  __resetMediaAssetsForTests();
+  expect(verifyMediaCapability(old.token, id, now).ok).toBe(true);
+  vi.resetModules();
+  const fresh = await import("./media-assets.ts");
+  expect(fresh.verifyMediaCapability(old.token, id, now).ok).toBe(false);
+  expect(fresh.verifyMediaCapability(fresh.issueMediaCapability(id, "r1.revision", now).token, id, now).ok).toBe(true);
 });
