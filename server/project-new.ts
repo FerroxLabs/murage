@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { scopedTx } from "./tx-scope.ts";
 import type { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
@@ -204,7 +205,7 @@ export function createProjectRows(db:DatabaseSync,input:unknown,members:ProjectM
   if (body.mode === 'chat' && !lead) throw new Error('Choose a lead for the chat room.');
   const roots = body.folder ? canonicalProjectRoots([{path:body.folder}],{dataDir:DATA_DIR}).map(root=>({...root,label:'Work folder',addedAt:now})) : [];
   return scopedTx(() => {
-  db.exec('SAVEPOINT project_create');
+  beginWrite(db, "project_create");
   try {
     channelToProjectRows(db,{groupId,bulletin:body.brief?.rules ?? body.purpose,leadBotId:lead,now});
     db.prepare('UPDATE project_briefs SET summary=?,done_means=? WHERE group_id=? AND version=1').run(body.brief?.summary ?? body.purpose.slice(0,200),body.brief?.doneMeans ?? '',groupId);
@@ -218,9 +219,9 @@ export function createProjectRows(db:DatabaseSync,input:unknown,members:ProjectM
     if (body.mode==='ongoing' || body.budget && !budgetId) budgetId = createDefaultPeriodBudget(db,{groupId,period:'week',tz:body.tz ?? 'UTC',now}).id;
     if (budgetId && body.budget) db.prepare('UPDATE project_budgets SET max_work_minutes=?,max_tokens=? WHERE id=?').run(body.budget.minutes,body.budget.tokens,budgetId);
     insertProjectActivity(db,{groupId,kind:'settings',actor:'owner',at:now,detail:{creation:'pending',name:body.name ?? body.purpose.slice(0,120),members:body.members,threadId:`project-${groupId}`}});
-    db.exec('RELEASE project_create');
+    endWrite(db, "project_create");
     return {groupId};
-  } catch(error) {db.exec('ROLLBACK TO project_create; RELEASE project_create');throw error;}
+  } catch(error) {undoWrite(db, "project_create");throw error;}
   });
 }
 export function projectCreationRecord(db:DatabaseSync,groupId:string): GroupRecord | null {

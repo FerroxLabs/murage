@@ -1,0 +1,45 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+stdout | server/message-search-forgotten.test.ts > RULE Case B applies rendered predicates before pagination in both search walks
+[sqlite] slow op=exec: PRAGMA auto_vacuum=INCREMENTAL ms=141 source=exec:PRAGMA auto_vacuum=INCREMENTAL
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS pending_delegations (id TEXT PRIMARY KEY NOT NU ms=617 source=exec:CREATE TABLE IF NOT EXISTS pending_deleg
+[memory] index build before listen name=memory_records_pinned ms=2
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS output_publications ( id TEXT PRIMARY KEY, prod ms=159 source=exec:CREATE TABLE IF NOT EXISTS output_public
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=116 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] slow op=exec: ALTER TABLE push_bindings ADD COLUMN preview_content INTEGER NOT NULL DEFA ms=50 source=exec:ALTER TABLE push_bindings ADD COLUMN pre
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=67 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+[sqlite] storage file=2 wal=2 freelist=0
+
+ ❯ server/message-search-forgotten.test.ts (8 tests | 1 failed | 7 skipped) 2028ms
+   × RULE Case B applies rendered predicates before pagination in both search walks 2024ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/message-search-forgotten.test.ts > RULE Case B applies rendered predicates before pagination in both search walks
+AssertionError: expected [ 'expired' ] to deeply equal [ 'visible' ]
+
+- Expected
++ Received
+
+  [
+-   "visible",
++   "expired",
+  ]
+
+ ❯ server/message-search-forgotten.test.ts:119:85
+    117|     if(indexed) rebuildMessageSearchIndex(database()); else closeMessa…
+    118|     const rendered = (_thread:string, row: import('./store.ts').Messag…
+    119|     expect(ids(searchMessagesWithMeta("needle",1,undefined,{owner:true…
+       |                                                                                     ^
+    120|     expect(ids(searchMessagesWithMeta("needle",10,undefined,{owner:tru…
+    121|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  21:28:24
+   Duration  8.24s (transform 4.96s, setup 6.07s, import 39ms, tests 2.03s, environment 0ms)
+

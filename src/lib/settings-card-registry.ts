@@ -41,6 +41,7 @@ const GENERAL: SettingsCard[] = [
   card("startup", "general", "startup-heading", { keywords: ["startup", "background", "tray", "login", "sign in", "launch", "autostart", "open at login"], advanced: true }),
   card("analytics", "general", "analytics-heading", { keywords: ["analytics"], surface: "any", advanced: true }),
   card("about-me", "general", "about-me-heading", { keywords: ["about me", "profile", "who i am", "my name", "myself", "time zone", "preferences", "every bot"] }),
+  card("bring-your-ai", "general", "bring-your-ai-heading", { keywords: ["bring what you already use", "bring your ai", "import", "grok bot", "chatgpt", "claude", "dots", "duet", "learn about me", "export"] }),
 ];
 
 // ---- Bots (L4) ----
@@ -104,6 +105,8 @@ const TOOLS: SettingsCard[] = [
 const REACH: SettingsCard[] = [
   card("apps", "connections", "connections-heading", { keywords: ["connected apps", "apps", "connections", "integrations", "gmail", "notion", "keys", "api"] }),
   card("bot-email", "connections", "bot-email-heading", { keywords: ["bot email", "email", "mail", "inbox", "address", "agentmail", "send email", "flux"] }),
+  card("highlevel", "connections", "highlevel-heading", { keywords: ["highlevel", "high level", "gohighlevel", "crm", "private integration", "location", "contacts", "opportunities"] }),
+  card("phone-calls", "connections", "phone-calls-heading", { keywords: ["phone calls", "call a business", "make a call", "vapi", "voice account", "caller", "outbound calls", "phone number"] }),
   card("mcp", "connections", "mcp-servers-heading", { keywords: ["mcp", "mcp servers", "servers"], advanced: true }),
   card("telegram", "channels", "telegram-settings-title", { keywords: ["telegram", "botfather", "pair", "messaging", "channels"] }),
   card("slack", "channels", "slack-settings-title", { keywords: ["slack", "messaging", "channels"] }),
@@ -161,6 +164,9 @@ export const ANCHORS_OWED: Readonly<Record<string, string>> = {};
 /** Cards whose name already lives with the card's own copy (SETTINGS-UX-1011 S2), read from there so the two never drift. */
 const CARD_NAMES: Readonly<Record<string, () => string>> = {
   "connections.bot-email": () => EMAIL_OWNER_COPY.sectionTitle,
+  "connections.highlevel": () => t("highlevel.title"),
+  // The screen's own words load with it (src/locales/lazy/phone-calls); search names the card in English, as Bot email does.
+  "connections.phone-calls": () => "Phone calls",
   "general.send-key": () => t("settings.sendKey.title"),
   "about.news": () => NEWS_COPY.title,
   "about.health": () => HEALTH_COPY.title,

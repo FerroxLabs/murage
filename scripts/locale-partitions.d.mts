@@ -1,0 +1,25 @@
+export type Catalogue = Record<string, string>;
+export type Partition = "main" | "help";
+export declare const LOCALES_DIR: string;
+export declare const PACK_CODES: readonly string[];
+export declare const MAIN_SOURCE_FILE: string;
+export declare const MAIN_FRAGMENT_DIR: string;
+export declare const HELP_SOURCE_DIR: string;
+export declare const HELP_PACK_DIR: string;
+export declare const SOURCE_HASH_FILE: string;
+export declare function normalise(value: string): string;
+export declare function exactHash(value: string): string;
+export declare function canonicalCode(code: string): string;
+export declare function duplicateKeys(text: string): string[];
+export declare function readPartitions(dir?: string): {
+  main: Catalogue;
+  help: Catalogue;
+  mainFiles: string[];
+  helpFiles: string[];
+  problems: string[];
+};
+export declare function packPath(dir: string, partition: Partition, code: string): string;
+export declare function hashPath(dir: string, partition: Partition): string;
+export declare function readPack(dir: string, partition: Partition, code: string, problems?: string[]): Catalogue;
+export declare const LEVEL_CONFUSABLES: Readonly<Record<string, string>>;
+export declare function levelFold(value: string): string;

@@ -1,3 +1,4 @@
+import { threadDenied } from "./deny.ts";
 import { executionStore, threadPartition, isHomePartition, partitionScopeKey, sameThreadPartition } from "../execution-audience.ts";
 import { teamMemoryKey } from "../team-identities.ts";
 import { isGroupPrincipal, threadHumanPrincipal, assertHumanPrincipal, isWorkspaceOwner, WORKSPACE_OWNER, type HumanPrincipal } from "../human-principals.ts";
@@ -10,7 +11,7 @@ import { threadMemoryRoom } from "./capture-scope.ts";
 import { scopeRow, scopeRows } from "./scope-id.ts";
 import { eligibilityAnswer, inEligibilityPass, passLookup } from "./eligibility-pass.ts";
 import { revokeAllDisclosures, revokeThreadDisclosures } from "./revocation.ts";
-import { bumpAuthorityHard } from "./authority-epoch.ts";
+import { bumpAuthorityThreads, bumpAuthorityHard } from "./authority-epoch.ts";
 
 export interface MemoryRoster {
   bots: Array<{name?: string; id: string; threadId: string; section?: string; tasks?: Array<{threadId: string; sharedWork?: {teamId: string; quarantined?: boolean}; channelProjectDesk?: {groupId: string; archivedAt?: number}}>; partitionedAt?: number}>;
@@ -74,7 +75,7 @@ function rosterIntent(roster: MemoryRoster) {
  *   holds any more: their receipts end; what other threads were shown from them is judged live on their next continuation
  *   (disclosures.ts revokedReason hydrates every cited record and source under the live roster, after the hold is dropped). Nothing
  *   else is withdrawn: a thread that cited nothing of a removed thread keeps its session. */
-type RosterDelta = { kind: "same" } | { kind: "audience" } | { kind: "scoped"; removedThreads: string[] };
+type RosterDelta = { kind: "same" } | { kind: "audience" } | { kind: "scoped"; removedThreads: string[]; removedContainers?: boolean };
 /** A v2 snapshot of the right shape. A binding written before v2 (ids, sections, members and threads only) cannot say whether a desk, a
  * partition or a room's audience moved since, so it is not accepted: the first roster change after the upgrade is an audience change. */
 function validSnapshot(snapshot: unknown): snapshot is Snapshot {
@@ -145,7 +146,7 @@ function rosterDelta(intent: string, roster: MemoryRoster): RosterDelta {
     const desked = new Set(old.bots.flatMap(bot => Object.values(bot.meta ?? {}).flatMap(meta => { const m = /^desk:(.*):[01]\|/.exec(meta); return m ? [m[1]] : []; })));
     for (const id of nextGroups.keys()) if (!oldGroups.has(id) && (desked.has(id) || !freshEntry(db, "room", id))) return audience;
     // rule 8: what nobody holds any more
-    return { kind: "scoped", removedThreads: [...oldHolders.keys()].filter(thread => !nextHolders.has(thread)) };
+    return { kind: "scoped", removedContainers: [...oldBots.keys()].some(id => !nextBots.has(id)) || [...oldGroups.keys()].some(id => !nextGroups.has(id)), removedThreads: [...oldHolders.keys()].filter(thread => !nextHolders.has(thread)) };
   } catch { return audience; }
 }
 function policyRow() { return database().prepare("SELECT state,intent,scope_id FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
@@ -187,7 +188,7 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'pending',?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state='pending',intent=excluded.intent")
       .run(POLICY_ID,scopeId,memoryState().policyRevision,rosterIntent(roster));
     if (delta.kind === "audience") revokeAllDisclosures(db,"roster");
-    else { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-removed"); bumpAuthorityHard(db); }
+    else { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-removed"); if (delta.removedContainers) bumpAuthorityHard(db); else bumpAuthorityThreads(db,delta.removedThreads); }
   });
   persist();
   reconcileMemoryRoster(roster);
@@ -209,7 +210,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster, options: { unlessUnc
     if (delta.kind === "audience") {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       revokeAllDisclosures(db,"roster-reconcile");
-    } else if (delta.kind === "scoped" && delta.removedThreads.length) { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-reconcile-removed"); bumpAuthorityHard(db); }
+    } else if (delta.kind === "scoped" && delta.removedThreads.length) { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-reconcile-removed"); if (delta.removedContainers) bumpAuthorityHard(db); else bumpAuthorityThreads(db,delta.removedThreads); }
     // Only what the last granted roster did not already ensure is looked up: a start over an unchanged roster (the first start after an upgrade among
     // them, before the scope-owner index exists) makes no search by owner, however many scopes the file holds. Its workspace scope is the binding's own,
     // confirmed by one primary-key read.
@@ -509,7 +510,7 @@ export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
   if (!trusted || !trusted.registry.isActive(trusted.claim)) throw new Error("MEMORY_UNAUTHORIZED");
   // Inside a synchronous pass the meta row and the policy binding are read once (a row this connection writes ends the memo).
   const { state, granted } = passLookup(database(), "assert-memory-state", () => ({ state: memoryState(), granted: policyRow()?.state === "granted" }));
-  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
+  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || passLookup(database(), `assert-thread-denied:${access.threadId}`, () => threadDenied(database(), access.threadId)) || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
   const roster = trusted.roster(), notOwner = trusted.claim.notOwnerAudience === true;
   // Inside a synchronous pass (hydrating one record, a hit loop) the audience is worked out once; the primary-key re-check still runs once per pass.
   const current = eligibilityAnswer(database(), `assert\u0000${access.botId}\u0000${access.threadId}\u0000${notOwner}`, roster, () => eligibleScopes(access.botId,access.threadId,roster,notOwner));

@@ -30,11 +30,11 @@ export const OFFLINE_BACKUP_CEILING_MS = 35 * 60_000;
 export const offlineCeilingFor = budgetMs => Number.isSafeInteger(budgetMs) ? Math.max(OFFLINE_BACKUP_CEILING_MS, budgetMs + 5 * 60_000) : OFFLINE_BACKUP_CEILING_MS;
 
 /** Destroy the progress window, quit, and make sure the process really ends. */
-export function quitForRelaunch({ app, progress, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
+export function quitForRelaunch({ app, progress, reopening = true, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
   try { progress?.destroy(); } catch { /* a window that is already gone can't block the quit */ }
-  try { app.quit(); } catch { /* the exit below still ends the process */ }
+  try { app.murageShutdownCause = app.murageShutdownCause || (reopening ? "automatic" : "owner"); app.quit(); } catch { /* the exit below still ends the process */ }
   setTimer(() => {
-    try { log("backup return: still open after quit, exiting so Murage reopens"); } catch { /* logging never blocks */ }
+    try { log(reopening ? "backup return: still open after quit, exiting so Murage reopens" : "quit: background work closed; finishing exit"); } catch { /* logging never blocks */ }
     app.exit(0);
   }, graceMs);
 }
@@ -43,38 +43,104 @@ export function quitForRelaunch({ app, progress, graceMs = BACKUP_QUIT_GRACE_MS,
  * arm the relaunch, then quitForRelaunch. Repeated calls share the attempt, so
  * a success and a failure (or a ceiling) never start two copies; a failed
  * cleanup can be tried again. */
-export function createBackupReturn({ app, cleanup, relaunch, takeProgress, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
-  let attempt = null;
-  return function returnToWorkspace() {
-    if (attempt) return attempt;
-    const current = (async () => {
-      await cleanup();
-      relaunch();
-      quitForRelaunch({ app, progress: takeProgress(), graceMs, setTimer, log });
-    })();
-    attempt = current;
-    current.catch(() => { if (attempt === current) attempt = null; });
-    return current;
+export function createReturnAuthority() {
+  return { userQuitRequested: false, generation: 0, attempt: null, leaving: false, internalQuit: false, quitAttempt: null };
+}
+const authorities = new WeakMap();
+function authorityFor(app) { if (!authorities.has(app)) authorities.set(app,createReturnAuthority()); return authorities.get(app); }
+export function revokeReturn(authority) {
+  authority.userQuitRequested = true;
+  authority.generation++;
+  authority.cancelGate?.();
+}
+function internalQuit(authority, app) {
+  authority.internalQuit = true;
+  try { app.murageShutdownCause = app.murageShutdownCause || "automatic"; app.quit(); } finally { authority.internalQuit = false; }
+}
+function boundedExit({authority, reopening = true, app, takeProgress, onLeaving, graceMs, setTimer, log}) {
+  try { takeProgress?.()?.destroy(); } catch { /* already gone */ }
+  onLeaving?.();
+  quitForRelaunch({app: {get murageShutdownCause() { return app.murageShutdownCause; }, set murageShutdownCause(cause) { app.murageShutdownCause = cause; }, quit: () => internalQuit(authority, app), exit: code => app.exit(code)}, reopening, graceMs, setTimer, log});
+}
+export function createBackupReturn({ app, authority: suppliedAuthority, cleanup, relaunch, takeProgress, shutdownStarted = () => Boolean(suppliedAuthority), onFailure = () => {}, onLeaving, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {} }) {
+  const authority = suppliedAuthority ?? authorityFor(app);
+  function returnToWorkspace({prepare = () => ({kind: "normal"}), destination, afterCleanup, retry = false} = {}) {
+    if (authority.userQuitRequested) return Promise.resolve({status: "stopped"});
+    if (retry && authority.failedReturn) { authority.attempt = null; authority.failedReturn = null; }
+    if (authority.attempt) return authority.attempt.promise;
+    if (authority.failedReturn && !retry) return Promise.reject(authority.failedReturn);
+    authority.failedReturn = null;
+    let resolve, reject;
+    const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const attempt = {promise, generation: authority.generation, destination};
+    authority.attempt = attempt;
+    // Ownership is installed before preparation, including synchronous reentry.
+    const fail = error => {
+      if (authority.attempt === attempt && !shutdownStarted()) authority.attempt = null;
+      authority.leaving = false;
+      authority.failedReturn = shutdownStarted() ? error : null;
+      try { onFailure(error); } finally { reject(error); }
+    };
+    try {
+      attempt.destination = Object.freeze(destination ?? prepare());
+    } catch (error) { authority.attempt=null; reject(error); return promise; }
+    try {
+      Promise.resolve(cleanup()).then(() => {
+        if (authority.userQuitRequested || authority.generation !== attempt.generation) { resolve({status: "stopped"}); return; }
+        afterCleanup?.();
+        if (authority.userQuitRequested || authority.generation !== attempt.generation) { resolve({status: "stopped"}); return; }
+        authority.leaving = true;
+        relaunch(attempt.destination);
+        boundedExit({authority,app,takeProgress,onLeaving,graceMs,setTimer,log});
+        resolve({status: "leaving"});
+      }).catch(fail);
+    } catch (error) { fail(error); }
+    return promise;
   };
+  returnToWorkspace.retry = options => returnToWorkspace({...options,retry:true});
+  return returnToWorkspace;
+}
+export function joinExplicitQuit({app, authority = authorityFor(app), scheduleExit = setImmediate, cleanup, takeProgress, onLeaving, onFailure = () => {}, graceMs = BACKUP_QUIT_GRACE_MS, setTimer = setTimeout, log = () => {}}) {
+  revokeReturn(authority);
+  if (authority.quitAttempt) return authority.quitAttempt;
+  let resolve, reject;
+  const promise = new Promise((yes, no) => {resolve = yes; reject = no;});
+  authority.quitAttempt = promise;
+  try {
+    Promise.resolve(cleanup()).then(() => {
+      scheduleExit(()=>{
+        authority.leaving = true;
+        boundedExit({authority,app,takeProgress,onLeaving,graceMs,setTimer,log,reopening:false});
+        resolve({status: "quit"});
+      });
+    }).catch(error => { authority.quitAttempt = null; onFailure(error); reject(error); });
+  } catch (error) { authority.quitAttempt = null; onFailure(error); reject(error); }
+  return promise;
 }
 
 /** Run the backup-mode capture and always finish it one of two ways: Murage
  * reopens normally, or (only when the capture never got as far as closing
  * anything) the Backup mode page opens. The progress window goes either way.
  * Resolves with "verified", "failed", "timed-out" or "backup-mode". */
-export async function runOfflineBackup({ run, abandon, returnToWorkspace, shutdownStarted, showBackupMode, destroyProgress, ceilingMs = OFFLINE_BACKUP_CEILING_MS, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {} }) {
+export async function runOfflineBackup({ run, abandon, returnToWorkspace, shutdownStarted, showBackupMode, destroyProgress, showCleanupFailure = () => {}, ceilingMs = OFFLINE_BACKUP_CEILING_MS, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {}, operation }) {
   let timer;
   const ceiling = new Promise(resolve => { timer = setTimer(() => resolve("timed-out"), ceilingMs); });
   let outcome;
-  try { outcome = await Promise.race([Promise.resolve().then(run).then(() => "verified"), ceiling]); }
-  catch { outcome = "failed"; }
+  let failure;
+  try { outcome = await Promise.race([Promise.resolve().then(run).then(result => result?.status === "stopped" ? "stopped" : "verified"), ceiling]); }
+  catch (error) { failure = error; outcome = "failed"; }
   finally { try { clearTimer(timer); } catch { /* the race is already decided */ } }
   const note = line => { try { log(line); } catch { /* logging never blocks */ } };
   const backupMode = () => {
-    try { showBackupMode(); } catch { /* the progress window still goes */ }
+    operation?.assertActive();
+    try { showBackupMode(); operation?.terminal(); }
     finally { try { destroyProgress(); } catch { /* already gone */ } }
     return "backup-mode";
   };
+  operation?.assertActive();
+  const cleanupFailure = error => { destroyProgress(); showCleanupFailure(error); operation?.terminal(); return "cleanup-failed"; };
+  if (failure?.code === "BACKUP_UPGRADE_CLEANUP_FAILED") return cleanupFailure(failure);
+  if (outcome === "stopped") { operation?.terminal(); return "stopped"; }
   if (outcome === "timed-out") {
     note(`backup did not finish within ${Math.round(ceilingMs / 60_000)} minutes; reopening`);
     let setAside = true;
@@ -86,6 +152,6 @@ export async function runOfflineBackup({ run, abandon, returnToWorkspace, shutdo
   // Nothing was closed yet (the host never reached its relaunch): the Backup
   // mode page, as before, rather than a relaunch that would arm the same backup again.
   if (outcome === "failed" && !shutdownStarted()) return backupMode();
-  try { await returnToWorkspace(); return outcome; }
-  catch { note("backup return: cleanup unconfirmed; showing the Backup mode page"); return backupMode(); }
+  try { operation?.assertActive(); const result = await returnToWorkspace(); operation?.terminal(); return result?.status === "stopped" ? "stopped" : outcome; }
+  catch (error) { if(error?.code === "BACKUP_UPGRADE_CLEANUP_FAILED") return cleanupFailure(error); note("backup return: cleanup unconfirmed; showing the Backup mode page"); return backupMode(); }
 }
