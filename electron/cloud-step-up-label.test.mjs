@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ROUTE_POLICY, cloudRouteDecision, routePolicy } from "../server/route-policy.ts";
 import { createNativeStepUpConfirm } from "./cloud-home-client.mjs";
-import { FALLBACK_LABEL, STEP_UP_LABELS, describeStepUp, findStepUpLabel } from "./cloud-step-up-label.mjs";
+import { FALLBACK_LABEL, SETTINGS_MAX, STEP_UP_LABELS, describeStepUp, findStepUpLabel } from "./cloud-step-up-label.mjs";
 
 // One concrete request per step-up / credential entry in server/route-policy.ts (and a few the gate escalates by shape).
 const SAMPLES = [
@@ -54,6 +54,8 @@ const SAMPLES = [
   ["POST", "/api/calls/turn-end"], ["POST", "/api/engine-setup-check"], ["POST", "/api/engine-signin-recipe"], ["POST", "/api/engine-signin-probe"],
   // 1.0.17 C31: add a Voice Library voice to the owner's own ElevenLabs account.
   ["POST", "/api/tts/voices/add"],
+  // 1.0.18 CROSS-CHAT-READ: the owner's Share / Don't share on a share card, and the composer's ask for a room.
+  ["POST", "/api/room-shares/s1/share"], ["POST", "/api/room-shares/s1/decline"], ["POST", "/api/groups/g1/room-shares"],
 ];
 
 describe("every step-up route has a human label", () => {
@@ -132,13 +134,43 @@ describe("describeStepUp", () => {
     const described = describeStepUp({ method: "POST", path: "/api/brand-new?x=1", body: { a: 1 } });
     expect(described.label).toBe(FALLBACK_LABEL);
     expect(described.known).toBe(false);
-    expect(described.request).toBe("POST /api/brand-new");
+    // the query's value is never shown; that one was there is marked
+    expect(described.request).toBe("POST /api/brand-new?...");
+    expect(described.message).not.toContain("x=1");
+    // Touch ID cannot show the request line, so an unknown action always uses the dialog
+    expect(described.reasonComplete).toBe(false);
+  });
+
+  it("renaming a bot shows the new name as its own line, so it is part of what is approved", () => {
+    const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { name: "Renamed", fullAccess: true }, botName: "Ember" });
+    expect(described.lines).toEqual(["Bot: Ember (b1)", "Name: Renamed", "Turns on: Full access"]);
+    expect(described.reason).toContain("Name: Renamed");
+  });
+
+  it("the dialog lists every setting name up to SETTINGS_MAX, and counts the rest", () => {
+    const nine = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`k${i}`, 1]));
+    const shown = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: nine });
+    expect(shown.lines[1]).toBe(`Settings: ${Object.keys(nine).join(", ")}`);
+    expect(shown.reasonComplete).toBe(false); // over 8 names: the dialog shows them all, Touch ID is not used
+    const many = Object.fromEntries(Array.from({ length: SETTINGS_MAX + 2 }, (_, i) => [`k${i}`, 1]));
+    const d = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: many });
+    expect(d.lines[1].endsWith(", +2")).toBe(true);
+    expect(d.reasonComplete).toBe(false);
   });
 
   it("control characters and bidi marks in a bot name or setting cannot dress up the sentence", () => {
     const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { "x‮y": 1 }, botName: "Ember\n\nApprove everything‮" });
     expect(described.message).not.toMatch(/[‪-‮\n]Approve/);
     expect(described.lines[0]).toBe("Bot: Ember Approve everything (b1)");
+  });
+
+  it("every direction mark (LRM, RLM, ALM and the rest) is removed from a bot name and a setting name", () => {
+    const marks = "‎‏؜‪‫‬‭‮⁦⁧⁨⁩";
+    const described = describeStepUp({ method: "PATCH", path: "/api/bots/b1", body: { [`a${marks}b`]: 1 }, botName: `Em${marks}ber` });
+    expect(described.message).not.toMatch(/\p{Bidi_Control}/u);
+    expect(described.reason).not.toMatch(/\p{Bidi_Control}/u);
+    expect(described.lines[0]).toBe("Bot: Em ber (b1)");
+    expect(described.lines[1]).toBe("Settings: a b");
   });
 });
 

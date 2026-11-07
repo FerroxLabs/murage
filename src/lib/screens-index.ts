@@ -716,7 +716,8 @@ export const SCREENS: readonly ScreenIndexEntry[] = [
     "title": "ux.l4a.screen.cloud.title",
     "intro": "ux.l4a.screen.cloud.intro",
     "tips": [
-      "ux.l4a.screen.cloud.tip1"
+      "ux.l4a.screen.cloud.tip1",
+      "ux.l4a.screen.cloud.tip2"
     ],
     "why": "ux.l4a.screen.cloud.why",
     "controls": []
