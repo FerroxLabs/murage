@@ -74,6 +74,63 @@ test('header has the Murage mark, the brand and the lighter for-Chrome suffix', 
   assert.match(readFileSync(new URL('panel.css', here), 'utf8'), /\[data-role=brand-suffix\]\{[^}]*color:var\(--secondary\)/);
   assert.equal(byRole(draw(null, { connected: false }).root, 'mark').length, 1);
 });
+test('CHROME-PANEL-AVATAR: the bot card shows the bot picture the app sent, and the letter when there is none or it is not a plain image', () => {
+  const pic = 'data:image/webp;base64,UklGRgAAAABXRUJQ';
+  const withPic = one(draw({ botName: 'Sable', botAvatar: pic }).root, 'avatar');
+  const img = one(withPic, 'avatar-image'); assert.ok(img, 'an <img> is drawn'); assert.equal(img.tagName, 'IMG');
+  assert.equal(img.getAttribute('src'), pic); assert.equal(img.getAttribute('alt'), '');
+  assert.equal(withPic.textContent, '', 'no letter under the picture'); assert.equal(withPic.getAttribute('aria-hidden'), 'true');
+  for (const bad of [undefined, '', 'https://tracker.example/p.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'javascript:alert(1)', `data:image/png;base64,${'A'.repeat(16384)}`, 7]) {
+    const av = one(draw({ botName: 'Sable', botAvatar: bad }).root, 'avatar');
+    assert.equal(byRole(av, 'avatar-image').length, 0, String(bad).slice(0, 40)); assert.equal(av.textContent, 'S');
+  }
+  assert.match(readFileSync(new URL('panel.css', here), 'utf8'), /\.av img\{[^}]*object-fit:cover/);
+});
+test('avatar decode failure shows the letter across refreshes and allows a replacement picture', () => {
+  const bad = 'data:image/webp;base64,AAAA', good = 'data:image/png;base64,AQAA';
+  const { doc, root } = draw({ botName: 'Sable', botAvatar: bad });
+  const redraw = pic => renderPanel(doc, root, { connected: true, bindings: [{ ...base, botName: 'Sable', botAvatar: pic }] }, { t });
+  redraw(bad); // Exercise the patched live image, not only the initial detached tree.
+  one(root, 'avatar-image').onerror?.();
+  assert.equal(one(root, 'avatar').textContent, 'S');
+  assert.equal(byRole(root, 'avatar-image').length, 0);
+  redraw(bad);
+  assert.equal(one(root, 'avatar').textContent, 'S');
+  assert.equal(byRole(root, 'avatar-image').length, 0);
+  redraw(good);
+  assert.equal(one(root, 'avatar-image').getAttribute('src'), good);
+});
+test('late error from a replaced avatar cannot blank the current picture', () => {
+  const old = 'data:image/webp;base64,AAAA', good = 'data:image/png;base64,AQAA';
+  const { doc, root } = draw({ botName: 'Sable', botAvatar: old });
+  const previous = one(root, 'avatar-image');
+  renderPanel(doc, root, { connected: true, bindings: [{ ...base, botName: 'Sable', botAvatar: good }] }, { t });
+  previous.onerror?.();
+  assert.equal(one(root, 'avatar-image').getAttribute('src'), good);
+  // Returning to the same bytes still creates a new image; the removed node is stale.
+  renderPanel(doc, root, { connected: true, bindings: [{ ...base, botName: 'Sable', botAvatar: old }] }, { t });
+  previous.onerror?.();
+  assert.equal(one(root, 'avatar-image').getAttribute('src'), old);
+  one(root, 'avatar-image').onerror?.();
+  assert.equal(one(root, 'avatar').textContent, 'S', 'current image still has a working error handler');
+  assert.equal(byRole(root, 'avatar-image').length, 0);
+});
+test('CHROME-PANEL-AVATAR (Astra r1 scale): the controller asks for the shown bot picture once per id; statuses carry ids only', async () => {
+  const pic = 'data:image/webp;base64,UklGRgAAAABXRUJQ', asked = [];
+  const bindings = [{ bindingId: 'a', botName: 'Sable', state: 'active', botAvatarId: '0123456789abcdef' }, { bindingId: 'b', botName: 'Ember', state: 'active', botAvatarId: 'fedcba9876543210' }];
+  const views = [];
+  const c = createController({ extensionId: 'me', onChange: v => views.push(v), send: async m => { if (m.action === 'avatar') { asked.push(m.bindingId); return { result: { botAvatarId: m.bindingId === 'a' ? '0123456789abcdef' : 'fedcba9876543210', botAvatar: pic } }; } return { result: { connected: true, bindings } }; } });
+  const push = () => c.push({ type: PUSH_TYPE, status: { version: 1, connected: true, bindings } }, { id: 'me' });
+  for (let i = 0; i < 5; i++) { push(); await new Promise(r => setTimeout(r, 0)); }
+  assert.deepEqual(asked, ['a'], 'only the bot shown, only once');
+  assert.equal(c.view().bindings.find(b => b.bindingId === 'a').botAvatar, pic);
+  assert.ok(!('botAvatar' in c.view().bindings.find(b => b.bindingId === 'b')));
+  c.select('b'); await new Promise(r => setTimeout(r, 0)); assert.deepEqual(asked, ['a', 'b']);
+  // A picture the runtime answers with the wrong id or a non-image is not drawn.
+  const bad = createController({ extensionId: 'me', send: async m => m.action === 'avatar' ? { result: { botAvatarId: 'ffffffffffffffff', botAvatar: pic } } : { result: {} } });
+  bad.push({ type: PUSH_TYPE, status: { version: 1, connected: true, bindings: bindings.slice(0, 1) } }, { id: 'me' }); await new Promise(r => setTimeout(r, 0));
+  assert.ok(!('botAvatar' in bad.view().bindings[0]));
+});
 test('avatar colour: the bot colour when the binding carries one, else deterministic from the name', () => {
   const style = r => one(r, 'avatar').getAttribute('style');
   assert.match(style(draw({ botColor: '#8057C8' }).root), /--bot:#8057C8/);

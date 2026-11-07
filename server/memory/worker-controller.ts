@@ -698,21 +698,27 @@ export class MemoryWorkerController {
     this.respawnAt=Date.now()+Math.min(30*60_000,MEMORY_IDLE_SWEEP_MS*2**(this.initFailures-1));
   }
   private clearHeartbeat(){if(this.heartbeat)clearTimeout(this.heartbeat);this.heartbeat=null;}
-  /** The helper's writes as an io-budget source, from the counts it reports (noteWorkerBlocks). Earlier builds read the index file
+  /** The helper's writes as an io-budget source, from the counts it reports (noteWorkerIo). Earlier builds read the index file
    * and its log from here, which missed every write cycle that ended between two samples: a merge, then a truncation, leaves the
    * log at zero and the file the same size (1.0.3 rehearsal 2, 240 MB/min unseen). */
   private registerWorkerBytes(){
     if(!this.unregisterBytes)this.unregisterBytes=ioBudget.registerByteSource("memory-worker",()=>this.workerBytes);
   }
-  /** A helper's cumulative fsWrite count: its growth since the last report is charged. Each helper counts from zero, so its first
-   * report is charged whole: the baseline is the reporting helper's own (a new one starts at zero), and a count that fell is a new
-   * process's too. */
-  private noteWorkerBlocks(child:unknown,blocks:unknown){
-    if(typeof blocks!=="number"||!Number.isFinite(blocks)||blocks<0)return;
-    if(child!==this.workerBlocksChild||blocks<this.workerBlocks){this.workerBlocksChild=child;this.workerBlocks=0;}
-    this.workerBytes+=(blocks-this.workerBlocks)*BLOCK_BYTES;this.workerBlocks=blocks;
+  /** A helper's cumulative counts, fsWrite blocks and index WAL bytes (worker.ts reportIo): the larger growth of the two since the last
+   * report is charged (the same writes, seen twice; on win32 the blocks read 0 and the WAL bytes decide). Each helper counts from zero,
+   * so its first report is charged whole: the baseline is the reporting helper's own (a new one starts at zero), and a count that fell
+   * is a new process's too. A count that is missing or not finite is left out; a report with neither charges nothing. */
+  private noteWorkerIo(child:unknown,blocks:unknown,bytes:unknown){
+    const valid=(n:unknown):n is number=>typeof n==="number"&&Number.isFinite(n)&&n>=0;
+    const b=valid(blocks)?blocks:undefined,w=valid(bytes)?bytes:undefined;
+    if(b===undefined&&w===undefined)return;
+    if(child!==this.workerBlocksChild||(b!==undefined&&b<this.workerBlocks)||(w!==undefined&&w<this.workerWalBytes)){this.workerBlocksChild=child;this.workerBlocks=0;this.workerWalBytes=0;}
+    this.workerBytes+=Math.max(b===undefined?0:(b-this.workerBlocks)*BLOCK_BYTES,w===undefined?0:w-this.workerWalBytes);
+    if(b!==undefined)this.workerBlocks=b;
+    if(w!==undefined)this.workerWalBytes=w;
   }
   private workerBlocksChild:unknown=null;
+  private workerWalBytes=0;
   private spawn() {
     this.registerWorkerBytes();
     this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;this.idleExited=false;this.modelReady=false;this.wasmHelper=false;this.warmSent=false;
@@ -780,9 +786,9 @@ export class MemoryWorkerController {
     const handlerStart=performance.now();
     {
       if(!message||typeof message!=="object")return;
-      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown};
-      // the helper's own write count rides on its index acknowledgements and its maintenance reports (worker.ts reportIo)
-      if("fsWriteBlocks" in event)this.noteWorkerBlocks(child,event.fsWriteBlocks);
+      const event=message as {type?:string;result?:unknown;requestId?:string;reset?:boolean;records?:Array<{id:string;version:number;deleted:boolean}>;embeddingStatus?:string;scrubOwed?:boolean;fsWriteBlocks?:unknown;ioBytes?:unknown};
+      // the helper's own write counts ride on its index acknowledgements and its maintenance reports (worker.ts reportIo)
+      if("fsWriteBlocks" in event||"ioBytes" in event)this.noteWorkerIo(child,event.fsWriteBlocks,event.ioBytes);
       if(event.type==="io")return;
       if(event.type==="ready"){
         const manifestFile=join(SERVER_ROOT,"memory-model-manifest.json");

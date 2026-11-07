@@ -21,6 +21,7 @@
 // lists outgrew a whole-thread budget). Past the node and receipt budgets a
 // caller that asks for failClosed gets the message withheld instead of an
 // error, so a turn never fails and never shows what it could not check.
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { memoryGate } from "./memory-gate.ts";
@@ -1809,6 +1810,9 @@ CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_u AFTER UPDATE ON main.mem
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_derivations_d AFTER DELETE ON main.memory_derivations BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_u AFTER UPDATE ON main.memory_evidence BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_evidence_d AFTER DELETE ON main.memory_evidence BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_i AFTER INSERT ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_u AFTER UPDATE ON main.memory_deny BEGIN ${BUMP}; END;
+CREATE TEMP TRIGGER IF NOT EXISTS lineage_deny_d AFTER DELETE ON main.memory_deny BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_meta_u AFTER UPDATE ON main.memory_meta
  WHEN OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch OR OLD.mode IS NOT NEW.mode BEGIN ${BUMP}; END;
 CREATE TEMP TRIGGER IF NOT EXISTS lineage_outputs_i AFTER INSERT ON main.memory_disclosure_outputs BEGIN ${NOTE("'m'||char(31)||NEW.thread_id||char(31)||NEW.message_id")}; END;
@@ -2367,9 +2371,9 @@ export interface OutputRoots {
 const rootKey = (thread: string, message: string) => `${thread}\u0000${message}`;
 /** One commit for a set and the row that points at it. */
 function atomically(db: ReturnType<typeof database>, work: () => void): void {
-  db.exec("SAVEPOINT memory_root_pointer");
-  try { work(); db.exec("RELEASE memory_root_pointer"); }
-  catch (error) { db.exec("ROLLBACK TO memory_root_pointer; RELEASE memory_root_pointer"); throw error; }
+  beginWrite(db, "memory_root_pointer");
+  try { work(); endWrite(db, "memory_root_pointer"); }
+  catch (error) { undoWrite(db, "memory_root_pointer"); throw error; }
 }
 /** The stored sets read so far, kept while the lineage cache is (a set is immutable under its id; every removal or change
  * of a set row moves the lineage epoch, which drops them with the verdicts). Where no cache can be kept (inside a

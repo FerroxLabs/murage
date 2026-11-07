@@ -32,11 +32,12 @@ describe("Settings list reaches every section (G3)", () => {
     // 0.1.62: six group headings of 22px over nineteen 28px rows, with the
     // title and search, need about 750px. 920x780 fits them in a 1440x900
     // window; a 1280x720 window caps the dialog at 688px and the list
-    // scrolls on its own (the first test).
-    const height = Number(/"h-\[min\((\d+)px,calc\(100dvh-2rem\)\)\]"/.exec(source)?.[1]);
+    // scrolls on its own (the first test). The window height is the visual
+    // viewport (--vvh, UX-L3B S7), falling back to 100dvh.
+    const height = Number(/"h-\[min\((\d+)px,calc\(var\(--vvh,100dvh\)-2rem\)\)\]"/.exec(source)?.[1]);
     expect(height).toBeGreaterThanOrEqual(760);
     expect(height).toBeLessThanOrEqual(900 - 32);
-    expect(source).toContain('"h-[min(780px,calc(100dvh-2rem))]"');
+    expect(source).toContain('"h-[min(780px,calc(var(--vvh,100dvh)-2rem))]"');
     // fixed row and heading heights, so the sum holds in every font
     expect(source).toContain('"flex h-7 shrink-0 items-center gap-2.5 rounded-lg px-2.5 text-left text-[13.5px]"');
     expect(source).toContain('"flex h-[22px] items-end px-2.5');

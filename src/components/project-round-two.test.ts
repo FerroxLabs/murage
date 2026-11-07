@@ -21,7 +21,7 @@ const board:ProjectBoardRead = {lifecycle:"open",columns:[],columnsRevision:3,ca
 const usage:UsageRead={lifecycle:"open",totals:project.strip.usage,byBot:[],notReported:[],budgets:project.budgets};
 it("renders the goal criteria, evidence, plan, deadline, budget and sign-off controls",()=>{
  const html=renderToStaticMarkup(createElement(ProjectGoalView,{group,members,project,initialBoard:board,initialUsage:usage}));
- for(const text of ["Launch","Ready for your sign-off","Result checked","Proposed by the lead","Met by Jax","Open evidence","Deliver result","past due","1 h 58 min of 2 h","2.9M of 3.0M tokens","Limit reached: stops starting new work at your limit","Sign off","Send back"]) expect(html).toContain(text);
+ for(const text of ["Launch","Ready for your sign-off","Result checked","Proposed by the lead","Met by Jax","Open evidence","Deliver result","past due","1 h 58 min of 2 h","2.9M of 3.0M tokens","Limit reached: no new work starts","Sign off","Send back"]) expect(html).toContain(text);
  expect(html).not.toMatch(/cost|spend|[$£€]/i);
 });
 it("offers a bounded Set a goal form with the requested defaults, hidden when goals are off",()=>{

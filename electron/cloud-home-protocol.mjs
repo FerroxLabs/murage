@@ -303,6 +303,11 @@ export function createCloudHomeHandler({ homeId, home, netFetch, readAsset, onAu
           catch (error) {
             warn(`step-up not completed: ${error?.code ?? "error"}`);
             if (error?.code === "unreachable") { void upstream.body?.cancel().catch(() => {}); return text(502, "cloud home unreachable"); }
+            // Refused by main, not by the person: the page shows why, in place of the home's "step-up required".
+            if (error?.code === "step-up-refused") {
+              void upstream.body?.cancel().catch(() => {});
+              return new Response(JSON.stringify({ error: error.message, code: error.code }), { status: 403, headers: { "content-type": "application/json", "x-content-type-options": "nosniff" } });
+            }
           }
         }
         if (stepped) { void upstream.body?.cancel().catch(() => {}); upstream = stepped; }

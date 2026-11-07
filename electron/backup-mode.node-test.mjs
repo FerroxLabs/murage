@@ -77,3 +77,9 @@ test("intentional backup mode is routed before harness and native writers start"
   assert.ok(source.includes('if(speechActive()||recorderActive())throw new Error("BACKUP_WORK_ACTIVE")'));
   assert.equal((source.match(/if\(backupMode\.isPreparing\(\)\|\|backupScheduleHost\?\.isPreparing\(\)\)throw new Error\("BACKUP_RESTART_PENDING"\)/g)||[]).length,2);
 });
+
+test('T-stop-admission: a successful preparation has an explicit cancel even after shutdown begins',async()=>{
+ const calls=[];let stopped=false;
+ const release=await prepareBackupRestart(async(action,token)=>{calls.push(action);return action==='prepare'?{prepared:true,token}:{released:true};},()=>stopped);
+ stopped=true;await release.cancel();assert.deepEqual(calls,['prepare','cancel']);
+});
