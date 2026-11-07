@@ -1,0 +1,676 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (43 tests | 9 failed | 20 skipped) 64054ms
+   × RULE unproven supplied rows never borrow current proof: archive-supplied-unversioned-open 411ms
+   × RULE same generation refresh failure preserves rows 1530ms
+   × RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers 552ms
+   × RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers 607ms
+   × RULE count survives section unmount, main invalidation and failed folded archive refresh 30966ms
+   × RULE path 13 flat routine folds keep titles and marks while snippets are gated 915ms
+   × RULE loss b disposes main transcript bytes while loss a keeps them in memory 401ms
+   × RULE main failed request retries on owner action but never polls 3562ms
+   × RULE rejected unversioned answers make at most one automatic request per generation 1460ms
+ ❯ src/lib/chats-gen.test.ts (11 tests | 2 failed | 8 skipped) 37ms
+   × RULE proof is never borrowed by list holders 13ms
+   × RULE paths 14 and 15 use versioned ordinary owner search without preview exclusions 16ms
+ ❯ src/lib/focus-message.test.ts (7 tests | 1 failed | 6 skipped) 14ms
+   × RULE Find and Palette do not focus a hit after its generation changed during landing 10ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-gen.test.ts > RULE proof is never borrowed by list holders
+AssertionError: ../components/AllChatsSections.tsx: expected 'import { useChatResource } from "@/li…' not to match /(?:\?\?|\|\|)\s*(?:[\w$.]+\.known|pro…/
+
+- Expected:
+/(?:\?\?|\|\|)\s*(?:[\w$.]+\.known|props\.listGen|chatsGenSnapshot\(\)\.known|state\.chatsGen|listGen\b|known\b(?!\.))/
+
++ Received:
+"import { useChatResource } from \"@/lib/chat-previews\";
+import { chatsEligible, compareGen, useChatsGen, type ChatsGen } from \"@/lib/chats-gen\";
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The Chats door at 50+ chats (UX L6B, UX-FIRSTRUN-SCALE-1012.md 2.2): Bots,
+// Projects, Channels and Archived, each collapsible and remembered. One row
+// per bot or place (\"Nova · Morning brief · 08:02\"); \"3 chats\" opens the rest
+// under it; \"14 older\" folds what is past 30 days; Archived starts folded with
+// its count and loads its chats only when opened. Loaded with All chats, which
+// is itself a lazy chunk, so the first paint does not carry it.
+import { useEffect, useRef, useState, type ReactNode } from \"react\";
+import { ChevronDown, ChevronRight } from \"lucide-react\";
+import { chatTime, chatsRequestPath, chatTitle, type ChatPage, type ChatRow } from \"@/lib/all-chats\";
+import {
+  chatsSections,
+  chatsSectionTitle,
+  loadFoldedChatsSections,
+  saveFoldedChatsSections,
+  type ChatOwnerRow,
+  type ChatsSectionKey,
+  type ChatsSectionView,
+} from \"@/lib/chats-sections\";
+import { cn } from \"@/lib/cn\";
+
+const focusRing = \"focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus\";
+
+export interface AllChatsSectionsProps {
+  rows: readonly ChatRow[];
+  listGen?: ChatsGen | null;
+  now: number;
+  waiting: (row: ChatRow) => number;
+  ownerName: (row: ChatRow) => string;
+  avatar: (row: ChatRow) => ReactNode;
+  time: (at: number) => string;
+  renderChat: (row: ChatRow, eligible: boolean) => ReactNode;
+  onOpenRow: (row: ChatRow) => void;
+  /** GET a chats page; the archived count and rows come from here */
+  fetchPage: (path: string) => Promise<ChatPage>;
+  /** tests: start with these sections folded instead of the remembered ones */
+  folded?: readonly ChatsSectionKey[];
+  archived?: { total: number; rows: ChatRow[]; gen?: ChatsGen };
+  /** tests: owner rows and older folds open at start, by key */
+  expanded?: readonly string[];
+}
+
+const retainArchivedCount = (page: ChatPage): ChatPage => ({ total: page.total, chats: [], next: null });
+
+export function AllChatsSections(props: AllChatsSectionsProps) {
+  const { rows, now, waiting, fetchPage } = props;
+  const [folded, setFolded] = useState<ChatsSectionKey[]>(() => [...(props.folded ?? loadFoldedChatsSections())]);
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(props.expanded));
+  const archivedFolded = folded.includes(\"archived\");
+  const proof = useChatsGen();
+  const [supplied, setSupplied] = useState(() => props.archived ? { ...props.archived, gen: props.archived.gen ?? props.listGen ?? proof.known } : null);
+  const suppliedCurrent = supplied && supplied.gen && proof.known && compareGen(supplied.gen, proof.known) === \"same\";
+  useEffect(() => { if (supplied && !suppliedCurrent) setSupplied(null); }, [supplied, suppliedCurrent]);
+  const archivedPage = useChatResource<ChatPage>(suppliedCurrent ? null : chatsRequestPath({ archived: true }, null, \"\", archivedFolded ? 1 : 50), fetchPage, 0, retainArchivedCount);
+  const count = useRef(props.archived?.total ?? 0);
+  if (archivedPage.data) count.current = archivedPage.data.total;
+  const archivedEligible = suppliedCurrent ? chatsEligible(supplied.gen, proof) : archivedPage.eligible;
+  const archived = { total: count.current, rows: archivedFolded ? [] : suppliedCurrent ? supplied.rows : archivedPage.eligible ? archivedPage.data?.chats ?? [] : [] };
+
+  const sections = chatsSections([...rows, ...(archived.rows ?? [])], now, waiting, archived.total);
+  const toggleSection = (key: ChatsSectionKey) => setFolded((before) => {
+    const next = before.includes(key) ? before.filter((entry) => entry !== key) : [...before, key];
+    saveFoldedChatsSections(next);
+    return next;
+  });
+  const toggle = (key: string) => setOpen((before) => {
+    const next = new Set(before);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
+  const ownerRow = (owner: ChatOwnerRow) => {
+    const latest = owner.latest;
+    const more = owner.chats.length > 1;
+    const expanded = open.has(owner.key);
+    return (
+      <li key={owner.key} data-chats-owner={owner.key}>
+        <div className=\"flex items-start\">
+          <button type=\"button\" data-chat-row={latest.threadId} onClick={() => props.onOpenRow(latest)}
+            className={cn(\"grid min-w-0 flex-1 grid-cols-[28px_1fr_auto] items-start gap-x-3 rounded-lg py-2 pl-3 pr-2 text-left hover:bg-raised/60\", focusRing)}>
+            {props.avatar(latest)}
+            <span className=\"flex min-w-0 items-center gap-1.5 text-[13.5px]\">
+              <span className=\"max-w-[10rem] shrink-0 truncate text-ink\">{props.ownerName(latest)}</span>
+              <span aria-hidden=\"true\" className=\"text-ink-secondary\">·</span>
+              <span dir=\"auto\" className={cn(\"min-w-0 truncate text-ink-secondary\", latest.unread && \"font-semibold text-ink\")}>{chatTitle(latest.title, Boolean(latest.routine))}</span>
+            </span>
+            <span className=\"flex items-center gap-1.5 pt-0.5\">
+              {owner.waiting > 0 && <span data-chats-waiting aria-label={`${owner.waiting} waiting`} className=\"min-w-4 rounded-full bg-warning/15 px-1 text-center text-[10px] font-semibold leading-4 text-warning\">{owner.waiting}</span>}
+              <time dateTime={new Date(chatTime(latest)).toISOString()} className=\"text-[12px] tabular-nums text-ink-secondary\">{props.time(chatTime(latest))}</time>
+            </span>
+          </button>
+          {more && (
+            <button type=\"button\" aria-expanded={expanded} data-chats-more={owner.key} onClick={() => toggle(owner.key)}
+              className={cn(\"mt-1 flex min-h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink\", focusRing)}>
+              {`${owner.chats.length} chats`}
+              <ChevronDown size={13} aria-hidden=\"true\" className={cn(\"transition-transform\", expanded && \"rotate-180\")} />
+            </button>
+          )}
+        </div>
+        {more && expanded && <ul aria-label={`Chats with ${props.ownerName(latest)}`}>{owner.chats.map((chat) => props.renderChat(chat, chat.archived ? archivedEligible : chatsEligible(props.listGen, proof)))}</ul>}
+      </li>
+    );
+  };
+
+  const section = (view: ChatsSectionView) => {
+    const isFolded = folded.includes(view.key);
+    const olderKey = `older:${view.key}`;
+    const Chevron = isFolded ? ChevronRight : ChevronDown;
+    return (
+      <section key={view.key} data-chats-section={view.key} aria-labelledby={`chats-section-${view.key}`}>
+        <h3 id={`chats-section-${view.key}`} className=\"sticky top-0 z-10 bg-panel px-1 pt-2\">
+          <button type=\"button\" aria-expanded={!isFolded} onClick={() => toggleSection(view.key)}
+            className={cn(\"flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-[11px] font-semibold uppercase tracking-wide text-ink-secondary hover:bg-raised/50\", focusRing)}>
+            <Chevron size={12} aria-hidden=\"true\" />
+            {chatsSectionTitle(view, archived.total)}
+          </button>
+        </h3>
+        {!isFolded && (
+          <ul>
+            {view.rows.map(ownerRow)}
+            {view.older.length > 0 && (
+              <li>
+                <button type=\"button\" aria-expanded={open.has(olderKey)} data-chats-older={view.key} onClick={() => toggle(olderKey)}
+                  className={cn(\"flex min-h-9 w-full items-center gap-1 rounded-lg px-3 text-left text-[12.5px] text-ink-secondary hover:bg-raised/60 hover:text-ink\", focusRing)}>
+                  {open.has(olderKey) ? \"Show less\" : `${view.older.length} older`}
+                  <ChevronDown size={13} aria-hidden=\"true\" className={cn(\"transition-transform\", open.has(olderKey) && \"rotate-180\")} />
+                </button>
+                {open.has(olderKey) && <ul>{view.older.map(ownerRow)}</ul>}
+              </li>
+            )}
+          </ul>
+        )}
+      </section>
+    );
+  };
+
+  return <div data-chats-sections>{sections.map(section)}</div>;
+}
+"
+
+ ❯ src/lib/chats-gen.test.ts:58:30
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  src/lib/chats-gen.test.ts > RULE paths 14 and 15 use versioned ordinary owner search without preview exclusions
+AssertionError: expected '// ⌘K switcher: bots and rooms from l…' to contain 'useChatResource<HitsPage>'
+
+- Expected
++ Received
+
+- useChatResource<HitsPage>
++ // ⌘K switcher: bots and rooms from local state, transcript hits from
++ // /api/search, and (0.1.62) the Settings pages whose words match, so
++ // "images" jumps straight to Settings > Images. Self-contained — owns its
++ // open state and its global chord, so App.tsx only mounts it. The sidebar's
++ // search field opens it through lib/app-events.ts.
++ import { useEffect, useRef, useState } from "react";
++ import { Bot as BotIcon, MessageSquare, Search, Settings as SettingsIcon, Users } from "lucide-react";
++ import { api, useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
++ import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
++ import { SETTINGS_SECTIONS, sectionsForSurface, settingsGroupLabel, settingsSectionLabel } from "@/lib/settings-sections";
++ import { useDesktopSurface } from "@/lib/use-surface";
++ import { t } from "@/lib/i18n";
++ import { rankByName } from "@/lib/palette-rank";
++ import { cn } from "@/lib/cn";
++ import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
++ import type { SearchHit } from "@/lib/search-hit";
++ import { landOnSearchHit } from "@/lib/focus-message";
++
++ type PaletteEntry =
++   | { kind: "bot"; bot: Bot }
++   | { kind: "room"; group: Group }
++   | { kind: "message"; hit: SearchHit }
++   | { kind: "setting"; section: AppSettingsSection };
++
++ /** At most this many Settings pages, after the bots and channels. */
++ const SETTINGS_LIMIT = 4;
++
++ /** `initialOpen`/`initialQuery`: the request that loaded this chunk
++  * (CommandPaletteHost), answered on mount. */
++ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery = "" }: { onOpenChange?: (open: boolean) => void; initialOpen?: boolean; initialQuery?: string }) {
++   const { state, dispatch } = useStore();
++   const desktop = useDesktopSurface();
++   const [open, setOpen] = useState(initialOpen);
++   // The Settings words load with the first open, not with the first paint.
++   const [settingsSearch, setSettingsSearch] = useState<typeof import("@/lib/settings-search") | null>(null);
++   const handedQuery = useRef(initialQuery);
++   const [query, setQuery] = useState("");
++   const [messageHits, setMessageHits] = useState<SearchHit[]>([]);
++   const [cursor, setCursor] = useState(0);
++   const selectedRef = useRef<HTMLButtonElement>(null);
++
++   // The chord fires from anywhere — Shell's app-wide shortcuts (⌘N, ⌘1–9)
++   // set the precedent of not guarding against focused inputs, and a
++   // modifier chord never collides with typing.
++   useEffect(() => {
++     const onKey = (e: KeyboardEvent) => {
++       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey) {
++         e.preventDefault();
++         setOpen((o) => !o);
++       }
++     };
++     const openFromSidebar = (event: Event) => {
++       const query = (event as CustomEvent<{ query?: unknown } | undefined>).detail?.query;
++       handedQuery.current = typeof query === "string" ? query.slice(0, 200) : "";
++       setOpen(true);
++     };
++     window.addEventListener("keydown", onKey);
++     window.addEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
++     return () => {
++       window.removeEventListener("keydown", onKey);
++       window.removeEventListener(OPEN_PALETTE_EVENT, openFromSidebar);
++     };
++   }, []);
++
++   useEffect(() => {
++     if (!open || settingsSearch) return;
++     let live = true;
++     import("@/lib/settings-search").then((module) => live && setSettingsSearch(module)).catch(() => {});
++     return () => {
++       live = false;
++     };
++   }, [open, settingsSearch]);
++
++   // fresh palette every open; stale queries from last time would flash
++   useEffect(() => {
++     if (!open) return;
++     setQuery(handedQuery.current);
++     handedQuery.current = "";
++     setMessageHits([]);
++     setCursor(0);
++   }, [open]);
++
++   useEffect(() => {
++     onOpenChange?.(open);
++   }, [onOpenChange, open]);
++
++   const q = query.trim().toLowerCase();
++
++   // Same debounce pattern as the sidebar search: names answer instantly
++   // from local state, transcript hits arrive a beat later, and a stale
++   // response for an outdated query is dropped.
++   useEffect(() => {
++     if (!open || !q) {
++       setMessageHits([]);
++       return;
++     }
++     // Results for the previous query must not remain clickable while the
++     // debounce and request for this query are pending.
++     setMessageHits([]);
++     let alive = true;
++     const timer = setTimeout(() => {
++       api(`/api/search?q=${encodeURIComponent(q)}&limit=12`)
++         .then((result: { hits?: SearchHit[] }) => alive && setMessageHits(result.hits ?? []))
++         .catch(() => alive && setMessageHits([]));
++     }, 150);
++     return () => {
++       alive = false;
++       clearTimeout(timer);
++     };
++   }, [open, q]);
++
++   useEffect(() => setCursor(0), [q]);
++
++   useEffect(() => {
++     selectedRef.current?.scrollIntoView({ block: "nearest" });
++   }, [cursor, messageHits]);
++
++   if (!open) return null;
++
++   const bots = rankByName(state.bots.filter((b) => !b.hidden), q);
++   const rooms = rankByName(state.groups, q);
++   // Settings answer a typed query only; an empty palette is the switcher.
++   const settings = q && settingsSearch
++     ? sectionsForSurface(SETTINGS_SECTIONS, desktop).filter((entry) => settingsSearch.settingsSectionMatches(entry, q)).slice(0, SETTINGS_LIMIT)
++     : [];
++   const entries: PaletteEntry[] = [
++     ...bots.map((bot): PaletteEntry => ({ kind: "bot", bot })),
++     ...rooms.map((group): PaletteEntry => ({ kind: "room", group })),
++     ...settings.map((entry): PaletteEntry => ({ kind: "setting", section: entry.id })),
++     // message hits only make sense for a typed query; empty = switcher mode
++     ...(q ? messageHits.map((hit): PaletteEntry => ({ kind: "message", hit })) : []),
++   ];
++   // hits arriving or rows filtering away can strand the cursor past the end
++   const selected = entries.length ? Math.min(cursor, entries.length - 1) : 0;
++
++   const activate = async (entry: PaletteEntry) => {
++     if (entry.kind === "setting") {
++       dispatch({ type: "toggleAppSettings", open: true, section: entry.section });
++     } else if (entry.kind === "message") {
++       const hit = entry.hit;
++       try {
++         await landOnSearchHit(hit, state, dispatch);
++       } catch (error) {
++         dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) });
++       }
++     } else {
++       dispatch({ type: "select", id: entry.kind === "bot" ? entry.bot.id : entry.group.id });
++     }
++     setOpen(false);
++   };
++
++   const onKeyDown = (e: React.KeyboardEvent) => {
++     if (e.key === "Escape") {
++       e.preventDefault();
++       // shield the window listeners other modals hang their own Esc on
++       e.stopPropagation();
++       setOpen(false);
++     } else if (e.key === "ArrowDown") {
++       e.preventDefault();
++       setCursor(entries.length ? (selected + 1) % entries.length : 0);
++     } else if (e.key === "ArrowUp") {
++       e.preventDefault();
++       setCursor(entries.length ? (selected - 1 + entries.length) % entries.length : 0);
++     } else if (e.key === "Enter") {
++       e.preventDefault();
++       const entry = entries[selected];
++       if (entry) void activate(entry);
++     }
++   };
++
++   // flat cursor across sections; each row needs its absolute index
++   const roomOffset = bots.length;
++   const settingOffset = bots.length + rooms.length;
++   const messageOffset = bots.length + rooms.length + settings.length;
++
++   const row = (key: string, index: number, onPick: () => void, children: React.ReactNode, twoLine = false) => (
++     <button
++       key={key}
++       ref={index === selected ? selectedRef : undefined}
++       onClick={onPick}
++       // mousemove, not mouseenter: rows shifting under a resting pointer
++       // (hits arriving) must not steal the keyboard selection
++       onMouseMove={() => setCursor(index)}
++       className={cn(
++         "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left",
++         twoLine && "flex-col items-stretch gap-0.5",
++         index === selected ? "bg-raised" : "hover:bg-raised/50",
++       )}
++     >
++       {children}
++     </button>
++   );
++
++   return (
++     <div
++       className="overlay-inset fixed inset-x-0 top-0 z-50 flex h-[var(--vvh,100dvh)] items-start justify-center bg-black/50 p-6 pt-[calc(0.14*var(--vvh,100dvh))]"
++       onMouseDown={(e) => e.target === e.currentTarget && setOpen(false)}
++       onKeyDown={onKeyDown}
++     >
++       <div
++         role="dialog"
++         aria-modal="true"
++         aria-label="Command palette"
++         className={`${BOX_FRAME} max-h-[min(480px,calc(0.7*var(--vvh,100dvh)))] w-full max-w-[560px] rounded-xl border border-hairline/50 bg-card shadow-2xl shadow-black/60`}
++       >
++         <BoxHead className="justify-start border-b border-hairline/40 px-4 py-3">
++           <Search size={16} className="shrink-0 text-ink-secondary" />
++           <input
++             autoFocus
++             value={query}
++             onChange={(e) => setQuery(e.target.value)}
++             placeholder={t("palette.placeholder")}
++             aria-label={t("palette.searchLabel")}
++             className="w-full bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
++           />
++           <kbd className="shrink-0 rounded-md border border-hairline/40 px-1.5 py-0.5 text-[11px] text-ink-secondary">
++             esc
++           </kbd>
++         </BoxHead>
++         <BoxBody className="p-2">
++           {entries.length === 0 && (
++             <div className="px-3 py-6 text-center text-[13px] text-ink-secondary">
++               {q ? `Nothing matches “${query}”` : "Nothing to switch to yet"}
++             </div>
++           )}
++           {bots.length > 0 && (
++             <div className="px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
++               Bots
++             </div>
++           )}
++           {bots.map((bot, i) =>
++             row(
++               `bot:${bot.id}`,
++               i,
++               () => void activate({ kind: "bot", bot }),
++               <>
++                 <BotIcon size={16} className="shrink-0 text-ink-secondary" />
++                 <span className="truncate text-[14px] text-ink">{bot.name}</span>
++                 {bot.title && (
++                   <span className="min-w-0 truncate text-[12.5px] text-ink-secondary">{bot.title}</span>
++                 )}
++               </>,
++             ),
++           )}
++           {rooms.length > 0 && (
++             <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
++               Channels
++             </div>
++           )}
++           {rooms.map((group, i) =>
++             row(
++               `room:${group.id}`,
++               roomOffset + i,
++               () => void activate({ kind: "room", group }),
++               <>
++                 <Users size={16} className="shrink-0 text-ink-secondary" />
++                 <span className="truncate text-[14px] text-ink">{group.name}</span>
++               </>,
++             ),
++           )}
++           {settings.length > 0 && (
++             <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
++               {t("settings.title")}
++             </div>
++           )}
++           {settings.map((entry, i) =>
++             row(
++               `setting:${entry.id}`,
++               settingOffset + i,
++               () => void activate({ kind: "setting", section: entry.id }),
++               <>
++                 <SettingsIcon size={16} className="shrink-0 text-ink-secondary" />
++                 <span className="truncate text-[14px] text-ink">{settingsSectionLabel(entry.id)}</span>
++                 <span className="min-w-0 truncate text-[12.5px] text-ink-secondary">{settingsGroupLabel(entry.group)}</span>
++               </>,
++             ),
++           )}
++           {q && messageHits.length > 0 && (
++             <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
++               Messages
++             </div>
++           )}
++           {q &&
++             messageHits.map((hit, i) => {
++               const before = hit.snippet.slice(0, hit.matchStart);
++               const match = hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength);
++               const after = hit.snippet.slice(hit.matchStart + hit.matchLength);
++               return row(
++                 `msg:${hit.threadId}:${hit.messageId}`,
++                 messageOffset + i,
++                 () => void activate({ kind: "message", hit }),
++                 <>
++                   <span className="flex items-center gap-2 truncate text-[13px] font-medium text-ink">
++                     <MessageSquare size={13} className="shrink-0 text-ink-secondary" />
++                     {hit.name}
++                     {hit.task ? <span className="font-normal text-ink-secondary"> · {hit.task}</span> : null}
++                   </span>
++                   <span className="line-clamp-2 text-[12.5px] text-ink-secondary">
++                     {before}<mark className="rounded-sm bg-accent/25 px-0.5 text-ink">{match}</mark>{after}
++                   </span>
++                 </>,
++                 true,
++               );
++             })}
++         </BoxBody>
++       </div>
++     </div>
++   );
++ }
++
+
+ ❯ src/lib/chats-gen.test.ts:76:20
+     74|   for(const name of ['CommandPalette','ChatFindBar']) {
+     75|     const source=readFileSync(new URL(`../components/${name}.tsx`,impo…
+     76|     expect(source).toContain('useChatResource<HitsPage>');
+       |                    ^
+     77|     expect(source).toContain('/api/search?q=');
+     78|     expect(source).not.toContain('view=chats');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE unproven supplied rows never borrow current proof: archive-supplied-unversioned-open
+AssertionError: expected 'Archived · 7Archive owner·Supplied ar…' not to contain 'Supplied archived title'
+
+Expected: "Supplied archived title"
+Received: "Archived · 7Archive owner·Supplied archived title"
+
+ ❯ src/lib/chats-previews-browser.test.ts:320:56
+    318|   const page=await browser.newPage(); await page.goto(url);
+    319|   await page.evaluate(mode=>{const f=(window as any).fixture;f.unmount…
+    320|   expect(await page.locator("body").textContent()).not.toContain("Supp…
+       |                                                        ^
+    321|   await page.waitForFunction(()=>(window as any).fixture.pending().som…
+    322|   expect(await page.locator('[data-chats-section="archived"]').textCon…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE same generation refresh failure preserves rows
+AssertionError: expected { total: 7, chats: [], next: null } to match object { gen: { epoch: 'A', rev: +0 }, …(3) }
+
+- Expected
++ Received
+
+  {
+-   "chats": [
+-     {
+-       "createdAt": 1,
+-       "snippet": "same secret",
+-       "threadId": "old",
+-       "title": "Title",
+-     },
+-   ],
+-   "gen": {
+-     "epoch": "A",
+-     "rev": 0,
+-   },
++   "chats": [],
+    "next": null,
+    "total": 7,
+  }
+
+ ❯ src/lib/chats-previews-browser.test.ts:335:72
+    333|   await page.evaluate(()=>{const f=(window as any).fixture;f.reject(f.…
+    334|   await page.waitForTimeout(650);
+    335|   expect(JSON.parse((await page.locator('#retained').textContent())!))…
+       |                                                                        ^
+    336|   await page.close();
+    337| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/lib/chats-previews-browser.test.ts:353:33
+    351|   const count=await page.evaluate(()=>(window as any).fixture.starts()…
+    352|   await page.evaluate(()=>(window as any).fixture.wake());
+    353|   expect(await shown().count()).toBe(0);
+       |                                 ^
+    354|   await page.evaluate(gen=>(window as any).fixture.hello(gen),A);
+    355|   await shown().waitFor();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE count survives section unmount, main invalidation and failed folded archive refresh
+TimeoutError: locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('button', { name: /Archived.*7/ }) to be visible[22m
+
+ ❯ src/lib/chats-previews-browser.test.ts:406:55
+    404|   await page.getByRole('textbox',{name:'Search all chats'}).fill('');
+    405|   await rawAnswer(page,'/api/chats?limit=50',{...first,gen:next});
+    406|   await page.getByRole('button',{name:/Archived.*7/}).waitFor();
+       |                                                       ^
+    407|   await page.waitForFunction(()=>(window as any).fixture.pending().som…
+    408|   await page.evaluate(()=>{const f=(window as any).fixture;f.reject(f.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 13 flat routine folds keep titles and marks while snippets are gated
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ src/lib/chats-previews-browser.test.ts:481:72
+    479|   expect(await page.locator('body').textContent()).not.toContain('rout…
+    480|   await page.getByRole('button',{name:/Morning.*2 runs/}).click();
+    481|   expect(await page.getByText('Routine title 0',{exact:true}).count())…
+       |                                                                        ^
+    482|   await page.close();
+    483| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE loss b disposes main transcript bytes while loss a keeps them in memory
+AssertionError: expected '{"gen":{"epoch":"A","rev":0},"chats":…' not to contain 'memory secret'
+
+Expected: "memory secret"
+Received: "{"gen":{"epoch":"A","rev":0},"chats":[{"threadId":"main0","title":"Chat 0","createdAt":1794000857337,"botId":"bot","archived":false,"snippet":"memory secret","lastRole":"user"},{"threadId":"main1","title":"Chat 1","createdAt":1794000857337,"botId":"bot","archived":false,"snippet":"memory secret","lastRole":"user"}],"next":null,"total":60,"listGen":{"epoch":"A","rev":0}}"
+
+ ❯ src/lib/chats-previews-browser.test.ts:503:89
+    501|   expect(JSON.stringify(await page.evaluate(()=>(window as any).fixtur…
+    502|   await page.evaluate(gen=>(window as any).fixture.hello(gen),next);
+    503|   expect(JSON.stringify(await page.evaluate(()=>(window as any).fixtur…
+       |                                                                                         ^
+    504|   expect(await page.evaluate(()=>(window as any).fixture.memory().tota…
+    505|   await page.close();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE main failed request retries on owner action but never polls
+TimeoutError: page.waitForFunction: Timeout 2000ms exceeded.
+ ❯ src/lib/chats-previews-browser.test.ts:536:14
+    534|   await page.evaluate(()=>{const f=(window as any).fixture;f.reject(f.…
+    535|   await page.getByRole('button',{name:'Try again',exact:true}).click();
+    536|   await page.waitForFunction(()=>(window as any).fixture.pending().som…
+       |              ^
+    537|   await rawAnswer(page,'/api/chats?limit=50',{gen:next,total:1,chats:[…
+    538|   await page.getByText('Retry works',{exact:true}).waitFor();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/12]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE rejected unversioned answers make at most one automatic request per generation
+AssertionError: expected 2 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 2
+
+ ❯ src/lib/chats-previews-browser.test.ts:550:122
+    548|   await rawAnswer(page,'/archive-resource',{total:7,chats:[],next:null…
+    549|   await page.waitForTimeout(1100);
+    550|   expect(await page.evaluate(()=>(window as any).fixture.starts().filt…
+       |                                                                                                                          ^
+    551|   await page.evaluate(gen=>(window as any).fixture.hello(gen),A);
+    552|   await rawAnswer(page,'/archive-resource',{total:7,chats:[],next:null…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/12]⎯
+
+ FAIL  src/lib/focus-message.test.ts > RULE Find and Palette do not focus a hit after its generation changed during landing
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/lib/focus-message.test.ts:138:78
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/12]⎯
+
+
+ Test Files  3 failed (3)
+      Tests  12 failed | 15 passed | 34 skipped (61)
+   Start at  21:33:13
+   Duration  72.26s (transform 4.90s, setup 6.66s, import 1.15s, tests 64.11s, environment 0ms)
+

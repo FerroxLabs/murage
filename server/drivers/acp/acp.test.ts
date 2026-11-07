@@ -22,14 +22,14 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
 import { GrokAgentDriver } from "./grok.ts";
 import { FuigoAgentDriver } from "./fuigo.ts";
 import { GeminiAgentDriver } from "./gemini.ts";
-import { KimiAgentDriver, KIMI_LOGIN_NOTE } from "./kimi.ts";
+import { KimiAgentDriver, KIMI_LOGIN_NOTE, kimiSignedIn } from "./kimi.ts";
 import { DroidAgentDriver } from "./droid.ts";
 import { CursorAgentDriver } from "./cursor.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
@@ -541,9 +541,36 @@ describe("ACP turns (fake CLI)", () => {
       }
       const completed = recorder.events.filter(e => e.type === "turn.completed");
       expect(completed).toHaveLength(2);
-      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5 } });
+      for (const event of completed) expect(event).toMatchObject({ usage: { input: shape === "fuigo" ? 100 : 10, output: shape === "fuigo" ? 50 : 5, ...(shape === "fuigo" ? { cachedInput: 30 } : {}) } });
       if (shape === "fuigo") expect(completed).toEqual(expect.arrayContaining([expect.objectContaining({ charge: 0.25 })]));
     } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  // upstream #1993: OpenCode keeps cache reads out of inputTokens. Counting
+  // only inputTokens as the whole prompt, with the cache reads named as its
+  // cached part, made the fresh figure zero on a cached turn.
+  it.each([
+    ["cache-beside", { input: 100, output: 5, cachedInput: 90 }],
+    ["cache-inside", { input: 100, output: 5, cachedInput: 90 }],
+  ] as const)("counts cache reads as part of the whole prompt (%s)", async (shape, want) => {
+    process.env.FAKE_ACP_USAGE_ROOT = shape;
+    await create();
+    try {
+      const sent = await instance.adapter.sendTurn({ threadId: `t-cache-${shape}`, text: "go" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
+      expect(recorder.events.find((e) => e.type === "thread.token-usage.updated")).toMatchObject(want);
+      expect(recorder.events.find((e) => e.type === "turn.completed")).toMatchObject({ usage: want });
+    } finally { delete process.env.FAKE_ACP_USAGE_ROOT; }
+  });
+
+  it("splits cache reads: no total means beside, absent or bad is not zero, Fuigo counts inside", () => {
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 90 }, false)).toEqual({ input: 100, cachedInput: 90 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 0 }, false)).toEqual({ input: 10, cachedInput: 0 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: -1 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 5, cachedReadTokens: 2.5 }, false)).toEqual({ input: 10 });
+    expect(splitAcpCacheReads({ inputTokens: 100, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 100, cachedInput: 30 });
+    expect(splitAcpCacheReads({ inputTokens: 10, outputTokens: 50, cachedReadTokens: 30 }, true)).toEqual({ input: 10, cachedInput: 10 });
   });
 
   it("reads token usage from the root of the prompt result", async () => {
@@ -2495,12 +2522,22 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ setup: true });
   });
 
+  for (const code of ["key_budget_reached", "premium_locked"]) for (const shape of ["flat", "nested"]) it(`ACP keeps typed Flux ${code} ${shape}`, async () => {
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", reachesFlux: () => true });
+    await create(driver, `flux-refusal:${code}:${shape}`);
+    await instance.adapter.sendTurn({ threadId: "t-flux-typed", text: "fixture only" });
+    await recorder.until(event => event.type === "turn.completed");
+    const error = recorder.events.find(event => event.type === "runtime.error");
+    expect(error?.providerError?.fluxBudget).toBe(code === "key_budget_reached" ? true : undefined);
+  });
+
   it("explains nested credit exhaustion without exposing provider data", async () => {
     await create(GrokAgentDriver, "credit-exhausted");
     await instance.adapter.sendTurn({ threadId: "t-credit-exhausted", text: "fixture only" });
     expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
-    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402 }, details: expect.stringContaining("Provider response: HTTP 402") });
-    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid/);
+    expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402, providerSaid: "Your credit balance is exhausted." }, details: expect.stringContaining("Provider response: HTTP 402") });
+    // Every event in full, raw payloads included: the sentence is reworded, and unknown prose and the link never travel.
+    expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|FIXTURE_PROVIDER_PROSE_CANARY|team's credit balance/);
   });
 
   it("retains only safe ACP diagnostic facts for customer error details", () => {
@@ -3571,7 +3608,7 @@ describe("ACP snapshot", () => {
     const kimiHome = join(scratch, "custom-kimi-home");
     const childHome = join(scratch, "child-home");
     mkdirSync(join(childHome, ".kimi-code", "credentials"), { recursive: true });
-    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), "{}");
+    writeFileSync(join(childHome, ".kimi-code", "credentials", "kimi-code.json"), '{"access_token":"fixture-access-token"}');
 
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-custom-home",
@@ -3583,12 +3620,202 @@ describe("ACP snapshot", () => {
     try {
       expect((await instance.snapshot()).authenticated).toBe(false);
       mkdirSync(join(kimiHome, "credentials"), { recursive: true });
-      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), "{}");
+      writeFileSync(join(kimiHome, "credentials", "kimi-code.json"), '{"access_token":"fixture-access-token"}');
       expect((await instance.snapshot()).authenticated).toBe(true);
     } finally {
       await instance.dispose();
       await removeTempDir(scratch);
     }
+  });
+
+  describe("kimi sign-in check (KIMI-SIGNIN-1020)", () => {
+    const FAKE_TOKENS = ["fake-access-kimi", "fake-refresh-kimi"];
+    const HELD = JSON.stringify({ access_token: FAKE_TOKENS[0], refresh_token: FAKE_TOKENS[1], expires_at: 1 });
+    const TOMBSTONE = JSON.stringify({ access_token: "", refresh_token: "" });
+    const ENV_NAME = "kimi-code-env-0123456789abcdef.json";
+    const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+    let scratch: string;
+    let logSpies: ReturnType<typeof vi.spyOn>[];
+
+    beforeEach(() => {
+      scratch = mkdtempSync(join(tmpdir(), "murage-kimi-signin-"));
+      logSpies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m));
+    });
+    afterEach(async () => {
+      vi.unstubAllEnvs();
+      // Leak check over logs: no fake token value reached any console call.
+      const logged = JSON.stringify(logSpies.flatMap((s) => s.mock.calls));
+      for (const t of FAKE_TOKENS) expect(logged).not.toContain(t);
+      for (const s of logSpies) s.mockRestore();
+      try { chmodSync(join(scratch, "home", "credentials"), 0o700); } catch { /* not created */ }
+      await removeTempDir(scratch);
+    });
+
+    function credDir(): string {
+      const dir = join(scratch, "home", "credentials");
+      mkdirSync(dir, { recursive: true });
+      return dir;
+    }
+
+    async function kimiSnap(env: Record<string, string> = { KIMI_CODE_HOME: join(scratch, "home"), HOME: join(scratch, "child") }) {
+      const instance = await KimiAgentDriver.create({
+        instanceId: `kimi-signin-${Math.random().toString(16).slice(2)}`,
+        displayName: undefined,
+        environment: env,
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: false },
+      });
+      try {
+        const snap = await instance.snapshot();
+        // Leak check over the snapshot: the check reports a state, never a token.
+        const json = JSON.stringify(snap);
+        for (const t of FAKE_TOKENS) expect(json).not.toContain(t);
+        return snap;
+      } finally {
+        await instance.dispose();
+      }
+    }
+
+    // Regressions (fail on base 3b1624a57).
+    it("a kimi.ai login (kimi-code-env-<16 hex>.json, the default region) is signed in", async () => {
+      writeFileSync(join(credDir(), ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("a kimi.ai login under the child HOME is signed in (default data root)", async () => {
+      vi.stubEnv("KIMI_CODE_HOME", undefined);
+      const dir = join(scratch, "child", ".kimi-code", "credentials");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap({ HOME: join(scratch, "child"), USERPROFILE: join(scratch, "child") })).authenticated).toBe(true);
+    });
+
+    it("a revoked tombstone is signed out, and so is an all-tombstone folder", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      expect((await kimiSnap()).authenticated).toBe(false);
+      writeFileSync(join(dir, ENV_NAME), TOMBSTONE);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it("a tombstoned kimi-code.json next to a held env file is signed in", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it.each(["not json", "null", "[]", "42", "\"text\""])("an unparseable or non-object file (%s) is signed out", async (body) => {
+      writeFileSync(join(credDir(), "kimi-code.json"), body);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a symlinked candidate or a symlinked credentials folder is signed out", async () => {
+      const outside = join(scratch, "outside");
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, "kimi-code.json"), HELD);
+      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")]);
+      expect((await kimiSnap()).authenticated).toBe(false);
+
+      const root2 = join(scratch, "root2");
+      mkdirSync(root2, { recursive: true });
+      execFileSync("ln", ["-s", outside, join(root2, "credentials")]);
+      expect((await kimiSnap({ KIMI_CODE_HOME: root2, HOME: join(scratch, "child") })).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a FIFO named kimi-code.json is signed out and does not block", async () => {
+      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")]);
+      const started = Date.now();
+      expect((await kimiSnap()).authenticated).toBe(false);
+      expect(Date.now() - started).toBeLessThan(1900);
+    });
+
+    it("a folder named kimi-code.json is signed out", async () => {
+      mkdirSync(join(credDir(), "kimi-code.json"));
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it.skipIf(process.platform === "win32")("a hard-linked candidate (nlink > 1) is signed out", async () => {
+      const outside = join(scratch, "outside-held.json");
+      writeFileSync(outside, HELD);
+      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")]);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
+
+    it("a file over 64 KiB is signed out; exactly 64 KiB padded is signed in", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD + " ".repeat(64 * 1024 + 1 - HELD.length));
+      expect((await kimiSnap()).authenticated).toBe(false);
+      writeFileSync(join(dir, "kimi-code.json"), HELD + " ".repeat(64 * 1024 - HELD.length));
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("33 tombstone candidates hit the open cap and show unverified, not signed out", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), TOMBSTONE);
+      for (let i = 0; i < 32; i++) writeFileSync(join(dir, `kimi-code-env-${i.toString(16).padStart(16, "0")}.json`), TOMBSTONE);
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it("more than 256 folder entries with no held login show unverified", async () => {
+      const dir = credDir();
+      for (let i = 0; i < 257; i++) writeFileSync(join(dir, `other-${i}.txt`), "x");
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it.skipIf(asRoot || process.platform === "win32")("an unreadable candidate makes the scan unverified", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      chmodSync(join(dir, "kimi-code.json"), 0o000);
+      writeFileSync(join(dir, ENV_NAME), HELD);
+      expect((await kimiSnap()).authenticated).toBeUndefined();
+    });
+
+    it.skipIf(asRoot || process.platform === "win32")("an unreadable credentials folder shows unverified", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      chmodSync(dir, 0o000);
+      const snap = await kimiSnap();
+      expect(snap.authenticated).toBeUndefined();
+      expect(snap.authUnverified).toBe(true);
+    });
+
+    it.skipIf(process.platform === "win32")("the folder recheck refuses a credentials folder swapped after it was pinned", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "kimi-code.json"), HELD);
+      const other = join(scratch, "home", "credentials-other");
+      mkdirSync(other);
+      writeFileSync(join(other, "kimi-code.json"), HELD);
+      let calls = 0;
+      const env = { KIMI_CODE_HOME: join(scratch, "home") };
+      const answer = await kimiSignedIn(env, {
+        pause: async () => {
+          // Swap the folder right after it was pinned (second pause point).
+          if (++calls === 2) {
+            execFileSync("mv", [dir, `${dir}-old`]);
+            execFileSync("mv", [other, dir]);
+          }
+        },
+      });
+      expect(answer).toBeUndefined();
+    });
+
+    // Compatibility (pass on base and head).
+    it("an expired access token with a refresh token stays signed in (the CLI refreshes)", async () => {
+      writeFileSync(join(credDir(), "kimi-code.json"), JSON.stringify({ access_token: FAKE_TOKENS[0], refresh_token: FAKE_TOKENS[1], expires_at: 0 }));
+      expect((await kimiSnap()).authenticated).toBe(true);
+    });
+
+    it("only non-matching names is signed out", async () => {
+      const dir = credDir();
+      writeFileSync(join(dir, "other.json"), HELD);
+      writeFileSync(join(dir, "kimi-code-env-XYZ.json"), HELD);
+      expect((await kimiSnap()).authenticated).toBe(false);
+    });
   });
 
   it("droid resolves the signed-in CLI before falling back to FACTORY_API_KEY", async () => {
@@ -3712,21 +3939,23 @@ describe("ACP snapshot", () => {
   });
 
   it("kimi resolves default credentials from the child HOME", async () => {
+    vi.stubEnv("KIMI_CODE_HOME", undefined);
     const scratch = mkdtempSync(join(tmpdir(), "murage-kimi-home-"));
     const credentialDir = join(scratch, ".kimi-code", "credentials");
     mkdirSync(credentialDir, { recursive: true });
-    writeFileSync(join(credentialDir, "kimi-code.json"), "{}");
+    writeFileSync(join(credentialDir, "kimi-code.json"), '{"access_token":"fixture-access-token"}');
 
     const instance = await KimiAgentDriver.create({
       instanceId: "kimi-child-home",
       displayName: undefined,
-      environment: { HOME: scratch },
+      environment: { HOME: scratch, USERPROFILE: scratch },
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
     try {
       expect((await instance.snapshot()).authenticated).toBe(true);
     } finally {
+      vi.unstubAllEnvs();
       await instance.dispose();
       await removeTempDir(scratch);
     }

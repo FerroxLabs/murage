@@ -109,7 +109,7 @@ export function describeSizeRule(rule: SizeRule): string {
     const top = rule.experimentalAbovePixels ? ` Above ${fmt(rule.experimentalAbovePixels)} pixels is experimental.` : "";
     return `Any width and height in multiples of ${rule.multiple}, ratio ${ratioLabel(rule.minRatio)} to ${ratioLabel(rule.maxRatio)}, ${fmt(rule.minPixels)} to ${fmt(rule.maxPixels)} pixels, longest side at most ${rule.maxEdge}.${top}`;
   }
-  if (rule.kind === "ratioTier") return `Named ratios ${rule.ratios.join(", ")} at size tiers ${rule.tiers.join(", ")}.`;
+  if (rule.kind === "ratioTier") return `Supported image proportions: ${rule.ratios.join(", ")}. Available image sizes: ${rule.tiers.join(", ")}.`;
   return rule.sizes.length ? `Only these sizes: ${rule.sizes.join(", ")}.` : "The provider's default size only.";
 }
 
@@ -318,7 +318,7 @@ const GEMINI_STANDARD_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4",
 const NO_SUPPORTS = { edit: false, background: false, seed: false, negative: false, n: 1, compression: false };
 const BUFFERED = { stream: false, streamEdits: false, jobs: false };
 const NOT_PUBLISHED = "Limit not published, Murage uses 4,000.";
-const GOOGLE_TOKENS = "Google counts tokens, not characters; Murage uses a conservative 32,000 characters.";
+const GOOGLE_TOKENS = "Google counts tokens (small pieces of text), not characters; Murage uses a conservative limit of 32,000 characters.";
 /** The built-in budget notes, so a view can say them in the reader's language. */
 export const IMAGE_BUDGET_NOTES = { notPublished: NOT_PUBLISHED, tokens: GOOGLE_TOKENS } as const;
 

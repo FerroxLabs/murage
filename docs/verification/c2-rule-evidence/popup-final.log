@@ -1,0 +1,32 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (44 tests | 1 failed) 77762ms
+   × RULE path 4 store task rows cannot supply preview text even after a proven empty page 438ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 4 store task rows cannot supply preview text even after a proven empty page
+Error: locator.waitFor: Error: strict mode violation: getByText('Storm chat', { exact: true }) resolved to 2 elements:
+    1) <span class="truncate chip-fold:hidden">Storm chat</span> aka getByRole('button', { name: 'Chat list' })
+    2) <div class="truncate text-[13px] text-ink">Storm chat</div> aka getByRole('button', { name: 'Storm chat Checking for' })
+
+Call log:
+[2m  - waiting for getByText('Storm chat', { exact: true }) to be visible[22m
+
+ ❯ src/lib/chats-previews-browser.test.ts:571:51
+    569|   const page=await browser.newPage();await page.goto(url);
+    570|   await page.evaluate(()=>{const f=(window as any).fixture;f.unmount()…
+    571|   await page.getByText('Storm chat',{exact:true}).first().waitFor();
+       |                                                   ^
+    572|   expect(await page.locator('body').textContent()).not.toContain('stor…
+    573|   await rawAnswer(page,'threads=main0',{gen:A,total:0,chats:[],next:nu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 82 passed (83)
+   Start at  21:40:44
+   Duration  86.67s (transform 6.15s, setup 7.14s, import 1.39s, tests 77.92s, environment 0ms)
+

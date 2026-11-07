@@ -1,3 +1,4 @@
+import { learningDeletionEpoch } from "./deny.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -83,7 +84,7 @@ export function publishMemoryEvolutionPolicy(snapshot:ProcedureReviewSnapshot,re
       if(prior.receiptId===receipt.id&&prior.candidateHash===receipt.candidateHash&&prior.snapshotDigest===procedureSnapshotDigest(snapshot)&&prior.contentHash===procedureCandidateHash(JSON.stringify(fields)))return current;
     }
     if(current.revision!==snapshot.target.baseRevision)throw Error("MEMORY_EVOLUTION_CONFLICT");
-    const state=memoryState();if(state.policyRevision!==snapshot.policyRevision||state.deletionEpoch!==snapshot.deletionEpoch||readMemoryLearning(database()).revision!==snapshot.learningRevision)throw Error("MEMORY_EVOLUTION_AUTHORITY_CHANGED");
+    const state=memoryState();if(state.policyRevision!==snapshot.policyRevision||learningDeletionEpoch(database())!==snapshot.deletionEpoch||readMemoryLearning(database()).revision!==snapshot.learningRevision)throw Error("MEMORY_EVOLUTION_AUTHORITY_CHANGED");
     if(snapshot.target.bundleId!==procedureCandidateHash(JSON.stringify(current))||snapshot.scopeId!==snapshot.target.scopeId||database().prepare("SELECT id FROM memory_scopes WHERE kind='workspace' AND owner_key=?").get(state.installationId)?.id!==snapshot.target.scopeId)throw Error("MEMORY_EVOLUTION_TARGET_MISMATCH");
     const revision=`evaluated:${randomUUID()}`;
     persist({schema:1,revision,parentRevision:current.revision,fields,contentHash:procedureCandidateHash(JSON.stringify(fields)),origin:"evaluated",createdAt:Date.now(),receiptId:receipt.id,candidateHash:receipt.candidateHash,snapshotDigest:procedureSnapshotDigest(snapshot),corpus});

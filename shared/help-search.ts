@@ -11,6 +11,7 @@
 // person reading the answer cannot open one.
 import { HELP_INDEX, type HelpEntry } from "./help-index.ts";
 import { CAPABILITY_ENTRIES, type CapabilityEntry } from "./capability-db.ts";
+import { stem, tokenize } from "./help-tokenize.ts";
 
 export type { HelpEntry };
 
@@ -42,46 +43,10 @@ export function helpResultForBot(result: HelpResult): Record<string, string | un
   return status ? { title, heading, where, url, text, status, limits: limits || undefined, applies } : { title, heading, where, url, text };
 }
 
-/** Words that carry no signal in a product-help question. Deliberately small:
- * over-trimming loses "can" and "use" from phrases like "how to use". */
-const STOPWORDS = new Set([
-  "a", "an", "the", "is", "are", "was", "were", "be", "am", "do", "does", "did",
-  "of", "in", "on", "at", "it", "its", "this", "that", "these", "those", "and",
-  "or", "but", "if", "so", "my", "me", "i", "you", "your", "we", "us", "there",
-  "what", "when", "where", "which", "who", "why", "how", "to", "for", "with",
-  "can", "will", "would", "should", "murage",
-]);
-
-/** Lowercase, split on non-alphanumerics, drop stopwords. Variants are folded
- * by `stem` at match time, not here, so the index keeps the words the docs
- * actually use and a result can still be quoted verbatim. */
-export function tokenize(text: string): string[] {
-  const out: string[] = [];
-  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (raw.length < 2 || STOPWORDS.has(raw)) continue;
-    out.push(raw);
-  }
-  return out;
-}
-
-/** Fold the endings that product prose varies freely: "approve"/"approval",
- * "connect"/"connection"/"connected", "routine"/"routines". Deliberately a
- * short fixed list rather than a full Porter stemmer — every rule here is one
- * a Murage help question actually needs, and a rule that over-merges ("cost"
- * and "costume") is worse on a corpus this small than a missed variant. */
-const SUFFIXES = ["ations", "ation", "ions", "ion", "ments", "ment", "ings", "ing", "als", "al", "ers", "er", "ed", "es", "s"];
-
-export function stem(word: string): string {
-  let out = word;
-  for (const suffix of SUFFIXES) {
-    if (out.length - suffix.length >= 4 && out.endsWith(suffix)) {
-      out = out.slice(0, -suffix.length);
-      break;
-    }
-  }
-  // "approve" → "approv" meets "approval" → "approv"; "routine" meets "routines".
-  return out.length > 4 && out.endsWith("e") ? out.slice(0, -1) : out;
-}
+// tokenize and stem live in ./help-tokenize.ts, shared with the help panel's
+// search over a language's Help pack, so that chunk does not carry the docs
+// index (every script, marks kept inside words, CJK runs as characters plus bigrams).
+export { stem, tokenize };
 
 /** Words the product uses that the documentation spells differently. Kept
  * tiny and one-directional (question vocabulary → docs vocabulary): every
@@ -173,7 +138,8 @@ function buildIndex(corpus: readonly HelpEntry[]) {
  * vocabulary word that shares their stem. */
 function expand(token: string, byStem: ReadonlyMap<string, readonly string[]>): string[] {
   const matches = new Set<string>();
-  for (const seed of [token, ...(ALIASES[token] ?? [])]) {
+  // Own entries only: "constructor" and other Object.prototype names are words, not alias lists.
+  for (const seed of [token, ...(Object.hasOwn(ALIASES, token) ? ALIASES[token]! : [])]) {
     for (const word of byStem.get(stem(seed)) ?? []) matches.add(word);
   }
   return [...matches];

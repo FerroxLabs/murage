@@ -1,0 +1,33 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (41 tests | 1 failed | 40 skipped) 1251ms
+   × RULE path 6 changing the Find query rejects a late prior-path answer 892ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 6 changing the Find query rejects a late prior-path answer
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ src/lib/chats-previews-browser.test.ts:522:63
+    520|   await answer(page,'q=oldquery',A,'late path secret');
+    521|   await page.waitForTimeout(50);
+    522|   expect(await page.getByText('1 of 1',{exact:true}).count()).toBe(1);
+       |                                                               ^
+    523|   await page.close();
+    524| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 40 skipped (41)
+   Start at  21:28:33
+   Duration  6.97s (transform 4.28s, setup 5.29s, import 314ms, tests 1.25s, environment 0ms)
+
