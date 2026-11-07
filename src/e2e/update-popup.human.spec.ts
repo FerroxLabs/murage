@@ -16,14 +16,18 @@ test.beforeAll(async()=>{
  writeFileSync(join(scratch,'style.css'),readFileSync(join(root,'src/styles.css'),'utf8').replace('@import "tailwindcss";',`@import "${root}/node_modules/tailwindcss/index.css" source(none);\n@source "${root}/src";\n@source "./entry.tsx";`));
  writeFileSync(join(scratch,'entry.tsx'),`
  import React from '${root}/node_modules/react/index.js';import{createRoot}from'${root}/node_modules/react-dom/client.js';
+ import{updatePopupAnchorRef}from'${root}/src/lib/update-card.ts';
  import{UpdateBanner}from'${root}/src/components/UpdateBanner.tsx';import{UpdateIndicator}from'${root}/src/components/UpdateIndicator.tsx';import{UndoToastHost}from'${root}/src/components/ui/UndoToast.tsx';import{undoHost}from'${root}/src/lib/undo.ts';import './style.css';
  const listeners=new Set();let state={status:'idle'};
  window.fixtureState=(next)=>{state=next;for(const l of listeners)l(next);};window.fixtureUndo=undoHost;
  const q=new URLSearchParams(location.search);
  if(q.get('surface')!=='browser')window.muragebox={updater:{onState:(l)=>{listeners.add(l);l(state);return()=>listeners.delete(l);},download:async()=>{},install:async()=>{},retry:async()=>{},check:async()=>{}}};
  const rail=q.get('rail')==='1';
+ // late=1: the terms screen first, so the sidebar (and its footer) mounts only once the terms are accepted.
+ function Aside(){const[shown,setShown]=React.useState(q.get('late')!=='1');window.fixtureShowFooter=()=>setShown(true);
+  return shown?<aside className={(rail?'w-[64px]':'w-[320px]')+' flex h-full shrink-0 flex-col justify-end max-md:hidden'}><div data-update-popup-anchor="" ref={updatePopupAnchorRef} data-testid="footer" className="px-3 pb-3 pt-2" style={rail?{height:170}:{height:68}}><UpdateIndicator/></div></aside>:null;}
  createRoot(document.getElementById('root')).render(<div className="flex h-full bg-app text-ink">
-  <UpdateBanner/><aside className={(rail?'w-[64px]':'w-[320px]')+' flex h-full shrink-0 flex-col justify-end max-md:hidden'}><div data-update-popup-anchor="" data-testid="footer" className="px-3 pb-3 pt-2" style={rail?{height:170}:{height:68}}><UpdateIndicator/></div></aside>
+  <UpdateBanner/><Aside/>
   <main className="flex flex-1 flex-col justify-end p-4"><textarea data-testid="composer" className="h-24 w-full bg-control"/></main><UndoToastHost/></div>);
  `);
  await build({configFile:false,root:scratch,envFile:false,logLevel:'silent',resolve:{alias:{'@':join(root,'src'),react:join(root,'node_modules/react'),'react-dom':join(root,'node_modules/react-dom')}},esbuild:{jsx:'automatic'},build:{outDir:join(scratch,'dist'),emptyOutDir:true},plugins:[tailwindcss()]});
@@ -88,6 +92,99 @@ test('on the rail it clears the rail footer and the composer; narrow it hangs at
  await page.setViewportSize({width:420,height:700});
  await expect.poll(async()=>(await box(page.getByTestId('update-popup'))).y).toBeLessThan(120);
  popup=await box(page.getByTestId('update-popup'));expect(popup.x).toBeGreaterThanOrEqual(0);expect(popup.x+popup.width).toBeLessThanOrEqual(420);expect(apart(popup,await box(composer))).toBe(true);
+});
+// A full-window modal <dialog>, as What's New opens it after an update (showModal: top layer, the rest of the page inert).
+const openModal=(page:any,box=false)=>page.evaluate((box:boolean)=>{const d=document.createElement('dialog');d.dataset.fixtureModal='';d.textContent="New in 1.0.18";
+ if(box){d.className='box-dialog';d.style.cssText='width:420px;height:300px;overflow:clip';}else d.style.cssText='width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0';
+ document.body.append(d);d.showModal();},box);
+// What a person sees at the pop-up's centre: the pop-up itself, or whatever covers it.
+const onTop=(page:any)=>page.getByTestId('update-popup').evaluate((el:Element)=>{const r=el.getBoundingClientRect();const top=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);return Boolean(top&&el.contains(top))&&r.width>0&&r.top>=0&&r.bottom<=innerHeight;});
+const settle=(page:any)=>page.getByTestId('update-popup').evaluate((el:Element)=>Promise.all(el.getAnimations().map(a=>a.finished)));
+test('a download that starts under an open What\'s New shows above it, with its percent, then Restart can be pressed',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await page.evaluate(()=>{(window as any).installs=0;(window as any).muragebox.updater.install=async()=>{(window as any).installs++;};});
+ await openModal(page);
+ await push(page,{status:'downloading',version:'1.0.18'});await push(page,{status:'downloading',version:'1.0.18',percent:37});
+ await expect(page.getByTestId('update-popup')).toContainText('Downloading 1.0.18');await expect(page.getByTestId('update-popup')).toContainText('37%');
+ await settle(page);await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloading',version:'1.0.18',percent:64});await expect(page.getByTestId('update-popup')).toContainText('64%');await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloaded',version:'1.0.18',installMode:'restart'});
+ await expect(page.getByTestId('update-popup')).toContainText('1.0.18 is ready');await expect.poll(()=>onTop(page)).toBe(true);
+ await page.getByTestId('update-popup').getByRole('button',{name:'Restart to update'}).click();
+ await expect.poll(()=>page.evaluate(()=>(window as any).installs)).toBe(1);
+ // What's New stays open behind it: the pop-up never closed it.
+ await expect(page.locator('dialog[data-fixture-modal]')).toHaveJSProperty('open',true);
+});
+test('a What\'s New that opens over a running download goes under the pop-up; closing it leaves the pop-up up',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await push(page,{status:'downloading',version:'1.0.18',percent:20});await settle(page);
+ await openModal(page);await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloading',version:'1.0.18',percent:50});await expect(page.getByTestId('update-popup')).toContainText('50%');await expect.poll(()=>onTop(page)).toBe(true);
+ // Escape in the pop-up closes the pop-up only; What's New stays.
+ await page.getByTestId('update-popup').getByRole('button',{name:'Dismiss'}).focus();await page.keyboard.press('Escape');
+ await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.locator('dialog[data-fixture-modal]')).toHaveJSProperty('open',true);
+ // The sidebar is inert under the window, so focus stays in the window (it has no control here: the window itself).
+ await expect(page.locator('dialog[data-fixture-modal]')).toBeFocused();
+ await page.evaluate(()=>{const d=document.querySelector('dialog[data-fixture-modal]') as HTMLDialogElement;d.close();d.remove();});
+ await push(page,{status:'downloading',version:'1.0.18',percent:80});await expect(page.getByTestId('update-popup')).toHaveCount(0);
+ // Closed during the download, it comes back when the update is ready, on top.
+ await push(page,{status:'downloaded',version:'1.0.18',installMode:'restart'});await expect(page.getByTestId('update-popup')).toContainText('1.0.18 is ready');await expect.poll(()=>onTop(page)).toBe(true);
+});
+test('a centred box dialog (shifted with translate, clipped) does not hide or clip the pop-up either',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await openModal(page,true);await push(page,{status:'downloading',version:'1.0.18',percent:45});
+ await expect(page.getByTestId('update-popup')).toContainText('45%');await settle(page);await expect.poll(()=>onTop(page)).toBe(true);
+ const popup=await box(page.getByTestId('update-popup'));expect(popup.x).toBeLessThan(320);expect(popup.y+popup.height).toBeGreaterThan(600);
+});
+test('Dismiss inside a window with a control hands focus to that control, never to the inert sidebar',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await page.evaluate(()=>{const d=document.createElement('dialog');d.dataset.fixtureModal='';const b=document.createElement('button');b.textContent='Close';b.dataset.testid='fixture-close';d.append('New in 1.0.18',b);document.body.append(d);d.showModal();});
+ await push(page,{status:'downloading',version:'1.0.18',percent:30});await settle(page);
+ await page.getByTestId('update-popup').getByRole('button',{name:'Dismiss'}).focus();await page.keyboard.press('Enter');
+ await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.locator('[data-testid="fixture-close"]')).toBeFocused();
+});
+for(const key of ['Escape','Enter'])test(`a control that turned disabled while focus was in the pop-up is skipped (${key})`,async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await page.evaluate(()=>{const d=document.createElement('dialog');d.dataset.fixtureModal='';for(const id of ['fixture-close','fixture-next']){const b=document.createElement('button');b.textContent=id;b.dataset.testid=id;d.append(b);}document.body.append(d);d.showModal();});
+ await push(page,{status:'downloading',version:'1.0.18',percent:30});await settle(page);
+ await page.locator('[data-testid="fixture-close"]').focus();await page.getByTestId('update-popup').getByRole('button',{name:'Dismiss'}).focus();
+ await page.evaluate(()=>{(document.querySelector('[data-testid="fixture-close"]') as HTMLButtonElement).disabled=true;});
+ await page.keyboard.press(key);
+ await expect(page.getByTestId('update-popup')).toHaveCount(0);await expect(page.locator('[data-testid="fixture-next"]')).toBeFocused();
+});
+test('stays up and working while the window it lives in closes, is removed, and another one opens over it',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await page.evaluate(()=>{(window as any).installs=0;(window as any).muragebox.updater.install=async()=>{(window as any).installs++;};});
+ await openModal(page);await push(page,{status:'downloading',version:'1.0.18',percent:20});await settle(page);await expect.poll(()=>onTop(page)).toBe(true);
+ // The window closes with the pop-up still in it: one pop-up, back in the page, still counting.
+ await page.evaluate(()=>(document.querySelector('dialog[data-fixture-modal]') as HTMLDialogElement).close());
+ await expect(page.getByTestId('update-popup')).toHaveCount(1);await push(page,{status:'downloading',version:'1.0.18',percent:40});await expect(page.getByTestId('update-popup')).toContainText('40%');
+ await expect.poll(()=>page.getByTestId('update-popup').evaluate((el:Element)=>el.isConnected&&!el.closest('dialog'))).toBe(true);
+ // Opened again, then taken out of the page while open.
+ await page.evaluate(()=>(document.querySelector('dialog[data-fixture-modal]') as HTMLDialogElement).showModal());await expect.poll(()=>onTop(page)).toBe(true);
+ await page.evaluate(()=>document.querySelector('dialog[data-fixture-modal]')!.remove());
+ await expect(page.getByTestId('update-popup')).toHaveCount(1);await push(page,{status:'downloading',version:'1.0.18',percent:60});await expect(page.getByTestId('update-popup')).toContainText('60%');
+ // Two windows, the one later in the page opened first: the pop-up follows the one opened last, and back when it closes.
+ await page.evaluate(()=>{for(const id of ['a','b']){const d=document.createElement('dialog');d.dataset.fixtureWin=id;d.textContent='win '+id;d.style.cssText='width:100vw;height:100vh;max-width:none;max-height:none;margin:0;padding:0;border:0';document.body.append(d);}
+  (document.querySelector('dialog[data-fixture-win="b"]') as HTMLDialogElement).showModal();(document.querySelector('dialog[data-fixture-win="a"]') as HTMLDialogElement).showModal();});
+ await expect.poll(()=>page.getByTestId('update-popup').evaluate((el:Element)=>(el.closest('dialog') as HTMLElement|null)?.dataset.fixtureWin)).toBe('a');await expect.poll(()=>onTop(page)).toBe(true);
+ await page.evaluate(()=>(document.querySelector('dialog[data-fixture-win="a"]') as HTMLDialogElement).close());
+ await expect.poll(()=>page.getByTestId('update-popup').evaluate((el:Element)=>(el.closest('dialog') as HTMLElement|null)?.dataset.fixtureWin)).toBe('b');await expect.poll(()=>onTop(page)).toBe(true);
+ await push(page,{status:'downloaded',version:'1.0.18',installMode:'restart'});
+ await page.getByTestId('update-popup').getByRole('button',{name:'Restart to update'}).click();await expect.poll(()=>page.evaluate(()=>(window as any).installs)).toBe(1);
+});
+test('a pop-up that came up on the terms screen moves above the sidebar footer once it mounts',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page,'late=1');
+ await push(page,{status:'downloading',version:'1.0.18',percent:15});await settle(page);
+ await page.evaluate(()=>(window as any).fixtureShowFooter());await expect(page.getByTestId('footer')).toBeVisible();
+ await expect.poll(async()=>apart(await box(page.getByTestId('update-popup')),await box(page.getByTestId('footer')))).toBe(true);
+});
+test('with no window open it stays under a menu, as before',async({page})=>{
+ await page.setViewportSize({width:1280,height:800});await go(page);
+ await push(page,{status:'downloading',version:'1.0.18',percent:15});await settle(page);
+ await expect(page.getByTestId('update-popup')).not.toHaveAttribute('popover',/.*/);
+ await page.getByTestId('update-popup').evaluate((el:Element)=>{const r=el.getBoundingClientRect();const m=document.createElement('div');m.style.cssText=`position:fixed;z-index:50;background:#222;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`;document.body.append(m);});
+ await expect.poll(()=>onTop(page)).toBe(false);
 });
 test('never shows in the browser or on the phone: no updater bridge',async({page})=>{
  await page.setViewportSize({width:1280,height:800});await go(page,'surface=browser');

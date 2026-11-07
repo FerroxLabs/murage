@@ -7,6 +7,7 @@
 // index.ts so the copy and the key that makes the card once per turn are named,
 // tested functions.
 import { createHash } from "node:crypto";
+import { rowToMessage } from "./transcript-seq.ts";
 
 /** What a phone or the browser door shows where the desktop shows a button. */
 export const MCP_SIGNIN_PHONE_NOTE = "Finish sign-in on the computer running Murage.";
@@ -108,7 +109,7 @@ export function waitingMcpSignInCards(db: CardDatabase, name: string, origin?: s
   const out: WaitingMcpSignInCard[] = [];
   for (const row of rows) {
     let message: { from?: { botId?: unknown }; mcpSignIn?: { botId?: unknown; reason?: unknown; scope?: unknown; origin?: unknown } };
-    try { message = JSON.parse(row.json); } catch { continue; }
+    try { message = rowToMessage({ json: row.json }); } catch { continue; }
     const card = message.mcpSignIn ?? {};
     const reason = card.reason === "needs-more-access" ? "needs-more-access" : "sign-in-ended";
     const botId = typeof card.botId === "string" ? card.botId : typeof message.from?.botId === "string" ? message.from.botId : undefined;

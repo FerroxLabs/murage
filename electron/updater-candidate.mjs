@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { lstat, open, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { canonicalUpdateDescriptor, parseUpdateCandidate } from "../shared/update-candidate.mjs";
 
 export function validateUpdateCandidate(value) {
@@ -29,17 +29,40 @@ export function assertCandidateManifest(value, info, { platform = process.platfo
   return candidate;
 }
 
-async function regularPath(file) {
-  if (typeof file !== "string" || !file || resolve(file) !== file) throw new Error("Update cache path is invalid.");
+const invalidPath = () => new Error("Update cache path is invalid.");
+
+// The updater's cache root (electron-updater's DownloadedUpdateHelper.cacheDir),
+// resolved once. Links in the folders ABOVE it are the person's own layout
+// (macOS /var -> /private/var, a home or Caches folder that is a link or a
+// junction), so only the root's parent goes through realpath. The root itself,
+// every folder below it and the artifact must be real folders and a regular file.
+async function cacheRoot(helper) {
+  const root = helper?.cacheDir;
+  if (typeof root !== "string" || !root || resolve(root) !== root || dirname(root) === root) throw invalidPath();
+  return { root, real: join(await realpath(dirname(root)), basename(root)) };
+}
+
+// The artifact must lie lexically inside the root; its real path is the same
+// relative path under the resolved root.
+function realCachePath(cache, file) {
+  if (typeof file !== "string" || !file || resolve(file) !== file) throw invalidPath();
+  const inside = relative(cache.root, file);
+  if (!inside || isAbsolute(inside) || inside === ".." || inside.startsWith(`..${sep}`)) throw invalidPath();
+  return join(cache.real, inside);
+}
+
+async function regularPath(file, cache) {
   for (let current = file;; current = dirname(current)) {
     const stat = await lstat(current);
     if (stat.isSymbolicLink() || (current === file ? !stat.isFile() : !stat.isDirectory())) throw new Error("Update cache must contain regular files without symlinks.");
-    if (dirname(current) === current) break;
+    if (current === cache.real) break;
+    if (dirname(current) === current) throw invalidPath();
   }
 }
 
-async function verifyFile(file, expected) {
-  await regularPath(file);
+async function verifyFile(path, expected, cache) {
+  const file = realCachePath(cache, path);
+  await regularPath(file, cache);
   const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const before = await handle.stat();
@@ -47,7 +70,7 @@ async function verifyFile(file, expected) {
     const hash = createHash("sha512");
     for await (const chunk of handle.createReadStream({ autoClose: false })) hash.update(chunk);
     const after = await handle.stat();
-    await regularPath(file);
+    await regularPath(file, cache);
     const pathStat = await lstat(file);
     if (before.dev !== pathStat.dev || before.ino !== pathStat.ino || before.size !== after.size
       || before.mtimeMs !== after.mtimeMs || before.ctimeMs !== after.ctimeMs
@@ -72,6 +95,7 @@ export async function captureUpdateCandidate(updater, { platform = process.platf
     platform, arch, artifacts, manifestDigests: manifestDigests(helper.versionInfo) };
   descriptor.candidateId = `update-${createHash("sha256").update(canonicalUpdateDescriptor(descriptor)).digest("hex")}`;
   const candidate = validateUpdateCandidate(descriptor);
-  for (let index = 0; index < paths.length; index++) await verifyFile(paths[index], artifacts[index].sha512);
+  const cache = await cacheRoot(helper);
+  for (let index = 0; index < paths.length; index++) await verifyFile(paths[index], artifacts[index].sha512, cache);
   return candidate;
 }

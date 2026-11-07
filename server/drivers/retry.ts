@@ -5,6 +5,7 @@
 // request-shape problem never does.
 import type { ProviderErrorCode } from "../contracts.ts";
 import { isProviderSafetyBlock } from "../../shared/provider-safety.ts";
+import { fluxRefusalCode, fluxRefusalFinal } from "../flux-refusal.ts";
 
 export const RETRY_MAX_ATTEMPTS = 3;
 
@@ -130,6 +131,14 @@ const classifyHttpStatus = (status: number): ErrorClassification | undefined => 
 
 export function classifyError(err: FailureInput): ErrorClassification {
   const text = messageOf(err);
+  // 1.0.18 (f): a Flux refusal no resend can fix (a spent included allowance, credit used up or unresolved) is sent once,
+  // whatever its status says. Read before the status: Flux sends free_cap_reached as a 429, which would otherwise retry.
+  // Only the code a driver read from a Flux host's answer counts (data.flux_code, set on the Flux route alone): the same words
+  // in another provider's text leave its retry as it was.
+  const fluxCode = err && typeof err === "object" ? (err as { data?: { flux_code?: unknown } }).data?.flux_code : undefined;
+  if (typeof fluxCode === "string" && fluxRefusalFinal(fluxRefusalCode({ flux_code: fluxCode }))) {
+    return { transient: false, reason: "quota" };
+  }
   const status = httpStatusOf(err);
   if (status !== undefined && !isProviderSafetyBlock(text)) {
     const byStatus = classifyHttpStatus(status);

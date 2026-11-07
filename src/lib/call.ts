@@ -12,6 +12,12 @@ import { callNative } from "./native-shell";
 import { speaker } from "./tts";
 
 let current: string | null = null;
+let budgetEnded: string | null = null;
+export function callBudgetEnded(): string | null { return budgetEnded; }
+export function dismissCallBudgetEnded(): void { budgetEnded = null; notify(); }
+export function useCallBudgetEnded(): string | null {
+  return useSyncExternalStore(onCallChange, callBudgetEnded, () => null);
+}
 const watchers = new Set<() => void>();
 
 function notify() {
@@ -44,6 +50,9 @@ export function startCall(targetId: string) {
   // old overlay may not unmount until React's next render.
   speaker.stop();
   void window.muragebox?.speechStop();
+  // A new call may explicitly use an owner key. The server still holds spent Flux keys.
+  speaker.resetBudgetHold();
+  budgetEnded = null;
   current = targetId;
   notifyNativeCallSession(true);
   notify();
@@ -51,9 +60,10 @@ export function startCall(targetId: string) {
 
 /** End the current call. A targetId makes cleanup ownership-safe: an async
  * teardown from call A cannot hang up a newer call B. */
-export function endCall(targetId?: string): boolean {
+export function endCall(targetId?: string, reason?: "budget"): boolean {
   if (targetId && current !== targetId) return false;
   if (current === null) return false;
+  if (reason === "budget") budgetEnded = current;
   current = null;
   speaker.stop();
   void window.muragebox?.speechStop();

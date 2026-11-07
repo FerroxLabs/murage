@@ -1,3 +1,4 @@
+import {explicitBackupReturn} from "./backup-startup.mjs";
 import assert from "node:assert/strict";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 import test from "node:test";
@@ -112,7 +113,7 @@ function recoveryReturn(host,onReturn){
   const recovery=main.slice(main.indexOf("function showDesktopRecovery("));
   const callback=/retry: (async \(\) => \{[\s\S]*?\n    \}),/.exec(recovery);
   assert.ok(callback,"the recovery window must supply its Return callback");
-  const retry=vm.runInNewContext(`(${callback[1]})`,{backupScheduleHost:host,returnToWorkspaceAfterBackup:onReturn});
+  const retry=vm.runInNewContext(`(${callback[1]})`,{explicitBackupReturn,backupScheduleHost:host,returnToWorkspaceAfterBackup:Object.assign(async options=>{options?.prepare?.();return onReturn();},{retry:options=>{options?.prepare?.();return onReturn();}}),returnAuthority:{userQuitRequested:false},descriptor:{updatePause:false},updateRequester:false});
   const controller=createInstallationRecoveryController({isTrustedSender:()=>true,isAvailable:()=>true,retry});
   const elements=new Map();
   const context={document:{documentElement:{dataset:{}},querySelectorAll:()=>[],getElementById:id=>{
@@ -402,7 +403,7 @@ test("joined updater and backup hosts defer candidate A then verify receipt and 
       updater.downloadUpdate=async()=>{
         // Model the pinned normal verifier's completed-download metadata, not
         // a fabricated candidate adapter or a pre-seeded restored process.
-        updater.downloadedUpdateHelper={file,versionInfo:info,fileInfo:{info:info.files[0]}};
+        updater.downloadedUpdateHelper={cacheDir:path.dirname(file),file,versionInfo:info,fileInfo:{info:info.files[0]}};
         updater.emit("update-downloaded",info);return[file];
       };
       updater.quitAndInstall=()=>{
@@ -503,7 +504,7 @@ test("closed owner, locked store, missing key and changed destination refuse cap
     await f.enable(false,true);f.setNow(Date.parse("2026-09-13T09:01:00Z"));
     if(mode==="key")rmSync(f.keyFile);if(mode==="destination"){renameSync(f.destination,f.destination+"-original");mkdirSync(f.destination);}
     const closed=f.create({assertClosedStartup:mode==="unproven"?undefined:async()=>{if(mode==="owner")throw Object.assign(Error("owner busy"),{code:"BACKUP_CLOSED_BUSY"});},...(mode==="locked"?{readProtected:async()=>{throw Error("private locked store diagnostic");}}:{})});
-    const result=await closed.runClosedDue();assert.equal(result.status,mode==="owner"?"busy":"unavailable");assert.equal(f.calls.includes("capture"),false);
+    const result=await closed.runClosedDue();assert.equal(result.status,mode==="owner"?"busy":["key","destination"].includes(mode)?"needs-review":"unavailable");assert.equal(f.calls.includes("capture"),false);
     assert.deepEqual(f.coordinator().status().lastClosedResult,result);assert.equal(JSON.stringify(result).includes("private"),false);
   }finally{f.cleanup();}}
 });
@@ -746,7 +747,7 @@ test("the log alone gets the redacted cause behind a failed capture (W-D1)",asyn
   const f=fixture(()=>({capture:async()=>{throw Object.assign(Error("BACKUP_FILE_IN_USE"),{code:"BACKUP_FILE_IN_USE",captureCause:cause});}}));
   try{
     await f.arm();
-    const next=f.create({reportCaptureFailure:failure=>reported.push(failure)});
+    const next=f.create({shutdownStarted:()=>true,reportCaptureFailure:failure=>reported.push(failure)});
     await assert.rejects(next.resumeOffline(),/BACKUP_SCHEDULE_REVIEW_REQUIRED/);
     assert.equal(reported.length,1);
     assert.deepEqual(reported[0],{stage:"capture",code:"BACKUP_FILE_IN_USE",cause:{step:"offline-open",errno:"EBUSY",syscall:"link",innerCode:"LEASE_IO",message:"EBUSY: resource busy or locked, link '<path>' -> '<path>'"}});
@@ -796,6 +797,8 @@ test("a closed-app capture failure records the reason without reopening a window
     f.setNow(Date.parse("2026-09-13T09:01:00Z"));
     const result=await f.create({assertClosedStartup:async()=>{}}).runClosedDue();
     assert.equal(result.status,"needs-review");
+    assert.equal(result.reason,"capture-unconfirmed");
+    assert.equal(f.coordinator().status().lastClosedResult.reason,"capture-unconfirmed");
     assert.deepEqual(f.coordinator().status().captureFailure,{stage:"capture",code:"SOURCE_CHANGED"});
     assert.equal(f.calls.includes("normal"),false);
   }finally{f.cleanup();}
@@ -935,8 +938,15 @@ for(const [what,code] of [["folder","BACKUP_FOLDER_MISSING"],["key","BACKUP_RECO
       for(let attempt=0;attempt<100&&controller.isPreparing();attempt++)await new Promise(resolve=>setImmediate(resolve));f.calls.length=0;
       const moved=`${what==="folder"?f.destination:f.keyFile}.moved`;renameSync(what==="folder"?f.destination:f.keyFile,moved);
       if(occasion==="daily"){f.setNow(Date.parse("2026-09-13T09:01:00Z"));await controller.tick();}
+      else if(what==="folder")await controller.runNow(f.coordinator().status().revision);
       else await assert.rejects(controller.runNow(f.coordinator().status().revision),new RegExp(`^Error: ${code}$`));
       const s=f.coordinator().status();
+      if(what==="folder"){
+        assert.equal(s.phase,"waiting",occasion);assert.equal(s.reviewReason,undefined);
+        assert.equal(s.captureFailure,undefined);assert.equal(s.waiting.code,code);
+        assert.equal(announced,0,occasion);assert.deepEqual(f.calls,[],"nothing was prepared or relaunched");
+        assert.equal((await controller.status()).waiting.cause,"drive");continue;
+      }
       assert.equal(s.phase,"needs-review",occasion);assert.equal(s.reviewReason,"references-unavailable");
       assert.deepEqual(s.captureFailure,{stage:"references",code});
       assert.equal(announced,1,occasion);assert.deepEqual(f.calls,[],"nothing was prepared or relaunched");
@@ -1421,4 +1431,454 @@ test("BACKUP-SILENT-STOP: a failed reopen after a verified backup is not a stopp
     const status=f.coordinator().status();assert.equal(status.phase,"return-pending");assert.ok(status.lastVerified);
     assert.equal(status.retainedFailure,undefined);
   }finally{f.cleanup();}
+});
+
+import {observeRequestedInstall,decideRequestedInstall} from "./mac-install-guard.mjs";
+async function requestedHostFixture(){const f=fixture();await f.enable(true);const candidate=updateCandidate();await f.controller.requestUpgrade(candidate);await f.create().resumeOffline();const host=f.create();await host.markUpgradeInstallRequested(candidate);return {...f,candidate,host,file:path.join(f.root,"control","backup-coordinator.json")};}
+function factsObserver(version,order=[]){return ()=>observeRequestedInstall({execPath:"/Applications/Murage.app/Contents/MacOS/Murage",home:"/Users/fixture",supported:true,read:()=>{order.push("plist");return Buffer.from("fixture");},exec:command=>{if(command==="/bin/ps"){order.push("ps");return Buffer.from("/sbin/launchd\n");}return JSON.stringify({CFBundleIdentifier:"com.murage.app",CFBundleShortVersionString:version});}});}
+test("T2 synchronous real observer and host CAS keep ps then plist then commit in one turn",async()=>{
+ const f=await requestedHostFixture();try{
+  const order=[],coordinator=f.coordinator(),original=coordinator.abandonUpgradeInstall.bind(coordinator);coordinator.abandonUpgradeInstall=(...args)=>{order.push("cas");return original(...args);};
+  const host=f.create({coordinator});queueMicrotask(()=>order.push("microtask"));
+  assert.equal(host.settleRequestedInstall({runningVersion:"8.0.0",observe:factsObserver("8.0.0",order),decide:decideRequestedInstall}).kind,"cancel");
+  assert.deepEqual(order,["ps","plist","cas"]);assert.equal(f.coordinator().status().phase,"upgrade-cancelled");assert.ok(f.host.peekInstallerOffer());
+ }finally{f.cleanup();}
+});
+test("T6 durable automatic and explicit hops survive clean argv and offer acknowledgement",async()=>{
+ const f=await requestedHostFixture();try{
+  const gate=host=>host.settleRequestedInstall({runningVersion:"8.0.0",observe:factsObserver(f.candidate.version),decide:decideRequestedInstall,argv:[]});
+  assert.equal(gate(f.host).kind,"landed");assert.equal(f.host.spendLandedHop("automatic"),true);
+  for(let restart=0;restart<3;restart++){const fresh=f.create();assert.equal(gate(fresh).reason,"landed-not-running");assert.equal(fresh.spendLandedHop("automatic"),false);}
+  const offer=f.host.peekInstallerOffer();f.host.acknowledgeInstallerOffer(offer);assert.equal(gate(f.create()).reason,"landed-not-running");
+  const action=randomUUID();assert.equal(f.host.spendLandedHop("explicit",action),true);assert.equal(f.create().spendLandedHop("explicit",action),false);
+  assert.equal(f.coordinator().status().landedHops[f.candidate.candidateId].explicitCount,1);
+ }finally{f.cleanup();}
+});
+for(const field of ["landedHops","installerOffer","both"])test(`BF-2 T24 invalid ${field} pauses real host before observation or writes`,async()=>{
+ const f=await requestedHostFixture();try{
+  const raw=JSON.parse(readFileSync(f.file,"utf8"));if(field!=="installerOffer")raw.landedHops={bad:true};if(field!=="landedHops")raw.installerOffer={bad:true};writeFileSync(f.file,JSON.stringify(raw));const bytes=readFileSync(f.file,"utf8");
+  for(let restart=0;restart<2;restart++){
+   const h=f.create(),p=h.pendingUpgrade();assert.ok(p.hopsInvalid||p.offerInvalid);assert.ok(h.internalStatus().lastVerified);
+   assert.equal(h.settleRequestedInstall({runningVersion:"8.0.0",observe:()=>assert.fail("invalid metadata must precede probe"),decide:decideRequestedInstall}).kind,"review");
+   assert.throws(()=>h.spendLandedHop("explicit",randomUUID()),/REVIEW_REQUIRED/);await assert.rejects(h.completeUpgrade(f.candidate.version));assert.equal(readFileSync(f.file,"utf8"),bytes);
+  }
+ }finally{f.cleanup();}
+});
+test("BF-4 real host verified completion retires only its candidate atomically",async()=>{
+ const f=await requestedHostFixture();try{
+  f.host.spendLandedHop("automatic");f.host.spendLandedHop("explicit",randomUUID());const raw=JSON.parse(readFileSync(f.file,"utf8")),other="update-"+"e".repeat(64);raw.landedHops[other]={version:"7.0.0",automaticSpent:true,explicitCount:0,explicitActionIds:[]};writeFileSync(f.file,JSON.stringify(raw));
+  await f.host.completeUpgrade(f.candidate.version);const state=f.coordinator().status();assert.equal(state.phase,"upgrade-complete");assert.equal(state.landedHops[f.candidate.candidateId],undefined);assert.deepEqual(state.landedHops[other],raw.landedHops[other]);
+ }finally{f.cleanup();}
+});
+async function nativeHostUpdater(f,options={}){
+ const {captureUpdateCandidate}=await import('./updater-candidate.mjs');
+ const file=path.join(f.root,'update.zip'),bytes=Buffer.from('isolated update fixture');writeFileSync(file,bytes);
+ const info={version:'9.0.0',files:[{url:'update.zip',sha512:createHash('sha512').update(bytes).digest('base64')}]};
+ const updater=new EventEmitter(),events=new EventEmitter(),authority=createReturnAuthority(),timers=new Map(),calls={native:0,recover:0,errors:0};
+ updater.on('error',()=>{});updater.downloadedUpdateHelper={cacheDir:f.root,file,versionInfo:info,fileInfo:{info:info.files[0]}};
+ updater.checkForUpdates=async()=>({isUpdateAvailable:true,updateInfo:info});updater.downloadUpdate=async()=>{updater.emit('update-downloaded',info);return [file];};updater.quitAndInstall=()=>{calls.native++;};
+ const coordinator=createUpdaterCoordinator(updater,state=>{if(state.status==='error')calls.errors++;},{returnAuthority:authority,installerFallback:{blocked:()=>null,events,offer:()=>({}),persist(){},recover(){calls.recover++;}},setTimer:(fn,ms)=>{const key={fn,ms};timers.set(key,key);return key;},clearTimer:key=>timers.delete(key),...options});
+ return {updater:coordinator,candidate:await captureUpdateCandidate(updater),calls,events,timers,authority};
+}
+for(const stop of [true,false])test(`F12 T17 real native continuation persists one request before held cleanup stop=${stop}`,async()=>{
+ const f=fixture();try{
+  const native=await nativeHostUpdater(f);await f.enable(true);const candidate=native.candidate;await f.controller.requestUpgrade(candidate);await f.create().resumeOffline();
+  const host=f.create(),file=path.join(f.root,'control','backup-coordinator.json'),before=atomicWriteCount(file);let resolve;
+  const cleanup=new Promise(done=>{resolve=done;});
+  const task=resumeBackedUpInstall({backup:host,currentVersion:'8.0.0',cleanup:()=>cleanup,updater:native.updater});
+  for(let i=0;i<100&&f.coordinator().status().phase!=='install-requested';i++)await new Promise(done=>setImmediate(done));
+  const saved=JSON.parse(readFileSync(file,'utf8'));assert.equal(saved.job.phase,'install-requested');assert.equal(saved.installerOffer.candidateId,candidate.candidateId);assert.equal(saved.landedHops[candidate.candidateId].automaticSpent,false);assert.equal(atomicWriteCount(file)-before,1);
+  assert.equal(f.create().pendingUpgrade().phase,'install-requested');const bytes=readFileSync(file,'utf8');assert.equal(native.calls.native,0);
+  let quit;if(stop)quit=joinExplicitQuit({authority:native.authority,app:{quit(){},exit(){}},cleanup:()=>cleanup,setTimer(){}});
+  resolve();assert.equal((await task).status,stop?'stopped':'install-requested');if(quit)await quit;
+  assert.equal(native.calls.native,stop?0:1);assert.equal(native.calls.recover,0);assert.equal(native.timers.size,stop?0:1);assert.equal(native.events.listenerCount('update-downloaded'),stop?0:1);assert.equal(readFileSync(file,'utf8'),bytes);
+ }finally{f.cleanup();}
+});
+for(const boundary of ['prompt','cancelled','before-cas','live-shipit'])test(`F12 T9 restart at ${boundary} preserves receipt without recapture`,async()=>{
+ const f=await requestedHostFixture();try{
+  const receipt=f.coordinator().status().job.receipt,artifact=readFileSync(path.join(f.destination,f.coordinator().status().job.id+'.age'));
+  if(boundary==='cancelled')f.host.settleRequestedInstall({runningVersion:'8.0.0',observe:factsObserver('8.0.0'),decide:decideRequestedInstall});
+  if(boundary==='before-cas')assert.throws(()=>f.host.settleRequestedInstall({runningVersion:'8.0.0',observe:()=>{throw Error('crash before CAS');},decide:decideRequestedInstall}));
+  if(boundary==='live-shipit')assert.equal(f.host.settleRequestedInstall({runningVersion:'8.0.0',observe:()=>({shipIt:'installing',bundle:{version:'8.0.0'}}),decide:decideRequestedInstall}).kind,'installing');
+  const reopened=f.create({capture:()=>assert.fail('no recapture')});assert.deepEqual(reopened.internalStatus().job.receipt,receipt);assert.ok(reopened.peekInstallerOffer());
+  assert.equal(reopened.internalStatus().phase,boundary==='cancelled'?'upgrade-cancelled':'install-requested');
+  if(boundary!=='cancelled'){await reopened.completeUpgrade(f.candidate.version);assert.equal(f.coordinator().status().phase,'upgrade-complete');}
+  assert.deepEqual(readFileSync(path.join(f.destination,f.coordinator().status().job.id+'.age')),artifact);
+ }finally{f.cleanup();}
+});
+
+for(const fault of ["before-rename","after-rename-sync"])test(`T17 ${fault} request failure never admits native and restart sees whole state`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);const candidate=updateCandidate();await f.controller.requestUpgrade(candidate);await f.create().resumeOffline();const h=f.create();
+  const nativeFs=createRequire(import.meta.url)("node:fs"),originalRename=nativeFs.renameSync,originalSync=nativeFs.fsyncSync;let renamed=false,launches=0,cleanups=0,folderSyncs=0;
+  // Windows cannot fsync a folder, so the product skips that sync there
+  // (server/atomic.ts syncParentDirectory): the after-rename fault cannot occur
+  // and the request lands whole.
+  const reachable=fault!=="after-rename-sync"||process.platform!=="win32";
+  const file=path.join(f.root,"control","backup-coordinator.json");
+  nativeFs.renameSync=(from,to)=>{if(to===file){if(fault==="before-rename")throw Error("injected before rename");renamed=true;}return originalRename(from,to);};
+  nativeFs.fsyncSync=fd=>{const folder=nativeFs.fstatSync(fd).isDirectory();if(folder)folderSyncs++;if(renamed&&fault==="after-rename-sync"&&folder){renamed=false;throw Error("injected directory sync");}return originalSync(fd);};syncBuiltinESMExports();
+  try{const run=resumeBackedUpInstall({backup:h,currentVersion:"8.0.0",cleanup:()=>{cleanups++;},updater:{resumeInstall:async(value,{beforeInstall})=>{await beforeInstall(value);launches++;return {status:"install-requested"};}}});if(reachable)await assert.rejects(run,/injected/);else await run;}
+  finally{nativeFs.renameSync=originalRename;nativeFs.fsyncSync=originalSync;syncBuiltinESMExports();}
+  if(!reachable){assert.equal(folderSyncs,0);assert.equal(launches,1);assert.equal(f.coordinator().status().phase,"install-requested");return;}
+  assert.equal(launches,0);assert.equal(cleanups,0);const s=f.coordinator().status();assert.equal(s.phase,fault==="before-rename"?"return-pending":"install-requested");
+  assert.equal(Boolean(s.installerOffer),fault!=="before-rename");assert.equal(Boolean(s.landedHops?.[candidate.candidateId]),fault!=="before-rename");
+ }finally{f.cleanup();}
+});
+test("T6c T8 real recovery Return spends one explicit hop after startup refuses the same facts",async()=>{
+ const f=await requestedHostFixture();try{
+  const {createReturnAuthority,createBackupReturn}=await import("./backup-offline-return.mjs");
+  const {refusal}=await import("./update-start-gate.mjs");
+  f.host.spendLandedHop("automatic");let launches=0,finish;const cleanup=new Promise(resolve=>{finish=resolve;});
+  const authority=createReturnAuthority();const calls=[];
+  const returning=createBackupReturn({authority,app:{quit(){},exit(){}},cleanup:()=>cleanup,relaunch:destination=>{launches++;calls.push(destination);},takeProgress:()=>null,setTimer:()=>{}});
+  const main=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
+  const prepare=main.slice(main.indexOf("function prepareUpdateReturn("),main.indexOf("function pauseForReview("));
+  const callback=/retry: (async \(\) => \{[\s\S]*?\n    \}),/.exec(main.slice(main.indexOf("function showDesktopRecovery(")));
+  const gate=()=>f.host.settleRequestedInstall({runningVersion:"8.0.0",observe:factsObserver(f.candidate.version),decide:decideRequestedInstall});
+  assert.equal(gate().reason,"landed-not-running");
+  const scope={returnAuthority:authority,updateRequester:false,backupScheduleHost:f.host,settleUpdate:gate,refusal,randomUUID,descriptor:{updatePause:true},returnToWorkspaceAfterBackup:returning};vm.createContext(scope);vm.runInContext(prepare,scope);
+  const retry=vm.runInContext('('+callback[1]+')',scope),controller=createInstallationRecoveryController({isTrustedSender:()=>true,isAvailable:()=>true,updatePause:()=>true,retry});
+  const press=controller.handle({}, {action:"retry"});const joined=returning();assert.equal(joined,authority.attempt.promise);
+  assert.equal((await controller.handle({}, {action:"retry"})).error,"RECOVERY_BUSY");
+  assert.equal(f.coordinator().status().landedHops[f.candidate.candidateId].explicitCount,1);finish();await press;
+  assert.equal(launches,1);assert.equal(calls[0].kind,"landed");assert.equal(calls[0].version,f.candidate.version);assert.equal(gate().reason,"landed-not-running");
+ }finally{f.cleanup();}
+});
+test("BF-4 failed verified completion and failed save retain the complete unresolved ledger",async()=>{
+ const f=await requestedHostFixture();try{
+  f.host.spendLandedHop("automatic");f.host.spendLandedHop("explicit",randomUUID());const before=readFileSync(f.file,"utf8");
+  const artifact=path.join(f.destination,f.coordinator().status().job.id+".age"),bytes=readFileSync(artifact);writeFileSync(artifact,"changed");
+  await assert.rejects(f.host.completeUpgrade(f.candidate.version));assert.equal(readFileSync(f.file,"utf8"),before);writeFileSync(artifact,bytes);
+  const coordinator=f.coordinator();coordinator.save=()=>{throw Error("before rename");};
+  await assert.rejects(f.create({coordinator}).completeUpgrade(f.candidate.version),/before rename/);assert.equal(readFileSync(f.file,"utf8"),before);
+ }finally{f.cleanup();}
+});
+test("ADDENDUM-2 changed candidate after observation cannot spend or cancel the observed attempt",async()=>{
+ const f=await requestedHostFixture();try{
+  const verdict=f.host.settleRequestedInstall({runningVersion:"8.0.0",observe:factsObserver(f.candidate.version),decide:decideRequestedInstall});
+  const raw=JSON.parse(readFileSync(f.file,"utf8")),replacement=updateCandidate("9.0.1");raw.job.handoff.upgrade=replacement;
+  raw.landedHops[replacement.candidateId]={version:replacement.version,automaticSpent:false,explicitCount:0,explicitActionIds:[]};writeFileSync(f.file,JSON.stringify(raw));const before=readFileSync(f.file,"utf8");
+  assert.throws(()=>f.host.spendLandedHop("automatic",undefined,verdict),/CHANGED/);
+  assert.throws(()=>f.coordinator().abandonUpgradeInstall(verdict.handoffId,"8.0.0",verdict.candidateId),/CHANGED/);
+  assert.equal(readFileSync(f.file,"utf8"),before);
+ }finally{f.cleanup();}
+});
+test("T6e missing legacy hop initializes spent and reviews before observing",async()=>{
+ const f=await requestedHostFixture();try{
+  const raw=JSON.parse(readFileSync(f.file,"utf8"));delete raw.landedHops;delete raw.installerOffer;writeFileSync(f.file,JSON.stringify(raw));
+  assert.equal(f.host.settleRequestedInstall({runningVersion:"8.0.0",observe:()=>assert.fail("legacy startup reviews"),decide:decideRequestedInstall}).reason,"legacy-hop");
+  const saved=f.coordinator().status();assert.equal(saved.landedHops[f.candidate.candidateId].automaticSpent,true);assert.ok(saved.installerOffer);
+ }finally{f.cleanup();}
+});
+test("T11i Quit queued during synchronous observation retains cancellation but revokes awaited relaunch",async()=>{
+ const f=await requestedHostFixture();try{
+  const {createReturnAuthority,createBackupReturn,joinExplicitQuit}=await import("./backup-offline-return.mjs");const authority=createReturnAuthority();let finish,quit,launches=0,quits=0;
+  const cleanup=new Promise(resolve=>{finish=resolve;}),options={authority,app:{quit:()=>{quits++;},exit(){}},cleanup:()=>cleanup,takeProgress:()=>null,setTimer:()=>{},relaunch:()=>{launches++;}};
+  const returning=createBackupReturn(options)({prepare:()=>{
+   const result=f.host.settleRequestedInstall({runningVersion:"8.0.0",observe:()=>{queueMicrotask(()=>{quit=joinExplicitQuit(options);});return factsObserver("8.0.0")();},decide:decideRequestedInstall});assert.equal(result.kind,"cancel");return {kind:"normal"};
+  }});
+  await Promise.resolve();assert.equal(f.coordinator().status().phase,"upgrade-cancelled");finish();assert.equal((await returning).status,"stopped");await quit;assert.equal(launches,0);assert.equal(quits,1);assert.ok(f.coordinator().status().installerOffer);
+ }finally{f.cleanup();}
+});
+
+test("F1 partial helper executable cannot cancel through the real host",async()=>{
+ const f=await requestedHostFixture();try{
+  const before=readFileSync(f.file,"utf8");
+  for(const executable of ["/Applications/Murage.app/Contents/Frameworks/Squirrel.framework/Versions/A/","/Applications/Murage.app/Contents/Frameworks/Squirrel.framework/Versions/A/Unknown","/unrecognized/"]){
+   const observe=()=>observeRequestedInstall({execPath:"/Applications/Murage.app/Contents/MacOS/Murage",home:"/Users/fixture",supported:true,read:()=>Buffer.from("old plist"),exec:command=>command==="/bin/ps"?Buffer.from(executable+"\n"):JSON.stringify({CFBundleIdentifier:"com.murage.app",CFBundleShortVersionString:"8.0.0"})});
+   assert.equal(f.host.settleRequestedInstall({runningVersion:"8.0.0",observe,decide:decideRequestedInstall}).kind,"review");
+   assert.equal(readFileSync(f.file,"utf8"),before);
+  }
+ }finally{f.cleanup();}
+});
+
+
+for(const landed of [false,true])for(const scenario of ['app','helpers','spaces','truncated','unknown','suffix'])test(`F1 round 2 real host ${scenario} landed=${landed}`,async()=>{
+ const f=await requestedHostFixture();try{
+  const bundle=scenario==='spaces'?'/Applications/Test Apps/Murage.app':'/Applications/Murage.app';
+  const execPath=bundle+'/Contents/MacOS/Murage';
+  const helpers=['Murage Helper','Murage Helper (GPU)','Murage Helper (Renderer)','Murage Helper (Plugin)',
+   'Electron Helper','Electron Helper (GPU)','Electron Helper (Renderer)','Electron Helper (Plugin)'];
+  const rows=[execPath+' --murage-fixture','/sbin/launchd'];
+  if(['helpers','spaces'].includes(scenario))for(const name of helpers)rows.push(`${bundle}/Contents/Frameworks/${name}.app/Contents/MacOS/${name} --type=renderer`);
+  if(scenario==='truncated')rows.push(bundle+'/Contents/Frameworks/Murage Helper (Renderer).app/Contents/MacOS/Murage Hel');
+  if(scenario==='unknown')rows.push(bundle+'/Contents/MacOS/Unknown');
+  if(scenario==='suffix')rows.push(execPath+'Unknown');
+  const before=readFileSync(f.file,'utf8'),version=landed?f.candidate.version:'8.0.0';
+  const observe=()=>observeRequestedInstall({execPath,home:'/Users/fixture',supported:true,read:()=>Buffer.from('fixture plist'),exec:(command,args)=>{
+   if(command==='/bin/ps'){assert.deepEqual(args,['-ww','-ax','-o','command=']);return Buffer.from(rows.join('\n')+'\n');}
+   return JSON.stringify({CFBundleIdentifier:'com.murage.app',CFBundleShortVersionString:version});
+  }});
+  const refused=['truncated','unknown','suffix'].includes(scenario);
+  const result=f.host.settleRequestedInstall({runningVersion:'8.0.0',observe,decide:decideRequestedInstall});
+  assert.equal(result.kind,refused?'review':landed?'landed':'cancel');
+  if(refused){assert.equal(result.reason,'observation-unknown');assert.equal(readFileSync(f.file,'utf8'),before);}
+  else if(landed){assert.equal(readFileSync(f.file,'utf8'),before);assert.equal(f.host.spendLandedHop('explicit',randomUUID(),result),true);assert.equal(f.coordinator().status().landedHops[f.candidate.candidateId].explicitCount,1);}
+  else {assert.equal(f.coordinator().status().phase,'upgrade-cancelled');assert.ok(f.host.peekInstallerOffer());}
+ }finally{f.cleanup();}
+});
+
+import {createDeferredStartup} from './deferred-startup.mjs';
+import {openBackupProgressWindow} from './backup-progress-window.mjs';
+function productionReturn(f,cleanup,extra={}){
+ const authority=createReturnAuthority(),events=[],main=readFileSync(new URL('./main.mjs',import.meta.url),'utf8');
+ class ProgressWindow extends EventEmitter{
+  constructor(){super();this.dead=false;this.webContents={executeJavaScript:async()=>{}};}
+  loadFile(){return Promise.resolve();}isDestroyed(){return this.dead;}destroy(){this.dead=true;events.push('destroy');}
+ }
+ let progress=openBackupProgressWindow({BrowserWindow:ProgressWindow,baseDir:'fixture'});
+ const window=progress.window;let veto=false;window.emit('close',{preventDefault(){veto=true;}});assert.equal(veto,true);
+ const scope={noteShutdownCause:cause=>assert.equal(cause,"automatic"),presentedCleanupFailures:new WeakSet(),desktopCleanupStage:'fixture writers',desktopShutdownStarted:true,updateRequester:false,backupScheduleHost:f.create(),showDesktopRecovery:(code,descriptor)=>events.push({error:descriptor.detail,code,descriptor}),app:{quit(){events.push('quit');},exit(){events.push('exit');}},returnAuthority:authority,serverStopReason:{note(){}},cleanupDesktopForExit:cleanup,
+ relaunchDesktop:({args})=>events.push({args}),normalArgs:()=>[],landedArgument:v=>'--murage-landed='+v,takeBackupProgress:()=>{const taken=progress;progress=null;return taken;},finishUpdateWait(){},slog(){},createBackupReturn:options=>createBackupReturn({...options,setTimer(){}}),BACKUP_MODE_ARGUMENT:'--murage-backup-mode',...extra};
+ vm.createContext(scope);
+ vm.runInContext(main.slice(main.indexOf('function cleanupFailed('),main.indexOf('const returnToWorkspaceAfterBackup='))+main.slice(main.indexOf('function pauseForReview('),main.indexOf('function startUpdateGate(')),scope);
+ if(extra.cleanupFailed)scope.cleanupFailed=extra.cleanupFailed;
+ vm.runInContext(main.slice(main.indexOf('const returnToWorkspaceAfterBackup='),main.indexOf('function settleUpdate('))+';globalThis.returning=returnToWorkspaceAfterBackup;',scope);
+ const adapter=main.slice(main.indexOf('    restartForBackup:(arm,token)=>{'),main.indexOf('    relaunch:async(mode,budgetArgument,token)=>{'));
+ const restartForBackup=vm.runInContext('({'+adapter+'}).restartForBackup',scope);
+ return {authority,events,scope,returning:scope.returning,restartForBackup};
+}
+import {createReturnAuthority,createBackupReturn,joinExplicitQuit,revokeReturn} from './backup-offline-return.mjs';
+const nextTurn=()=>new Promise(resolve=>setImmediate(resolve));
+for(const ceiling of [false,true])for(const ending of ['reject','success','stop','stop-reject'])test(`T27 production capture runner ${ending} ceiling=${ceiling}`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);await f.controller.requestUpgrade(updateCandidate());
+  let finish,fail,cleanups=0,page=0,backupPages=0,hostReturns=0,runnerReturns=0,ceilingTick;
+  const held=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});
+  const p=productionReturn(f,()=>{cleanups++;return held;});
+  const host=f.create({relaunch:mode=>{hostReturns++;assert.equal(mode,'normal');return p.returning();}});
+  const run=runOfflineBackup({run:()=>host.resumeOffline(),abandon:()=>host.abandonOffline(),returnToWorkspace:()=>{runnerReturns++;return p.returning();},shutdownStarted:()=>true,showBackupMode:()=>backupPages++,destroyProgress(){},showCleanupFailure:error=>{page++;p.scope.cleanupFailed(error);},setTimer:fn=>{ceilingTick=fn;},clearTimer(){}});
+  for(let i=0;i<100&&cleanups===0;i++)await nextTurn();
+  assert.equal(cleanups,1);const file=path.join(f.root,'control','backup-coordinator.json'),bytes=readFileSync(file,'utf8');assert.equal(f.coordinator().status().phase,'return-pending');
+  if(ceiling){ceilingTick();await nextTurn();}
+  let quit;if(ending.startsWith('stop'))quit=joinExplicitQuit({authority:p.authority,app:p.scope.app,takeProgress:p.scope.takeBackupProgress,cleanup:()=>held,setTimer(){},onFailure:p.scope.cleanupFailed}).catch(error=>({error}));
+  if(ending.includes('reject'))fail(Error('writer rejected'));else finish();
+  assert.equal(await run,ending.includes('reject')?'cleanup-failed':ending==='stop'?'stopped':ceiling?'timed-out':'verified');if(quit)await quit;
+  assert.equal(hostReturns,1);assert.equal(runnerReturns,ceiling||ending==='success'?1:0);assert.equal(readFileSync(file,'utf8'),bytes);assert.equal(backupPages,0);assert.equal(page,ending.includes('reject')?1:0);assert.equal(p.events.filter(x=>x==='destroy').length,1);if(ending.includes('reject')){assert.equal(p.events.filter(x=>x.descriptor).length,1);assert.ok(p.events.indexOf('destroy')<p.events.findIndex(x=>x.descriptor));assert.equal(p.events.find(x=>x.descriptor).descriptor.cleanupOnly,true);assert.equal(p.events.find(x=>x.descriptor).descriptor.committedHandoff,f.coordinator().status().job.handoff.id);}assert.equal(p.events.filter(x=>x.args).length,ending==='success'?1:0);
+  if(ending==='stop-reject'){assert.equal(p.events.find(x=>x.descriptor).descriptor.returnRevoked,true);assert.equal(p.events.includes('exit'),false);assert.equal((await p.returning()).status,'stopped');}
+  if(ending==='reject'){
+   await assert.rejects(p.returning(),e=>e.code==='BACKUP_UPGRADE_CLEANUP_FAILED');assert.equal(cleanups,1);
+   const retryMain=readFileSync(new URL('./main.mjs',import.meta.url),'utf8');const callback=/retry: (async \(\) => \{[\s\S]*?\n    \}),/.exec(retryMain.slice(retryMain.indexOf('function showDesktopRecovery(')));
+   p.scope.descriptor={updatePause:true,cleanupOnly:true};p.scope.updateRequester=false;p.scope.backupScheduleHost=new Proxy({}, {get(){assert.fail('cleanup Retry must not access host');}});
+   const retry=vm.runInContext('('+callback[1]+')',p.scope);
+   await assert.rejects(retry());assert.equal(cleanups,2);assert.equal(readFileSync(file,'utf8'),bytes);
+   await assert.rejects(p.returning());assert.equal(cleanups,2);
+   p.scope.cleanupDesktopForExit=async()=>{cleanups++;};
+   const controller=createInstallationRecoveryController({isTrustedSender:()=>true,isAvailable:()=>false,updatePause:()=>true,retry});
+   const response=await controller.handle({}, {action:'retry'});assert.equal(response.error,null);assert.equal(cleanups,3);assert.equal(p.events.filter(x=>x.args).length,1);assert.equal(readFileSync(file,'utf8'),bytes);
+  }
+ }finally{f.cleanup();}
+});
+for(const entry of ['upgrade','scheduled','manual'])for(const ending of ['stop','reentry','reject','success'])test(`T28 T29 production ${entry} arming ${ending}`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);let finish,fail,cleanups=0;
+  const held=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});const p=productionReturn(f,()=>{cleanups++;return held;});
+  const coordinator=f.coordinator(),original=coordinator.armHandoff.bind(coordinator);
+  coordinator.armHandoff=id=>{const result=original(id);if(ending==='reentry')revokeReturn(p.authority);return result;};
+  const host=f.create({coordinator,restartForBackup:p.restartForBackup});
+  if(entry==='scheduled')f.setNow(Date.parse('2026-09-13T09:01:00Z'));
+  const run=entry==='upgrade'?prepareBackedUpInstall(updateCandidate(),{backup:host,prepareNormal:()=>assert.fail('no native admission')}):entry==='manual'?host.runNow((await host.status()).revision):host.tick();
+  const observed=run.catch(error=>({error}));
+  for(let i=0;i<100&&cleanups===0;i++)await nextTurn();assert.equal(cleanups,1);
+  const joined=p.returning();assert.equal(joined,p.authority.attempt.promise);joined.catch(()=>{});
+  let quit;if(ending==='stop')quit=joinExplicitQuit({authority:p.authority,app:p.scope.app,takeProgress:p.scope.takeBackupProgress,cleanup:()=>held,setTimer(){}});
+  if(ending==='reject')fail(Error('cleanup rejected'));else finish();const result=await observed;if(quit)await quit;
+  assert.equal(p.events.filter(x=>x.args).length,ending==='success'?1:0);
+  if(['stop','reentry'].includes(ending)){assert.equal(result.status,'stopped');assert.equal(f.calls.filter(x=>x==='release').length,1);assert.equal(f.coordinator().status().phase,ending==='stop'?'handoff-prepared':'handoff-armed');}
+  if(ending==='success'){assert.equal(p.events.find(x=>x.args).args[0],'--murage-backup-mode');assert.equal(f.coordinator().status().phase,'handoff-armed');}
+  if(ending==='reject'){assert.equal(p.events.filter(x=>x.error).length,1);assert.notEqual(f.coordinator().status().phase,'handoff-armed');}
+  if(ending==='reentry'){await f.create().resumeOffline();assert.equal(f.coordinator().status().phase,'return-pending');assert.equal(f.calls.filter(x=>x==='capture').length,1);}
+  if(ending==='stop'&&entry==='upgrade'){await assert.rejects(resumeBackedUpInstall({backup:f.create(),currentVersion:'8.0.0'}),/REVIEW_REQUIRED/);assert.equal(f.calls.includes('capture'),false);}
+ }finally{f.cleanup();}
+});
+
+for(const ending of ['stop','quit-reject','pre-stop','release-failure'])test(`T28 real install and backup arming ${ending}`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);let finish,fail,entered=0,releases=0,admitted;
+  const admission=new Promise(resolve=>{admitted=resolve;});
+  const held=new Promise((resolve,reject)=>{finish=resolve;fail=reject;});
+  const p=productionReturn(f,()=>{entered++;admitted();return held;});
+  const host=f.create({restartForBackup:p.restartForBackup,prepare:async()=>async()=>{releases++;if(ending==='release-failure')throw Error('release rejected');}});
+  const native=await nativeHostUpdater(f,{returnAuthority:p.authority,beforeInstall:candidate=>prepareBackedUpInstall(candidate,{backup:host,prepareNormal:()=>assert.fail('must not admit native')})});
+  await native.updater.download();if(ending==='pre-stop')revokeReturn(p.authority);
+  const run=native.updater.install();
+  if(ending!=='pre-stop')await Promise.race([admission,run.then(()=>{throw Error('install ended before cleanup admission');})]);
+  assert.equal(entered,ending==='pre-stop'?0:1);
+  let quitting;if(ending!=='pre-stop')quitting=joinExplicitQuit({authority:p.authority,app:p.scope.app,takeProgress:p.scope.takeBackupProgress,cleanup:()=>held,setTimer(){},onFailure(){}}).catch(error=>({error}));
+  if(ending==='quit-reject')fail(Error('cleanup rejected'));else finish();
+  const result=await run;if(quitting)await quitting;
+  assert.equal(native.calls.native,0);assert.equal(native.calls.recover,0);assert.equal(native.timers.size,0);assert.equal(p.events.filter(x=>x.args).length,0);assert.equal(releases,ending==='pre-stop'?0:1);
+  if(ending==='stop'||ending==='pre-stop'){assert.equal(result.status,'stopped');assert.equal(native.calls.errors,0);assert.equal(f.coordinator().status().phase,ending==='pre-stop'?'idle':'handoff-prepared');}
+  if(ending==='release-failure'){assert.equal((await host.status()).error,'BACKUP_RELEASE_UNCONFIRMED');assert.equal(f.coordinator().status().phase,'handoff-prepared');}
+  if(ending==='quit-reject'){assert.equal(p.events.filter(x=>x.error).length,1);assert.equal(p.events.includes('exit'),false);}
+ }finally{f.cleanup();}
+});
+
+for(const boundary of ['committed','before-page','after-page'])test(`T27 restart after ${boundary} uses verified receipt continuation`,async()=>{
+ const f=fixture();try{
+  const native=await nativeHostUpdater(f);await f.enable(true);await f.controller.requestUpgrade(native.candidate);
+  let pages=0;const p=productionReturn(f,()=>Promise.reject(Error('writer failed')),{cleanupFailed:()=>{if(boundary==='after-page')pages++;}});
+  const host=f.create({relaunch:()=>boundary==='committed'?Promise.reject(Object.assign(Error('process ended'),{code:'BACKUP_UPGRADE_CLEANUP_FAILED'})):p.returning()});
+  await assert.rejects(host.resumeOffline(),e=>e.code==='BACKUP_UPGRADE_CLEANUP_FAILED');assert.equal(pages,boundary==='after-page'?1:0);
+  const receipt=f.coordinator().status().job.receipt;assert.equal(f.coordinator().status().phase,'return-pending');
+  const next=f.create({capture:()=>assert.fail('no recapture on restart')});let cleanups=0;
+  assert.equal((await resumeBackedUpInstall({backup:next,updater:native.updater,currentVersion:'8.0.0',cleanup:()=>{cleanups++;assert.equal(f.coordinator().status().phase,'install-requested');assert.ok(f.coordinator().status().installerOffer);}})).status,'install-requested');
+  assert.equal(cleanups,1);assert.equal(native.calls.native,1);assert.deepEqual(f.coordinator().status().job.receipt,receipt);assert.equal(f.calls.filter(x=>x==='capture').length,1);
+ }finally{f.cleanup();}
+});
+
+test('T27 restart with changed artifact pauses through the actual startup continuation',async()=>{
+ const f=fixture();try{
+  const native=await nativeHostUpdater(f);await f.enable(true);await f.controller.requestUpgrade(native.candidate);await f.create().resumeOffline();
+  const receipt=f.coordinator().status().job.receipt;writeFileSync(path.join(f.destination,f.coordinator().status().job.id+'.age'),'changed fixture artifact');
+  const host=f.create({capture:()=>assert.fail('no recapture')}),pages=[];
+  const main=readFileSync(new URL('./main.mjs',import.meta.url),'utf8'),start=main.indexOf('  const upgrade=backupScheduleHost?.pendingUpgrade();'),end=main.indexOf('  if(!process.argv.includes(BACKUP_MODE_ARGUMENT))',start);
+  const scope={desktopRecoveryMode:false,startupDecisionPending:false,backupScheduleHost:host,ensureDesktopUpdater:()=>native.updater,app:{getVersion:()=> '8.0.0',getLocale:()=> 'en'},process:{platform:'darwin'},startupSplash:{set(){}},updateRecoveryWords:()=>({}),desktopStartup:Promise.resolve(),resumeBackedUpInstall,pauseForReview:code=>pages.push(code),showDesktopRecovery:()=>assert.fail('no Backup mode'),serverStopReason:{note(){}},cleanupDesktopForExit:()=>assert.fail('verification must precede cleanup')};
+  scope.deferredStartup=createDeferredStartup({failure:()=>scope.pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED"),record(){},setTimer:()=>({unref(){}}),clearTimer(){}});
+  vm.createContext(scope);await vm.runInContext('(async()=>{"use strict";'+main.slice(start,end)+'})()',scope);
+  for(let i=0;i<100&&!pages.length;i++)await nextTurn();assert.deepEqual(pages,['BACKUP_UPGRADE_REVIEW_REQUIRED']);assert.equal(scope.desktopRecoveryMode,true);assert.equal(scope.startupDecisionPending,true);assert.equal(native.calls.native,0);assert.equal(f.coordinator().status().phase,'return-pending');assert.deepEqual(f.coordinator().status().job.receipt,receipt);
+ }finally{f.cleanup();}
+});
+
+async function interruptedStartup(host){
+ const main=readFileSync(new URL('./main.mjs',import.meta.url),'utf8');
+ const start=main.indexOf('  // W-D7:'),end=main.indexOf('  if(!process.argv.includes(BACKUP_MODE_ARGUMENT))',start);
+ const seen={workspace:0,pause:0,resume:0};
+ const scope={desktopRecoveryMode:false,startupDecisionPending:false,backupScheduleHost:host,desktopStartup:Promise.resolve(),announceLastBackupFailure(){},announceLastBackupResult(){},ensureDesktopUpdater:()=>({}),app:{getVersion:()=> '8.0.0',getLocale:()=> 'en'},process:{platform:'darwin'},startupSplash:{set(){seen.pause++;}},updateRecoveryWords:()=>({}),resumeBackedUpInstall:async()=>{seen.resume++;throw Error('pending');},pauseForReview(){},seen};
+ scope.deferredStartup=createDeferredStartup({failure:()=>scope.pauseForReview("BACKUP_UPGRADE_REVIEW_REQUIRED"),record(){},setTimer:()=>({unref(){}}),clearTimer(){}});
+ vm.createContext(scope);await vm.runInContext('(async()=>{"use strict";'+main.slice(start,end)+'seen.workspace++;})()',scope);await nextTurn();assert.equal(scope.desktopRecoveryMode,seen.pause>0);assert.equal(scope.startupDecisionPending,seen.pause>0);return seen;
+}
+for(const phase of ['quit','handoff-prepared','offline-claimed','capturing'])test(`BF-G1 T28d reopen after ${phase}`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);
+  // Keep a real prior verified backup through both restarts and review clearing.
+  await f.controller.requestUpgrade(updateCandidate());await f.create().resumeOffline();
+  f.coordinator().cancelUpgrade(f.coordinator().status().job.handoff.id);
+  const prior=f.coordinator().status().lastVerified;
+  const archives=readdirSync(f.destination).map(name=>[name,readFileSync(path.join(f.destination,name))]);
+  const p=productionReturn(f,async()=>{revokeReturn(p.authority);});
+  assert.equal((await f.create({restartForBackup:p.restartForBackup}).requestUpgrade(updateCandidate('10.0.0'))).status,'stopped');
+  if(phase!=='quit'){
+   const {spawn}=await import('node:child_process');
+   const child=spawn(process.execPath,['--input-type=module','-e',`import {BackupCoordinator} from './server/backup-coordinator.ts';const c=new BackupCoordinator({stateDirectory:${JSON.stringify(path.join(f.root,'control'))},now:()=>${f.host.now()}});const h=c.status().job.handoff;if(${JSON.stringify(phase)}!=='handoff-prepared'){c.armHandoff(h.id);c.claimHandoff(h.id,h.bindingRevision,h.installationIdentity);if(${JSON.stringify(phase)}==='capturing')c.beginHandoffCapture(h.id);}process.send('ready');setInterval(()=>{},1000);`],{stdio:['ignore','pipe','pipe','ipc']});
+   try{await new Promise((resolve,reject)=>{child.once('message',resolve);child.once('error',reject);child.once('exit',code=>reject(Error('child exited '+code)));});assert.equal(f.coordinator().status().phase,phase);const exited=new Promise(resolve=>child.once('exit',(_code,signal)=>resolve(signal)));child.kill('SIGKILL');assert.equal(await exited,'SIGKILL');}finally{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}
+  }
+  const captureCount=f.calls.filter(x=>x==='capture').length;
+  let saved;
+  for(let restart=0;restart<2;restart++){
+   const host=f.create(),seen=await interruptedStartup(host);
+   assert.deepEqual(seen,{workspace:1,pause:0,resume:0});assert.equal(host.internalStatus().phase,'needs-review');assert.equal(host.internalStatus().job.error,'interrupted');assert.equal(host.pendingUpgrade(),null);assert.deepEqual(host.internalStatus().lastVerified,prior);
+   const bytes=readFileSync(path.join(f.root,'control','backup-coordinator.json'),'utf8');if(saved)assert.equal(bytes,saved);saved=bytes;
+  }
+  assert.equal(f.calls.filter(x=>x==='capture').length,captureCount);
+  const host=f.create();await host.clearReview(host.internalStatus().revision);assert.equal(host.internalStatus().job,undefined);
+  for(const [name,bytes] of archives)assert.deepEqual(readFileSync(path.join(f.destination,name)),bytes);
+ }finally{f.cleanup();}
+});
+test('BF-G1 truly pending upgrade still pauses',async()=>{
+ const f=fixture();try{await f.enable(true);await f.controller.requestUpgrade(updateCandidate());await f.create().resumeOffline();for(let i=0;i<2;i++){assert.deepEqual(await interruptedStartup(f.create()),{workspace:0,pause:1,resume:1});assert.equal(f.coordinator().status().phase,'return-pending');}}finally{f.cleanup();}
+});
+
+for(const field of ['landedHops','installerOffer'])test(`BF-G1 corrupt ${field} reopens twice in review`,async()=>{
+ const f=fixture();try{
+  await f.enable(true);await f.controller.requestUpgrade(updateCandidate());await f.create().resumeOffline();
+  f.coordinator().cancelUpgrade(f.coordinator().status().job.handoff.id);
+  const prior=f.coordinator().status().lastVerified;
+  const archives=readdirSync(f.destination).map(name=>[name,readFileSync(path.join(f.destination,name))]);
+  const p=productionReturn(f,async()=>{revokeReturn(p.authority);});
+  await f.create({restartForBackup:p.restartForBackup}).requestUpgrade(updateCandidate('10.0.0'));
+  const file=path.join(f.root,'control','backup-coordinator.json'),state=JSON.parse(readFileSync(file,'utf8'));
+  assert.equal(state.job.phase,'handoff-prepared');state[field]='corrupt';writeFileSync(file,JSON.stringify(state));
+  const captures=f.calls.filter(x=>x==='capture').length;let saved;
+  for(let launch=0;launch<2;launch++){
+   const host=f.create();assert.deepEqual(await interruptedStartup(host),{workspace:1,pause:0,resume:0});
+   const status=await host.status();assert.equal(status.phase,'needs-review');assert.equal(status.reviewReason,'interrupted');
+   assert.deepEqual(status.lastVerified,prior);assert.equal(host.pendingUpgrade(),null);
+   const bytes=readFileSync(file,'utf8');if(saved)assert.equal(bytes,saved);saved=bytes;
+   for(const [name,bytes] of archives)assert.deepEqual(readFileSync(path.join(f.destination,name)),bytes);
+  }
+  assert.equal(f.calls.filter(x=>x==='capture').length,captures);
+  const host=f.create();await host.clearReview(host.internalStatus().revision);assert.equal(host.internalStatus().job,undefined);
+ }finally{f.cleanup();}
+});
+
+// The Mac driver asks this isolated fixture for a real receipt and interrupted job.
+test('native kill seed', {skip:!process.env.MURAGE_MACWD_SEED}, async()=>{
+ const f=fixture();try{
+  await f.enable(true);await f.controller.requestUpgrade(updateCandidate());await f.create().resumeOffline();
+  f.coordinator().cancelUpgrade(f.coordinator().status().job.handoff.id);
+  const p=productionReturn(f,async()=>{revokeReturn(p.authority);});
+  await f.create({restartForBackup:p.restartForBackup}).requestUpgrade(updateCandidate('10.0.0'));
+  const target=process.env.MURAGE_MACWD_SEED;
+  copyFileSync(path.join(f.root,'control','backup-coordinator.json'),path.join(target,'seed.json'));
+  for(const name of readdirSync(f.destination))copyFileSync(path.join(f.destination,name),path.join(target,name));
+ }finally{f.cleanup();}
+});
+
+
+test('Mac kill boundary observes real durable coordinator operations',async()=>{
+ const {installCommitStop}=await import('../scripts/macwd/kill-support.mjs');
+ const f=fixture();let restore;try{
+  await f.enable(true);
+  const coordinator=f.coordinator(),seen=[];let target='handoff-prepared';
+  restore=installCommitStop(Object.getPrototypeOf(coordinator),{target:()=>target,
+   committed(file,phase){assert.equal(JSON.parse(readFileSync(file,'utf8')).job.phase,phase);seen.push(phase);},
+   stop(){seen.push('stopped');}});
+  await f.controller.requestUpgrade(updateCandidate());
+  const h=f.coordinator().status().job.handoff;
+  target='offline-claimed';coordinator.claimHandoff(h.id,h.bindingRevision,h.installationIdentity);
+  target='capturing';coordinator.beginHandoffCapture(h.id);
+  assert.deepEqual(seen,['handoff-prepared','stopped','offline-claimed','stopped','capturing','stopped']);
+ }finally{restore?.();f.cleanup();}
+});
+
+for(const action of ["quit","return"])for(const boundary of ["preflight","committed","space","prepare","cleanup","armed","queued"]){
+ test(`T-stop-admission BF-5: ${action} at upgrade ${boundary}`,async()=>{
+  const f=fixture();try{
+   await f.enable(true);await f.controller.runNow(f.coordinator().status().revision);
+   await assert.rejects(f.create({freeBytes:()=>1,capture:async()=>{throw Error("BACKUP_DISK_FULL");}}).resumeOffline(),/BACKUP_WAITING/);
+   const old=f.coordinator().status();f.calls.length=0;
+   const c=f.coordinator();let h,token,shutdown=false,returned;
+   c.cancelManual=()=>assert.fail("Upgrade never owns a manual cancellation");
+   const stop=()=>{if(action==="return")returned=explicitBackupReturn(h,{retry:async()=>{}});else h.noteStop();shutdown=true;};
+   const hooks={coordinator:c,shutdownStarted:()=>shutdown};
+   if(boundary==="preflight")hooks.assertUpgradeAllowed=async()=>stop();
+   const prepare=c.prepareUpgrade.bind(c);let commits=0;
+   c.prepareUpgrade=(...args)=>{commits++;const result=prepare(...args);if(boundary==="committed")stop();return result;};
+   if(boundary==="space")hooks.freeBytes=async()=>{stop();return 100*1024**3;};
+   hooks.prepare=async(_occasion,t)=>{token=t;if(boundary==="prepare")stop();return Object.assign(async()=>assert.fail("Stop must cancel preparation"),{cancel:async()=>{assert.equal(h.isPreparing(),true);f.calls.push("release");}});};
+   hooks.cleanupIdle=async t=>{assert.equal(t,token);shutdown=true;if(boundary==="cleanup")stop();};
+   const arm=c.armHandoff.bind(c);let arms=0;c.armHandoff=id=>{arms++;const result=arm(id);if(boundary==="armed")stop();return result;};
+   hooks.relaunch=async(_mode,_budget,t)=>{assert.equal(t,token);assert.equal(boundary,"queued");await new Promise((resolve,reject)=>{t.cancelQueued=()=>reject(Error("BACKUP_ADMISSION_STOPPED"));stop();});};
+   h=f.create(hooks);await assert.rejects(h.requestUpgrade(updateCandidate()),/STOPPED/);await returned;
+   assert.equal(commits,boundary==="preflight"?0:1);assert.equal(arms,["armed","queued"].includes(boundary)?1:0);
+   assert.equal(f.calls.includes("backup"),false);assert.equal(f.calls.includes("capture"),false);
+   assert.deepEqual(c.status().room,old.room);
+   if(boundary==="preflight")assert.equal(c.status().job.id,old.job.id);
+   if(boundary!=="preflight"){
+    assert.notEqual(c.status().job.id,old.job.id);assert.equal(c.status().waiting,undefined);
+    const state=c.status();assert.equal(state.phase,"needs-review");
+    const marker=JSON.parse(readFileSync(path.join(f.root,"control","backup-handoff-failure.json"),"utf8"));
+    assert.equal(marker.handoff,state.job.handoff.id);assert.equal(marker.code,"SNAPSHOT_CANCELLED");
+    assert.equal(f.create().reconcileStartup().phase,"needs-review");
+   }
+  }finally{f.cleanup();}
+ });
+}
+
+test("BW-B9 Low: a cancelled arm whose release rejects still retires its admission",async()=>{
+ const f=fixture();try{
+  await f.enable(true);await f.controller.runNow(f.coordinator().status().revision);
+  await assert.rejects(f.create({freeBytes:()=>1,capture:async()=>{throw Error("BACKUP_DISK_FULL");}}).resumeOffline(),/BACKUP_WAITING/);
+  const c=f.coordinator();let h,released=0;
+  h=f.create({coordinator:c,shutdownStarted:()=>false,
+   prepare:async()=>Object.assign(async()=>assert.fail("a cancelled stop uses cancel"),{cancel:async()=>{released++;throw Error("release rejected");}}),
+   restartForBackup:async arm=>{arm();h.noteStop();return {status:"stopped"};}});
+  await assert.rejects(h.requestUpgrade(updateCandidate()),/BACKUP_RELEASE_UNCONFIRMED/);
+  assert.equal(released,1);assert.equal(f.calls.includes("capture"),false);
+  const state=c.status();assert.equal(state.phase,"needs-review");
+  const marker=JSON.parse(readFileSync(path.join(f.root,"control","backup-handoff-failure.json"),"utf8"));
+  assert.equal(marker.handoff,state.job.handoff.id);assert.equal(marker.code,"SNAPSHOT_CANCELLED");
+ }finally{f.cleanup();}
 });

@@ -12114,6 +12114,7 @@ var require_ElectronAppAdapter = __commonJS({
         return (0, AppAdapter_1.getAppCacheDir)();
       }
       quit() {
+        this.app.murageShutdownCause = "automatic";
         this.app.quit();
       }
       relaunch() {
@@ -14703,6 +14704,7 @@ var require_BaseUpdater = __commonJS({
         if (isInstalled) {
           setImmediate(() => {
             require("electron").autoUpdater.emit("before-quit-for-update");
+            this.app.murageShutdownCause = "automatic";
             this.app.quit();
           });
         } else {
@@ -15540,6 +15542,7 @@ var require_MacUpdater = __commonJS({
         if (this.autoRunAppAfterInstall) {
           this.nativeUpdater.quitAndInstall();
         } else {
+          this.app.murageShutdownCause = "automatic";
           this.app.quit();
         }
         this.closeServerIfExists();
