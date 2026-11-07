@@ -1,11 +1,12 @@
+import {spaceRequirement, volumeLayout, floorFor, implicatedVolumes} from "../shared/backup-space.mjs";
 import { normalizeBackupAgeDiagnostic } from "./backup-age-attestation.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, readdirSync, statfsSync } from "node:fs";
 import path from "node:path";
 import { readBackupIdentity } from "./backup-mode.mjs";
 import { pathWithin, samePath } from "../shared/path-identity.mjs";
 import { parseUpdateCandidate, canonicalUpdateDescriptor } from "../shared/update-candidate.mjs";
-import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
+import { BACKUP_CAPTURE_CODES, BACKUP_CAPTURE_STAGES, backupWaitCause, captureFailurePath, normalizeCaptureCause } from "../shared/backup-capture-failure.mjs";
 import { createBackupStepLog } from "../shared/backup-progress.mjs";
 import { backupBudgetArgument, decideBackupBudget, readBackupBudgetArgument, validStoredDuration } from "../shared/backup-budget.mjs";
 import { offlineCeilingFor } from "./backup-offline-return.mjs";
@@ -98,7 +99,7 @@ export function captureFailureDiagnostic(stage,error){
 /** Existing coordinator and native ownership/worker are injected, never duplicated. */
 export function createBackupScheduleHost(host) {
   const coordinator=host.coordinator;
-  let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null;
+  let running=false,timer=null,lastError=null,upgradeRequest=null,upgradeCandidateId=null,operation=null,reconciled=false;
   const internalStatus=()=>({...coordinator.status(),error:lastError});
   // Who the last refused backup was waiting on, when it was a person's
   // answer (electron/backup-waiting.mjs). A due daily backup keeps trying
@@ -164,6 +165,33 @@ export function createBackupScheduleHost(host) {
   /** Asks the harness to re-derive the step from these files now. A request,
    * never a claim: it carries no state. */
   const firstRunChanged=async()=>{try{await host.firstRunChanged?.();}catch{/* the harness re-derives on its next read */}};
+  async function spaceInputs(s,b){
+    const data=path.dirname(realpathSync(host.installation())),backup=b.destination;
+    const free=async file=>{try{if(host.freeBytes)return await host.freeBytes(file);const fs=statfsSync(file);const value=Number(fs.bavail)*Number(fs.bsize);return fs.blocks>0&&Number.isFinite(value)&&value>=0?value:undefined;}catch{return undefined;}};
+    const device=async file=>{try{return host.volumeId?await host.volumeId(file):lstatSync(file).dev;}catch{return undefined;}};
+    const [backupFree,dataFree,backupId,dataId]=await Promise.all([free(backup),free(data),device(backup),device(data)]);
+    const layout=volumeLayout(backupId,dataId);
+    let live;try{const size=(name,optional)=>{try{return lstatSync(path.join(host.installation(),name)).size;}catch(error){if(optional&&error.code==="ENOENT")return 0;throw error;}};live=size("messages.db",false)+size("messages.db-wal",true)+size("memory-index.db",true);}catch{/* A first backup with unknown size can still try. */}
+    const prior=s.lastVerified?.destinationRef===s.schedule.destinationRef?s.lastVerified.bytes:undefined;
+    const archive=Math.max(live??0,prior??0),estimate=Math.ceil(1.2*archive);
+    return {layout,estimates:{backup:estimate,data:estimate},room:s.room,free:{backup:backupFree,data:dataFree,shared:backupFree===undefined?dataFree:dataFree===undefined?backupFree:Math.min(backupFree,dataFree)}};
+  }
+  async function measuredRoom(s,b,step){
+    const inputs=await spaceInputs(s,b);let leftover=0;
+    const bytes=file=>{try{const st=lstatSync(file);return st.isFile()&&!st.isSymbolicLink()?st.size:0;}catch{return 0;}};
+    leftover+=bytes(path.join(b.destination,s.job.id+".age"));
+    try{for(const entry of readdirSync(b.destination,{withFileTypes:true}))if(entry.isDirectory()&&!entry.isSymbolicLink()&&entry.name.startsWith(".murage-backup-"))leftover+=bytes(path.join(b.destination,entry.name,"backup.age"));}catch{/* No artifact is deleted to measure room. */}
+    const kinds=inputs.layout==="shared"?["shared"]:implicatedVolumes(step,host.platform??process.platform);
+    return {destinationRef:s.schedule.destinationRef,at:now(),layout:inputs.layout,mode:kinds.length===1?"pinned":"either",floors:Object.fromEntries(kinds.map(kind=>[kind,floorFor(inputs.free[kind],kind==="data"?0:leftover)]))};
+  }
+  function reconcileStartup(){const decision=coordinator.reconcileStartup?.()??{blocked:false};reconciled=!decision.blocked;return decision;}
+  const stopped=token=>token?.cancelled||(!token?.internalCleanup&&host.shutdownStarted?.());
+  const checkStop=token=>{if(stopped(token))throw Error("BACKUP_ADMISSION_STOPPED");};
+  function noteStop(){
+    if(operation){operation.cancelled=true;operation.cancelQueued?.();}
+    if(offline)offline.stopped=true;
+    host.stopCapture?.();
+  }
   const publicStatus=async()=>{
     const s=internalStatus();let refs;try{const b=await read();if(b)refs={installationRef:b.installationRef,destinationRef:b.destinationRef,recoveryRef:b.recoveryRef,destinationLabel:path.basename(b.destination),recoveryLabel:path.basename(b.keyFile)};}catch{lastError="BACKUP_BINDINGS_UNAVAILABLE";}
     let preUpgradeSupported=false;try{await assertUpgradeAllowed();preUpgradeSupported=true;}catch{/* Static capability refusal is not a schedule failure. */}
@@ -181,10 +209,13 @@ export function createBackupScheduleHost(host) {
     // computer where no backup could ever run.
     let restartBlocked=null;try{restartBlocked=captureBlocked();}catch{/* A probe failure is not a refusal. */}
     let firstRun;try{firstRun=await firstRunState();}catch{firstRun={eligible:false,completed:null,owed:false};}
-    return {supported,firstRun,...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
+    let waiting=s.waiting;
+    if(waiting)try{const b=await read();if(b)waiting={...waiting,...spaceRequirement(await spaceInputs(s,b))};}catch{/* Preserve the wait when its folder is unreadable. */}
+    return {supported,firstRun,...(waiting?{waiting}:{}),...(restartBlocked?{relaunchBlocked:restartBlocked}:{}),...(heldBy?{heldBy}:{}),...(checking?{checking:true}:{}),...(unavailable?{unavailable}:{}),preUpgradeSupported,closedAppSupported,pending:running,enabled:s.enabled,revision:s.revision,phase:s.phase,schedule:s.schedule,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,...(s.reviewReason?{reviewReason:s.reviewReason}:{}),...(s.captureFailure?{captureFailure:s.captureFailure}:{}),...(s.lastSkipped?{lastSkipped:s.lastSkipped}:{}),refs,error:lastError};
   };
   const stopPolling=()=>{if(timer)clearInterval(timer);timer=null;};
-  const start=()=>{stopPolling();if(!coordinator.status().enabled)return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
+  const start=()=>{stopPolling();let s;try{s=coordinator.status();}catch{return;}
+    if(!s.enabled&&s.phase!=="waiting")return;timer=setInterval(()=>{void tick();},60000);timer.unref?.();void tick();};
   /** How long this run may take, decided before anything closes. `before` is
    * the status from before a new job replaced the last one, the only place
    * the last run's length still shows. Never written down (shared/backup-budget.mjs). */
@@ -212,7 +243,7 @@ export function createBackupScheduleHost(host) {
   const captureBlocked=()=>relaunchRefusal()??(host.elevated?.()?"BACKUP_ELEVATED":null);
   const assertRelaunchPossible=()=>{const blocked=captureBlocked();if(blocked)throw Error(blocked);};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
-  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["needs-review","upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
+  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["needs-review","upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase,offerInvalid:s.offerInvalid,hopsInvalid:s.hopsInvalid,hop:s.landedHops?.[candidate.candidateId]}:null;}
   async function verifyUpgrade(candidate){
     candidate=checkedCandidate(candidate);await assertUpgradeAllowed(candidate);
     const b=await checked(),s=coordinator.status(),intent=s.job?.handoff;
@@ -233,23 +264,47 @@ export function createBackupScheduleHost(host) {
       const s=coordinator.status();
       if(pendingUpgrade())throw Error("BACKUP_UPGRADE_PENDING");
       if(running)throw Error("BACKUP_BUSY");
-      running=true;let release,intent;
+      running=true;let intent;
+      const token={cancelled:false,internalCleanup:false,committed:false,upgrade:true};operation=token;
       try{
-        await assertUpgradeAllowed(candidate);assertRelaunchPossible();const b=await checked();
-        if(s.job&&!["local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"].includes(s.phase))throw Error("BACKUP_REVIEW_REQUIRED");
-        release=await host.prepare();
+        checkStop(token);await assertUpgradeAllowed(candidate);checkStop(token);assertRelaunchPossible();const b=await checked();checkStop(token);
+        if(s.job&&!["waiting","local-verified","skipped","returned","upgrade-complete","upgrade-cancelled"].includes(s.phase))throw Error("BACKUP_REVIEW_REQUIRED");
         const budgetMs=chooseBudget(s);
         intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000,upgrade:candidate};
-        coordinator.prepareUpgrade(candidate,intent);stopPolling();
-        await host.cleanupIdle();coordinator.armHandoff(intent.id);await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
+        // D5a: preserving the old wait ends at the durable upgrade commit.
+        token.intent=intent;checkStop(token);
+        const prepared=coordinator.prepareUpgrade(candidate,intent);token.committed=true;token.jobId=prepared.job.id;
+        checkStop(token);
+        const requirement=spaceRequirement(await spaceInputs(s,b));checkStop(token);
+        if(requirement.short){coordinator.recordCaptureFailure?.({stage:"precondition",code:"BACKUP_DISK_FULL"});throw Error("BACKUP_DISK_FULL");}
+        token.release=await host.prepare("manual",token);checkStop(token);stopPolling();
+        const exit=await armBackup(intent,budgetMs,token.release,token);if(exit?.status==="stopped")return exit;
         return {status:"deferred",message:"Backup restart prepared before installing this update."};
       }catch(error){
+        if(error?.stopped)throw error;
         lastError="BACKUP_UPGRADE_DEFERRED";
-        if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}
-        if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
+        if(stopped(token))await retireAdmission(token);
+        else{
+          if(token.committed)try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}
+          if(token.release)try{await token.release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
+        }
         throw error;
-      }finally{running=false;}
+      }finally{if(operation===token)operation=null;running=false;}
     })().finally(()=>{upgradeRequest=null;upgradeCandidateId=null;});return upgradeRequest;
+  }
+  async function armBackup(intent,budgetMs,release,token){
+    const arm=()=>{checkStop(token);coordinator.armHandoff(intent.id);checkStop(token);return backupBudgetArgument(intent.id,budgetMs);};
+    checkStop(token);token.internalCleanup=true;
+    const result=host.restartForBackup ? await host.restartForBackup(arm,token) : await (async()=>{await host.cleanupIdle(token);checkStop(token);return host.relaunch("backup",arm(),token);})();
+    if(result?.status==="stopped"){
+      // A cancelled stop retires its admission even when the release rejects (BW-B9 Low).
+      try{await (stopped(token)?release?.cancel??release:release)?.();}catch(cause){lastError="BACKUP_RELEASE_UNCONFIRMED";throw Object.assign(Error(lastError),{code:lastError,cause,stopped:true});}
+      finally{if(stopped(token))await retireAdmission({...token,release:undefined});}
+      return result;
+    }
+    checkStop(token);
+    lastError=null;
+    return result;
   }
   const REFERENCE_FAILURES=new Set(["BACKUP_FOLDER_MISSING","BACKUP_RECOVERY_KEY_MISSING","BACKUP_REFERENCE_CHANGED"]);
   /** Stops a job whose folder or key can't be used: needs review, the reason
@@ -263,34 +318,82 @@ export function createBackupScheduleHost(host) {
     try{void Promise.resolve(host.announceFailure?.()).catch(()=>{});}catch{/* never worth a failed tick */}
     return code;
   }
+  const duePhases=["due","waiting-idle","waiting-backup-mode","waiting"];
+  async function retireAdmission(token){
+    if(token.release)try{await (token.release.cancel??token.release)();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
+    if(token.committed){
+      if(!token.upgrade&&["needs-review","return-pending","returned","waiting"].includes(coordinator.status().phase))return;
+      const diagnostic={stage:"precondition",code:"SNAPSHOT_CANCELLED"};
+      try{coordinator.recordHandoffFailure({job:token.jobId,handoff:token.intent.id,...diagnostic});coordinator.recordCaptureFailure?.(diagnostic);}catch{/* Keep ownership blocked if the record cannot be saved. */}
+      try{coordinator.failHandoff(token.intent.id);}catch{/* Marker prevents a later armed capture. */}
+    }else if(token.manualId)try{coordinator.cancelManual(token.manualId);}catch{/* A stale or refused cancellation never grants capture authority. */}
+  }
+  async function admit(entry,expectedRevision,upgradeId,onStage=()=>{}){
+    const token={cancelled:false,internalCleanup:false,committed:false};operation=token;
+    try{
+      const before=coordinator.status();let s=before,b,referenceError;
+      if(entry==="manual"){
+        if(before.revision!==expectedRevision)throw Error("BACKUP_SCHEDULE_CHANGED");
+        const binding=await read();checkStop(token);
+        if(!binding?.allowIdleRestart||["installationRef","destinationRef","recoveryRef"].some(key=>before.schedule[key]!==binding[key]))throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");
+        try{b=await checked();}catch(error){if(!REFERENCE_FAILURES.has(error?.message))throw error;referenceError=error;}
+        checkStop(token);
+        const current=coordinator.status();
+        if(current.revision!==before.revision)throw Error("BACKUP_SCHEDULE_CHANGED");
+        if(current.job?.id!==before.job?.id)throw Error("BACKUP_BUSY");
+        if(referenceError?.message==="BACKUP_REFERENCE_CHANGED"&&before.phase!=="waiting")throw referenceError;
+        if(!referenceError||before.phase!=="waiting"){
+          s=coordinator.requestManual(expectedRevision,randomUUID(),{jobId:before.job?.id});
+          // A manual commit transfers ownership before any asynchronous preparation.
+          if(s.job?.id!==before.job?.id&&s.job?.occurrence.startsWith(s.revision+":manual:"))token.manualId=s.job.id;
+        }
+      }else{s=await coordinator.tick(upgradeId);checkStop(token);}
+      checkStop(token);
+      if(!duePhases.includes(s.phase))return {kind:"no-work"};
+      token.jobId=s.job.id;token.revision=s.revision;
+      if(entry==="closed"&&s.phase==="waiting"){
+        checkStop(token);const claim=coordinator.claimClosedCheck(s.job.id,s.waiting.nextAt);
+        if(claim.outcome!=="durable")return {kind:"waited"};token.closedClaim=claim;
+      }
+      if(s.phase==="waiting"&&["busy","interrupted"].includes(s.waiting.cause)&&now()<s.waiting.nextAt&&!token.closedClaim)return {kind:"still-waiting"};
+      if(!host.supported()){
+        if(entry==="manual")throw Error("BACKUP_UNAVAILABLE");
+        if(!host.checking?.())try{const reason=host.unavailableReason?.();if(reason)void Promise.resolve(host.announceUnavailable?.(reason)).catch(()=>{});}catch{/* Notice only. */}
+        return {kind:"no-work"};
+      }
+      assertRelaunchPossible();
+      if(!b&&!referenceError)try{b=await checked();}catch(error){referenceError=error;}
+      checkStop(token);
+      if(referenceError){
+        const code=referenceError?.message;
+        if(code==="BACKUP_FOLDER_MISSING"){coordinator.waitJob(s.job.id,{cause:"drive",code,drive:"backup"});lastError=null;return {kind:"waited"};}
+        if(REFERENCE_FAILURES.has(code)){stopForReferences(s.job.id,referenceError);lastError=code;return {kind:"review"};}
+        throw referenceError;
+      }
+      if(entry==="closed"&&b.allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");
+      const requirement=spaceRequirement(await spaceInputs(s,b));checkStop(token);
+      if(requirement.short){coordinator.waitJob(s.job.id,{cause:"space",code:"BACKUP_DISK_FULL",drive:requirement.drive});lastError=null;return {kind:"waited"};}
+      if(entry!=="closed"){token.release=await host.prepare(entry==="manual"?"manual":"daily",token);checkStop(token);heldBy=null;}
+      if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
+      const budgetMs=await (host.chooseBudget?.(s,before)??chooseBudget(s,before));checkStop(token);
+      const current=coordinator.status();if(current.revision!==s.revision||current.job?.id!==s.job.id)throw Error("BACKUP_HANDOFF_CHANGED");
+      const intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};token.intent=intent;
+      checkStop(token);const prepared=coordinator.prepareHandoff(s.job.id,intent);token.committed=true;token.jobId=prepared.job.id;
+      if(entry==="closed"){checkStop(token);coordinator.armHandoff(intent.id);checkStop(token);onStage("capture");await captureArmed(true,budgetMs);}
+      else {stopPolling();const exit=await armBackup(intent,budgetMs,token.release,token);if(exit?.status==="stopped")return {kind:"stopped",...exit};}
+      checkStop(token);lastError=null;return {kind:"prepared"};
+    }catch(error){if(!error?.stopped&&error?.message!=="BACKUP_WAITING")await retireAdmission(token);throw error;}
+    finally{if(operation===token)operation=null;}
+  }
   async function tick(upgradeId){
     if(running)return;
-    const before=coordinator.status();
-    if(!before.enabled)return;
-    running=true;let release,intent;
+    running=true;
     try{
-      const s=await coordinator.tick(upgradeId);
-      if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase))return;
-      // A due backup that can't run used to wait here without a word, every
-      // day (0.1.60 Windows final D1). Say so: the Inbox row, one
-      // notification, and the page's sentence, each with what to do.
-      if(!host.supported()){
-        if(!host.checking?.())try{const reason=host.unavailableReason?.();if(reason)void Promise.resolve(host.announceUnavailable?.(reason)).catch(()=>{});}catch{/* never worth a failed tick */}
-        return;
-      }
-      const blocked=captureBlocked();if(blocked){lastError=blocked;return;}
-      let b;try{b=await checked();}catch(error){const code=stopForReferences(s.job?.id,error);if(code){lastError=code;return;}throw error;}
-      release=await host.prepare("daily");heldBy=null;
-      const budgetMs=chooseBudget(s,before);
-      intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
-      coordinator.prepareHandoff(s.job.id,intent);
-      stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
-    }catch(error){
-      lastError=holdFor(error,"daily")?"BACKUP_WAITING_ON_YOU":"BACKUP_HANDOFF_DEFERRED";
-      if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve unreadable state. */}
-      if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
-    }finally{running=false;}
+      if(!reconciled&&reconcileStartup().blocked)return;
+      const before=coordinator.status();if(!before.enabled&&before.phase!=="waiting"){stopPolling();return;}
+      const result=await admit("automatic",undefined,upgradeId);if(result.kind==="stopped")return {status:"stopped"};
+    }catch(error){if(error?.stopped)return {status:"stopped",error:error.code};lastError=holdFor(error,"daily")?"BACKUP_WAITING_ON_YOU":error?.message??"BACKUP_HANDOFF_DEFERRED";}
+    finally{running=false;}
   }
   /** Clears a backup that stopped without a confirmed result, so backups can
    * run again. Never while this window is preparing one. */
@@ -313,45 +416,23 @@ export function createBackupScheduleHost(host) {
    * Every precondition is proven before the workspace is asked to close. */
   async function runNow(expectedRevision){
     if(!Number.isSafeInteger(expectedRevision)||expectedRevision<0)throw Error("INVALID_BACKUP_REQUEST");
-    if(running)throw Error("BACKUP_BUSY");
-    if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
-    assertRelaunchPossible();
-    running=true;let release,intent,manual;
-    try{
-      const current=coordinator.status();
-      if(current.revision!==expectedRevision)throw Error("BACKUP_SCHEDULE_CHANGED");
-      const b=await read();
-      if(!b||!b.allowIdleRestart||current.schedule.installationRef!==b.installationRef||current.schedule.destinationRef!==b.destinationRef||current.schedule.recoveryRef!==b.recoveryRef)throw Error("BACKUP_SCHEDULE_CONSENT_REQUIRED");
-      try{await checked();}catch(error){
-        // Recorded like a failed backup (review, Inbox, notification), and
-        // the window gets the same plain reason.
-        if(["BACKUP_FOLDER_MISSING","BACKUP_RECOVERY_KEY_MISSING"].includes(error?.message)){lastError=error.message;try{const r=coordinator.requestManual(expectedRevision,randomUUID());stopForReferences(r.job?.id,error);}catch{/* the sentence below still names it */}}
-        throw error;
-      }
-      const s=coordinator.requestManual(expectedRevision,randomUUID());
-      if(s.job.occurrence.startsWith(s.revision+":manual:"))manual=s.job.id;
-      try{release=await host.prepare("manual");}catch(error){holdFor(error,"manual");throw error;}
-      if(heldBy?.occasion==="manual")heldBy=null;
-      if(!host.supported())throw Error("BACKUP_UNAVAILABLE");
-      const budgetMs=chooseBudget(s,current);
-      intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
-      coordinator.prepareHandoff(s.job.id,intent);
-      stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
-    }catch(error){
-      if(intent){lastError="BACKUP_HANDOFF_DEFERRED";try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}}
-      else if(manual)try{coordinator.cancelManual(manual);}catch{/* A changed job is left for review. */}
-      if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
-      throw error;
-    }finally{running=false;}
+    if(running)throw Error("BACKUP_BUSY");if(!host.supported())throw Error("BACKUP_UNAVAILABLE");assertRelaunchPossible();
+    running=true;let result;
+    try{result=await admit("manual",expectedRevision);}
+    catch(error){holdFor(error,"manual");throw error;}
+    finally{running=false;}
+    if(result.kind==="stopped")return {status:"stopped"};
+    if(result.kind==="review")throw Error(lastError);
+    if(result.kind==="waited"||result.kind==="still-waiting")start();
     return publicStatus();
   }
   // The backup-mode capture under way, so a run past its ceiling can be
   // recorded as failed while the capture itself is still stuck (abandonOffline).
   let offline=null,offlineGivenUp=false;
   async function captureArmed(closed=false,closedBudgetMs){
-    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
-    const run={stage:"precondition",abandoned:false};if(!closed)offline=run;
+    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,committed=false,captureStage="precondition";
+    const run={stage:"precondition",abandoned:false,stopped:false};offline=run;
+    const captureStopped=()=>run.abandoned||run.stopped||host.shutdownStarted?.();
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
       const note=line=>{try{host.reportOutcome?.(line);}catch{/* Logging never changes the backup. */}};
@@ -380,20 +461,41 @@ export function createBackupScheduleHost(host) {
       note(`backup local verified ${JSON.stringify({job:s.job.id.slice(0,8),bytes,how:"file re-read and its sha256 matched the encrypting worker's"})}`);
       {let line=null;try{line=skippedOutcomeLine(s.job.id.slice(0,8),result.skipped);}catch{/* Logging never changes the backup. */}if(line)note(line);}
       // Given up at the ceiling while the worker finished: the timeout stands.
-      if(run.abandoned)throw Error("BACKUP_HANDOFF_REJECTED");
+      if(captureStopped())throw Error("BACKUP_HANDOFF_REJECTED");
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      committed=true;
       publishBackupStatus("verified");
       // Durable receipt precedes relaunch. A failed return never recaptures.
       stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
-      else await host.relaunch("normal");
+      else {const result=await host.relaunch("normal");if(result?.status==="stopped")return result;}
       return {verified:true};
     }catch(error){
+      if(committed){
+        if(error?.code==="BACKUP_UPGRADE_CLEANUP_FAILED")throw error;
+        throw Object.assign(new Error(error?.message??"Cleanup failed",{cause:error}),{code:"BACKUP_UPGRADE_CLEANUP_FAILED",handoffId:intent.id});
+      }
       const diagnostic=captureFailureDiagnostic(captureStage,error);
       // The log alone also gets the redacted cause behind the code; the
       // durable record below (and so the window) keeps only stage and code.
       let cause=null;try{cause=normalizeCaptureCause(error?.captureCause);}catch{/* Diagnostic properties are not trusted. */}
       // A run already given up at its ceiling keeps that reason: what the
       // stuck capture throws once the workspace closes is only the shutdown.
+      const waitCause=backupWaitCause(diagnostic.code);
+      if(waitCause&&intent&&!intent.upgrade&&!captureStopped()){
+        let room,committed=false;
+        try{
+          if(waitCause==="space"){const b=await read();if(b)room=await measuredRoom(s,b,error?.captureStep);}
+          for(let attempt=0;attempt<5;attempt++){
+            if(captureStopped())break;
+            try{const result=coordinator.waitHandoff(s.job.id,{cause:waitCause,code:diagnostic.code,drive:waitCause==="space"?(room?.mode==="pinned"&&Object.hasOwn(room.floors,"data")?"data":"backup"):waitCause==="drive"?"backup":null},room);committed=result.committed;break;}
+            catch(failure){if(failure?.message!=="BACKUP_COORDINATOR_BUSY"||attempt===4)break;await (host.pause?.(250)??new Promise(resolve=>setTimeout(resolve,250)));}
+          }
+        }catch{/* An uncommitted wait follows the existing marker/review path. */}
+        if(committed){
+          try{host.reportCaptureFailure?.(cause?{...diagnostic,cause}:diagnostic,{job:s.job.id,handoff:intent.id});}catch{/* Logging never changes the wait. */}
+          lastError=null;if(!closed)await host.relaunch("normal");throw Error("BACKUP_WAITING");
+        }
+      }
       if(!run.abandoned){
         if(intent&&["handoff-armed","offline-claimed","capturing"].includes(coordinator.status().phase))try{
           coordinator.recordHandoffFailure({job:s.job.id,handoff:intent.id,stage:diagnostic.stage,code:diagnostic.code});
@@ -424,6 +526,7 @@ export function createBackupScheduleHost(host) {
     // Given up before it started (a tool check that never settled): never start it after all.
     if(offlineGivenUp)throw Error("BACKUP_SCHEDULE_REVIEW_REQUIRED");
     const previous=internalStatus();
+    if(previous.phase==="waiting")throw Error("BACKUP_WAITING");
     if(previous.phase==="handoff-armed"&&previous.captureFailure){
       // On the next open, show the marked failure instead of capturing again.
       // If writes have recovered, also let Return to workspace leave this job.
@@ -471,38 +574,20 @@ export function createBackupScheduleHost(host) {
     catch{return {status:"unavailable",reason:"state-unavailable"};}
   };
   async function runClosedDue(){
-    if(running)return closedResult("busy");
-    running=true;let intent,stage="state";
+    if(running)return closedResult("busy");running=true;let stage="state";
     try{
-      const before=coordinator.status();
-      let eligibility=coordinator.closedEligibility();
-      if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
-      // This private main-owned hook must prove the existing installation lease,
-      // exact profile/registration, and that normal startup never began.
-      stage="owner";host.traceClosed?.(stage);if(typeof host.assertClosedStartup!=="function")throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");
-      await host.assertClosedStartup();
-      stage="capability";host.traceClosed?.(stage);await assertClosedAllowed();
-      stage="references";host.traceClosed?.(stage);const b=await checked();
-      if(b.allowClosedApp!==true)throw Error("BACKUP_CLOSED_CONSENT_REQUIRED");
-      eligibility=coordinator.closedEligibility();
-      if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
-      stage="state";host.traceClosed?.(stage);const s=await coordinator.tick();
-      if(!s.enabled||s.schedule.closedApp!==true)return closedResult("disabled");
-      if(!["due","waiting-idle","waiting-backup-mode"].includes(s.phase))return closedResult("needs-review","pending-work");
-      const budgetMs=chooseBudget(s,before);
-      intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
-      coordinator.prepareHandoff(s.job.id,intent);coordinator.armHandoff(intent.id);
-      stage="capture";host.traceClosed?.(stage);await captureArmed(true,budgetMs);
-      lastError=null;return closedResult("verified");
+      const initial=coordinator.closedEligibility();
+      if(["disabled","not-due"].includes(initial.status))return closedResult(initial.status);
+      stage="owner";host.traceClosed?.(stage);if(typeof host.assertClosedStartup!=="function")throw Error("BACKUP_CLOSED_OWNER_UNAVAILABLE");await host.assertClosedStartup();
+      stage="state";if(reconcileStartup().blocked)return {status:"unavailable",reason:"state-unavailable"};
+      const eligibility=coordinator.closedEligibility();if(eligibility.status!=="due")return closedResult(eligibility.status,eligibility.status==="needs-review"?"pending-work":undefined);
+      stage="capability";host.traceClosed?.(stage);await assertClosedAllowed();stage="references";host.traceClosed?.(stage);
+      const result=await admit("closed",undefined,undefined,value=>{stage=value;});
+      return closedResult(result.kind==="prepared"?"verified":result.kind==="review"?"needs-review":"not-due",result.kind==="review"?"references-unavailable":undefined);
     }catch(error){
-      if(intent){
-        try{
-          const phase=coordinator.status().phase;
-          if(!["return-pending","returned","needs-review"].includes(phase))coordinator.failHandoff(intent.id);
-        }catch{/* Preserve authoritative evidence. */}
-      }
-      const reason={owner:"owner-unavailable",capability:"capability-unavailable",references:"references-unavailable",state:"state-unavailable",capture:"capture-unconfirmed"}[stage];
-      return closedResult(stage==="owner"&&error?.code==="BACKUP_CLOSED_BUSY"?"busy":stage==="capture"?"needs-review":"unavailable",reason);
+      if(error?.message==="BACKUP_WAITING")return closedResult("not-due");
+      if(error?.message?.includes("STATE_UNAVAILABLE"))return {status:"unavailable",reason:"state-unavailable"};
+      return closedResult(stage==="owner"&&error?.code==="BACKUP_CLOSED_BUSY"?"busy":error?.message==="BACKUP_SCHEDULE_REVIEW_REQUIRED"?"needs-review":"unavailable",stage==="owner"?"owner-unavailable":stage==="capability"?"capability-unavailable":stage==="capture"?"capture-unconfirmed":"references-unavailable");
     }finally{running=false;}
   }
   async function currentArtifact(){
@@ -517,7 +602,8 @@ export function createBackupScheduleHost(host) {
   return {
     /** The whole-run ceiling for the armed backup-mode run. */
     offlineCeilingMs(){try{return offlineCeilingFor(carriedBudget(coordinator.status()));}catch{return offlineCeilingFor();}},
-    status:publicStatus,internalStatus,isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,prepareWorkspaceReturn,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    status:publicStatus,internalStatus,reconcileStartup,noteStop,publishCommitted:()=>host.publishCommitted?.(),isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,prepareWorkspaceReturn,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    interruptIncomplete:()=>coordinator.interruptIncomplete(),
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
     /** The recovery key file the saved references read, or null. */
@@ -589,6 +675,23 @@ export function createBackupScheduleHost(host) {
       }finally{running=false;}
       await firstRunChanged();
       return publicStatus();
+    },
+    peekInstallerOffer:()=>coordinator.peekInstallerOffer(),
+    acknowledgeInstallerOffer:offer=>coordinator.acknowledgeInstallerOffer(offer),
+    spendLandedHop(kind,actionId,expected){const p=pendingUpgrade();if(!p)throw Error("BACKUP_HANDOFF_CHANGED");return coordinator.spendLandedHop(expected?.handoffId??p.handoffId,expected?.candidateId??p.candidate.candidateId,kind,actionId);},
+    settleRequestedInstall({runningVersion,observe,decide,argv=[]}){
+      let p=pendingUpgrade();
+      if(!p||p.phase!=="install-requested")return {kind:"none"};
+      if(p.offerInvalid||p.hopsInvalid)return {kind:"review",reason:"metadata-invalid"};
+      if(p.candidate.version===runningVersion)return {kind:"review",reason:"completion-required"};
+      const legacyHop=!p.hop;
+      coordinator.ensureRequestedInstallMetadata(p.handoffId,p.candidate.candidateId);
+      if(legacyHop)return {kind:"review",reason:"legacy-hop"};
+      p=pendingUpgrade();
+      const facts=observe();
+      const verdict=decide({facts,runningVersion,candidate:p.candidate,hop:p.hop,argv});
+      if(verdict.kind==="cancel")coordinator.abandonUpgradeInstall(p.handoffId,runningVersion,p.candidate.candidateId);
+      return {...verdict,handoffId:p.handoffId,candidateId:p.candidate.candidateId,version:p.candidate.version};
     },
     async markUpgradeInstallRequested(candidate){const v=await verifyUpgrade(candidate);coordinator.requestUpgradeInstall(v.handoffId,v.candidate,v.bindingRevision,v.installationIdentity);return {status:"continue"};},
     async completeUpgrade(currentVersion){const p=pendingUpgrade();if(!p)throw Error("BACKUP_UPGRADE_REJECTED");const v=await verifyUpgrade(p.candidate);coordinator.completeUpgrade(v.handoffId,currentVersion,v.candidate,v.bindingRevision,v.installationIdentity);},

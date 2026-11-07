@@ -18,6 +18,7 @@
 // NULL until known, never zero for unknown.
 import { Worker } from "node:worker_threads";
 import { lstatSync } from "node:fs";
+import { noteWrittenBytes } from "../io-written.ts";
 import { basename, join } from "node:path";
 import {
   DB_STATS_ROLES, DB_STATS_SCHEMA_VERSION, DB_STATS_TABLES, HEALTH_BOUNDS, HEALTH_FILES, HEALTH_LIMITS, HEALTH_SCHEMA_VERSION, HEALTH_TOKEN_PATTERN,
@@ -76,7 +77,11 @@ export const buildInWorker: StatsBuilder = input => new Promise(resolve => {
   const worker = new Worker(BUILD_WORKER_SOURCE, { eval: true, workerData: input });
   const timer = setTimeout(() => { finish({ ok: false, code: "timeout" }); void worker.terminate(); }, STATS_BUILD_TIMEOUT_MS);
   timer.unref?.();
-  worker.once("message", (message: BuildResult) => { finish(message); void worker.terminate(); });
+  worker.once("message", (message: BuildResult) => {
+    // the sealed DB the worker thread wrote, charged here on the main thread: its logical size is its count on win32 (io-written.ts)
+    if (message?.ok) noteWrittenBytes("health-stats", message.bytes);
+    finish(message); void worker.terminate();
+  });
   worker.once("error", () => finish({ ok: false, code: "worker-error" }));
   worker.once("exit", () => finish({ ok: false, code: "worker-exit" }));
 });

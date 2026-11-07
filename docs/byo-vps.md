@@ -11,7 +11,7 @@ passphrase, and never runs an agent remotely.
 - A per-bot Linux desktop in a managed container on your VPS, driven through the official Cua tools.
 - Live screen preview in the Computer panel and in transcripts, same as a Box.
 - Explicit **Cloud** with the **Self-hosted VPS** backend provisions or starts the container. **Auto** reuses
-  a ready container by default; an off-by-default **Start VPS automatically** switch lets that bot prepare
+  a ready container by default; an off-by-default **Start hosted computer automatically** switch lets that bot prepare
   or wake its managed container when needed.
 - Interactive **Take control** through a temporary SSH tunnel. The app binds noVNC only to a random
   `127.0.0.1` port on your computer, closes the tunnel with the viewer, and never publishes VNC on the VPS.
@@ -96,7 +96,7 @@ uploaded, or pasted back into chat) before the container is removed.
 
 A bot set to **Auto** is lifecycle-read-only by default. It attaches only when the container is already
 running and verified. If no local fallback exists, the turn now explains why the VPS was unavailable instead
-of silently running without a computer. Enable **Start VPS automatically** per bot to let Auto prepare or wake
+of silently running without a computer. Enable **Start hosted computer automatically** per bot to let Auto prepare or wake
 that bot's managed container; the switch is deliberately off by default.
 
 ## Troubleshooting

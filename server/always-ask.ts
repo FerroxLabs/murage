@@ -1339,6 +1339,8 @@ function readWhole(text: string, cwd: string | undefined, shell?: "pwsh", window
 const SHAPE_SHELLS = new Set(["bash", "sh"]);
 const SHAPE_INTERPRETERS = new Set(["python", "python3", "node", "ruby", "php", "perl"]);
 const SHAPE_SOURCES = new Set(["source", "."]);
+/** 1.0.18 (APPROVALS-SIMPLE 5a): -I isolated, -E no PYTHON* env, -s no user site, -B no .pyc, -u unbuffered, -q quiet. */
+const PY_RUN_OPTIONS = /^-[IEsBuq]+$/;
 const SHAPE_PRINTS = new Set(["pwd", "ls", "true", "deactivate", "which", "echo"]);
 /** 1.0.9: the filters a script's output may be piped through
  * (`node tool.mjs | head -c 3000`), each read by `stdinFilter`: only the
@@ -1748,11 +1750,16 @@ function shapeScript(words: string[]): string | null {
   if (SHAPE_PRINTS.has(name)) return words.slice(1).some((word) => !word.startsWith(HOME_MARK) && deviceOrProcess(word)) ? null : "";
   if (SHAPE_FILTERS.has(name)) return stdinFilter(words) ? "" : null;
   if (!SHAPE_SOURCES.has(name) && !SHAPE_SHELLS.has(name) && !SHAPE_INTERPRETERS.has(name)) return null;
-  if (!shapePath(path)) return null;
+  // 1.0.18 (APPROVALS-SIMPLE 5a): Python's run-tightening options before the script (`python3 -I x.py`, `-IB`); each
+  // only isolates or quiets the run, none takes code, a module or a path. Whole option words only.
+  let at = 1;
+  if (name === "python" || name === "python3") while (at < words.length - 1 && PY_RUN_OPTIONS.test(words[at]!)) at += 1;
+  const script = words[at];
+  if (!shapePath(script)) return null;
   // php reads its own options after the script too (`php app.php -r code`,
   // `-d auto_prepend_file=x`): any option-shaped word there is outside the shape
   if (name === "php" && words.slice(2).some((word) => word.startsWith("-"))) return null;
-  return path;
+  return script!;
 }
 
 /** Each script path is spelled once (no other word shares its file name),

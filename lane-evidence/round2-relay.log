@@ -1,0 +1,55 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/push-relay
+
+ ❯ test/attestation.test.ts (0 test)
+ ❯ test/index.test.ts (0 test)
+ ❯ test/edge-limit.test.ts (0 test)
+ ❯ test/approval-statement.test.ts (0 test)
+ ❯ test/privacy.test.ts (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/approval-statement.test.ts [ test/approval-statement.test.ts ]
+Error: Cannot find package '@peculiar/x509' imported from /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/push-relay/src/attestation.ts
+ ❯ src/attestation.ts:4:1
+      2| // two real verifiers, and fakes in the tests. A verifier never throws…
+      3| // logs: every failure is { ok: false }, and which check failed is not…
+      4| import * as x509 from "@peculiar/x509";
+       | ^
+      5| import { decodeCbor } from "./cbor";
+      6| import { googleAccessToken, type ServiceAccount } from "./google";
+ ❯ test/approval-statement.test.ts:4:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  test/attestation.test.ts [ test/attestation.test.ts ]
+Error: Cannot find package '@peculiar/x509' imported from /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/push-relay/test/attestation.test.ts
+ ❯ test/attestation.test.ts:1:1
+      1| import * as x509 from "@peculiar/x509";
+       | ^
+      2| import { afterEach, beforeEach, describe, expect, it, vi } from "vites…
+      3| import { combineVerifiers, createAppAttestVerifier, createPlayIntegrit…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  test/edge-limit.test.ts [ test/edge-limit.test.ts ]
+ FAIL  test/index.test.ts [ test/index.test.ts ]
+ FAIL  test/privacy.test.ts [ test/privacy.test.ts ]
+Error: Cannot find package '@peculiar/x509' imported from /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/push-relay/src/attestation.ts
+ ❯ src/attestation.ts:4:1
+      2| // two real verifiers, and fakes in the tests. A verifier never throws…
+      3| // logs: every failure is { ok: false }, and which check failed is not…
+      4| import * as x509 from "@peculiar/x509";
+       | ^
+      5| import { decodeCbor } from "./cbor";
+      6| import { googleAccessToken, type ServiceAccount } from "./google";
+ ❯ src/index.ts:22:1
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+
+ Test Files  5 failed | 8 passed (13)
+      Tests  124 passed (124)
+   Start at  16:24:06
+   Duration  1.04s (transform 1.38s, setup 0ms, import 1.04s, tests 1.19s, environment 1ms)
+
