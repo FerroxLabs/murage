@@ -1,0 +1,45 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+stdout | server/kimi-signin-probe.test.ts
+L9 isolated fixture {
+  url: 'http://127.0.0.1:20341',
+  pid: 11727,
+  dataDir: '/root/swarm1018/ENGINES-REST-1018/repo/t/murage-verify-data-Q7Kwlf',
+  logPath: '/root/swarm1018/ENGINES-REST-1018/repo/t/murage-verification-evidence/server-1793984158024-11669.log'
+}
+
+ ❯ server/kimi-signin-probe.test.ts (5 tests | 1 failed | 4 skipped) 3690ms
+   × L9 B3(a)/B6: a held Kimi hint cannot clear the rejection mark 557ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/kimi-signin-probe.test.ts > L9 B3(a)/B6: a held Kimi hint cannot clear the rejection mark
+AssertionError: expected { state: 'available', …(3) } to match object { authenticated: false, …(1) }
+(2 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "authenticated": false,
++   "authenticated": true,
+    "signInAnswerIsLocalHint": true,
+  }
+
+ ❯ server/kimi-signin-probe.test.ts:89:34
+     87| it("L9 B3(a)/B6: a held Kimi hint cannot clear the rejection mark", as…
+     88|   expect(await api("/api/engine-signin-probe", { instanceId: "kimi", s…
+     89|   expect(await snapshot("kimi")).toMatchObject({ authenticated: false,…
+       |                                  ^
+     90| });
+     91| it("L9 B3(b): a real ready setup reply clears the mark", async () => {
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  16:55:51
+   Duration  9.82s (transform 4.75s, setup 5.77s, import 243ms, tests 3.69s, environment 0ms)
+

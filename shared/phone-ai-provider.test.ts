@@ -4,7 +4,8 @@ import { aiProviderName } from "./phone-ai-provider.ts";
 
 const FIXED: Record<string, string> = {
   claude: "Anthropic", claudeAgent: "Anthropic", codex: "OpenAI", geminiAgent: "Google", antigravityAgent: "Google",
-  grokAgent: "xAI", kimiAgent: "Moonshot AI", qwenAgent: "Alibaba Cloud", cursorAgent: "Cursor", droidAgent: "Factory",
+  grokAgent: "xAI", kimiAgent: "Moonshot AI", qwenAgent: "Alibaba Cloud", cursorAgent: "Cursor", droidAgent: "Factory", copilotAgent: "GitHub",
+  museCode: "Meta",
 };
 const ROUTERS = ["fuigoAgent", "piAgent", "opencodeGo", "hermesAgent", "openclawAgent", "clineAgent", "customAcp"];
 

@@ -1,0 +1,35 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ src/locales/locale-copy.test.ts (46 tests | 1 failed) 374ms
+     × fr uses informal address only 14ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/locales/locale-copy.test.ts > locale copy rules > fr uses informal address only
+AssertionError: expected [ Array(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "engineSignIn.signedIn: Connexion vérifiée pour {label}. Fermez cette fenêtre et utilisez Vérifier pour essayer une réponse.",
++ ]
+
+ ❯ src/locales/locale-copy.test.ts:54:25
+     52|         .filter(([key, value]) => pattern.test(value) && !FORMAL_ALLOW…
+     53|         .map(([key, value]) => `${key}: ${value}`);
+     54|       expect(offenders).toEqual([]);
+       |                         ^
+     55|     });
+     56|   }
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 9 passed (10)
+      Tests  1 failed | 162 passed (163)
+   Start at  17:27:20
+   Duration  16.67s (transform 7.41s, setup 12.12s, import 1.96s, tests 1.50s, environment 1ms)
+

@@ -9,7 +9,8 @@ import { createProcedurePin, preparePinnedProcedures } from "./procedure-bundles
 import { taskWorkspacePath } from "./workspace.ts";
 import { createProcedureReviewHost } from "./procedure-review-host.ts";
 import { applyStagedSkillWrite, stageSkillWrite, skillEvolutionDescriptor, publishEvaluatedScopedSkill, wasEvaluatedScopedSkillPublished, assertSkillProcedureEvidence } from "./skills.ts";
-import { captureSource } from "./memory/capture.ts";
+import { captureSource, captureThreadDeletion } from "./memory/capture.ts";
+import { INLINE_REVOCATION } from "./memory/memory-revocation.ts";
 import { backgroundMemoryAudience, reconcileMemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { pendingProcedureReviews, processProcedureReview, procedureCandidateHash, procedureSnapshotDigest, procedureTargetDigest, type ProcedureEvaluationReceipt, type ProcedureReviewSnapshot } from "./memory/procedure-review.ts";
@@ -118,4 +119,49 @@ it("reviews a procedure pinned in a pair room (a room that is its own holder) fo
   expect(JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(String(rows[0].id))!.intent)))
     .toMatchObject({ target: { kind: "skill", ownerId: f.bot.id, artifactId: "checked-method", threadId: pair.threadId }, status: "deferred", reason: "needs-owner-approval" });
   expect(f.evaluator).not.toHaveBeenCalled();
+});
+
+// Inject at the external publication boundary, after the real phase-1 commit.
+// Unlike an evaluate hook, this exercises the durable publishing ledger path.
+it.each((["routine", "skill"] as const).flatMap(kind => (["delete", "clock", "deny", "none"] as const).map(mutation => ({ kind, mutation }))))("fences $kind phase-2 publication: $mutation", async ({ kind, mutation }) => {
+    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+    const f = fixture();
+    const routine = kind === "routine" ? f.manager.create({ name: "Review output", botId: f.bot.id, prompt: "Original routine", target: "bot", enabled: false, runOn: "ember", permissionMode: "ask", schedule: { type: "interval", everyMinutes: 5, anchorAt: Date.now() } }) : undefined;
+    if (kind === "skill") install(f);
+    const original = kind === "skill" ? skillEvolutionDescriptor(f.bot.id, "checked-method", context(f)) : undefined;
+    const pin = createProcedurePin(f.bot.id, f.threadId, [], [], routine ? { id: routine.id, instructionRevision: routineInstructionRevision(routine) } : undefined, context(f), { ownerTurn: true, shipped: () => true });
+    f.store.pinTaskProcedures(f.bot.id, f.threadId, pin);
+    settle(f);
+    const publish = f.bridge.host.publish!;
+    const boundary = vi.fn((snapshot: ProcedureReviewSnapshot, result: ProcedureEvaluationReceipt) => {
+      expect(database().isTransaction).toBe(false);
+      // appliedChange is real: reaching this boundary requires a committed outbox row.
+      expect(database().prepare("SELECT 1 FROM memory_learning_events WHERE kind='guide-applied' AND json_extract(detail,'$.publishState')='publishing'").get()).toBeTruthy();
+      if (mutation === "clock") transaction(db => captureThreadDeletion(db, "other-deleted-conversation"));
+      if (mutation === "delete") {
+        const ms = INLINE_REVOCATION.ms;
+        try { INLINE_REVOCATION.ms = 0; transaction(db => captureThreadDeletion(db, f.threadId)); }
+        finally { INLINE_REVOCATION.ms = ms; }
+      }
+      if (mutation === "deny") transaction(db => db.prepare("INSERT INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,0,?)").run(f.threadId, Date.now()));
+      expect(database().prepare("SELECT state FROM memory_sources WHERE id='synthetic-tool'").get()?.state).toBe("active");
+      publish(snapshot, result);
+    });
+    f.bridge.host.publish = boundary;
+    const rows = await review(f);
+    expect(boundary).toHaveBeenCalledOnce();
+    const saved = JSON.parse(String(database().prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(rows[0].id)!.intent));
+    expect(saved.reason).toBe(mutation === "none" ? "accepted" : "MEMORY_CONSOLIDATION_REVOKED");
+    if (routine) {
+      const current = f.manager.listRoutines()[0];
+      expect(current.prompt).toBe(mutation === "none" ? "Verify the output before reporting success." : routine.prompt);
+      const disk = readFileSync(join(DATA_DIR, "routines.json"), "utf8");
+      if (mutation !== "none") {
+        expect(current.instructionHistory?.some(version => version.evidence?.length)).not.toBe(true);
+        expect(disk).not.toContain("synthetic-tool");
+        expect(disk).not.toContain("Verify the output before reporting success.");
+      } else expect(current.instructionHistory?.some(version => version.evidence?.some(item => item.id === "synthetic-tool"))).toBe(true);
+    } else {
+      expect(skillEvolutionDescriptor(f.bot.id, "checked-method", context(f))?.revision === original?.revision).toBe(mutation !== "none");
+    }
 });

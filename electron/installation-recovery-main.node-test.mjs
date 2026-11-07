@@ -1,3 +1,4 @@
+import { settleDesktopStartup, terminalDesktopStartup } from './startup-settle.mjs';
 import assert from "node:assert/strict";
 import path from "node:path";
 import { readFileSync } from "node:fs";
@@ -150,21 +151,25 @@ test("actual failed-server branch returns before background account work", async
   assert.deepEqual(blocked, ["MEMORY_UPGRADE_BLOCKED"]);
 });
 test("actual packaged early startup rejection opens recovery without exposing private error text", async () => {
-  const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');
+  const body = between("const startupSettleDeps = {", 'app.on("window-all-closed"').replace('void settleDesktopStartup(desktopStartup', 'return settleDesktopStartup(desktopStartup');
   const calls = [];
   const startup = Promise.reject(new Error("PRIVATE_CREDENTIAL_CANARY"));
   const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
-  await new Function(...Object.keys(scope), body + "; return desktopStartup.catch(()=>{});")(...Object.values(scope));
+  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, shutdownCause: null,
+    recordStartupRefusal: () => {}, closeStartupSplash: () => {}, cleanupDesktopForExit: async () => {} });
+  await new Function(...Object.keys(scope), body)(...Object.values(scope));
   assert.equal(calls.includes("STARTUP_FAILED"), true);
   assert.equal(calls.includes("quit"), false);
   assert.equal(JSON.stringify(calls).includes("PRIVATE_CREDENTIAL_CANARY"), false);
 });
 test("actual startup catch forwards foreign ownership code without private error text", async () => {
-  const body = between("void desktopStartup.catch((error) => {", 'app.on("window-all-closed"');
+  const body = between("const startupSettleDeps = {", 'app.on("window-all-closed"').replace('void settleDesktopStartup(desktopStartup', 'return settleDesktopStartup(desktopStartup');
   const calls = [];
   const startup = Promise.reject(Object.assign(new Error("PRIVATE_ERROR_CANARY"), { name: "DataDirLeaseError", code: "LEASE_FOREIGN_HOST" }));
   const scope = { desktopStartup: startup, desktopShutdownStarted: false, closedBackupRequested: false, app: { isPackaged: true, quit: () => calls.push("quit") }, slog: value => calls.push(value), dialog: { showErrorBox: () => calls.push("error-box") }, showDesktopRecovery: code => calls.push(code) };
-  await new Function(...Object.keys(scope), body + "; return desktopStartup.catch(()=>{});")(...Object.values(scope));
+  Object.assign(scope, { settleDesktopStartup, terminalDesktopStartup, shutdownCause: null,
+    recordStartupRefusal: () => {}, closeStartupSplash: () => {}, cleanupDesktopForExit: async () => {} });
+  await new Function(...Object.keys(scope), body)(...Object.values(scope));
   assert.equal(calls.includes("LEASE_FOREIGN_HOST"), true);
   assert.equal(calls.includes("STARTUP_FAILED"), false);
   assert.equal(calls.includes("quit"), false);
@@ -192,4 +197,122 @@ test("actual snapshot supervisor owns only the capture clone and restores its va
   const run = new Function(...Object.keys(scope), "let retainedSeparateDirectory=null;" + body + ";return runSnapshotDesktopRecovery;")(...Object.values(scope));
   await run(async preview => { assert.equal(preview.installation, plan.dataDirectory); events.push("confirm"); return true; });
   assert.deepEqual(events, ["confirm", "capture", "lease-clone", "archive", "release-clone", "restore-select"]);
+});
+
+import vm from "node:vm";
+import {createReturnAuthority} from "./backup-offline-return.mjs";
+import {updateRecoveryCopy} from "./update-recovery-copy.mjs";
+test("BF-3 T15 T25 actual failure and reopen functions retain the latest descriptor after writer shutdown",()=>{
+  const events=[],authority=createReturnAuthority();let progress={destroy:()=>events.push("destroy")},descriptor;
+  const scope={presentedCleanupFailures:new WeakSet(),returnAuthority:authority,desktopShutdownStarted:true,desktopCleanupStage:"owned harness",updateRequester:false,updateRecoveryDescriptor:null,recoveryWindow:null,
+    takeBackupProgress:()=>{const p=progress;progress=null;return p;},
+    showDesktopRecovery:(code,detail)=>{descriptor={reasonCode:code,...detail};scope.updateRecoveryDescriptor=descriptor;events.push("page");}};
+  vm.createContext(scope);
+  const failure=between("function cleanupFailed(","const returnToWorkspaceAfterBackup=");
+  const pause=between("function pauseForReview(","function startUpdateGate(");
+  const reopen=between("function reopenUpdateRecoveryIfNeeded(","let backupToolSettleUntil");
+  vm.runInContext(failure+pause+reopen,scope);
+  vm.runInContext('cleanupFailed(new Error("writer rejected"))',scope);
+  assert.deepEqual(events,["destroy","page"]);assert.equal(progress,null);assert.equal(descriptor.cleanupFailure,true);assert.match(descriptor.detail,/writer rejected/);
+  const saved={...descriptor};events.length=0;
+  scope.recoveryWindow={isDestroyed:()=>false,focus:()=>events.push("focus")};vm.runInContext("reopenUpdateRecoveryIfNeeded()",scope);assert.deepEqual(events,["focus"]);scope.recoveryWindow=null;events.length=0;
+  vm.runInContext("reopenUpdateRecoveryIfNeeded()",scope);assert.deepEqual(descriptor,saved);assert.deepEqual(events,["page"]);
+  authority.userQuitRequested=true;events.length=0;vm.runInContext("reopenUpdateRecoveryIfNeeded()",scope);assert.deepEqual(events,[]);
+  vm.runInContext('cleanupFailed(new Error("retry rejected"))',scope);assert.deepEqual(events,["page"]);assert.equal(descriptor.returnRevoked,true);
+  const second=between('app.on("second-instance"','// Packaged: the harness');assert.ok(second.includes("reopenUpdateRecoveryIfNeeded()"));
+  const recovery=between("function showDesktopRecovery(","function canRestoreSeparateInstallation(");assert.ok(recovery.includes("reopenUpdateRecoveryIfNeeded()"));
+});
+test("T1 T3 actual watchdog recovery ignores writer shutdown and respects explicit Quit",async()=>{
+ const {createBackupReturn}=await import("./backup-offline-return.mjs");
+ const callback=/recover:(async\(\)=>\{if\(returnAuthority.userQuitRequested\)[\s\S]*?return returnToWorkspaceAfterBackup\(\);\})/.exec(source);assert.ok(callback);
+ for(const quit of [false,true]){
+  const authority=createReturnAuthority();authority.userQuitRequested=quit;let relaunches=0,failures=0;
+  const returnToWorkspaceAfterBackup=createBackupReturn({app:{quit(){},exit(){}},authority,cleanup:async()=>{},relaunch:()=>{relaunches++;},takeProgress:()=>null,setTimer:()=>{}});
+  const recover=vm.runInNewContext('('+callback[1]+')',{returnAuthority:authority,desktopShutdownStarted:true,cuaCleanedUp:true,cleanupFailed:()=>{failures++;},returnToWorkspaceAfterBackup,refusal:code=>Error(code)});
+  await recover();assert.equal(relaunches,quit?0:1);assert.equal(failures,0);
+ }
+});
+
+import {runStartGate} from "./update-start-gate.mjs";
+for(const kind of ["cancel","landed","installing","review","candidate","invalid","invalid-candidate","non-mac"])test(`T10 actual pending startup branch ${kind} keeps writers behind settlement`,async()=>{
+ const calls=[],authority=createReturnAuthority(),candidate={version:["candidate","invalid-candidate"].includes(kind)?"1.0.0":"2.0.0"};
+ const branch=between("  const upgrade=backupScheduleHost?.pendingUpgrade();",'  if(!process.argv.includes(BACKUP_MODE_ARGUMENT))');
+ const start=between("function startUpdateGate(){","function reopenUpdateRecoveryIfNeeded(");
+ const scope={returnAuthority:authority,runStartGate,backupScheduleHost:{pendingUpgrade:()=>({phase:"install-requested",candidate,...(["invalid","invalid-candidate"].includes(kind)?{hopsInvalid:true}:{})}),completeUpgrade:async()=>calls.push("complete")},
+  app:{getVersion:()=>"1.0.0",getLocale:()=>"en"},process:{platform:kind==="non-mac"?"win32":"darwin"},backupToolCheck:Promise.resolve(),ensureDesktopUpdater:checks=>{assert.equal(checks,false);return {};},
+  desktopRecoveryMode:false,startupDecisionPending:false,startupSplash:{set:()=>calls.push("splash-wait")},updateRecoveryWords:()=>({"installer-wait":"wait"}),desktopStartup:Promise.resolve(),
+  settleUpdate:()=>{calls.push("probe");return {kind};},returnToWorkspaceAfterBackup:()=>{calls.push("return");return Promise.resolve();},prepareUpdateReturn:()=>({kind:"normal"}),pauseForReview:code=>calls.push(code),showDesktopRecovery:()=>calls.push("ordinary-recovery"),dialog:{showErrorBox:()=>calls.push("ordinary-copy")}};
+ vm.createContext(scope);vm.runInContext(start,scope);await vm.runInContext('(async()=>{'+branch+'})()',scope);await Promise.resolve();
+ authority.cancelGate?.();
+ if(kind==="candidate")assert.deepEqual(calls,["complete"]);
+ else if(["invalid","invalid-candidate"].includes(kind))assert.deepEqual(calls,["BACKUP_UPGRADE_REVIEW_REQUIRED"]);
+ else if(kind==="non-mac")assert.deepEqual(calls,["splash-wait","ordinary-recovery","ordinary-copy"]);
+ else {assert.equal(calls[0],"splash-wait");assert.equal(calls[1],"probe");if(kind==="review")assert.equal(calls[2],"BACKUP_UPGRADE_REVIEW_REQUIRED");if(["cancel","landed"].includes(kind))assert.equal(calls[2],"return");}
+});
+
+test("F2 hop reservation errors become terminal coded refusals",async()=>{
+ const {createReturnAuthority,createBackupReturn}=await import("./backup-offline-return.mjs");
+ const {refusal,runStartGate}=await import("./update-start-gate.mjs");
+ for(const explicit of [false,true])for(const message of ["BACKUP_BUSY","CHANGED","disk full","exhausted"]){
+  const pages=[],authority=createReturnAuthority();let cleanups=0;
+  const scope={returnAuthority:authority,updateRequester:false,refusal,randomUUID:()=>"action",backupScheduleHost:{pendingUpgrade:()=>({phase:"install-requested"}),spendLandedHop:()=>{throw Error(message);}},settleUpdate:()=>({kind:"landed"}),runStartGate,pauseForReview:code=>pages.push(code)};
+  scope.returnToWorkspaceAfterBackup=createBackupReturn({authority,app:{},cleanup:()=>{cleanups++;},relaunch:()=>assert.fail("no relaunch")});
+  const body=between("function prepareUpdateReturn(","function pauseForReview(")+between("function startUpdateGate(","function reopenUpdateRecoveryIfNeeded(");
+  const f=new Function(...Object.keys(scope),body+";return {prepareUpdateReturn,startUpdateGate};")(...Object.values(scope));
+  const code=message==="BACKUP_BUSY"?"BACKUP_BUSY":"BACKUP_UPGRADE_REVIEW_REQUIRED";
+  if(explicit)await assert.rejects(scope.returnToWorkspaceAfterBackup({prepare:()=>f.prepareUpdateReturn(true)}),e=>e.code===code);
+  else{f.startUpdateGate();await pause();assert.deepEqual(pages,[code]);}
+  assert.equal(cleanups,0);
+ }
+});
+
+test("F5 unreadable coordinator cannot suppress cleanup failure presentation",()=>{
+ const body=between('  let captureFailure = null, backupError = null','  const recovery = openInstallationRecoveryWindow(');
+ const scope={backupScheduleHost:{internalStatus(){throw Error("unreadable");}},updateRecoveryWords:()=>updateRecoveryCopy,app:{getLocale:()=>"en"},descriptor:{updatePause:true,cleanupFailure:true,detail:"cleanup rejected"},reasonCode:"BACKUP_UPGRADE_CLEANUP_FAILED"};
+ const reason=new Function(...Object.keys(scope),body+';return reason;')(...Object.values(scope));
+ assert.match(reason,/cleanup rejected/);
+});
+
+test("F6 ordinary Retry prepares only inside the shared attempt",async()=>{
+ const {createBackupReturn}=await import('./backup-offline-return.mjs');
+ const authority=createReturnAuthority(),held=deferred();let prepares=0,cancels=0;
+ const returnToWorkspaceAfterBackup=createBackupReturn({authority,app:{quit(){},exit(){}},cleanup:()=>held.promise,relaunch(){},setTimer(){}});
+ const scope={returnAuthority:authority,descriptor:{updatePause:false},updateRequester:false,backupScheduleHost:{prepareWorkspaceReturn(){prepares++;},pendingUpgrade:()=>({}),returnUpgradeToWorkspace(){cancels++;}},returnToWorkspaceAfterBackup};
+ const callback=between('    retry: async () => {','    openDiagnostics:');
+ const retry=new Function(...Object.keys(scope),'return ({'+callback+'}).retry;')(...Object.values(scope));
+ const first=retry(),second=retry();assert.equal(prepares,1);assert.equal(cancels,1);held.resolve();await Promise.all([first,second]);
+});
+
+test("F7 ordinary restore retires armed handoff inside shared normal Return",async()=>{
+ const {createBackupReturn}=await import('./backup-offline-return.mjs');
+ const authority=createReturnAuthority(),held=deferred();let prepares=0;
+ const returnToWorkspaceAfterBackup=createBackupReturn({authority,app:{quit(){},exit(){}},cleanup:()=>held.promise,relaunch:destination=>assert.equal(destination.kind,'normal'),setTimer(){}});
+ const callback=between('    relaunchAfterRestore:','    context:');
+ const restore=new Function('returnToWorkspaceAfterBackup','backupScheduleHost','return ({'+callback+'}).relaunchAfterRestore;')(returnToWorkspaceAfterBackup,{prepareWorkspaceReturn(){prepares++;},pendingUpgrade(){assert.fail('no settlement');}});
+ const first=restore(),second=restore();assert.equal(first,second);assert.equal(prepares,1);held.resolve();await first;
+});
+
+test('F3 failed normal prelaunch cleanup leaves explicit Return available',async()=>{
+ // Mutant: remove releasePendingInstall() from ensureDesktopUpdater's normal cleanup callback.
+ const callbacks=[...source.matchAll(/cleanup:(\(\)=>\{(?:updateRequester=true;)?serverStopReason.note\("update"\);return cleanupDesktopForExit\(\).catch\(error=>\{(?:returnAuthority.releasePendingInstall\(\);)?cleanupFailed\(error\);throw refusal\("BACKUP_UPGRADE_CLEANUP_FAILED"\);\}\);\})/g)];
+ assert.equal(callbacks.length,1,'expected exactly one normal-update cleanup callback');
+ const callback=callbacks[0];
+ const scope={updateRequester:true,returnAuthority:{releasePendingInstall(){scope.updateRequester=false;}},serverStopReason:{note(){}},cleanupDesktopForExit:()=>Promise.reject(Error('cleanup rejected')),cleanupFailed(){assert.equal(scope.updateRequester,false);},refusal:code=>Object.assign(Error(code),{code})};vm.createContext(scope);
+ const cleanup=vm.runInContext('('+callback[1]+')',scope);await assert.rejects(cleanup(),e=>e.code==='BACKUP_UPGRADE_CLEANUP_FAILED');assert.equal(scope.updateRequester,false);
+});
+
+test('F3 failed resumed prelaunch cleanup leaves explicit Return available',async()=>{
+ // Mutant: remove releasePendingInstall() from resumeBackedUpInstall's cleanup callback.
+ const callbacks=[...source.matchAll(/cleanup:(\(\)=>\{noteShutdownCause\("automatic"\);(?:updateRequester=true;)?serverStopReason.note\("update"\);return cleanupDesktopForExit\(\).catch\(error=>\{(?:returnAuthority.releasePendingInstall\(\);)?cleanupFailed\(error\);throw refusal\("BACKUP_UPGRADE_CLEANUP_FAILED"\);\}\);\})/g)];
+ assert.equal(callbacks.length,1,'expected exactly one resumed-update cleanup callback');
+ const callback=callbacks[0];
+ const scope={noteShutdownCause:cause=>assert.equal(cause,"automatic"),updateRequester:true,returnAuthority:{releasePendingInstall(){scope.updateRequester=false;}},serverStopReason:{note(){}},cleanupDesktopForExit:()=>Promise.reject(Error('cleanup rejected')),cleanupFailed(){assert.equal(scope.updateRequester,false);},refusal:code=>Object.assign(Error(code),{code})};vm.createContext(scope);
+ const cleanup=vm.runInContext('('+callback[1]+')',scope);await assert.rejects(cleanup(),e=>e.code==='BACKUP_UPGRADE_CLEANUP_FAILED');assert.equal(scope.updateRequester,false);
+});
+
+test('F3 normal admission failure never claims launched requester authority',async()=>{
+ const {prepareBackedUpInstall}=await import('./preupgrade-continuation.mjs');let options;
+ const scope={process:{platform:'linux',env:{}},returnAuthority:createReturnAuthority(),backupScheduleHost:null,prepareBackedUpInstall,startUpdater:value=>{options=value;return {};},prepareUpdaterRestart:async()=>{throw Error('activity unavailable');}};
+ const run=new Function(...Object.keys(scope),'let desktopUpdater,updateRequester=false;'+between('function ensureDesktopUpdater(','async function readBackupActivity(')+';ensureDesktopUpdater(false);return ()=>updateRequester;')(...Object.values(scope));
+ await assert.rejects(options.beforeInstall({}),/activity unavailable/);assert.equal(run(),false);
 });

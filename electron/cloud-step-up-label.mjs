@@ -9,6 +9,12 @@
 // An unknown route still gets a plain fallback sentence with the method and path; it is never an opaque blob.
 //
 // Pure module: no Electron import. electron/cloud-step-up-label.test.mjs checks it against the real ROUTE_POLICY.
+//
+// STEPUP-LOCALES 1.0.18: the words are shown in the app's language (step-up-locale.mjs). The English labels below
+// stay the table's own text and each is also a "label.*" value in electron/locales/step-up/en.json, the source the
+// other 7 packs translate (cloud-step-up-locale.test.mjs fails a label that is missing there).
+
+import { STEP_UP_BASELINE, STEP_UP_EN, stepUpText } from "./step-up-locale.mjs";
 
 const ID = String.raw`[\w-]+`;
 const rx = (source) => new RegExp(`^${source}$`);
@@ -44,9 +50,9 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx(`/api/bots/${ID}/always-allow(?:/remove)?`), label: "Change what a bot is always allowed to do", summary: "settings" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/task-allow/(?:remove|clear)`), label: "Take back what a bot was allowed to do for a task" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/(?:assistant-profile|skills|skills/library)`), label: "Change a bot's skills", summary: "settings" },
-  { methods: ANY, path: rx(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), label: "Change or roll back a bot's skill", summary: "settings" },
-  { methods: ["POST"], path: rx(`/api/bots/${ID}/held-continuations/${ID}/retry`), label: "Let a held step of a bot continue" },
-  { methods: ["POST"], path: rx(`/api/restore-holds/(?:output_receipt|shared_result)/${ID}/release`), label: "Release an item your restore kept" },
+  { methods: ANY, path: rx(`/api/bots/${ID}/skills/[a-z0-9-]+(?:/history|/rollback)?`), label: "See, switch on or off, or remove a bot's skill, or restore an earlier version", summary: "settings" },
+  { methods: ["POST"], path: rx(`/api/bots/${ID}/held-continuations/${ID}/retry`), label: "Let a bot continue a paused step" },
+  { methods: ["POST"], path: rx(`/api/restore-holds/(?:output_receipt|shared_result)/${ID}/release`), label: "Release an item held back when you restored your data" },
   { methods: ["PATCH"], path: rx(`/api/bots/${ID}/message-allow`), label: "Change who a bot can message", summary: "settings" },
   { methods: ["POST"], path: rx(`/api/bots/${ID}/secret-cards/${ID}/(?:provided|resume|dismiss|value)`), label: "Answer a bot's request for a key" },
   { methods: ANY, path: rx(`/api/bots/${ID}/connector-cards/${ID}/(?:authorize|status|timeout|resume|dismiss)`), label: "Answer a bot's request to connect an app" },
@@ -58,7 +64,7 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx(`/api/bots/${ID}/computer/(?:provision|sleep|exec|screenshot|remove)`), label: "Control a bot's cloud computer" },
   { methods: ANY, path: rx(`/api/bots/${ID}/local-computer(?:/run|/stop|/remove|/screenshot|/keepalive)?`), label: "Control a bot's host computer" },
   { methods: ANY, path: /^\/api\/bots\/[^/]+\/browser-extension\/(?:activity|mode|sites|check|start-task)$/, label: "Change a bot's browser access" },
-  { methods: ANY, path: rx("/api/browser-extension/clients"), label: "Pair or remove a browser client" },
+  { methods: ANY, path: rx("/api/browser-extension/clients"), label: "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one" },
   { methods: ANY, path: rx("/api/browser/linux-sandbox/enable"), label: "Enable the bot browser on this Linux computer" },
 
   // Teams, projects and groups.
@@ -67,6 +73,9 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["PUT"], path: rx(`/api/groups/${ID}/project/work-roots`), label: "Choose the folders a project can work in" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}/project/work-profile`), label: "Change a project's work profile", summary: "settings" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}/project/settings`), label: "Change a project's settings", summary: "settings" },
+  // CROSS-CHAT-READ: the owner's answer on a share card, and the owner's ask from a room's composer.
+  { methods: ["POST"], path: rx(`/api/room-shares/${ID}/(?:share|decline)`), label: "Share or keep private what a bot found in its other chats" },
+  { methods: ["POST"], path: rx(`/api/groups/${ID}/room-shares`), label: "Ask a bot to look in its other chats for this room" },
   { methods: ["PATCH"], path: rx(`/api/groups/${ID}`), label: "Change a team or group", summary: "settings" },
   { methods: ["DELETE"], path: rx(`/api/groups/${ID}`), label: "Delete a team or group" },
   { methods: ["POST"], path: /^\/api\/teams\/(?:import|export)$/, label: "Import or export a team" },
@@ -90,7 +99,7 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx("/api/mcp/inspect"), label: "Check a tool server" },
   { methods: ANY, path: rx("/api/folder-trust"), label: "Change which folders an engine trusts" },
   { methods: ANY, path: /^\/api\/local-computer(?:\/.*)?$/, label: "Control the host computer" },
-  { methods: ["POST"], path: rx("/api/cli-test"), label: "Run a command-line check" },
+  { methods: ["POST"], path: rx("/api/cli-test"), label: "Run this program to see if it starts", summary: "program" },
   { methods: ["GET", "POST"], path: rx(String.raw`/api/engine-management/[\w.-]+`), label: "Install or change an engine" },
   { methods: ["PATCH"], path: rx(String.raw`/api/instances/[\w.-]+`), label: "Change how an engine starts", summary: "settings" },
   { methods: ["POST"], path: rx(String.raw`/api/instances/[\w.-]+/claude-update`), label: "Update Claude Code" },
@@ -104,13 +113,20 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["POST"], path: rx(`/api/email/other-setups/${ID}/remove`), label: "Remove an email address from another setup", summary: "none" },
   { methods: ["POST"], path: rx(`/api/email/bots/${ID}/[a-z-]+`), label: "Change a bot's email address or who can email it", summary: "none" },
   { methods: ANY, path: /^\/api\/email(?:\/.*)?$/, label: "Change bot email", summary: "none" },
+  // 1.0.18 HighLevel owner routes (server/index.ts, read only); route-policy marks every write under /api/highlevel credential.
+  // summary "none": the body is never described, so no location id or token detail reaches the confirmation.
+  { methods: ["POST"], path: rx("/api/highlevel/token/check"), label: "Check a HighLevel location", summary: "none" },
+  { methods: ["POST"], path: rx("/api/highlevel/token/[0-9a-f-]{36}/confirm"), label: "Connect a HighLevel location", summary: "none" },
+  { methods: ["PUT"], path: rx(`/api/highlevel/bots/${ID}/access`), label: "Change what a bot can read in HighLevel", summary: "none" },
+  { methods: ["DELETE"], path: rx("/api/highlevel/connections/hl_[A-Za-z0-9]{4,64}"), label: "Disconnect your HighLevel location", summary: "none" },
+  { methods: ANY, path: /^\/api\/highlevel(?:\/.*)?$/, label: "Change your HighLevel connection", summary: "none" },
   // 1.0.4 SL-H: route-policy denies this on every Cloud home; the label is here so the sentence is never the fallback.
   { methods: ["POST"], path: rx("/api/storage/attachments/remove"), label: "Remove attachment files for good" },
   { methods: ["POST"], path: rx("/api/publish/netlify/check"), label: "Check a Netlify connection", summary: "none" },
   // 1.0.17 C31: route-policy allows this on the paired owner desktop only, after step-up.
   { methods: ["POST"], path: rx("/api/tts/voices/add"), label: "Add a Voice Library voice to your ElevenLabs account", summary: "none" },
   { methods: ["GET", "POST"], path: rx("/api/mcp-grants"), label: "Create script access for a bot", summary: "settings" },
-  { methods: ["DELETE"], path: rx(`/api/mcp-grants/${ID}`), label: "Switch off a script access" },
+  { methods: ["DELETE"], path: rx(`/api/mcp-grants/${ID}`), label: "Turn off an access permission for scripts" },
   // 1.0.9 bot calls: the owner's call settings, from a chat-only Cloud browser.
   { methods: ["PUT"], path: rx(`/api/bots/${ID}/calls/rules`), label: "Change when a bot can call you", summary: "bot" },
   { methods: ["POST"], path: rx("/api/calls/off-today"), label: "Turn bot calls off for today" },
@@ -127,22 +143,37 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["DELETE"], path: rx(`/api/routines/${ID}`), label: "Delete a routine" },
   { methods: ["GET", "POST"], path: rx("/api/webhooks"), label: "Create or list external triggers", summary: "settings" },
   { methods: ["PATCH", "DELETE"], path: rx(`/api/webhooks/${ID}`), label: "Change or delete an external trigger", summary: "settings" },
-  { methods: ["POST"], path: rx(`/api/webhooks/${ID}/(?:rotate|test)`), label: "Rotate or test an external trigger" },
+  { methods: ["POST"], path: rx(`/api/webhooks/${ID}/(?:rotate|test)`), label: "Change an external trigger's key or test the trigger" },
   { methods: ["POST"], path: rx(`/api/connectors/${ID}/authorize`), label: "Connect an app" },
   { methods: ["DELETE"], path: rx(`/api/connectors/${ID}(?:/accounts/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?`), label: "Disconnect an app" },
 ]);
 
 export const FALLBACK_LABEL = "Make a change on your Cloud home";
 
-/** Body flags the home treats as raising authority (server/route-policy.ts `elevated`), with the words a person would use. */
+/** English label text to its pack key ("label.*" in electron/locales/step-up/en.json). */
+const LABEL_KEYS = new Map(Object.entries(STEP_UP_EN).filter(([key]) => key.startsWith("label.")).map(([key, text]) => [text, key]));
+/** The pack key of an English label, or null when en.json lacks it (the test fails that). */
+export function stepUpLabelKey(label) {
+  return LABEL_KEYS.get(label) ?? null;
+}
+/** A label in a language: the pack's words, or the English label itself when no key or translation exists. */
+function localLabel(label, t) {
+  const key = stepUpLabelKey(label);
+  return key ? t(key) || label : label;
+}
+
+/** Body flags the home treats as raising authority (server/route-policy.ts `elevated`), as pack keys for the words a person would use. */
 const ELEVATED_FLAGS = Object.freeze({
-  fullAccess: "Full access", noLimits: "No limits", acknowledgeFullAccess: "Full access", acknowledgeNoLimits: "No limits",
-  fullAccessChannelMessages: "Full access for channel messages", fullAccessSetupRequests: "Full access for setup requests",
-  autoApprove: "Auto-approve", acknowledgeLocalAuto: "Auto-approve on the host computer",
+  fullAccess: "flag.fullAccess", noLimits: "flag.noLimits", acknowledgeFullAccess: "flag.fullAccess", acknowledgeNoLimits: "flag.noLimits",
+  fullAccessChannelMessages: "flag.fullAccessChannelMessages", fullAccessSetupRequests: "flag.fullAccessSetupRequests",
+  autoApprove: "flag.autoApprove", acknowledgeLocalAuto: "flag.localAuto",
 });
 const WIRE_ONLY = new Set(["acknowledgeFullAccess", "acknowledgeNoLimits", "acknowledgeLocalAuto", "settingsScope"]);
 
-const clean = (value, max = 60) => String(value).replace(/[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+// Cut on whole graphemes (cutWhole), so a long name never ends in half an emoji or a letter without its accent.
+// Every Unicode direction mark (Bidi_Control: U+061C, U+200E, U+200F, U+202A-U+202E, U+2066-U+2069) is removed, the
+// same class the language packs refuse (step-up-locale.mjs usableText), so a name cannot reorder the line around it.
+const clean = (value, max = 60) => cutWhole(String(value).replace(/[\u0000-\u001f\u007f-\u009f\p{Bidi_Control}]/gu, " ").replace(/\s+/g, " ").trim(), max).trim();
 const stripQuery = (path) => String(path).split("?")[0].split("#")[0];
 const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -158,42 +189,104 @@ export function botIdOfPath(path) {
   return /^\/api\/(?:email\/)?bots\/([\w-]+)(?:\/|$)/.exec(stripQuery(path))?.[1] ?? null;
 }
 
-function elevatedFrom(body) {
+function elevatedFrom(body, t) {
   const named = new Set();
   if (!isPlainObject(body)) return [];
-  for (const [key, label] of Object.entries(ELEVATED_FLAGS)) if (body[key] === true) named.add(label);
-  if (typeof body.permissionMode === "string" && ["auto", "full", "unlimited"].includes(body.permissionMode)) named.add(`Permission mode "${clean(body.permissionMode, 20)}"`);
-  if (body.computer === "local") named.add("A bot using the host computer");
-  if (body.hostComputerConsent === "allowed") named.add("Host computer access");
-  if (Object.hasOwn(body, "alwaysAllow")) named.add("An always-allow rule");
+  for (const [key, textKey] of Object.entries(ELEVATED_FLAGS)) if (body[key] === true) named.add(t(textKey));
+  if (typeof body.permissionMode === "string" && ["auto", "full", "unlimited"].includes(body.permissionMode)) named.add(t("flag.permissionMode", { mode: clean(body.permissionMode, 20) }));
+  if (body.computer === "local") named.add(t("flag.hostComputerBot"));
+  if (body.hostComputerConsent === "allowed") named.add(t("flag.hostComputerConsent"));
+  if (Object.hasOwn(body, "alwaysAllow")) named.add(t("flag.alwaysAllow"));
   return [...named];
 }
 
 /**
  * The lines under the label. `names` is an optional resolver result (the bot's display name).
  * Setting NAMES are listed, never values, so a key or token in a body is never put on screen.
+ * `language` picks the words (step-up-locale.mjs); ids, setting names, the key fingerprint and the request stay as sent.
  */
-export function summarizeStepUpBody({ method, path, body, summary, botName }) {
+/**
+ * The longest name or id the dialog shows whole (UTF-16 units), the most setting names it lists, the longest setting
+ * name it shows whole (UTF-16 units), and the most setting names Touch ID's one line may carry: a longer list always
+ * uses the dialog (STEPUP-LOOKUPS-R2-1018 rules 4 and 4b).
+ */
+export const SHOW_MAX = 300;
+export const SETTINGS_MAX = 40;
+export const SETTING_NAME_MAX = 40;
+export const TOUCH_ID_SETTINGS_MAX = 8;
+
+export function summarizeStepUpBody(input) {
+  return summarize(input).lines;
+}
+
+/** The longest program location the dialog shows (UTF-16 units). A longer one is refused, never cut: a cut can hide the real file name. */
+export const PROGRAM_SHOW_MAX = 300;
+// What the dialog can show exactly: printable ASCII but "&" (a Windows dialog may read it as a shortcut marker, hide it and
+// underline the next letter) and the left-to-right scripts named here. Script_Extensions, so a
+// combining mark counts only when it belongs to one of these scripts. Everything else is refused, so a character added
+// to Unicode or a right-to-left script no one listed fails closed: controls, line separators, lone surrogates, the
+// replacement character, and right-to-left letters, marks and digits such as Hebrew and Arabic, which reorder a path on screen.
+const SHOWN_EXACTLY = /^[\x20-\x25\x27-\x7E\p{scx=Latin}\p{scx=Greek}\p{scx=Cyrillic}\p{scx=Armenian}\p{scx=Georgian}\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\p{scx=Devanagari}]+$/u;
+// Some of those carry characters that cannot be seen or look like a plain space: bidi marks, zero-width characters,
+// tag and variation characters, any space but U+0020.
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Bidi_Control}\p{Default_Ignorable_Code_Point}]|[^\P{Zs} ]/u;
+
+/**
+ * POST /api/cli-test spawns body.cli on the home (server/index.ts), so the person approving must see that exact value.
+ * Returns it unchanged, or null when it cannot be shown exactly: then the action is refused (describeStepUp `refused`).
+ * The server trims the value, so an untrimmed one would run as something other than what is shown.
+ */
+export function programToShow(body) {
+  const value = isPlainObject(body) ? body.cli : undefined;
+  if (typeof value !== "string" || !value || value !== value.trim() || value.length > PROGRAM_SHOW_MAX || !SHOWN_EXACTLY.test(value) || INVISIBLE.test(value)) return null;
+  return value;
+}
+
+/**
+ * The summary lines, and `cut`: whether anything in them was shortened (so Touch ID is not enough and the dialog
+ * marks it). Names and ids are shown whole up to SHOW_MAX, setting names up to SETTING_NAME_MAX, and up to
+ * SETTINGS_MAX of them; past that the text is cut on a whole grapheme and marked "..." (a list: "+N"), never shortened
+ * silently. A list over TOUCH_ID_SETTINGS_MAX is shown whole in the dialog but counts as `cut`, so Touch ID is not used.
+ */
+/** The line must carry the program: a pack or en.json line without exactly one {path} gives way to the built-in words. */
+export function programLine(t, program) {
+  if (t("line.program").split("{path}").length === 2) return t("line.program", { path: program });
+  return STEP_UP_BASELINE["line.program"].replace("{path}", () => program);
+}
+
+function summarize({ path, body, summary, botName, language = "en" }) {
+  const t = stepUpText(language);
+  // The one line that shows a body value, byte for byte. `cut`, so it always uses the dialog: Touch ID's one line belongs
+  // to the system, which may shorten it.
+  if (summary === "program") {
+    const program = programToShow(body);
+    return { lines: program === null ? [] : [programLine(t, program)], cut: true };
+  }
   const lines = [];
+  let cut = false;
+  const c = (value, max = SHOW_MAX) => { const whole = clean(value, Infinity); if (whole.length <= max) return whole; cut = true; return `${cutWhole(whole, max - 3).trim()}...`; };
   const botId = botIdOfPath(path);
   if (botId || (isPlainObject(body) && typeof body.name === "string" && summary === "bot")) {
-    const display = botName ? `${clean(botName)} (${clean(botId ?? "", 40)})` : clean(botId ?? body.name);
-    lines.push(`Bot: ${display}`);
+    const display = botName ? `${c(botName)} (${c(botId ?? "")})` : c(botId ?? body.name);
+    lines.push(t("line.bot", { bot: display }));
+    // A change to an existing bot's name is part of what is approved: shown as its own line.
+    if (botId && isPlainObject(body) && typeof body.name === "string") lines.push(t("line.name", { name: c(body.name) }));
   } else if (isPlainObject(body) && typeof body.name === "string" && body.name && summary !== "none") {
-    lines.push(`Name: ${clean(body.name)}`);
+    lines.push(t("line.name", { name: c(body.name) }));
   }
   if (summary === "device" && isPlainObject(body)) {
-    lines.push(`Device type: ${clean(body.scope ?? "unknown", 20)}`);
-    lines.push(`Device key: ${fingerprint(body.publicKey)}`);
+    lines.push(t("line.deviceType", { type: body.scope == null ? t("line.unknown") : c(body.scope) }));
+    lines.push(t("line.deviceKey", { key: typeof body.publicKey === "string" && body.publicKey ? fingerprint(body.publicKey) : t("line.unknown") }));
   }
   if ((summary === "settings" || summary === "bot") && isPlainObject(body)) {
     const all = Object.keys(body).filter((key) => key !== "name" && !WIRE_ONLY.has(key) && !Object.hasOwn(ELEVATED_FLAGS, key));
-    const keys = all.slice(0, 8);
-    if (keys.length) lines.push(`Settings: ${keys.map((key) => clean(key, 32)).join(", ")}${all.length > keys.length ? ", ..." : ""}`);
+    const keys = all.slice(0, SETTINGS_MAX);
+    if (all.length > TOUCH_ID_SETTINGS_MAX) cut = true;
+    if (keys.length) lines.push(t("line.settings", { names: `${keys.map((key) => c(key, SETTING_NAME_MAX)).join(", ")}${all.length > keys.length ? `, +${all.length - keys.length}` : ""}` }));
   }
-  const elevated = elevatedFrom(body);
-  if (elevated.length) lines.push(`Turns on: ${elevated.join(", ")}`);
-  return lines;
+  const elevated = elevatedFrom(body, t);
+  if (elevated.length) lines.push(t("line.turnsOn", { flags: elevated.join(", ") }));
+  return { lines, cut };
 }
 
 /** Short stable fingerprint of a PEM public key, for "is this the device in front of me". */
@@ -205,18 +298,58 @@ export function fingerprint(publicKey) {
 }
 
 /**
- * Everything a confirmation shows.
- * @returns {{ label: string, known: boolean, request: string, lines: string[], message: string, reason: string }}
- *   `message`: the dialog body; `reason`: one line (<= 200 chars) for Touch ID.
+ * The longest Touch ID reason, in characters (UTF-16 units, as Electron passes the string to LAContext).
+ * Neither Apple (LAContext evaluatePolicy localizedReason: "Make the message short and clear") nor Microsoft
+ * (TASKDIALOGCONFIG pszMainInstruction / pszContent) documents a hard maximum; 200 is this app's own ceiling, so a long
+ * bot name can never push the action off a small prompt. The label always comes first and is never cut.
  */
-export function describeStepUp({ method, path, body, botName }) {
+export const REASON_MAX = 200;
+
+const GRAPHEME_EXTEND = String.raw`[\p{M}\p{Emoji_Modifier}\u{E0020}-\u{E007F}]*`;
+const GRAPHEME_FALLBACK = new RegExp(String.raw`[\u{1F1E6}-\u{1F1FF}]{2}|\P{M}${GRAPHEME_EXTEND}(?:\p{Join_Control}\P{M}${GRAPHEME_EXTEND}|(?<=[्্੍્୍్್്])\p{L}${GRAPHEME_EXTEND})*|[\p{M}\p{Emoji_Modifier}]+`, "gu");
+
+/** `text` cut to at most `max` UTF-16 units on a whole grapheme, so no letter, accent or emoji is split. */
+export function cutWhole(text, max) {
+  if (text.length <= max) return text;
+  let out = "";
+  // Electron always has Intl.Segmenter. The fallback keeps together what a cut could otherwise split: a letter and its
+  // marks, skin-tone modifiers, flag pairs, tag-sequence flags, emoji joined by ZWJ and Indic conjuncts (virama + letter).
+  const parts = typeof Intl.Segmenter === "function" ? Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (s) => s.segment)
+    : (text.match(GRAPHEME_FALLBACK) ?? []);
+  for (const part of parts) { if (out.length + part.length > max) break; out += part; }
+  return out;
+}
+
+/**
+ * Everything a confirmation shows, in `language` (step-up-locale.mjs; English by default).
+ * @returns {{ label: string, known: boolean, request: string, lines: string[], message: string, reason: string, reasonComplete: boolean, refused: boolean }}
+ *   `message`: the dialog body; `reason`: one line (<= REASON_MAX chars) for Touch ID; `reasonComplete`: that line
+ *   was not cut (Touch ID may be used only then); `refused`: this cannot be approved, because what would run cannot be
+ *   shown exactly (programToShow).
+ */
+export function describeStepUp({ method, path, body, botName, language = "en" }) {
+  const t = stepUpText(language);
   const verb = String(method).toUpperCase();
   const target = stripQuery(path);
   const entry = findStepUpLabel(verb, target);
-  const label = entry?.label ?? FALLBACK_LABEL;
-  const lines = summarizeStepUpBody({ method: verb, path: target, body, summary: entry?.summary, botName });
-  const request = `${verb} ${clean(target, 120)}`;
+  const label = localLabel(entry?.label ?? FALLBACK_LABEL, t);
+  const { lines, cut } = summarize({ path: target, body, summary: entry?.summary, botName, language });
+  // The request line: method and path as sent. A query is never shown (it can hold a token) but is marked "?...",
+  // and a path too long to show is marked "...", so nothing is shortened silently.
+  const shownPath = clean(target, 120);
+  const request = `${verb} ${shownPath}${shownPath !== clean(target, Infinity) ? "..." : ""}${String(path).includes("?") ? "?..." : ""}`;
   const message = [label, ...lines, "", request].join("\n");
-  const reason = `${label}${lines[0] ? ` (${lines[0]})` : ""}`.slice(0, 200);
-  return { label, known: Boolean(entry), request, lines, message, reason };
+  // Touch ID shows one line: the label, then what the change turns on (Full access, No limits ...), then every other
+  // summary line (which bot, the device type and key, the settings).
+  const turnsOn = lines.find((line) => line === t("line.turnsOn", { flags: elevatedFrom(body, t).join(", ") }));
+  const parts = [...new Set([turnsOn, ...lines].filter(Boolean))].join("; ");
+  const room = REASON_MAX - label.length - 3; // " (" and ")"
+  const detail = parts && room > 3 ? (parts.length <= room ? parts : `${cutWhole(parts, room - 3)}...`) : "";
+  const reason = detail ? `${label} (${detail})` : label;
+  // `reasonComplete`: a known action whose one line holds the whole label and every summary line, nothing in them
+  // shortened. Otherwise (an unknown route included, whose request line Touch ID cannot show) the Confirm dialog is
+  // used and shows everything (createNativeStepUpConfirm).
+  const reasonComplete = Boolean(entry) && !cut && detail === parts && reason.length <= REASON_MAX;
+  const refused = entry?.summary === "program" && programToShow(body) === null;
+  return { label, known: Boolean(entry), request, lines, message, reason: cutWhole(reason, REASON_MAX), reasonComplete, refused };
 }

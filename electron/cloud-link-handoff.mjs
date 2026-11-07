@@ -59,7 +59,7 @@ export async function takeStashedDoorLink({ safeStorage, directory, now = Date.n
 }
 
 /**
- * The first process's whole job when a door link started it: seal, release the lock, relaunch without the link, exit.
+ * The first process's whole job when a door link started it: seal, acknowledge relaunch without the link, release the lock, exit.
  * Returns true when it handed over (the caller stops starting up), false when it could not (the caller keeps the link in
  * this process instead, so the person still connects).
  */
@@ -67,11 +67,15 @@ export async function handOffDoorLink({ app, safeStorage, directory, url, argv =
   if (blocked()) return false;
   try { await stashDoorLink({ safeStorage, directory, url }); } catch { return false; }
   try {
+    if (await relaunch(argvWithoutLink(argv.slice(1))) === false) {
+      await fs.rm(path.join(directory, HANDOFF_FILE), { force: true });
+      return false;
+    }
     app.releaseSingleInstanceLock?.();
-    relaunch(argvWithoutLink(argv.slice(1)));
     app.exit(0);
     return true;
-  } catch {
+  } catch (error) {
+    if (error?.code === "HANDOFF_HELPER_ALIVE") throw error;
     await fs.rm(path.join(directory, HANDOFF_FILE), { force: true }).catch(() => {});
     return false;
   }

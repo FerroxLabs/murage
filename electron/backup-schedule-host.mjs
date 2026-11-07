@@ -212,7 +212,7 @@ export function createBackupScheduleHost(host) {
   const captureBlocked=()=>relaunchRefusal()??(host.elevated?.()?"BACKUP_ELEVATED":null);
   const assertRelaunchPossible=()=>{const blocked=captureBlocked();if(blocked)throw Error(blocked);};
   const assertClosedAllowed=async()=>{if(!host.supported()||typeof host.assertClosedAllowed!=="function")throw Error("BACKUP_CLOSED_UNAVAILABLE");await host.assertClosedAllowed();};
-  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["needs-review","upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase}:null;}
+  function pendingUpgrade(){const s=coordinator.status(),candidate=s.job?.handoff?.upgrade;return candidate&&!["needs-review","upgrade-complete","upgrade-cancelled"].includes(s.phase)?{candidate,handoffId:s.job.handoff.id,phase:s.phase,offerInvalid:s.offerInvalid,hopsInvalid:s.hopsInvalid,hop:s.landedHops?.[candidate.candidateId]}:null;}
   async function verifyUpgrade(candidate){
     candidate=checkedCandidate(candidate);await assertUpgradeAllowed(candidate);
     const b=await checked(),s=coordinator.status(),intent=s.job?.handoff;
@@ -241,15 +241,26 @@ export function createBackupScheduleHost(host) {
         const budgetMs=chooseBudget(s);
         intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000,upgrade:candidate};
         coordinator.prepareUpgrade(candidate,intent);stopPolling();
-        await host.cleanupIdle();coordinator.armHandoff(intent.id);await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
+        const exit=await armBackup(intent,budgetMs,release);if(exit?.status==="stopped")return exit;
         return {status:"deferred",message:"Backup restart prepared before installing this update."};
       }catch(error){
+        if(error?.stopped)throw error;
         lastError="BACKUP_UPGRADE_DEFERRED";
         if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}
         if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
         throw error;
       }finally{running=false;}
     })().finally(()=>{upgradeRequest=null;upgradeCandidateId=null;});return upgradeRequest;
+  }
+  async function armBackup(intent,budgetMs,release){
+    const arm=()=>{coordinator.armHandoff(intent.id);return backupBudgetArgument(intent.id,budgetMs);};
+    const result=host.restartForBackup ? await host.restartForBackup(arm) : await (async()=>{await host.cleanupIdle();return host.relaunch("backup",arm());})();
+    if(result?.status==="stopped"){
+      try{await release?.();}catch(cause){lastError="BACKUP_RELEASE_UNCONFIRMED";throw Object.assign(Error(lastError),{code:lastError,cause,stopped:true});}
+      return result;
+    }
+    lastError=null;
+    return result;
   }
   const REFERENCE_FAILURES=new Set(["BACKUP_FOLDER_MISSING","BACKUP_RECOVERY_KEY_MISSING","BACKUP_REFERENCE_CHANGED"]);
   /** Stops a job whose folder or key can't be used: needs review, the reason
@@ -284,9 +295,9 @@ export function createBackupScheduleHost(host) {
       const budgetMs=chooseBudget(s,before);
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
-      stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
+      stopPolling();const exit=await armBackup(intent,budgetMs,release);if(exit?.status==="stopped")return exit;
     }catch(error){
+      if(error?.stopped)return {status:"stopped",error:error.code};
       lastError=holdFor(error,"daily")?"BACKUP_WAITING_ON_YOU":"BACKUP_HANDOFF_DEFERRED";
       if(intent)try{coordinator.failHandoff(intent.id);}catch{/* Preserve unreadable state. */}
       if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
@@ -336,9 +347,9 @@ export function createBackupScheduleHost(host) {
       const budgetMs=chooseBudget(s,current);
       intent={version:1,id:randomUUID(),bindingRevision:hash(b),installationIdentity:b.installationIdentity,expiresAt:now()+30*60000};
       coordinator.prepareHandoff(s.job.id,intent);
-      stopPolling();await host.cleanupIdle();coordinator.armHandoff(intent.id);
-      await host.relaunch("backup",backupBudgetArgument(intent.id,budgetMs));lastError=null;
+      stopPolling();const exit=await armBackup(intent,budgetMs,release);if(exit?.status==="stopped")return exit;
     }catch(error){
+      if(error?.stopped)throw error;
       if(intent){lastError="BACKUP_HANDOFF_DEFERRED";try{coordinator.failHandoff(intent.id);}catch{/* Preserve authoritative state. */}}
       else if(manual)try{coordinator.cancelManual(manual);}catch{/* A changed job is left for review. */}
       if(release)try{await release();}catch{lastError="BACKUP_RELEASE_UNCONFIRMED";}
@@ -350,7 +361,7 @@ export function createBackupScheduleHost(host) {
   // recorded as failed while the capture itself is still stuck (abandonOffline).
   let offline=null,offlineGivenUp=false;
   async function captureArmed(closed=false,closedBudgetMs){
-    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,captureStage="precondition";
+    const s=coordinator.status(),intent=s.job?.handoff;let claimed=false,committed=false,captureStage="precondition";
     const run={stage:"precondition",abandoned:false};if(!closed)offline=run;
     try{
       if(!intent||s.phase!=="handoff-armed")throw Error("BACKUP_HANDOFF_REJECTED");
@@ -382,12 +393,17 @@ export function createBackupScheduleHost(host) {
       // Given up at the ceiling while the worker finished: the timeout stands.
       if(run.abandoned)throw Error("BACKUP_HANDOFF_REJECTED");
       captureStage="receipt-commit";coordinator.clearCaptureFailure?.();coordinator.recordSkipped?.(s.job.id,result.skipped);coordinator.completeHandoff(intent.id,{jobId:s.job.id,installationRef:b.installationRef,destinationRef:b.destinationRef,selectionHash:hash(s.schedule.selection),snapshotId:result.snapshotId,artifactRef:s.job.id,sha256,bytes,verifiedAt:now(),...(intent.upgrade?{candidateId:intent.upgrade.candidateId}:{})});
+      committed=true;
       publishBackupStatus("verified");
       // Durable receipt precedes relaunch. A failed return never recaptures.
       stage("return");captureStage="return";if(closed)coordinator.completeReturn(intent.id);
-      else await host.relaunch("normal");
+      else {const result=await host.relaunch("normal");if(result?.status==="stopped")return result;}
       return {verified:true};
     }catch(error){
+      if(committed){
+        if(error?.code==="BACKUP_UPGRADE_CLEANUP_FAILED")throw error;
+        throw Object.assign(new Error(error?.message??"Cleanup failed",{cause:error}),{code:"BACKUP_UPGRADE_CLEANUP_FAILED",handoffId:intent.id});
+      }
       const diagnostic=captureFailureDiagnostic(captureStage,error);
       // The log alone also gets the redacted cause behind the code; the
       // durable record below (and so the window) keeps only stage and code.
@@ -518,6 +534,7 @@ export function createBackupScheduleHost(host) {
     /** The whole-run ceiling for the armed backup-mode run. */
     offlineCeilingMs(){try{return offlineCeilingFor(carriedBudget(coordinator.status()));}catch{return offlineCeilingFor();}},
     status:publicStatus,internalStatus,isPreparing:()=>running,start,stopPolling,tick,runNow,clearReview,resumeOffline,prepareWorkspaceReturn,abandonOffline,runClosedDue,requestUpgrade,pendingUpgrade,verifyUpgrade,
+    interruptIncomplete:()=>coordinator.interruptIncomplete(),
     /** Folder the saved references back up into, for recovery-key placement checks. */
     async selectedDestination(){const b=await read();return b?b.destination:null;},
     /** The recovery key file the saved references read, or null. */
@@ -589,6 +606,23 @@ export function createBackupScheduleHost(host) {
       }finally{running=false;}
       await firstRunChanged();
       return publicStatus();
+    },
+    peekInstallerOffer:()=>coordinator.peekInstallerOffer(),
+    acknowledgeInstallerOffer:offer=>coordinator.acknowledgeInstallerOffer(offer),
+    spendLandedHop(kind,actionId,expected){const p=pendingUpgrade();if(!p)throw Error("BACKUP_HANDOFF_CHANGED");return coordinator.spendLandedHop(expected?.handoffId??p.handoffId,expected?.candidateId??p.candidate.candidateId,kind,actionId);},
+    settleRequestedInstall({runningVersion,observe,decide,argv=[]}){
+      let p=pendingUpgrade();
+      if(!p||p.phase!=="install-requested")return {kind:"none"};
+      if(p.offerInvalid||p.hopsInvalid)return {kind:"review",reason:"metadata-invalid"};
+      if(p.candidate.version===runningVersion)return {kind:"review",reason:"completion-required"};
+      const legacyHop=!p.hop;
+      coordinator.ensureRequestedInstallMetadata(p.handoffId,p.candidate.candidateId);
+      if(legacyHop)return {kind:"review",reason:"legacy-hop"};
+      p=pendingUpgrade();
+      const facts=observe();
+      const verdict=decide({facts,runningVersion,candidate:p.candidate,hop:p.hop,argv});
+      if(verdict.kind==="cancel")coordinator.abandonUpgradeInstall(p.handoffId,runningVersion,p.candidate.candidateId);
+      return {...verdict,handoffId:p.handoffId,candidateId:p.candidate.candidateId,version:p.candidate.version};
     },
     async markUpgradeInstallRequested(candidate){const v=await verifyUpgrade(candidate);coordinator.requestUpgradeInstall(v.handoffId,v.candidate,v.bindingRevision,v.installationIdentity);return {status:"continue"};},
     async completeUpgrade(currentVersion){const p=pendingUpgrade();if(!p)throw Error("BACKUP_UPGRADE_REJECTED");const v=await verifyUpgrade(p.candidate);coordinator.completeUpgrade(v.handoffId,currentVersion,v.candidate,v.bindingRevision,v.installationIdentity);},
