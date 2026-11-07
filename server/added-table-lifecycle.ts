@@ -9,6 +9,7 @@
 //     `sweepAddedOrphans` removes what the cascade cannot reach (a connection with foreign keys off, a restored file);
 //   - retained: rows are kept on purpose and pruned by the named function;
 //   - marker: derived data, a flag or a record with no growth, or rows removed by a trigger, with the reason.
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import type { DatabaseSync } from "node:sqlite";
 
 export type Lifecycle =
@@ -62,6 +63,8 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   shared_drain_sweep: { kind: "marker", reason: "one row: where the sweep of waiting teams goes on from" },
   // bot email (server/email/email-store.ts), 1.0.9: created only when email is in use
   email_bindings: { kind: "marker", reason: "one row per bot with an email address; replaced by a tombstone when the address is removed" },
+  venue_posts: { kind: "marker", reason: "one row per held Post in… post a bot made at Ask or Auto; the card is a view of it, a few small rows per owner answer" },
+  room_shares: { kind: "retained", by: "pruneRoomShares" },
   email_sends: { kind: "marker", reason: "one row per email a bot wrote; settled rows are pruned by EmailStore.pruneSettledSends, open rows never" },
   email_payloads: { kind: "marker", reason: "the frozen bytes of an email, removed by EmailStore.pruneSettledSends 30 days after the send settles" },
   email_events: { kind: "marker", reason: "a cache of Flux email events for dedupe and reconcile, pruned by EmailStore.pruneEvents" },
@@ -101,7 +104,7 @@ export function ensureChildTable(db: DatabaseSync, name: string): void {
   if (/REFERENCES\s+room_requests/i.test(current)) return;
   // the parent may be absent in a database that never had projects: nothing then belongs to a request
   const keep = hasTable(db, entry.parent) ? ` WHERE EXISTS (SELECT 1 FROM ${entry.parent} p WHERE p.id=o.${entry.column})` : " WHERE 0";
-  db.exec("SAVEPOINT child_table_rebuild");
+  beginWrite(db, "child_table_rebuild");
   try {
     const old = `${name}__old`;
     db.exec(`ALTER TABLE ${quote(name)} RENAME TO ${quote(old)}`);
@@ -109,8 +112,8 @@ export function ensureChildTable(db: DatabaseSync, name: string): void {
     const columns = (db.prepare(`PRAGMA table_info(${quote(name)})`).all() as Array<{ name: string }>).map(column => quote(column.name));
     db.exec(`INSERT INTO ${quote(name)}(${columns.join(",")}) SELECT ${columns.map(column => `o.${column}`).join(",")} FROM ${quote(old)} o${keep}`);
     db.exec(`DROP TABLE ${quote(old)}`);
-    db.exec("RELEASE child_table_rebuild");
-  } catch (error) { db.exec("ROLLBACK TO child_table_rebuild"); db.exec("RELEASE child_table_rebuild"); throw error; }
+    endWrite(db, "child_table_rebuild");
+  } catch (error) { undoWrite(db, "child_table_rebuild"); throw error; }
 }
 
 /** Removes the rows of every child table whose request is gone. The cascade does this on a connection with foreign keys on; this is for the

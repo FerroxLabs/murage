@@ -1,3 +1,4 @@
+import { redactRoomShareArguments } from "../room-share-log.ts";
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderContents, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
@@ -32,7 +33,7 @@ import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withS
 import {
   CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
-  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv, hookRuntime, warmHookRunner,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -406,6 +407,36 @@ const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIM
 export function readCodexLogin(failed: boolean, text: string): boolean | undefined {
   if (/^not logged in\b/im.test(text)) return false;
   return !failed && /^logged in\b/im.test(text) ? true : undefined;
+}
+
+/** Parse and tee one native frame, then dispatch the unchanged live message. */
+export function handleCodexStdoutLine(threadId: string, line: string, receive: (message: any) => void): void {
+  if (!line.trim()) return;
+  let msg: any;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return;
+  }
+  // The native tee is a plain file people paste into issues. A
+  // generated image would put megabytes of base64 in it and the
+  // provider's own filesystem path beside them; keep the SHAPE and
+  // lose both, the same trade server/redact.ts makes for secrets.
+  const loggedMessage = msg.method === "item/completed" && msg.params?.item?.type === "imageGeneration"
+    ? {
+        ...msg,
+        params: {
+          ...msg.params,
+          item: {
+            ...msg.params.item,
+            result: `[generated image omitted · ${String(msg.params.item.result ?? "").length} base64 chars]`,
+            savedPath: undefined,
+          },
+        },
+      }
+    : msg;
+  appendNative(threadId, { dir: "in", source: "codex.app-server", msg: redactRoomShareArguments(loggedMessage) });
+  receive(msg);
 }
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {
@@ -1166,12 +1197,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
         if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
+        // HOOK-LIVENESS-COLD-START: the runtime's first start runs beside Codex's own start and handshake; turn/start waits for it
+        if (hookFiles) void warmHookRunner();
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
         if (hookFiles && !reuse && process.platform === "win32") {
           env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(hookFiles.launcher);
-          env[CODEX_HOOK_EXE_ENV] = process.execPath;
+          env[CODEX_HOOK_EXE_ENV] = hookRuntime();
         }
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
@@ -2005,7 +2038,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               if (paths.length) fileChangePaths.set(String(item.id), paths);
               fileChangeItems.set(String(item.id), item.changes);
             }
-            if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title, toolIdentity: { name: item.type === "commandExecution" ? "shell" : title }, input: item.arguments });
+            if (title) emit({ ...base(threadId, turnId), type: "item.started", itemType: "tool", origin: "engine", itemId: item.id, title, toolIdentity: codexItemToolIdentity(item, title), input: item.arguments });
             break;
           }
           case "item/completed": {
@@ -2159,46 +2192,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // a completion earlier in the same read ends the turn: later lines
         // from that read are not this turn's output
         if (abandoned || state.settled) return;
-        if (!line.trim()) return;
-        let msg: any;
-        try {
-          msg = JSON.parse(line);
-        } catch {
-          return;
-        }
-        stderrSinceOutput.reset();
-        // The native tee is a plain file people paste into issues. A
-        // generated image would put megabytes of base64 in it and the
-        // provider's own filesystem path beside them; keep the SHAPE and
-        // lose both, the same trade server/redact.ts makes for secrets.
-        const loggedMessage = msg.method === "item/completed" && msg.params?.item?.type === "imageGeneration"
-          ? {
-              ...msg,
-              params: {
-                ...msg.params,
-                item: {
-                  ...msg.params.item,
-                  result: `[generated image omitted · ${String(msg.params.item.result ?? "").length} base64 chars]`,
-                  savedPath: undefined,
-                },
-              },
+        handleCodexStdoutLine(threadId, line, msg => {
+          stderrSinceOutput.reset();
+          if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
+            const pend = rpcPending.get(msg.id);
+            if (pend) {
+              rpcPending.delete(msg.id);
+              msg.error ? pend.reject(new CodexRpcErrorAnswer(msg.error)) : pend.resolve(msg.result);
             }
-          : msg;
-        appendNative(threadId, { dir: "in", source: "codex.app-server", msg: loggedMessage });
-        if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
-          const pend = rpcPending.get(msg.id);
-          if (pend) {
-            rpcPending.delete(msg.id);
-            msg.error ? pend.reject(new CodexRpcErrorAnswer(msg.error)) : pend.resolve(msg.result);
+          } else if (msg.id !== undefined && msg.method) {
+            // Rule 68c: an approval request on a gated process waits for the hook's proof; unproven, it is never answered (the refusal
+            // closes the process with the turn)
+            if (hookGate && !refusal.hookLive) void proveLiveness().then(() => { if (!abandoned) handleServerRequest(msg); });
+            else handleServerRequest(msg);
+          } else if (msg.method) {
+            handleNotification(msg);
           }
-        } else if (msg.id !== undefined && msg.method) {
-          // Rule 68c: an approval request on a gated process waits for the hook's proof; unproven, it is never answered (the refusal
-          // closes the process with the turn)
-          if (hookGate && !refusal.hookLive) void proveLiveness().then(() => { if (!abandoned) handleServerRequest(msg); });
-          else handleServerRequest(msg);
-        } else if (msg.method) {
-          handleNotification(msg);
-        }
+        });
       };
 
       conn.onLine = handleStdoutLine;
@@ -2531,6 +2541,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           try { conn.baseline = await descendantPids(enginePid); } catch { /* stays null: fails closed at settle */ }
         }
         if (cancelledBeforeStart()) return;
+        // HOOK-LIVENESS-COLD-START: the hook's runtime has started once before the bound starts (codex-hook.ts warmHookRunner), so the
+        // bound measures the hook, not the operating system's first launch of the runtime. Started when the process launched; usually done.
+        if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) {
+          await warmHookRunner();
+          // an attempt the close path retired (or a turn that settled) during the wait writes nothing (Astra r1 #1)
+          if (abandoned || state.settled || cancelledBeforeStart()) return;
+        }
         // The submission fence (SendTurnInput.beforeSubmit), on every
         // attempt: no await separates it from the turn/start write below. A
         // refusal writes nothing. Before sendTurn resolved the harness stops
@@ -2821,3 +2838,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
   });
 },
 };
+
+/** Identity used by the item/started runtime projection. */
+export function codexItemToolIdentity(item: { type?: string; server?: string }, title: string) {
+  return { name: item.type === "commandExecution" ? "shell" : title,
+    ...(item.type === "mcpToolCall" && item.server !== undefined ? { server: item.server } : {}) };
+}

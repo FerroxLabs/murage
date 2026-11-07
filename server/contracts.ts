@@ -168,8 +168,8 @@ export type RuntimeEvent = RuntimeEventBase &
          *  calls off, where the chip is hidden. */
         spoken?: string;
         /** Canonical tool kind and identity, separate from display text. */
-        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
-    | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string } }
+        toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string; server?: string } }
+    | { type: "item.started"; itemType: "reasoning"; title?: string; summary?: string; input?: unknown; toolKind?: string; toolIdentity?: { namespace?: string; name?: string; kind?: string; server?: string } }
     | { type: "item.updated"; itemType: "tool" | "reasoning"; tokens?: number | null }
     /** `detail` is why the tool failed, as the engine reported it. It reaches
      * the person, not only the model's context. */
@@ -270,7 +270,7 @@ export type RuntimeEvent = RuntimeEventBase &
         /** Additive: the identity the engine stamped on the tool (Fuigo's
          * `_meta["fuigo/tool"]`: namespace, name, kind). A title can be any
          * text; this cannot come from the model. */
-        toolIdentity?: { namespace: string; name: string; kind?: string };
+        toolIdentity?: { namespace: string; name: string; kind?: string; server?: string };
         /** Additive (1.0.3), F4 (APP-GRANT-DESIGN-FINAL.AGREED-r10.md Rule 54):
          * the MCP servers this engine actually loads for this turn, each
          * recorded by the driver that mounted or enumerated it

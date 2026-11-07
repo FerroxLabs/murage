@@ -246,18 +246,23 @@ export class AttachmentList {
 
   /** Drop the snapshot after a Remove: its later pages would still list the
    * removed files, so a page asked of it answers "The list changed". */
-  forget(): void { this.snapshot = null; }
+  forget(): void { this.snapshot = null; this.epoch++; }
+  /** Bumped by forget(): a walk that was reading the folder when files went answers its own request but is not kept, so a name
+   * removed during it cannot stay in the list for the snapshot's five minutes. */
+  private epoch = 0;
 
   private walk(): Promise<Snapshot | null> {
     // a request during a walk awaits it
     if (this.walking) return this.walking;
     this.snapshot = null; // a new walk drops the old snapshot
+    const epoch = this.epoch;
     this.walking = walkAttachments(this.options.dir, this.options.fs).then(result => {
       if (!result.ok) return null;
       const hidden = this.options.hidden;
       const items = hidden ? result.items.filter(item => !hidden(item.name)) : result.items;
       const totals = items === result.items ? result.totals : { ...result.totals, count: items.length, bytes: items.reduce((sum, item) => sum + item.bytes, 0) };
       const snapshot: Snapshot = { id: randomBytes(12).toString("hex"), createdAt: this.now(), items, sorted: {}, totals };
+      if (epoch !== this.epoch) return snapshot; // files went while it read: not kept, its next page answers "The list changed"
       this.snapshot = snapshot;
       // dropped after five minutes even when nobody asks again (R1.3)
       clearTimeout(this.expiry);

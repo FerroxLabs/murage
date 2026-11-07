@@ -1,3 +1,4 @@
+import { redactRoomShareArguments } from "../room-share-log.ts";
 import { oneShots } from "../engine-one-shots.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
 import { NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
@@ -839,7 +840,7 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
         } catch {
           return;
         }
-        appendNative(threadId, { dir: "in", source: "agy.stream", msg: o });
+        appendNative(threadId, { dir: "in", source: "agy.stream", msg: redactRoomShareArguments(o) });
         const payload = o[o.event] ?? {};
         switch (o.event) {
           case "init": {

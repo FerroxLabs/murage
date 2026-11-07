@@ -1,3 +1,4 @@
+import { redactRoomShareArguments } from "../room-share-log.ts";
 import { cliSig, engineLaunchFile, knownCliVersion, memoDeps, noteVersionProbe, pathExists, rememberCliVersion, versionProbeAllowed } from "./isolation-cache.ts";
 import { engineUpdateRequired } from "./scoped-cli-home.ts";
 import { cloudTurnBot, cloudTurnEnvironment } from "../cloud-home/turn-process.ts";
@@ -1149,7 +1150,7 @@ export const PiDriver: ProviderDriver<PiConfig> = {
       starting.delete(threadId);
 
       const onEvent = (evt: PiEvent) => {
-        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: evt });
+        appendNative(threadId, { dir: "in", source: "pi.rpc", msg: redactRoomShareArguments(evt) });
         // After the end only what a graceful Stop needs still counts: the abort's response, and a dialog pi would otherwise wait on.
         if (settled && evt.type !== "response") {
           if (aborting && evt.type === "extension_ui_request" && evt.id && PI_DIALOGS.has(String(evt.method))) {

@@ -1,3 +1,4 @@
+import { redactRoomShareArguments } from "../room-share-log.ts";
 import { NO_TOOL_SURFACE, PI_TOOL_SURFACE, renderMurageTurn, type McpToolSurface } from "../murage-tool-surface.ts";
 import { KEY_REJECTED_REASON, keyRejected, noteKeyAccepted, noteKeyRejected, rejectsKey } from "../key-rejections.ts";
 import { httpErrorDetail, providerSentence } from "./provider-error-body.ts";
@@ -1092,11 +1093,14 @@ export function createOpenAIChatRuntime<Config>(options: RuntimeOptions<Config>)
       try { return JSON.stringify(scrub(JSON.parse(text))); } catch { return "[unreadable arguments omitted]"; }
     };
     const nativeOut = (tools: string[]) => {
-      const view = messages.map((message) => message.role === "tool"
+      const view = messages.map((liveMessage) => {
+        const message = redactRoomShareArguments(liveMessage);
+        return message.role === "tool"
         ? { ...message, content: capUtf8(scrub(message.content ?? ""), NATIVE_TOOL_RESULT_MAX_BYTES) }
-        : message.tool_calls
-        ? { ...scrub(message), tool_calls: message.tool_calls.map((call) => ({ ...call, function: { ...call.function, arguments: scrubArguments(call.function.arguments) } })) }
-        : scrub(message));
+        : Array.isArray(message.tool_calls)
+        ? { ...scrub(message), tool_calls: message.tool_calls.map((call) => ({ ...call, function: { ...call.function, ...(call.function.arguments === undefined ? {} : { arguments: scrubArguments(call.function.arguments) }) } })) }
+        : scrub(message);
+      });
       const record = options.nativeLog.outgoing(turn, view, model);
       native("out", tools.length && record && typeof record === "object" && !Array.isArray(record) ? { ...record as object, tools } : record);
     };

@@ -11,6 +11,7 @@
 // An ask goes out as an ALLOWLIST: every field of `request.opened` is named
 // below as out (true) or kept in the server (false), so a field added to the
 // contract later does not compile until someone decides which it is.
+import { redactRoomShareArguments } from "./room-share-log.ts";
 import type { RuntimeEvent } from "./contracts.ts";
 import { envInfoOf, isExecEnv } from "../shared/mount-identity.ts";
 
@@ -88,6 +89,7 @@ export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
  * never the map handed to the engine process (its value-free projection
  * instead, Astra #9). */
 export function loggedRuntimeEvent<T>(event: T): T {
+  event = redactRoomShareArguments(event);
   if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "request.opened") return event;
   // OPENAI-TOOLS-109 s8 (b): the exact, unscrubbed call the handler judges (`toolCall.input`) is never written to the log, for
   // every engine; the bounded, scrubbed `toolInput` is the logged text. Only the call's name stays.

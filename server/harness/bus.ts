@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { EVENTS_DIR } from "../config.ts";
 import { redactSecrets } from "../redact.ts";
 import { loggedRuntimeEvent } from "../runtime-event-out.ts";
+import { carryRoomShareLogMark } from "../room-share-log.ts";
 import { isPhoneRequest } from "../phones/withhold.ts";
 import { createHash } from "node:crypto";
 import { IntakeValve } from "./intake.ts";
@@ -225,7 +226,7 @@ export class EventBus {
           return;
         }
         if (instance.tracksKeyRejection !== true) observeSignIn(instance.instanceId, event, instance.driverKind === "claude" || instance.driverKind === "codex");
-        this.publish({ ...event, providerInstanceId: instance.instanceId });
+        this.publish(carryRoomShareLogMark(event, { ...event, providerInstanceId: instance.instanceId }));
       });
       this.unsubscribes.push({ instanceId: instance.instanceId, unsubscribe: unsub });
     }

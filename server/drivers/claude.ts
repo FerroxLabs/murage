@@ -1,3 +1,4 @@
+import { redactRoomShareArguments } from "../room-share-log.ts";
 import type { ExecEnv } from "../../shared/mount-identity.ts";
 import { claudeModelExtras } from "./claude-model-extras.ts";
 import { oneShots } from "../engine-one-shots.ts";
@@ -655,7 +656,7 @@ export function claudeOwnUnaskedTools(builtin: OwnBuiltin, emailMode?: string): 
 export const CLAUDE_BROKER_TOOLS = ["mcp__muragebox__approve", "mcp__muragebox__ask_user"] as const;
 
 /** One human-readable line for an ask — what the card subtitle shows. */
-function askSummary(ask: Ask): string {
+export function askSummary(ask: Ask): string {
   const input = ask.input;
   if (ask.questions?.length) return ask.questions[0]!.question.slice(0, 300);
   if (!input) return "";
@@ -4818,7 +4819,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           session.startupTimer = null;
           if (!session.turn) dropStartFiles();
         }
-        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: o });
+        appendNative(threadId, { dir: "in", source: "claude.sdk.message", msg: redactRoomShareArguments(o) });
         // A retired session (closing, or replaced in the thread's slot) with
         // no open turn can no longer speak for the thread: its system/init must
         // not become session.started, which writes the thread's resume cursor.

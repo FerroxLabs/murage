@@ -837,6 +837,8 @@ const playTurn = (prompt: JsonValue) => {
     const timer = setInterval(() => { if (!existsSync(holdGate)) return; clearInterval(timer); playTurn(prompt); }, 10);
     return;
   }
+  // FAKE_CLAUDE_EXTRA_FRAMES: a JSON array of frames written as the turn starts (log-path tests)
+  for (const frame of JSON.parse(process.env.FAKE_CLAUDE_EXTRA_FRAMES ?? "[]")) out(frame);
   if (mode === "exit-early") {
     process.stderr.write("fake-claude: simulated crash before result\n");
     process.exit(3);

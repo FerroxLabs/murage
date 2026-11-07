@@ -456,6 +456,8 @@ function handle(cmd: any) {
       send({ type: "response", command: "set_thinking_level", success: true });
       return;
     case "prompt":
+      // FAKE_PI_EXTRA_FRAMES: a JSON array of frames written as the prompt arrives (log-path tests)
+      for (const frame of JSON.parse(process.env.FAKE_PI_EXTRA_FRAMES ?? "[]")) send(frame);
       // crash-mid-turn: take the prompt and exit with no terminal event (a pi that crashes after the first write)
       if (mode === "crash-mid-turn") {
         process.stderr.write("pi crashed while answering\n", () => process.exit(1));

@@ -140,7 +140,9 @@ it("the first review of a restored WAL-mode database succeeds", async () => {
   const target = join(f.parent, "target"); mkdirSync(target);
   const archive = join(f.parent, "backup.zip"), saved = await writeInstallationArchive(f.data, archive);
   await restoreInstallation(target, archive, saved.sha256);
-  expect(readFileSync(join(target, "messages.db")).subarray(18, 20)).toEqual(Buffer.from([2, 2]));
+  // SMOOTH-FTS-MERGE R6 section 3: the restored candidate settles itself and leaves in rollback mode, so the review's read-only open
+  // creates no side files at all; the review must still succeed on the first try.
+  expect(readFileSync(join(target, "messages.db")).subarray(18, 20)).toEqual(Buffer.from([1, 1]));
   const review = reviewInstallation(target);
   expect(review.status).toBe("ready-for-review");
   // Approval binds to the reviewed state; the review's own sidecars are part of it.
