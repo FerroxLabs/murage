@@ -37,7 +37,7 @@ export const engineCannotAsk = (driverKind: string | undefined): boolean => Bool
  *  (server/drivers/acp/openclaw.ts); at the other levels Murage sends no
  *  directive, so the owner's own OpenClaw command settings apply. */
 export const ownApprovalsNote = (engine: string) => t("permissionMenu.ownTools", { engine });
-const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
+export const cannotAskNote = (engine: string) => t("permissionMenu.cannotAsk", { engine });
 
 export const PermissionModeIcon = ({ mode, size, className }: { mode: PermissionMode; size: number; className: string }) =>
   mode === "unlimited" ? <Zap size={size} className={className} /> : mode === "full" ? <ShieldOff size={size} className={className} /> : mode === "auto" ? <ShieldCheck size={size} className={className} /> : <Hand size={size} className={className} />;

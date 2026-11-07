@@ -41,24 +41,31 @@ final class PhoneAskSetup {
     private func show(in presenter: UIViewController, problem: String? = nil, onlyOk: Bool = false) {
         guard !closed, UIApplication.shared.applicationState == .active,
               presenter.viewIfLoaded?.window != nil, presenter.presentedViewController == nil else { return }
-        let body = PhoneJobStrings.text("ask_setup_body") + (problem.map { "\n\n" + $0 } ?? "")
-        let alert = UIAlertController(title: PhoneJobStrings.text("ask_setup_title"), message: body, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: PhoneJobStrings.text(onlyOk ? "ask_ok" : "ask_not_now"), style: .cancel) { [weak self] _ in
+        let alert = Self.makeAlert(problem: problem, onlyOk: onlyOk, notNow: { [weak self] in
             guard let self else { return }
             self.defaults.set(PhoneAskSetupChoice.marker(turnOn: false, pairing: self.pairing), forKey: self.marker)
+        }, turnOn: { [weak self, weak presenter] alert in
+            // Wait for dismissal before a synchronous no-key failure can
+            // present its explanation, or before device authentication starts.
+            alert?.dismiss(animated: true) { [weak self, weak presenter] in
+                guard let self, let presenter else { return }
+                self.turnOn(in: presenter)
+            }
         })
-        if !onlyOk {
-            alert.addAction(UIAlertAction(title: PhoneJobStrings.text("ask_turn_on"), style: .default) { [weak self, weak presenter, weak alert] _ in
-                // Wait for dismissal before a synchronous no-key failure can
-                // present its explanation, or before device authentication starts.
-                alert?.dismiss(animated: true) { [weak self, weak presenter] in
-                    guard let self, let presenter else { return }
-                    self.turnOn(in: presenter)
-                }
-            })
-        }
         screen = alert
         presenter.present(alert, animated: true)
+    }
+
+    /// The alert exactly as shown. OK (after a "turned off" answer) runs the same `notNow` write as NOT NOW.
+    static func makeAlert(problem: String?, onlyOk: Bool, notNow: @escaping () -> Void,
+                          turnOn: @escaping (UIAlertController?) -> Void) -> UIAlertController {
+        let body = PhoneJobStrings.text("ask_setup_body") + (problem.map { "\n\n" + $0 } ?? "")
+        let alert = UIAlertController(title: PhoneJobStrings.text("ask_setup_title"), message: body, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: PhoneJobStrings.text(onlyOk ? "ask_ok" : "ask_not_now"), style: .cancel) { _ in notNow() })
+        if !onlyOk {
+            alert.addAction(UIAlertAction(title: PhoneJobStrings.text("ask_turn_on"), style: .default) { [weak alert] _ in turnOn(alert) })
+        }
+        return alert
     }
 
     private func turnOn(in presenter: UIViewController) {

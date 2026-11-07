@@ -9,6 +9,7 @@
 // ACP's hosted tools, Pi's unasked rows are its exact mount/tool pairs). A
 // tool on an own mount that is NOT in OWN_UNASKED asks.
 
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_MCP_SERVER, HIGHLEVEL_READ_TOOL_NAMES } from "./highlevel.ts";
 import { PHONE_TOOL_NAMES } from "./phone-jobs-contract.ts";
 
 /** The built-in own mounts, by the `mountId` suffix of Rule 54
@@ -22,6 +23,7 @@ export const OWN_BUILTINS = {
   browser: "browser",
   phone: "phone",
   phoneJobs: "phoneJobs",
+  highlevel: HIGHLEVEL_MCP_SERVER,
   dweb: "dweb",
 } as const;
 
@@ -94,6 +96,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   },
   {
     mount: "own:agents",
+    tools: ["venue_post"],
+    boundary: "VENUE-POST-1017: mounted only on the owner's own proven line that carried a Post in… pick (MURAGE_VENUE_POST); the handler re-checks the pick, the room and the request line on every call, posts only at Full access or No limits, and holds every Ask or Auto post on Murage's own Post it / Don't post card",
+  },
+  {
+    mount: "own:agents",
     tools: ["email_send", "email_reply", "email_trust_offer"],
     boundary: "the handler applies the bot's email setting (3.3) and holds every send that policy does not clear on Murage's own Send / Don't send card before any request leaves; Flux enforces the same inbox policy server-side; email_trust_offer only files a proposal the owner answers (server/email/tools.ts)",
   },
@@ -111,6 +118,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
     mount: "own:phoneJobs",
     tools: PHONE_TOOL_NAMES,
     boundary: "1.0.9 phone tools (ruling in the ledger): the live phone authority, the grant intersection and the phone's own confirmation card are the gate; the owner started the turn directly",
+  },
+  {
+    mount: "own:highlevel",
+    tools: [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES],
+    boundary: "native HighLevel (HL-S2, GAP-HIGHLEVEL-109 section 7), read only: the host checks the turn claim, the bot's native grant for that location and tool, and a confirmed connection on every call; reads go only to the fixed provider manifest. No change tool is listed or pre-allowed (server/highlevel/runtime.ts)",
   },
 ];
 
@@ -130,10 +142,12 @@ export const OWN_ALWAYS_ASK: readonly { mount: `own:${OwnBuiltin}`; tool: string
 
 /** Own tools whose handler is the only place they are cleared or held (BOT-EMAIL-MURAGE-109 3.2): every engine reaches the handler at
  *  every access level, with no engine card in front of Murage's own email card. Each is also an OWN_UNASKED row. */
-export const OWN_HANDLER_CARDED: readonly { mount: `own:${OwnBuiltin}`; tool: string }[] = [
+export const OWN_HANDLER_CARDED: readonly { mount: `own:${OwnBuiltin}`; tool: string; /** the agents-mount env key that admits it on a turn */ mountEnv?: string }[] = [
   { mount: "own:agents", tool: "email_send" },
   { mount: "own:agents", tool: "email_reply" },
   { mount: "own:agents", tool: "email_trust_offer" },
+  // VENUE-POST-1017: admitted only on a turn that mounts it (agentsIntegration sets MURAGE_VENUE_POST=1); held on the Post it card
+  { mount: "own:agents", tool: "venue_post", mountEnv: "MURAGE_VENUE_POST" },
 ];
 
 /** Whether an own tool is handler-carded: its mount and exact name are an OWN_HANDLER_CARDED row (and so also an OWN_UNASKED one). */
@@ -200,8 +214,10 @@ export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly s
 /** The owner's phone tools, run with no desktop card at every level on every engine. Not reads: add, change, compose
  * and dial act, but the live phone authority, the grant intersection and the phone's own confirmation card are the gate
  * (OWN_UNASKED ruling). Kept apart from OWN_READS so that set stays read-only. */
-export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs"; tools: readonly string[] }[] = [
+export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs" | "own:highlevel"; tools: readonly string[] }[] = [
   { mount: "own:phoneJobs", tools: PHONE_TOOL_NAMES },
+  // native HighLevel, read only: the host grant check is the gate (OWN_UNASKED row); no change tool is listed
+  { mount: "own:highlevel", tools: [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES] },
 ];
 
 /** Whether an own tool runs with no desktop card as a read or as a phone tool: an OWN_READS or PHONE_PREALLOWED row,

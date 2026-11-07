@@ -66,7 +66,7 @@ it.skipIf(process.platform === "win32").each(["shutdown", "owner", "installation
 });
 
 it("joins background restaging before releasing desktop ownership", () => {
-  const cleanup = main.slice(main.indexOf("function cleanupDesktopForExit() {"));
+  const cleanup = main.slice(main.indexOf("function cleanupDesktopForExit("));
   const join = cleanup.indexOf("await awaitOwnedWork(backupToolCheck,");
   expect(join).toBeGreaterThan(-1);
   // f30368945 (rc10-lease) passes the exited children to release(); match the call, not its argument list.

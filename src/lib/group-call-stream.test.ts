@@ -10,97 +10,46 @@ import type { Bot } from "@/state/store";
 
 const members = [{ id: "b1", name: "Sable" }, { id: "b2", name: "Moss" }] as Bot[];
 
-describe("ReplyStreamer", () => {
-  it("speaks the first sentence before the block is complete", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Hi there, friend. I'm checking");
-    expect(said).toEqual(["Hi there, friend."]);
-    streamer.update("Hi there, friend. I'm checking the deploy now.");
-    // the second sentence has no whitespace after it yet: it waits
-    expect(said).toEqual(["Hi there, friend."]);
-    streamer.settle("Hi there, friend. I'm checking the deploy now.");
-    expect(said).toEqual(["Hi there, friend.", "I'm checking the deploy now."]);
+const identity = { callSessionId: "call", replyId: "reply", threadId: "thread", botId: "b1", messageId: "message", bootId: "boot" };
+describe("ReplyStreamer server identity lifecycle", () => {
+  it("is silent before the server supplies a sealed identity", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play);
+    expect(play).not.toHaveBeenCalled(); expect(stream.started).toBe(false);
   });
-
-  it("voices the first clause of a block, then whole sentences", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    let full = "";
-    for (const token of ["Sure, ", "I can pull that ", "together for you, ", "and send it ", "after lunch. ", "Anything else? "]) {
-      full += token;
-      streamer.update(full);
-    }
-    expect(said).toEqual(["Sure, I can pull that together for you,", "and send it after lunch.", "Anything else?"]);
+  it("passes the complete identity to audio playback", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.ready(identity);
+    expect(play).toHaveBeenCalledExactlyOnceWith(identity);
   });
-
-  it("waits while nothing follows the clause boundary yet", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Sure, I can pull that together for you, ");
-    expect(said).toEqual([]);
-    streamer.update("Sure, I can pull that together for you, and");
-    expect(said).toEqual(["Sure, I can pull that together for you,"]);
+  it("never repeats an identity", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.ready(identity); stream.ready(identity);
+    expect(play).toHaveBeenCalledOnce();
   });
-
-  it("does not cut a later sentence at a clause", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Okay, that one is done. I can pull that together for you, and send it after lunch ");
-    expect(said).toEqual(["Okay, that one is done."]);
+  it("an identity consumer cannot reset to another reply", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.ready(identity); stream.ready({ ...identity, replyId: "other" });
+    expect(play).toHaveBeenCalledExactlyOnceWith(identity);
   });
-
-  it("a code fence before the clause end still stops streaming", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Sure, here is the fix for you ```ts\nconst a = 1;\n``` and then, after that we are done ");
-    expect(said).toEqual([]);
+  it("closing before seal never starts playback", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.close(); stream.ready(identity);
+    expect(play).not.toHaveBeenCalled();
   });
-
-  it("settle after a clause cut says only the unsaid rest", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Sure, I can pull that together for you, and send it");
-    streamer.settle("Sure, I can pull that together for you, and send it after lunch.");
-    expect(said).toEqual(["Sure, I can pull that together for you,", "and send it after lunch."]);
+  it("closing after admission prevents late duplicate playback", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.ready(identity); stream.close(); stream.ready(identity);
+    expect(play).toHaveBeenCalledOnce();
   });
-
-  it("never repeats a sentence, however often the same text arrives", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("One is first. Two is second. Thr");
-    streamer.update("One is first. Two is second. Thr");
-    streamer.update("One is first. Two is second. Three is third. Fo");
-    streamer.settle("One is first. Two is second. Three is third. Four is last.");
-    expect(said).toEqual(["One is first.", "Two is second.", "Three is third.", "Four is last."]);
+  it("closing twice cannot reopen admission", () => {
+    const play = vi.fn(); const stream = new ReplyStreamer(play); stream.close(); stream.close(); stream.ready(identity);
+    expect(play).not.toHaveBeenCalled();
   });
-
-  it("ignores the empty text that follows a settled message", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("One is first. Two is sec");
-    streamer.update("");
-    streamer.settle("One is first. Two is second.");
-    expect(said).toEqual(["One is first.", "Two is second."]);
+  it("separate replies have separate lifecycle consumers", () => {
+    const play = vi.fn(); new ReplyStreamer(play).ready(identity); new ReplyStreamer(play).ready({ ...identity, replyId: "next" });
+    expect(play).toHaveBeenCalledTimes(2);
   });
-
-  it("speaks the whole text at settle when nothing streamed", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    expect(streamer.started).toBe(false);
-    streamer.settle("Done. The deploy is green.");
-    expect(said.join(" ")).toBe("Done. The deploy is green.");
+  it("started becomes true only on identity admission", () => {
+    const stream = new ReplyStreamer(() => {}); expect(stream.started).toBe(false); stream.ready(identity); expect(stream.started).toBe(true);
   });
-
-  it("stops streaming at a code block and says it as the spoken form at settle", () => {
-    const said: string[] = [];
-    const streamer = new ReplyStreamer((s) => said.push(s));
-    streamer.update("Here is the fix. ```ts\nconst a = 1;\n```\nThat is all. ");
-    expect(said).toEqual(["Here is the fix."]);
-    streamer.settle("Here is the fix. ```ts\nconst a = 1;\n```\nThat is all.");
-    expect(said.join(" ")).not.toContain("const a");
-    expect(said.join(" ")).toContain("code block");
-    expect(said[said.length - 1]).toContain("That is all.");
+  it("has no raw text splitting or client completion entrance", () => {
+    const stream = new ReplyStreamer(() => {});
+    expect("update" in stream).toBe(false); expect("settle" in stream).toBe(false);
   });
 });
 
