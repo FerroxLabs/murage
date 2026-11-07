@@ -7,6 +7,7 @@
 // declaredCountry, checkoutLanguage and renewalText before anything else: a missing, forged, expired (24 h) or mismatched token is
 // 409 disclosure_stale, so a client cannot relabel a German page as English (or any other field) after the fact.
 // Token shape: base64url(JSON payload) "." base64url(HMAC-SHA256(secret, DOMAIN + base64url(JSON payload))).
+import { Buffer } from "node:buffer";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { HTTPError } from "./http";
 
@@ -29,7 +30,7 @@ const secretOf = (env: unknown): string | null => {
 /** 503 disclosure_key_missing when the secret is unset or shorter than 32 characters: no token, no checkout (fails closed). */
 export const disclosureKeyError = (env: unknown): string | null => secretOf(env) ? null : "disclosure_key_missing";
 
-const b64url = (b: Buffer) => b.toString("base64url");
+const b64url = (b: Uint8Array) => Buffer.from(b).toString("base64url");
 const mac = (secret: string, body: string) => createHmac("sha256", secret).update(DISCLOSURE_TOKEN_DOMAIN + body).digest();
 export const renewalSha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 

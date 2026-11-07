@@ -10,6 +10,7 @@
 // (PermissionModeMenu), above the + button, with Escape, Tab and an outside press
 // closing it and focus going back to the + button.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { inPhoneSheet } from "@/components/phone/sheet-layer";
 import { Hand, Paperclip, Target } from "lucide-react";
 
 import { ChatHeaderMenu, type HeaderMenuItem } from "./ChatHeaderMenu";
@@ -80,14 +81,16 @@ export function ComposerPlusMenu(props: ComposerPlusMenuProps) {
   useEffect(() => {
     if (!approvalOpen) return;
     panelRef.current?.querySelector<HTMLElement>('[role="menuitemradio"]:not(:disabled)')?.focus();
+    // A phone sheet holds its own keys: Tab moves inside it, Escape is its Close.
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" && event.key !== "Tab") return;
+      if (inPhoneSheet(event.target)) return;
       event.preventDefault();
       setApprovalOpen(false);
       triggerRef.current?.focus();
     };
     const onPointer = (event: PointerEvent) => {
-      if (event.target instanceof Node && !panelRef.current?.contains(event.target)) setApprovalOpen(false);
+      if (event.target instanceof Node && !panelRef.current?.contains(event.target) && !inPhoneSheet(event.target)) setApprovalOpen(false);
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onPointer);

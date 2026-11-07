@@ -11,6 +11,7 @@ import { request as httpRequest, type IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";
 
 export const STREAM_UPGRADE_PATH = "/api/voice/stream";
+export const CALL_CHANNEL_UPGRADE = /^\/api\/calls\/sessions\/[\w-]{1,64}\/live$/;
 const HOP_HEADERS = ["sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol", "sec-websocket-extensions"];
 const HANDSHAKE_MS = 10_000;
 const RECHECK_MS = 30_000;
@@ -60,6 +61,7 @@ export function forwardStreamUpgrade(
   socket: Duplex,
   head: Buffer,
   opts: {
+    callChannel?: boolean;
     harnessPort: number;
     companionToken: string;
     principal: string;
@@ -76,7 +78,7 @@ export function forwardStreamUpgrade(
   },
 ): void {
   const url = new URL(req.url ?? "/", "http://device");
-  if (req.method !== "GET" || url.pathname !== STREAM_UPGRADE_PATH) return void socket.destroy();
+  if (req.method !== "GET" || url.pathname !== STREAM_UPGRADE_PATH && !(opts.callChannel && CALL_CHANNEL_UPGRADE.test(url.pathname))) return void socket.destroy();
   if ((opts.slots.get(opts.principal) ?? 0) >= opts.maxOpen) return rejectUpgrade(socket, 429, "a call is already streaming");
   const headers: Record<string, string> = {
     connection: "Upgrade",

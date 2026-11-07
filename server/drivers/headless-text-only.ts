@@ -15,16 +15,16 @@ import { execFile } from "node:child_process";
 import { homedir, userInfo } from "node:os";
 import { PIP_JOB_REFUSAL, PipJobRefusedError } from "../memory/pip-job.ts";
 import { join, posix as posixPath, win32 as win32Path } from "node:path";
-import { reportMemoryUsage } from "../memory/extract.ts";
+import { captureMemoryUsage, reportMemoryUsage, journalMemoryRetry, type MemoryUsageReport } from "../memory/extract.ts";
 import { augmentedPath } from "../env-path.ts";
 import { awaitCliTreeStopped, cliJobRefused, spawnCli } from "../procs.ts";
 import { cloudTurnBot } from "../cloud-home/turn-process.ts";
 import { registerChild } from "../memory/pip-reaper.ts";
-import type { LearningGate } from "../memory/learning-send.ts";
+import { MemorySendCommitFailed, type LearningGate } from "../memory/learning-send.ts";
 import { MemorySendFenced } from "../memory/learning-send-fence.ts";
 import {
   FIRST_BYTE_MS, MAX_OUTPUT_BYTES, RUN_BOUND_MS, assertSupportedSchema, bindReflectionRoute, buildIsolationReport, buildReflectionEnv, createTempRoot, pinReflectionFuigoConfig,
-  gateRun, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
+  fluxUsageReport, headlessUsageReport, headlessAnswerBytes, gateRun, isReadMoved, isReportedOverLimit, listFiles, newFiles, parseHeadlessMessages, preflightRoute, removeTempRoot, runAdmissionFence,
   type AdmissionFenceAnswer, type BootEpoch, type FixedPrompt, type JsonSchema, type MissHistory, type PipEngine, type PreflightOptions, type TempRoot, type TextOnlyTurnInput,
   type TextOnlyTurnResult, type TransportHooks, type Verdict,
 } from "../memory/pip-transport.ts";
@@ -43,6 +43,7 @@ export interface HeadlessRunOptions {
   temp: TempRoot; tmpBase: string; outputSchema: JsonSchema; signal: AbortSignal;
   /** Which engine answers: decides the result fallback the gate may use (A.1). */
   engine: PipEngine;
+  requestBytes?: number;
   maxOutputBytes?: number; maxOutputTokens?: number; firstByteMs?: number; deadlineAt?: number;
   context: { runId: string; family: string; attempt: number; botId?: string };
   bootEpoch?: BootEpoch; history?: MissHistory; hooks?: TransportHooks; binaryIdentity?: string | null;
@@ -54,11 +55,15 @@ export interface HeadlessRunOptions {
   stdinText?: string;
   /** The call's learning gate (TextOnlyTurnInput.transport.gate): the physical write is released through it, under the write lock. */
   gate?: LearningGate;
-  /** Fuigo and Grok with a gate: the prompt, written to the (empty) prompt file inside the gate's send, together with the spawn. */
+  /** Fuigo and Grok: write the prepared prompt and spawn together under the gate lock. */
   promptText?: string;
   cleanup?: () => void; allowedHomeNew?: RegExp[]; allowedRootNew?: RegExp[];
   /** After the result line, the child gets this long to exit on its own before the tree is stopped. */
   postResultGraceMs?: number;
+  /** Fuigo or Grok ran without `--json-schema` (a Flux route): the gate reads the answer from the result text. */
+  schemaInPrompt?: boolean;
+  /** Routed Claude uses the same Flux predicate without changing its schema delivery. */
+  fluxUsage?: boolean;
 }
 
 /**
@@ -87,9 +92,12 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
 
   // Before any process exists: a throw here is safe to settle by removing the root.
   let beforeHome: string[], beforeCwd: string[], beforeRoot: string[];
+  let promptBytes: Buffer | undefined;
   try {
     assertSupportedSchema(o.outputSchema);
     if (o.signal.aborted) throw cancelled();
+    if (o.promptText !== undefined && !o.gate) throw new Error("HEADLESS_PROMPT_REQUIRES_GATE");
+    if (o.promptText !== undefined) promptBytes = Buffer.from(o.promptText, "utf8");
     beforeHome = listFiles(o.temp.home); beforeCwd = listFiles(o.temp.work); beforeRoot = listFiles(o.temp.root, ROOT_SUBDIRS);
     await o.hooks?.onIntent?.({
       runId: o.context.runId, family: o.context.family, attempt: o.context.attempt, tempRoot: o.temp.root,
@@ -102,18 +110,27 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   } catch (error) { finish(true); throw error; }
 
   let child: ReturnType<typeof spawnCli>;
+  let spawned: ReturnType<typeof spawnCli> | undefined, commitFailed: MemorySendCommitFailed | undefined;
   // The bot this reflection runs for: the launcher refuses a Cloud run that names none.
   const env: Record<string, string | undefined> = { ...o.env };
   cloudTurnBot(env, o.context?.botId);
-  const spawnIt = () => spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
-  // Fuigo and Grok read the prompt file at start: the file is written and the process started inside the gate's send (r8 section 1)
+  const spawnIt = () => spawned = spawnCli(o.cli, o.args, { cwd: o.cwd, env, stdio: ["pipe", "pipe", "pipe"] }, job);
+  // Each attempt owns a unique root. Still keep the prompt write and spawn in the same
+  // admission fence: a refused send must not write the private words. Encoding is done above.
   const promptText = o.promptText;
-  try { child = o.gate && promptText !== undefined ? o.gate.send(() => { writeFileSync(o.temp.promptFile, promptText, { mode: 0o600 }); return spawnIt(); }) : spawnIt(); }
+  const writeAndSpawn = () => {
+    if (promptBytes !== undefined) writeFileSync(o.temp.promptFile, promptBytes, { mode: 0o600 });
+    return spawnIt();
+  };
+  try { child = o.gate && promptText !== undefined ? o.gate.send(() => writeAndSpawn()) : spawnIt(); }
   catch (error) {
+    if (spawned && error instanceof MemorySendCommitFailed) { child = spawned; commitFailed = error; }
+    else {
     finish(true);
     // No job, no CLI: the run is refused for isolation, exactly as a failed assignment is (jobRefusal below).
     if (error instanceof PipJobRefusedError) return settledWithout({ state: "refused", reason: "isolation", detail: "job-assignment-failed", counted: false });
     throw error;
+    }
   }
 
   let exitCode: number | null = null;
@@ -122,6 +139,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   child.once("error", (e) => { spawnError = e; });
   const chunks: Buffer[] = [];
   let reportedUsage: TextOnlyTurnResult["usage"];
+  let resultSeen=false, answerBytes=0;
   let bytes = 0, overBytes = false, aborted = false, timedOut = false, deadlineHit = false, resultTimer: NodeJS.Timeout | undefined;
   // Stopping is awaited, never fire-and-forget: a failed stop wakes the wait below with "stop-failed".
   let stopFailed: () => void = () => {};
@@ -138,17 +156,22 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     clearTimeout(firstByte);
     if (overBytes) return;
     bytes += chunk.length;
-    if (bytes > max) { overBytes = true; chunks.length = 0; void stop(); return; }
     chunks.push(chunk);
-    reportedUsage = parseHeadlessMessages(Buffer.concat(chunks)).result?.usage ?? reportedUsage;
+    const parsed=parseHeadlessMessages(Buffer.concat(chunks));
+    // The parser keeps the latest meaningful receipt across all buffered result lines.
+    if(parsed.result){const next=parsed.result.usage;if(next?.inputTokens!==undefined||next?.outputTokens!==undefined)reportedUsage=next;if(bytes<=max)answerBytes=headlessAnswerBytes(parsed,o.engine);else if(!resultSeen)answerBytes=1;resultSeen=true;}
+    if (bytes > max) { overBytes = true; chunks.length = 0; void stop(); return; }
     if (!resultTimer && chunk.includes('"result"')) resultTimer = setTimeout(() => { void stop(); }, o.postResultGraceMs ?? 10_000);
   });
+  const ledgerUsage = (usage: TextOnlyTurnResult["usage"]) => (o.fluxUsage ?? o.schemaInPrompt)
+    ? fluxUsageReport({ prompt_tokens: usage?.inputTokens, completion_tokens: usage?.outputTokens, replyBytes: bytes, engineRun: true })
+    : headlessUsageReport(usage, resultSeen, o.requestBytes ?? 0, bytes, answerBytes);
   const accountUsage = () => {
     const reported = reportedUsage ?? parseHeadlessMessages(Buffer.concat(chunks)).result?.usage;
     const value = { inputTokens: reported?.inputTokens, outputTokens: reported?.outputTokens ?? Math.ceil(bytes / 3.5) };
-    // the ledger takes only what the CLI reported; an unreported side keeps its reservation (an engine run is never counted unmetered). A CLI that
-    // wrote nothing at all never produced a reply: it is left to the caller's finish (reservation kept, not unmetered)
-    if (reported || bytes > 0) reportMemoryUsage({ prompt_tokens: reported?.inputTokens, completion_tokens: reported?.outputTokens, replyBytes: bytes, engineRun: true });
+    // Flux unknown usage keeps the reservation and counts one unseen, including silent cancellation.
+    // Off Flux, tokenless completed runs use byte estimates; silent runs retain the existing finish behavior.
+    if (o.fluxUsage || o.schemaInPrompt || reported || bytes > 0) reportMemoryUsage(ledgerUsage(reported));
     o.hooks?.onUsage?.(value);
     return value;
   };
@@ -174,14 +197,15 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       return { text: "", usage: accountUsage(), isolation: { ...noProcessReport(), exited }, verdict: { state: "uncertain-transport", reason: spawnError ? "spawn-failed" : "register-failed" } };
     }
     await o.hooks?.onChild?.(registered);
+    if (commitFailed) void stop();
     // registration and the child hook were awaited after the fence: a read that moved meanwhile (a Forget, a delete) stops the child
     // before its prompt is written, so the words never reach it; the move reaches the caller as before the spawn
     // With a gate, Claude's stdin write is the release: checked and written under the write lock (r8 section 1)
     let moved: unknown = null, written = false;
-    if (o.gate && promptText === undefined) {
+    if (!commitFailed && o.gate && promptText === undefined) {
       try { o.gate.send(() => { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }); written = true; }
-      catch (error) { moved = error; }
-    } else if (!o.gate) { try { runAdmissionFence(o.recheck); } catch (error) { moved = error; } }
+      catch (error) { moved = error; if (error instanceof MemorySendCommitFailed) commitFailed = error; }
+    } else if (!commitFailed && !o.gate) { try { runAdmissionFence(o.recheck); } catch (error) { moved = error; } }
     if (moved) {
       void stop();
       const first = await Promise.race([closed.then(() => "closed" as const), stopFailedSignal]);
@@ -190,7 +214,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       finish(await stop());
       throw moved;
     }
-    if (!written) { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }
+    if (!commitFailed && !written) { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }
 
     const first = await Promise.race([closed.then(() => "closed" as const), stopFailedSignal]);
     clearAll();
@@ -214,7 +238,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       finish(exited);
       return { text: "", usage: accountUsage(), isolation: { ...noProcessReport(), exited }, verdict: { state: "uncertain-transport", reason: "inventory-unreadable" } };
     }
-    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: o.allowedRootNew, engine: o.engine, structuredTool: o.engine === "claude" };
+    const observation = { parsed, homeNewFiles, cwdNewFiles, rootNewFiles, exited, outputSchema: o.outputSchema, history: o.history, overBytes, allowedHomeNew: o.allowedHomeNew, allowedRootNew: o.allowedRootNew, engine: o.engine, structuredTool: o.engine === "claude", ...(o.schemaInPrompt ? { schemaInPrompt: true } : {}) };
     const isolation = buildIsolationReport(observation);
     // A first byte that never arrived is a start-up delay, not a bad answer.
     let verdict: Verdict = timedOut && bytes === 0 && exited
@@ -228,11 +252,13 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       }
     } catch { verdict = { state: "refused", reason: "isolation", detail: "debug-inspection-failed", counted: true }; }
     finish(exited);
-    const usage = parsed.result?.usage ?? reportedUsage;
+    // Retain the streamed receipt if overflow discarded the parser buffer.
+    const next = parsed.result?.usage;
+    const usage = next?.inputTokens !== undefined || next?.outputTokens !== undefined ? next : reportedUsage;
     const reported = { inputTokens: usage?.inputTokens, outputTokens: usage?.outputTokens ?? Math.ceil(bytes / 3.5) };
-    // settled here, at the transport, before any caller frees its slot: the ledger takes only what the CLI reported, and an unreported
-    // side keeps its reservation, never counted unmetered (the bytes/3.5 figure above is the run's trace, never the charge)
-    reportMemoryUsage({ prompt_tokens: usage?.inputTokens, completion_tokens: usage?.outputTokens, replyBytes: bytes, engineRun: true });
+    // Settle before freeing the slot; estimates affect only the ledger, never the trace or over-limit flag.
+    reportMemoryUsage(ledgerUsage(usage));
+    o.hooks?.onUsage?.(reported);
     const text = verdict.state === "validated" ? JSON.stringify(verdict.structured) : "";
     return {
       text, verdict, isolation,
@@ -246,6 +272,10 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     const ok = await awaitCliTreeStopped(child).catch(() => false);
     if (ok) { accountUsage(); finish(true); throw error; }
     return uncertain("post-spawn-error-exit-not-confirmed");
+  } finally {
+    // Every return, including failed registration and unconfirmed stop, preserves the failed COMMIT.
+    // eslint-disable-next-line no-unsafe-finally
+    if (commitFailed) throw commitFailed;
   }
 }
 
@@ -261,15 +291,80 @@ export interface HeadlessEngineConfig {
   firstByteMs?: number; postResultGraceMs?: number; allowedHomeNew?: RegExp[];
 }
 
-/** The A.1 argv. Fuigo and Grok are identical (the Grok binary is the same source under the grok brand). */
-export function headlessArgv(temp: TempRoot, model: string, schema: JsonSchema): string[] {
+/** The A.1 argv. Fuigo and Grok are identical (the Grok binary is the same source under the grok brand). A Flux route (`schemaInPrompt`)
+ *  drops only the `--json-schema` pair; every other argument is the same. */
+export function headlessArgv(temp: TempRoot, model: string, schema: JsonSchema, schemaInPrompt = false): string[] {
   return [
     "--cwd", temp.work, "--no-leader", "-m", model, "--permission-mode", "dontAsk", "--max-turns", "1",
     "--tools", "mcp__murage__none", "--disallowed-tools", "search_tool,use_tool,Agent",
     "--disable-web-search", "--no-memory", "--no-auto-update", "--verbatim",
-    "--output-format", "streaming-messages-json", "--json-schema", JSON.stringify(schema),
+    "--output-format", "streaming-messages-json", ...(schemaInPrompt ? [] : ["--json-schema", JSON.stringify(schema)]),
     "--prompt-file", temp.promptFile, "--debug-file", temp.debugFile,
   ];
+}
+
+/** The reflection goes to Flux: the same test that picks the Flux Memory overlay. Today's Flux router answers 502/422 to the flat
+ *  response_format json_schema that `--json-schema` makes Fuigo send, on every model, so such a run carries the schema in its prompt. */
+export function reflectionRoutesToFlux(input: Pick<TextOnlyTurnInput, "providerRoute">, cfg: { engine: PipEngine; fluxKey?: string }): boolean {
+  return input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey);
+}
+
+/** The JSON-only instruction a Flux-routed prompt ends with, in place of `--json-schema`. The host validator stays the gate. */
+export function schemaPromptInstruction(schema: JsonSchema): string {
+  return `Reply with one JSON object and nothing else: no prose and no code fences. The object must validate against this JSON Schema:\n${JSON.stringify(schema)}`;
+}
+
+/** A miss the schema-in-prompt route may answer again: the reply was not JSON, or did not match the schema. */
+const schemaMiss = (v: Verdict): boolean => v.state === "refused" && v.reason === "bad-output" && (v.detail === "no-structured-output" || v.detail.startsWith("schema:"));
+
+const sumKnown = (values: (number | undefined)[]): number | undefined => values.every((v) => v !== undefined) ? values.reduce<number>((a, b) => a + (b as number), 0) : undefined;
+/** One settlement for every run of the request: a side any run left unreported keeps its reservation. */
+export function sumUsageReports(reports: MemoryUsageReport[]): MemoryUsageReport {
+  const bytes = reports.map((r) => r.replyBytes).filter((b): b is number => b !== undefined);
+  const knownFloor:MemoryUsageReport["knownFloor"]={};
+  for(const side of ["prompt_tokens","completion_tokens"] as const){const values=reports.map(r=>r[side]);if(sumKnown(values)===undefined&&values.some(v=>v!==undefined))knownFloor[side]=values.reduce<number>((sum,v)=>sum+(v??0),0);}
+  return {
+    ...(Object.keys(knownFloor).length?{knownFloor}:{}),
+    ...(reports.some(r=>r.extraUnseen!==undefined)?{extraUnseen:reports.reduce((sum,r)=>sum+(r.extraUnseen??0),0)}:{}),
+    ...(reports.some(r=>r.estimatedRuns)?{estimatedRuns:reports.reduce((sum,r)=>sum+(r.estimatedRuns??0),0)}:{}),
+    prompt_tokens: sumKnown(reports.map((r) => r.prompt_tokens)), completion_tokens: sumKnown(reports.map((r) => r.completion_tokens)),
+    ...(bytes.length ? { replyBytes: bytes.reduce((a, b) => a + b, 0) } : {}),
+    ...(reports.some((r) => r.engineRun) ? { engineRun: true } : {}), ...(reports.every((r) => r.unsent) ? { unsent: true } : {}),
+  };
+}
+
+/** A Flux-routed run answers in text, so a model can still miss the schema: one more run on a parse or schema miss, then that miss stands.
+ *  Each run reports its own usage as before; the reports are captured and settled once, as their sum. */
+async function withOneSchemaRetry(signal: AbortSignal, gate: LearningGate, run: () => Promise<TextOnlyTurnResult>): Promise<TextOnlyTurnResult> {
+  const reports: MemoryUsageReport[] = [];
+  // a run the gate released that reported no usage (stopped before any output): its tokens are unknown, so the sum keeps the reservation
+  let journaled = false;
+  let extraUnseen = 0;
+  // the lease takes a run's first report only (extract.ts settle): the same rule per run here
+  const once = async () => {
+    let seen = false, report:MemoryUsageReport|undefined;
+    const before = gate.released;
+    try { return await captureMemoryUsage((usage) => { if (!seen) { seen = true; report=usage; reports.push(usage); } }, run); }
+    finally { if (gate.released > before) { if (!seen) reports.push({engineRun:true}); if(report?.prompt_tokens===undefined||report?.completion_tokens===undefined)extraUnseen++; } }
+  };
+  try {
+    const first = await once();
+    if (!schemaMiss(first.verdict) || signal.aborted) return first;
+    journaled=journalMemoryRetry(reports[0]);
+    if(!journaled)return first;
+    if (signal.aborted) return first;
+    let second: TextOnlyTurnResult;
+    try { second = await once(); }
+    catch (error) { if (isReadMoved(error) && error.kind === "paid-cap") return first; throw error; }
+    const a = first.usage, b = second.usage;
+    const usage = a && b ? { inputTokens: sumKnown([a.inputTokens, b.inputTokens]), outputTokens: sumKnown([a.outputTokens, b.outputTokens]) } : (b ?? a);
+    const preserveFirst = second.isolation.exited && second.verdict.state !== "uncertain-transport"
+      && second.verdict.state !== "validated" && !schemaMiss(second.verdict);
+    return { ...(preserveFirst ? first : second), ...(usage ? { usage } : {}), ...(first.reportedOverLimit || second.reportedOverLimit ? { reportedOverLimit: true } : {}) };
+  } finally {
+    // with no report at all the call is left to the lease's own finish, exactly as a single run is
+    if (reports.length || journaled) reportMemoryUsage({...sumUsageReports(reports),...(journaled?{extraUnseen}:{})});
+  }
 }
 
 export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: HeadlessEngineConfig): Promise<TextOnlyTurnResult> {
@@ -282,8 +377,15 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
   const pre = preflightRoute(cfg.engine, { ...cfg.preflight, ...(parentGrokHome ? { grokHome: parentGrokHome } : {}) });
   if (!pre.ok) return settledWithout(pre.verdict);
   if (input.signal.aborted) throw cancelled();
-  // with a gate the prompt file starts empty: its words are written inside the gate's send, with the spawn
-  const prompt = `${input.system}\n\n${input.text}`, gate = input.transport?.gate;
+  if (!reflectionRoutesToFlux(input, cfg)) return headlessAttempt(input, cfg, parentGrokHome, false);
+  return withOneSchemaRetry(input.signal, input.transport.gate, () => headlessAttempt(input, cfg, parentGrokHome, true));
+}
+
+/** One run: its own temp root, binding and spawn. `schemaInPrompt` (a Flux route): no `--json-schema`, the schema at the prompt's end. */
+async function headlessAttempt(input: TextOnlyTurnInput, cfg: HeadlessEngineConfig, parentGrokHome: string | undefined, schemaInPrompt: boolean): Promise<TextOnlyTurnResult> {
+  // The root starts without a process; runHeadlessCli prepares its prompt before the gated spawn.
+  const base = `${input.system}\n\n${input.text}`, gate = input.transport?.gate;
+  const prompt = schemaInPrompt ? `${base}\n\n${schemaPromptInstruction(input.outputSchema)}` : base;
   const temp = createTempRoot(cfg.tmpBase, input.context.runId, input.context.attempt, gate ? "" : prompt);
   // Everything up to the run holds no process: a failure here removes the root. After this block runHeadlessCli owns it.
   let cleanup = () => {}, model: string, env: Record<string, string>;
@@ -299,18 +401,19 @@ export async function headlessTextOnlyTurn(input: TextOnlyTurnInput, cfg: Headle
     if (cfg.engine === "fuigo") pinReflectionFuigoConfig(temp.home);
     // Flux Memory: a reflection is background work, so a Flux-routed child carries off/off
     // (PROPOSAL-v2 5.4, same overlay the engine's turns use).
-    if (input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey)) {
+    if (reflectionRoutesToFlux(input, cfg)) {
       const overlay = fuigoConfigOverlay(fluxCallHeaders("pip-reflection", { overlay: true, usage: { botId: input.context.botId } }));
       if (cfg.engine === "fuigo") env.FUIGO_CONFIG = overlay; else env.GROK_CONFIG = overlay;
     }
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }
   return runHeadlessCli({
-    cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...headlessArgv(temp, model, input.outputSchema)], cwd: temp.work, env,
+    cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...headlessArgv(temp, model, input.outputSchema, schemaInPrompt)], cwd: temp.work, env,
+    requestBytes: Buffer.byteLength(prompt),
     temp, tmpBase: cfg.tmpBase, outputSchema: input.outputSchema, signal: input.signal, engine: cfg.engine,
     maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens, firstByteMs: cfg.firstByteMs,
     deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
     history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, recheck: input.transport?.recheck, ...(gate ? { gate, promptText: prompt } : {}), binaryIdentity: cfg.binaryIdentity,
-    cleanup, allowedHomeNew: cfg.allowedHomeNew, postResultGraceMs: cfg.postResultGraceMs,
+    cleanup, allowedHomeNew: cfg.allowedHomeNew, postResultGraceMs: cfg.postResultGraceMs, ...(schemaInPrompt ? { schemaInPrompt: true } : {}),
   });
 }
 
@@ -489,6 +592,8 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
     outputSchema: input.outputSchema, signal: input.signal, maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens,
     firstByteMs: cfg.firstByteMs, deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
     history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, recheck: input.transport?.recheck, ...(input.transport?.gate ? { gate: input.transport.gate } : {}), binaryIdentity: cfg.binaryIdentity,
+    requestBytes: Buffer.byteLength(input.system)+Buffer.byteLength(input.text),
+    fluxUsage: reflectionRoutesToFlux(input, { engine: "claude" }),
     stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
   }).then((result) => {
     // a run that did not validate may be a sign-in that moved: the Keychain answer is asked again next time

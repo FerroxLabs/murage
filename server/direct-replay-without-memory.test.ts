@@ -6,6 +6,7 @@
 // since forgotten, because no receipt was read at all. The direct replay now
 // follows the same content rule as a room: the withheld line for the owner's
 // turn, left out for a turn that is not the owner's.
+import { storeAnchorMessage } from "./memory/testing/anchor-message.ts";
 import { mkdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeEach, expect, it } from "vitest";
@@ -28,6 +29,7 @@ beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_
 
 it("a direct reply made with memory the owner then forgot is withheld from the replay while memory is off", () => {
   const text = "The vault code is 7788.";
+  storeAnchorMessage(database(), "dax-older", "m0", text, "user", 1);
   captureSource(database(), { id: "message:dax-older:m0", threadId: "dax-older", messageId: "m0", kind: "text", speaker: "owner", outcome: "recorded", text });
   const registry = new InternalCapabilities(); registry.begin("dax", "dax-direct", "g");
   const access = memoryAccess(registry, registry.resolve(`Bearer ${registry.mint({ botId: "dax", threadId: "dax-direct", generation: "g", depth: 0, kind: "memory", skillAuthoring: false })}`)!, () => roster);
