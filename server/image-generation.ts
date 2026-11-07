@@ -1,3 +1,4 @@
+import { checkFluxBudget, FluxBudgetReached } from "./voice/flux-budget.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import { z } from "zod";
@@ -264,10 +265,11 @@ export function assertCredentialOrigin(provider: ImageProvider, url: string): vo
 }
 /** `: <code>: <message>` from a 4xx JSON error body, or "" when the body is
  * not that shape. Bounded and secret-redacted; never the raw body. */
-async function providerErrorDetail(response: Response): Promise<string> {
+async function providerErrorDetail(response: Response, fluxKey?: string): Promise<string> {
   try {
     // Bounded as it is read: a chunked error body has no length to check first.
     const body = await boundedJson(response, 64 * 1024);
+    if (fluxKey) checkFluxBudget(response.status, body, "https://api.fluxrouter.ai/v1", fluxKey);
     const error = record(body) && record(body.error) ? body.error : record(body) ? body : null;
     if (!error) return "";
     const clean = (value: unknown, max: number) => typeof value === "string" && value.trim() ? redactSecretsInText(value.replace(/\s+/g, " ").trim()).slice(0, max) : "";
@@ -276,7 +278,7 @@ async function providerErrorDetail(response: Response): Promise<string> {
     const code = clean(error.code, 80), message = clean(error.message, 300) || clean(record(body) ? body.error : undefined, 300);
     if (!code && !message) return "";
     return `: ${[code, message].filter(Boolean).join(": ")}`;
-  } catch { return ""; }
+  } catch (error) { if (error instanceof FluxBudgetReached) throw error; if (fluxKey) checkFluxBudget(response.status, null, "https://api.fluxrouter.ai/v1", fluxKey); return ""; }
 }
 
 /** Plain words for a request that never got a reply. Reads the wall the
@@ -758,7 +760,7 @@ export class ImageGenerationService {
         const response = await this.fetcher(url, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${connection.apiKey}`, ...fluxCallHeaders("image-generation") },
           body: JSON.stringify({ model: modelId, probe: true }), signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout, redirect: "error" });
         active();
-        if (!response.ok) {const detail=await providerErrorDetail(response);active();return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${detail}.` });}
+        if (!response.ok) {const detail=await providerErrorDetail(response, connection.provider === "flux" ? connection.apiKey : undefined);active();return done({ ok: false, free: true, errorCode: "provider-error", errorMessage: `Flux answered HTTP ${response.status}${detail}.` });}
         const body = await boundedJson(response, 64 * 1024);active();
         if (!record(body) || body.contract !== 1 || body.kind !== "image-probe" || !["ok", "down"].includes(String(body.state))) return done({ ok: false, free: true, errorCode: "invalid-response", errorMessage: "Flux's check answer was not understood." });
         const detail = typeof body.detail === "string" ? redactSecretsInText(body.detail.replace(/\s+/g, " ").trim()).slice(0, 300) : "";
@@ -987,8 +989,20 @@ export class ImageGenerationService {
         assertCredentialOrigin(connection.provider, url);
         return pollImageJob({ id, firstDelaySeconds, signal, sleep: this.options.sleep ?? defaultSleep, now: this.options.now ?? Date.now,
           // A changed connection, a lost authorization or a cancel stops at once with its own reason.
-          fatal: error => error instanceof ImageGenerationError,
-          get: async pollSignal => { active(); const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" }); return { status: response.status, body: response.ok ? await boundedJson(response, imageResponseCap(count)) : (void response.body?.cancel(), null) }; } });
+          fatal: error => error instanceof ImageGenerationError || error instanceof FluxBudgetReached,
+          get: async pollSignal => {
+            active();
+            const response = await this.fetcher(url, { headers: auth, signal: pollSignal, redirect: "error" });
+            // Classify bounded error bodies before the delivery helper converts
+            // HTTP failures or failed-job envelopes into generic image errors.
+            if (!response.ok) {
+              await providerErrorDetail(response, connection.apiKey);
+              return { status: response.status, body: null };
+            }
+            const body = await boundedJson(response, imageResponseCap(count));
+            checkFluxBudget(response.status, body, "https://api.fluxrouter.ai/v1", connection.apiKey);
+            return { status: response.status, body };
+          } });
       };
       let result: unknown;
       if (hooks.resumeJob && connection.provider === "flux" && !fluxJobs) fail("provider-timeout", "This image was started by an earlier version and its result can no longer be fetched. The render may have finished on the provider. Check before trying again; no automatic retry was attempted.", "uncertain");
@@ -1039,13 +1053,13 @@ export class ImageGenerationService {
             // A 4xx body from the provider says why (Flux: error.code such as
             // moderation_blocked or invalid_reference_image, plus error.message).
             // Throwing it away left the person with only the status number.
-            const detail = outcome === "failed" ? await providerErrorDetail(response) : (void response.body?.cancel(), "");
+            const detail = outcome === "failed" ? await providerErrorDetail(response, connection.provider === "flux" ? connection.apiKey : undefined) : (void response.body?.cancel(), "");
             // 524: the provider's edge stopped waiting while the render ran on.
             if (response.status === 524) throw withFacts(new ImageGenerationError("provider-timeout", "The image provider's edge stopped waiting for the render (HTTP 524). The render may still have finished on its side. Check before trying again; no automatic retry was attempted.", outcome), { httpStatus: 524 });
             throw withFacts(new ImageGenerationError("provider-error", `The selected image provider rejected the request (HTTP ${response.status})${detail}. No fallback or automatic retry was attempted.`, outcome), { httpStatus: response.status });
           }
           const type = response.headers.get("content-type") ?? "";
-          if (type.includes("text/event-stream") && response.body) result = await readImageEventStream(response.body, { onActivity: idle?.touch, maxEventBytes: imageResponseCap(count), maxTotalBytes: IMAGE_RESPONSE_MAX_BYTES, expected: count });
+          if (type.includes("text/event-stream") && response.body) result = await readImageEventStream(response.body, { onActivity: idle?.touch, onFrame: connection.provider === "flux" ? frame => checkFluxBudget(0, frame, "https://api.fluxrouter.ai/v1", connection.apiKey) : undefined, maxEventBytes: imageResponseCap(count), maxTotalBytes: IMAGE_RESPONSE_MAX_BYTES, expected: count });
           else {
             result = await boundedJson(response, imageResponseCap(count));
             // Only Flux runs jobs (contract section 4); any other 202 is read as an answer.
@@ -1063,7 +1077,7 @@ export class ImageGenerationService {
           // Bytes had left, so the provider may hold part of it: never retried.
           if (uploadStalled) fail("upload-stalled", `The upload to ${imageProviderName(connection.provider)} stalled: no image data moved for ${Math.round(UPLOAD_STALL_MS / 1000)} seconds, so Murage stopped. The image may not have reached ${imageProviderName(connection.provider)}. Nothing was retried automatically.`, "uncertain");
           if (answer?.fired()) fail("provider-timeout", `${imageProviderName(connection.provider)} did not send the image within ${Math.round(FLUX_ANSWER_DEADLINE_MS / 1000)} seconds, so Murage stopped waiting. The render may still have finished on its side. Check before trying again; no automatic retry was attempted.`, "uncertain");
-          if (retried && !(error instanceof ImageGenerationError)) {
+          if (retried && !(error instanceof ImageGenerationError) && !(error instanceof FluxBudgetReached)) {
             const transport = describeTransportFailure(error);
             throw withFacts(new ImageGenerationError(transport.code, `${transport.message} The first connection could not be opened, so Murage tried once more on a new connection; no further retry was attempted.`, outcome), transport);
           }
@@ -1121,6 +1135,7 @@ export class ImageGenerationService {
       const metadata: GeneratedImageMetadata = { ...base, delivered: images.map(item => item.delivered) };
       return { artifact: artifacts[0]!, artifacts, metadata: { ...metadata, summary: imageResultSummary(metadata) } };
     } catch (error) {
+      if (error instanceof FluxBudgetReached) throw error;
       if (error instanceof ImageDeliveryError) { outcome = error.outcome; throw new ImageGenerationError(error.code, error.message, error.outcome); }
       if (error instanceof ImageGenerationError) {
         // Only deterministic local validation, before any external read or

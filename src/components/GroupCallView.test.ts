@@ -260,3 +260,16 @@ describe("a spoken yes in a room call goes through fresh authentication (SEC-006
     expect(spoken).toMatch(/pending\.submitted = false/);
   });
 });
+
+it("a budget stop prevents room fallback and drains queued speech before the closing line", () => {
+  const start = source.indexOf("const stopForBudget = useCallback");
+  const stop = source.slice(start, source.indexOf("const listen = useCallback", start));
+  expect(stop).toContain("budgetStopped.current = true;");
+  expect(stop).toContain("queueGeneration.current += 1;");
+  expect(stop).toContain("hostAbort.current?.abort()");
+  expect(stop).toContain("speaker.stop()");
+  expect(stop).toContain("budgetClosing: true");
+  expect(stop).toContain('endCall(group.id, "budget")');
+  expect(source).toContain('event.reason === "budget"');
+  expect(source).toContain("if (budgetStopped.current || !live()) return;");
+});

@@ -1,0 +1,37 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ server/chats-api.test.ts (10 tests | 1 failed | 9 skipped) 3923ms
+   × RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation 502ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/chats-api.test.ts > RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tools and deleted rows, and carries generation
+AssertionError: expected [ Array(4) ] to deeply equal [ 'changed', 'forgotten', 'kept' ]
+
+- Expected
++ Received
+
+  [
+    "changed",
+    "forgotten",
+    "kept",
++   "offbranch",
+  ]
+
+ ❯ server/chats-api.test.ts:292:64
+    290|       expect(owner.status).toBe(200);
+    291|       expect(owner.body.gen).toMatchObject({epoch:expect.any(String),r…
+    292|       expect(owner.body.hits.map((h:any)=>h.messageId).sort()).toEqual…
+       |                                                                ^
+    293|     }
+    294|     const door=await api('GET','/api/search?q=rule-search');
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 9 skipped (10)
+   Start at  21:28:14
+   Duration  9.76s (transform 4.59s, setup 5.52s, import 206ms, tests 3.92s, environment 0ms)
+

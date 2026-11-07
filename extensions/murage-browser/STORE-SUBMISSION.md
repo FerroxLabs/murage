@@ -190,6 +190,8 @@ Never upload from a build session. Owner steps for creating the publisher and th
 
 ## 11. Remaining gates before the final submission
 
+- 1.0.1 update (EXT-RESTART r6): the `resumed` event also carries `resumedAt`, the generation the owner's Resume made. Backward compatible with the app; until Chrome installs 1.0.1 the app asks the owner to update before a paused task resumes. Submit as a version update with no listing or permission change.
+
 - Final claims pass against the built package after every feature lane: C12, C19, C30, C37 and any LANE row either turn PROVED or the sentence is removed.
 - Opus copy and claims review of this file and `docs/murage-for-chrome-privacy.md`.
 - Flux retention wording confirmed by the owner (D7 row in section 6).

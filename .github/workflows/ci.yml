@@ -148,7 +148,7 @@ jobs:
       # has its own tests in electron/browser-extension-windows.node-test.mjs.
       - name: Murage for Chrome script tests
         if: matrix.os != 'windows-latest'
-        run: pnpm test:browser-extension-scripts
+        run: npm run test:browser-extension-scripts
       # installer/test/*.test.mjs (the installer's bind, pairing, systemd and
       # sidecar rules) ran in no job before; a failure here fails the run the
       # release-ci-gate reads. Ubuntu only: several files are about Linux hosts.
@@ -176,7 +176,7 @@ jobs:
     if: ${{ !inputs.human_files }}
     name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/{1}', matrix.vitest_shard, matrix.os == 'windows-latest' && 12 || 10) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
-    needs: quality
+    needs: []
     strategy:
       fail-fast: false
       matrix:
@@ -266,6 +266,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Git Bash is required' }
           $fixturePowerShell | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $fixtureBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Stage the real Windows backup helper and pinned age.exe
+        # server/installation-windows-backup-roundtrip.test.ts takes a real encrypted backup on Windows through
+        # the product resolver, the native helper and the hash-pinned age.exe. Only the Authenticode check is
+        # replaced (a runner has no signed install). MURAGE_TEST_REQUIRE_WIN_BACKUP_RT makes the test fail, not skip,
+        # if this step's output is missing.
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          node scripts/prepare-windows-backup-tools.mjs
+          node scripts/build-backup-helper.mjs
+          tools="$(cygpath -w "$PWD/dist-native/backup-tools/win32-x64")"
+          for f in murage-backup-age.exe age.exe age-keygen.exe LICENSE; do test -s "dist-native/backup-tools/win32-x64/$f"; done
+          { echo "MURAGE_TEST_WIN_BACKUP_TOOLS=$tools"; echo "MURAGE_TEST_REQUIRE_WIN_BACKUP_RT=1"; echo "MURAGE_TEST_RT_MUTANT=alter"; } >> "$GITHUB_ENV"
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         shell: bash

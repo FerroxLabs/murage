@@ -6,6 +6,7 @@
 // back, or a lookup companion dated a millisecond before its frame, must not
 // decide which receipt is the session's newest. These use the real linking
 // functions and the real replay.
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -32,6 +33,7 @@ function access() {
 }
 function secretRecord() {
   const text = "The alarm code is 4812.";
+  storeAnchorMessage(database(), "older", "m1", text, "user", 1);
   captureSource(database(), { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", access());
   database().prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);

@@ -247,7 +247,7 @@ describe("PIP P2: reflection between conversations", () => {
   it("maps refusals to plain lines", () => {
     const table: Record<string, string> = {
       cap: "Stopped: daily limit reached", off: "Stopped: reflection was switched off", unsupported: "Held: this engine cannot answer using only text",
-      transient: "Paused: the engine did not answer in time", unstable: "Stopped: three attempts did not finish", "bad-output": "Stopped: the answer was not usable",
+      transient: "Paused: the engine did not answer in time", unstable: "Stopped: this run did not finish", "bad-output": "Stopped: the answer was not usable",
       isolation: "Stopped: the engine did more than return text",
     };
     for (const [reason, line] of Object.entries(table)) { expect(refusalLine("refused", reason)).toBe(line); expect(refusalLine(`refused:${reason}`, "")).toBe(line); }
@@ -304,4 +304,9 @@ it("28: scopes confirmation to proposed commitments and traits", () => {
 it("24: offers an owner exclusion control for each conversation", () => {
   const html = view({ on: true, reflectThreads: [{ id: "thread", title: "Main conversation" }], onReflectExclude: vi.fn() });
   expect(html).toContain("Choose which conversations this bot can reflect on."); expect(html).toContain('type="checkbox"');
+});
+
+it("30: older rows and every unstable cause keep accurate refusal copy",()=>{
+  for(const reason of ["spend-ceiling","budget-exhausted"])expect(refusalLine("refused:cap",reason)).toBe("Paused: a learning limit stopped this run");
+  for(const reason of ["paid-calls","read-moved","run-bound","schema"])expect(refusalLine("refused:unstable",reason)).toBe("Stopped: this run did not finish");
 });

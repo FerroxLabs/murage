@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { scopedTx } from "./tx-scope.ts";
 import { findDelegationReceipt, handoffPhaseOf, handoffRow, recordDelegationReceipt } from "./delegations.ts";
 import { dispatchHandoff } from "./handoff-dispatch.ts";
@@ -204,21 +205,21 @@ export function enqueueSharedWork(store: Store, input: { routineAuthority?: Rout
   if(!task?.sharedWork)return {ok:false as const,code:"not_reachable",retry:"never" as const};
   const db=database();
   return scopedTx(() => {
-  db.exec("SAVEPOINT shared_enqueue");
+  beginWrite(db, "shared_enqueue");
   try {
     const old=roomRequestByKey(db,input.admissionKey);
-    if(old){db.exec("RELEASE shared_enqueue");return {ok:true as const,request:old,created:false};}
+    if(old){endWrite(db, "shared_enqueue");return {ok:true as const,request:old,created:false};}
     const count=db.prepare("SELECT count(*) AS n FROM room_requests WHERE to_bot_id=? AND target_thread_id=? AND state='queued'").get(target.id,task.threadId)!;
-    if(Number(count.n)>=20){db.exec("RELEASE shared_enqueue");return {ok:false as const,code:"shared_queue_cap",retry:"never" as const,line:`${target.name} has 20 requests waiting from ${pair.section}. Try again later.`};}
+    if(Number(count.n)>=20){endWrite(db, "shared_enqueue");return {ok:false as const,code:"shared_queue_cap",retry:"never" as const,line:`${target.name} has 20 requests waiting from ${pair.section}. Try again later.`};}
     const parent=input.parentRequestId?roomRequest(db,input.parentRequestId):null;
     const roomParent=parent && store.groupByThread(input.sourceThreadId) && !isSharedWorkRow(parent);
     const inserted=insertRoomRequest(db,{id,groupId:pair.id,targetThreadId:task.threadId,verb:input.verb??"ask",fromKind:"bot",fromBotId:from.id,toBotId:target.id,parentId:parent?.id,payloadText:input.message,admissionKey:input.admissionKey,now:input.now,deadlineAt:input.now+86400000,returnThreadId:roomParent?input.sourceThreadId:undefined,returnBotId:roomParent?from.id:undefined,lineage:{rootThreadId:input.sourceThreadId,origin:"desktop",audienceFingerprint:"owner",notOwnerAudience:!input.ownerAudience,unattended:input.unattended===true||parent?.unattended===true,executionAudience:tag}});
     // persisted before the request commits: a crash in between leaves a ceiling with no request, never the reverse
     // provenance (routine or explicitly none) commits with the request itself, so a restart can always tell
     if(inserted.created){recordProvenance(inserted.request.id,input.routineAuthority);if(input.eventId)recordSharedRequestEvent(inserted.request.id,input.eventId);if(input.routineAuthority){ceilings().set(inserted.request.id,validCeiling(input.routineAuthority));saveCeilings();}}
-    db.exec("RELEASE shared_enqueue");return {ok:true as const,...inserted};
+    endWrite(db, "shared_enqueue");return {ok:true as const,...inserted};
   }catch(error){
-    db.exec("ROLLBACK TO shared_enqueue; RELEASE shared_enqueue");
+    undoWrite(db, "shared_enqueue");
     // F3 fence: the request that asked was cancelled (inside this insert's transaction): a refusal, never a new request
     if(error instanceof RequestEndedError)return {ok:false as const,code:"request_ended" as const,retry:"never" as const,line:"The request that asked for this has ended, so nothing more can be handed on from it."};
     throw error;

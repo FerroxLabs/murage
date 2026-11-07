@@ -31,7 +31,7 @@ describe("Update Claude for me", () => {
 describe("the O12 pin note (audit round 1, Kimi 1)", () => {
   it("is its own row ahead of the Tool calls gate, showing the sentence", () => {
     const row = chatView.indexOf("const pinnedProfile = hermesPinNoteProfile(m.tool?.name);");
-    const gate = chatView.indexOf("if (!showToolCalls && !m.comm) return null;");
+    const gate = chatView.indexOf("if (!showToolCalls && !m.comm && !hasDoneWhenLine(m.tool?.doneWhen)) return null;");
     expect(row).toBeGreaterThan(0);
     expect(row).toBeLessThan(gate);
     expect(chatView).toContain("{hermesPinNoteText(pinnedProfile)}");

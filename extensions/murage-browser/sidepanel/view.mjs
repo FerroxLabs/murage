@@ -29,6 +29,8 @@ export function botColor(name, given) {
   const ink = ratio(bg, '#0a0a0a') >= ratio(bg, '#ffffff') ? '#0a0a0a' : '#ffffff';
   return { bg, ink };
 }
+// Only a base64 WebP, PNG or JPEG data URL (no SVG, no remote URL), within 16 KB; anything else draws the letter.
+export const avatarUrl = v => typeof v === 'string' && v.length <= 16384 && /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(v) ? v : undefined;
 const MARK_PATHS = ['M16.005 15.108a5.041 6.52 28.25 00-8.008-6.217 5.041 6.52 28.25 008.008 6.217A11.884 7.288-60.76 014.029 7.001', 'M17 21h.01', 'M7 3h.01', 'M7.997 8.891a11.885 7.288-60.756 0111.977 8.107'];
 const MODE_RANK = { step: 0, task: 1, full: 2 };
 const MODE = { step: ['spModeStep', 'spHintStep'], task: ['spModeTask', 'spHintTask'], full: ['spModeFull', 'spHintFull'] };
@@ -36,7 +38,13 @@ const MODE = { step: ['spModeStep', 'spHintStep'], task: ['spModeTask', 'spHintT
 const PHASE = { starting: 'spPhaseStarting', connecting: 'spPhaseConnecting', reading: 'spPhaseReading', waiting: 'spPhaseWaiting' };
 const SITE = { always: 'spSiteAlways', never: 'spSiteNever', asks: 'spSiteAsks' };
 
+// Per mounted panel: failures apply only to the exact bytes for that binding.
+const avatarViews = new WeakMap();
 export function renderPanel(doc, root, view, io) {
+  const state = avatarViews.get(root) ?? { failed: new Map() };
+  const render = Symbol();
+  Object.assign(state, { doc, view, io, render }); avatarViews.set(root, state);
+  for (const id of state.failed.keys()) if (!view.bindings.some(b => b.bindingId === id)) state.failed.delete(id);
   const t = (key, subs) => { if (!KEYS.includes(key)) throw Error(`unknown panel key ${key}`); return io.t(key, subs); };
   const can = action => !view.supports || view.supports.includes(action);
   const el = (tag, role, text, attrs = {}) => {
@@ -74,7 +82,21 @@ export function renderPanel(doc, root, view, io) {
   } else {
     const main = el('main');
     const bot = el('div', 'bot'); bot.className = 'card bot';
-    const bc = botColor(b.botName, b.botColor); const av = user('span', 'avatar', [...b.botName][0] ?? '', { 'aria-hidden': 'true', style: `--bot:${bc.bg};--bot-ink:${bc.ink};` }); av.className = 'av';
+    const bc = botColor(b.botName, b.botColor); const url = avatarUrl(b.botAvatar);
+    const pic = state.failed.get(b.bindingId) === url ? undefined : url;
+    // The bot's own picture when the app sends one (CHROME-PANEL-AVATAR); the coloured letter otherwise. Decorative: the name follows.
+    const av = pic ? el('span', 'avatar', undefined, { 'aria-hidden': 'true', 'data-key': pic, style: `--bot:${bc.bg};--bot-ink:${bc.ink};` }) : user('span', 'avatar', [...b.botName][0] ?? '', { 'aria-hidden': 'true', style: `--bot:${bc.bg};--bot-ink:${bc.ink};` });
+    if (pic) {
+      const img = el('img', 'avatar-image', undefined, { src: pic, alt: '', width: '36', height: '36', draggable: 'false' });
+      img.onerror = () => {
+        const current = state.view.connected ? state.view.bindings.find(x => x.bindingId === state.view.selected) ?? state.view.bindings[0] : undefined;
+        if (state.render !== render || current?.bindingId !== b.bindingId || avatarUrl(current.botAvatar) !== pic) return;
+        state.failed.set(b.bindingId, pic);
+        renderPanel(state.doc, root, state.view, state.io);
+      };
+      av.append(img);
+    }
+    av.className = 'av';
     const names = el('div'); names.append(user('div', 'botname', b.botName));
     if (b.conversation !== undefined) names.append(el('div', 'botline', t('spBotLine', [b.botName, b.conversation])));
     bot.append(av, names); main.append(bot);

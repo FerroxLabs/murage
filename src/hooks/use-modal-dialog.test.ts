@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { modalKeyAction, tabReachable } from "./use-modal-dialog";
 
@@ -50,5 +52,33 @@ describe("which controls Tab can reach (upstream 9ee83332e)", () => {
   it("skips disabled and aria-hidden controls", () => {
     expect(tabReachable(el({ disabled: "" }))).toBe(false);
     expect(tabReachable(el({ "aria-hidden": "true" }))).toBe(false);
+  });
+});
+
+describe("dialog focus follows what is drawn (U19 follow-ups)", () => {
+  type Node = { hasAttribute: (n: string) => boolean; getAttribute: (n: string) => string | null; closest: () => null; parentElement: Node | null; style: { display: string; visibility: string } };
+  const node = (style: Partial<Node["style"]> = {}, parentElement: Node | null = null): Node => ({
+    hasAttribute: () => false, getAttribute: () => null, closest: () => null, parentElement,
+    style: { display: "block", visibility: "visible", ...style },
+  });
+  const styleOf = (n: unknown) => (n as { style?: Node["style"] }).style ?? null;
+  it("skips a control hidden by a style on it or on a parent, which the browser skips too", () => {
+    expect(tabReachable(node({ display: "none" }), styleOf)).toBe(false);
+    expect(tabReachable(node({}, node({ display: "none" }, node())), styleOf)).toBe(false);
+    expect(tabReachable(node({ visibility: "hidden" }), styleOf)).toBe(false);
+    expect(tabReachable(node({}, node({}, node())), styleOf)).toBe(true);
+  });
+  it("stops at the dialog: a parent it cannot style does not hide the control", () => {
+    const outside = { hasAttribute: () => false, getAttribute: () => null, closest: () => null, parentElement: null };
+    expect(tabReachable(node({}, outside as unknown as Node), styleOf)).toBe(true);
+  });
+  it("with one control, Shift+Tab and Tab both stay on it", () => {
+    expect(modalKeyAction("Tab", true, "only")).toBe("wrap-to-first");
+    expect(modalKeyAction("Tab", false, "only")).toBe("wrap-to-first");
+  });
+  it("the trap reads computed styles and names the one-control case", () => {
+    const source = readFileSync(fileURLToPath(new URL("./use-modal-dialog.ts", import.meta.url)), "utf8");
+    expect(source).toContain("filter((el) => tabReachable(el, styleOf))");
+    expect(source).toContain('items.length === 1 && current === items[0] ? "only"');
   });
 });

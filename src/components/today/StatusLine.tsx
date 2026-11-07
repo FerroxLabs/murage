@@ -4,6 +4,7 @@
 // Today's status tags (lane L2A; mockup Desktop.dc.html Today header). A tag
 // with something to open is a button; the rest are plain text. The dot's
 // colour repeats what the words already say, so it is hidden from readers.
+// On a phone (UX L7) the tags stay on one line and scroll sideways.
 import { cn } from "@/lib/cn";
 import { TONE_DOT } from "@/lib/today-model";
 import { t } from "@/lib/i18n";
@@ -12,7 +13,7 @@ import type { TodayTag } from "@/components/shell/shell-contract";
 export function StatusLine({ tags }: { tags: readonly TodayTag[] }) {
   if (tags.length === 0) return null;
   return (
-    <ul aria-label={t("ux.l2a.today.statusLabel")} className="mt-2 flex flex-wrap gap-1.5" data-today-status>
+    <ul aria-label={t("ux.l2a.today.statusLabel")} className="mt-2 flex flex-wrap gap-1.5 max-md:flex-nowrap max-md:overflow-x-auto max-md:py-0.5 max-md:[&>li]:shrink-0" data-today-status>
       {tags.map((tag) => {
         const inner = (
           <>
