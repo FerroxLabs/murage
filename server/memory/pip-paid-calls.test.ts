@@ -10,7 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
-import { captureMessage } from "./capture.ts";
+import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { httpTextOnlyTurn } from "../drivers/http-text-only.ts";
@@ -34,8 +34,8 @@ const recordsWithWords = () => Number(database().prepare("SELECT count(*) AS n F
 async function rig(inFlight?: (other: import("node:sqlite").DatabaseSync) => void, opts: { probe?: boolean; fingerprint?: () => string; content?: unknown } = {}) {
   const db = database();
   for (let i = 1; i <= 3; i++) {
-    captureMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
-    captureMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
+    captureStoredMessage(db, "private", { id: `o${i}`, at: T0 + i * MIN, role: "user", kind: "text", text: `Secret ${i}.`, origin: "desktop" } as never);
+    captureStoredMessage(db, "private", { id: `b${i}`, at: T0 + i * MIN + 1000, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never);
   }
   db.exec("UPDATE memory_jobs SET status='complete',cursor=100");
   const { DatabaseSync } = await import("node:sqlite");

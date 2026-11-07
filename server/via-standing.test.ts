@@ -26,12 +26,24 @@ const bodyOf = (header: string): string => {
 };
 
 describe("wiring in server/index.ts", () => {
-  it("resendFailover cancels a via source before any acceptBotSend", () => {
+  it("failOverThread starts nothing for a via source: its check comes before the row, the move and the line", () => {
+    const body = bodyOf("function failOverThread(");
+    const guard = body.indexOf("store.messageById(turn.threadId, turn.sourceMessageId)?.via");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(body.indexOf("limitFailovers.startFrom("));
+    expect(guard).toBeLessThan(body.indexOf("failoverLine("));
+    expect(body.indexOf("limitFailovers.startFrom(")).toBeGreaterThan(-1);
+    expect(body.indexOf("failoverLine(")).toBeGreaterThan(-1);
+  });
+  it("resendFailover drops a via source and returns before any acceptBotSend", () => {
     const body = bodyOf("function resendFailover(");
     const guard = body.indexOf("source.via");
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(body.indexOf("acceptBotSend("));
-    expect(body.slice(guard, body.indexOf("acceptBotSend("))).toContain("limitFailovers.cancel(row.rowId)");
+    const branch = body.slice(guard, body.indexOf("acceptBotSend("));
+    expect(branch).toContain("dropFailover(row, failoverRefusalSteps(row))");
+    expect(branch).toContain("return;");
+    expect(branch).not.toContain("limitFailovers.cancel(");
     expect(body).toContain("limit failover: not resent, via line ${row.rowId}");
   });
   it("a via turn is never ownerDirect and never an engine command", () => {

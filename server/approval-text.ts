@@ -10,7 +10,7 @@
 //   2. Codex and ACP cards headline the real target (the command, the files)
 //      and keep the model's own `reason` as a labelled, secondary line.
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
-import { redactSecretsForCard } from "./redact.ts";
+import { redactSecretsForCard, redactSecretsInText } from "./redact.ts";
 
 /** Cap on the tool input text a card carries. A cut is always marked. */
 export const TOOL_INPUT_MAX_BYTES = 16 * 1024;
@@ -173,6 +173,25 @@ export function cardDetail(event: { summary: string; toolInput?: string; reason?
   if (event.toolInput) return event.toolInput;
   if (event.reason && event.reason !== event.summary) return `${event.summary}\n\n${MODEL_REASON_LABEL}${event.reason}`;
   return event.summary;
+}
+
+/** APPROVALS-SIMPLE-1018 section 1: how many characters of what a bot wants fit a row. */
+export const CARD_WANTS_MAX = 140;
+/** What the bot says it wants, in its own words, for the row line "{bot} wants to {wants}": a Claude tool call's
+ *  `description` (Bash carries a short active-voice one), else the model's own `reason` (Codex). One line, at most
+ *  140 characters, secrets masked; undefined when the bot said nothing. Display only: the hard categories are read
+ *  from the command, never from these words, and the approval digest does not cover them. */
+export function cardWants(event: { toolCall?: { input?: unknown }; reason?: string }): string | undefined {
+  const input = event.toolCall?.input;
+  const description = input && typeof input === "object" && !Array.isArray(input) ? (input as { description?: unknown }).description : undefined;
+  for (const said of [description, event.reason]) {
+    if (typeof said !== "string") continue;
+    const line = said.split(/\r?\n/).map((part) => part.trim()).find(Boolean)?.replace(/\s+/g, " ").replace(/[.\s]+$/, "") ?? "";
+    if (!line) continue;
+    const masked = redactSecretsInText(line);
+    return masked.length <= CARD_WANTS_MAX ? masked : `${masked.slice(0, CARD_WANTS_MAX - 1).trimEnd()}…`;
+  }
+  return undefined;
 }
 
 /** What audit rows, risk rating and the tray read from a card: the engine's

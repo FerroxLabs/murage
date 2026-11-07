@@ -1,3 +1,4 @@
+import {createReturnAuthority,revokeReturn,joinExplicitQuit} from "./backup-offline-return.mjs";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import test from "node:test";
@@ -6,7 +7,7 @@ const source=readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
 const handler=source.slice(source.indexOf('app.on("before-quit", (e) => {'));
 function fixture(cleanup){
   let trigger;const events=[],queue=[];
-  const scope={app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")}};
+  const scope={noteShutdownCause:()=>{},shutdownCause:"owner",startupFailureExit:false,recordStartupRefusal:()=>{},startupDecisionPending:false,updateRecoveryDescriptor:null,updateRequester:false,returnAuthority:createReturnAuthority(),revokeReturn,joinExplicitQuit:options=>joinExplicitQuit({...options,scheduleExit:callback=>queue.push(callback),setTimer:()=>{}}),finishUpdateWait:()=>{},takeBackupProgress:()=>null,cleanupFailed:()=>events.push("incomplete"),app:{on:(_event,callback)=>{trigger=callback;},quit:()=>events.push("quit")},backgroundLifecycle:null,cuaCleanedUp:false,desktopCleanup:null,cleanupDesktopForExit:cleanup,setImmediate:callback=>queue.push(callback),slog:()=>{},desktopCleanupStage:"owned harness",dialog:{showErrorBox:()=>events.push("incomplete")}};
   new Function(...Object.keys(scope),handler)(...Object.values(scope));
   return {events,queue,trigger:()=>trigger({preventDefault:()=>events.push("prevented")})};
 }

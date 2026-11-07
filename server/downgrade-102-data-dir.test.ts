@@ -71,7 +71,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // the one-time chat model cleanup's marker (1.0.4 SL-IK)
     writeFileSync(join(DATA_DIR, ".threads-follow-model-v1"), "");
     // the owner's cross-device prefs (1.0.17 owner-prefs.ts: the Approve all caution's "Don't show this again"; 1.0.2 has no Approve all)
-    writeFileSync(join(DATA_DIR, "owner-prefs.json"), `${JSON.stringify({ approveAllCautionDismissed: true }, null, 2)}\n`, { mode: 0o600 });
+    // (1.0.18 TODAY adds Today's Calm | Detailed choice to the same file; the downgrade takes it away with the file)
+    writeFileSync(join(DATA_DIR, "owner-prefs.json"), `${JSON.stringify({ approveAllCautionDismissed: true, todayView: "detailed" }, null, 2)}\n`, { mode: 0o600 });
     // the cloud computer prompt record and its set-aside unreadable copy (1.0.6 cloud-computer-turns.ts; 1.0.2 has no such record)
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json"), JSON.stringify({ version: 1, entries: [] }));
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
@@ -89,14 +90,18 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // the last definitive bot email capability answer (1.0.11 email/caps-file.ts; re-read from Flux, 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, "email-capabilities.json"), "{}", { mode: 0o600 });
     writeFileSync(join(DATA_DIR, "email-capabilities.json.tmp"), "{", { mode: 0o600 });
+    // the HighLevel connection record (1.0.18 highlevel/private-token.ts: ids, location name, token fingerprint, never the token)
+    mkdirSync(join(DATA_DIR, "highlevel"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(DATA_DIR, "highlevel", "connection.json"), JSON.stringify({ locationId: "loc-1" }), { mode: 0o600 });
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name))).toEqual([]);
     expect(readFileSync(join(DATA_DIR, "about-me.md"), "utf8")).toBe("owner words");
-    // a later upgrade reads the removed prefs as the defaults: the caution shows again, nothing throws
-    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false });
+    // a later upgrade reads the removed prefs as the defaults: the caution shows again, Today opens Calm, nothing throws
+    expect(existsSync(join(DATA_DIR, "owner-prefs.json"))).toBe(false);
+    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm" });
     expect(existsSync(join(DATA_DIR, "messages.db"))).toBe(true);
     // a second run (already v10) finds nothing more to remove and still succeeds
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });

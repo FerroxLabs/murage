@@ -7,7 +7,7 @@ import { afterEach, expect, it } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { inspectInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
-import { writeInstallationDamagedExport } from "./installation-damaged-export.ts";
+import { DAMAGED_EXPORT_DATABASE_WITHHELD, writeInstallationDamagedExport } from "./installation-damaged-export.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
@@ -44,10 +44,13 @@ async function readZip(path: string) {
   return files;
 }
 
-it("exports damaged JSON and database bytes unchanged as private non-restorable evidence", async () => {
+// SMOOTH-FTS-MERGE R6 section 3: the database bytes are never exported raw. This fixture's messages.db does not open, so its
+// three names are withheld with the approved sentence (a settled export is covered by settle-copy-damaged-export.test.ts).
+it("exports damaged JSON bytes unchanged as private non-restorable evidence and withholds a database that will not open", async () => {
   const f = fixture();
   for (const home of ["vm-home", "vm-homes", "connection-profiles", "companion", "native", "flux-hermes-home"]) f.put(`${home}/private`, "fake-excluded-home-secret");
-  const originals = new Map(["config.json", "messages.db", "messages.db-wal", "messages.db-shm", "section-contexts.json", "workspaces/bot/notes.txt", "artifact-files/report.html"].map(path => [path, readFileSync(join(f.data, path))]));
+  const database = new Map(["messages.db", "messages.db-wal", "messages.db-shm"].map(path => [path, readFileSync(join(f.data, path))]));
+  const originals = new Map(["config.json", "section-contexts.json", "workspaces/bot/notes.txt", "artifact-files/report.html"].map(path => [path, readFileSync(join(f.data, path))]));
   const result = await writeInstallationDamagedExport(f.data, f.target);
   expect(result.manifest).toMatchObject({ format: "murage.installation-damaged", version: 1, complete: false, restorePolicy: "preservation-only-no-restore" });
   expect(result.manifest.warning).toContain("credentials");
@@ -60,6 +63,12 @@ it("exports damaged JSON and database bytes unchanged as private non-restorable 
     expect(entries.get(`preservation/${path}`)).toEqual(bytes);
     expect(readFileSync(join(f.data, path))).toEqual(bytes);
     expect(result.manifest.files.find(entry => entry.path === path)).toEqual({ path, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") });
+  }
+  for (const [path, bytes] of database) {
+    expect(entries.has(`preservation/${path}`)).toBe(false);
+    expect(readFileSync(join(f.data, path))).toEqual(bytes);
+    expect(result.manifest.omitted.filter(entry => entry.path === path)).toEqual([{ path, reason: DAMAGED_EXPORT_DATABASE_WITHHELD }]);
+    expect(result.manifest.files.some(entry => entry.path === path)).toBe(false);
   }
   expect([...entries.values()].some(bytes => bytes.includes("fake-excluded-home-secret"))).toBe(false);
   expect(createHash("sha256").update(readFileSync(f.target)).digest("hex")).toBe(result.sha256);

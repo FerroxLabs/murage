@@ -5,10 +5,17 @@
 //   node scripts/generate-locale.mjs it "Italian"
 //   node scripts/generate-locale.mjs pt-br --accept
 //   node scripts/generate-locale.mjs --check
+//
+// L-COPY LINT r3 (1.0.18, design section 6): every mode reads the two partitions of scripts/locale-partitions.mjs.
+// Main keys go to <code>.json + source-hashes.json; Help keys go to help/<code>.json + help/source-hashes.json.
+// A main pack never holds a Help key and a Help pack never holds a main key; overlap and stale hashes fail, and
+// --check requires both partitions complete in every pack. Source acceptance (--accept) is separate from review
+// approval (src/locales/copy-lint/reviews, scripts/copy-review.mjs); the copy lint requires both.
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -20,14 +27,24 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { acceptReviewProblems } from "./copy-lint.mjs";
+import {
+  HELP_PACK_DIR,
+  LOCALES_DIR,
+  PACK_CODES,
+  SOURCE_HASH_FILE,
+  hashPath,
+  packPath,
+  readPack,
+  readPartitions,
+} from "./locale-partitions.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const LOCALES_DIR = join(dirname(SCRIPT_PATH), "..", "src", "locales");
 const SOURCE_FILE = "en.json";
-const SOURCE_HASH_FILE = "source-hashes.json";
 const LOCALE_CODE = /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/;
 const PLACEHOLDER = /\{(\w+)\}/g;
 const MODEL_TIMEOUT_MS = 5 * 60 * 1_000;
+export const PARTITIONS = Object.freeze(["main", "help"]);
 
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -142,24 +159,37 @@ function readJson(path, label = basename(path)) {
   }
 }
 
-function readCatalog(file) {
-  return readJson(join(LOCALES_DIR, file), file);
+/** Both English sources: { main, help }. Throws on a duplicate key in a file or a key in both partitions. */
+export function readSourceCatalogs(dir = LOCALES_DIR) {
+  const { main, help, problems } = readPartitions(dir);
+  if (problems.length > 0) throw new Error(problems.join("\n"));
+  return { main, help };
+}
+
+/** The main-partition English source (en.json plus en-ux fragments, en.json wins): what <code>.json translates. */
+export function readSourceCatalog(dir = LOCALES_DIR) {
+  return readSourceCatalogs(dir).main;
 }
 
 function emptySourceHashes() {
   return { version: 1, locales: {} };
 }
 
-function readSourceHashes() {
-  const path = join(LOCALES_DIR, SOURCE_HASH_FILE);
+function hashLabel(partition) {
+  return partition === "help" ? `${HELP_PACK_DIR}/${SOURCE_HASH_FILE}` : SOURCE_HASH_FILE;
+}
+
+function readSourceHashes(dir, partition) {
+  const path = hashPath(dir, partition);
+  const label = hashLabel(partition);
   if (!existsSync(path)) return emptySourceHashes();
-  const value = readJson(path, SOURCE_HASH_FILE);
+  const value = readJson(path, label);
   if (value?.version !== 1 || !isRecord(value.locales)) {
-    throw new Error(`${SOURCE_HASH_FILE}: expected { "version": 1, "locales": { ... } }`);
+    throw new Error(`${label}: expected { "version": 1, "locales": { ... } }`);
   }
   for (const [code, hashes] of Object.entries(value.locales)) {
     if (normalizeLocaleCode(code) !== code || code === "en" || !isRecord(hashes)) {
-      throw new Error(`${SOURCE_HASH_FILE}: invalid locale entry ${code}`);
+      throw new Error(`${label}: invalid locale entry ${code}`);
     }
   }
   return value;
@@ -203,50 +233,78 @@ export function writeTextAtomically(path, contents, platform = process.platform)
 }
 
 function writeJsonAtomically(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
   writeTextAtomically(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-export function checkCatalogs() {
-  const source = readCatalog(SOURCE_FILE);
-  const sourceProblems = validateSourceCatalog(source);
-  if (sourceProblems.length > 0) {
-    throw new Error(sourceProblems.map((problem) => `${SOURCE_FILE}: ${problem}`).join("\n"));
-  }
-  const state = readSourceHashes();
-  const errors = [];
-  const sourceKeys = Object.keys(source);
-  const files = readdirSync(LOCALES_DIR)
-    .filter((file) => file.endsWith(".json") && file !== SOURCE_HASH_FILE)
-    .sort();
-  const targetCodes = new Set();
-
-  for (const file of files) {
+function packCodes(dir, partition, problems) {
+  const folder = partition === "help" ? join(dir, HELP_PACK_DIR) : dir;
+  if (!existsSync(folder)) return [];
+  const prefix = partition === "help" ? `${HELP_PACK_DIR}/` : "";
+  const codes = [];
+  for (const file of readdirSync(folder).filter((name) => name.endsWith(".json") && name !== SOURCE_HASH_FILE).sort()) {
     const stem = file.slice(0, -".json".length);
     try {
       const normalized = normalizeLocaleCode(stem);
-      if (normalized !== stem) errors.push(`${file}: locale filenames must be lowercase (${normalized}.json)`);
+      if (normalized !== stem) problems.push(`${prefix}${file}: locale filenames must be lowercase (${normalized}.json)`);
     } catch (error) {
-      errors.push(`${file}: ${error instanceof Error ? error.message : String(error)}`);
+      problems.push(`${prefix}${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    if (file === SOURCE_FILE) continue;
-    targetCodes.add(stem);
-    const catalog = readCatalog(file);
-    errors.push(...validateTranslationCatalog(source, catalog).map((problem) => `${file}: ${problem}`));
-    errors.push(...validateTranslationHashes(source, catalog, state.locales[stem] ?? {}).map(
-      (problem) => `${file}: ${problem}`,
-    ));
-    const translated = isRecord(catalog)
-      ? sourceKeys.filter((key) => Object.hasOwn(catalog, key)).length
-      : 0;
-    const percent = sourceKeys.length === 0 ? 0 : Math.round((translated / sourceKeys.length) * 100);
-    console.log(`${file}: ${percent}% (${translated}/${sourceKeys.length})`);
+    if (partition === "main" && file === SOURCE_FILE) continue;
+    if (partition === "help" && stem === "en") {
+      problems.push(`${prefix}${file}: English Help lives in en-help/, not in a Help pack`);
+      continue;
+    }
+    codes.push(stem);
   }
+  return codes;
+}
 
-  for (const code of Object.keys(state.locales)) {
-    if (!targetCodes.has(code)) errors.push(`${SOURCE_HASH_FILE}: ${code} has no matching locale catalog`);
+/** Every problem --check reports, for a locales folder (the real one, or a test fixture). */
+export function catalogProblems(dir = LOCALES_DIR, { log = () => undefined, requiredCodes = dir === LOCALES_DIR ? PACK_CODES : [] } = {}) {
+  const { main, help, problems: partitionProblems } = readPartitions(dir);
+  const errors = [...partitionProblems];
+  for (const problem of validateSourceCatalog(main)) errors.push(`${SOURCE_FILE}: ${problem}`);
+  const sources = { main, help };
+  const codesBy = {};
+  for (const partition of PARTITIONS) {
+    const state = readSourceHashes(dir, partition);
+    const codes = packCodes(dir, partition, errors);
+    codesBy[partition] = codes;
+    for (const code of requiredCodes) {
+      if (!codes.includes(code)) errors.push(`${partition === "help" ? `${HELP_PACK_DIR}/` : ""}${code}.json: the whole language pack is missing`);
+    }
+    const source = sources[partition];
+    const other = sources[partition === "main" ? "help" : "main"];
+    for (const code of codes) {
+      const label = partition === "help" ? `${HELP_PACK_DIR}/${code}.json` : `${code}.json`;
+      const catalog = readPack(dir, partition, code, errors);
+      if (isRecord(catalog)) {
+        for (const key of Object.keys(catalog)) {
+          if (Object.hasOwn(other, key)) errors.push(`${label}: ${key}: a ${partition === "main" ? "Help" : "main"} key in a ${partition} pack`);
+        }
+      }
+      errors.push(...validateTranslationCatalog(source, catalog, { requireComplete: true }).map((problem) => `${label}: ${problem}`));
+      errors.push(...validateTranslationHashes(source, catalog, state.locales[code] ?? {}).map((problem) => `${label}: ${problem}`));
+      const keys = Object.keys(source);
+      const translated = isRecord(catalog) ? keys.filter((key) => Object.hasOwn(catalog, key)).length : 0;
+      log(`${label}: ${keys.length === 0 ? 100 : Math.round((translated / keys.length) * 100)}% (${translated}/${keys.length})`);
+    }
+    for (const code of Object.keys(state.locales)) {
+      if (!codes.includes(code)) errors.push(`${hashLabel(partition)}: ${code} has no matching locale catalog`);
+    }
   }
+  if (Object.keys(help).length > 0) {
+    for (const code of codesBy.main) if (!codesBy.help.includes(code)) errors.push(`${HELP_PACK_DIR}/${code}.json: missing (every pack has a Help pack)`);
+  }
+  for (const code of codesBy.help) if (!codesBy.main.includes(code)) errors.push(`${HELP_PACK_DIR}/${code}.json: no main pack ${code}.json`);
+  return { errors, counts: { languages: codesBy.main.length, main: Object.keys(main).length, help: Object.keys(help).length } };
+}
+
+export function checkCatalogs(dir = LOCALES_DIR) {
+  const { errors, counts } = catalogProblems(dir, { log: (line) => console.log(line) });
   if (errors.length > 0) throw new Error(errors.join("\n"));
-  console.log(`locale catalogs valid (${files.length} languages, ${sourceKeys.length} English strings)`);
+  console.log(`locale catalogs valid (${counts.languages} languages, ${counts.main} main and ${counts.help} Help English strings)`);
 }
 
 function translationPrompt(source, label, code) {
@@ -335,23 +393,37 @@ function parseArguments(argv) {
   return { accept, force, positional };
 }
 
-function acceptCatalog(code, source) {
-  const file = `${code}.json`;
-  if (!existsSync(join(LOCALES_DIR, file))) throw new Error(`${file} does not exist`);
-  const catalog = readCatalog(file);
-  const problems = validateTranslationCatalog(source, catalog);
-  if (problems.length > 0) throw new Error(`refusing invalid catalog:\n${problems.join("\n")}`);
-  const state = readSourceHashes();
-  state.locales[code] = Object.fromEntries(
-    Object.keys(catalog).map((key) => [key, sourceHash(source[key])]),
-  );
-  writeJsonAtomically(join(LOCALES_DIR, SOURCE_HASH_FILE), state);
-  console.error(`accepted ${file} against the current English source; commit and review ${SOURCE_HASH_FILE}`);
+/** Accept both partitions of one pack against today's English: each pack file only against its own partition. */
+export function acceptCatalog(code, sources, dir = LOCALES_DIR) {
+  if (!existsSync(packPath(dir, "main", code))) throw new Error(`${code}.json does not exist`);
+  for (const partition of PARTITIONS) {
+    const label = partition === "help" ? `${HELP_PACK_DIR}/${code}.json` : `${code}.json`;
+    if (!existsSync(packPath(dir, partition, code))) {
+      if (Object.keys(sources[partition]).length > 0) throw new Error(`${label} does not exist`);
+      continue;
+    }
+    const pending = [];
+    const catalog = readPack(dir, partition, code, pending);
+    pending.push(...validateTranslationCatalog(sources[partition], catalog));
+    if (pending.length > 0) throw new Error(`refusing invalid catalog ${label}:\n${pending.join("\n")}`);
+  }
+  const unreviewed = acceptReviewProblems(code, dir);
+  if (unreviewed.length > 0) throw new Error(`refusing to accept ${code}: record a review first (scripts/copy-review.mjs):\n${unreviewed.join("\n")}`);
+  for (const partition of PARTITIONS) {
+    if (!existsSync(packPath(dir, partition, code))) continue;
+    const catalog = readPack(dir, partition, code);
+    const state = readSourceHashes(dir, partition);
+    state.locales[code] = Object.fromEntries(
+      Object.keys(catalog).map((key) => [key, sourceHash(sources[partition][key])]),
+    );
+    writeJsonAtomically(hashPath(dir, partition), state);
+  }
+  console.error(`accepted ${code}.json and ${HELP_PACK_DIR}/${code}.json against the current English source; commit and review both ${SOURCE_HASH_FILE} files`);
 }
 
-export function main(argv = process.argv.slice(2)) {
+export function main(argv = process.argv.slice(2), { dir = LOCALES_DIR, model = runModel } = {}) {
   if (argv.length === 1 && argv[0] === "--check") {
-    checkCatalogs();
+    checkCatalogs(dir);
     return;
   }
 
@@ -359,46 +431,54 @@ export function main(argv = process.argv.slice(2)) {
   const code = normalizeLocaleCode(positional[0]);
   if (code === "en") throw new Error("English is the source catalog and cannot be model-generated or accepted");
   const label = positional[1] ?? code;
-  const source = readCatalog(SOURCE_FILE);
-  const sourceProblems = validateSourceCatalog(source);
+  const sources = readSourceCatalogs(dir);
+  const sourceProblems = validateSourceCatalog(sources.main);
   if (sourceProblems.length > 0) throw new Error(sourceProblems.join("\n"));
   if (accept) {
-    acceptCatalog(code, source);
+    acceptCatalog(code, sources, dir);
     return;
   }
 
-  const outFile = join(LOCALES_DIR, `${code}.json`);
-  const existing = existsSync(outFile) ? readJson(outFile, `${code}.json`) : {};
-  const existingProblems = validateTranslationCatalog(source, existing);
-  if (existingProblems.length > 0) throw new Error(`refusing invalid existing catalog:\n${existingProblems.join("\n")}`);
-  const state = readSourceHashes();
-  const hashes = state.locales[code] ?? {};
-  const keys = staleTranslationKeys(source, existing, hashes, { force });
-  if (keys.length === 0) throw new Error(`${code}.json is already current`);
+  let wrote = 0;
+  for (const partition of PARTITIONS) {
+    const source = sources[partition];
+    if (Object.keys(source).length === 0) continue;
+    const outFile = packPath(dir, partition, code);
+    const fileLabel = partition === "help" ? `${HELP_PACK_DIR}/${code}.json` : `${code}.json`;
+    const existingProblems = [];
+    const existing = readPack(dir, partition, code, existingProblems);
+    existingProblems.push(...validateTranslationCatalog(source, existing));
+    if (existingProblems.length > 0) throw new Error(`refusing invalid existing catalog ${fileLabel}:\n${existingProblems.join("\n")}`);
+    const state = readSourceHashes(dir, partition);
+    const hashes = state.locales[code] ?? {};
+    const keys = staleTranslationKeys(source, existing, hashes, { force });
+    if (keys.length === 0) continue;
 
-  const requested = Object.fromEntries(keys.map((key) => [key, source[key]]));
-  const prompt = translationPrompt(requested, label, code);
-  console.error(`asking Claude to draft ${keys.length} missing or stale strings for ${label}…`);
-  const draft = parseModelCatalog(runModel(prompt));
-  const problems = validateTranslationCatalog(requested, draft, { requireComplete: true });
-  if (problems.length > 0) throw new Error(`refusing invalid model output:\n${problems.join("\n")}`);
+    const requested = Object.fromEntries(keys.map((key) => [key, source[key]]));
+    console.error(`asking Claude to draft ${keys.length} missing or stale ${partition} strings for ${label}…`);
+    const draft = parseModelCatalog(model(translationPrompt(requested, label, code)));
+    const problems = validateTranslationCatalog(requested, draft, { requireComplete: true });
+    if (problems.length > 0) throw new Error(`refusing invalid model output for ${fileLabel}:\n${problems.join("\n")}`);
 
-  const merged = Object.fromEntries(Object.keys(source).flatMap((key) => {
-    if (Object.hasOwn(draft, key)) return [[key, draft[key]]];
-    if (Object.hasOwn(existing, key)) return [[key, existing[key]]];
-    return [];
-  }));
-  const nextHashes = Object.fromEntries(Object.keys(merged).map((key) => [
-    key,
-    Object.hasOwn(draft, key) ? sourceHash(source[key]) : hashes[key],
-  ]));
-  state.locales[code] = nextHashes;
+    const merged = Object.fromEntries(Object.keys(source).flatMap((key) => {
+      if (Object.hasOwn(draft, key)) return [[key, draft[key]]];
+      if (Object.hasOwn(existing, key)) return [[key, existing[key]]];
+      return [];
+    }));
+    state.locales[code] = Object.fromEntries(Object.keys(merged).map((key) => [
+      key,
+      Object.hasOwn(draft, key) ? sourceHash(source[key]) : hashes[key],
+    ]));
 
-  // Install the catalog first. If the second write fails, deterministic
-  // --check reports the stale state rather than blessing an old translation.
-  writeJsonAtomically(outFile, merged);
-  writeJsonAtomically(join(LOCALES_DIR, SOURCE_HASH_FILE), state);
-  console.error(`wrote ${outFile}; review every changed string and register new locale "${code}" in src/locales/index.ts`);
+    // Install the catalog first. If the second write fails, deterministic
+    // --check reports the stale state rather than blessing an old translation.
+    writeJsonAtomically(outFile, merged);
+    writeJsonAtomically(hashPath(dir, partition), state);
+    console.error(`wrote ${outFile}; review every changed string`);
+    wrote += 1;
+  }
+  if (wrote === 0) throw new Error(`${code}.json and ${HELP_PACK_DIR}/${code}.json are already current`);
+  console.error(`register a new locale "${code}" in src/locales/index.ts and its Help pack in the Help copy store`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {

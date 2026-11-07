@@ -148,7 +148,7 @@ jobs:
       # has its own tests in electron/browser-extension-windows.node-test.mjs.
       - name: Murage for Chrome script tests
         if: matrix.os != 'windows-latest'
-        run: pnpm test:browser-extension-scripts
+        run: npm run test:browser-extension-scripts
       # installer/test/*.test.mjs (the installer's bind, pairing, systemd and
       # sidecar rules) ran in no job before; a failure here fails the run the
       # release-ci-gate reads. Ubuntu only: several files are about Linux hosts.

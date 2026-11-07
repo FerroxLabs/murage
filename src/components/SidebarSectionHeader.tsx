@@ -11,6 +11,7 @@ import {
 export function SidebarSectionHeader({
   name,
   collapsed,
+  count,
   attention,
   onToggle,
   reorderable,
@@ -23,6 +24,8 @@ export function SidebarSectionHeader({
 }: {
   name: string;
   collapsed: boolean;
+  /** bots in the section, shown while some are folded away: "Bots · 18" */
+  count?: number;
   attention?: SidebarSectionAttention;
   onToggle?: () => void;
   reorderable: boolean;
@@ -67,6 +70,7 @@ export function SidebarSectionHeader({
           <Chevron size={12} className="shrink-0 text-ink-secondary" />
           <span className="truncate text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
             {name}
+            {count !== undefined && ` · ${count}`}
           </span>
           {/* A closed section follows the same rule its rows do: a count, in
               colour, for the one thing waiting on you. Unread loses its badge

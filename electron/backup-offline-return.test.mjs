@@ -140,10 +140,13 @@ it("success and failure both asking to return arm one relaunch, never two copies
   expect(d.counts().cleanups).toBe(1);
 });
 
-it("a cleanup that failed inside the host's relaunch is tried again, then Murage reopens", async () => {
+it("r33 a failed host return waits for trusted Retry before reopening", async () => {
   const d = desktop({ cleanupFails: 1 });
-  const outcome = await d.run(async () => { await d.returnToWorkspace().catch(() => {}); throw Error("BACKUP_SCHEDULE_REVIEW_REQUIRED"); });
-  expect(outcome).toBe("failed");
+  const outcome = await d.run(async () => { try { await d.returnToWorkspace(); } catch(error) { throw Object.assign(error,{code:"BACKUP_UPGRADE_CLEANUP_FAILED"}); } });
+  expect(outcome).toBe("cleanup-failed");
+  expect(d.counts().cleanups).toBe(1);
+  expect(d.reopened()).toBe(false);
+  await d.returnToWorkspace({retry:true});
   expect(d.counts().cleanups).toBe(2);
   expect(d.reopened()).toBe(true);
 });
@@ -178,14 +181,14 @@ it("a ceiling whose give-up could not be recorded stays open on the Backup mode 
 
 it("Return to workspace pressed again and again on a page whose cleanup keeps failing arms one relaunch at most", async () => {
   const d = desktop({ cleanupFails: 3 });
-  for (let press = 0; press < 3; press++) await expect(d.returnToWorkspace()).rejects.toThrow();
+  for (let press = 0; press < 3; press++) await expect(d.returnToWorkspace({retry:true})).rejects.toThrow();
   expect(d.app.relaunches).toBe(0);
-  await d.returnToWorkspace(); await d.returnToWorkspace();
+  await d.returnToWorkspace({retry:true}); await d.returnToWorkspace();
   expect(d.app.relaunches).toBe(1);
   expect(d.reopened()).toBe(true);
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
   const retry = main.slice(main.indexOf("    retry: async () => {"), main.indexOf("    openDiagnostics: async () =>"));
-  expect(retry).toContain("await returnToWorkspaceAfterBackup();");
+  expect(retry).toContain("await returnToWorkspaceAfterBackup({retry:true,prepare:");
   expect(retry).not.toContain("relaunchDesktop(");
 });
 
@@ -220,4 +223,43 @@ it("main.mjs routes every backup-mode ending through the bounded return", () => 
   expect(main).not.toContain(`if(!desktopShutdownStarted)showDesktopRecovery("BACKUP_REQUESTED");}finally{backupProgress?.close()`);
   // The failure notice still follows the reopen.
   expect(main).toContain("void desktopStartup.then(announceLastBackupFailure)");
+});
+
+it("T12c shared authority owns the destination before synchronous reentry and retries rejection", async () => {
+  const {createReturnAuthority}=await import("./backup-offline-return.mjs");
+  const authority=createReturnAuthority(),app={quit(){},exit(){}},destinations=[];
+  let finish,joined,prepares=0;
+  const cleanup=new Promise(resolve=>{finish=resolve;});
+  const common={app,authority,cleanup:()=>{joined=normal();return cleanup;},relaunch:d=>destinations.push(d),takeProgress:()=>null,setTimer:()=>{}};
+  const landed=createBackupReturn(common),normal=createBackupReturn(common);
+  const first=landed({prepare:()=>{prepares++;return {kind:"landed",version:"2.0.0"};}});
+  expect(joined).toBe(first);expect(normal({prepare:()=>{throw Error("must join");}})).toBe(first);
+  finish();await first;expect(destinations).toEqual([{kind:"landed",version:"2.0.0"}]);expect(prepares).toBe(1);
+});
+
+for(const rejectCleanup of [false,true])it(`T11 T15 BF-3 joined Quit ${rejectCleanup?"rejects":"resolves"} with a real vetoing progress wrapper`,async()=>{
+  const {createReturnAuthority,joinExplicitQuit}=await import("./backup-offline-return.mjs");
+  const authority=createReturnAuthority(),e=fakeElectron(),timers=manualTimers();
+  let progress=openBackupProgressWindow({BrowserWindow:e.BrowserWindow,baseDir:"/fixture"}),finish,reject;
+  const win=progress.window,order=[];
+  const cleanup=new Promise((yes,no)=>{finish=yes;reject=no;});
+  const takeProgress=()=>{const p=progress;progress=null;return p;};
+  const onFailure=error=>{takeProgress()?.destroy();order.push({error:error.message,revoked:authority.userQuitRequested,destroyed:win.isDestroyed()});};
+  const options={app:e.app,authority,cleanup:()=>cleanup,takeProgress,onFailure,setTimer:timers.setTimer,relaunch:()=>e.app.relaunch()};
+  const returning=createBackupReturn(options)();
+  const quitting=joinExplicitQuit(options);
+  const results=Promise.allSettled([returning,quitting]);
+  if(rejectCleanup)reject(Error("owned writer did not close"));else finish();
+  await results;
+  expect(progress).toBe(null);expect(win.isDestroyed()).toBe(true);expect(e.app.relaunches).toBe(0);
+  expect(e.events.filter(x=>x==="window-destroyed")).toHaveLength(1);
+  if(rejectCleanup){expect(order).toHaveLength(2);expect(order.every(x=>x.destroyed&&x.revoked&&x.error==="owned writer did not close")).toBe(true);expect(timers.pending).toHaveLength(0);timers.fire(5000);expect(e.app.exitCode).toBe(null);}
+  else {expect(timers.pending).toHaveLength(1);expect((await returning).status).toBe("stopped");}
+});
+
+it('F10 explicit Quit grace log never promises reopening',async()=>{
+ const {joinExplicitQuit,createReturnAuthority}=await import('./backup-offline-return.mjs');
+ const lines=[],timers=[];
+ await joinExplicitQuit({app:{quit(){},exit(){}},authority:createReturnAuthority(),cleanup:async()=>{},scheduleExit:fn=>fn(),setTimer:fn=>timers.push(fn),log:line=>lines.push(line)});
+ timers.forEach(fn=>fn());expect(lines).toHaveLength(1);expect(lines[0]).not.toMatch(/reopen/);
 });

@@ -488,7 +488,7 @@ type SkillRecordingPayload = {
       /** Reconnect connected apps here after another computer took over. */
       reconnectConnectedApps?(): Promise<{ reconnected: boolean }>;
       setCredential?(
-        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
+        name: "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "openaiImageApiKey" | "tavilySearchApiKey" | "exaSearchApiKey" | "firecrawlSearchApiKey" | "highlevelPrivateToken" | "telegramBotToken" | "slackAppToken" | "slackBotToken" | "discordBotToken",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState
@@ -562,7 +562,8 @@ export interface UpdaterState {
   currentVersion?: string;
   percent?: number;
   message?: string;
-  action?: "download-from-murage";
+  action?: "download-from-murage" | "download-installer";
+  downloadUrl?: string;
   /** ISO time of the first failed update check in a streak that has lasted a day or more; absent once a check works. */
   staleCheckSince?: string;
   /**
