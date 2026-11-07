@@ -31,8 +31,9 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { commitMemoryImport, previewMemoryImport } from "./import.ts";
 import { ensureWorkspace } from "../workspace.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { resetDataRootsForTest } from "../data-roots.ts";
 
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); thawRootSetWritesForTest(true); resetSessionHolds(); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); thawRootSetWritesForTest(true); resetSessionHolds(); });
 afterEach(() => { thawRootSetWritesForTest(false); vi.restoreAllMocks(); });
 
 /** Every "memory receipts revoked" line the code under test logs. */

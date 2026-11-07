@@ -28,6 +28,7 @@ export default defineConfig({
       "src/**/*.test.ts",
       "src/components/PhoneAccessCard.test.tsx",
       "src/components/PhoneForBotsRow.test.tsx",
+      "src/components/DataFolderSettings.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",

@@ -111,6 +111,8 @@ const ROUTE_TERMS = {
   // /api/engine-health: the Health line for the engines (UX L2A)
   "engine-health": "health checks",
   cloud: "your own server",
+  // /api/data-dir: Settings > Data folder, the data roots and the owner confirming a moved linked root (S5 DR7)
+  "data-dir": "data folder",
   // /api/browser/linux-sandbox/enable: the Linux "Enable browser" button (1505df2ae)
   browser: "browser",
   "browser-extension": "browser extension",
@@ -168,7 +170,7 @@ const ROUTE_TERMS = {
 };
 const ROUTE_PLUMBING = new Set([
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
-  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "presence", "restore-holds", "setup", "shared-results", "subscribe", "terms",
+  "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);
 const seenFamilies = new Set();
 for (const match of read("server/index.ts").matchAll(/"\/api\/([a-z][a-z-]*)/g)) seenFamilies.add(match[1]);

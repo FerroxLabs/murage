@@ -94,6 +94,11 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   },
   {
     mount: "own:agents",
+    tools: ["venue_post"],
+    boundary: "VENUE-POST-1017: mounted only on the owner's own proven line that carried a Post in… pick (MURAGE_VENUE_POST); the handler re-checks the pick, the room and the request line on every call, posts only at Full access or No limits, and holds every Ask or Auto post on Murage's own Post it / Don't post card",
+  },
+  {
+    mount: "own:agents",
     tools: ["email_send", "email_reply", "email_trust_offer"],
     boundary: "the handler applies the bot's email setting (3.3) and holds every send that policy does not clear on Murage's own Send / Don't send card before any request leaves; Flux enforces the same inbox policy server-side; email_trust_offer only files a proposal the owner answers (server/email/tools.ts)",
   },
@@ -130,10 +135,12 @@ export const OWN_ALWAYS_ASK: readonly { mount: `own:${OwnBuiltin}`; tool: string
 
 /** Own tools whose handler is the only place they are cleared or held (BOT-EMAIL-MURAGE-109 3.2): every engine reaches the handler at
  *  every access level, with no engine card in front of Murage's own email card. Each is also an OWN_UNASKED row. */
-export const OWN_HANDLER_CARDED: readonly { mount: `own:${OwnBuiltin}`; tool: string }[] = [
+export const OWN_HANDLER_CARDED: readonly { mount: `own:${OwnBuiltin}`; tool: string; /** the agents-mount env key that admits it on a turn */ mountEnv?: string }[] = [
   { mount: "own:agents", tool: "email_send" },
   { mount: "own:agents", tool: "email_reply" },
   { mount: "own:agents", tool: "email_trust_offer" },
+  // VENUE-POST-1017: admitted only on a turn that mounts it (agentsIntegration sets MURAGE_VENUE_POST=1); held on the Post it card
+  { mount: "own:agents", tool: "venue_post", mountEnv: "MURAGE_VENUE_POST" },
 ];
 
 /** Whether an own tool is handler-carded: its mount and exact name are an OWN_HANDLER_CARDED row (and so also an OWN_UNASKED one). */

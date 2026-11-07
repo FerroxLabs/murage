@@ -5,6 +5,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR, loadConfig } from "./config.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store, isIndividualAssistant } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
@@ -49,7 +50,7 @@ function seam(name: string, deps: Record<string, unknown>) {
   return evaluate(`${ts.isVariableDeclaration(node) ? "const " : ""}${node.getText(ast)}; return ${name};`, deps);
 }
 function value(name: string, deps: Record<string, unknown>) { return seam(name, deps); }
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };

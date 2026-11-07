@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { basename,dirname,isAbsolute,join,normalize } from "node:path";
 import { z } from "zod";
 import { DATA_DIR } from "./config.ts";
+import { rootFor } from "./data-roots.ts";
+import { LocalSetupError } from "./local-setup-failure.ts";
 import type { InstanceConfig,InstanceConfigMap } from "./contracts.ts";
 import { resolveCli } from "./procs.ts";
 
@@ -30,11 +32,33 @@ export function resolveClaudeConfigDir(configDir?:string,env:NodeJS.ProcessEnv=p
 export function claudeAccountEnvironment(source:NodeJS.ProcessEnv,configDir?:string):NodeJS.ProcessEnv {
   const env={...source};if(!configDir?.trim())return env;
   for(const key of Object.keys(env))if(key.toUpperCase()==="CLAUDE_CONFIG_DIR"||(CLAUDE_ACCOUNT_ENV_KEYS as readonly string[]).includes(key.toUpperCase())||key.toUpperCase().startsWith("CLAUDE_CODE_OAUTH_"))delete env[key];
-  env.CLAUDE_CONFIG_DIR=resolveClaudeConfigDir(configDir,source);
+  const directory=resolveClaudeConfigDir(configDir,source);
+  // RH4: an account whose folder could not be re-homed never gets CLAUDE_CONFIG_DIR at its old path.
+  const unavailable=unavailableAccounts.get(configDir.trim())??unavailableAccounts.get(directory);
+  if(unavailable)throw new LocalSetupError("working-folder",unavailable);
+  env.CLAUDE_CONFIG_DIR=canonicalProvidersDir(directory);
   return env;
 }
 
 const text=z.string().trim().max(4096).refine(value=>!/[\p{Cc}\p{Cf}]/u.test(value),"Control characters are not allowed");
+/** S5-DATADIR-PATHS sites 6 RH4: accounts whose folder could not be re-homed, by stored configDir. In memory only. */
+const unavailableAccounts=new Map<string,string>();
+export function markClaudeAccountUnavailable(configDir:string,text:string):void{unavailableAccounts.set(configDir.trim(),text);}
+export function claudeAccountUnavailable(configDir:string):string|undefined{return unavailableAccounts.get(configDir.trim());}
+/** C8 + DR5: a configDir under the providers root is handed to the engine in its canonical form; the providers root
+ * must be ok (else the turn ends with the providers card through WT4). Lexical stays in config.json. */
+function canonicalProvidersDir(directory:string):string{
+  const providers=join(DATA_DIR,"providers");
+  const rel=relativeInside(providers,directory);if(rel===undefined)return directory;
+  const snapshot=rootFor("providers");
+  return snapshot.state==="ok"?join(snapshot.canonical,...rel.split(/[\\/]/).filter(Boolean)):directory;
+}
+function relativeInside(root:string,path:string):string|undefined{
+  const a=normalize(root),b=normalize(path);
+  if(b===a)return "";
+  const prefix=a.endsWith("/")||a.endsWith("\\")?a:a+(process.platform==="win32"?"\\":"/");
+  return b.startsWith(prefix)?b.slice(prefix.length):undefined;
+}
 export const createClaudeAccountSchema=z.object({displayName:text.min(1).max(80),configDir:text.optional()}).strict();
 export const claudeAccountSettingsSchema=z.object({displayName:text.min(1).max(80).optional(),configDir:text.optional()}).strict().refine(value=>Object.keys(value).length>0,"No settings supplied");
 function rawConfig(entry:InstanceConfig):Record<string,unknown>{return entry.config&&typeof entry.config==="object"&&!Array.isArray(entry.config)?entry.config as Record<string,unknown>:{};}
@@ -91,5 +115,7 @@ export function claudeAccountInfo(instanceId:string,entry:InstanceConfig,cli:str
   const raw=rawConfig(entry).configDir;
   if(raw!==undefined&&typeof raw!=="string")throw new Error("Invalid saved Claude configuration directory.");
   const configDir=typeof raw==="string"&&raw.trim()?accountDirectory(entry):"";
-  return {configDir,managed:!!configDir,isDefault:instanceId==="claude",signInCommand:claudeSignInCommand(cli,configDir),signInShell:process.platform==="win32"?"powershell" as const:"sh" as const};
+  // RH4: sign-in is disabled for an account whose folder could not be re-homed
+  const unavailable=typeof raw==="string"?claudeAccountUnavailable(raw):undefined;
+  return {configDir,managed:!!configDir,isDefault:instanceId==="claude",signInCommand:unavailable?"":claudeSignInCommand(cli,configDir),...(unavailable?{unavailable}:{}),signInShell:process.platform==="win32"?"powershell" as const:"sh" as const};
 }

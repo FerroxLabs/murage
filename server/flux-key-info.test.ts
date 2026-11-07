@@ -54,6 +54,34 @@ describe("Flux key validity through GET /key/info", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it("a request already in flight when Check again is pressed never refills the cache; the next check asks fresh", async () => {
+    let release!: (response: Response) => void;
+    const slow = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const before = checkFluxKey(KEY, { fetchImpl: slow, now: 0 });
+    requestFluxKeyRecheck();
+    const fresh = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ info: { blocked: false, expires: null, max_budget: 10, spend: 9 } }), { status: 200 }));
+    const after = checkFluxKey(KEY, { fetchImpl: fresh, now: 1 });
+    expect(fresh).toHaveBeenCalledTimes(1);
+    release(ok());
+    expect((await before).state).toBe("valid");
+    expect(await after).toMatchObject({ state: "valid", info: { spend: 9 } });
+    const cached = vi.fn<typeof fetch>(async () => ok());
+    expect(await checkFluxKey(KEY, { fetchImpl: cached, now: 2 })).toMatchObject({ state: "valid", info: { spend: 9 } });
+    expect(cached).not.toHaveBeenCalled();
+  });
+
+  it("an answer that lands after Check again does not put the old figure back", async () => {
+    let release!: (response: Response) => void;
+    const slow = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { release = resolve; }));
+    const before = checkFluxKey(KEY, { fetchImpl: slow, now: 0 });
+    requestFluxKeyRecheck();
+    release(ok());
+    await before;
+    const fresh = vi.fn<typeof fetch>(async () => ok());
+    await checkFluxKey(KEY, { fetchImpl: fresh, now: 1 });
+    expect(fresh).toHaveBeenCalledTimes(1);
+  });
+
   it("other failures back off from 1 minute, doubling, to 1 hour", async () => {
     expect([1, 2, 3, 4, 5, 6, 7, 20].map(fluxRetryDelayMs)).toEqual([60_000, 120_000, 240_000, 480_000, 960_000, 1_920_000, 3_600_000, 3_600_000]);
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response("down", { status: 503 }));

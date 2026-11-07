@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DATA_DIR } from "./config.ts";
 import { Store, type Message } from "./store.ts";
 import * as mdb from "./message-db.ts";
+import { database } from "./database.ts";
 import type { RuntimeErrorDiagnostic } from "../shared/error-diagnostic.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -62,12 +63,16 @@ it("load drops invalid new metadata without rewriting stored rows or changing le
   const legacy = store.appendMessage(threadId, { role: "bot", kind: "activity", tool: { name: "error: old", errorDetails: "Legacy details" } });
   const saved = store.appendMessage(threadId, error());
   const malformed = { ...saved, tool: { ...saved.tool!, diagnostic: { ...diagnostic, body: "PRIVATE-RELOAD-CANARY" } as RuntimeErrorDiagnostic } };
-  mdb.updateMessage(threadId, malformed);
+  // planted in the raw column, as an older build left it: every write now passes the stored-row check (U4 S3)
+  const { seq: _seq, ...row } = malformed;
+  database().prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?").run(JSON.stringify(row), threadId, saved.id);
+  mdb.closeMessageDb();
   const reloaded = new Store(selection).messagesFor(threadId);
   expect(reloaded.find(message => message.id === legacy.id)).toEqual(legacy);
   expect(reloaded.find(message => message.id === saved.id)?.tool?.diagnostic).toBeUndefined();
   expect(reloaded.find(message => message.id === saved.id)?.tool?.errorDetails).toBe("Existing details");
-  expect(stored(threadId).messages.find(message => message.id === saved.id)?.tool?.diagnostic).toEqual(malformed.tool.diagnostic);
+  const kept = database().prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, saved.id) as { json: string };
+  expect((JSON.parse(kept.json) as Message).tool?.diagnostic).toEqual(malformed.tool.diagnostic);
 });
 it("a patch event carries the message as it was before the patch", () => {
   const { store, threadId } = fixture();

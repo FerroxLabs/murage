@@ -31,6 +31,8 @@ import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync,
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { DATA_DIR } from "../config.ts";
+import { dataRoots } from "../data-roots.ts";
+import { prefixRebaseLinks } from "../link-removal.ts";
 import { memoDeps, pathExists } from "./isolation-cache.ts";
 import { LoginLinkUnavailableError, linkSharedEntry, nodeLinkIo, sharesFile, type LinkIo, type LinkMode } from "./shared-login-link.ts";
 import { ownProcessRecord, processRunning, type ProcessRecord } from "./process-identity.ts";
@@ -472,7 +474,7 @@ const scopeRootOfPath = (path: string): string => (GEN_DIR.test(basename(path)) 
 
 /** Names that belong to the scope's bookkeeping, never carried into a generation. */
 const bookkeeping = (name: string): boolean =>
-  name === SCOPE_MARKER || name.startsWith(`${SCOPE_MARKER}.`) || name === LOGIN_ASIDE_DIR || name.startsWith(`.${GENERATION_PREFIX}`) || GEN_DIR.test(name);
+  /^.+\.murage-relink-.+$/.test(name) || name === SCOPE_MARKER || name.startsWith(`${SCOPE_MARKER}.`) || name === LOGIN_ASIDE_DIR || name.startsWith(`.${GENERATION_PREFIX}`) || GEN_DIR.test(name);
 
 /** One entry of an earlier generation, linked into a newer one: a symlink to where the entry really is (a directory junction on
  *  Windows without symlink rights); a file falls back to a hardlink, then a copy. False when the source is gone. */
@@ -493,13 +495,21 @@ function carryEntry(source: string, dest: string): boolean {
  *  its own. A link whose target is gone is removed. Never touches the earlier folders. */
 function carryInto(sources: readonly string[], dest: string, skip: (name: string) => boolean): void {
   mkdirSync(dest, { recursive: true, mode: 0o700 });
+  prefixRebaseLinks.sweep(dest);
   const have = new Set<string>();
   for (const name of readdirSync(dest)) {
     have.add(name);
     if (skip(name)) continue;
     const path = join(dest, name);
     try {
-      if (lstatSync(path).isSymbolicLink()) { try { statSync(path); } catch { unlinkSync(path); have.delete(name); } }
+      if (lstatSync(path).isSymbolicLink()) {
+        // Carry kind comes only from the new target; never inspect the old target for rebasing.
+        prefixRebaseLinks.relink(path, {
+          site: 10, dataDir: DATA_DIR, previousRoots: dataRoots().previousRoots(), kind: "new-target",
+          create: (target, dest, kind) => symlinkSync(target, dest, kind === "dir" ? "junction" : "file"),
+        });
+        try { statSync(path); } catch { unlinkSync(path); have.delete(name); }
+      }
     } catch { /* gone */ }
   }
   for (const source of sources) {
@@ -787,11 +797,14 @@ export function verifyScopeLogins(root: string, kind = basename(dirname(root)).r
   // a login that is missing or split in it is never created, relinked or repaired there: a new generation is made.
   const established = marker.launched === true || current > 0;
   if (current > 0) { try { mkdirSync(home, { recursive: true, mode: 0o700 }); } catch { /* the engine makes it */ } }
+  prefixRebaseLinks.sweep(home, now);
   for (const name of marker.share as unknown[]) {
     if (!validLoginName(name) || locks.has(name) || generated.has(name)) continue;
     const mode = modes[name];
     const real = join(marker.realHome, name);
     const scoped = join(home, name);
+    // Rebase a recorded old login path through LinkIo before the existing owner check.
+    sharesFile(real, scoped, linkIo);
     const scopedStat = statOrNull(scoped, false);
     const owner = statOrNull(real, true);
     if (mode === "hardlink") {
