@@ -69,7 +69,7 @@ describe("the description field stops hiding that it is a prompt", () => {
   it("still writes `description`, and says when the agent reads it", () => {
     expect(descriptionField).toContain("patch({ description: e.target.value })");
     expect(descriptionField).toContain('t("settings.bot.identity.instructionsHint")');
-    expect(en["settings.bot.identity.instructionsHint"]).toMatch(/every turn/);
+    expect(en["settings.bot.identity.instructionsHint"]).toMatch(/at the start of each response/);
   });
 
   it("warns that teammates read it too — which is why voice belongs next door", () => {

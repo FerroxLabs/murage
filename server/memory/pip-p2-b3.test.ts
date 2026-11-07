@@ -271,18 +271,18 @@ describe("the reflection state machine", () => {
     expect(DAILY_RUN_CAP).toBe(24);
   });
 
-  it("a bad body is refused:bad-output, retried up to three attempts under one deadline, then unstable with a cooldown", async () => {
+  it("a bad body is refused:bad-output, retried up to three attempts under one deadline, then preserves its schema refusal with a cooldown", async () => {
     seedConversation();
     const r = rig(), deadlines = new Set<number | undefined>();
     r.set(async i => { deadlines.add(i.transport?.deadlineAt); return verdictResult({ state: "refused", reason: "bad-output", detail: "schema", counted: true }); });
     const out = await run(r);
-    expect(out).toMatchObject({ status: "refused", reason: "unstable" });
+    expect(out).toMatchObject({ status: "refused", reason: "bad-output" });
     expect(r.calls.map(c => c.context.attempt)).toEqual([1, 2, 3]);
     expect(deadlines.size).toBe(1);
     const s = state();
     expect(s.cooldownUntil).toBeGreaterThan(r.clock.now);
     expect(s.refusals.length).toBeLessThanOrEqual(3);
-    expect(s.refusals[0].state).toBe("refused:unstable");
+    expect(s.refusals[0].state).toBe("refused:bad-output");
     expect(s.threads.private?.cursorMessageId ?? null).toBeNull(); // refused leaves the cursor
     expect(listProposals(ticket, "moss", roster as never)).toHaveLength(0);
     // cooldown honoured

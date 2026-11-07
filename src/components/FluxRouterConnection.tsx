@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ExternalLink, Route } from "lucide-react";
 import { opensPurchasePages } from "@/lib/native-shell";
+import { FLUX_KEYS_PAGE } from "../../shared/flux-links";
 
 export const FLUX_SIGNUP_URL = "https://fluxrouter.ai/auth/sign-up";
 /** Where somebody who ALREADY has a key wants to go: their own balance and
  *  spend. The signed-in home, not the sign-up form. */
-export const FLUX_ACCOUNT_URL = "https://fluxrouter.ai/home/api-keys";
+export const FLUX_ACCOUNT_URL = FLUX_KEYS_PAGE;
 
 /** Electron wraps a rejection from the main process in its own channel text
  * ("Error invoking remote method '…': Error: …"). The same refusal arrives

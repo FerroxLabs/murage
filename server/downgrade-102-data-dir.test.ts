@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS } from "./data-dir-inventory.ts";
-import { DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
+import { DATA_DIR_DATABASES_AFTER_102, DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { readOwnerPrefs } from "./owner-prefs.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -39,10 +39,12 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
 
   it("every 1.0.3 name 1.0.2 does not know is removed by the downgrade or written only by a Cloud home", () => {
     const newer = Object.keys(DATA_DIR_ENTRIES).filter(name => !classifiedBy102(name)).sort();
-    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...CLOUD_ONLY].sort());
+    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...CLOUD_ONLY].sort());
     for (const name of DATA_DIR_NAMES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
     // the follow-model marker is the owner's (backed up with bots.json), and the downgrade still takes it away for 1.0.2
     for (const name of DATA_DIR_OWNER_NOTES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("owner-file");
+    // the phone call history is a backed-up database (in every newer backup); only it and its own sidecars are on this list
+    for (const name of DATA_DIR_DATABASES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe(name.endsWith(".db") ? "database" : "sidecar");
   });
 
   it("removes the 1.0.3 notes and env/, keeps the owner's files, and leaves only names 1.0.2's backup classifies", () => {
@@ -71,7 +73,8 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // the one-time chat model cleanup's marker (1.0.4 SL-IK)
     writeFileSync(join(DATA_DIR, ".threads-follow-model-v1"), "");
     // the owner's cross-device prefs (1.0.17 owner-prefs.ts: the Approve all caution's "Don't show this again"; 1.0.2 has no Approve all)
-    writeFileSync(join(DATA_DIR, "owner-prefs.json"), `${JSON.stringify({ approveAllCautionDismissed: true }, null, 2)}\n`, { mode: 0o600 });
+    // (1.0.18 TODAY adds Today's Calm | Detailed choice to the same file; the downgrade takes it away with the file)
+    writeFileSync(join(DATA_DIR, "owner-prefs.json"), `${JSON.stringify({ approveAllCautionDismissed: true, todayView: "detailed" }, null, 2)}\n`, { mode: 0o600 });
     // the cloud computer prompt record and its set-aside unreadable copy (1.0.6 cloud-computer-turns.ts; 1.0.2 has no such record)
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json"), JSON.stringify({ version: 1, entries: [] }));
     writeFileSync(join(DATA_DIR, "cloud-computer-turns.json.unreadable"), "{");
@@ -89,14 +92,20 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // the last definitive bot email capability answer (1.0.11 email/caps-file.ts; re-read from Flux, 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, "email-capabilities.json"), "{}", { mode: 0o600 });
     writeFileSync(join(DATA_DIR, "email-capabilities.json.tmp"), "{", { mode: 0o600 });
-    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102].sort());
+    // the HighLevel connection record (1.0.18 highlevel/private-token.ts: ids, location name, token fingerprint, never the token)
+    mkdirSync(join(DATA_DIR, "highlevel"), { recursive: true, mode: 0o700 });
+    writeFileSync(join(DATA_DIR, "highlevel", "connection.json"), JSON.stringify({ locationId: "loc-1" }), { mode: 0o600 });
+    // the bot phone call history and its sidecars (1.0.20 phone-calls/store.ts; 1.0.2 has no phone calls)
+    for (const name of DATA_DIR_DATABASES_AFTER_102) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
+    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 
     expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name))).toEqual([]);
     expect(readFileSync(join(DATA_DIR, "about-me.md"), "utf8")).toBe("owner words");
-    // a later upgrade reads the removed prefs as the defaults: the caution shows again, nothing throws
-    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false });
+    // a later upgrade reads the removed prefs as the defaults: the caution shows again, Today opens Calm, nothing throws
+    expect(existsSync(join(DATA_DIR, "owner-prefs.json"))).toBe(false);
+    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm" });
     expect(existsSync(join(DATA_DIR, "messages.db"))).toBe(true);
     // a second run (already v10) finds nothing more to remove and still succeeds
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
@@ -119,4 +128,15 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // a second run finds nothing to take away
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   });
+});
+
+it("blocks the full downgrade before touching conversations when a vendor call is uncertain", () => {
+  database(); closeDatabase();
+  const calls = new DatabaseSync(join(DATA_DIR, "phone-calls.db"));
+  calls.exec("CREATE TABLE phone_calls (status TEXT NOT NULL); INSERT INTO phone_calls VALUES ('uncertain')");
+  calls.close();
+  const before = readFileSync(join(DATA_DIR, "messages.db"));
+  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10)).toThrow("PHONE_CALLS_PENDING");
+  expect(readFileSync(join(DATA_DIR, "messages.db"))).toEqual(before);
+  expect(existsSync(join(DATA_DIR, "phone-calls.db"))).toBe(true);
 });

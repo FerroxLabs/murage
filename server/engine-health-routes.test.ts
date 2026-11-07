@@ -64,6 +64,7 @@ describe("engineHealthRoute", () => {
         defaultId: "claude",
         flux: "none",
         fluxInfo: null,
+        fuigoVersion: null,
         checkedAt: 1234,
       },
     });

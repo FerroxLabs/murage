@@ -105,6 +105,14 @@ export function attachmentRemoved(home: AttachmentsHome, name: string): boolean 
   }
 }
 
+/** Avatar observation distinguishes absence from I/O failure; serving remains fail closed. */
+export async function attachmentRemovalState(home: AttachmentsHome, name: string,
+  stat: (path: string) => Promise<unknown> = fsp.stat): Promise<"removed" | "present" | "error"> {
+  if (!isAttachmentName(name)) return "present";
+  try { await stat(join(folderOf(home), REMOVED_FOLDER, name)); return "removed"; }
+  catch (error) { const code = errno(error); return code === "ENOENT" || code === "ENOTDIR" ? "present" : "error"; }
+}
+
 // ---------------------------------------------------------------------------
 // Test seams
 

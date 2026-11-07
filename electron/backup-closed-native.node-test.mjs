@@ -136,3 +136,20 @@ test("Linux: an older Murage's job (legacy) can be read and removed, never insta
     await assert.rejects(f.provider.read({...legacy,files:[{name:"../../foreign",text:"x"},legacy.files[1]]}));
   }finally{f.cleanup();}
 });
+
+test('B7/A6: account lookup failure falls back once to positive uid and absolute HOME', () => {
+  let lookups = 0;
+  const lookup = () => { lookups++; throw Error('no passwd'); };
+  const provider = createNativeClosedBackupProvider({ platform: 'linux', lookup, getuid: () => 1234, env: { HOME: '/fixture/home' } });
+  assert.equal(provider.supported, true); assert.equal(lookups, 1);
+  for (const options of [{ env: {} }, { getuid: null }, { getuid: () => 0 }, { getuid: () => 1.5 }, { env: { HOME: 'relative' } }]) {
+    assert.equal(createNativeClosedBackupProvider({ platform: 'linux', lookup, getuid: () => 1234, env: { HOME: '/fixture/home' }, ...options }).supported, false);
+  }
+});
+test('A6: supplied owner must match independent identity and unsupported home never reaches path.join', () => {
+  const options = { platform: 'linux', lookup: () => ({ uid: 1234, homedir: '/fixture/account' }), env: {} };
+  assert.equal(createNativeClosedBackupProvider({ ...options, owner: { uid: 5678 }, home: '/fixture/supplied' }).supported, false);
+  assert.equal(createNativeClosedBackupProvider({ ...options, owner: { uid: 1234 }, home: '/fixture/supplied' }).supported, true);
+  assert.equal(createNativeClosedBackupProvider({ ...options, home: 12 }).supported, false);
+  assert.equal(createNativeClosedBackupProvider({ ...options, platform: 'win32' }).supported, false);
+});

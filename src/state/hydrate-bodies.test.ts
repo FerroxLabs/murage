@@ -34,7 +34,10 @@ describe("snapshot replies are checked before they are applied", () => {
 
   it("a good reply passes through as it came", () => {
     expect(routinesReply({ routines: [{ id: "r" }], runs: [] })).toEqual({ routines: [{ id: "r" }], runs: [] });
-    expect(instancesReply({ instances: [], engineNote: "n" })).toEqual({ instances: [], shellEnvironment: undefined, engineNote: "n" });
+    expect(instancesReply({ instances: [], engineNote: "n" })).toEqual({ instances: [], shellEnvironment: undefined, engineNote: "n", localOnlyEngines: [] });
+    expect(instancesReply({ instances: [], localOnlyEngines: ["Cline", "GitHub Copilot"] }).localOnlyEngines).toEqual(["Cline", "GitHub Copilot"]);
+    expect(instancesReply({ instances: [], localOnlyEngines: "Cline" }).localOnlyEngines).toEqual([]);
+    expect(instancesReply({ instances: [], localOnlyEngines: ["Cline", 3, ""] }).localOnlyEngines).toEqual(["Cline"]);
     expect(webhooksReply({ webhooks: [], ingress: null })).toEqual({ webhooks: [], attempts: [], ingress: null });
     expect(sidebarReply({ bots: [] })).toEqual({ bots: [] });
     const config = { surface: "remote", composio: { configured: false }, computer: false };

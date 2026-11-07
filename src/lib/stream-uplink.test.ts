@@ -213,3 +213,11 @@ describe("StreamUplink", () => {
     expect(sock().sent.map(String)).toEqual(['{"type":"turn.commit"}', '{"type":"keepalive"}', '{"type":"session.update","config":{"eagerness":"low"}}']);
   });
 });
+
+it("preserves premium on a bare 4402 close for StreamMic classification", async () => {
+  const u = await connected();
+  const close = vi.fn();
+  u.onClose(close);
+  sock().fire("close", { code: 4402, reason: "premium_locked" });
+  expect(close).toHaveBeenCalledWith(expect.objectContaining({ error: expect.objectContaining({ code: "premium_locked" }) }));
+});

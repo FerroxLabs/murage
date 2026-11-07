@@ -496,3 +496,45 @@ describe("binding writes that change no held words do not fence; every withdrawa
     expect(LEARNING_FENCE_TRIGGERS.every(n => names.has(n))).toBe(true);
   });
 });
+
+// Retry-journal design 24/25: the real gate owns release and rollback; the charge is independently durable.
+describe("durable preSend and pre-release refund",()=>{
+  function paidGate(options:{check?:()=>void;onAdmit?:()=>void;preFail?:boolean;refundFail?:boolean}={}){
+    const db=database();db.exec("CREATE TABLE IF NOT EXISTS retry_paid_fixture(n INTEGER); INSERT INTO retry_paid_fixture VALUES(0)");
+    const other=new DatabaseSync(join(DATA_DIR,"messages.db"));
+    const paid=()=>Number(other.prepare("SELECT n FROM retry_paid_fixture").get()!.n);
+    const gate=learningGate("continuity",sampleLearningFence(),{}, {
+      checks:options.check?[options.check]:[],onAdmit:options.onAdmit,
+      preSend:()=>{
+        if(options.preFail)throw new Error("charge fixture");
+        transaction(db=>db.exec("UPDATE retry_paid_fixture SET n=n+1"));
+        expect(paid()).toBe(1);
+        return ()=>{if(options.refundFail)throw new Error("refund fixture");transaction(db=>db.exec("UPDATE retry_paid_fixture SET n=n-1"));};
+      },
+    });
+    return {gate,other,paid};
+  }
+  it.each(["check","held","busy","onAdmit"])("25: %s refusal refunds after rollback",mode=>{
+    const r=paidGate({check:mode==="check"||mode==="held"?()=>{throw new Error("moved");}:undefined,onAdmit:mode==="onAdmit"?()=>{throw new Error("moved");}:undefined});
+    const db=database(),exec=db.exec.bind(db);
+    let busyInjected=false;
+    if(mode==="busy")vi.spyOn(db,"exec").mockImplementation(sql=>{if(!busyInjected&&sql==="BEGIN IMMEDIATE"&&r.paid()===1){busyInjected=true;throw Object.assign(new Error("database is locked"),{code:"SQLITE_BUSY"});}return exec(sql);});
+    try{const emit=vi.fn();expect(()=>r.gate.send(emit)).toThrow();expect(emit).not.toHaveBeenCalled();expect(r.paid()).toBe(0);expect(db.isTransaction).toBe(false);}
+    finally{r.other.close();}
+  });
+  it("25: repeated moved reads never consume calls",()=>{
+    const r=paidGate({check:()=>{throw new Error("moved");}});
+    try{for(let i=0;i<10;i++){expect(()=>r.gate.send(()=>{})).toThrow();expect(r.paid()).toBe(0);}}finally{r.other.close();}
+  });
+  it("25: a failed charge refunds nothing, and a failed refund leaves its charge",()=>{
+    const a=paidGate({preFail:true});try{expect(()=>a.gate.send(()=>{})).toThrow("charge fixture");expect(a.paid()).toBe(0);}finally{a.other.close();}
+    database().exec("DROP TABLE retry_paid_fixture");
+    const b=paidGate({refundFail:true,check:()=>{throw new Error("moved");}});try{expect(()=>b.gate.send(()=>{})).toThrow();expect(b.paid()).toBe(1);}finally{b.other.close();}
+  });
+  it.each(["spawn-throws","commit-throws","after-commit"])("24, 25: %s keeps the committed charge once released",mode=>{
+    const r=paidGate(),db=database(),exec=db.exec.bind(db);let released=false;
+    if(mode==="commit-throws")vi.spyOn(db,"exec").mockImplementation(sql=>{if(sql==="COMMIT"&&released)throw new Error("commit fixture");return exec(sql);});
+    const emit=()=>{released=true;expect(r.paid()).toBe(1);if(mode==="spawn-throws")throw new Error("spawn fixture");};
+    try{if(mode==="after-commit")r.gate.send(emit);else expect(()=>r.gate.send(emit)).toThrow();expect(r.paid()).toBe(1);expect(r.gate.released).toBe(1);}finally{r.other.close();}
+  });
+});
