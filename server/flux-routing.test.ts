@@ -55,7 +55,7 @@ describe("FLUX_SURFACE", () => {
   it("leaves every non-routable engine absent, so the gate denies by default", () => {
     // gemini-cli-over-ACP has no proven recipe (Wayland routes only its own
     // in-process gemini); the rest are vendor-locked or unclassified.
-    for (const kind of ["droidAgent", "cursorAgent", "geminiAgent", "kimiAgent", "grokAgent", "piAgent", "antigravityAgent", "minimax", "openai-compat", "boxAgent", "customAcp", "gooseAgent"]) {
+    for (const kind of ["droidAgent", "cursorAgent", "geminiAgent", "kimiAgent", "grokAgent", "piAgent", "antigravityAgent", "minimax", "openai-compat", "boxAgent", "customAcp", "gooseAgent", "museCode"]) {
       expect(fluxSurfaceFor(kind)).toBeNull();
     }
   });

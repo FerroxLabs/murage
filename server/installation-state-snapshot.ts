@@ -8,6 +8,7 @@ import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PA
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
+import { claimCopyScratch } from "./settle-copy.ts";
 import { safeBackupProgress, type BackupProgressReport } from "../shared/backup-progress.mjs";
 import { notificationPreferencesSchema } from "../shared/notification-preferences.ts";
 import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry } from "./data-dir-inventory.ts";
@@ -255,6 +256,8 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BACKUP_BYTES || !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > MAX_BACKUP_FILES) fail("INVALID_SNAPSHOT_LIMITS");
     if (!lstatSync(root).isDirectory()) fail("INSTALLATION_MISSING");
     const stage = mkdtempSync(join(parent, ".murage-state-snapshot-"));
+    // the stage lives on in the caller until the archive is written: claimed, so that write's own scratch sweep leaves it alone
+    claimCopyScratch(stage);
     let published = false;
     let bytes = 0;
     /** Restorable items: files, stored shortcuts and extra names. One place
@@ -411,7 +414,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
-      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm");
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
       if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();
@@ -452,6 +455,9 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       // records keep blocking duplicate actions on a restored computer.
       const ledger = await installation.snapshotConnectedLedger(join(stage, "state", "connected-app-ledger.db"));
       if (ledger.status === "copied") add("connected-app-ledger.db", ledger.bytes, ledger.sha256, "connected-app-ledger.db");
+      // Bot phone calls: call history, owner-only transcripts and caller settings (BOT-CALLS-1020).
+      const phone = await installation.snapshotPhoneCalls(join(stage, "state", "phone-calls.db"));
+      if (phone.status === "copied") add("phone-calls.db", phone.bytes, phone.sha256, "phone-calls.db");
       check();
       const assertSourceUnchanged = () => {
         check();

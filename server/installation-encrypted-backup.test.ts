@@ -156,3 +156,13 @@ it.skipIf(!rawAgeHost)("headless encrypted roundtrip retains WAL-visible memorie
     paths.forEach((name,i)=>expect(readFileSync(join(f.data,name)),name).toEqual(originals[i]));expect(existsSync(join(f.data,"config.json"))).toBe(false);
   }finally{index.close();f.db.close();removeTempDirSync(f.parent);}
 },20000);
+
+it('T-H3: work-folder ENOSPC is a data-stage failure and scratch is in the backup folder', async () => {
+  const work = await import('./backup-local-work.ts');
+  const f=backupFixture();
+  const spy=vi.spyOn(work,'createBackupWork').mockImplementation(()=>{throw Object.assign(Error('full'),{code:'ENOSPC'});});
+  try {
+    await expect(writeEncryptedInstallationBackup(f.data,join(f.parent,'backup.age'),{recipient:'fixture',identity:'fixture',ageExecutable:'fixture',selection})).rejects.toMatchObject({code:'BACKUP_DISK_FULL',captureStep:'stage'});
+    expect(readdirSync(f.parent).some(name=>name.startsWith('.murage-encrypted-write-'))).toBe(true);
+  } finally {spy.mockRestore();f.db.close();removeTempDirSync(f.parent);}
+});

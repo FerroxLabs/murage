@@ -69,7 +69,13 @@ export function recoveryDesktopSummary(result) {
     } else if (value !== null && (typeof value !== "string" || value.length > 8192)) throw new Error("INVALID_RECOVERY_RESULT");
     summary[key] = value;
   }
-  if (result.operation === "memory-downgrade") { summary.from = result.from; summary.to = result.to; }
+  if (result.operation === "memory-downgrade") {
+    summary.from = result.from; summary.to = result.to;
+    if (result.phoneCallsPreservedAt !== undefined) {
+      if (!file(result.phoneCallsPreservedAt)) invalid();
+      summary.phoneCallsPreservedAt = result.phoneCallsPreservedAt;
+    }
+  }
   if (result.operation === "restore") summary.sha256 = result.sha256 ?? result.archiveSha256;
   for (const key of ["files", "bytes"]) if (result[key] !== undefined) {
     if (!Number.isSafeInteger(result[key]) || result[key] < 0) invalid();

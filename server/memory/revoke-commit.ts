@@ -177,7 +177,6 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
     case "thread": {
       // a deleted conversation is denied as a direct fact whatever was captured from it (revbound r3 A1/F2)
       if (hasDenyTable(tx)) st(tx, "INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('thread',?,?,?)").run(root.threadId, epochNow(tx), Date.now());
-      setMeta(tx, "epoch_bump_lsn", now);
       rootLsn = firstLsn(tx, root.threadId, now);
       writeRange(tx, R, root.threadId, FIRST_LSN, now, reason);
       // the deletion's durable receipt (DELETION-DRAIN-V2 2.5, capture.ts captureThreadDeletion): a line row at FIRST_LSN, a position no line

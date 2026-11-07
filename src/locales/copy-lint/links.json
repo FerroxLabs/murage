@@ -1,0 +1,608 @@
+{
+  "de:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging.",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "de:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "de:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "de:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai.",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "de:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "de:mcp.reason.httpsRequired": [
+    {
+      "token": "https://",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "de:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "de:publish.sites.add.badName": [
+    {
+      "token": "mein-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "de:publish.sites.add.placeholder": [
+    {
+      "token": "mein-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "de:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "en:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "en:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging.",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "en:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "en:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "en:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai.",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "en:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "en:mcp.reason.httpsRequired": [
+    {
+      "token": "https://.",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "en:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "en:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "en:publish.sites.add.badName": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "en:publish.sites.add.placeholder": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "en:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "en:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "es:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "es:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging.",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "es:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "es:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "es:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai.",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "es:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "es:mcp.reason.httpsRequired": [
+    {
+      "token": "https://.",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "es:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "es:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "es:publish.sites.add.badName": [
+    {
+      "token": "mi-tienda.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "es:publish.sites.add.placeholder": [
+    {
+      "token": "mi-tienda.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "es:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "es:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "fr:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "fr:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging.",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "fr:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "fr:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "fr:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai.",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "fr:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "fr:mcp.reason.httpsRequired": [
+    {
+      "token": "https://.",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "fr:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "fr:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "fr:publish.sites.add.badName": [
+    {
+      "token": "ma-boutique.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "fr:publish.sites.add.placeholder": [
+    {
+      "token": "ma-boutique.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "fr:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "fr:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "hi:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "hi:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "hi:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "hi:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "hi:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "hi:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "hi:mcp.reason.httpsRequired": [
+    {
+      "token": "https://",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "hi:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "hi:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "hi:publish.sites.add.badName": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "hi:publish.sites.add.placeholder": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "hi:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "hi:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "ja:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "ja:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "ja:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "ja:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "ja:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "キーはブロックされています。support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "ja:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "ja:mcp.reason.httpsRequired": [
+    {
+      "token": "https://",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "ja:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "ja:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "ja:publish.sites.add.badName": [
+    {
+      "token": "my-shop.netlify.appのようなアドレス",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "ja:publish.sites.add.placeholder": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "ja:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "ja:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "pt-br:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "pt-br:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging.",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "pt-br:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "pt-br:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "pt-br:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai.",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "pt-br:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "pt-br:mcp.reason.httpsRequired": [
+    {
+      "token": "https://.",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "pt-br:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "pt-br:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "pt-br:publish.sites.add.badName": [
+    {
+      "token": "minha-loja.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "pt-br:publish.sites.add.placeholder": [
+    {
+      "token": "minha-loja.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "pt-br:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "pt-br:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ],
+  "zh:bringYourAi.lead": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "zh:browserUnavailable.userChrome": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page the owner opens to allow remote debugging; not a web destination"
+    }
+  ],
+  "zh:connectedApps.flux.conflict.installAlreadyClaimed": [
+    {
+      "token": "support@fluxrouter.ai,并提供安装",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "zh:connectedApps.flux.movedElsewhere": [
+    {
+      "token": "support@fluxrouter.ai,并提供安装",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "zh:connectedApps.flux.tokenBlocked": [
+    {
+      "token": "support@fluxrouter.ai。",
+      "reason": "Flux Router's support address, given when a Flux key is blocked or claimed elsewhere; no purchase step"
+    }
+  ],
+  "zh:mcp.add.placeholder": [
+    {
+      "token": "https://...",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "zh:mcp.reason.httpsRequired": [
+    {
+      "token": "https://",
+      "reason": "the shape of an address (https:// placeholder), not a destination"
+    }
+  ],
+  "zh:modelSignIn.pasteHint": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "zh:modelSignIn.pastePlaceholder": [
+    {
+      "token": "x.ai",
+      "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "zh:publish.sites.add.badName": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "zh:publish.sites.add.placeholder": [
+    {
+      "token": "my-shop.netlify.app",
+      "reason": "an example site address in the publishing form, in this language's words; not a real destination"
+    }
+  ],
+  "zh:updates.downloadFromMurage": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "zh:ux.lcopyb.cloud.claudeSignin": [
+    {
+      "token": "claude.ai",
+      "reason": "Anthropic's Claude site, where the owner signs in to Claude or its desktop features live; no purchase step"
+    }
+  ]
+}

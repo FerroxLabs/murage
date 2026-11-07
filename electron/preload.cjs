@@ -438,6 +438,11 @@ contextBridge.exposeInMainWorld("muragebox", {
     start: () => ipcRenderer.invoke("email-owner-signin:start"),
     cancel: () => ipcRenderer.invoke("email-owner-signin:cancel"),
   },
+  /** Phone calls: the Settings key box. Save sends the key to main once; nothing ever reads it back. Resolves { ok } or { ok:false, code, message }. */
+  phoneKey: {
+    save: (key) => ipcRenderer.invoke("phone-key:save", { key }),
+    remove: () => ipcRenderer.invoke("phone-key:remove"),
+  },
   /** Plan sign-in (ChatGPT, Grok). Results and status never carry a token. */
   modelSignIn: {
     status: () => ipcRenderer.invoke("model-signin:status"),
