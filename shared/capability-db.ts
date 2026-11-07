@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "ea031914b5680189bd36054dbbc8a9f72d8a158a44d9edeb8037f4acbffec4e9";
+export const CAPABILITY_DB_REV = "e8cd474e288c8d27ace319ecb712fd71d59398502c6d9ce7e333424ee1cf3dc6";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -338,6 +338,31 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to Mac, Windows, Linux; OpenAI-compatible engines.",
     "rev": "1541a17b07978e99607de92d84a5cbf102ef80aa605f047c5bdd8dd7cba97c3e"
+  },
+  {
+    "id": "cap:engines.muse-code",
+    "title": "Muse Code from Meta",
+    "description": "Murage can do this.",
+    "heading": "Set up Muse Code / Who pays for Muse Code? / Is Muse Code on Murage Cloud?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/providers#muse-code",
+    "text": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take a regular model, Murage doesn't send your message. Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "capability": "engines.muse-code",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take a regular model, Murage doesn't send your message.",
+    "limits": "Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "muse"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Muse Code.",
+    "rev": "1c17f3e557c185a10f51168b62779a04e75198654516459850808515ab24e60e"
   },
   {
     "id": "cap:install-account.ubuntu-computer-control",

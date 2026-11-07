@@ -57,6 +57,13 @@ describe("decodeCodexSelection", () => {
   });
 });
 
+describe("STATIC_CODEX_MODELS", () => {
+  it("names gpt-6.1-sol, the bundled Codex CLI's default, in the offline fallback", () => {
+    expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6.1-sol");
+    expect(STATIC_CODEX_MODELS.options.map(option => option.id)).toContain("gpt-6-sol");
+  });
+});
+
 describe("readCodexModelCatalog", () => {
   it("returns the static cloud fallback when there is no config or CLI probe", async () => {
     expect(await readCodexModelCatalog({ HOME: join(tmpdir(), "murage-codex-missing-home") })).toEqual(

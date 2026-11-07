@@ -97,6 +97,10 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_sends_inbox",
     "email_sends_replaces",
     "email_sends_settled",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts_open",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares_status",
   ],
   tables: [
     "app_write_revision",
@@ -147,6 +151,10 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_tombstones",
     "email_trust",
     "email_trusted",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares",
   ],
 });
 

@@ -6,7 +6,7 @@ import { allInstanceConfigs, instanceConfigs, type AppConfig } from "../config.t
 import type { InstanceConfigMap } from "../contracts.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { ENGINE_LOGIN_ENGINES } from "./engine-login.ts";
-import { CLOUD_HIDDEN_ENGINES, CLOUD_RUNNABLE_ENGINES, cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./runnable-engines.ts";
+import { CLOUD_DESKTOP_ONLY_ENGINES, CLOUD_HIDDEN_ENGINES, CLOUD_RUNNABLE_ENGINES, cloudEngineChoiceRefusal, isCloudHiddenEngine } from "./runnable-engines.ts";
 import { CLOUD_ENGINES } from "./turn-process.ts";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
@@ -27,11 +27,20 @@ describe("the runnable set cannot drift from the launcher or the image", () => {
     expect(sorted(engines)).toEqual(sorted(CLOUD_RUNNABLE_ENGINES));
   });
   it("with the hidden set covers every cloud engine exactly once", () => {
-    expect(sorted([...CLOUD_RUNNABLE_ENGINES, ...CLOUD_HIDDEN_ENGINES])).toEqual(sorted(CLOUD_ENGINES.map(driverKind)));
+    const launcherHidden = CLOUD_HIDDEN_ENGINES.filter(name => !(CLOUD_DESKTOP_ONLY_ENGINES as readonly string[]).includes(name));
+    expect(sorted([...CLOUD_RUNNABLE_ENGINES, ...launcherHidden])).toEqual(sorted(CLOUD_ENGINES.map(driverKind)));
+    for (const name of CLOUD_DESKTOP_ONLY_ENGINES) expect(CLOUD_HIDDEN_ENGINES).toContain(name);
+    expect(CLOUD_DESKTOP_ONLY_ENGINES.filter(name => (CLOUD_ENGINES as readonly string[]).includes(name))).toEqual([]);
     expect(CLOUD_RUNNABLE_ENGINES.filter(name => (CLOUD_HIDDEN_ENGINES as readonly string[]).includes(name))).toEqual([]);
   });
-  it("hides exactly the eight engines the home cannot run", () => {
-    expect(sorted(CLOUD_HIDDEN_ENGINES)).toEqual(sorted(["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "antigravityAgent", "droidAgent", "qwenAgent", "customAcp"]));
+  it("hides exactly the nine engines the home cannot run", () => {
+    expect(sorted(CLOUD_HIDDEN_ENGINES)).toEqual(sorted(["piAgent", "hermesAgent", "geminiAgent", "cursorAgent", "antigravityAgent", "droidAgent", "qwenAgent", "customAcp", "museCode"]));
+  });
+  it("keeps Muse Code desktop only, launcher and image included", () => {
+    expect(isCloudHiddenEngine("museCode")).toBe(true);
+    expect(cloudEngineChoiceRefusal(true, "museCode", true)).toBe(cloudHomeCopy.engineNotOnCloud);
+    expect(read("../../deploy/cloud-home/murage-turn-launch.py")).not.toMatch(/muse/i);
+    expect(read("../../deploy/cloud-home/build-image.sh")).not.toMatch(/muse/i);
   });
   it("keeps engine sign-in to engines a home runs", () => {
     for (const engine of ENGINE_LOGIN_ENGINES) expect(CLOUD_RUNNABLE_ENGINES).toContain(engine);
@@ -43,13 +52,14 @@ const fleet: InstanceConfigMap = {
   opencodeGo: { driver: "opencodeGo" }, fuigo: { driver: "fuigoAgent" },
   pi: { driver: "piAgent" }, hermes: { driver: "hermesAgent" }, gemini: { driver: "geminiAgent" }, cursor: { driver: "cursorAgent" },
   antigravity: { driver: "antigravityAgent" }, droid: { driver: "droidAgent" }, qwen: { driver: "qwenAgent" }, custom: { driver: "customAcp" },
+  muse: { driver: "museCode" },
   computer: { driver: "boxAgent" }, openaiCompat: { driver: "openai-compat" },
 };
 const cfg = { instances: fleet } as unknown as AppConfig;
 const drivers = (map: InstanceConfigMap) => Object.values(map).map(entry => entry.driver);
 
 describe("the engine list a home offers", () => {
-  it("leaves out the eight hidden engines and keeps the six it runs", () => {
+  it("leaves out the nine hidden engines and keeps the six it runs", () => {
     const offered = drivers(instanceConfigs(cfg, { MURAGE_CLOUD_ROLE: "home" }));
     for (const hidden of CLOUD_HIDDEN_ENGINES) expect(offered).not.toContain(hidden);
     for (const runnable of CLOUD_RUNNABLE_ENGINES) expect(offered).toContain(runnable);

@@ -15,7 +15,8 @@ import { Mail } from "lucide-react";
 import { Card, Switch } from "./SettingsPrimitives";
 import { SETTINGS_STUB_COPY, SettingsStub, chiefName } from "./SettingsStub";
 import { useBotSettingsNavigation } from "./bot-settings-drafts";
-import { useStore } from "@/state/store";
+import { api, useStore, type ConfigStatus } from "@/state/store";
+import { configAfterFluxKeyChange } from "@/lib/spend-meter";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { isCloudOrigin } from "@/lib/cloud-workspace";
 import { inNativeShell } from "@/lib/native-shell";
@@ -75,7 +76,9 @@ export function BotEmailStub({ status, testId, onStatus }: { status: EmailStatus
     setBusy(true); setError(null);
     try {
       const refused = await signInFluxAgain(undefined, undefined, connected => {
-        if (state.config) dispatch({ type: "configStatus", config: { ...state.config, flux: { configured: connected.configured } } });
+        // the old key's fingerprint goes with the copy; the server's config replaces it (UX-L2C pull)
+        if (state.config) dispatch({ type: "configStatus", config: configAfterFluxKeyChange(state.config, connected.configured) });
+        void api("/api/config").then((config: ConfigStatus) => dispatch({ type: "configStatus", config })).catch(() => { /* the next config frame brings it */ });
       });
       if (refused) { setError(refused); return; }
       const next = await readEmailStatus(undefined, true);

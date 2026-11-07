@@ -35,15 +35,15 @@ export const STATUSES = ["can", "partial", "via-engine", "coming", "cannot"];
 export const PLATFORMS = ["mac", "windows", "linux", "android", "ios", "cloud"];
 const PHONES = ["android", "ios"];
 /** Fuigo first: the order every engine list follows (copy rule). */
-export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "pi", "openclaw", "openai-compatible"];
+export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "muse", "pi", "openclaw", "openai-compatible"];
 /** Every engine driver the primer names (server/capabilities-primer.ts ENGINE_LABELS) maps to one id above, so a new
  *  engine cannot ship without the capability lists being able to name it. customAcp and boxAgent are not one engine. */
 const DRIVER_ENGINES = { fuigoAgent: "fuigo", grokAgent: "grok", geminiAgent: "gemini", kimiAgent: "kimi", droidAgent: "droid", cursorAgent: "cursor",
-  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", opencodeGo: "opencode" };
+  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", museCode: "muse", opencodeGo: "opencode" };
 const DRIVER_NOT_ONE_ENGINE = new Set(["customAcp", "boxAgent"]);
 const ENGINE_NAMES = {
   fuigo: "Fuigo", claude: "Claude", codex: "Codex", grok: "Grok", cursor: "Cursor", kimi: "Kimi", droid: "Droid", antigravity: "Antigravity",
-  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines",
+  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", muse: "Muse Code", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines",
 };
 const PLATFORM_NAMES = { mac: "Mac", windows: "Windows", linux: "Linux", android: "the Android app", ios: "the iPhone app", cloud: "Murage Cloud" };
 const STATUS_SENTENCES = {
