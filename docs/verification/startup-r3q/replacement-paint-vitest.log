@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-STARTUP-SILENT-1018/repo
+
+
+ Test Files  9 passed | 1 skipped (10)
+      Tests  49 passed | 1 skipped (50)
+   Start at  00:18:39
+   Duration  13.70s (transform 5.09s, setup 11.11s, import 759ms, tests 742ms, environment 1ms)
+

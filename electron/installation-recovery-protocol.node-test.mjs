@@ -42,3 +42,9 @@ test("memory-downgrade results are accepted only for the 11 to 10 step", () => {
   assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, extra: "private" }), { ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
   assert.deepEqual(recoveryDesktopSummary({ ok: true, operation: "memory-downgrade", status: "already-v10", from: 10, to: 10 }), { ok: true, operation: "memory-downgrade", status: "already-v10", from: 10, to: 10, omittedCount: 0, missingCount: 0, quarantinedCount: 0, modificationsCount: 0 });
 });
+
+test("the downgrade summary retains only a valid preserved phone history path", () => {
+  const result = { ok: true, operation: "memory-downgrade", status: "downgraded", from: 11, to: 10, phoneCallsPreservedAt: "/fixture/phone-history" };
+  assert.equal(recoveryDesktopSummary(result).phoneCallsPreservedAt, result.phoneCallsPreservedAt);
+  assert.throws(() => recoveryDesktopSummary({ ...result, phoneCallsPreservedAt: 42 }), /INVALID_RECOVERY_RESULT/);
+});

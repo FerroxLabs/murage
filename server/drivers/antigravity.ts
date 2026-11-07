@@ -409,13 +409,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const env = antigravityEnvironment(input.environment);
     const catalogEnv: Record<string, string | undefined> = env;
     let models = STATIC_ANTIGRAVITY_MODELS;
-    const refreshModels = async () => {
+    let lastListed: ModelCatalog | undefined;
+    let pendingCatalog: Promise<void> | undefined;
+    const loadModels = async () => {
       try {
         // No local server rows (0.1.52 spec E3): agy takes only `--model <id>`
         // and has no base-URL or key input, so a local pick never reached the
         // local host. Hidden rather than listed and failing later.
         const resolved = readAntigravityModelCatalog(catalogEnv);
-        if (resolved.options.length) models = resolved;
         // The installed agy's own list wins: ids it no longer accepts must not stay selectable.
         const listed = await new Promise<string>((resolve) => {
           try {
@@ -423,15 +424,21 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } catch { resolve(""); }
         });
         const live = parseAntigravityModelsOutput(listed);
-        if (live.length) {
-          const fromAgy = catalogFromAgyList(live);
+        if (live.length) lastListed = catalogFromAgyList(live);
+        if (lastListed) {
+          const fromAgy = lastListed;
           const seen = new Set(fromAgy.options.map((option) => option.id));
           const custom = resolved.options.filter((option) => option.custom && !seen.has(option.id));
-          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: "live" };
-        }
+          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: live.length ? "live" : "static" };
+        } else if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
+        models = { ...models, source: "static" };
       }
+    };
+    const refreshModels = (): Promise<void> => {
+      pendingCatalog ??= loadModels().finally(() => { pendingCatalog = undefined; });
+      return pendingCatalog;
     };
     await refreshModels();
     // Versions before 1.0.2 mounted Murage's tools in the owner's own global

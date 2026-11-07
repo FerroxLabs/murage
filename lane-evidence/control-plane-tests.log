@@ -1,0 +1,41 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/cloudflare/control-plane
+
+Using secrets defined in process.env
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mMissing required secrets: REFUND_KEY_SECRET. Add them to .dev.vars, .env, or set as environment variables.[0m
+
+
+Using secrets defined in process.env
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mMissing required secrets: REFUND_KEY_SECRET. Add them to .dev.vars, .env, or set as environment variables.[0m
+
+
+Using secrets defined in process.env
+[33m▲ [43;33m[[43;30mWARNING[43;33m][0m [1mMissing required secrets: REFUND_KEY_SECRET. Add them to .dev.vars, .env, or set as environment variables.[0m
+
+
+[34msend_email binding called with MessageBuilder:[39m
+From: "Murage" <noreply@murage.ai>
+To: nobody@example.test
+Subject: Your Murage Cloud cancellation
+
+Text: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-text/05292e0b-0fdc-49d8-9fbf-82c99684e3b8.txt
+HTML: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-html/05292e0b-0fdc-49d8-9fbf-82c99684e3b8.html
+[34msend_email binding called with MessageBuilder:[39m
+From: "Murage" <noreply@murage.ai>
+To: nobody@example.test
+Subject: Your Murage Cloud cancellation
+
+Text: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-text/e68522fa-689a-4523-bb3b-eb9d87ef7313.txt
+HTML: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-html/e68522fa-689a-4523-bb3b-eb9d87ef7313.html
+[34msend_email binding called with MessageBuilder:[39m
+From: "Murage" <noreply@murage.ai>
+To: nobody@example.test
+Subject: Your Murage Cloud cancellation
+
+Text: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-text/41f3c179-303f-4dc1-a12e-314a543d3730.txt
+HTML: /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/scratch/tmp/miniflare-0dd30e2964e3ea15cfe72fa885908f9d/email/email-html/41f3c179-303f-4dc1-a12e-314a543d3730.html
+
+ Test Files  3 passed (3)
+      Tests  711 passed (711)
+   Start at  13:45:18
+   Duration  244.09s (transform 7.44s, setup 20.54s, import 967ms, tests 240.98s, environment 0ms)

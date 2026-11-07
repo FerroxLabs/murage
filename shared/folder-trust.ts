@@ -328,7 +328,7 @@ export function folderTrustDisplayName(name: string | undefined | null): string 
   if (!notice) return undefined;
   if (notice.kind === "passed") return folderTrustPassedLine(notice.key!);
   if (notice.kind === "storedNo") return FOLDER_TRUST_STORED_NO_LINE;
-  if (notice.kind === "chosen") return `You chose to trust this folder: Fuigo brings in ${notice.sources} as it applies that. Instructions apply in a new conversation in this folder`;
+  if (notice.kind === "chosen") return `You chose to trust this folder. Fuigo brings in ${notice.sources} when applying your choice. Instructions apply in a new conversation in this folder`;
   if (notice.kind === "late") return `Folder trusted: ${notice.sources} apply in a new conversation in this folder`;
   const left = `Folder not trusted: ${notice.sources} left out`;
   return notice.key ? `${left}. ${folderTrustForgetLine(notice.key)}` : left;

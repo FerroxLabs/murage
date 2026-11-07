@@ -16,8 +16,8 @@ import * as procs from "../procs.ts";
 
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
-import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin } from "./codex.ts";
-import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests } from "./codex-hook.ts";
+import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin, readCodexLoginMode } from "./codex.ts";
+import { HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
 import { DATA_DIR } from "../config.ts";
 import { flushDecisionLog } from "../decision-log.ts";
 import { resetIsolationCache } from "./isolation-cache.ts";
@@ -28,6 +28,7 @@ import { PassThrough } from "node:stream";
 import { TURN_BOT, TURN_RENDER, cloudTurnLaunch } from "../cloud-home/turn-process.ts";
 import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import type { CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
+import * as cloudBotState from "../cloud-home/bot-state.ts";
 import { buildRemoteMount } from "../custom-mcp-mounts.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { unsupportedCallsNotice } from "./codex-unsupported-calls.ts";
@@ -108,6 +109,16 @@ describe("CodexDriver turns (fake app-server)", () => {
     recorder?.stop();
     await instance?.dispose();
     await removeTempDir(scratch);
+  });
+
+  it.each(["", undefined])("dispatches an empty native selection %s with the live catalog default", async model => {
+    const dump = join(scratch, "blank-model.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    await create();
+    const sent = await instance.adapter.sendTurn({ threadId: "blank-model", text: "hi", model });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    const { calls } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(calls.find((call: { method: string }) => call.method === "thread/start").params.model).toBe("gpt-fake-default");
   });
 
   // D20 (adapted from OpenMausBot cc411b61b): a call Codex refused as unsupported left no item; the turn names it once.
@@ -265,6 +276,21 @@ describe("CodexDriver turns (fake app-server)", () => {
     );
     const seen = JSON.parse(readFileSync(process.env.FAKE_CODEX_DUMP, "utf8"));
     expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
+  });
+
+  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
+    const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
+    resetUnavailable();
+    await create({ mode: `flux-budget-${code}` });
+    await instance.adapter.sendTurn({ threadId: "t-cli-budget", text: "hi", model: "fixture-model",
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+    await recorder.until(e => e.type === "turn.completed");
+    const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
+    expect(Boolean(failure)).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
+    resetUnavailable();
   });
 
   it.each(["terminal-error", "terminal-error-duplicate"])("surfaces a terminal provider error exactly once (%s)", async (mode) => {
@@ -1916,6 +1942,62 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
   });
 
+  it.each([
+    ["Logged in using ChatGPT", "subscription"], ["Logged in using API key", "metered"],
+    ["Logged in using an API key", "metered"], ["logged in using api-key", "metered"],
+    ["Not logged in", "signed-out"], ["Logged in", "unknown"], ["", "unknown"], ["unrecognized", "unknown"],
+  ])("C1: login mode %s is %s", (text, expected) => { expect(readCodexLoginMode(text)).toBe(expected); });
+
+  it.each([
+    ["Logged in using ChatGPT", false, true, "subscription"],
+    ["Logged in using an API key", false, true, "metered"],
+    ["Not logged in", true, false, undefined],
+    ["Logged in using something new", false, true, undefined],
+    ["", false, undefined, undefined], ["", true, undefined, undefined],
+  ] as const)("C2: snapshot retains callback authentication and billing: %s failed=%s", async (text, failed, authenticated, billing) => {
+    await create();
+    const exec = vi.spyOn(procs, "execCli").mockImplementation((...args: Parameters<typeof procs.execCli>) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      if (args[1].includes("--version")) callback(null, "codex-cli 0.151.0", "");
+      else callback(failed ? Object.assign(new Error("timed out"), { killed: true, code: "ETIMEDOUT" }) : null, "", text);
+      return undefined as never;
+    });
+    try {
+      const snapshot = await instance.snapshot();
+      expect(snapshot.state).toBe("available");
+      if (authenticated === undefined) {
+        expect(snapshot).not.toHaveProperty("authenticated");
+        expect(snapshot.authUnverified).toBe(true);
+      } else expect(snapshot.authenticated).toBe(authenticated);
+      if (billing === undefined) expect(snapshot).not.toHaveProperty("billing");
+      else expect(snapshot.billing).toBe(billing);
+      expect(exec).toHaveBeenCalled();
+    } finally { exec.mockRestore(); }
+  });
+
+  it.each([
+    ["apikey", "Logged in using ChatGPT", "metered"],
+    ["chatgpt", "Logged in using an API key", "subscription"],
+  ] as const)("C2 Cloud snapshot: launcher %s overrides CLI %s", async (mode, text, billing) => {
+    await create();
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    const launcher = vi.spyOn(cloudBotState, "queryCloudBotState").mockResolvedValue({
+      tombstoned: false, engines: { codex: { mode, signedIn: true, expiresAt: null } },
+    });
+    const exec = vi.spyOn(procs, "execCli").mockImplementation((...args: Parameters<typeof procs.execCli>) => {
+      const callback = args[args.length - 1] as (error: Error | null, stdout: string, stderr: string) => void;
+      callback(null, args[1].includes("--version") ? "codex-cli 0.151.0" : "", args[1].includes("--version") ? "" : text);
+      return undefined as never;
+    });
+    try {
+      expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true, billing });
+      expect(launcher).toHaveBeenCalledExactlyOnceWith(undefined, undefined);
+      expect(exec.mock.calls.filter(call => call[1].includes("status"))).toHaveLength(1);
+    } finally {
+      exec.mockRestore(); launcher.mockRestore(); vi.unstubAllEnvs();
+    }
+  });
+
   it("reports whether the installed Codex CLI is signed in", async () => {
     await create();
     await expect(instance.snapshot()).resolves.toMatchObject({
@@ -2936,6 +3018,43 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(readFileSync(log, "utf8")).toContain("turn/interrupt");
     expect(recorder.events.some((e: any) => e.type === "item.started" && e.origin === "engine")).toBe(false);
   });
+
+  // HOOK-LIVENESS-COLD-START (1.0.15 r6 gate): on a freshly unpacked Mac app the first exec of the hook's runtime (Murage Helper as
+  // node) took longer than the 10 s bound and the first Codex turn was refused. The stand-in runtime here is slow on its first start
+  // only (3x the bound), as a program the operating system has not run yet is; every later start is fast.
+  // POSIX: the stand-in is a sh script (Windows runs the hook through its cmd launcher and keeps its wider bound, see above)
+  it.skipIf(process.platform === "win32")("runs the first turn when the hook runtime's first start is slower than the bound, and still refuses a hook that never posts", async () => {
+    const bound = 400;
+    process.env.MURAGE_CODEX_HOOK_LIVENESS_MS = String(bound);
+    const coldRuntime = (name: string) => {
+      const mark = join(scratch, `${name}.started-once`);
+      const path = join(scratch, `${name}.sh`);
+      writeFileSync(path, `#!/bin/sh\nif [ ! -e '${mark}' ]; then sleep ${(bound * 3) / 1000}; : > '${mark}'; fi\nexec '${process.execPath}' "$@"\n`);
+      chmodSync(path, 0o755);
+      setHookRuntimeForTests(path);
+      return mark;
+    };
+    onTestFinished(() => setHookRuntimeForTests());
+    const sessions = join(scratch, "cold-sessions.log");
+    process.env.FAKE_CODEX_SESSION_LOG = sessions;
+    const mark = coldRuntime("cold-runtime");
+    await recreate();
+    const r = await run("t-cold", [{ kind: "shell", id: "c1", command: "echo hi" }], () => ({ behavior: "allow" }));
+    expect(r.done).toMatchObject({ ok: true });
+    expect(recorder.events.some((e: any) => e.type === "runtime.error" && /pre-execution hook did not start/.test(e.message))).toBe(false);
+    expect(existsSync(mark)).toBe(true);
+    expect(readFileSync(sessions, "utf8").split("\n").filter(Boolean)).toHaveLength(1);
+    // the bound itself is unchanged: on a cold runtime a hook that never posts is still refused, at the bound and not before
+    process.env.FAKE_CODEX_HOOKS = "dead";
+    coldRuntime("cold-runtime-dead");
+    await recreate();
+    const started = Date.now();
+    const dead = await run("t-cold-dead", [], () => null);
+    expect(dead.done).toMatchObject({ ok: false, stopReason: "scope_unavailable" });
+    expect(recorder.events.find((e) => e.type === "runtime.error")).toMatchObject({ message: expect.stringContaining("pre-execution hook did not start") });
+    // the cold first start (3x the bound) runs out before turn/start, and the whole bound runs after it (Astra r1 #3)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(bound * 3 + bound);
+  }, 30_000);
 
   // Astra BLOCK 2: the turn is held until the hook is proven, so a Codex that carries on past a dead hook never ends a turn cleanly
   it("refuses a turn that completes before the SessionStart proof, and stops a call that starts unproven", async () => {

@@ -29,7 +29,8 @@ export function helpRoute(req: { method: string; url: URL }): HelpRouteAnswer | 
   // It is no help word either, so it is left out of the search, not refused.
   // Split the way shared/help-search.ts tokenize() splits, so no spelling
   // (`_constructor_`, `x.constructor`) reaches the table.
-  const words = query.split(/[^A-Za-z0-9]+/).filter((word) => word && word.toLowerCase() !== "constructor").join(" ");
+  // Letters of every script, combining marks and digits are word characters (L-COPY r3), as in tokenize().
+  const words = query.split(/[^\p{L}\p{M}\p{N}]+/u).filter((word) => word && word.normalize("NFKC").toLowerCase() !== "constructor").join(" ");
   const body: HelpSearchAnswer = { query, results: words ? searchHelp(words, { limit }) : [] };
   return { status: 200, body };
 }
