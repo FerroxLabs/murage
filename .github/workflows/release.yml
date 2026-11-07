@@ -106,6 +106,10 @@ jobs:
             echo "::error::release notes for this version are missing or break the copy rules (see the message above)"
             exit 1
           }
+      - name: Require a review record for every shipped string
+        # copy-lint/pending-review.json must be empty at the release cut.
+        if: steps.pin.outputs.should_release == 'true'
+        run: node scripts/copy-pending-check.mjs
       - name: Refuse to overwrite a published release
         if: steps.pin.outputs.should_release == 'true'
         env:

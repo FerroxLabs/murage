@@ -103,6 +103,15 @@ export function validateHeadlessBrowserCall(name: unknown, args: unknown): { nam
 }
 
 /** Advertise only tools actually offered by the child, with owned schemas. */
+/** SABLE-B 6.1: the one URL form. http or https only, no username or password; returns url.href (lower-case scheme and host, IDNA,
+ * default port dropped, empty path "/", dot segments resolved, the hash kept). Every admission path compares this form only. */
+export function canonicalUrl(raw: string): string {
+  let url: URL;
+  try { url = new URL(raw); } catch { denied("Browser URL must use HTTP or HTTPS"); }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) denied("Browser URL must use HTTP or HTTPS");
+  return url.href;
+}
+
 export function listHeadlessBrowserTools(upstreamTools: unknown): Json[] {
   if (!Array.isArray(upstreamTools)) return [];
   const seen = new Set<string>();

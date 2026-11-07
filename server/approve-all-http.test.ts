@@ -277,6 +277,31 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
     expect((await apply({ batchId: shown.body.batchId, requestIds, freshAuth: { nonce: last.nonce, signature: signFor(APPROVE_ALL_THREAD, shown.body.batchId, last) } }, appWithKey)).body.code).toBe("batch_used");
   }, 240_000);
 
+  it("the bot respond route answers by the same rules as the thread route (BOT-RESPOND-ROUTE-UNIFY)", async () => {
+    const one = await askedBot("Bot route one", "builder");
+    const other = await askedBot("Bot route other");
+    const botRespond = (botId: string, body: object, headers: Record<string, string>) => request("POST", `/api/bots/${botId}/respond`, body, headers);
+    // another bot's thread is not this bot's to answer
+    expect((await botRespond(one.bot.id, { threadId: other.bot.threadId, requestId: other.requestId, behavior: "allow" }, desktopHeaders)).status).toBe(404);
+    expect((await cardById(other.bot.threadId, other.requestId)).answered).toBeUndefined();
+    // a request nothing is waiting on gets the thread route's own answer
+    const nothing = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: "not-a-request", behavior: "allow" }, desktopHeaders);
+    const nothingThread = await request("POST", `/api/threads/${one.bot.threadId}/respond`, { requestId: "not-a-request", behavior: "allow" }, desktopHeaders);
+    expect([nothing.status, nothing.body?.outcome, nothing.body?.error]).toEqual([nothingThread.status, nothingThread.body?.outcome, nothingThread.body?.error]);
+    // the phone app needs a fresh proof on a card that is not low, on both routes alike
+    const viaBot = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: one.requestId, behavior: "allow" }, appWithKey);
+    const viaThread = await request("POST", `/api/threads/${one.bot.threadId}/respond`, { requestId: one.requestId, behavior: "allow" }, appWithKey);
+    expect(viaBot.status, JSON.stringify(viaBot.body)).toBe(403);
+    expect(viaBot.body.code).toBe("fresh_auth");
+    expect([viaThread.status, viaThread.body?.code]).toEqual([403, "fresh_auth"]);
+    expect((await cardById(one.bot.threadId, one.requestId)).answered).toBeUndefined();
+    // the desktop's Allow lands once
+    const allowed = await botRespond(one.bot.id, { threadId: one.bot.threadId, requestId: one.requestId, behavior: "allow" }, desktopHeaders);
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
+    expect((await cardById(one.bot.threadId, one.requestId)).answered).toBe("allow");
+    await desktopApi("POST", `/api/threads/${other.bot.threadId}/respond`, { requestId: other.requestId, behavior: "deny" });
+  }, 240_000);
+
   it("only the desktop app and the owner phone app show the button; the caution choice is one server pref they share", async () => {
     const surface = (headers: Record<string, string>) => request("POST", "/api/inbox/approve-all/surface", {}, headers);
     const caution = (dismissed: unknown, headers: Record<string, string>) => request("POST", "/api/inbox/approve-all/caution", { dismissed }, headers);
@@ -293,4 +318,62 @@ describe.skipIf(process.platform === "win32")("Approve all in Inbox > Approvals"
     expect((await caution(false, desktopHeaders)).body).toEqual({ cautionDismissed: false });
     expect((await surface(appWithKey)).body.cautionDismissed).toBe(false);
   }, 60_000);
+
+  it("Today's Calm | Detailed choice: the desktop and the keyed phone app save it over real HTTP; a browser and a keyless app only read it", async () => {
+    const read = (headers: Record<string, string>) => request("GET", "/api/owner-prefs/today-view", undefined, headers);
+    const save = (view: unknown, headers: Record<string, string>) => request("POST", "/api/owner-prefs/today-view", { view }, headers);
+    expect((await read(desktopHeaders)).body).toEqual({ view: "calm", canSave: true });
+    expect((await save("Detailed", desktopHeaders)).status).toBe(400);
+    expect((await save("detailed", pairedBrowser)).status).toBe(403);
+    expect((await save("detailed", appNoKey)).status).toBe(403);
+    expect((await read(pairedBrowser)).body).toEqual({ view: "calm", canSave: false });
+    expect((await save("detailed", appWithKey)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(desktopHeaders)).body).toEqual({ view: "detailed", canSave: true });
+    expect((await read(appNoKey)).body).toEqual({ view: "detailed", canSave: false });
+    expect((await request("POST", "/api/inbox/approve-all/surface", {}, desktopHeaders)).body.cautionDismissed).toBe(false);
+  }, 60_000);
+
+  it("the preview reads the page on screen: a later page and a snoozed card are previewed, never Approvals page 0 (RESIDUALS-1018-B row 6)", async () => {
+    const one = await askedBot("Screen one");
+    const two = await askedBot("Screen two");
+    const mine = new Set([one.bot.threadId, two.bot.threadId]);
+    const inbox = async (q: Record<string, string>) => (await desktopApi("GET", `/api/inbox?${new URLSearchParams({ view: "approvals", query: "", ...q })}`)).body;
+    const rowKey = (item: any) => `${item.link.threadId}:${item.link.messageId}`;
+    const keyOf = (card: any) => `${card.threadId}:${card.messageId}`;
+    const previewOf = (screen: unknown) => request("POST", "/api/inbox/approve-all/preview", { screen }, desktopHeaders);
+    // the Inbox projection follows the cards a moment later
+    const all = await poll(async () => {
+      const page = await inbox({ pageSize: "100" });
+      return (page?.items ?? []).filter((item: any) => item.kind === "request" && mine.has(item.link?.threadId)).length === 2 ? page : null;
+    }, 20_000);
+    expect(all, "both cards reach Approvals").not.toBeNull();
+    // page 2 of a one-row list: the preview lists exactly the row that page shows (the base previewed page 0 of 100)
+    const second = ((await inbox({ page: "1", pageSize: "1" })).items as any[]).filter((item) => item.kind === "request");
+    expect(second).toHaveLength(1);
+    const paged = await previewOf({ view: "approvals", query: "", page: 1, pageSize: 1, includeSnoozed: false });
+    expect(paged.status, JSON.stringify(paged.body)).toBe(200);
+    expect((paged.body.eligible as any[]).length + (paged.body.excluded as any[]).length).toBe(1);
+    expect((paged.body.eligible as any[]).map(keyOf).every((key) => key === rowKey(second[0]))).toBe(true);
+    // Show snoozed: a snoozed ok card is in the preview of the list that shows it, and only there
+    const target = (all!.items as any[]).find((item) => item.kind === "request" && item.link.threadId === one.bot.threadId);
+    const snoozed = await desktopApi("POST", "/api/inbox/state", { id: target.id, version: target.version, snoozedUntil: Date.now() + 3_600_000 });
+    expect(snoozed.status, JSON.stringify(snoozed.body)).toBe(200);
+    const plain = await previewOf({ view: "approvals", query: "", page: 0, pageSize: 25, includeSnoozed: false });
+    expect((plain.body.eligible as any[]).map(keyOf)).not.toContain(rowKey(target));
+    expect((plain.body.eligible as any[]).map((card) => card.requestId)).toContain(two.requestId);
+    const withSnoozed = await previewOf({ view: "approvals", query: "", page: 0, pageSize: 25, includeSnoozed: true });
+    expect((withSnoozed.body.eligible as any[]).map(keyOf)).toContain(rowKey(target));
+    // Needs you reads the same way
+    const needsYou = await previewOf({ view: "decisions", query: "", page: 0, pageSize: 25, includeSnoozed: true });
+    expect((needsYou.body.eligible as any[]).map(keyOf)).toContain(rowKey(target));
+    // only the two lists that offer the button, and a well formed query; an empty body is still Approvals page 0
+    for (const bad of [{ view: "routines", query: "", page: 0, pageSize: 25, includeSnoozed: false }, { view: "approvals", page: -1 },
+      { view: "approvals", query: "", page: 0, pageSize: 500, includeSnoozed: false }, { view: "approvals", query: "", page: 0, pageSize: 25, includeSnoozed: "yes" }, "approvals"]) {
+      const refused = await previewOf(bad);
+      expect(refused.status, JSON.stringify(bad)).toBe(400);
+      expect(refused.body.batchId).toBeUndefined();
+    }
+    expect((await request("POST", "/api/inbox/approve-all/preview", {}, desktopHeaders)).status).toBe(200);
+    for (const asked of [one, two]) await desktopApi("POST", `/api/threads/${asked.bot.threadId}/respond`, { requestId: asked.requestId, behavior: "deny" });
+  }, 240_000);
 });

@@ -10,7 +10,7 @@ import {
 
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
-import { CLOUD_ROUTINE_NOT_YET, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../../shared/routine-run";
+import { CLOUD_ROUTINE_NOT_YET, CLOUD_ROUTINE_NOT_YET_EARLIER, PROJECT_CLOSED_COPY, type RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
 import { ArtifactCards } from "./ArtifactCards";
 
@@ -142,7 +142,7 @@ export function RoutineRunCard({
               {copy.label}
             </span>
           </div>
-          {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail === CLOUD_ROUTINE_NOT_YET ? t("routines.cloudAskOnly") : detail === PROJECT_CLOSED_COPY ? t("routines.projectClosed") : detail}</p>}
+          {detail && <p className="mt-1 line-clamp-2 text-[12.5px] leading-relaxed text-ink-secondary">{detail === CLOUD_ROUTINE_NOT_YET || detail === CLOUD_ROUTINE_NOT_YET_EARLIER ? t("routines.cloudAskOnly") : detail === PROJECT_CLOSED_COPY ? t("routines.projectClosed") : detail}</p>}
           {run.nextStep && <p className="mt-1 text-[12px] leading-relaxed text-ink">{run.nextStep}</p>}
         </div>
         {onOpen && run.executionThreadId && (

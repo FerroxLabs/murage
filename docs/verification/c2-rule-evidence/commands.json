@@ -1,0 +1,13 @@
+{
+  "client-final.log": "PLAYWRIGHT_BROWSERS_PATH=/tmp/c2-playwright NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/vitest run src/lib/chats-previews-browser.test.ts src/lib/chats-gen.test.ts src/lib/focus-message.test.ts src/components/AllChatsPage.test.ts src/components/ChatPickerSearch.test.ts src/first-paint.test.ts",
+  "server-final.log": "NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/vitest run server/chats-api.test.ts server/chat-search.test.ts server/message-search-forgotten.test.ts server/chats-gen-writers.test.ts",
+  "neighbours.log": "PLAYWRIGHT_BROWSERS_PATH=/tmp/c2-playwright node_modules/.bin/vitest run src/components/AllChatsPage.test.ts src/components/ChatPickerSearch.test.ts src/lib/all-chats.test.ts src/lib/focus-message.test.ts src/lib/task-window.test.ts src/lib/live-events.test.ts src/state/all-chats-view.test.ts server/message-search-forgotten.test.ts server/message-search-before.test.ts server/message-search-bounded.test.ts server/message-search-chunked.test.ts server/message-search-index.test.ts server/chat-search.test.ts server/thread-recall.test.ts server/mcp-server.test.ts",
+  "popup-verified.log": "PLAYWRIGHT_BROWSERS_PATH=/tmp/c2-playwright NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/vitest run src/lib/chats-previews-browser.test.ts src/components/TaskPicker.test.ts",
+  "build.log": "NODE_OPTIONS=--max-old-space-size=8192 corepack pnpm build",
+  "bundle.log": "corepack pnpm check:bundle-budget",
+  "tiers.log": "node scripts/ci-test-tiers.mjs check",
+  "catalog.log": "corepack pnpm catalog:check",
+  "locale.log": "corepack pnpm i18n:check",
+  "tsc-client.log": "NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/tsc -b",
+  "tsc-server.log": "NODE_OPTIONS=--max-old-space-size=8192 node_modules/.bin/tsc -p tsconfig.server.json"
+}

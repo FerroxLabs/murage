@@ -1,0 +1,316 @@
+
+> murage@1.0.17 build /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+> tsc -b && tsc -p tsconfig.server.json && vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+Found 2 warnings while optimizing generated CSS:
+
+Issue #1:
+[2m│   }[22m
+[2m│   .pt-\[env\(\)\] {[22m
+[2m│[22m     padding-top: env();
+[2m┆[22m                      [33m[2m^--[22m Unexpected end of input[39m
+[2m┆[22m
+[2m│   }[22m
+[2m│   .pt-\[env\(safe-area-inset-top\)\] {[22m
+
+Issue #2:
+[2m│   animation: whats-new-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1);[22m
+[2m│ }[22m
+[2m│[22m ::highlight(murage-claim) {
+[2m┆[22m             [33m[2m^--[22m 'highlight' is not recognized as a valid pseudo-element. Did you mean ':highlight' (pseudo-class) or is this a typo?[39m
+[2m┆[22m
+[2m│   background-color: color-mix(in srgb, #ff6b35 28%, transparent);[22m
+[2m│   @supports (color: color-mix(in lab, red, red)) {[22m
+
+node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js (400:0): A comment
+
+"// Wrapped in a `@__PURE__` IIFE: esbuild never tree-shakes a top-level initializer that contains a member access on `Number`, so the bare object literal survived into every bundle."
+
+in "node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/util.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/regexes.js (74:0): A comment
+
+"/** Anchors a pattern source. The interpolation lives here rather than at the call site because
+ * esbuild will not drop a `@__PURE__` call whose own argument interpolates a variable, but it
+ * will drop `anchor(dateSource)`. Keeping it inline pinned `date` into every bundle. */"
+
+in "node_modules/.pnpm/zod@4.6.7/node_modules/zod/v4/core/regexes.js" contains an annotation that Rollup cannot interpret due to the position of the comment. The comment will be removed to avoid issues.
+✓ 3418 modules transformed.
+rendering chunks...
+[esbuild css minify]
+▲ [WARNING] "orders" is not a known CSS property [unsupported-css-property]
+
+    <stdin>:2:115496:
+      2 │ ...ernet:443}.\[orders\:write\]{orders:write}.\[overflow-anchor\:no...
+        │                                 ~~~~~~
+        ╵                                 border
+
+  Did you mean "border" instead?
+
+
+[plugin vite:reporter] 
+(!) /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/live-events.ts is dynamically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Announcements.tsx but also statically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CallAura.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Files.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ImageMedia.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/InspectorPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LocalVmWorkspace.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PushToTalk.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/bot-call-session.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/call-mic.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/call-turns.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/cloud-door.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/composer-image-upload.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/conversation-export.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/dictation-cleanup.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/paged-screen-frame.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/presence.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/save-file.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/stream-uplink.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/surface.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/team-files.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/tts/index.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/use-desktop-resource.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/voice-host.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/workspace-pane.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/state/store.tsx, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/state/store.tsx is dynamically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/UseAsReferenceButton.tsx but also statically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/App.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/AboutMeSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/AllChatsPage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Announcements.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/AnnouncementsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ApiKeys.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ApprovalCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ApproveAll.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ArtifactCards.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BackupSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotAccessSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotCallCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotCallRing.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotCallsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotEmailSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotIntakeCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotPermissionDefault.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotProfileAvatarCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotRoleControl.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotSettingsPane.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotShapesPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotSkillsPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BotTeamsSection.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BringYourAi.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserActivityLog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserApprovalMode.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserApprovedSites.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserExtensionPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserExternalClients.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserSetupCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BrowserWorkspace.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/BundleImportDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CallControls.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CallMeWhenDone.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CallView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CallsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CanTalkToControl.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ChannelDetailsPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ChatFindBar.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ChatHeader.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ChatMarkdown.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ChatView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ClaudeAccountsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ClaudeUpdatePrompt.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/CommandPalette.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Composer.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ComputerPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ConfirmDelete.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ConnectorCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ContinuityBlock.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ConversationSnooze.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/DiscordSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/EmailSendCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/EngineChatLinkDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/EngineManagement.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/EngineSetup.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/EnginesSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ExportPasteNote.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Files.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FilesDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunAppsCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunChrome.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunFluxCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunHelloCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunJobsCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FirstRunPhases.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FluxKeyCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FluxKeyProblemBanner.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FolderTrustNote.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/FolderTrustRow.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/GroupCallView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/GroupView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/HeldAfterRestore.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/HermesImport.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/HouseRulesSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ImageLibrary.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ImageSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Inbox.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/InboxLearningSuggestions.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/InboxMemoryWaiting.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/InboxRequest.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/InspectorPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/IntakeTurn.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LearningOverviewLine.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LearningPausedCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LearningSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LinuxLocalControl.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LocalComputerSection.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LocalModelsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/LocalVmWorkspace.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ManageMembersPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/McpAddSection.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/McpEnableCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/McpServersPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/McpSignInCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MediaPlayer.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemoryEvolutionControls.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemoryNeedsYou.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemoryNotebookPicker.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemorySection.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemorySettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/MemoryUpgradeDetail.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ModelPicker.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ModelsSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NewFromTemplateDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NewProjectDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NewTeamDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NewsSignupSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NoEngines.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NoLimitsTermsPrompt.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/NotificationSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/OptionCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PasteKeys.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PendingApproval.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PhoneAccessCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PhoneForBotsRow.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PhonePreviewSwitches.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PluginsPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProcedureEvaluationAdmissions.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProcedureVersionHistory.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectActivity.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectAutonomySetting.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectBoard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectCardSheet.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectGoalView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectHome.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectInboxRows.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectStripDetails.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ProjectWorkSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PublishCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/QuestionCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ReconnectAppsBanner.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RememberedApprovals.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoomRoutingSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoomShareCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoomTurnTimeoutSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoutineApprovals.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoutineCalendarPage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoutineRunDivider.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/RoutineWatchPicker.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ScriptAccessSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SearchResults.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SearchSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SecretRequestCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SectionContextDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SettingsAddressLink.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SettingsModal.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SettingsPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SettingsSearchResults.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/Sidebar.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SidebarSharedRows.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SkillRecorderPage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SlackSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SpeakButton.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SpendLimitCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/StarterProfiles.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/StorageList.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/StorageSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/SubscriptionSignIn.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TaskPicker.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TeamExportDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TeamLibraryPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TeamMapPage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TeamSettingsDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TelegramSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TermsGate.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ThreadFollowControls.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ThreadLinkMenu.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/TimeZoneSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/UnifiedBrowserPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/UnloadableRoutines.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/UsageSection.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/VenuePostMenu.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/VoiceSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WebhooksPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WhatsAppSettings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WhatsNewHost.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WorkspaceFiles.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WorkspacePane.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/approval/use-level-change.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/engine/UseFuigoInstead.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/health/HealthFindings.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/health/HealthIssues.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/health/HealthPageBody.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/health/HealthPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/health/health-status.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/help/FeedbackForm.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/help/HelpPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/hire/HireBotDialog.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/needs/NeedsYouPage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/needs/NeedsYouPageBody.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/routines/NewRoutineSheet.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/routines/RoutineSheet.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/shell/StillWorkingLine.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/shell/shell-nav.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/MonthCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/MonthCardView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/TodayView.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/use-engine-health.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/use-today-view.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/today/use-worth-a-look.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ui/CoachMarks.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/useDeepLinks.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/usePendingApprovals.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/usePushEnrol.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/useTrayIntents.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/widget/WidgetMessage.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/workspace-pane-gate.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/hooks/use-warm-intent.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/all-chats.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/bot-email.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/chat-previews.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/connected-apps-preload.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/deep-link.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/focus-message.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/grant-added.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/held-message.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/importScan.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/learned-chips.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/learning-counts.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/memory-integrity-feed.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/open-inbox-link.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/outcomes.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/skills-api.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/team-files.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/thread-owner.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/use-ensure-task.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/use-memory-waiting.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/use-project.ts, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/use-slash-skills.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/open-external.ts is dynamically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/lib/whats-new.ts but also statically imported by /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/ConnectorCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PluginsPanel.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/PublishCard.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/components/WhatsNewHost.tsx, /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo/src/main.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff                      4.42 kB
+dist/assets/tile-speed-4mOwt-oG.webp                               4.51 kB
+dist/index.html                                                    4.85 kB │ gzip:     2.11 kB
+dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2                     4.93 kB
+dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2                     5.21 kB
+dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2                     5.47 kB
+dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff                      5.98 kB
+dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff                      6.19 kB
+dist/assets/KaTeX_Size1-Regular-C195tn64.woff                      6.50 kB
+dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2               6.91 kB
+dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2                  6.91 kB
+dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf                       7.59 kB
+dist/assets/tile-desktops--rmi6vPz.webp                            7.62 kB
+dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff                7.66 kB
+dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff                   7.72 kB
+dist/assets/tile-gemini-FQgJ6fMp.webp                              7.84 kB
+dist/assets/tile-shapes-wZF5NVKu.webp                              9.39 kB
+dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2                    9.64 kB
+dist/assets/tile-labs-Drc54oOq.webp                                9.77 kB
+dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2                10.34 kB
+dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf                      10.36 kB
+dist/assets/KaTeX_Script-Regular-D5yQViql.woff                    10.59 kB
+dist/assets/tile-packs-D9fDhWgU.webp                              10.68 kB
+dist/assets/tile-longwork-B7CKqeyH.webp                           10.81 kB
+dist/assets/tile-routing-BX1wW1so.webp                            11.30 kB
+dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2                  11.32 kB
+dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2                     11.35 kB
+dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf                      11.51 kB
+dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2                 12.03 kB
+dist/assets/tile-rooms-D4Inw8Hm.webp                              12.12 kB
+dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2                   12.22 kB
+dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf                      12.23 kB
+dist/assets/tile-blocks-Dnog05UR.webp                             12.29 kB
+dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff                 12.32 kB
+dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf                12.34 kB
+dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf                   12.37 kB
+dist/assets/tile-engines-nTm-Ll6V.webp                            12.82 kB
+dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff                   13.21 kB
+dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff                      13.30 kB
+dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2               13.57 kB
+dist/assets/tile-chrome-D6Rr_McL.webp                             13.76 kB
+dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff                  14.11 kB
+dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff                    14.41 kB
+dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff                16.03 kB
+dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2                  16.40 kB
+dist/assets/KaTeX_Math-Italic-t53AETM-.woff2                      16.44 kB
+dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf                     16.65 kB
+dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2                  16.78 kB
+dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2                      16.99 kB
+dist/assets/tile-fuigo-start-sdsTtdAJ.webp                        17.25 kB
+dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff                   18.67 kB
+dist/assets/KaTeX_Math-Italic-DA0__PXp.woff                       18.75 kB
+dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff                   19.41 kB
+dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf                  19.44 kB
+dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf                    19.57 kB
+dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf                       19.58 kB
+dist/assets/KaTeX_Main-Italic-BMLOBm91.woff                       19.68 kB
+dist/assets/instrument-serif-latin-400-normal-DnYpCC2O.woff2      21.03 kB
+dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf                   22.36 kB
+dist/assets/tile-one-place-S-un1qcN.webp                          24.16 kB
+dist/assets/ort-wasm-simd-threaded-BbYCYElJ.mjs                   24.27 kB
+dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf                     24.50 kB
+dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2                        25.32 kB
+dist/assets/team-hero-B1t8mR6l.webp                               25.40 kB
+dist/assets/KaTeX_Main-Regular-B22Nviop.woff2                     26.27 kB
+dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf                 27.56 kB
+dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2                      28.08 kB
+dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff                         29.91 kB
+dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff                      30.77 kB
+dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf                    31.20 kB
+dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf                        31.31 kB
+dist/assets/memory-hero-DvlNqdM0.webp                             31.68 kB
+dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf                    32.97 kB
+dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff                       33.52 kB
+dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf                        33.58 kB
+dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf                          51.34 kB
+dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf                       53.58 kB
+dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf                        63.63 kB
+dist/.vite/manifest.json                                          69.48 kB │ gzip:     9.03 kB
+dist/mermaid-frame-bdede319bb380e76.html                       5,257.09 kB │ gzip: 1,501.70 kB
+dist/assets/ort-wasm-simd-threaded-1QYQn1Hs.wasm              12,361.75 kB │ gzip: 3,165.12 kB
+dist/assets/ProjectBoardDialog-CMRNNg3a.css                        1.52 kB │ gzip:     0.62 kB
+dist/assets/EngineLoginTerminal-DDGTF8rc.css                       3.62 kB │ gzip:     0.99 kB
+dist/assets/RichMarkdownEditor-Dm_Qrn3w.css                        7.48 kB │ gzip:     1.91 kB
+dist/assets/katex-BOvhZl6_.css                                    30.25 kB │ gzip:     8.09 kB
+dist/assets/index-3f4-SL1u.css                                   190.29 kB │ gzip:    31.37 kB
+dist/assets/transcription-status-DpVYqD7I.js                       0.14 kB │ gzip:     0.14 kB
+dist/assets/published-sites-ZfpSv8Ua.js                            0.14 kB │ gzip:     0.13 kB
+dist/assets/cloud-o1-a4yBn.js                                      0.16 kB │ gzip:     0.17 kB
+dist/assets/ComputerOnlyNotice-DAwAIScK.js                         0.19 kB │ gzip:     0.17 kB
+dist/assets/rotate-cw-BzLo7LsC.js                                  0.20 kB │ gzip:     0.19 kB
+dist/assets/plug-DIxqR1GF.js                                       0.26 kB │ gzip:     0.20 kB
+dist/assets/ProjectMemoryView-BzrFM4lN.js                          0.31 kB │ gzip:     0.25 kB
+dist/assets/ProjectFilesView-BGt0mKG4.js                           0.33 kB │ gzip:     0.26 kB
+dist/assets/octagon-x-DOT-ac33.js                                  0.42 kB │ gzip:     0.26 kB
+dist/assets/learning-limit-cZZEqkwn.js                             0.55 kB │ gzip:     0.31 kB
+dist/assets/connected-app-calls-Cc8q9hdE.js                        0.58 kB │ gzip:     0.35 kB
+dist/assets/TodayQuickAnswer-CtKAyeBa.js                           0.59 kB │ gzip:     0.39 kB
+dist/assets/EndProjectDialog-0N0-2YAn.js                           0.60 kB │ gzip:     0.38 kB
+dist/assets/ProjectSinceYouLeft-DlDdPTWg.js                        0.71 kB │ gzip:     0.44 kB
+dist/assets/memory-words-CynZh7t0.js                               0.73 kB │ gzip:     0.45 kB
+dist/assets/screen-preview-CBi9zVPu.js                             0.87 kB │ gzip:     0.47 kB
+dist/assets/CloseProjectDialog-ufGvYodK.js                         0.89 kB │ gzip:     0.49 kB
+dist/assets/analytics-active-h3L_bwTQ.js                           0.89 kB │ gzip:     0.54 kB
+dist/assets/server-cog-Dlgz4veQ.js                                 1.01 kB │ gzip:     0.47 kB
+dist/assets/open-settings-address-BMM4WDM6.js                      1.01 kB │ gzip:     0.55 kB
+dist/assets/MemoryIntegrityStrip-5tROT5Nf.js                       1.15 kB │ gzip:     0.67 kB
+dist/assets/CloudBackendPicker-B4rn5oPP.js                         1.18 kB │ gzip:     0.68 kB
+dist/assets/health-actions-Mci2FlUg.js                             1.19 kB │ gzip:     0.60 kB
+dist/assets/bot-settings-pane-load-DEaYLXJ_.js                     1.20 kB │ gzip:     0.67 kB
+dist/assets/FirstRunBackupsRow-B0eIh7Vp.js                         1.24 kB │ gzip:     0.51 kB
+dist/assets/ChatThreadMatches-CVkkG0VI.js                          1.27 kB │ gzip:     0.74 kB
+dist/assets/CoachMark-BV8YRQLy.js                                  1.32 kB │ gzip:     0.76 kB
+dist/assets/BotSettingsDialog-Dl7hy7QY.js                          1.36 kB │ gzip:     0.74 kB
+dist/assets/VenuePostMenu-BiBN-Cdf.js                              1.50 kB │ gzip:     0.76 kB
+dist/assets/SidebarYouMenuPanel-DNchthW1.js                        1.51 kB │ gzip:     0.84 kB
+dist/assets/ProjectBoardDialog-CycTSpoU.js                         1.52 kB │ gzip:     0.73 kB
+dist/assets/RailBotList-BeGljkas.js                                1.54 kB │ gzip:     0.76 kB
+dist/assets/ChatPickerSearch-DaatAGSH.js                           1.59 kB │ gzip:     0.90 kB
+dist/assets/webhook-message-DnlGAiJX.js                            1.72 kB │ gzip:     0.82 kB
+dist/assets/Tip-Bb9XgQAu.js                                        2.02 kB │ gzip:     1.12 kB
+dist/assets/ChatFindBar-Yq5ywxSh.js                                2.15 kB │ gzip:     1.04 kB
+dist/assets/EngineChatLinkDialog-Duzypiu1.js                       2.16 kB │ gzip:     1.05 kB
+dist/assets/local-vm-workspace-B3XEDK9y.js                         2.25 kB │ gzip:     1.04 kB
+dist/assets/TeamToday-nk-00iYg.js                                  2.31 kB │ gzip:     1.04 kB
+dist/assets/BrowserWorkspace-DB_WUNzv.js                           2.33 kB │ gzip:     1.16 kB
+dist/assets/GrantFold-C4aDCNFh.js                                  2.46 kB │ gzip:     1.16 kB
+dist/assets/diff-D97Zzqfu.js                                       2.57 kB │ gzip:     0.70 kB
+dist/assets/SpendCard-D6DBZQm_.js                                  2.73 kB │ gzip:     1.17 kB
+dist/assets/InboxMemoryWaiting-BSn3drIk.js                         2.81 kB │ gzip:     1.28 kB
+dist/assets/json-Cp-IABpG.js                                       2.82 kB │ gzip:     0.78 kB
+dist/assets/McpSignInCard-B33clZ2B.js                              2.88 kB │ gzip:     1.23 kB
+dist/assets/conversation-cache-BbuKxZ5B.js                         2.89 kB │ gzip:     1.12 kB
+dist/assets/MonthCardView-yiymaflP.js                              2.93 kB │ gzip:     1.26 kB
+dist/assets/project-activity-BRNCozDO.js                           3.00 kB │ gzip:     1.22 kB
+dist/assets/Door-BlyhXbqA.js                                       3.14 kB │ gzip:     1.41 kB
+dist/assets/SettingsPrimitives-DiIvrz_0.js                         3.16 kB │ gzip:     1.36 kB
+dist/assets/McpEnableCard-DkQqPRq-.js                              3.20 kB │ gzip:     1.33 kB
+dist/assets/ClaudeUpdatePrompt-Bk-B9g0X.js                         3.20 kB │ gzip:     1.23 kB
+dist/assets/sentinel-view-D7x-JXVv.js                              3.34 kB │ gzip:     1.43 kB
+dist/assets/ProjectActivity-CET3kFFw.js                            3.34 kB │ gzip:     1.56 kB
+dist/assets/ProjectInboxRows-BTP5h3Fi.js                           3.36 kB │ gzip:     1.18 kB
+dist/assets/HealthNeedCard-CI4eCEo2.js                             3.49 kB │ gzip:     1.31 kB
+dist/assets/FirstRunPhoneCard-Pt07tdN4.js                          3.88 kB │ gzip:     1.49 kB
+dist/assets/LevelExamples-YdpjJkRD.js                              3.91 kB │ gzip:     1.15 kB
+dist/assets/today-detail-DQrSN5rH.js                               3.94 kB │ gzip:     1.73 kB
+dist/assets/HermesImport-BZtoa9xa.js                               3.98 kB │ gzip:     1.64 kB
+dist/assets/InboxLearningSuggestions-CeyURjMm.js                   4.05 kB │ gzip:     1.71 kB
+dist/assets/RoomShareCard-0GxkExj3.js                              4.06 kB │ gzip:     1.49 kB
+dist/assets/TermsScreens-D1zn66In.js                               4.13 kB │ gzip:     1.49 kB
+dist/assets/ProjectWorkSettings-QuuLj3lf.js                        4.51 kB │ gzip:     1.62 kB
+dist/assets/ConnectedAppsLock-Bvjmabha.js                          4.55 kB │ gzip:     1.95 kB
+dist/assets/settings-search-Bdke4a8N.js                            4.86 kB │ gzip:     2.15 kB
+dist/assets/memory-review-BfADCK9r.js                              5.11 kB │ gzip:     2.18 kB
+dist/assets/HireBotDialog-D_1AR5Es.js                              5.42 kB │ gzip:     2.14 kB
+dist/assets/KeyboardShortcutsDialog-B5QvjCKP.js                    5.73 kB │ gzip:     2.29 kB
+dist/assets/BrowserSetupCard-BXxmAeCK.js                           5.79 kB │ gzip:     2.27 kB
+dist/assets/ImageLibrary-B9i3t_f_.js                               6.06 kB │ gzip:     1.80 kB
+dist/assets/settings-index-D4iPD-Bj.js                             6.11 kB │ gzip:     2.25 kB
+dist/assets/CommandPalette-D0rd-6Zl.js                             6.37 kB │ gzip:     2.53 kB
+dist/assets/EngineSignInDialog-bKoXspLt.js                         6.78 kB │ gzip:     2.26 kB
+dist/assets/InboxRequest-CM417p6d.js                               7.40 kB │ gzip:     3.04 kB
+dist/assets/ApiKeys-CxZUa_8t.js                                    7.97 kB │ gzip:     2.85 kB
+dist/assets/cloud-door-BLCGRITj.js                                 8.14 kB │ gzip:     3.28 kB
+dist/assets/learning-screen-DwKIjXse.js                            8.17 kB │ gzip:     3.16 kB
+dist/assets/SubscriptionSignIn-v5_bHxHT.js                         8.19 kB │ gzip:     2.69 kB
+dist/assets/FolderTrustNote-B4-gZlhP.js                            8.25 kB │ gzip:     2.61 kB
+dist/assets/ProcedureVersionHistory-DcTyHZ9E.js                    8.66 kB │ gzip:     2.83 kB
+dist/assets/BundleImportDialog-Cp1YrC7M.js                         8.74 kB │ gzip:     2.90 kB
+dist/assets/BotTeamsSection-ndmJ_qlx.js                            8.75 kB │ gzip:     2.93 kB
+dist/assets/LevelConfirmCard-AmCJeg83.js                          10.43 kB │ gzip:     3.60 kB
+dist/assets/yaml-Buea-lGh.js                                      10.51 kB │ gzip:     2.27 kB
+dist/assets/NewProjectDialog-C57D8vEX.js                          10.64 kB │ gzip:     3.32 kB
+dist/assets/ProjectStripDetails-Uo07AjmB.js                       11.09 kB │ gzip:     3.50 kB
+dist/assets/MemoryNeedsYou-BBioZzut.js                            11.96 kB │ gzip:     3.97 kB
+dist/assets/TeamMapPage-BV8VEKmh.js                               12.06 kB │ gzip:     3.97 kB
+dist/assets/ConnectHome-GXg6QaJV.js                               12.14 kB │ gzip:     4.60 kB
+dist/assets/ApproveAll-Bz8olXN9.js                                12.39 kB │ gzip:     4.45 kB
+dist/assets/MemoryLearningControls-bKIykOdx.js                    12.45 kB │ gzip:     4.76 kB
+dist/assets/TeamSettingsDialog-K9XNm4ku.js                        12.49 kB │ gzip:     4.44 kB
+dist/assets/ProjectGoalView-D9zKfUoJ.js                           12.56 kB │ gzip:     4.06 kB
+dist/assets/NewFromTemplateDialog-DAVZOfi6.js                     12.78 kB │ gzip:     4.51 kB
+dist/assets/InspectorPanel-DU-zOSIY.js                            13.05 kB │ gzip:     5.19 kB
+dist/assets/LocalVmWorkspace-CEZDkvw1.js                          13.83 kB │ gzip:     5.03 kB
+dist/assets/github-light-default-D7oLnXFd.js                      14.16 kB │ gzip:     3.04 kB
+dist/assets/github-dark-default-Cuk6v7N8.js                       14.44 kB │ gzip:     3.13 kB
+dist/assets/PendingApprovalQueue-C2GgExfc.js                      14.53 kB │ gzip:     5.50 kB
+dist/assets/TeamExportDialog-CA7r556A.js                          14.59 kB │ gzip:     4.46 kB
+dist/assets/rust-B1yitclQ.js                                      15.07 kB │ gzip:     2.72 kB
+dist/assets/project-goal-view-Ci8kySk6.js                         15.16 kB │ gzip:     5.29 kB
+dist/assets/SettingsStub-BUiWfORu.js                              17.21 kB │ gzip:     5.92 kB
+dist/assets/memory-integrity-feed-OiSyHbIF.js                     18.73 kB │ gzip:     6.50 kB
+dist/assets/MarkdownEditor-lfkBd3E-.js                            19.17 kB │ gzip:     5.35 kB
+dist/assets/HermesMark-Df3O86b4.js                                19.87 kB │ gzip:     8.65 kB
+dist/assets/MemorySection-W4am0SKD.js                             21.37 kB │ gzip:     5.92 kB
+dist/assets/PublishCard-DDtWxpcq.js                               21.57 kB │ gzip:     5.80 kB
+dist/assets/HealthPageBody-D9Nph21c.js                            22.63 kB │ gzip:     6.74 kB
+dist/assets/sql-CRqJ_cUM.js                                       23.43 kB │ gzip:     7.42 kB
+dist/assets/AllChatsPage-DwC8fZU7.js                              23.54 kB │ gzip:     7.12 kB
+dist/assets/SkillRecorderPage-DSR5Y4OW.js                         23.70 kB │ gzip:     8.22 kB
+dist/assets/WhatsNewDialog-Nz-M39QR.js                            23.88 kB │ gzip:     8.23 kB
+dist/assets/approval-plain-CguNJKIa.js                            27.81 kB │ gzip:    10.37 kB
+dist/assets/purify.es-18JuyMri.js                                 30.12 kB │ gzip:    11.51 kB
+dist/assets/GroupCallView-BfiozVvk.js                             30.48 kB │ gzip:    11.58 kB
+dist/assets/BotEmailSettings-CWNsbAUQ.js                          32.83 kB │ gzip:     9.56 kB
+dist/assets/ProjectBoard-CgX1eWUi.js                              33.93 kB │ gzip:    10.63 kB
+dist/assets/WorkspacePane-DhI_fD7b.js                             34.81 kB │ gzip:    10.14 kB
+dist/assets/PhoneSetupFlow-CG-qQfe4.js                            36.87 kB │ gzip:    12.94 kB
+dist/assets/NeedsYouPageBody-CtMG8I7A.js                          37.19 kB │ gzip:    12.27 kB
+dist/assets/PluginsPanel-CtbKMsG0.js                              37.34 kB │ gzip:    12.41 kB
+dist/assets/TeamLibraryPanel-D-tnJyDJ.js                          38.81 kB │ gzip:    11.62 kB
+dist/assets/shellscript-CEILq0vU.js                               41.69 kB │ gzip:     6.17 kB
+dist/assets/ReadAlong-B6ZaqbaE.js                                 42.76 kB │ gzip:    16.05 kB
+dist/assets/go-C27-OAKa.js                                        46.82 kB │ gzip:     5.18 kB
+dist/assets/css-CLj8gQPS.js                                       49.04 kB │ gzip:    11.86 kB
+dist/assets/html-pp8916En.js                                      57.25 kB │ gzip:    11.69 kB
+dist/assets/engine-javascript-ZX5pI3G3.js                         59.09 kB │ gzip:    20.66 kB
+dist/assets/markdown-Cvjx9yec.js                                  59.34 kB │ gzip:     5.64 kB
+dist/assets/HelpPanel-DLzZgm0-.js                                 60.10 kB │ gzip:    15.43 kB
+dist/assets/ComputerPanel-Cy65bKPH.js                             60.97 kB │ gzip:    17.80 kB
+dist/assets/McpServersPanel-CHURVI2x.js                           61.54 kB │ gzip:    18.29 kB
+dist/assets/python-B6aJPvgy.js                                    69.95 kB │ gzip:     9.13 kB
+dist/assets/silero-vad-BGiusAHw.js                                73.04 kB │ gzip:    24.80 kB
+dist/assets/CallView-BihkT4ne.js                                  73.72 kB │ gzip:    25.29 kB
+dist/assets/MemorySettings-Cgj4YkZk.js                            89.98 kB │ gzip:    25.02 kB
+dist/assets/GroupView-sGS2A0li.js                                 92.49 kB │ gzip:    26.38 kB
+dist/assets/core-eZ5RfGcJ.js                                      95.24 kB │ gzip:    30.10 kB
+dist/assets/importScan-GLekxMYB.js                               105.67 kB │ gzip:    33.53 kB
+dist/assets/RoutinesPage-Dd9l4d-r.js                             149.45 kB │ gzip:    38.24 kB
+dist/assets/javascript-wDzz0qaB.js                               174.83 kB │ gzip:    16.51 kB
+dist/assets/tsx-COt5Ahok.js                                      175.54 kB │ gzip:    16.51 kB
+dist/assets/jsx-g9-lgVsj.js                                      177.79 kB │ gzip:    16.61 kB
+dist/assets/typescript-BPQ3VLAy.js                               181.08 kB │ gzip:    16.04 kB
+dist/assets/BotSettingsPane-BiHcuFt5.js                          184.50 kB │ gzip:    50.31 kB
+dist/assets/UnifiedBrowserPanel-DJyQ3oTj.js                      221.92 kB │ gzip:    63.54 kB
+dist/assets/module-DCUsy2BQ.js                                   241.45 kB │ gzip:    80.02 kB
+dist/assets/katex-C79Zqph_.js                                    261.69 kB │ gzip:    77.88 kB
+dist/assets/zh-QqcID86M.js                                       274.10 kB │ gzip:    78.00 kB
+dist/assets/pt-br-DNMNc5Mh.js                                    297.45 kB │ gzip:    77.13 kB
+dist/assets/es-CCPMXsfq.js                                       300.25 kB │ gzip:    77.83 kB
+dist/assets/fr-C6DXZ0cY.js                                       311.41 kB │ gzip:    80.03 kB
+dist/assets/de-ffBAWtYa.js                                       313.56 kB │ gzip:    82.11 kB
+dist/assets/EngineLoginTerminal-ixEbhs3W.js                      334.48 kB │ gzip:    84.93 kB
+dist/assets/ja-7LtqkjR3.js                                       358.92 kB │ gzip:    82.39 kB
+dist/assets/SettingsModal-BzDW1vua.js                            426.68 kB │ gzip:   111.17 kB
+dist/assets/hi-ChMyzQJW.js                                       515.71 kB │ gzip:    90.91 kB
+dist/assets/RichMarkdownEditor-BGOOPG5M.js                       710.18 kB │ gzip:   224.25 kB
+dist/assets/model-metadata--Oz-I-Ca.js                         1,654.18 kB │ gzip:   137.12 kB
+dist/assets/index-BcIEvfZl.js                                  2,397.14 kB │ gzip:   736.69 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 12.60s

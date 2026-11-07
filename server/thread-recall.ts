@@ -363,19 +363,26 @@ function planRead(access: MemoryAccess, set: readonly string[], args: z.infer<ty
   const leaf = readActiveLeafOrNewest(threadId);
   // rule 8: the active branch in the branch's own order (branchRows), never storage rowid; an anchor that is not on that branch reads as not-reachable
   const walk = (direction: "before" | "after", need: number) => textLinesAlongBranch(threadId, leaf, anchor.id, direction, need);
+  const checking = (): Plan => ({
+    rows: [], limit, checking: 1, unavailable: 0, trim: "end",
+    build: () => ({ rows: [], more: true, checking: 1, unavailable: 0, notes: [CHECKING_LINE] }),
+  });
   let older: Message[] = [], newer: Message[] = [], moreOlder = false, moreNewer = false, includeAnchor = false;
   if (args.direction === "before") {
     const got = walk("before", limit);
+    if (got.unknown) return checking();
     if (!got.anchorOnBranch) return "not-reachable";
     ({ rows: older, more: moreOlder } = got);
   } else if (args.direction === "after") {
     const got = walk("after", limit);
+    if (got.unknown) return checking();
     if (!got.anchorOnBranch) return "not-reachable";
     ({ rows: newer, more: moreNewer } = got);
   } else {
     const before = Math.floor((limit - 1) / 2), after = limit - 1 - before;
     includeAnchor = true;
     const back = walk("before", before), forward = walk("after", after);
+    if (back.unknown || forward.unknown) return checking();
     if (!back.anchorOnBranch || !forward.anchorOnBranch) return "not-reachable";
     ({ rows: older, more: moreOlder } = back);
     ({ rows: newer, more: moreNewer } = forward);

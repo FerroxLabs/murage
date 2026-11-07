@@ -1018,7 +1018,7 @@ describe("agents-proxy MCP surface", () => {
     };
     const res = await callTool("list_routines", {});
     expect(res.result.content[0].text).toContain("routine-1");
-    expect(res.result.content[0].text).toContain("Asia/Kolkata");
+    expect(res.result.content[0].text).toContain("timezone: India time (IANA id Asia/Kolkata)");
     const query = new URL(lastRoutineQuery, "http://localhost").searchParams;
     expect(query.get("fromBotId")).toBe("bot-asker");
     expect(query.get("fromThreadId")).toBe("thread-asker-routine");
@@ -1152,6 +1152,13 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBe(true);
     expect(res.result.content[0].text).toContain("self-hosted VPS");
     expect(lastRoutineRequestBody).toBeNull();
+  });
+
+  it("1.0.18 U6 E32: an empty routine list says the time zone in plain words", async () => {
+    routinesResponse = { now: "2026-08-28T10:30:00.000Z", timeZone: "Europe/London", routines: [] };
+    const text = (await callTool("list_routines", {})).result.content[0].text;
+    expect(text).toContain("This bot has no routines.");
+    expect(text).toContain("Timezone: UK time (IANA id Europe/London).");
   });
 
   it("lists routines with run_on in the tool's own words", async () => {
