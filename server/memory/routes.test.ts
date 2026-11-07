@@ -8,6 +8,7 @@ import { memoryAccess,reconcileMemoryRoster } from "./policy.ts";
 import { setMemoryMode } from "./repository.ts";
 import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
+import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { captureSource } from "./capture.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
 import { installLearningDestination } from "./learning-destination.ts";
@@ -359,7 +360,11 @@ it.each(["webhook","tool","other-bot","other-thread","later-invitation","person"
  captureSource(db,{id:"r7-evidence",threadId:"thread",kind:reason==="tool"?"tool-outcome":"text",speaker:reason==="webhook"?"owner":reason==="tool"?"tool":reason==="other-bot"?"other":reason==="person"?"person:visitor":"bot",outcome:"recorded",text,occurredAt:2,origin:{kind:reason==="webhook"?"webhook":"attended"}});
  for(let job=claimMemoryJob("fixture");job;job=claimMemoryJob("fixture"))publishMemoryWork(job,"fixture",captureWork(job));
  // Preserve the same scope to exercise the thread rule rather than scope access.
- if(reason==="other-thread")db.prepare("UPDATE memory_sources SET thread_id='different-thread' WHERE id=?").run(f.evidence[0].sourceId);
+ if(reason==="other-thread"){
+  // Move the invitation with its real anchor, so this exercises cross-thread canon provenance, not a missing message.
+  storeAnchorMessage(db,"different-thread","m","Verified source note");
+  db.prepare("UPDATE memory_sources SET thread_id='different-thread' WHERE id=?").run(f.evidence[0].sourceId);
+ }
  if(reason==="later-invitation")db.prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.occurredAt',3) WHERE source_id=?").run(f.evidence[0].sourceId);
  const evidence=[{sourceId:"r7-evidence",revision:1,startByte:0,endByte:Buffer.byteLength(text)}];
  const ground=vi.fn(async()=>'{"supported":true}'),extractor:TextOnlyExtractor=Object.assign(async()=>"[]",{ground});
@@ -389,7 +394,11 @@ it.each(["webhook","tool","other-bot","other-thread","later-invitation"])("reche
   }
   if(reason==="tool")db.prepare("UPDATE memory_sources SET kind='tool-outcome' WHERE id='r7-race'").run();
   if(reason==="other-bot")db.prepare("UPDATE memory_sources SET speaker='other' WHERE id='r7-race'").run();
-  if(reason==="other-thread")db.prepare("UPDATE memory_sources SET thread_id='different-thread' WHERE id=?").run(f.evidence[0].sourceId);
+  if(reason==="other-thread"){
+  // Move the invitation with its real anchor, so this exercises cross-thread canon provenance, not a missing message.
+  storeAnchorMessage(db,"different-thread","m","Verified source note");
+  db.prepare("UPDATE memory_sources SET thread_id='different-thread' WHERE id=?").run(f.evidence[0].sourceId);
+ }
   if(reason==="later-invitation")db.prepare("UPDATE memory_source_versions SET payload=json_set(payload,'$.occurredAt',3) WHERE source_id=?").run(f.evidence[0].sourceId);
   return '{"supported":true}';
  });

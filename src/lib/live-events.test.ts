@@ -848,3 +848,32 @@ describe("a desktop with no internet keeps its own live stream", () => {
     }
   });
 });
+
+it.each(["focus", "visibilitychange", "resume"])("T-H2-wake: %s always closes and invalidates before checking offline, even just after hello", signal => {
+  const fixture = harness(); let resume!: () => void; const order: string[] = [];
+  const stop = openLiveEvents({ onFrame: vi.fn(), onSnapshotRequired: async () => true, onError: () => order.push("hide"), onHello: (resumed, gen) => { expect(resumed).toBe(true); expect(gen).toEqual({ epoch: "A", rev: 0 }); } }, {
+    ...fixture.platform, isOnline: () => { order.push("online"); return fixture.platform.isOnline(); }, resumeSignal: listener => { resume = listener; return () => {}; },
+  });
+  fixture.sources[0].message({ kind: "hello", resumed: true, chatsGen: { epoch: "A", rev: 0 } });
+  fixture.setOnline(false); order.length = 0;
+  if (signal === "resume") resume(); else if (signal === "focus") fixture.windowTarget.emit(signal); else fixture.documentTarget.emit(signal);
+  expect(order[0]).toBe("hide"); expect(fixture.sources[0].close).toHaveBeenCalledOnce(); expect(fixture.sources).toHaveLength(1);
+  vi.advanceTimersByTime(100_000); expect(fixture.sources).toHaveLength(1);
+  fixture.setOnline(true); fixture.windowTarget.emit("online"); expect(fixture.sources).toHaveLength(2); stop();
+});
+
+it("does not reopen a hidden stream when an earlier wake's secret refresh resolves",async()=>{
+  const fixture=harness();let resolve!: (value:Response)=>void;
+  setDesktopSurfaceSecretForTest("a".repeat(64));
+  vi.stubGlobal("fetch",vi.fn(()=>new Promise<Response>(done=>{resolve=done;})));
+  const stop=openLiveEvents({onFrame:vi.fn(),onSnapshotRequired:async()=>true},fixture.platform);
+  try {
+    expect(fixture.sources).toHaveLength(1);
+    fixture.windowTarget.emit("focus");
+    fixture.setVisible(false);fixture.windowTarget.emit("focus");
+    resolve({ok:true,json:async()=>({secret:"b".repeat(64)})} as Response);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.sources).toHaveLength(1);
+    expect(fixture.sources[0].close).toHaveBeenCalledOnce();
+  } finally {stop();setDesktopSurfaceSecretForTest("");vi.unstubAllGlobals();}
+});

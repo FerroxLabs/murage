@@ -1,7 +1,9 @@
+import { resetThreadSummaries, remintChatsGen } from "./thread-summary.ts";
 import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
 import { endAllLivePairedRequests } from "./handoff-pair.ts";
 import { reconcileTeamJournalFiles } from "./team-lifecycle.ts";
-import type { BotRecord, GroupRecord } from "./store.ts";
+import type { BotRecord, GroupRecord, Message } from "./store.ts";
+import { rowToMessage, storedJson } from "./transcript-seq.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { markIntegrityPassProven } from "./memory/integrity-state.ts";
 import { prepareProjectTablesForRestore } from "./project-tables.ts";
@@ -27,6 +29,7 @@ import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { isReservedBotId } from "../shared/bot-identity.ts";
 import { mapRoutineRuns, routinesCommit } from "./routine-runs-journal.ts";
 import { bumpWriteEpoch } from "./app-write-revision.ts";
+import { settleFtsCopy } from "./settle-copy.ts";
 import { neutralizeRestoredSends } from "./send-store.ts";
 import { prepareRestoredEmail } from "./email/restore.ts";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
@@ -56,6 +59,37 @@ function localName(name: string): boolean {
 }
 function exists(path: string) { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; } }
 
+/** Review notes for one kind of left-out entry. Up to REVIEW_NOTES_EACH entries get a line each; more become one counted line
+ * naming the first REVIEW_NOTE_EXAMPLES. A data copy with 10,184 skill shortcuts wrote a 4.5 MB restore-review.json, over the
+ * reader's 1 MiB cap (electron/restore-review.mjs), so the restore finished and its review refused every time. */
+export const REVIEW_NOTES_EACH = 20, REVIEW_NOTE_EXAMPLES = 5;
+function noteEach(modifications: Array<{ component: string; action: string }>, items: Array<{ component: string; action: string }>, folded: (count: number) => string) {
+  if (items.length <= REVIEW_NOTES_EACH) { modifications.push(...items); return; }
+  const examples = items.slice(0, REVIEW_NOTE_EXAMPLES).map(item => item.component.length > 200 ? `${item.component.slice(0, 200)}...` : item.component);
+  modifications.push({ component: examples.join(", "), action: folded(items.length) });
+}
+/** The marker stays well under the 1 MiB its reader accepts, leaving room for the lines restore and activation add later. */
+export const MAX_RESTORE_REVIEW_BYTES = 512 * 1024;
+/** Every other kind of note (sharing repairs name one conversation or room each, left-out top-level names one name each) folds
+ * the same way: lines whose words match once names, numbers and paths are set aside keep their first examples, and the rest
+ * become one counted line. A line naming the deletion ledger is never folded (deletionLedgerNotice reads it). */
+export function foldReviewNotes(modifications: Array<{ component: string; action: string }>): Array<{ component: string; action: string }> {
+  const shape = (line: { action: string }) => line.action.split(/\s+/).map(word => /[\d/\\]|^.{25,}$/.test(word) ? "*" : word).join(" ");
+  const counts = new Map<string, number>();
+  for (const line of modifications) counts.set(shape(line), (counts.get(shape(line)) ?? 0) + 1);
+  const kept: Array<{ component: string; action: string }> = [], seen = new Map<string, number>();
+  for (const line of modifications) {
+    const key = shape(line), total = counts.get(key)!;
+    if (total <= REVIEW_NOTES_EACH || line.action.includes("ledger")) { kept.push(line); continue; }
+    const at = (seen.get(key) ?? 0) + 1; seen.set(key, at);
+    if (at <= REVIEW_NOTE_EXAMPLES) kept.push(line);
+    if (at === REVIEW_NOTE_EXAMPLES) kept.push({ component: line.component, action: `${total - REVIEW_NOTE_EXAMPLES} more changes like the ${REVIEW_NOTE_EXAMPLES} above` });
+  }
+  return kept;
+}
+/** Files moved to recovery-quarantine are all kept there; the marker names the first of them. */
+export const REVIEW_QUARANTINE_NAMED = 200;
+
 /** Put back what a bot's folder held besides plain files (audit A-01): each
  * extra name of a hard-linked file as its own copy, each shortcut as a
  * shortcut (never followed), and each real name that had to be stored under
@@ -70,6 +104,7 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
     mkdirSync(dirname(inside(copy.path)), { recursive: true, mode: 0o700 });
     copyFileSync(inside(copy.from), inside(copy.path), constants.COPYFILE_EXCL);
   }
+  const outside: Array<{ component: string; action: string }> = [], notMade: Array<{ component: string; action: string }> = [], renamed: Array<{ component: string; action: string }> = [];
   for (const link of manifest.links ?? []) {
     if (underLink(link.path)) fail("UNSAFE_ARCHIVE_PATH");
     // Only a shortcut that stays inside the restored data folder comes back
@@ -77,7 +112,7 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
     // (an absolute target, one leading out) is left out and listed.
     const resolved = resolve(dirname(inside(link.path)), link.target);
     if (isAbsolute(link.target) || /^[A-Za-z]:|^[\\/]/.test(link.target) || !(resolved === state || resolved.startsWith(state + sep))) {
-      modifications.push({ component: link.path, action: `Shortcut to ${link.target} left out: it pointed outside Murage's data folder` });
+      outside.push({ component: link.path, action: `Shortcut to ${link.target} left out: it pointed outside Murage's data folder` });
       continue;
     }
     mkdirSync(dirname(inside(link.path)), { recursive: true, mode: 0o700 });
@@ -85,7 +120,7 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
     catch (error) {
       // Windows lets only some accounts make shortcuts of this kind.
       if (!["EPERM", "EACCES", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"].includes(String((error as NodeJS.ErrnoException).code))) throw error;
-      modifications.push({ component: link.path, action: `Shortcut to ${link.target} could not be re-created on this computer` });
+      notMade.push({ component: link.path, action: `Shortcut to ${link.target} could not be re-created on this computer` });
     }
   }
   // Deepest first, so each rename changes only the last part of a path whose
@@ -96,11 +131,14 @@ function materializeOwnerEntries(state: string, manifest: InstallationArchiveMan
     const from = inside(entry.path), to = join(dirname(from), entry.name);
     if (!exists(from)) continue;
     if (!localName(entry.name) || exists(to)) {
-      modifications.push({ component: entry.path, action: `Restored as ${entry.path.split("/").pop()} because this computer can't hold the name ${entry.name} there` });
+      renamed.push({ component: entry.path, action: `Restored as ${entry.path.split("/").pop()} because this computer can't hold the name ${entry.name} there` });
       continue;
     }
     renameSync(from, to);
   }
+  noteEach(modifications, outside, count => `${count} shortcuts left out: they pointed outside Murage's data folder`);
+  noteEach(modifications, notMade, count => `${count} shortcuts could not be re-created on this computer`);
+  noteEach(modifications, renamed, count => `${count} files were restored with different names because this computer does not allow their original names there`);
 }
 
 /** Whether a path is the app-made working folder `workspaces/<bot>/threads/<thread>` of some data directory. */
@@ -119,7 +157,7 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
   const files = new Set(inspected.manifest.files.map(file => file.path));
   const modifications: Array<{ component: string; action: string }> = [];
   const quarantined: string[] = [];
-  let success = false;
+  let disposition: "delete-on-failure" | "retained-preparing" | "ready-for-review" = "delete-on-failure";
   // One token for this restore: every held row, JSON or SQL, carries it, and only an owner action after the restore releases them.
   const generation = randomUUID();
   let heldContinuations = 0;
@@ -364,6 +402,12 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         discardInboxProjection(db);
         const counts = inspectInstallationDatabase(db);
         if (inspected.manifest.database.status !== "copied" || counts.messages !== inspected.manifest.database.messages || counts.threads !== inspected.manifest.database.threads) fail("INVALID_DATABASE_MANIFEST");
+        const reviewPath = join(state, RESTORE_REVIEW_FILE);
+        const preparingPath = `${reviewPath}.preparing`;
+        writeFileSync(preparingPath, JSON.stringify({ version: 1, status: "preparing", snapshotId: inspected.manifest.snapshotId, archiveSha256: inspected.sha256 }) + "\n", { mode: 0o600, flush: true });
+        renameSync(preparingPath, reviewPath);
+        disposition = "retained-preparing";
+        remintChatsGen(db);
         if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_meta'").get()){migrateMemorySchema(db);markIntegrityPassProven(db);} // inspectInstallationDatabase proved every row in full above
         bumpWriteEpoch(db); // a restored file is not the file any cached figure was counted from
         validateSharingStructure(sharingBots, sharingGroups, db);
@@ -373,10 +417,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         const update = db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
         for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
           if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) fail("INVALID_RESTORE_MESSAGE");
-          const before = JSON.parse(row.json);
+          const before = rowToMessage({ json: row.json }); // U4 S3: the one decoder, and storedJson below the one encoder
           const after = expireMessage(before);
           if (after.id !== row.id) fail("INVALID_RESTORE_MESSAGE");
-          const encoded = JSON.stringify(after);
+          const encoded = storedJson(after as unknown as Message);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
         // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.
@@ -402,18 +446,51 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         // bot email (section 7): every binding waits for the owner's Reconnect; nothing polls, mounts or sends before it
         const emailBindings = prepareRestoredEmail(db);
         if (emailBindings) modifications.push({ component: "messages.db", action: `${emailBindings} bot email address${emailBindings === 1 ? "" : "es"} will reconnect when you choose Reconnect email` });
+        resetThreadSummaries(db);
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }
+      // The candidate settles itself before it can be activated (SMOOTH-FTS-MERGE R6 section 3): an archive from a build before the
+      // copy rule can carry deleted conversations in its search index. inspectInstallationDatabase proved every row above, so no
+      // quick_check here. A throw fails the restore. Nothing after this inserts or deletes messages_fts rows; the candidate leaves
+      // in journal_mode=DELETE, so a read-only open by activation creates no side files.
+      try { settleFtsCopy(join(state, "messages.db"), { check: false }); }
+      catch (error) {
+        // A failed settle can leave deleted text in the candidate's index.
+        // It is not a remint recovery candidate and must not be retained.
+        disposition = "delete-on-failure";
+        throw new InstallationSnapshotError("RESTORE_PREPARATION_FAILED", { cause: error });
+      }
+      const finished = new DatabaseSync(join(state, "messages.db"), { readOnly: true });
+      try { inspectInstallationDatabase(finished); } finally { finished.close(); }
     }
     write("bots.json", sharingBots); write("groups.json", sharingGroups);
     validateSharingPaused(sharingBots, sharingGroups);
     materializeOwnerEntries(state, inspected.manifest, modifications);
     write(RESTORED_CONNECTIONS_FILE, { version: 1, id: randomUUID() });
     modifications.push({ component: RESTORED_CONNECTIONS_FILE, action: "Fresh Murage credentials and companion/device state; native engine globals remain untouched" });
-    write(RESTORE_REVIEW_FILE, { version: 1, status: "review-required", snapshotId: inspected.manifest.snapshotId, archiveSha256: inspected.sha256, quarantined, modifications });
-    success = true;
+    const notes = foldReviewNotes(modifications);
+    if (quarantined.length > REVIEW_QUARANTINE_NAMED) notes.push({ component: "recovery-quarantine", action: `${quarantined.length - REVIEW_QUARANTINE_NAMED} more files were moved to the recovery-quarantine folder` });
+    modifications.splice(0, modifications.length, ...notes);
+    const review = { version: 1, status: "review-required", snapshotId: inspected.manifest.snapshotId, archiveSha256: inspected.sha256, quarantined: quarantined.slice(0, REVIEW_QUARANTINE_NAMED), modifications };
+    // A marker its reader refuses would make a restore that can never be reviewed: stop here, before anything is replaced.
+    if (Buffer.byteLength(JSON.stringify(review)) > MAX_RESTORE_REVIEW_BYTES) fail("RESTORE_COMPONENT_TOO_LARGE");
+    write(RESTORE_REVIEW_FILE, review);
+    disposition = "ready-for-review";
     return { ...inspected, stateDirectory: state, modifications, quarantined, activationAvailable: false as const };
-  } catch (error) { throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError("RESTORE_PREPARATION_FAILED"); }
-  finally { if (!success) rmSync(inspected.directory, { recursive: true, force: true }); }
+  } catch (error) {
+    if (disposition === "retained-preparing") throw new RetainedRestorePreparationError(state, error);
+    throw error instanceof InstallationSnapshotError ? error : new InstallationSnapshotError("RESTORE_PREPARATION_FAILED", { cause: error });
+  }
+  finally { if (disposition === "delete-on-failure") rmSync(inspected.directory, { recursive: true, force: true }); }
+}
+
+export class RetainedRestorePreparationError extends InstallationSnapshotError {
+  readonly activationAvailable = false;
+  readonly stateDirectory: string;
+  constructor(stateDirectory: string, cause: unknown) {
+    super("RESTORE_PREPARATION_RETAINED", { cause, path: stateDirectory });
+    this.stateDirectory = stateDirectory;
+    this.name = "RetainedRestorePreparationError";
+  }
 }

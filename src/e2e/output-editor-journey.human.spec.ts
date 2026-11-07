@@ -47,8 +47,8 @@ test("registered engine Markdown opens beside chat, edits only working bytes and
   await expect(pane.getByTestId("workspace-document")).toHaveAttribute("aria-label",artifact.relativePath);
   await page.screenshot({path:info.outputPath("registered-card-files-preview.png"),fullPage:true});
   await pane.getByTestId("workspace-document-edit").click();
-  await pane.getByRole("button",{name:"Source",exact:true}).click();
-  const source=pane.getByRole("textbox",{name:"Markdown source",exact:true});await expect(source).toHaveValue(original);await source.fill(edited);
+  await pane.getByRole("button",{name:"Markdown text",exact:true}).click();
+  const source=pane.getByRole("textbox",{name:"Markdown text",exact:true});await expect(source).toHaveValue(original);await source.fill(edited);
   await pane.getByRole("button",{name:"Save",exact:true}).click();await expect(pane.getByTestId("markdown-file-status")).toHaveText("File saved");
   expect(readFileSync(join(workspace,artifact.relativePath),"utf8")).toBe(edited);expect(await saved()).toBe(original);
   expect((await api("GET",`/api/artifacts/${artifact.id}`)).artifact).toMatchObject({sha256:sha(original),sourceState:"changed",botId:bot.id,threadId:bot.threadId});

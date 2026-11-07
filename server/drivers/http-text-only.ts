@@ -6,14 +6,15 @@
 // a tools field, asks for a json-schema response where the endpoint supports
 // it, sets max_tokens, counts the body and cancels it at the cap, and reports
 // the isolation facts a socket can state (no tools, no files, finish_reason).
-import { reportMemoryUsage } from "../memory/extract.ts";
+import { reportMemoryUsage, type MemoryUsageReport } from "../memory/extract.ts";
 import { isMemorySendBusy } from "../memory/learning-send.ts";
 import { MemorySendFenced, isMemorySendFenced } from "../memory/learning-send-fence.ts";
 import { checkLocalServerUrl } from "../local-address-guard.ts";
 import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { providerDispatcher } from "../provider-dispatcher.ts";
+import { schemaPromptInstruction } from "./headless-text-only.ts";
 import {
-  RUN_BOUND_MS, assertSupportedSchema, httpIsolationReport, httpVerdict, isReadMoved, isReportedOverLimit,
+  RUN_BOUND_MS, assertSupportedSchema, fluxUsageReport, httpIsolationReport, httpVerdict, isReadMoved, isReportedOverLimit,
   type TextOnlyTurnInput, type TextOnlyTurnResult, type Verdict,
 } from "../memory/pip-transport.ts";
 
@@ -34,14 +35,26 @@ const cancelled = () => Object.assign(new Error("cancelled"), { name: "cancelled
 const settled = (verdict: Verdict, extra: Partial<TextOnlyTurnResult> = {}): TextOnlyTurnResult =>
   ({ text: "", isolation: httpIsolationReport({ finishReason: null, exited: true }), verdict, ...extra });
 
+/** A schema-in-prompt reply may come back in one ```json fence. The enclosed text goes on as written (never re-serialised, so no
+ *  value changes before the unchanged validator), and a reply over the byte cap goes on whole so the cap still refuses it. */
+export function unwrapJsonFence(content: string, maxOutputBytes: number): string {
+  if (Buffer.byteLength(content) > maxOutputBytes) return content;
+  const fenced = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n?```$/i.exec(content.trim());
+  return fenced ? fenced[1] : content;
+}
+
 /** The exact JSON body a text-only call sends; exported so tests can assert it. */
 export function textOnlyBody(o: HttpTextOnlyOptions, turn: TextOnlyTurnInput, model: string): Record<string, unknown> {
+  // Flux answers 502/422 to response_format json_schema on every model, so a Flux endpoint (the Flux preset or a custom
+  // endpoint pointed at it) gets the schema in the prompt instead; the host validator stays the gate.
+  const toFlux = isFluxUrl(o.baseUrl);
+  const user = toFlux ? `${turn.text}\n\n${schemaPromptInstruction(turn.outputSchema)}` : turn.text;
   const body: Record<string, unknown> = {
-    ...o.buildBody(model, [{ role: "system", content: turn.system }, { role: "user", content: turn.text }]),
+    ...o.buildBody(model, [{ role: "system", content: turn.system }, { role: "user", content: user }]),
     stream: false, max_tokens: turn.maxOutputTokens,
   };
   for (const field of TOOL_FIELDS) delete body[field];
-  if (o.jsonSchemaResponse) body.response_format = { type: "json_schema", json_schema: { name: "pip_reflection", strict: true, schema: turn.outputSchema } };
+  if (o.jsonSchemaResponse && !toFlux) body.response_format = { type: "json_schema", json_schema: { name: "pip_reflection", strict: true, schema: turn.outputSchema } };
   return body;
 }
 
@@ -57,6 +70,9 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   const bodyCap = o.maxBodyBytes ?? Math.max(65_536, turn.maxOutputBytes * 4);
   const signal = AbortSignal.any([turn.signal, AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))]);
   const request = JSON.stringify(textOnlyBody(o, turn, turn.model));
+  const toFlux = isFluxUrl(o.baseUrl);
+  const reportUsage = (usage: MemoryUsageReport) => reportMemoryUsage(toFlux ? fluxUsageReport(usage) : usage);
+  const releasedBefore = gate.released;
   let response: Response;
   try {
     const reach = await checkLocalServerUrl(endpoint);
@@ -73,17 +89,19 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   } catch (error) {
     // a moved read is not a provider failure: it reaches the caller as itself, never as a transient refusal
     if (isReadMoved(error) || isMemorySendBusy(error) || isMemorySendFenced(error)) throw error;
+    if (toFlux && gate.released > releasedBefore) reportUsage({});
     if (turn.signal.aborted) throw cancelled();
     return settled({ state: "refused", reason: "transient", detail: "request-failed", counted: false });
   }
   if (!response.ok || !response.body) {
+    if (toFlux) reportUsage({});
     await response.body?.cancel().catch(() => {});
     return settled({ state: "refused", reason: "transient", detail: `http-${response.status}`, counted: false });
   }
   const declared = Number(response.headers.get("content-length"));
   // A paid reply settles before any refusal: what the provider reported, or (unreadable) the full reservation, counted as unmetered.
   if (Number.isFinite(declared) && declared > bodyCap) {
-    reportMemoryUsage({ replyBytes: declared });
+    reportUsage({ replyBytes: declared });
     await response.body.cancel().catch(() => {});
     return settled({ state: "refused", reason: "bad-output", detail: "over-byte-cap", counted: true });
   }
@@ -120,7 +138,7 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   } finally {
     reader.releaseLock?.();
     const usage = readUsage();
-    reportMemoryUsage({ prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens, replyBytes: bytes });
+    reportUsage({ prompt_tokens: usage.inputTokens, completion_tokens: usage.outputTokens, replyBytes: bytes });
   }
 
   let json: { choices?: Array<{ finish_reason?: unknown; message?: { content?: unknown; tool_calls?: unknown[] } }>; usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } };
@@ -132,7 +150,8 @@ export async function httpTextOnlyTurn(turn: TextOnlyTurnInput, o: HttpTextOnlyO
   const isolation = httpIsolationReport({ finishReason, exited: true });
   if (choice?.message?.tool_calls?.length) return { text: "", isolation, verdict: { state: "unsupported", reason: "tools", detail: "tool-call-in-response" }, usage };
   if (content === null) return { text: "", isolation, verdict: { state: "refused", reason: "bad-output", detail: "no-content", counted: true }, usage };
-  const verdict = httpVerdict({ finishReason, content, outputSchema: turn.outputSchema, maxOutputBytes: turn.maxOutputBytes, exited: true });
+  // A schema-in-prompt reply may come back in one ```json fence; the object itself goes to the unchanged validator.
+  const verdict = httpVerdict({ finishReason, content: isFluxUrl(o.baseUrl) ? unwrapJsonFence(content, turn.maxOutputBytes) : content, outputSchema: turn.outputSchema, maxOutputBytes: turn.maxOutputBytes, exited: true });
   return {
     text: verdict.state === "validated" ? JSON.stringify(verdict.structured) : "", isolation, verdict, usage,
     ...(isReportedOverLimit(num(json.usage?.completion_tokens), turn.maxOutputTokens) ? { reportedOverLimit: true } : {}),

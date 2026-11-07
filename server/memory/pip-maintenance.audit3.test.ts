@@ -27,11 +27,25 @@ beforeEach(() => {
 });
 afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
 
+it("boot scans at most thirteen month keys once per process; later ticks only read eligibility", async () => {
+  const prepare = vi.spyOn(database(), "prepare");
+  await maintainPip(deps);
+  const reads = prepare.mock.calls.map(([sql]) => sql);
+  expect(reads.filter(sql => sql === "SELECT intent FROM memory_scope_bindings WHERE id=?")).toHaveLength(13);
+  expect(reads).toHaveLength(14); // 13 month keys and one eligibility SELECT, no records to reconcile.
+  prepare.mockClear();
+  await maintainPip(deps);
+  await maintainPip(deps);
+  expect(prepare.mock.calls).toHaveLength(2);
+  expect(prepare.mock.calls.every(([sql]) => sql.startsWith("SELECT "))).toBe(true);
+});
+
 it.each([false, true])("complete maintenance tick does one query and zero filesystem calls with no Continuity (root=%s)", async root => {
   if (root) fs.mkdirSync(join(deps.tmpBase, "orphan"), { recursive: true });
   const onContinuity = vi.fn(async () => {});
   const worker = new MemoryWorkerController({ onMaintenance: () => maintainPip(deps), continuityEligible: () => deps.bots().some(bot => bot.continuity), onContinuity });
   const tick = worker as unknown as { independentWork(): void; maintenanceTask: Promise<void>; continuityTask: Promise<void> | null };
+  await maintainPip(deps); // Pay the once-per-process boot scan before measuring steady state.
   const prepare = vi.spyOn(database(), "prepare");
   vi.clearAllMocks();
   tick.independentWork();

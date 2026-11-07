@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-import type { RoutineRunCardData } from "../../shared/routine-run";
+import { CLOUD_ROUTINE_NOT_YET, CLOUD_ROUTINE_NOT_YET_EARLIER, type RoutineRunCardData } from "../../shared/routine-run";
 import type { Message } from "@/state/store";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 
@@ -28,6 +28,14 @@ function message(
 }
 
 describe("RoutineRunCard", () => {
+  it("a Cloud line saved by an earlier version shows through the catalogue like the current one", () => {
+    for (const error of [CLOUD_ROUTINE_NOT_YET, CLOUD_ROUTINE_NOT_YET_EARLIER]) {
+      const markup = renderToStaticMarkup(createElement(RoutineRunCard, { message: message("failed", { error }), onOpen: vi.fn() }));
+      expect(markup).toContain(CLOUD_ROUTINE_NOT_YET);
+    }
+    expect(CLOUD_ROUTINE_NOT_YET_EARLIER).not.toBe(CLOUD_ROUTINE_NOT_YET);
+  });
+
   it("shows a compact completion receipt and a path to the isolated run", () => {
     const markup = renderToStaticMarkup(createElement(RoutineRunCard, {
       message: message("completed", { summary: "The brief is ready with three follow-ups." }),

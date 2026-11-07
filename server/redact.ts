@@ -12,6 +12,7 @@
 // enough to debug "the proxy got no token" without the token being there.
 
 import { maskFinancialIdentifiers } from "../shared/financial-ids.ts";
+import { maskSecretLabelsToEnd } from "../shared/md-secret-label.mjs";
 
 /** Key names whose value is a credential. Matched case-insensitively as a
  * substring, so KEY catches ANTHROPIC_API_KEY and x-api-key. */
@@ -222,6 +223,23 @@ export function redactSecretsInText(text: string): string {
   return out;
 }
 
+/** The mask extent A writes: always a fresh marker over the whole rest. */
+const sinkMask = (rest: string) => `«redacted ${rest.length} chars»`;
+
+/** MACHINE sinks only (logs, the native protocol log): a secret label wrapped
+ * in markdown marks masks everything after it to the end of the text, then the
+ * usual rules run. User-visible text keeps `redactSecretsInText`. */
+export function redactSecretsForSink(text: string): string {
+  if (!text) return text;
+  return redactSecretsInText(maskSecretLabelsToEnd(text, sinkMask));
+}
+
+/** `redactSecrets` for machine sinks: every string leaf, the depth fallback and
+ * env-array values go through `redactSecretsForSink`. */
+export function redactSecretsForSinkWalk(input: unknown): unknown {
+  return redactWalk(input, 0, false, true);
+}
+
 /** Deep copy with credential VALUES replaced. Handles the two shapes that
  * actually carry them: a plain object of env vars ({KEY: "v"}) and the ACP
  * wire shape (env: [{name, value}]). Anything unrecognised is copied as-is. */
@@ -245,10 +263,11 @@ export function redactSecrets(input: unknown, depth = 0): unknown {
   return redactWalk(input, depth, false);
 }
 
-function redactWalk(input: unknown, depth: number, card: boolean): unknown {
+function redactWalk(input: unknown, depth: number, card: boolean, sink = false): unknown {
   const secretName = (name: string, value: string) =>
     isSecretName(name) && (!card || ALWAYS_MASK_NAMES.has(name.toLowerCase()) || value.length >= CARD_NAME_MIN_VALUE);
-  if (typeof input === "string") return redactSecretsInText(input);
+  const redactText = sink ? redactSecretsForSink : redactSecretsInText;
+  if (typeof input === "string") return redactText(input);
   if (input === null || typeof input !== "object") return input;
   if (depth > MAX_DEPTH) {
     // FAIL CLOSED. This used to `return input`, which handed the entire
@@ -262,7 +281,7 @@ function redactWalk(input: unknown, depth: number, card: boolean): unknown {
     // Serialisation can throw on a cycle or a BigInt; that is exactly the
     // case where guessing is worst, so it collapses to a marker.
     try {
-      return redactSecretsInText(JSON.stringify(input) ?? "");
+      return redactText(JSON.stringify(input) ?? "");
     } catch {
       return "«redacted: unserialisable subtree past depth budget»";
     }
@@ -288,17 +307,17 @@ function redactWalk(input: unknown, depth: number, card: boolean): unknown {
         // `{name, value, authorization: "Bearer …", metadata: {password}}`
         // therefore defeated the only scrub standing between a provider
         // payload and the on-disk log.
-        const scrubbed = redactWalk({ ...entry }, depth + 1, card) as Record<string, unknown>;
+        const scrubbed = redactWalk({ ...entry }, depth + 1, card, sink) as Record<string, unknown>;
         // A non-secret-shaped name (a custom env var, a feature flag) does
         // not clear the value of suspicion — the same content pass every
         // other string in this tree gets is what catches a credential
         // someone stashed under an ordinary-looking name.
         return {
           ...scrubbed,
-          value: secretName(entry.name, entry.value) ? mask(entry.value) : redactSecretsInText(entry.value),
+          value: secretName(entry.name, entry.value) ? mask(entry.value) : redactText(entry.value),
         };
       }
-      return redactWalk(item, depth + 1, card);
+      return redactWalk(item, depth + 1, card, sink);
     });
   }
 
@@ -310,7 +329,7 @@ function redactWalk(input: unknown, depth: number, card: boolean): unknown {
     }
     // any other string may still CONTAIN a credential (a command line, a
     // header value, a bot's reply) — the content pass catches those
-    out[key] = redactWalk(value, depth + 1, card);
+    out[key] = redactWalk(value, depth + 1, card, sink);
   }
   return out;
 }

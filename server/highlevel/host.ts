@@ -12,9 +12,11 @@
 // read retry or the owner's review ends at once, nothing more is sent, and a change waiting to be sent is recorded
 // not_applied with reason stopped_before_send. A change already sent is not recalled.
 //
-// Not in this slice: the /api/internal/highlevel/ route, engine mounts and the owner review route. The capability
-// kind and the Stop hook are wired so those can attach without new authority paths.
+// HL-S2: index.ts builds this host and serves it at /api/internal/highlevel/mcp (drivers/highlevel-proxy.ts), read
+// only: runtime.ts hands it every bot as readOnlyHighLevelAccess, so no change is listed or proposed and no review card
+// exists in 1.0.17 (row HL-S2-WRITES-DESIGN). With no connection source the host answers "not connected".
 import { isHighLevelHelperName, isHighLevelToolName, type HighLevelToolName } from "../../shared/highlevel.ts";
+import { markTurnEmailDerived } from "../email/external-marks.ts";
 import type { InternalCapability } from "../internal-capabilities.ts";
 import { authorizeHighLevelCall, nativeAccessFor, visibleHighLevelTools, type HighLevelAccessBot, type HighLevelDecision } from "./access.ts";
 import { ActionRefused, type ActionContext, type ActionReview, type HighLevelActions } from "./actions.ts";
@@ -24,6 +26,8 @@ import {
   changedFields,
   changeProblem,
   checkToolArguments,
+  fenceHighLevelText,
+  highlevelCrmResult,
   highlevelErrorResult,
   highlevelOk,
   highlevelToolDefinition,
@@ -87,6 +91,8 @@ export interface HighLevelHostDeps {
   actions: HighLevelActions;
   /** A change is waiting for the owner (the card and notification attach here later). */
   onReview?: (claim: InternalCapability, review: ActionReview) => void;
+  /** The review ended (decided, Stop, expiry or a refusal): its card closes and can approve nothing. */
+  onReviewClosed?: (actionId: string) => void;
   /** A change ran: ids and field names only. */
   onReceipt?: (claim: InternalCapability, receipt: HighLevelWriteRecord & { actionId: string; connectionId: string }) => void;
 }
@@ -96,10 +102,19 @@ type JsonRpcResponse = { jsonrpc: "2.0"; id: unknown; result?: unknown; error?: 
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const STOPPED_TEXT = "Stopped. Nothing more was sent to the CRM.";
-
 export class HighLevelHost {
   readonly #deps: HighLevelHostDeps;
   constructor(deps: HighLevelHostDeps) { this.#deps = deps; }
+
+  /** A HighLevel error's text for the bot: HighLevel's own quoted words are fenced as outside content and mark the turn. */
+  #errorText(claim: InternalCapability, error: HighLevelError, text: string = error.message): string {
+    const detail = error.providerDetail;
+    if (!detail) return text;
+    markTurnEmailDerived(claim.threadId);
+    // the quote is always the message's tail (client.ts refusal): Murage's own words before it stay plain, the quote is fenced. A message
+    // that does not end with it is fenced whole, so HighLevel's words are never left outside a fence.
+    return text.endsWith(detail) ? `${text.slice(0, text.length - detail.length)}${fenceHighLevelText(detail)}` : fenceHighLevelText(text);
+  }
 
   /** Why this claim may not use HighLevel at all right now, or null. */
   #claimRefusal(claim: InternalCapability): string | null {
@@ -189,12 +204,14 @@ export class HighLevelHost {
       ({ value } = await runHighLevelTool(this.#deps.client.crm(this.#context(claim, decision, signal, tool, args)), tool, args));
     } catch (error) {
       if (error instanceof HighLevelStopped) return highlevelErrorResult(STOPPED_TEXT, { stopped: true });
-      if (error instanceof HighLevelError) return highlevelErrorResult(error.message, { ...(error.status ? { status: error.status } : {}), ...(error.signedOut ? { reconnect: true } : {}) });
+      if (error instanceof HighLevelError) return highlevelErrorResult(this.#errorText(claim, error), { ...(error.status ? { status: error.status } : {}), ...(error.signedOut ? { reconnect: true } : {}) });
       throw error;
     }
     const release = await this.#stillAuthorized(claim, tool, args, decision);
     if (typeof release === "string") return highlevelErrorResult(release, release === STOPPED_TEXT ? { stopped: true } : {});
-    return highlevelOk(value);
+    // CRM records are outside content: fenced for the bot, and the bot text rows this turn writes from here on are marked (5.4 marks)
+    markTurnEmailDerived(claim.threadId);
+    return highlevelCrmResult(value);
   }
 
   async #change(claim: InternalCapability, tool: HighLevelToolName, args: Record<string, unknown>, decision: Extract<HighLevelDecision, { ok: true }>, signal: AbortSignal): Promise<HighLevelToolResult> {
@@ -219,11 +236,13 @@ export class HighLevelHost {
     try {
       decided = await this.#deps.actions.awaitDecision(actionId, signal);
     } catch (error) {
+      this.#deps.onReviewClosed?.(actionId);
       if (error instanceof ActionRefused) return highlevelErrorResult(`${error.message} The change was not made.`, { actionId, outcome: "not_applied", code: error.code });
       if (!(error instanceof HighLevelStopped)) throw error;
       this.#deps.actions.notApplied(actionId, "stopped_before_send");
       return highlevelErrorResult(`${STOPPED_TEXT} The change was not made.`, { actionId, stopped: true, outcome: "not_applied" });
     }
+    this.#deps.onReviewClosed?.(actionId);
     if (decided === "denied") return highlevelErrorResult("The owner declined this change. It was not made.", { actionId, outcome: "not_applied" });
     if (decided === "expired") return highlevelErrorResult("The review expired before the owner decided. The change was not made.", { actionId, outcome: "stale" });
     const current = await this.#stillAuthorized(claim, tool, args, decision);
@@ -270,10 +289,10 @@ export class HighLevelHost {
       if (error instanceof HighLevelError) {
         if (error.outcome === "outcome_unknown") {
           this.#deps.actions.outcomeUnknown(actionId, "possible_send");
-          return highlevelErrorResult(`${error.message} Use HIGHLEVEL_ACTION_STATUS or check the CRM; Murage will not send it again.`, { actionId, outcome: "outcome_unknown" });
+          return highlevelErrorResult(`${this.#errorText(claim, error)} Use HIGHLEVEL_ACTION_STATUS or check the CRM; Murage will not send it again.`, { actionId, outcome: "outcome_unknown" });
         }
         this.#deps.actions.notApplied(actionId, error.status ? `provider_${error.status}` : "refused");
-        return highlevelErrorResult(error.message, { actionId, outcome: "not_applied", ...(error.signedOut ? { reconnect: true } : {}) });
+        return highlevelErrorResult(this.#errorText(claim, error), { actionId, outcome: "not_applied", ...(error.signedOut ? { reconnect: true } : {}) });
       }
       if (error instanceof ActionRefused) {
         const phase = this.#deps.actions.get(actionId)?.phase;
@@ -290,7 +309,9 @@ export class HighLevelHost {
     if (write) this.#deps.onReceipt?.(claim, { ...write, actionId, connectionId: current.grant.accountId });
     const release = await this.#stillAuthorized(claim, tool, args, current);
     if (typeof release === "string") return highlevelErrorResult(`The change was made, but its result is not shown here: ${release}`, { actionId, outcome: "applied" });
-    return highlevelOk({ actionId, outcome: "applied", result: value });
+    // what HighLevel answered for the change is its own record: fenced, and the turn's later words are marked (as after a read)
+    markTurnEmailDerived(claim.threadId);
+    return highlevelCrmResult({ result: value }, { actionId, outcome: "applied" });
   }
 
   async #helper(claim: InternalCapability, name: "HIGHLEVEL_LIST_CONNECTIONS" | "HIGHLEVEL_ACTION_STATUS", args: Record<string, unknown>): Promise<HighLevelToolResult> {
@@ -298,7 +319,12 @@ export class HighLevelHost {
     if (!bot || bot.composio === false) return highlevelErrorResult("Connected apps are off for this bot, so it cannot use HighLevel.");
     if (name === "HIGHLEVEL_ACTION_STATUS") {
       const status = this.#deps.actions.statusFor(claim.botId, String(args.actionId));
-      return status ? highlevelOk(status) : highlevelErrorResult("This bot has no HighLevel change with that id.");
+      if (!status) return highlevelErrorResult("This bot has no HighLevel change with that id.");
+      // the receipt's record id came from HighLevel's answer: fenced as outside content, and the turn marked, like any CRM words
+      const recordId = status.receipt?.recordId;
+      if (!status.receipt || typeof recordId !== "string" || recordId === "") return highlevelOk(status);
+      markTurnEmailDerived(claim.threadId);
+      return highlevelOk({ ...status, receipt: { ...status.receipt, recordId: fenceHighLevelText(recordId) } });
     }
     const grants = nativeAccessFor(bot)?.grants ?? [];
     const start = typeof args.cursor === "string" ? Number(args.cursor) : 0;
@@ -307,7 +333,8 @@ export class HighLevelHost {
     const connections = [];
     for (const grant of page) {
       const view = await this.#deps.leases.connection(grant.accountId);
-      connections.push({ connectionId: grant.accountId, locationName: view?.locationName, state: view?.state ?? "disconnected", tools: [...grant.tools], ceiling: grant.ceiling });
+      // the location's name is HighLevel's own text: fenced like any CRM words
+      connections.push({ connectionId: grant.accountId, locationName: typeof view?.locationName === "string" ? fenceHighLevelText(view.locationName) : undefined, state: view?.state ?? "disconnected", tools: [...grant.tools], ceiling: grant.ceiling });
     }
     // The awaits above may have spanned a Stop or a grant change: answer only with what is still true now.
     if (this.#claimRefusal(claim)) return highlevelErrorResult(STOPPED_TEXT, { stopped: true });
@@ -319,6 +346,8 @@ export class HighLevelHost {
       if (!grant) connections.splice(i, 1);
       else Object.assign(connections[i]!, { tools: [...grant.tools], ceiling: grant.ceiling });
     }
+    // a location name is HighLevel's own words: the turn is marked as after a read
+    if (connections.some((connection) => connection.locationName !== undefined)) markTurnEmailDerived(claim.threadId);
     return highlevelOk({ connections, ...(start + limit < grants.length ? { nextCursor: String(start + limit) } : {}) });
   }
 }

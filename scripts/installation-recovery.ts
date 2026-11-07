@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { installationRecoveryCommand, usage } from "../server/installation-recovery-command.ts";
+import { MEMORY_DOWNGRADE_GO_THROUGH_102, MEMORY_DOWNGRADE_GO_THROUGH_102_LINE } from "../server/installation-memory-downgrade.ts";
 import { setPathWalkNotice } from "../server/link-removal.ts";
 export { installationRecoveryCommand };
 
@@ -21,6 +22,7 @@ if (invokedAsMain()) {
     const component = error && typeof error === "object" && "component" in error && ["routines.json", "calendar-calls.json", "webhooks.json", "delegation-receipts.json"].includes(String(error.component)) ? String(error.component) : undefined;
     const message = code === "VM_WORKSPACE_BACKUP_UNSUPPORTED"
       ? "Backup cannot include persistent VM workspaces yet. Stop the VM and preserve its workspace separately; browser profiles need credential-safe handling. No backup was created and original data is unchanged."
+      : code === MEMORY_DOWNGRADE_GO_THROUGH_102 ? MEMORY_DOWNGRADE_GO_THROUGH_102_LINE
       : error instanceof Error && error.message === usage ? usage : "The recovery operation could not complete. Preserve the installation, retained copies and recovery receipts; an interrupted restore may require rollback.";
     const retainedDirectory = (process.platform === "win32" || code === "AGE_PROCESS_CLOSE_UNCONFIRMED") && error && typeof error === "object" && "retainedDirectory" in error && typeof error.retainedDirectory === "string" && error.retainedDirectory.length <= 8192 ? error.retainedDirectory : undefined;
     process.stderr.write(JSON.stringify({ ok: false, error: code, ...(component ? { component } : {}), ...(retainedDirectory ? { retainedDirectory } : {}), message }) + "\n");
