@@ -16,6 +16,7 @@ import { DATA_DIR } from "./config.ts";
 import { Store } from "./store.ts";
 import { routeClass, conversationSubject } from "./route-policy.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { approvalSaveOutcome, ModeNotConfirmed, readApprovalMode, saveApprovalMode } from "../src/lib/browser-approval-read.ts";
 
 const launchProof = randomBytes(32).toString("hex");
 let fixture: VerificationServer;
@@ -260,5 +261,57 @@ describe("PATCH /api/bots/:id/browser-extension/check (T34 follow-up)", () => {
     await setCheck(one.id, { check: "bot" });
     const own = (await mode(one.id)).body;
     expect(own.checkerAvailable).toBe(true); expect(own.checkerReason).toBeUndefined();
+  });
+});
+
+// CHROME-SETUP-WIZARD: the panel's own read and save (src/lib/browser-approval-read.ts) against this real server. Setup step 3
+// ticks only on a mode the server stated.
+describe("Use my Chrome step 3 reads the server's stored mode", () => {
+  const request = async (path: string, init?: RequestInit) => {
+    const res = await fetch(fixture.info.url + path, { ...init, headers: { ...desktop, "content-type": "application/json", ...(init?.headers as Record<string, string> | undefined) } });
+    const body = await res.json().catch(() => ({}));
+    // As the app's api() does: an error the server answered carries its status.
+    if (!res.ok) throw Object.assign(new Error((body as { error?: string }).error ?? `HTTP ${res.status}`), { status: res.status });
+    return body;
+  };
+  it("reads the stored mode, saves with the server's own echo, and a later read agrees", async () => {
+    const one = await bot("Dax Wizard");
+    expect(await readApprovalMode(request, one.id)).toMatchObject({ read: "known", mode: "task" });
+    expect(await saveApprovalMode(request, one.id, "step")).toBe("step");
+    expect(await readApprovalMode(request, one.id)).toMatchObject({ read: "known", mode: "step" });
+    expect(await saveApprovalMode(request, one.id, "full", "Dax Wizard")).toBe("full");
+    expect(await saveApprovalMode(request, one.id, "task")).toBe("task");
+    expect((await mode(one.id)).body.mode).toBe("task");
+  });
+  it("a refused save throws and the stored mode stays; a read that fails says failed, not the default", async () => {
+    const one = await bot("Dax Refused");
+    await expect(saveApprovalMode(request, one.id, "full", "wrong name")).rejects.toThrow();
+    expect(await readApprovalMode(request, one.id)).toMatchObject({ read: "known", mode: "task" });
+    expect(await readApprovalMode(request, "no-such-bot")).toEqual({ read: "failed" });
+    expect(await readApprovalMode(async () => { throw new Error("offline"); }, one.id)).toEqual({ read: "failed" });
+  });
+  it("a save the server does not echo is read back before it counts", async () => {
+    const one = await bot("Dax Echo");
+    const quiet = async (path: string, init?: RequestInit) => { const body = await request(path, init); return init?.method === "PATCH" ? {} : body; };
+    expect(await saveApprovalMode(quiet, one.id, "step")).toBe("step");
+    // No echo and no read back: not confirmed.
+    const silent = async (path: string, init?: RequestInit) => (init?.method === "PATCH" ? request(path, init).then(() => ({})) : ({}));
+    await expect(saveApprovalMode(silent, one.id, "task")).rejects.toThrow("mode not confirmed");
+    // Full access that lands with no confirmation: the panel must treat the mode as unknown, not keep the old one.
+    const unconfirmed = await saveApprovalMode(silent, one.id, "full", "Dax Echo").catch((cause: unknown) => cause);
+    expect(unconfirmed).toBeInstanceOf(ModeNotConfirmed);
+    expect(approvalSaveOutcome(unconfirmed)).toBe("unconfirmed");
+    expect((await mode(one.id)).body.mode).toBe("full"); // it did land
+    // Full lands but the answer is lost on the way back (the connection drops): read back, never the old mode kept.
+    const lost = await bot("Dax Lost");
+    const dropped = async (path: string, init?: RequestInit) => { const body = await request(path, init); if (init?.method === "PATCH") throw new TypeError("network connection was lost"); return body; };
+    expect(await saveApprovalMode(dropped, lost.id, "full", "Dax Lost")).toBe("full");
+    const droppedNoRead = async (path: string, init?: RequestInit) => { if (init?.method === "PATCH") { await request(path, init); throw new TypeError("network connection was lost"); } throw new TypeError("offline"); };
+    const unknown = await saveApprovalMode(droppedNoRead, lost.id, "task").catch((cause: unknown) => cause);
+    expect(approvalSaveOutcome(unknown)).toBe("unconfirmed");
+    expect((await mode(lost.id)).body.mode).toBe("task"); // it landed, and the panel did not claim otherwise
+    const other = await bot("Dax Refused Two");
+    const refused = await saveApprovalMode(request, other.id, "full", "wrong name").catch((cause: unknown) => cause);
+    expect(approvalSaveOutcome(refused)).toBe("refused");
   });
 });

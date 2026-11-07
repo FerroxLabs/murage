@@ -1,3 +1,4 @@
+import { runVoiceBrief, runVoiceHostTurn } from "../testing/protected-host.ts";
 // Live routing eval for the voice host. Skipped unless MURAGE_VOICE_HOST_EVAL
 // names a file holding a Flux key (the key is read, never printed). Each case
 // is a spoken sentence and what the host must do with it: answer from the
@@ -20,7 +21,7 @@ import { describe, expect, it } from "vitest";
 
 import { PROVIDER_PRESETS } from "../../electron/provider-connections.mjs";
 import type { ProviderPreset } from "../../shared/provider-connections.ts";
-import { runVoiceBrief, runVoiceHostTurn, type VoiceHostState } from "./voice-host.ts";
+import { type VoiceHostState } from "./voice-host.ts";
 import { handDownResult } from "./hand-downs.ts";
 import { voiceEndpoint, type VoiceEndpoint } from "./voice-routes.ts";
 

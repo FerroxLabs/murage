@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-opus-stepup-locales",
+  "date": "2026-11-06",
+  "base": "03aa8d643f367cf51c475052958cdd675e8af5b4",
+  "scope": "Shortened browser label",
+  "strings": {
+    "stepup/de:label.browserClients": {
+      "text": "Browser-Zugriff externer Apps ein- oder ausschalten, externe App hinzufügen (fügt einen Bot hinzu) oder entfernen",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 4."
+    },
+    "stepup/fr:label.browserClients": {
+      "text": "Activer ou couper l'accès des apps externes au navigateur, ajouter une app (cela ajoute un bot) ou en retirer une",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 4."
+    },
+    "stepup/pt-br:label.browserClients": {
+      "text": "Ligar ou desligar o acesso de apps externos ao navegador, adicionar um app externo (adiciona um bot) ou remover um",
+      "en": "Turn outside app access to your browser on or off, add an outside app (this adds a bot), or remove one",
+      "verdict": "pass",
+      "note": "Read in round 4."
+    }
+  },
+  "files": {}
+}

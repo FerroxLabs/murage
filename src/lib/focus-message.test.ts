@@ -127,3 +127,16 @@ describe("a search hit lands with its matched phrase", () => {
     expect(searchHitSentence({ snippet: "abc", matchStart: -1, matchLength: 2 })).toBe("");
   });
 });
+
+it("RULE Find and Palette do not focus a hit after its generation changed during landing", async()=>{
+  const { chatsGenHello, chatsGenFrame } = await import('./chats-gen');
+  const { api } = await import('@/state/store');
+  const gen={epoch:'landing',rev:0};chatsGenHello(gen);
+  const dispatch=vi.fn();
+  vi.mocked(api).mockImplementationOnce(async()=>{chatsGenFrame({...gen,rev:1},false);return {activeLeafId:'m'};});
+  await landOnSearchHit({threadId:'t',messageId:'m',botId:'b',onActivePath:false,snippet:'owner visible forgotten',matchStart:0,matchLength:5} as never,{bots:[{id:'b',threadId:'t'}],groups:[],pageIntent:{}} as never,dispatch,gen);
+  expect(dispatch.mock.calls.some(([action])=>action.type==='focusMessage')).toBe(false);
+  dispatch.mockClear();
+  await landOnSearchHit({threadId:'t',messageId:'m',botId:'b',onActivePath:true} as never,{bots:[{id:'b',threadId:'t'}],groups:[],pageIntent:{}} as never,dispatch,gen);
+  expect(dispatch).not.toHaveBeenCalled();
+});

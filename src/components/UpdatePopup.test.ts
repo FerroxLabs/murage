@@ -18,6 +18,7 @@ vi.mock("@/lib/update-card", async (importOriginal) => {
   return { ...real, useUpdatePopup: (state: UpdaterState | null) => following.value || real.useUpdatePopup(state) };
 });
 import { UpdateBanner } from "./UpdateBanner";
+import { openModalWindow } from "@/lib/modal-window";
 
 afterEach(() => { vi.unstubAllGlobals(); current.value = null; following.value = false; });
 
@@ -94,15 +95,63 @@ it("renders nothing with no bridge: the phone app and the browser", () => {
 it("takes no focus: outside the centred card, focus only moves when a keyboard inside closes the pop-up", () => {
   const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
   const frame = source.slice(source.indexOf("function UpdatePopup("), source.indexOf("function updateTitle("));
-  expect(frame).not.toMatch(/autoFocus|tabIndex/);
+  expect(frame).not.toMatch(/autoFocus|tabIndex=\{/);
   expect(frame.match(/\.focus\(/g)).toHaveLength(1);
-  expect(frame).toMatch(/if \(held\) document\.querySelector<HTMLElement>\([^)]*\)\?\.focus\(\)/);
+  // Only after a keyboard inside closed it, and to a place that is not inert (inside the open window when there is one).
+  expect(frame).toContain("if (!held) return;");
+  expect(frame).toContain("popupFocusReturn<HTMLElement>({");
+  expect(frame).toContain("back.focus();\n      if (document.activeElement === back) break;");
   expect(source.slice(source.indexOf("function UpdateCardBody(")).match(/\.focus\(|autoFocus/)).toBeNull();
 });
 
-it("sits under dialogs and the Undo toast, and the card hands a download over", () => {
+it("is a fixed box under menus with no window open, and a top-layer popover only inside an open modal window", () => {
+  // Static rendering has no window open: the plain box, below the z-50 menus and overlays.
+  const html = popup({ status: "downloading", version: "1.0.18", percent: 12 });
+  expect(html).not.toContain("popover=");
+  expect(html).toContain("z-40");
   const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
-  expect(source).toContain("fixed z-40");
+  const frame = source.slice(source.indexOf("function UpdatePopup("), source.indexOf("function updateTitle("));
+  expect(frame).toContain('popover={host ? "manual" : undefined}');
+  expect(frame).toMatch(/if \(!host\) return;\s*try \{ frame\.current\?\.showPopover\(\)/);
+  expect(frame).toContain("createPortal(");
+  expect(frame).toContain("useModalHost()");
+});
+
+it("shares the help tab's modal-window watch (one watcher, the window opened last)", () => {
+  const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
+  expect(source).toContain("useLayoutEffect(() => watchModalWindow(setHost), []);");
+  expect(source).not.toContain("new MutationObserver");
+  expect(source).not.toContain("topModalDialog");
+  const dialog = (name: string) => ({ name, matches: (q: string) => q === "dialog:modal" });
+  const root = (list: unknown[]) => ({ querySelectorAll: () => list }) as unknown as Document;
+  expect(openModalWindow(root([]))).toBeNull();
+  const top = dialog("top");
+  expect(openModalWindow(root([dialog("under"), top]))).toBe(top);
+});
+
+it("measures again when the sidebar footer mounts after the terms are accepted", () => {
+  const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
+  const frame = source.slice(source.indexOf("function UpdatePopup("), source.indexOf("function updateTitle("));
+  expect(frame).toContain("const footer = useUpdatePopupAnchor();");
+  expect(frame).toContain("}, [toast, footer]);");
+  expect(readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8")).toContain('data-update-popup-anchor="" ref={updatePopupAnchorRef}');
+});
+
+it("follows a language change by itself: it is mounted outside Shell", () => {
+  const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
+  const banner = source.slice(source.indexOf("export function UpdateBanner("), source.indexOf("function useModalHost("));
+  expect(banner).toContain("useSyncExternalStore(subscribeLocale, localeVersion, localeVersion);");
+});
+
+it("shows before the terms are accepted too: mounted beside the terms gate, not behind it", () => {
+  const app = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+  expect(app.match(/<UpdateBanner \/>/g)).toHaveLength(1);
+  expect(app.indexOf("<UpdateBanner />")).toBeGreaterThan(app.indexOf("</TermsGate>"));
+});
+
+it("leaves room for the Undo toast, and the card hands a download over", () => {
+  const source = readFileSync(new URL("./UpdateBanner.tsx", import.meta.url), "utf8");
+  expect(source).toContain("[data-undo-toast]");
   expect(source).toContain('const cardShows = cardOpen && status !== "downloading"');
   expect(readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8")).toContain('if (status === "downloading") return showUpdatePopup();');
   expect(readFileSync(new URL("./UpdateIndicator.tsx", import.meta.url), "utf8")).toContain('s.status === "downloading" ? showUpdatePopup : openUpdateCard');

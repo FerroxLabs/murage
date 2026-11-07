@@ -1,3 +1,4 @@
+import { initializeChatsPreviewStorage } from "./thread-summary.ts";
 import { ensureForgetTable } from "./harness/event-log.ts";
 import { ensureScrubPassTable } from "./memory/scrub-state.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
@@ -7,6 +8,8 @@ import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdte
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { publishNoReplace } from "./publish-file.ts";
+import { claimCopyScratch, settleFtsCopy, sweepStaleCopyScratch } from "./settle-copy.ts";
+import { noteWrittenBytes, noteWrittenFile } from "./io-written.ts";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { isDiskFullError, validateMemorySchema } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
@@ -25,6 +28,8 @@ import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
+import { initializeVenuePosts } from "./venue-post-held.ts";
+import { initializeRoomShares } from "./room-shares-schema.ts";
 
 import { ensureIntegrityPassTable } from "./memory/integrity-state.ts";
 import { LEGACY_UPGRADE_TABLES, ensureUpgradeAppTables } from "./memory/upgrade-app-tables.ts";
@@ -37,6 +42,7 @@ import { initializePhoneReceipts } from "./phones/receipts.ts";
 import { initializePhones } from "./phones/registry.ts";
 import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
 import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
 function regularFile(path: string, missing = false) {
@@ -217,9 +223,10 @@ function referenceSchema(): Map<string, ReferenceObject> {
   if (reference) return reference;
   const db = new DatabaseSync(":memory:");
   try {
+    initializeChatsPreviewStorage(db);
     initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeEmailTables(db);
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeAppTriggers(db); initializeEmailTables(db); initializeVenuePosts(db); initializeRoomShares(db);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -327,7 +334,7 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
       graph = new InstallationTranscriptGraph(fail);
       thread = row.thread_id as string;
     }
-    graph.add(JSON.parse(row.json as string));
+    graph.add(rowToMessage({ json: row.json as string }));
   }
   graph.validate();
   return {
@@ -355,7 +362,7 @@ function digestFile(path: string): string {
  * publishes without replacing any existing destination. No runtime Store,
  * migration, provider or scheduler is constructed. Other app-state components
  * must eventually share this offline epoch in the complete backup builder. */
-async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db", inspect: (db: DatabaseSync) => T, onProgress?: BackupProgressReport) {
+async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, destination: string, component: "messages.db" | "memory-index.db" | "connected-app-ledger.db" | "phone-calls.db", inspect: (db: DatabaseSync) => T, onProgress?: BackupProgressReport) {
   const report = safeBackupProgress(onProgress);
   const root = dataDirLeasePaths(dataDir).canonicalDataDir;
   if (!destination || /[\r\n\0]/.test(destination) || [".", "..", ""].includes(basename(destination))) throw new InstallationSnapshotError("INVALID_DESTINATION");
@@ -395,7 +402,10 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
         if(!current||!equalIdentity(held.identity,current)||!equalIdentity(held.identity,fstatSync(held.fd))||(held.sha256!==undefined&&digestDescriptor(held.fd)!==held.sha256))throw new InstallationSnapshotError("SOURCE_CHANGED");
       }
     };
+    // a killed earlier run can leave raw, unsettled copies in this parent (SMOOTH-FTS-MERGE R6 section 3, stale scratch)
+    sweepStaleCopyScratch(dirname(target));
     scratch = mkdtempSync(join(dirname(target), ".murage-database-snapshot-"));
+    claimCopyScratch(scratch);
     const inputDirectory=join(scratch,"source");mkdirSync(inputDirectory,{mode:0o700});
     const originalBytes=originals.reduce((total,held)=>total+held.identity.size,0);let readBytes=0;
     report("database-read",0,originalBytes);
@@ -406,7 +416,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
         for(;;){
           const size=readSync(held.fd,buffer,0,buffer.length,offset);if(!size)break;
           hash.update(buffer.subarray(0,size));
-          if(output!==undefined){let written=0;while(written<size)written+=writeSync(output,buffer,written,size-written);}
+          if(output!==undefined){let written=0;while(written<size){const bytes=writeSync(output,buffer,written,size-written);noteWrittenBytes("database-copy",bytes);written+=bytes;}}// charge each successful write even if the next throws; -shm is read and hashed only
           offset+=size;readBytes+=size;report("database-read",readBytes,originalBytes);
         }
         held.sha256=hash.digest("hex");
@@ -423,10 +433,13 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     inspect(source);
     report("database-copy",0,identity.size);
     await backup(source, staged, { rate: 128, progress: ({ totalPages, remainingPages }) => { if (totalPages > 0) report("database-copy", Math.round(identity.size * (1 - remainingPages / totalPages)), identity.size); } });
+    noteWrittenFile("database-copy", staged); // its logical size: the only count of it on win32 (io-written.ts)
     source.close();
     source = undefined;
     report("database-clean");
-    if (component === "messages.db") sanitizeStagedEmail(staged);
+    // Every staged messages.db settles itself (SMOOTH-FTS-MERGE R6 section 3): the search index's deleted postings, the email
+    // rows of a backup and every freed page leave the staged file before inspect, digest and publish. One VACUUM, always.
+    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: sanitizeStagedEmailRows });
     report("database-verify");
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
@@ -457,28 +470,23 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
 
 /** Bot email (BOT-EMAIL-MURAGE-109 section 7): mail bodies, frozen send payloads and inbound events never leave in a backup. After the
  * copy and before `inspect`, every row of email_payloads and email_events is deleted from the STAGED file (normal and fidelity archives
- * share this path) with secure_delete on and a VACUUM, so no freed page keeps the bytes. The tables stay (registered app tables, schema
- * validation unchanged); bindings and send receipts are carried so a restored install can reconcile. Email send cards in the transcript
- * keep their header lines (To, Cc, Subject, contacts) but lose the mail text: the subtitle is cut at its first blank line (the body
- * follows it) and the draft text is emptied, the same view a restored card shows once its payload is gone (Astra r2 Medium). A database
- * without the tables (email never on) is not touched. */
-export function sanitizeStagedEmail(path: string): { payloads: number; events: number; cards: number } {
-  const db = new DatabaseSync(path);
-  try {
-    const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
-    if (!has("email_payloads") && !has("email_events")) return { payloads: 0, events: 0, cards: 0 };
-    db.exec("PRAGMA secure_delete=ON");
-    const payloads = has("email_payloads") ? Number(db.prepare("DELETE FROM email_payloads").run().changes) : 0;
-    const events = has("email_events") ? Number(db.prepare("DELETE FROM email_events").run().changes) : 0;
-    // a row with damaged JSON is left as it is (json_valid first): sanitizing never fails a backup over one bad row
-    const subtitle = "json_extract(json,'$.card.subtitle')";
-    const cards = has("messages") ? Number(db.prepare(
-      `UPDATE messages SET json=json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ` +
-      `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_extract(json,'$.card.kind') END)='email-send'`,
-    ).run().changes) : 0;
-    db.exec("VACUUM");
-    return { payloads, events, cards };
-  } finally { db.close(); }
+ * share this path) on the settle's own connection (settle-copy.ts: secure_delete on, then its one VACUUM), so no freed page keeps the
+ * bytes. The tables stay (registered app tables, schema validation unchanged); bindings and send receipts are carried so a restored
+ * install can reconcile. Email send cards in the transcript keep their header lines (To, Cc, Subject, contacts) but lose the mail text:
+ * the subtitle is cut at its first blank line (the body follows it) and the draft text is emptied, the same view a restored card shows
+ * once its payload is gone (Astra r2 Medium). A database without the tables (email never on) is not touched. */
+export function sanitizeStagedEmailRows(db: DatabaseSync): { payloads: number; events: number; cards: number } {
+  const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  if (!has("email_payloads") && !has("email_events")) return { payloads: 0, events: 0, cards: 0 };
+  const payloads = has("email_payloads") ? Number(db.prepare("DELETE FROM email_payloads").run().changes) : 0;
+  const events = has("email_events") ? Number(db.prepare("DELETE FROM email_events").run().changes) : 0;
+  // a row with damaged JSON is left as it is (json_valid first): sanitizing never fails a backup over one bad row
+  const subtitle = "json_extract(json,'$.card.subtitle')";
+  const cards = has("messages") ? Number(db.prepare(
+    `UPDATE messages SET json=json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ` +
+    `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_extract(json,'$.card.kind') END)='email-send'`,
+  ).run().changes) : 0;
+  return { payloads, events, cards };
 }
 
 function snapshotDatabaseWhileOwned(dataDir: string, destination: string, onProgress?: BackupProgressReport) {
@@ -506,8 +514,18 @@ function snapshotConnectedLedgerWhileOwned(dataDir: string, destination: string)
   });
 }
 
+// Bot phone calls (BOT-CALLS-1020): the owner's call history and caller settings travel with a backup, so a restore never loses them.
+function snapshotPhoneCallsWhileOwned(dataDir: string, destination: string) {
+  return snapshotSqliteWhileOwned(dataDir, destination, "phone-calls.db", db => {
+    const rows = db.prepare("PRAGMA integrity_check").all();
+    if (rows.length !== 1 || Object.values(rows[0])[0] !== "ok") throw new InstallationSnapshotError("DATABASE_INTEGRITY_FAILED");
+    return {};
+  });
+}
+
 export interface OfflineInstallation {
   readonly dataDir: string;
+  snapshotPhoneCalls(destination: string): Promise<Awaited<ReturnType<typeof snapshotPhoneCallsWhileOwned>>>;
   snapshotConnectedLedger(destination: string): Promise<Awaited<ReturnType<typeof snapshotConnectedLedgerWhileOwned>>>;
   snapshotDatabase(destination: string, onProgress?: BackupProgressReport): Promise<Awaited<ReturnType<typeof snapshotDatabaseWhileOwned>>>;
   snapshotMemoryIndex(destination: string): Promise<Awaited<ReturnType<typeof snapshotMemoryIndexWhileOwned>>>;
@@ -538,6 +556,13 @@ export async function withOfflineInstallation<T>(dataDir: string, operation: (in
       snapshotConnectedLedger(destination: string) {
         if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
         const result = snapshotConnectedLedgerWhileOwned(root, destination);
+        pending.add(result);
+        void result.then(() => pending.delete(result), () => pending.delete(result));
+        return result;
+      },
+      snapshotPhoneCalls(destination: string) {
+        if (!active) return Promise.reject(new InstallationSnapshotError("SNAPSHOT_EPOCH_CLOSED"));
+        const result = snapshotPhoneCallsWhileOwned(root, destination);
         pending.add(result);
         void result.then(() => pending.delete(result), () => pending.delete(result));
         return result;

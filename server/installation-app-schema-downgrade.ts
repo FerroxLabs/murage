@@ -1,3 +1,4 @@
+import { CHATS_PREVIEW_TABLES, CHATS_PREVIEW_INDEXES } from "./thread-summary.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
@@ -40,6 +41,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "turn_source_hold_u",
   ],
   indexes: [
+    ...CHATS_PREVIEW_INDEXES,
     // turnctx: indexed reads of the working context on tables 1.0.1 already has
     "artifacts_bot_date",
     "image_operations_awaiting",
@@ -97,8 +99,13 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_sends_inbox",
     "email_sends_replaces",
     "email_sends_settled",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts_open",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares_status",
   ],
   tables: [
+    ...CHATS_PREVIEW_TABLES,
     "app_write_revision",
     "attachment_name",
     "branch_change",
@@ -147,6 +154,10 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_tombstones",
     "email_trust",
     "email_trusted",
+    // venue posts (server/venue-post-held.ts), 1.0.18
+    "venue_posts",
+    // cross-chat share cards (server/room-shares-schema.ts), 1.0.18
+    "room_shares",
   ],
 });
 
@@ -172,6 +183,43 @@ export interface AppSchemaDowngrade {
 const has = (db: DatabaseSync, type: string, name: string): boolean => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
 const quoted = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 const BUSY_FALLBACK_MS = 5 * 60_000;
+
+/** The card tables 1.0.18 makes at every open (database.ts): the held Post in… posts (venue-post-held.ts) and the cross-chat share
+ *  cards (room-shares-schema.ts). No earlier build knows them, and 1.0.2's database check refuses an object it does not know, so they
+ *  leave whatever the target, indexes first, in one transaction (a savepoint inside the caller's). Each row is a view of a card in a
+ *  transcript; the card message itself stays, and a later 1.0.18 start makes the empty tables again. Idempotent. */
+export const CARD_TABLES_AFTER_117 = Object.freeze({ indexes: ["venue_posts_open", "room_shares_status"], tables: ["venue_posts", "room_shares"] });
+/** A held Post in… post (state held, or posting: a boot moves a cut-short post back to held, venue-post-held.ts recoverVenuePosts) is the only
+ *  copy of the bot's full post while the owner has not answered it (the card in the transcript keeps a preview), so the downgrade refuses
+ *  while one is open, before any change (installation-memory-downgrade.ts runs this on its read-only probe first). A room share needs no
+ *  such check: every start of 1.0.18 discards the live drafts and settles an interrupted Share (room-shares.ts recoverRoomShares).
+ *  Every row goes, 'shared' ones too, and only metadata goes with it (query, nonce, stable_id, status; a shared row's excerpts are
+ *  already '[]'). The shared line is a message and stays, and its "Shared from…" label reads message.sharedFrom, not the row. The ask card
+ *  stays too; its state line (Shared, Declined, Closed) comes from the row, so a card with no row falls back to the "closed" line
+ *  (RoomShareCard.tsx, on a 404 only). */
+export function assertNoHeldVenuePosts(db: DatabaseSync): void {
+  if (!has(db, "table", "venue_posts")) return;
+  const open = Number((db.prepare("SELECT COUNT(*) AS n FROM venue_posts WHERE state IN ('held','posting')").get() as { n: number }).n);
+  if (open > 0) throw Object.assign(new Error(`You have ${open} post${open === 1 ? "" : "s"} from a bot still waiting for your answer. Post or decline ${open === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
+}
+export function downgradeCardTablesTo117(db: DatabaseSync): { dropped: number } {
+  let dropped = 0;
+  const outer = db.isTransaction;
+  db.exec(outer ? "SAVEPOINT card_tables_downgrade" : "BEGIN IMMEDIATE");
+  try {
+    assertNoHeldVenuePosts(db);
+    const indexes = CARD_TABLES_AFTER_117.indexes.filter(name => has(db, "index", name));
+    const tables = CARD_TABLES_AFTER_117.tables.filter(name => has(db, "table", name));
+    dropped = indexes.length + tables.length;
+    for (const name of indexes) db.exec(`DROP INDEX ${quoted(name)}`);
+    for (const name of tables) db.exec(`DROP TABLE ${quoted(name)}`);
+    db.exec(outer ? "RELEASE card_tables_downgrade" : "COMMIT");
+  } catch (error) {
+    try { if (outer) { db.exec("ROLLBACK TO card_tables_downgrade"); db.exec("RELEASE card_tables_downgrade"); } else db.exec("ROLLBACK"); } catch { /* already rolled back */ }
+    throw error;
+  }
+  return { dropped };
+}
 const RECEIPTS_FILE = "delegation-receipts.json";
 const MAX_RECEIPTS = 100;
 
@@ -337,6 +385,7 @@ function heldHandoffs(db: DatabaseSync): number {
  *     columns differ rebuilt from its executable original definition (schema-1.0.1.ts `ddl`); COMMIT.
  * A crash anywhere leaves the rows (or the finished result): a retry recomputes the same files and the same drops. */
 export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: string, hooks: { beforeCommit?: () => void; branchChangeProgress?: (slices: number) => void } = {}): AppSchemaDowngrade {
+  assertNoHeldVenuePosts(db);
   const pending = pendingOwnerWork(db);
   if (pending > 0) {
     throw Object.assign(new Error(`You have ${pending} message${pending === 1 ? "" : "s"} still waiting to send or restore. Send or cancel ${pending === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });

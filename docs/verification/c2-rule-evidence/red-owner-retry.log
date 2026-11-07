@@ -1,0 +1,26 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (43 tests | 1 failed | 42 skipped) 3790ms
+   × RULE main failed request retries on owner action but never polls 3451ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE main failed request retries on owner action but never polls
+TimeoutError: page.waitForFunction: Timeout 2000ms exceeded.
+ ❯ src/lib/chats-previews-browser.test.ts:536:14
+    534|   await page.evaluate(()=>{const f=(window as any).fixture;f.reject(f.…
+    535|   await page.getByRole('button',{name:'Try again',exact:true}).click();
+    536|   await page.waitForFunction(()=>(window as any).fixture.pending().som…
+       |              ^
+    537|   await rawAnswer(page,'/api/chats?limit=50',{gen:next,total:1,chats:[…
+    538|   await page.getByText('Retry works',{exact:true}).waitFor();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 skipped (43)
+   Start at  21:32:48
+   Duration  9.94s (transform 4.71s, setup 5.72s, import 328ms, tests 3.79s, environment 0ms)
+

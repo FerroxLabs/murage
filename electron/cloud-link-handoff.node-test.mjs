@@ -65,14 +65,14 @@ test("handoff: argv filtered", () => {
   assert.equal(needsDoorHandoff({ platform: "linux", link: { kind: "open-cloud" } }), false);
 });
 
-test("handoff: the first process seals, lets go of the lock, relaunches without the link and exits", async () => {
+test("DQ-3/B11: the first process seals, relaunches without the link, releases the lock and exits", async () => {
   const calls = [];
   const app = { releaseSingleInstanceLock: () => calls.push("release"), exit: (code) => calls.push(`exit ${code}`) };
   let relaunchedWith;
   const done = await handOffDoorLink({ app, safeStorage: sealing(), directory: dir, url: DOOR, argv: ["C:\\Murage\\Murage.exe", "--x", DOOR],
     relaunch: (args) => { calls.push("relaunch"); relaunchedWith = args; } });
   assert.equal(done, true);
-  assert.deepEqual(calls, ["release", "relaunch", "exit 0"]);
+  assert.deepEqual(calls, ["relaunch", "release", "exit 0"]);
   assert.deepEqual(relaunchedWith, ["--x"], "relaunch args: everything but the link");
   assert.ok(!JSON.stringify(relaunchedWith).includes(TICKET));
   assert.deepEqual(await takeStashedDoorLink({ safeStorage: sealing(), directory: dir }), { kind: "door", url: DOOR }, "the relaunched process finds it");
@@ -134,4 +134,48 @@ test("Windows argv: the #t= fragment survives the registry handler's quoting (si
   assert.deepEqual(windowsArgv("a\\\\\\b d\"e f\"g h"), ["a\\\\\\b", "de fg", "h"]);
   assert.deepEqual(windowsArgv("a\\\\\\\"b c d"), ["a\\\"b", "c", "d"]);
   assert.deepEqual(windowsArgv("a\\\\\\\\\"b c\" d e"), ["a\\\\b c", "d", "e"]);
+});
+
+import { EventEmitter } from 'node:events';
+import { acknowledgedRelaunchHandoff } from './desktop-relaunch.mjs';
+const handoffOptions = (child, extra = {}) => ({ app: {}, args: [], platform: 'linux',
+  env: { APPIMAGE: '/fixture/Murage.AppImage', APPDIR: '/fixture/mount', OWD: process.cwd() },
+  execPath: '/fixture/mount/murage', spawn: () => child, register() {}, ackMs: 5, stopMs: 5, ...extra });
+
+test('B11/A5: acknowledgment precedes release; usable earlier directory avoids homedir lookup', async () => {
+  const calls = [], child = new EventEmitter(); child.pid = 123; child.unref = () => {};
+  const result = handOffDoorLink({ app: { releaseSingleInstanceLock: () => calls.push('release'), exit: () => calls.push('exit') },
+    safeStorage: sealing(), directory: dir, url: DOOR,
+    relaunch: args => acknowledgedRelaunchHandoff(handoffOptions(child, { args,
+      register: () => { calls.push('owned'); setImmediate(() => child.emit('spawn')); },
+      homedir: () => assert.fail('must be lazy'), ackMs: 100 })) });
+  assert.equal(await result, true); assert.deepEqual(calls, ['owned', 'release', 'exit']);
+});
+
+test('B11/A5: spawn error, synchronous throw and confirmed timeout continue locally with lock held', async () => {
+  for (const mode of ['error', 'throw', 'timeout']) {
+    let killed = 0;
+    const child = new EventEmitter(); child.pid = mode === 'error' ? undefined : 123;
+    child.kill = () => { killed++; child.emit('exit'); };
+    const result = await handOffDoorLink({ app: { releaseSingleInstanceLock: () => assert.fail('lock'), exit: () => assert.fail('exit') },
+      safeStorage: sealing(), directory: dir, url: DOOR,
+      relaunch: () => acknowledgedRelaunchHandoff(handoffOptions(child, { spawn: () => {
+        if (mode === 'throw') throw Error('spawn');
+        if (mode === 'error') setImmediate(() => child.emit('error', Error('spawn')));
+        return child;
+      } })) });
+    assert.equal(result, false); assert.equal(killed, mode === 'timeout' ? 1 : 0);
+    assert.equal(await takeStashedDoorLink({ safeStorage: sealing(), directory: dir }), null);
+  }
+});
+
+test('BF-1: unconfirmed timeout remains owned and late acknowledgment cannot hand over', async () => {
+  const child = new EventEmitter(); child.pid = 123;
+  let owned, killed = 0; child.kill = () => { killed++; };
+  await assert.rejects(handOffDoorLink({ app: { releaseSingleInstanceLock: () => assert.fail('lock'), exit: () => assert.fail('exit') },
+    safeStorage: sealing(), directory: dir, url: DOOR,
+    relaunch: () => acknowledgedRelaunchHandoff(handoffOptions(child, { register: value => { owned = value; } })) }), { code: 'HANDOFF_HELPER_ALIVE' });
+  assert.equal(killed, 1); child.emit('spawn');
+  await assert.rejects(owned.stop(), { code: 'HANDOFF_HELPER_ALIVE' });
+  child.emit('exit'); await owned.stop();
 });

@@ -24,6 +24,7 @@ export interface IndexedMemory {id:string;version:number;scopeId:string;text:str
 export interface IndexHit {id:string;version:number;score:number;similarity?:number;lexical?:boolean}
 export { byScore, compareRefs };
 import { FTS_SEGMENT_LIMIT,isSegmentLimitError } from "./segment-limit.ts";
+import { walFrameReader } from "../io-written.ts";
 import { ageTablesPresent, fillAgeIndexStep, lexicalGeneration, lexicalRowidsAged, markFreshIndexAged, placeLexicalRow, sweepAgeRowidsStep, type AgeFillOptions } from "./age-index.ts";
 export { isSegmentLimitError };
 /** Past this many segments the helper compacts the index once, well before the limit. */
@@ -52,6 +53,13 @@ export class MemoryIndex {
   private allowedKeys=new WeakMap<object,string>();
   private matrix:{model:string;coverage:Set<string>|null;rows:Map<string,{id:string;version:number;key:string;values:Float32Array}>}|null=null;
   readonly rebuilt:boolean;
+  /** The log-frame reader. Owned here (WIN-IOB-QUICK note rev 3): created after the final successful open of this path, before the first
+   * write, and closed only after that handle's db.close(), so no descriptor on the shm is opened or closed by code that does not own the handle. */
+  private wal:ReturnType<typeof walFrameReader>|null=null;
+  private closeAll:()=>void=()=>{};
+  /** Read the log right before every TRUNCATE checkpoint: a checkpoint restarts the write-ahead log, and a frame counter that has not
+   * read the log by then sees only the newest generation. */
+  private sampleLog():void{try{this.wal?.();}catch{/* accounting never blocks a checkpoint */}}
   constructor(path: string) {
     this.path=path;
     let rebuilt=!existsSync(path);
@@ -62,10 +70,17 @@ export class MemoryIndex {
     // A log file that is a link or not a regular file stops the start; one left without its index file is removed first (index-quarantine.ts).
     prepareIndexOpen(path);
     let db=new DatabaseSync(path,{timeout:INDEX_OPEN_BUSY_MS});
-    // Any throw past here closes the handle it opened, so a failed start leaves no connection on the file.
+    let release:()=>void=()=>{db.close();};// the failure path below: the handle alone until the reader exists, then both (closeAll)
+    // On failure attempt to release the handle; if that close fails, retain its reader and report the cleanup error too.
     try {
     try {checkIndex(db);}
     catch(error){db.close();if(!indexDamaged(error))throw error;quarantineIndex(path);prepareIndexOpen(path);db=new DatabaseSync(path,{timeout:INDEX_OPEN_BUSY_MS});rebuilt=true;}
+    // The log reader belongs to THIS handle (after the final open, before the first write): per-handle state, so closing a damaged
+    // handle above never marks this one closed, and a db.close() that throws leaves the reader open with the live handle.
+    const wal=walFrameReader(path);this.wal=wal;
+    let closedAll=false;
+    const closeAll=()=>{if(closedAll)return;db.close();closedAll=true;wal.close();};
+    this.closeAll=closeAll;release=closeAll;
     // Past the check the handle keeps the wait it always had (none): the helper's steps meet a held lock at once and retry.
     db.exec("PRAGMA busy_timeout=0");
     const hadLexicalKeys=Boolean(db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='lexical_keys'").get());
@@ -81,6 +96,7 @@ export class MemoryIndex {
     // A merge owed when the app last stopped is still owed: the obligation lives in this file, not in memory.
     this.purge.merging=Boolean(db.prepare("SELECT 1 FROM index_meta WHERE key='merge_owed' AND value='1'").get());
     // One TRUNCATE before traffic gives back a log left large by an earlier run (PROPOSAL-v2 10.3).
+    this.sampleLog();
     try{db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* a reader holds it; the next checkpoint takes it */}
     // FTS5 keeps deleted terms until a merge. Owner deletions owe both that
     // merge and a truncated log; rolled checkpoint versions use stepped maintenance.
@@ -92,11 +108,11 @@ export class MemoryIndex {
         db.exec("CREATE TABLE lexical_keys(id TEXT NOT NULL,version INTEGER NOT NULL,fts_rowid INTEGER NOT NULL UNIQUE,PRIMARY KEY(id,version))");
         db.exec("INSERT INTO lexical_keys SELECT id,CAST(version AS INTEGER),rowid FROM lexical");
         db.exec("COMMIT");
-      }catch(error){db.exec("ROLLBACK");db.close();throw error;}
+      }catch(error){db.exec("ROLLBACK");closeAll();throw error;}
     }
     // Age order (age-index.ts): an index with no word row yet takes age keys as rowids from its first row; one with rows is filled
     // into a second table by the helper and cut over by rename (fillAgeIndex).
-    try{this.aged=markFreshIndexAged(db);}catch(error){db.close();throw error;}
+    try{this.aged=markFreshIndexAged(db);}catch(error){closeAll();throw error;}
     this.ageTables=!this.aged&&ageTablesPresent(db);
     // The scoped word index (postings.ts). Creating it reads nothing: the triggers keep every entry written from here on, and the
     // entries already there are filled newest first by fillPostings, from the rowid recorded here.
@@ -107,14 +123,14 @@ export class MemoryIndex {
         const top=db.prepare("SELECT max(rowid) AS n FROM entries").get()?.n;
         if(top!==null&&top!==undefined)db.prepare("INSERT OR REPLACE INTO index_meta VALUES(?,?)").run(POSTINGS_BELOW,String(Number(top)+1));
         db.exec("COMMIT");
-      }catch(error){db.exec("ROLLBACK");db.close();throw error;}
+      }catch(error){db.exec("ROLLBACK");closeAll();throw error;}
     } else if(!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='posting_todo'").get()){
       // A file the build before the per-scope backfill left, part way through or finished: the to-do list and the triggers that clear it,
       // in one transaction of schema pages. `postings_below` stays where it is: entries at or above it have their postings, entries
       // below it are listed by the next steps, so nothing already written is read again.
       db.exec("BEGIN IMMEDIATE");
       try { db.exec(POSTINGS_TODO_UPGRADE); db.exec("COMMIT"); }
-      catch(error){db.exec("ROLLBACK");db.close();throw error;}
+      catch(error){db.exec("ROLLBACK");closeAll();throw error;}
     }
     // Resume a completed scrub's checkpoint. A legacy marker without a generation takes at most
     // one merge step here; all remaining work stays owed to the worker.
@@ -124,7 +140,7 @@ export class MemoryIndex {
     // The new index is open and complete: a copy set aside now or by an earlier start is never read again, and it still holds the words
     // of deleted conversations, so it goes (index-quarantine.ts). Messages.db's own quarantines are never touched here.
     removeIndexQuarantines(path);
-    } catch(error){try{db.close();}catch{/* already closed on the path that threw */}throw error;}
+    } catch(error){try{release();}catch(closeError){if((closeError as {code?:string}).code!=="ERR_INVALID_STATE")console.error("MemoryIndex constructor cleanup failed",closeError);}throw error;}
   }
   /** Whether `lexical` holds every row at its age key (age-index.ts), and whether the second word table exists (the fill is under way). */
   private aged=false;
@@ -219,6 +235,7 @@ export class MemoryIndex {
   settlePostings():void{
     if(++this.settled<SETTLE_EVERY||walBytes(this.path)<POSTINGS_WAL_BYTES)return;
     this.settled=0;
+    this.sampleLog();
     try{this.db.exec("PRAGMA wal_checkpoint(PASSIVE)");}catch{/* a writer holds it; the next call takes it */}
   }
   private enumerate(maxMs:number,maxRows:number):{rows:number;done:boolean}{
@@ -337,10 +354,12 @@ export class MemoryIndex {
   /** Truncate the log now (the reader asked: no scan snapshot is open). True when the log was truncated, or was already empty. */
   checkpointNow():boolean{
     if(walBytes(this.path)===0)return true;
+    this.sampleLog();
     return checkpointTruncate(this.db,"memory-index");
   }
   checkpointIfLarge(limit:number=WAL_DRAIN_BYTES):boolean{
     if(walBytes(this.path)<=limit)return false;
+    this.sampleLog();
     return checkpointTruncate(this.db,"memory-index");
   }
   /** Whether deletions are waiting for the stepped maintenance to merge them out of the word index. Durable: set in the
@@ -382,6 +401,7 @@ export class MemoryIndex {
     if(ran==="rebuild")this.db.exec("INSERT INTO lexical(lexical) VALUES('rebuild')");
     // Either pays every merge debt, the stepped walk's included.
     this.purge.merging=false;this.purge.since=0;this.mergeStarted=false;this.setMergeOwed(false);
+    this.sampleLog();
     try{this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");}catch{/* the next checkpoint takes it */}
     return ran;
   }
@@ -394,6 +414,7 @@ export class MemoryIndex {
     this.purge.merging=false;this.purge.since=0;this.mergeStarted=false;this.setMergeOwed(false);
     // The metadata write belongs before the final checkpoint too. A blocked
     // checkpoint keeps a durable obligation for the next attempt or restart.
+    this.sampleLog();
     if(!checkpointTruncate(this.db,"memory-rewrite",Number(this.db.prepare("PRAGMA busy_timeout").get()?.timeout??0))){
       this.setMergeOwed(true);this.purge.merging=true;return false;
     }
@@ -427,6 +448,7 @@ export class MemoryIndex {
     let merge:Merge=saved?JSON.parse(saved):{generation:this.scrubGeneration(),table:"lexical",started:false};
     // A legacy truncate marker has no generation proof. Start a bounded merge before acknowledging it.
     if(owed==='truncate'&&saved&&merge.generation>=this.scrubTarget()){
+      this.sampleLog();
       if(!checkpointTruncate(this.db,"memory-delete",Number(this.db.prepare("PRAGMA busy_timeout").get()?.timeout??0))){
         this.scrubBlocked=true;return false;
       }
@@ -513,6 +535,7 @@ export class MemoryIndex {
         this.db.exec("INSERT INTO lexical(lexical) VALUES('optimize')");
         // A full merge pays every debt, the stepped walk's included; the walk's own count restarts from here.
         this.purge.merging=false;this.purge.since=0;this.setMergeOwed(false);
+        this.sampleLog();
         this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       }catch{/* the debt stays written: the next open or merge step pays it */this.purge.merging=true;}
     }
@@ -699,5 +722,8 @@ export class MemoryIndex {
     return {hits:[...hits.values()].sort(byScore).slice(0,limit),vectorRows,lexicalRanked,vectorRanked,...unvectored?{unvectored,unvectoredMore}:{},
       timings:{lexicalMs:lexicalDone-started,matrixMs,vectorMs:performance.now()-lexicalDone-matrixMs}};
   }
-  close(){this.db.close();}
+  /** The database handle first, then the log reader: closing a descriptor on the shm drops this process's locks on it (io-written.ts). */
+  close(){this.closeAll();}
+  /** Cumulative WAL bytes written through this index (win32 io accounting); 0 when unreadable. */
+  ioBytes():number{try{return this.wal?.()??0;}catch{return 0;}}
 }
