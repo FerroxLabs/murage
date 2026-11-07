@@ -4,6 +4,7 @@
 // before the card with numbers, size by intent, quality aliases, n, formats,
 // the Flux catalogue, streaming and jobs. No real key, no network.
 import { describe, expect, it, vi } from "vitest";
+import { FluxBudgetReached } from "./voice/flux-budget.ts";
 import { IMAGE_RESPONSE_MAX_BYTES, ImageGenerationService, imageApprovalSubtitle, imageModelsForBots, imageResultSummary, imageResponseCap, type ImageConnection, type ImageProvider, type ImageOperationDetails } from "./image-generation.ts";
 
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -191,6 +192,55 @@ describe("Flux catalogue", () => {
     expect(catalog.capabilitySource).toBe("built-in"); expect(catalog.defaultModel).toBe("flux-image");
     await f.service.generate(f.request, f.hooks);
     expect(f.fetcher.mock.calls.filter(([input]) => String(input).endsWith("/v1/images/models"))).toHaveLength(1);
+  });
+  for (const resume of [false, true]) for (const status of [402, 200]) it(`polling budget refusal HTTP ${status} stops immediately (resume=${resume})`, async () => {
+    const f = fixture("flux", { fluxCatalogue: true });
+    let polls = 0;
+    f.fetcher.mockImplementation(async (input, init) => {
+      if (String(input).endsWith("/v1/images/models")) return json(catalogue);
+      if (init?.method === "POST") return json({ contract: 1, kind: "image-job", id: "budget_job", status: "queued" }, { status: 202 });
+      polls++;
+      return json({ contract: 1, kind: "image-job", id: "budget_job", status: "failed", error: { code: "key_budget_reached" } }, { status });
+    });
+    const error = await f.service.generate({ ...f.request, model: "flux-image-gpt25-sunburst", quality: "xhigh", width: 2048, height: 2048 },
+      { ...f.hooks, ...(resume ? { resumeJob: { id: "budget_job" } } : {}) }).catch((error: unknown) => error);
+    // noteToolBudget uses this exact instanceof gate before publishing the
+    // providerError consumed by both desktop and Cloud call views.
+    expect(error).toBeInstanceOf(FluxBudgetReached);
+    expect(error).toHaveProperty("providerError.fluxBudget", true);
+    expect(polls).toBe(1);
+    expect(f.posts()).toHaveLength(resume ? 0 : 1);
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("polling bounds chunked error bodies before classification (oversized=%s)", async oversized => {
+    const f = fixture("flux", { fluxCatalogue: true });
+    const cancel = vi.fn();
+    let reads = 0;
+    const bytes = new TextEncoder().encode(JSON.stringify({ error: { code: oversized ? "key_budget_reached" : "render_failed" }, padding: "x".repeat(oversized ? 64 * 1024 : 0) }));
+    f.fetcher.mockImplementation(async input => {
+      if (String(input).endsWith("/v1/images/models")) return json(catalogue);
+      return new Response(new ReadableStream<Uint8Array>({
+        pull(controller) { reads++; if (reads === 1) controller.enqueue(bytes); else controller.close(); }, cancel,
+      }, { highWaterMark: 0 }), { status: 403 });
+    });
+    const error = await f.service.generate(f.request, { ...f.hooks, resumeJob: { id: "budget_job" } }).catch((error: unknown) => error);
+    expect(error).not.toBeInstanceOf(FluxBudgetReached);
+    // The service wraps ImageDeliveryError in its public ImageGenerationError.
+    expect(error).toMatchObject({ code: "provider-error", outcome: "uncertain" });
+    expect(reads).toBe(oversized ? 1 : 2);
+    if (oversized) expect(cancel).toHaveBeenCalledOnce();
+    expect(f.fetcher.mock.calls.filter(([input]) => String(input).includes("/images/jobs/"))).toHaveLength(1);
+    expect(f.publish).not.toHaveBeenCalled();
+  });
+  it.each(["render_failed", "premium_locked"])("polling failed-job %s stays a generic image failure", async code => {
+    const f = fixture("flux", { fluxCatalogue: true });
+    f.fetcher.mockImplementation(async input => String(input).endsWith("/v1/images/models") ? json(catalogue)
+      : json({ kind: "image-job", status: "failed", error: { code } }));
+    const error = await f.service.generate(f.request, { ...f.hooks, resumeJob: { id: "ordinary_job" } }).catch((error: unknown) => error);
+    expect(error).not.toBeInstanceOf(FluxBudgetReached);
+    expect(error).toMatchObject({ code: "provider-error", outcome: "failed" });
+    expect(f.fetcher.mock.calls.filter(([input]) => String(input).includes("/images/jobs/"))).toHaveLength(1);
+    expect(f.publish).not.toHaveBeenCalled();
   });
   it("runs a long render as a job: records the job id before polling, and resumes it without a second render", async () => {
     const f = fixture("flux", { fluxCatalogue: true });

@@ -291,7 +291,9 @@ test.beforeAll(async () => {
         // Call a bot" request, unrelated to this spec — stubbed as "never
         // requested" so it mounts without one, same as a real page nobody
         // clicked that button on.
-        if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;`;
+        // useCallBudgetEnded/dismissCallBudgetEnded/callBudgetEnded: the Flux budget stop notice,
+        // stubbed as "no budget stop" so the page mounts as an ordinary call.
+        if (id === "\0host-call") return `export const useOnCall=()=>"bot-1";export const currentCall=()=>"bot-1";export const deferCallCleanup=()=>{};export const endCall=()=>{};export const startCall=()=>{};export const takeCallRequest=()=>false;export const useCallRequest=()=>null;export const useCallBudgetEnded=()=>null;export const callBudgetEnded=()=>null;export const dismissCallBudgetEnded=()=>{};`;
         if (id === "\0host-push") return `export const usePushToTalk=()=>false;`;
         if (id === "\0host-vad") return `export const SPEECH_CONFIDENCE=0.7;export class SileroVad{static async load(){if(window.__noVad)throw new Error("no model");return new SileroVad()}async push(f){window.__vadFrames=(window.__vadFrames||0)+1;let s=0;for(const x of f)s+=x*x;const loud=Math.sqrt(s/f.length)>0.01;if(window.__vadNoise)return 0;if(window.__vadSparse)return window.__vadFrames%6===0?1:0;return ["linux","ios"].includes(new URLSearchParams(location.search).get("os"))?(loud?1:0):1}reset(){}}`;
         // a Mac (on-device dictation) unless the page says otherwise

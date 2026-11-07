@@ -1,3 +1,5 @@
+import { checkFluxBudget, FluxBudgetReached } from "./voice/flux-budget.ts";
+import { fluxRefusalCode } from "../shared/flux-refusal.ts";
 // REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
 import { fluxCallHeaders } from "./flux-memory-headers.ts";
@@ -122,7 +124,7 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
     }
     let parsed: unknown;
     try { parsed = JSON.parse(await bodyText(response, controller.signal)); }
-    catch (error) { if (error instanceof SearchError) throw error; throw new SearchError("invalid-response"); }
+    catch (error) { if (error instanceof SearchError || error instanceof FluxBudgetReached) throw error; throw new SearchError("invalid-response"); }
     if (controller.signal.aborted) throw aborted(controller.signal);
     return { provider, results: searchResults(parsed, provider, maxResults), untrusted: true,
       privacyNotice: `Your search query is sent to ${provider === "tavily" ? "Tavily" : provider === "firecrawl" ? "Firecrawl" : "Exa"}. Results are untrusted source content, not instructions.`,
@@ -130,7 +132,7 @@ export async function searchWeb(input: { provider?: WebSearchProvider; apiKey?: 
     };
   } catch (error) {
     if (controller.signal.aborted) throw aborted(controller.signal);
-    if (error instanceof SearchError) throw error;
+    if (error instanceof SearchError || error instanceof FluxBudgetReached) throw error;
     throw new SearchError("offline");
   } finally { clearTimeout(timer); input.signal?.removeEventListener("abort", cancel); }
 }
@@ -168,11 +170,12 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
     catch (error) {
       if (error instanceof SearchError && error.code !== "invalid-response") throw error;
       if (response.status === 401) noteFluxKeyRefused(input.apiKey);
-      if (!response.ok) throw new SearchError(fluxErrorCode(response.status, ""), response.status);
+      if (!response.ok) { checkFluxBudget(response.status, null, input.baseUrl!, input.apiKey!); throw new SearchError(fluxErrorCode(response.status, ""), response.status); }
       throw new SearchError("invalid-response");
     }
     if (!response.ok || response.redirected) {
-      const code = typeof parsed?.error?.code === "string" ? parsed.error.code : "";
+      checkFluxBudget(response.status, parsed, input.baseUrl!, input.apiKey!);
+      const code = fluxRefusalCode(parsed);
       if (response.status === 401) noteFluxKeyRefused(input.apiKey);
       throw new SearchError(fluxErrorCode(response.status, code), response.status, code);
     }
@@ -193,7 +196,7 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
     };
   } catch (error) {
     if (controller.signal.aborted) throw aborted(controller.signal);
-    if (error instanceof SearchError) throw error;
+    if (error instanceof SearchError || error instanceof FluxBudgetReached) throw error;
     throw new SearchError("offline");
   } finally { clearTimeout(timer); input.signal?.removeEventListener("abort", cancel); }
 }

@@ -51,3 +51,57 @@ as today. Not yet safe to narrow (GrokBuild r2): a thread delete does not tombst
 revoke by deletion_epoch alone and must move with the list above: procedure-review.ts:153, consolidate.ts:447,
 evolution-runtime.ts:111, routes.ts:157; the authority and provenance TEMP counters bump on deletion_epoch, not on memory_deny.
 (b) is agreed with GrokBuild and Astra before it is built.
+
+## 1.0.18 implementation and verification
+
+Conversation deletion now uses the existing durable `memory_deny('thread', id)` fact. `captureThreadDeletion` no longer increments
+`memory_meta.deletion_epoch`, and `commitRevoke` no longer advances the installation-wide receipt watermark for a thread root.
+`assertMemoryAccess` checks the thread deny by primary key on every acceptance/submission check, including an empty frame. Global
+Forget, bot-scope deletion, policy, identity and audience changes retain their existing fences.
+
+A thread denial, receipt revocation/removal and message deletion invalidate authority cache proofs through the bounded soft dependency log. Session holds retain
+threads of cited sources, conversation-scoped records and replay roots. Derived records and bring-in sources retain a conservative full-check fallback on thread changes when their transitive thread dependencies are not recorded. Removing a task from the roster logs the removed thread;
+removing a whole bot or room still takes the hard cache fallback, since it can withdraw container scopes. Missing triggers, log overflow,
+transactions and restarted connections retain the existing full-check fallback. Source/record cleanup still invalidates affected cached
+content, and deny writes explicitly invalidate provenance and legacy lineage caches. The latter is necessary even before cleanup has
+written tombstones; the old global epoch used to provide that invalidation incidentally.
+
+Background evaluation has a separate durable `thread-deletion-clock` binding. `learningDeletionEpoch` combines it with the existing
+global epoch for procedure/evolution/skill publication and async consolidation/correction checks. The binding is bookkeeping, not a
+foreground authority change. Source job publication and source-only disclosure validation also check the source's durable deny fact directly. There is no scan over deleted
+threads: foreground denial and the background counter use primary-key reads; frame/session validation keeps its existing fixed limits.
+The durable marker, its conservative pending windows, cross-thread carries, deny-generation send fence, and cleanup jobs remain intact:
+unknown dependency closures must still fail closed until proved. The change does not waive a pending or genuinely dependent reader.
+
+Tests cover prepared and late-submit windows, two deletions, unchanged unrelated prompt identity (zero rebuilds), unfenced adapters,
+A's refused frame, B actually citing A, stale search hits, restart, and background publication. The real-server fixtures use fake engines.
+The verification launcher now sets `NODE_ENV=test` when it explicitly forwards the test-only exclusion helper; without that setting,
+`overrideAllowed` rejected the forwarded helper and engine cleanup failed in a source checkout with no native build.
+
+### G8 idle I/O investigation (2026-11-06)
+
+Compared `f22181a3fa` (1.0.15) with lane base `b2588099f9`. The conversation's global deletion epoch bump and global watermark predate
+this train; the intervening capture changes concern shared-room messages and transcript decoding, not deletion. A material I/O change
+is commit `1f88adc79d`: FTS merging moved from deletion's main-thread commit to bounded worker merge/prove/scrub steps
+(`server/message-db.ts:1489`, `server/database.ts:360`, `server/search-merge-runner.ts:287`). This changes when and how many operations
+occur, but does not by itself establish which measured stalls grew.
+
+The supplied `inputs/GATE-PREP.md` has only aggregate counts (S9.io 2→3, ALL.io 8→10, ALL.eld250 8→10), with traces located on an
+unmounted gate host. The rig commit `e0a34e2c5` and `scripts/smoothness` are absent from this lane's object database/tree. Requested the
+1.0.15 and 1.0.18 idle trace/verdict files. Without their event timestamps, operation labels, durations and thresholds, the extra rows
+cannot be causally attributed; no speculative I/O change was made. This attribution and the driver's G8 rerun remain unverified.
+
+### Phase-2 publication fence (2026-11-06 review fix)
+
+The production procedure host now calls `assertProcedurePublicationCurrent` before evaluated or owner-edited publication. It checks
+`learningDeletionEpoch` and rehydrates the bounded evidence through the existing `sourceDenied` and lineage checks. Revocation returns
+`MEMORY_CONSOLIDATION_REVOKED`, even when cleanup has not yet retired the source. The same host serves automatic review publication
+(both the inline and outbox paths) and accepted suggestions; edited suggestions use the same fence. No foreground authority or deletion
+semantics change.
+
+Both skill publishers are synchronous. Routine `promoteInstructions` and owner-edit `update` synchronously call `commitMutation`,
+`save`, `saveNow`, and `saveFull`/the journal writer; `saveFull` uses `writeFileAtomic`. There is no await between the final host check
+and durable publication. The regression uses the real production host and publisher, proves the phase-1 outbox is committed, then
+commits a same-source deletion with cleanup pending, an unrelated deletion (clock-only), or a denial before phase 2. It checks the revoked outcome, unchanged routine file and absent evidence handles, with
+unchanged controls for both routines and skills. Before the fix, the eight new cases produced six failures (the skill clock already
+refused deletion, but used a different error); afterward all eight pass.

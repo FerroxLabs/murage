@@ -871,7 +871,7 @@ export class FluxMic extends Capture implements CallMic {
       if (!res.ok) {
         // the end names a transcription failure whatever the server called
         // it; the call says so and listens again (isTranscriptionFailure)
-        emit(this.ends, { code: 1, reason: "transcription-failed" });
+        emit(this.ends, { code: 1, reason: body?.reason === "budget" ? "budget" : "transcription-failed" });
         return;
       }
       emit(this.lines, { text: typeof body?.text === "string" ? body.text : "", partial: false, ...(speech ? { speech } : {}), endedAt });

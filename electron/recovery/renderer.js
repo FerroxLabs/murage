@@ -1,11 +1,11 @@
 const byId = id => document.getElementById(id);
 const buttons = [...document.querySelectorAll("button[data-action]")];
 let current = null, pending = false;
-const recoveryMessage = state => globalThis.murageRecoveryMessages.sentence(state.error, { action: state.errorAction, backupMode: state.context?.backupMode === true, path: state.errorPath });
+const recoveryMessage = state => (state.context?.returnRevoked ? state.context?.updateMessages?.["return-revoked"] : state.context?.updateMessages?.[state.error]) ?? globalThis.murageRecoveryMessages.sentence(state.error, { action: state.errorAction, backupMode: state.context?.backupMode === true, path: state.errorPath });
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
-  byId("page-heading").textContent=state.context?.backupMode?"Backup mode":"Restore or recover Murage";
+  byId("page-heading").textContent=(state.context?.backupMode||state.context?.updatePause)?"Backup mode":"Restore or recover Murage";
   byId("encrypted-backup").hidden=!state.encryptedAvailable;
   byId("reason").textContent = state.context?.reason || "Murage needs your attention before it can start. Your data is kept as it is.";
   byId("location").textContent = state.context?.dataDirectory || "Murage can't see its data folder right now.";
@@ -43,13 +43,19 @@ function render(state) {
   }
   for (const button of buttons) {
     const action = button.dataset.action;
-    if(action==="retry")button.textContent=state.context?.backupMode?"Return to workspace":"Retry startup";
+    const unavailable = state.allowedActions && !state.allowedActions.includes(action);
+    if (state.context?.updatePause) button.hidden = unavailable;
+    if(action==="retry")button.textContent=(state.context?.backupMode||state.context?.updatePause)?"Return to workspace":"Retry startup";
     const separate = ["choose-separate-backup", "restore-separate"].includes(action);
-    button.disabled = pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
+    button.disabled = unavailable || pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
       (action.includes("encrypted")&&!state.encryptedAvailable)||(action==="restore-encrypted-new"&&!state.selection?.encrypted)||
       (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
   }
-  if (pending || state.busy) byId("status").textContent = "Working on it. A large backup can take several minutes.";
+  if (state.context?.updatePause) {
+    byId("page-heading").textContent = "Murage";
+    for (const id of ["encrypted-backup","preview","separate-recovery","capture-recovery","activation-review","legacy-recovery","activation-section"]) byId(id).hidden=true;
+  }
+  if (pending || state.busy) byId("status").textContent = state.context?.updatePause ? state.context.updateMessages?.["update-wait"] : "Working on it. A large backup can take several minutes.";
   else if (error) byId("status").textContent = "";
   else if (state.result?.ok) byId("status").textContent = [state.result.operation==="backup-encrypted"?"Backup saved and checked: "+state.result.path:state.result.operation==="restore-encrypted-new"?"Restored. Murage is restarting so you can review the restored copy; your current data stays as it is.":state.result.status === "reviewed-engines-disabled" ? "Approved. Murage is restarting with AI engines and schedules off." : state.result.status === "restored-review-required" ? "Restored, and paused until you review it. Your previous data is kept at: " + state.result.previousDataDir : state.result.status === "rolled-back" ? "Your previous data is back. The restored copy is kept at: " + (state.result.retainedCandidate || "the recovery folder") : "Backup saved: " + state.result.path, ...globalThis.murageRecoveryMessages.skippedLines(state.result.skipped)].join(" ");
   else byId("status").textContent = state.selection ? "Backup checked. Nothing has been changed yet." : "";

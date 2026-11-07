@@ -62,7 +62,7 @@ export function usePendingApprovals(enabled: boolean, connected: boolean) {
   const { view } = useSetupView();
   const signedOutRows = signedOutEngineRows(view);
   const reading = useEngineReading();
-  const owed = signedOutRows.length + (engineNeed(reading, signedOutEngineIds(view), Boolean(view && firstRunOwnsMainView(view))) ? 1 : 0);
+  const owed = signedOutRows.length + (engineNeed({ engine: reading.health, flux: reading.flux }, signedOutEngineIds(view), Boolean(view && firstRunOwnsMainView(view))) ? 1 : 0);
   return {
     count,
     decisions: decisions === undefined ? decisions : decisions + owed,
