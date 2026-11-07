@@ -82,7 +82,7 @@ it("never requests a remote, local-path, file or SVG image from model text", () 
   }));
   expect(html).not.toContain("<img");
   expect(html).toContain("Image from tracker.example not loaded.");
-  expect(html.match(/Local image paths are not loaded in chat\./g)).toHaveLength(4);
+  expect(html.match(/Only pictures in this conversation&#x27;s folder load here\./g)).toHaveLength(4);
   // the data: allowance is images only: a data: link is still stripped
   const link = renderToStaticMarkup(createElement(ChatMarkdown, { text: "[x](data:text/html;base64,PGgxPg==)" }));
   expect(link).not.toContain("data:text/html");
@@ -208,4 +208,12 @@ it("keeps a reply's single line breaks as line breaks, outside code (upstream d1
   expect(html).toMatch(/>1<br\/>\n?2<br\/>\n?3<\/p>/);
   expect(html).toMatch(/>a<\/code><br\/>\n?b<\/p>/);
   expect(html).toContain("x\ny");
+});
+
+it("hides only double-tilde spans as spoilers, not text between ranges written with a single tilde", () => {
+  const ranges = renderToStaticMarkup(createElement(ChatMarkdown, { text: "Episodes 77~82 first, then 77~80." }));
+  expect(ranges).not.toContain("Reveal spoiler");
+  expect(ranges).toContain("Episodes 77~82 first, then 77~80.");
+  const spoiler = renderToStaticMarkup(createElement(ChatMarkdown, { text: "The answer is ~~42~~." }));
+  expect(spoiler).toContain("Reveal spoiler");
 });

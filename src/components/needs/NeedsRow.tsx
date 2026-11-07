@@ -2,12 +2,22 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // One Needs you row (UX L2B). Collapsed it is a line to read: avatar, the
-// question it asks, "<bot> · waiting since 07:12", and Open. Nothing on the
-// collapsed row commits anything (R1-04: a one-line row once sent an email the
-// owner never saw). Open expands the same card the chat shows, in place, and
-// every verb lives there.
-import type { ReactNode, Ref } from "react";
+// question it asks, "<bot> · waiting since 07:12", and Open. Open expands the
+// same card the chat shows, in place, with every verb. On a phone (UX L7) the
+// open card rises as a sheet over the list instead, so its verbs sit under the
+// thumb, with Next to the following request; a swipe left on a closed row is
+// "Not now", with the same Undo as the card's own Not now.
+//
+// NEEDSYOU-INLINE-APPROVE (1.0.18, Sean): a plain approval or a two-option
+// question also answers from the collapsed row (`actions`: Approve and Don't
+// allow, or the two options), through the open card's own route. R1-04 still
+// holds where it matters: the line says WHAT is being answered (the action and
+// its target), and anything that is not one plain press (an email, a scope to
+// pick, typed input, several options) gets no actions, only Open.
+import { useRef, type ReactNode, type Ref, type TouchEvent } from "react";
 import { t } from "@/lib/i18n";
+import { useNarrowViewport } from "@/lib/media-query";
+import { PhoneSheet } from "@/components/phone/PhoneSheet";
 
 export interface NeedsRowProps {
   id: string;
@@ -23,28 +33,62 @@ export interface NeedsRowProps {
   /** the expanded card: shown only while open */
   children?: ReactNode;
   headRef?: Ref<HTMLButtonElement>;
+  /** the one-click answer, shown only while collapsed (the open card has its own verbs); its group is named by the
+   *  line, `needs-row-line-<id>` */
+  actions?: ReactNode;
+  /** APPROVALS-SIMPLE-1018: a waiting request's expand is "Show details" / "Hide details" (the command is inside) */
+  details?: boolean;
+  /** phone: a swipe left on the closed row snoozes it (absent: the row does not swipe) */
+  onNotNow?: () => void;
+  /** phone: Next in the open sheet's footer, to the following request (absent: no Next, it is the last one) */
+  onNext?: () => void;
+}
+
+/** A swipe left is a mostly sideways drag of at least 72 px; anything shorter or steeper is a scroll or a tap. */
+export const SWIPE_MIN = 72;
+export function isSwipeLeft(dx: number, dy: number): boolean {
+  return dx <= -SWIPE_MIN && Math.abs(dy) * 2 < Math.abs(dx);
 }
 
 const openButton = "inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg border border-hairline/50 bg-control px-3 text-[13px] text-ink hover:bg-raised-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
 
-export function NeedsRow({ id, line, meta, avatar, open, cameBack, onToggle, children, headRef }: NeedsRowProps) {
+export function NeedsRow({ id, line, meta, avatar, open, cameBack, onToggle, children, headRef, actions, details = false, onNotNow, onNext }: NeedsRowProps) {
   const bodyId = `needs-row-body-${id}`;
+  const phone = useNarrowViewport();
+  const inline = open && !phone;
+  const sheet = open && phone;
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const swipes = phone && !open && onNotNow;
+  const touch = swipes ? {
+    onTouchStart: (event: TouchEvent) => { const p = event.touches[0]; start.current = p ? { x: p.clientX, y: p.clientY } : null; },
+    onTouchEnd: (event: TouchEvent) => {
+      const from = start.current; const p = event.changedTouches[0]; start.current = null;
+      if (from && p && isSwipeLeft(p.clientX - from.x, p.clientY - from.y)) onNotNow();
+    },
+  } : {};
+  const next = onNext && <button type="button" data-needs-next={id} onClick={onNext} className={`${openButton} w-full`}>{t("ux.l7.needs.next")}</button>;
+  // One element names the entry at a time: the row, or on a phone the open sheet (portalled to the end of the body, it carries
+  // data-needs-row so the door's key model finds its row). Two elements with the same marker made the entry ambiguous.
   return (
-    <li data-needs-row={id} data-open={open ? "true" : "false"} className={`rounded-xl border bg-inset ${open ? "border-accent/40" : "border-hairline/50"}`}>
-      <div className="flex min-h-14 items-center gap-3 px-3 py-2">
+    <li data-needs-row={sheet ? undefined : id} data-open={open ? "true" : "false"} data-swipe={swipes ? "not-now" : undefined} {...touch} className={`rounded-xl border bg-inset ${open ? "border-accent/40" : "border-hairline/50"}`}>
+      <div className="flex min-h-14 flex-wrap items-center gap-3 px-3 py-2">
         {avatar && <span aria-hidden className="shrink-0">{avatar}</span>}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[14px] font-medium leading-snug text-ink">{line}</p>
-          <p className="truncate text-[12px] text-ink-secondary">
+        <div className="min-w-0 flex-1 basis-48">
+          {/* APPROVALS-SIMPLE-1018 (needs-inline Astra r2 High): the line WRAPS. A CSS cut hid the end of a short line
+              beside Approve, so nobody answers words they could not see. */}
+          <p id={`needs-row-line-${id}`} className="break-words text-[14px] font-medium leading-snug text-ink">{line}</p>
+          <p className="break-words text-[12px] text-ink-secondary">
             {meta}
             {cameBack && <span className="ml-2 rounded-md bg-control px-1.5 py-0.5 text-[11px] text-ink">{t("ux.l2b.door.cameBack")}</span>}
           </p>
         </div>
-        <button ref={headRef} type="button" data-needs-open={id} aria-expanded={open} aria-controls={bodyId} onClick={onToggle} className={openButton}>
-          {open ? t("ux.l2b.door.close") : t("ux.l2b.door.open")}
+        {!open && actions}
+        <button ref={headRef} type="button" data-needs-open={id} aria-expanded={open} aria-controls={open ? bodyId : undefined} onClick={onToggle} className={openButton}>
+          {details ? (open ? t("ux.l2b.door.hideDetails") : t("ux.l2b.door.details")) : open ? t("ux.l2b.door.close") : t("ux.l2b.door.open")}
         </button>
       </div>
-      {open && <div id={bodyId} className="border-t border-hairline/40 px-4 pb-4">{children}</div>}
+      {inline && <div id={bodyId} className="border-t border-hairline/40 px-4 pb-4">{children}</div>}
+      {sheet && <PhoneSheet title={line} onClose={onToggle} bodyData={{ "data-needs-row": id }} bodyId={bodyId} namedByBodyHeading footer={next || undefined}>{children}</PhoneSheet>}
     </li>
   );
 }

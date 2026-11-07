@@ -1,0 +1,60 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+ ❯ src/lib/chats-previews-browser.test.ts (41 tests | 1 failed | 40 skipped) 969ms
+   × RULE path 7 hello precedes stalled snapshot and replay cannot replace restart proof 547ms
+ ❯ src/lib/chats-gen.test.ts (11 tests | 1 failed | 10 skipped) 60ms
+   × RULE path 12 no response can borrow proof, and path 7 replay cannot advance hydration proof 17ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-gen.test.ts > RULE path 12 no response can borrow proof, and path 7 replay cannot advance hydration proof
+AssertionError: expected { epoch: 'A', rev: 99 } to deeply equal { epoch: 'A', rev: 3 }
+
+- Expected
++ Received
+
+  {
+    "epoch": "A",
+-   "rev": 3,
++   "rev": 99,
+  }
+
+ ❯ src/lib/chats-gen.test.ts:66:36
+     64|   expect(await fetchChats('/unversioned',null,async()=>({gen:undefined…
+     65|   chatsGenFrame({...A,rev:99},true);
+     66|   expect(chatsGenSnapshot().known).toEqual(A);
+       |                                    ^
+     67|   chatsGenUnproven();
+     68|   expect(chatsEligible(A)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 7 hello precedes stalled snapshot and replay cannot replace restart proof
+AssertionError: expected { epoch: 'A', rev: +0 } to deeply equal { epoch: 'B', rev: +0 }
+
+- Expected
++ Received
+
+  {
+-   "epoch": "B",
++   "epoch": "A",
+    "rev": 0,
+  }
+
+ ❯ src/lib/chats-previews-browser.test.ts:492:77
+    490|   expect(await page.locator('#hydrated').textContent()).toBe('false');
+    491|   await page.evaluate(gen=>(window as any).fixture.stream({kind:'chats…
+    492|   expect(await page.evaluate(()=>(window as any).fixture.snapshot().kn…
+       |                                                                             ^
+    493|   await page.close();
+    494| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 50 skipped (52)
+   Start at  21:27:10
+   Duration  9.80s (transform 6.12s, setup 6.79s, import 1.76s, tests 1.03s, environment 0ms)
+

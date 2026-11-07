@@ -96,13 +96,22 @@ final class PhoneAskSetup {
                     dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setEnabled(true);
                     if (offersOnlyOk(failure)) {
                         // The computer said no: another TURN ON would only show the same refusal. OK closes it and records "asked", like NOT NOW.
-                        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setText(R.string.ask_ok);
+                        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setText(buttons(true).dismissLabel);
                         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setVisibility(android.view.View.GONE);
                     } else dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);
                 }
             });
         });
     }
+
+    /** The dismiss button (the one wired to the "asked" write) and whether TURN ON is shown, for the dialog as built. */
+    static final class Buttons {
+        final int dismissLabel; final boolean turnOnShown;
+        Buttons(int dismissLabel, boolean turnOnShown) { this.dismissLabel = dismissLabel; this.turnOnShown = turnOnShown; }
+        int count() { return turnOnShown ? 2 : 1; }
+    }
+
+    static Buttons buttons(boolean onlyOk) { return new Buttons(onlyOk ? R.string.ask_ok : R.string.ask_not_now, !onlyOk); }
 
     /** After these refusals the dialog offers only OK: asking again cannot change the computer's answer. */
     static boolean offersOnlyOk(PhoneJobsMintClient.Failure failure) { return failure == PhoneJobsMintClient.Failure.TURNED_OFF; }

@@ -50,10 +50,16 @@ const jobSchema = z.object({ id:z.string().regex(/^[a-f0-9]{64}$/), occurrence:z
   handoff:backupHandoffSchema.optional(),
   attemptAt:z.number().int().nonnegative().optional(), error:z.enum(["interrupted","capture-unconfirmed","receipt-mismatch","cancelled","duration-exceeded","catchup-expired","idle-release-unconfirmed","references-unavailable"]).optional(), receipt:backupReceiptSchema.optional(),
 }).strict();
+const candidateIdSchema = z.string().regex(/^update-[a-f0-9]{64}$/);
+const versionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
+const installerOfferSchema = z.object({handoffId:backupHandoffSchema.shape.id,candidateId:candidateIdSchema,version:versionSchema,reason:z.literal("install-requested"),at:z.number().int().nonnegative()}).strict();
+const landedHopSchema = z.object({version:versionSchema,automaticSpent:z.boolean(),explicitCount:z.number().int().nonnegative().safe(),explicitActionIds:z.array(z.uuid())}).strict().refine(hop => hop.explicitActionIds.length === hop.explicitCount && new Set(hop.explicitActionIds).size === hop.explicitCount);
+const landedHopsSchema = z.record(candidateIdSchema,landedHopSchema);
 const stateSchema = z.object({ version:z.literal(1),revision:z.number().int().nonnegative(),configuredAt:z.number().int().nonnegative(),schedule:backupScheduleSchema,
+  installerOffer:installerOfferSchema.optional(),landedHops:landedHopsSchema.optional(),
   job:jobSchema.optional(),seen:z.array(z.string().max(200)).max(256),watermark:z.number().int().nonnegative(),lastVerified:backupReceiptSchema.optional(),lastClosedResult:backupClosedResultSchema.optional(),
 }).strict();
-type State = z.infer<typeof stateSchema>;
+type State = z.infer<typeof stateSchema> & {offerInvalid?:true;hopsInvalid?:true};
 /** The coordinator state exactly as last written durably (1.0.9 Sentinel: health/backup-status.ts projects it). */
 export type BackupCommittedState = Readonly<State>;
 type Job = z.infer<typeof jobSchema>;
@@ -86,11 +92,21 @@ export class BackupCoordinator {
   private read():State {
     try {
       const stat=lstatSync(this.file());if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>128*1024)throw Error();
-      return stateSchema.parse(JSON.parse(readFileSync(this.file(),"utf8")));
+      const raw=JSON.parse(readFileSync(this.file(),"utf8"));
+      const full=stateSchema.safeParse(raw);if(full.success)return full.data;
+      if(!raw||typeof raw!=="object"||Array.isArray(raw))throw Error();
+      const projection={...raw};let offerInvalid:true|undefined,hopsInvalid:true|undefined;
+      if(Object.hasOwn(raw,"installerOffer")&&!installerOfferSchema.safeParse(raw.installerOffer).success){delete projection.installerOffer;offerInvalid=true;}
+      if(Object.hasOwn(raw,"landedHops")&&!landedHopsSchema.safeParse(raw.landedHops).success){delete projection.landedHops;hopsInvalid=true;}
+      return {...stateSchema.parse(projection),...(offerInvalid?{offerInvalid}:{}),...(hopsInvalid?{hopsInvalid}:{})};
     } catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return {version:1,revision:0,configuredAt:0,schedule:backupScheduleSchema.parse({}),seen:[],watermark:0};throw new Error("BACKUP_COORDINATOR_STATE_INVALID");}
   }
+  private requireWritable(s:State){if(s.offerInvalid||s.hopsInvalid)throw Error("BACKUP_UPGRADE_REVIEW_REQUIRED");}
   private save(state:State){
-    const checked=stateSchema.parse(state);mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.file(),JSON.stringify(checked),{mode:0o600});
+    this.requireWritable(state);
+    const checked=stateSchema.parse(state),bytes=JSON.stringify(checked);
+    if(Buffer.byteLength(bytes)>128*1024)throw Error("BACKUP_UPGRADE_REVIEW_REQUIRED");
+    mkdirSync(this.options.stateDirectory,{recursive:true,mode:0o700});writeFileAtomic(this.file(),bytes,{mode:0o600,syncDir:true});
     if(!checked.job||!failureMarkerPhases.has(checked.job.phase))this.clearHandoffFailure();
     // After the commit, never before: a published verification always has its receipt on disk.
     if(this.options.onCommitted)try{this.options.onCommitted(structuredClone(checked));}catch{/* An observer never changes a backup. */}
@@ -214,7 +230,7 @@ export class BackupCoordinator {
   }
   /** The committed state as it is on disk (a copy), for an observer that republishes it at startup. */
   committedState():BackupCommittedState{return structuredClone(this.read());}
-  status(){const s=this.read();return {enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
+  status(){const s=this.read();return {installerOffer:s.installerOffer,landedHops:s.landedHops,offerInvalid:s.offerInvalid,hopsInvalid:s.hopsInvalid,enabled:s.schedule.enabled,revision:s.revision,schedule:s.schedule,phase:s.job?.phase??"idle",job:s.job,lastVerified:s.lastVerified,lastClosedResult:s.lastClosedResult,reviewReason:s.job?.phase==="needs-review"?s.job.error:undefined,
     captureFailure:s.job?.phase==="needs-review"?this.captureFailure(s.job)??this.handoffFailure(s.job)??reviewCaptureFailure(s.job.error):this.handoffFailure(s.job),
     retainedFailure:this.retainedFailure(s),
     lastSkipped:this.lastSkipped(s.lastVerified?.jobId),
@@ -317,9 +333,43 @@ export class BackupCoordinator {
     const s=this.read();if(!["return-pending","install-requested"].includes(s.job?.phase??""))throw Error("BACKUP_UPGRADE_REJECTED");
     this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity);return this.status();
   }
-  requestUpgradeInstall(id:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"return-pending","install-requested",s=>this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity));}
-  completeUpgrade(id:string,currentVersion:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"install-requested","upgrade-complete",s=>{this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity);if(currentVersion!==candidate.version)throw Error("BACKUP_UPGRADE_VERSION_MISMATCH");});}
+  requestUpgradeInstall(id:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"return-pending","install-requested",s=>{this.requireWritable(s);this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity);
+    s.installerOffer={handoffId:id,candidateId:candidate.candidateId,version:candidate.version,reason:"install-requested",at:this.now()};
+    s.landedHops??={};s.landedHops[candidate.candidateId]??={version:candidate.version,automaticSpent:false,explicitCount:0,explicitActionIds:[]};
+  });}
+  completeUpgrade(id:string,currentVersion:string,candidate:UpdateCandidate,bindingRevision:string,installationIdentity:string){return this.transitionHandoff(id,"install-requested","upgrade-complete",s=>{this.checkUpgrade(s,id,candidate,bindingRevision,installationIdentity);if(currentVersion!==candidate.version)throw Error("BACKUP_UPGRADE_VERSION_MISMATCH");if(s.landedHops)delete s.landedHops[candidate.candidateId];if(s.installerOffer?.candidateId===candidate.candidateId)delete s.installerOffer;});}
   cancelUpgrade(id:string){return this.transitionHandoff(id,"return-pending","upgrade-cancelled",s=>{if(!s.job!.handoff!.upgrade)throw Error("BACKUP_UPGRADE_REJECTED");});}
+  /** Called only by the next start's gate; keep the receipt for the cancelled attempt. */
+  abandonUpgradeInstall(id:string,runningVersion:string,expectedCandidateId?:string){return this.transitionHandoff(id,"install-requested","upgrade-cancelled",s=>{const upgrade=s.job!.handoff!.upgrade;if(!upgrade)throw Error("BACKUP_UPGRADE_REJECTED");if(expectedCandidateId!==undefined&&upgrade.candidateId!==expectedCandidateId)throw Error("BACKUP_HANDOFF_CHANGED");if(runningVersion===upgrade.version)throw Error("BACKUP_UPGRADE_INSTALLED");});}
+  peekInstallerOffer(){return this.read().installerOffer;}
+  acknowledgeInstallerOffer(identity:{handoffId:string;candidateId:string;at:number}){
+    const lease=this.lease();try{const s=this.read();this.requireWritable(s);const offer=s.installerOffer;
+      if(offer&&offer.handoffId===identity.handoffId&&offer.candidateId===identity.candidateId&&offer.at===identity.at){delete s.installerOffer;this.save(s);return true;}return false;
+    }finally{lease.release();}
+  }
+  ensureRequestedInstallMetadata(id:string,candidateId:string){
+    const lease=this.lease();try{const s=this.read();this.requireWritable(s);const candidate=this.requestedCandidate(s,id,candidateId);let changed=false;
+      if(!s.installerOffer){s.installerOffer={handoffId:id,candidateId,version:candidate.version,reason:"install-requested",at:this.now()};changed=true;}
+      s.landedHops??={};if(!s.landedHops[candidateId]){s.landedHops[candidateId]={version:candidate.version,automaticSpent:true,explicitCount:0,explicitActionIds:[]};changed=true;}
+      if(changed)this.save(s);return this.status();
+    }finally{lease.release();}
+  }
+  private requestedCandidate(s:State,id:string,candidateId:string){
+    this.requireWritable(s);if(s.job?.handoff?.id!==id||s.job.phase!=="install-requested")throw Error("BACKUP_HANDOFF_CHANGED");
+    const candidate=this.checkedCandidate(s.job.handoff.upgrade);if(candidate.candidateId!==candidateId)throw Error("BACKUP_HANDOFF_CHANGED");return candidate;
+  }
+  spendLandedHop(id:string,candidateId:string,kind:"automatic"|"explicit",actionId?:string){
+    const lease=this.lease();try{const s=this.read();const candidate=this.requestedCandidate(s,id,candidateId),hop=s.landedHops?.[candidateId];
+      if(!hop||hop.version!==candidate.version)throw Error("BACKUP_UPGRADE_REVIEW_REQUIRED");
+      if(kind==="automatic"){if(hop.automaticSpent)return false;hop.automaticSpent=true;}
+      else if(kind==="explicit"){
+        const action=z.uuid().parse(actionId);if(hop.explicitActionIds.includes(action))return false;
+        if(hop.explicitCount===Number.MAX_SAFE_INTEGER)throw Error("BACKUP_UPGRADE_REVIEW_REQUIRED");
+        hop.automaticSpent=true;hop.explicitCount++;hop.explicitActionIds.push(action);
+      }else throw Error("BACKUP_UPGRADE_REVIEW_REQUIRED");
+      this.save(s);return true;
+    }finally{lease.release();}
+  }
   prepareHandoff(jobId:string,input:BackupHandoff){const lease=this.lease();try{const s=this.read(),handoff=backupHandoffSchema.parse(input);if(!(s.schedule.enabled||(manualJob(s)&&manualReady(s.schedule)))||s.job?.id!==jobId||s.job.revision!==s.revision||!["due","waiting-idle","waiting-backup-mode"].includes(s.job.phase)||handoff.expiresAt<=this.now()||handoff.expiresAt>this.now()+30*60000)throw new Error("BACKUP_HANDOFF_REJECTED");s.job.phase="handoff-prepared";s.job.handoff=handoff;this.save(s);return this.status();}finally{lease.release();}}
   private transitionHandoff(id:string,from:string,to:z.infer<typeof jobSchema>["phase"],check?:(s:State)=>void){const lease=this.lease();try{const s=this.read();if(s.job?.handoff?.id!==id||s.job.phase!==from)throw new Error("BACKUP_HANDOFF_CHANGED");check?.(s);s.job.phase=to;this.save(s);return this.status();}finally{lease.release();}}
   armHandoff(id:string){return this.transitionHandoff(id,"handoff-prepared","handoff-armed");}
@@ -333,12 +383,22 @@ export class BackupCoordinator {
    * (0.1.60 Windows re-test 3 D3). */
   failWaiting(jobId:string){const lease=this.lease();try{const s=this.read();if(s.job?.id!==jobId||!waitingPhases.includes(s.job.phase))throw new Error("BACKUP_HANDOFF_CHANGED");s.job.phase="needs-review";s.job.error="references-unavailable";this.save(s);return this.status();}finally{lease.release();}}
   failHandoff(id:string){const lease=this.lease();try{const s=this.read();if(s.job?.handoff?.id!==id)throw new Error("BACKUP_HANDOFF_CHANGED");s.job.phase="needs-review";s.job.error="capture-unconfirmed";this.save(s);return this.status();}finally{lease.release();}}
+  /** Recover an interrupted owner before startup decides whether an upgrade can continue. */
+  interruptIncomplete(){const lease=this.lease();try{const s=this.read();if(!this.interruptIncompleteState(s))this.requireWritable(s);return this.status();}finally{lease.release();}}
+  private interruptIncompleteState(s:State){
+    if(s.job&&["claiming","capturing","handoff-prepared","offline-claimed"].includes(s.job.phase)){s.job.phase="needs-review";s.job.error="interrupted";
+      // read() already removed invalid optional metadata. Only this terminal
+      // recovery may save that projection; normal upgrade writes stay guarded.
+      delete s.offerInvalid;delete s.hopsInvalid;
+      this.save(s);return true;}
+    return false;
+  }
   private async work(upgradeId?:string){
     const lease=this.lease();let claimed:{release:()=>Promise<void>}|undefined;let timer:ReturnType<typeof setTimeout>|undefined;
     const controller=new AbortController();this.controller=controller;
     try{
       const s=this.read();
-      if(s.job&&["claiming","capturing","handoff-prepared","offline-claimed"].includes(s.job.phase)){s.job.phase="needs-review";s.job.error="interrupted";this.save(s);return this.status();}
+      if(this.interruptIncompleteState(s))return this.status();
       if(s.job&&["handoff-armed","return-pending","install-requested"].includes(s.job.phase))return this.status();
       // Only the request that created a manual job hands it off; a leftover
       // one is withdrawn rather than run later without the user.
@@ -378,7 +438,8 @@ export class BackupCoordinator {
       const s=this.read();if(s.job&&["claiming","capturing"].includes(s.job.phase)){s.job.phase="needs-review";s.job.error=controller.signal.aborted?(controller.signal.reason==="duration-exceeded"?"duration-exceeded":"cancelled"):"capture-unconfirmed";this.save(s);return this.status();}throw error;
     }finally{
       if(timer)clearTimeout(timer);
-      try{await this.releaseIdle(claimed);}finally{this.controller=undefined;lease.release();}
+      if(!claimed){this.controller=undefined;lease.release();}
+      else try{await this.releaseIdle(claimed);}finally{this.controller=undefined;lease.release();}
     }
   }
   /** Cancellation requests do not release executor ownership before callbacks settle. */

@@ -1,3 +1,4 @@
+import { sourceDenied, learningDeletionEpoch } from "./deny.ts";
 import { learningWriteDecision,learningSourceBot,learningEvidenceScopes } from "./learning-guard.ts";
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -90,7 +91,7 @@ interface Intent {
 }
 function versions(db:DatabaseSync) {
   const meta=db.prepare("SELECT mode,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
-  return {mode:String(meta.mode),policyRevision:Number(meta.policy_revision),deletionEpoch:Number(meta.deletion_epoch),learningRevision:readMemoryLearning(db).revision};
+  return {mode:String(meta.mode),policyRevision:Number(meta.policy_revision),deletionEpoch:learningDeletionEpoch(db),learningRevision:readMemoryLearning(db).revision};
 }
 function read(db:DatabaseSync,id:string):Intent|undefined {
   const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=? AND subject_type='system'").get(id);
@@ -129,7 +130,7 @@ function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,hos
     let text:string,speaker:string,outcome:string,evidenceScopeId:string;
     if(item.kind==="source"){
       const row=db.prepare("SELECT s.*,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision WHERE s.id=? AND s.revision=? AND s.state='active'").get(item.id,item.revision);
-      if(!row||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
+      if(!row||sourceDenied(db,item.id)||db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(item.id,item.revision))throw Error("PROCEDURE_EVIDENCE_STALE");
       // A reply made with something since archived, corrected, withheld or
       // forgotten stays an active source; its disclosure lineage says it is
       // withheld, and withheld evidence never reaches a review or publication.
@@ -146,6 +147,15 @@ function hydrate(db:DatabaseSync,evidence:ProcedureEvidence[],scopeId:string,hos
     bytes+=Buffer.byteLength(text);if(bytes>65536)throw Error("PROCEDURE_EVIDENCE_LIMIT");
     return {...item,scopeId:evidenceScopeId,text,speaker,outcome};
   });
+}
+/** Final synchronous fence shared by automatic and owner-approved publication.
+ * Rehydrate the bounded evidence with the existing denial/lineage predicates;
+ * active source rows can outlive the deletion commit until cleanup runs. */
+export function assertProcedurePublicationCurrent(snapshot:ProcedureReviewSnapshot,host:ProcedureReviewHost):void {
+  const db=database();
+  if(learningDeletionEpoch(db)!==snapshot.deletionEpoch)throw Error("MEMORY_CONSOLIDATION_REVOKED");
+  try { hydrate(db,snapshot.evidence,snapshot.scopeId,host); }
+  catch { throw Error("MEMORY_CONSOLIDATION_REVOKED"); }
 }
 function assertCurrent(db:DatabaseSync,intent:Intent,host:ProcedureReviewHost) {
   const v=versions(db),learning=readMemoryLearning(db);

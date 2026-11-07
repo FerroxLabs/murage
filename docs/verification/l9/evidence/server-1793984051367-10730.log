@@ -1,0 +1,5 @@
+[sqlite] storage file=2 wal=0 freelist=0
+murage webhook receiver on http://127.0.0.1:20960
+murage server on http://127.0.0.1:20959
+[startup] writes before first health=0
+Murage: PID 1 (MainThread) does not reap orphaned processes. Engine stops cannot be confirmed and warm engines will not be reused. Run the container with --init or tini.

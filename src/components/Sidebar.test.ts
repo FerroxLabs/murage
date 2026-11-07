@@ -95,7 +95,7 @@ describe("the sidebar footer has one update control", () => {
     // so every guidance label opens the card before any updater action.
     const source = readFileSync(new URL("./Sidebar.tsx", import.meta.url), "utf8");
     const button = source.slice(source.indexOf("function UpdateButton()"), source.indexOf("export function SidebarUpdateControl"));
-    expect(source).toContain('import { openUpdateCard, showUpdatePopup } from "@/lib/update-card"');
+    expect(source).toContain('import { openUpdateCard, showUpdatePopup, updatePopupAnchorRef } from "@/lib/update-card"');
     expect(button).toMatch(/onClick=\{\(\) => \{\s*if \(cardLabel\) return openUpdateCard\(\);/);
   });
 

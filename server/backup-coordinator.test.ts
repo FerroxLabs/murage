@@ -188,3 +188,112 @@ it("the first run's ending is recorded once and stands",()=>{
  expect(f.coordinator.recordFirstRun({state:"verified",jobId:"a".repeat(64),sha256:"b".repeat(64),installationRef:"installation-one",destinationRef:"destination-one",recoveryRef:"recovery-one"}).state).toBe("off");
  writeFileSync(join(f.stateDirectory,"backup-first-run.json"),"{");expect(()=>f.coordinator.firstRunRecord()).toThrow("BACKUP_FIRST_RUN_STATE_INVALID");
 });
+
+it("a stalled install is abandoned only from install-requested, only while the old version runs, and keeps its receipt",async()=>{
+ const f=fixture(),c=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});c.configure(0,{...choices,preUpgrade:true});const update=candidate();
+ const intent={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ const jobId=c.prepareUpgrade(update,intent).job!.id;c.armHandoff(intent.id);c.claimHandoff(intent.id,intent.bindingRevision,intent.installationIdentity);c.beginHandoffCapture(intent.id);
+ c.completeHandoff(intent.id,{jobId,installationRef:choices.installationRef,destinationRef:choices.destinationRef,selectionHash,snapshotId:randomUUID(),artifactRef:jobId,sha256:"a".repeat(64),bytes:200,verifiedAt:f.options.now(),candidateId:update.candidateId});
+ expect(()=>c.abandonUpgradeInstall(intent.id,"8.0.0")).toThrow("CHANGED");expect(c.status().phase).toBe("return-pending");
+ c.requestUpgradeInstall(intent.id,update,intent.bindingRevision,intent.installationIdentity);const receipt=c.status().job!.receipt;
+ expect(()=>c.cancelUpgrade(intent.id)).toThrow("CHANGED");
+ expect(()=>c.abandonUpgradeInstall(randomUUID(),"8.0.0")).toThrow("CHANGED");
+ expect(()=>c.abandonUpgradeInstall(intent.id,update.version)).toThrow("BACKUP_UPGRADE_INSTALLED");expect(c.status().phase).toBe("install-requested");
+ const held=(c as unknown as {lease:()=>{release:()=>void}}).lease();
+ try{expect(()=>new BackupCoordinator({stateDirectory:f.stateDirectory}).abandonUpgradeInstall(intent.id,"8.0.0")).toThrow("BACKUP_COORDINATOR_BUSY");}finally{held.release();}
+ const next=new BackupCoordinator({stateDirectory:f.stateDirectory,now:f.options.now});next.abandonUpgradeInstall(intent.id,"8.0.0");
+ expect(next.status().phase).toBe("upgrade-cancelled");expect(next.status().job!.receipt).toEqual(receipt);
+ expect(()=>next.abandonUpgradeInstall(intent.id,"8.0.0")).toThrow("CHANGED");
+ expect(()=>next.completeUpgrade(intent.id,update.version,update,intent.bindingRevision,intent.installationIdentity)).toThrow("CHANGED");
+});
+
+function requestedFixture(){
+ const f=fixture(),c=f.coordinator,update=candidate();c.configure(0,{...choices,preUpgrade:true});
+ const admit=()=>{const intent={version:1 as const,id:randomUUID(),bindingRevision:"b".repeat(64),installationIdentity:"c".repeat(64),expiresAt:f.options.now()+60000};
+ const jobId=c.prepareUpgrade(update,intent).job!.id;c.armHandoff(intent.id);c.claimHandoff(intent.id,intent.bindingRevision,intent.installationIdentity);c.beginHandoffCapture(intent.id);
+ c.completeHandoff(intent.id,{jobId,installationRef:choices.installationRef,destinationRef:choices.destinationRef,selectionHash,snapshotId:randomUUID(),artifactRef:jobId,sha256:"a".repeat(64),bytes:200,verifiedAt:f.options.now(),candidateId:update.candidateId});
+ c.requestUpgradeInstall(intent.id,update,intent.bindingRevision,intent.installationIdentity);return intent;};
+ return {...f,c,update,admit,intent:admit(),file:join(f.stateDirectory,"backup-coordinator.json")};
+}
+it("request persists offer and hop budget in the same committed state",()=>{
+ const f=requestedFixture(),s=JSON.parse(readFileSync(f.file,"utf8"));
+ expect(s.job.phase).toBe("install-requested");expect(s.installerOffer).toMatchObject({handoffId:f.intent.id,candidateId:f.update.candidateId,version:f.update.version});
+ expect(s.landedHops[f.update.candidateId]).toEqual({version:f.update.version,automaticSpent:false,explicitCount:0,explicitActionIds:[]});
+ expect(f.c.spendLandedHop(f.intent.id,f.update.candidateId,"automatic")).toBe(true);
+ const fresh=new BackupCoordinator(f.options);expect(fresh.spendLandedHop(f.intent.id,f.update.candidateId,"automatic")).toBe(false);
+ const action=randomUUID();expect(fresh.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",action)).toBe(true);
+ expect(new BackupCoordinator(f.options).spendLandedHop(f.intent.id,f.update.candidateId,"explicit",action)).toBe(false);
+ const offer=fresh.peekInstallerOffer()!;expect(fresh.acknowledgeInstallerOffer({...offer,at:offer.at+1})).toBe(false);
+ expect(fresh.acknowledgeInstallerOffer(offer)).toBe(true);expect(fresh.status().landedHops![f.update.candidateId].automaticSpent).toBe(true);
+});
+it.each(["hops","offer","both"])("invalid %s preserves core and pauses without mutation",kind=>{
+ const f=requestedFixture(),raw=JSON.parse(readFileSync(f.file,"utf8"));
+ if(kind!=="offer")raw.landedHops[f.update.candidateId].explicitCount=-1;
+ if(kind!=="hops")raw.installerOffer.at=-1;
+ writeFileSync(f.file,JSON.stringify(raw));const before=readFileSync(f.file,"utf8");
+ for(let restart=0;restart<2;restart++){
+ const c=new BackupCoordinator(f.options),status=c.status();expect(status.job).toEqual(raw.job);expect(status.lastVerified).toEqual(raw.lastVerified);expect(status.schedule).toEqual(raw.schedule);
+ expect(status.hopsInvalid).toBe(kind!=="offer"?true:undefined);expect(status.offerInvalid).toBe(kind!=="hops"?true:undefined);
+ expect(status.installerOffer).toEqual(kind==="hops"?raw.installerOffer:undefined);expect(status.landedHops).toEqual(kind==="offer"?raw.landedHops:undefined);
+ for(const operation of [()=>c.configure(1,{...choices,preUpgrade:true,enabled:false}),()=>c.acknowledgeInstallerOffer(raw.installerOffer),()=>c.ensureRequestedInstallMetadata(f.intent.id,f.update.candidateId),()=>c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID()),()=>c.abandonUpgradeInstall(f.intent.id,"8.0.0"),()=>c.completeUpgrade(f.intent.id,f.update.version,f.update,f.intent.bindingRevision,f.intent.installationIdentity)])expect(operation).toThrow("REVIEW_REQUIRED");
+ expect(readFileSync(f.file,"utf8")).toBe(before);
+ }
+});
+it("legacy absence initializes conservatively while invalid core and JSON still throw",()=>{
+ const f=requestedFixture(),raw=JSON.parse(readFileSync(f.file,"utf8"));delete raw.installerOffer;delete raw.landedHops;writeFileSync(f.file,JSON.stringify(raw));
+ f.c.ensureRequestedInstallMetadata(f.intent.id,f.update.candidateId);expect(f.c.status().landedHops![f.update.candidateId]).toEqual({version:f.update.version,automaticSpent:true,explicitCount:0,explicitActionIds:[]});
+ expect(f.c.spendLandedHop(f.intent.id,f.update.candidateId,"automatic")).toBe(false);expect(f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID())).toBe(true);
+ writeFileSync(f.file,JSON.stringify({...raw,revision:-1}));expect(()=>f.c.status()).toThrow("STATE_INVALID");writeFileSync(f.file,"{");expect(()=>f.c.status()).toThrow("STATE_INVALID");
+});
+it("verified completion starts a fresh hop lifecycle on later admission",()=>{
+ const f=requestedFixture();f.c.spendLandedHop(f.intent.id,f.update.candidateId,"automatic");f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID());
+ const before=readFileSync(f.file,"utf8");expect(()=>f.c.completeUpgrade(f.intent.id,"8.0.0",f.update,f.intent.bindingRevision,f.intent.installationIdentity)).toThrow("VERSION_MISMATCH");expect(readFileSync(f.file,"utf8")).toBe(before);
+ f.c.completeUpgrade(f.intent.id,f.update.version,f.update,f.intent.bindingRevision,f.intent.installationIdentity);
+ expect(new BackupCoordinator(f.options).status()).toMatchObject({phase:"upgrade-complete",landedHops:{}});
+ expect(f.c.status().landedHops![f.update.candidateId]).toBeUndefined();const next=f.admit();
+ expect(f.c.status().landedHops![f.update.candidateId]).toEqual({version:f.update.version,automaticSpent:false,explicitCount:0,explicitActionIds:[]});
+ expect(f.c.spendLandedHop(next.id,f.update.candidateId,"automatic")).toBe(true);expect(new BackupCoordinator(f.options).spendLandedHop(next.id,f.update.candidateId,"automatic")).toBe(false);
+});
+it("no-claim work releases its lease before any microtask",async()=>{
+ const f=fixture(),release=vi.fn(),c=new BackupCoordinator({...f.options,acquire:()=>({release})});
+ const done=c.tick();expect(release).toHaveBeenCalledTimes(1);expect(f.release).not.toHaveBeenCalled();await done;
+});
+it("a trusted explicit action cannot spend twice after a different action and restart",()=>{
+ const f=requestedFixture(),first=randomUUID(),second=randomUUID();
+ expect(f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",first)).toBe(true);
+ expect(f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",second)).toBe(true);
+ const restarted=new BackupCoordinator(f.options),before=readFileSync(f.file,"utf8");
+ expect(restarted.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",first)).toBe(false);
+ expect(restarted.status().landedHops![f.update.candidateId].explicitCount).toBe(2);
+ expect(readFileSync(f.file,"utf8")).toBe(before);
+});
+
+it("ADDENDUM-1 refuses mismatched history and size exhaustion without changing bytes",()=>{
+ const f=requestedFixture(),raw=JSON.parse(readFileSync(f.file,"utf8")),hop=raw.landedHops[f.update.candidateId];
+ hop.explicitCount=1;writeFileSync(f.file,JSON.stringify(raw));
+ expect(new BackupCoordinator(f.options).status().hopsInvalid).toBe(true);
+ const invalid=readFileSync(f.file,"utf8");expect(()=>f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID())).toThrow("REVIEW_REQUIRED");expect(readFileSync(f.file,"utf8")).toBe(invalid);
+ hop.explicitCount=0;
+ while(Buffer.byteLength(JSON.stringify(raw))+39<=128*1024){hop.explicitActionIds.push(randomUUID());hop.explicitCount++;}
+ writeFileSync(f.file,JSON.stringify(raw));const before=readFileSync(f.file,"utf8");
+ expect(f.c.status().hopsInvalid).toBeUndefined();
+ expect(()=>f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID())).toThrow("REVIEW_REQUIRED");
+ expect(readFileSync(f.file,"utf8")).toBe(before);
+});
+
+it("T6d process crash after durable spend cannot restore automatic allowance",async()=>{
+ const {spawnSync}=await import("node:child_process");const {pathToFileURL}=await import("node:url");
+ const f=requestedFixture();
+ const code=`import {BackupCoordinator} from ${JSON.stringify(pathToFileURL(join(process.cwd(),"server/backup-coordinator.ts")).href)};const c=new BackupCoordinator(${JSON.stringify({stateDirectory:f.stateDirectory})});if(!c.spendLandedHop(${JSON.stringify(f.intent.id)},${JSON.stringify(f.update.candidateId)},"automatic"))process.exit(2);process.exit(0);`;
+ const child=spawnSync(process.execPath,["--input-type=module","-e",code],{encoding:"utf8"});expect(child.status,child.stderr).toBe(0);
+ expect(new BackupCoordinator(f.options).spendLandedHop(f.intent.id,f.update.candidateId,"automatic")).toBe(false);
+});
+it("T6b unresolved budget survives configure, cancellation and same-candidate readmission",()=>{
+ const f=requestedFixture();f.c.spendLandedHop(f.intent.id,f.update.candidateId,"automatic");f.c.spendLandedHop(f.intent.id,f.update.candidateId,"explicit",randomUUID());
+ const hop=f.c.status().landedHops![f.update.candidateId],offer=f.c.peekInstallerOffer();
+ f.c.abandonUpgradeInstall(f.intent.id,"8.0.0");
+ f.c.configure(f.c.status().revision,{...choices,preUpgrade:true,enabled:false});
+ expect(f.c.status().landedHops![f.update.candidateId]).toEqual(hop);expect(f.c.peekInstallerOffer()).toEqual(offer);
+ f.c.configure(f.c.status().revision,{...choices,preUpgrade:true});const next=f.admit();
+ expect(f.c.status().landedHops![f.update.candidateId]).toEqual(hop);expect(f.c.spendLandedHop(next.id,f.update.candidateId,"automatic")).toBe(false);
+});

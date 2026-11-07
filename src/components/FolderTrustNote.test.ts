@@ -62,7 +62,7 @@ describe("folderTrustStatusLabel", () => {
     expect(folderTrustStatusLabel(refused)).toBe("This bot's turns would not start: Selected provider connection is disabled or unavailable");
     expect(folderTrustStatusKind(refused)).toBe("refused");
     const cloud = status({ upstreamStore: "none", engineGates: false, instanceId: "computer", upstreamTrusted: false });
-    expect(folderTrustStatusLabel(cloud)).toBe("Not gated by this bot's engine: the folder's files apply as they always did");
+    expect(folderTrustStatusLabel(cloud)).toBe("This bot's engine does not check folder trust: it continues to use the folder's files as before");
     expect(folderTrustStatusKind(cloud)).toBe("not-gated");
     // an older server without the fields: the FUIGOTRUST3 verdicts, unchanged
     const legacy: FolderTrustStatus = { gated: true, sources: ["AGENTS.md"], record: null, upstreamTrusted: true };

@@ -1,10 +1,11 @@
+import { CHATS_PREVIEW_TABLES } from "./thread-summary.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Review round 4 #1 and #3: every table 1.0.2 adds is on ONE list (APP_SCHEMA_102_ADDITIONS.tables, which the downgrade drops and the snapshot
 // accepts), and each has a lifecycle entry. The list is checked against the real 1.0.1 (git archive d950cbf67 in the gitignored .v101-ref
-// directory), in both directions; the real 1.0.1 inspector accepts a downgraded file with rows in every registered table; rows of a child table never
-// outlive their request.
+// directory), in both directions; the real 1.0.1 inspector accepts a stepped file with rows in every registered table once the inbox projection is out;
+// rows of a child table never outlive their request.
 import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,6 +17,7 @@ import { inspectInstallationDatabase } from "./installation-database-snapshot.ts
 import { APP_SCHEMA_102_ADDITIONS, CARD_DELIVERY_OWED_LINE, DOWNGRADE_CARD_DELIVERY_OWED, downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
 import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
 import { validateMemorySchema } from "./memory/schema.ts";
+import { discardInboxProjection, isInboxProjectionObject } from "./inbox.ts";
 import { deleteProjectRows } from "./project-tables.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { insertRoomRequest, pruneTerminalRoomRequests, ROOM_REQUEST_RETENTION_MS } from "./room-requests.ts";
@@ -173,7 +175,51 @@ describe("R5-04: a card result still owed to its project room is never discarded
 });
 
 describe("against the real 1.0.1 (git archive d950cbf67)", () => {
-  it.skipIf(!haveV101)("the list is exactly the objects 1.0.2 adds: nothing unlisted is added, nothing listed already existed in 1.0.1", async () => {
+  // 1.0.2 is judged by the file it really makes (testing/schema-1.0.2-fresh.json): a later build's objects are not 1.0.2's, and leave through their own steps.
+  it.skipIf(!haveV101)("the list names what fresh 1.0.2 adds to the real 1.0.1, beside the inbox projection and the forget table, and nothing listed already existed in 1.0.1", async () => {
+    const fresh102 = (JSON.parse(readFileSync(new URL("./testing/schema-1.0.2-fresh.json", import.meta.url), "utf8")) as { objects: Array<{ type: string; name: string; tbl_name: string }> }).objects;
+    const current = fresh102.filter(row => !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_"));
+    const { referenceSchema } = await realV101();
+    const old = new Set(referenceSchema().keys());
+    const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
+    const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
+    // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table). The inbox projection and the forget table stay in a stepped
+    // file, 1.0.2's own step included: that is why a step to schema 6 is 1.0.2's to run, and why the test below judges the file without the projection.
+    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    expect(unlisted.sort(), "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual(["event_log_forgets", "sqlite_autoindex_event_log_forgets_1"]);
+    // listed objects that exist here must be new: a 1.0.1 object on the list would be dropped by the downgrade
+    const present = new Set(current.map(row => row.name));
+    expect([...listed].filter(name => present.has(name) && old.has(name)), "on the list but already in 1.0.1").toEqual([]);
+    // the tables this lane registers are really there and really new
+    for (const name of CHILDREN) { expect(present.has(name), name).toBe(true); expect(old.has(name), name).toBe(false); }
+  });
+
+  it.skipIf(!haveV101)("the real 1.0.1 inspector refuses a stepped file only over the inbox projection, and accepts it without, after rows in every registered table", async () => {
+    request("one", "g", 1); mapping("one");
+    request("two", "g"); mapping("two");
+    expect(rows("shared_request_events")).toBe(2);
+    // the owed deliveries must be delivered first: the downgrade refuses until they are
+    closeDatabase();
+    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
+    database().prepare("DELETE FROM project_card_delivery_owed").run();
+    closeDatabase();
+    const result = downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
+    expect(result).toMatchObject({ status: "downgraded", to: 6 });
+    const { inspectInstallationDatabase: inspect101 } = await realV101();
+    const down = new DatabaseSync(join(DATA_DIR, "messages.db"));
+    try {
+      // the reason the command refuses this step (installation-recovery-command.test.ts). When this stops throwing, that refusal can be looked at again.
+      expect(() => inspect101(down)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
+      discardInboxProjection(down);
+      expect(() => inspect101(down)).not.toThrow();
+      const names = (down.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name);
+      for (const table of CHILDREN) expect(names.includes(table), table).toBe(false);
+    } finally { down.close(); }
+  }, 120_000);
+});
+
+// ADDENDUM-2: the unrelated base inventory is owned separately.
+it.skipIf(!haveV101)("C2 adds zero objects to the real 1.0.1 base inventory", async () => {
     const db = database();
     const memory = validateMemorySchema(db);
     const current = (db.prepare("SELECT type,name,tbl_name FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string }>)
@@ -184,31 +230,150 @@ describe("against the real 1.0.1 (git archive d950cbf67)", () => {
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
     // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table)
     const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
-    expect(unlisted, "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual([]);
-    // listed objects that exist here must be new: a 1.0.1 object on the list would be dropped by the downgrade
-    const present = new Set(current.map(row => row.name));
-    expect([...listed].filter(name => present.has(name) && old.has(name)), "on the list but already in 1.0.1").toEqual([]);
-    // the tables this lane registers are really there and really new
-    for (const name of CHILDREN) { expect(present.has(name), name).toBe(true); expect(old.has(name), name).toBe(false); }
-  });
+    expect(unlisted).toEqual([
+  "flux_capture_hold",
+  "messages_thread_seq",
+  "messages_id",
+  "upgrade_scrub_pass",
+  "inbox_raw",
+  "sqlite_autoindex_inbox_raw_1",
+  "inbox_raw_rank_4",
+  "inbox_keys",
+  "inbox_items",
+  "sqlite_autoindex_inbox_items_1",
+  "inbox_items_v_all_4",
+  "inbox_items_l_all_4",
+  "inbox_items_v_approvals_4",
+  "inbox_items_l_approvals_4",
+  "inbox_items_v_decisions_4",
+  "inbox_items_l_decisions_4",
+  "inbox_items_v_questions_4",
+  "inbox_items_l_questions_4",
+  "inbox_items_v_connections_4",
+  "inbox_items_l_connections_4",
+  "inbox_items_v_routines_4",
+  "inbox_items_l_routines_4",
+  "inbox_items_v_to_read_4",
+  "inbox_items_l_to_read_4",
+  "inbox_items_v_results_4",
+  "inbox_items_l_results_4",
+  "inbox_items_routine_at_4",
+  "inbox_items_snoozed_4",
+  "inbox_counts",
+  "inbox_projection_state",
+  "setup_marks",
+  "setup_marks_message_4",
+  "setup_marks_tail_4",
+  "setup_marks_solid_4",
+  "inbox_fill_deferred",
+  "inbox_fill_deferred_thread_4",
+  "inbox_deferred_removed",
+  "inbox_deferred_reinserted",
+  "inbox_deferred_updated",
+  "setup_marks_insert",
+  "setup_marks_update",
+  "setup_marks_delete",
+  "inbox_raw_added",
+  "inbox_raw_removed",
+  "inbox_state_added",
+  "inbox_state_changed",
+  "inbox_state_removed",
+  "inbox_item_added",
+  "inbox_item_removed",
+  "inbox_project_insert",
+  "inbox_project_update",
+  "inbox_project_delete",
+  "project_routine_authority",
+  "sqlite_autoindex_project_routine_authority_1",
+  "push_events_expires",
+  "push_risk_rated",
+  "push_decisions_decided",
+  "bot_call_rules",
+  "sqlite_autoindex_bot_call_rules_1",
+  "bot_call_rules_bot",
+  "bot_calls",
+  "sqlite_autoindex_bot_calls_1",
+  "bot_calls_fact",
+  "bot_calls_one_active",
+  "bot_calls_open",
+  "bot_calls_rule_created",
+  "bot_calls_rule_rang",
+  "bot_calls_bot_rang",
+  "bot_calls_rang",
+  "bot_calls_history",
+  "bot_call_sessions",
+  "sqlite_autoindex_bot_call_sessions_1",
+  "sqlite_autoindex_bot_call_sessions_2",
+  "bot_call_sessions_live",
+  "bot_call_owed",
+  "sqlite_autoindex_bot_call_owed_1",
+  "bot_call_owed_at",
+  "bot_call_watch_threads",
+  "sqlite_autoindex_bot_call_watch_threads_1",
+  "bot_call_settings",
+  "sqlite_autoindex_bot_call_settings_1",
+  "bot_call_owed_msg",
+  "app_trigger_bindings",
+  "sqlite_autoindex_app_trigger_bindings_1",
+  "app_trigger_bindings_routine",
+  "app_trigger_bindings_subscription",
+  "app_trigger_bindings_owner",
+  "app_trigger_policies",
+  "sqlite_autoindex_app_trigger_policies_1",
+  "app_trigger_policies_trigger",
+  "app_event_inbox",
+  "sqlite_autoindex_app_event_inbox_1",
+  "app_event_inbox_source",
+  "app_event_inbox_ready",
+  "app_event_inbox_unacked",
+  "app_event_tombstones",
+  "sqlite_autoindex_app_event_tombstones_1",
+  "app_event_tombstones_unacked",
+  "app_event_tombstones_at",
+  "app_event_batches",
+  "sqlite_autoindex_app_event_batches_1",
+  "app_event_batches_open",
+  "app_event_batches_due",
+  "app_event_batches_unrun",
+  "app_event_run_events",
+  "sqlite_autoindex_app_event_run_events_1",
+  "app_event_run_events_delivery",
+  "app_event_runs",
+  "sqlite_autoindex_app_event_runs_1",
+  "sqlite_autoindex_app_event_runs_2",
+  "app_event_runs_active",
+  "app_event_runs_due",
+  "app_event_runs_thread",
+  "app_event_runs_history",
+  "app_event_runs_card_owed"
+]);
+    for (const name of CHATS_PREVIEW_TABLES) expect(unlisted).not.toContain(name);
+});
 
-  it.skipIf(!haveV101)("the real 1.0.1 inspector accepts a downgraded file that held rows in every registered table", async () => {
-    request("one", "g", 1); mapping("one");
-    request("two", "g"); mapping("two");
-    expect(rows("shared_request_events")).toBe(2);
-    // the owed deliveries must be delivered first: the downgrade refuses until they are
-    closeDatabase();
-    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 6)).toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
-    database().prepare("DELETE FROM project_card_delivery_owed").run();
-    closeDatabase();
-    const result = downgradeInstallationMemorySchema(DATA_DIR, 6);
-    expect(result).toMatchObject({ status: "downgraded", to: 6 });
-    const { inspectInstallationDatabase: inspect101 } = await realV101();
-    const down = new DatabaseSync(join(DATA_DIR, "messages.db"));
-    try {
-      expect(() => inspect101(down)).not.toThrow();
-      const names = (down.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name);
-      for (const table of CHILDREN) expect(names.includes(table), table).toBe(false);
-    } finally { down.close(); }
-  }, 120_000);
+import * as servingAccess from "./database.ts";
+import { readChatsGen } from "./thread-summary.ts";
+it.each([6, 10, 12] as const)("T-DOWNGRADE offline orchestration to %s drops previews without serving acquisition", target => {
+  const original=readChatsGen(database()); closeDatabase();
+  const acquire=vi.spyOn(servingAccess,"database").mockImplementation(()=>{throw Error("offline serving acquisition");});
+  const transaction=vi.spyOn(servingAccess,"transaction").mockImplementation(()=>{throw Error("offline serving transaction");});
+  try {
+    expect(downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true }).status).toBe("downgraded");
+    downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true });
+    expect(acquire).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
+    expect(servingAccess.databaseSharedRowsStamp()).toBeUndefined();
+    const db=new DatabaseSync(join(DATA_DIR,"messages.db"),{readOnly:true});
+    try {for(const table of CHATS_PREVIEW_TABLES)expect(db.prepare("SELECT name FROM sqlite_schema WHERE name=?").get(table)).toBeUndefined();}
+    finally {db.close();}
+  } finally {acquire.mockRestore();transaction.mockRestore();}
+  expect(readChatsGen(database()).epoch).not.toBe(original.epoch);
+});
+it("T-DOWNGRADE offline orchestration rolls both preview drops back after the second drop fails",()=>{
+  const original=readChatsGen(database());closeDatabase();
+  const raw=DatabaseSync.prototype.exec;
+  const spy=vi.spyOn(DatabaseSync.prototype,"exec").mockImplementation(function(this:DatabaseSync,sql:string){if(sql===`DROP TABLE IF EXISTS ${CHATS_PREVIEW_TABLES[1]}`)throw Error("second preview drop");return raw.call(this,sql);});
+  try {expect(()=>downgradeInstallationMemorySchema(DATA_DIR,10)).toThrow("second preview drop");expect(servingAccess.databaseSharedRowsStamp()).toBeUndefined();}
+  finally {spy.mockRestore();}
+  const db=new DatabaseSync(join(DATA_DIR,"messages.db"),{readOnly:true});
+  try {expect(readChatsGen(db)).toEqual(original);for(const table of CHATS_PREVIEW_TABLES)expect(db.prepare("SELECT name FROM sqlite_schema WHERE name=?").get(table)).toBeDefined();}
+  finally {db.close();}
 });

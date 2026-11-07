@@ -292,6 +292,7 @@ const instanceConfigSchema = z.object({
   accentColor: optionalText,
   environment: z.record(z.string(), z.string()).optional(),
   enabled: z.boolean().optional(),
+  hidden: z.boolean().optional(),
   config: z.json().optional(),
 });
 const instanceConfigMapSchema = z.record(z.string(), instanceConfigSchema);
@@ -322,6 +323,12 @@ const appConfigSchema = z.object({
     quoteReplies: z.enum(["off", "groups", "all"]).optional(),
   }).strict().optional(),
   notifications: notificationPreferencesSchema.optional(),
+  /** The owner's monthly limit (UX-L2C): a heads-up only, nothing is held or refused by it. `monthlyLimitUsd` null = no limit;
+   * `headsUpLeft` = "<Flux resets_at>@80" or "@100", the heads-up the owner left for that Flux month. Not a secret. */
+  spend: z.object({
+    monthlyLimitUsd: z.number().finite().positive().max(1_000_000).nullable().optional(),
+    headsUpLeft: z.string().max(80).regex(/^[0-9T:.+\-Z]{10,64}@(80|100)$/).nullable().optional(),
+  }).strict().optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
    * upstream (e.g. "fireworks"). Both are non-secret and optional. */
@@ -348,6 +355,9 @@ const appConfigSchema = z.object({
    * Absent keeps engine search. Only desktop Murage-specific key variables
    * are imported; ambient engine/MCP provider credentials remain separate. */
   webSearch: z.object({ provider: z.enum(["engine", "auto", "flux", "tavily", "exa", "firecrawl", "off"]).optional(), tavilyApiKey: optionalText, exaApiKey: optionalText, firecrawlApiKey: optionalText }).strict().optional(),
+  /** Native HighLevel (HL-S2): the owner's Private Integration token. Write-only workspace state kept in the secret
+   * store (credentials.bin / the Cloud supervisor); a location is live only after the owner checks and confirms it. */
+  highlevel: z.object({ privateToken: optionalText }).strict().optional(),
   /** Flux Router key. Workspace-scoped on purpose: FLUX_API_KEY is listed in
    *  WORKSPACE_CREDENTIAL_ENV, so no spawned engine CLI ever inherits it and
    *  every route that needs it injects a copy under a harness-owned name
@@ -417,6 +427,7 @@ export interface AppConfig {
     readReceipts?: boolean; quoteReplies?: "off" | "groups" | "all";
   };
   notifications?: NotificationPreferences;
+  spend?: { monthlyLimitUsd?: number | null; headsUpLeft?: string | null };
   engineDiscovery?: "automatic" | "explicit";
   hermesProfilesPinned?: boolean;
   /** Effort for a new bot whose selection names none; absent sends none. */
@@ -436,6 +447,7 @@ export interface AppConfig {
     /** Check the default image model once a day with one small render (off by default). */
     dailyProbe?: boolean };
   webSearch?: { provider?: "engine" | "auto" | "flux" | "tavily" | "exa" | "firecrawl" | "off"; tavilyApiKey?: string; exaApiKey?: string; firecrawlApiKey?: string };
+  highlevel?: { privateToken?: string };
   flux?: { apiKey?: string; memory?: { enabled?: boolean; inject?: boolean; owner?: boolean; spaces?: boolean; external?: boolean }; connectionAliases?: import("../electron/flux-credential-policy.mjs").FluxAlias[] };
   decider?: { enabled?: boolean; provider?: "flux"; jobs?: { roomRouting?: boolean }; byoKey?: string; baseUrl?: string };
   profile?: { name?: string; email?: string; timeZone?: string };
@@ -723,6 +735,7 @@ export function loadConfig(): AppConfig {
     if (process.env.MURAGE_EXA_SEARCH_KEY !== undefined) cfg.webSearch.exaApiKey = process.env.MURAGE_EXA_SEARCH_KEY;
     if (process.env.MURAGE_FIRECRAWL_SEARCH_KEY !== undefined) cfg.webSearch.firecrawlApiKey = process.env.MURAGE_FIRECRAWL_SEARCH_KEY;
   }
+  if (process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN !== undefined) cfg.highlevel = { ...cfg.highlevel, privateToken: process.env.MURAGE_HIGHLEVEL_PRIVATE_TOKEN };
   cfg.flux = { ...cfg.flux };
   if (process.env.FLUX_API_KEY !== undefined) cfg.flux.apiKey = process.env.FLUX_API_KEY;
   if (process.env.MURAGE_FLUX_CONNECTION_ALIASES !== undefined) cfg.flux.connectionAliases = appConfigSchema.shape.flux.unwrap().shape.connectionAliases.parse(JSON.parse(process.env.MURAGE_FLUX_CONNECTION_ALIASES));
@@ -761,6 +774,7 @@ export function syncCredentialEnv(patch: ConfigWritePatch): void {
     [patch.webSearch?.tavilyApiKey, "MURAGE_TAVILY_SEARCH_KEY"],
     [patch.webSearch?.exaApiKey, "MURAGE_EXA_SEARCH_KEY"],
     [patch.webSearch?.firecrawlApiKey, "MURAGE_FIRECRAWL_SEARCH_KEY"],
+    [patch.highlevel?.privateToken, "MURAGE_HIGHLEVEL_PRIVATE_TOKEN"],
     [patch.flux?.apiKey, "FLUX_API_KEY"],
   ];
   for (const [value, name] of secrets) {
@@ -801,6 +815,10 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
+  // Muse Code's Meta key. On both strip lists so no other engine or tool
+  // child inherits it; the museCode driver adds it back from its own
+  // instance env only.
+  "META_API_KEY",
   "MURAGE_TTS_KEY",
   "MURAGE_OPENAI_IMAGE_KEY",
   "MURAGE_MODEL_PROVIDER_CONNECTIONS",
@@ -815,6 +833,8 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "MURAGE_TAVILY_SEARCH_KEY",
   "MURAGE_EXA_SEARCH_KEY",
   "MURAGE_FIRECRAWL_SEARCH_KEY",
+  // The owner's HighLevel Private Integration token: only the harness's native HighLevel client sends it.
+  "MURAGE_HIGHLEVEL_PRIVATE_TOKEN",
   // Flux Router. The whole point of listing it: the raw workspace key must
   // never ride into a spawned CLI's env. Routing injects it post-strip.
   "FLUX_API_KEY",
@@ -875,6 +895,7 @@ export const PROVIDER_CREDENTIAL_ENV = [
   "CURSOR_API_KEY",
   "CURSOR_AUTH_TOKEN",
   "CLINE_API_KEY",
+  "META_API_KEY",
 ] as const;
 
 /** Strip every credential from the env of a pre-save CLI probe or a Claude
@@ -948,9 +969,31 @@ export function stripCapturedProviderEnv(env: Record<string, string | undefined>
   }
 }
 
+/** Bumped by every save that touches the Flux section (a key saved, rotated, selected or removed), before and after the
+ * write. The monthly meter's key fingerprint hashes it (server/flux-limits.ts), so no answer read before the save can
+ * match after it, even for the same key. In memory only; a restart starts again with the key in the hash. */
+let fluxKeyEpochValue = 0;
+export const fluxKeyEpoch = (): number => fluxKeyEpochValue;
+const fluxKeySavedListeners = new Set<() => void>();
+/** Called after every save that touches the Flux section, rollbacks and sign-ins included (the server tells every open
+ *  window the new key fingerprint). Returns the unsubscribe. */
+export function onFluxKeySaved(listener: () => void): () => void {
+  fluxKeySavedListeners.add(listener);
+  return () => { fluxKeySavedListeners.delete(listener); };
+}
+
 /** Merge a partial config into ~/.murage/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(patch: ConfigWritePatch): void {
+  if (!patch.flux) return writeConfigPatch(patch);
+  fluxKeyEpochValue++;
+  try { writeConfigPatch(patch); } finally {
+    fluxKeyEpochValue++;
+    for (const listener of fluxKeySavedListeners) { try { listener(); } catch { /* a listener never breaks a save */ } }
+  }
+}
+
+function writeConfigPatch(patch: ConfigWritePatch): void {
   if (process.env.MURAGE_CLOUD_ROLE === "home") assertNoCloudPlaintext(patch);
   const p = join(DATA_DIR, "config.json");
   let disk: JsonObject = {};
@@ -970,7 +1013,7 @@ export function saveConfig(patch: ConfigWritePatch): void {
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "notifications", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1146,6 +1189,18 @@ export function withInstanceEnabled(cfg: AppConfig, instanceId: string, enabled:
   return { ok: true, config: next };
 }
 
+/** 1.0.18 U22 G20: hide an engine from every model list, or bring it back. Unhiding stores hidden: false, not a
+ *  dropped key: the config write merges each instance entry over the one on disk, so a dropped key would leave the
+ *  stored hidden: true in place and the engine would come back hidden after a restart (Astra r1 Medium). */
+export function withInstanceHidden(cfg: AppConfig, instanceId: string, hidden: boolean): InstanceCliUpdate {
+  const next = structuredClone(cfg);
+  const map = persistableInstanceConfigs(next);
+  if (!Object.hasOwn(map, instanceId) || typeof hidden !== "boolean") return { ok: false, config: cfg };
+  map[instanceId].hidden = hidden;
+  next.instances = map;
+  return { ok: true, config: next };
+}
+
 interface InstanceCliUpdate {
   ok: boolean;
   config: AppConfig;
@@ -1224,7 +1279,9 @@ export function allInstanceConfigs(cfg: AppConfig): InstanceConfigMap {
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     cline: { driver: "clineAgent" },
+    muse: { driver: "museCode" },
     pi: { driver: "piAgent" },
+    githubCopilot: { driver: "copilotAgent" },
   } as const;
   // New default-fleet engines that existing product configs would otherwise
   // never see. Custom-only engines stay in CUSTOM_ONLY so a one-off test map

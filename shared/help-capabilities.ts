@@ -732,6 +732,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/highlevel",
+    "term": "HighLevel",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/house-rules",
     "term": "house rules",
     "source": "server/index.ts"
@@ -806,6 +812,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/phones",
     "term": "phone tools",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/plan-usage",
+    "term": "usage",
     "source": "server/index.ts"
   },
   {
