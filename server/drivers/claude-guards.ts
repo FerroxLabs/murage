@@ -9,15 +9,9 @@ import { delimiter, isAbsolute, join } from "node:path";
 import { execCli, resolveCli } from "../procs.ts";
 import { engineLaunchFile } from "./isolation-cache.ts";
 
-/** The oldest Claude Code Murage runs a bot on: 2.1.280, the floor Murage 1.0.1 already had (the
- * CLI itself answers "version 2.1.280 or newer is required" to anything older, claude.ts), so no
- * owner who could chat on 1.0.1 is refused here. Every isolation control claudeIsolation relies on
- * was proven on the build host stub-API rig with 2.1.280, 2.1.281 and 2.1.295, each case with and
- * without the flags (2026-10-10): disableAllHooks, flag-level enabledPlugins (marketplace and
- * `@skills-dir` ids), claudeMdExcludes for CLAUDE.md and rules, skillOverrides for skills and nested
- * commands, outputStyle, agent, permissions.deny Agent(<name>), and the flag-level env override of
- * CLAUDE_CODE_PLUGIN_DIRS. Nothing in the isolation raises the floor. */
-export const CLAUDE_MIN_VERSION = "2.1.280";
+/** The pinned 2.1.292 artifact contains Sonnet 5.5; see the captured support
+ * evidence in docs/verification/model-defaults-artifacts.json. */
+export const CLAUDE_MIN_VERSION = "2.1.292";
 
 /** `2.1.295 (Claude Code)` -> [2, 1, 295]; null when no version is in the text. */
 export function parseClaudeVersion(text: string): number[] | null {
@@ -46,19 +40,21 @@ export class ClaudeUpdateRequired extends Error {
   }
 }
 
-/** A probe that could not answer is not retried for this long: the turn launches without the floor
- * check (fail-open, logged) instead of paying the probe's timeout on every turn. */
+export class ClaudeProbeMissing extends Error {
+  readonly code = "ENOENT";
+}
+
+/** Failed probes block launches and are retried after this backoff. */
 export const VERSION_FAILURE_BACKOFF_MS = 10 * 60_000;
 /** A good answer stands while the executable is unchanged; this only bounds how long a wrapper
  * script whose target changed underneath it can be trusted. */
 const VERSION_SUCCESS_TTL_MS = 6 * 60 * 60_000;
-interface VersionEntry { identity: string; at: number; version: Promise<string | null>; failed?: boolean; logged?: boolean }
+interface VersionEntry { identity: string; at: number; version: Promise<string | null>; failed?: boolean; missing?: Error }
 const versionCache = new Map<string, VersionEntry>();
-const loggedUnknown = new Set<string>();
-export function resetClaudeVersionGate(): void { versionCache.clear(); loggedUnknown.clear(); }
+export function resetClaudeVersionGate(): void { versionCache.clear(); }
 
 /** The verdict on `cli --version`: "below" for a parsed version older than the minimum, "unknown"
- * for output with no version in it (allowed, and logged once per CLI and answer), "ok" otherwise. */
+ * for output with no version in it, "ok" otherwise. */
 export function claudeVersionVerdict(output: string): "ok" | "below" | "unknown" {
   if (!parseClaudeVersion(output)) return "unknown";
   return claudeVersionBelow(output) ? "below" : "ok";
@@ -98,14 +94,11 @@ export async function knownClaudeCliVersion(cli: string): Promise<string | null>
   return answer?.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
 }
 
-/** Throws ClaudeUpdateRequired when `cli --version` reports less than the minimum. The answer is held
- * per executable identity (claudeExecutableIdentity): an unchanged CLI is probed once. A probe that
- * fails (no answer, timeout) or prints no version lets the launch go ahead, logged, and a failure is
- * not probed again for VERSION_FAILURE_BACKOFF_MS: a previously working owner keeps chatting, and the
- * CLI's own refusal of an unknown flag (claudeLaunchRefusal) still stands behind it. `signal` (the
- * turn's Stop) ends the wait at once without throwing; the caller's own stop check takes over. */
+/** Require a readable, qualified version before launch. Cache successes by executable
+ * identity and back off failed probes; cancellation still ends the wait immediately. */
 export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEnv, signal?: AbortSignal, run: typeof execCli = execCli, probeEnv?: () => Promise<NodeJS.ProcessEnv>): Promise<void> {
   if (signal?.aborted) return;
+  engineLaunchFile(cli, { PATH: env.PATH }); // Preserve ENOENT when the binary is absent.
   const now = Date.now();
   const identity = claudeExecutableIdentity(cli, env);
   let entry = versionCache.get(cli);
@@ -121,6 +114,7 @@ export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEn
       let probeFile: string;
       try { probeFile = engineLaunchFile(cli, { PATH: env.PATH }); } catch { return failed(); }
       run(probeFile, ["--version"], { timeout: 8000, env: spawnEnv }, (err, stdout) => {
+        if ((err as NodeJS.ErrnoException | null)?.code === "ENOENT") fresh.missing = err!;
         const answer = err ? null : String(stdout ?? "").trim();
         // the backoff runs from the failure, not from when the probe started
         if (answer === null) return failed();
@@ -139,18 +133,10 @@ export async function requireClaudeCliVersion(cli: string, env: NodeJS.ProcessEn
       })
     : await pending.version;
   if (version === "aborted") return;
-  if (version === null) {
-    if (!pending.logged) {
-      pending.logged = true;
-      console.warn(`claude: '${cli} --version' did not answer; launching without the ${CLAUDE_MIN_VERSION} floor check (next probe in ${VERSION_FAILURE_BACKOFF_MS / 60_000} min)`);
-    }
-    return;
-  }
-  const verdict = claudeVersionVerdict(version);
-  if (verdict === "below") throw new ClaudeUpdateRequired(parseClaudeVersion(version)!.join("."));
-  if (verdict === "unknown" && !loggedUnknown.has(`${cli}\n${version}`)) {
-    loggedUnknown.add(`${cli}\n${version}`);
-    console.warn(`claude: '${cli} --version' printed no version (${JSON.stringify(version.slice(0, 80))}); launching without the ${CLAUDE_MIN_VERSION} floor check`);
+  // Keep a missing binary distinct from an unqualified installed version.
+  if (pending.missing) throw new ClaudeProbeMissing(pending.missing.message);
+  if (version === null || claudeVersionVerdict(version) !== "ok") {
+    throw new ClaudeUpdateRequired(version ?? "unknown");
   }
 }
 

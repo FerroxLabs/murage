@@ -1,0 +1,46 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+stderr | src/lib/chats-previews-browser.test.ts > RULE search holder sidebar preserves reconnect, drops changed rows, fails once and rejects late answers
+Pending [ '/main' ] DOM 
+
+stderr | src/lib/chats-previews-browser.test.ts > RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers
+Pending [ '/main' ] DOM 
+
+ ❯ src/lib/chats-previews-browser.test.ts (29 tests | 3 failed) 84378ms
+   × RULE search holder sidebar preserves reconnect, drops changed rows, fails once and rejects late answers 5408ms
+   × RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers 5445ms
+   × RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers 30459ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder sidebar preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers
+TimeoutError: page.waitForFunction: Timeout 5000ms exceeded.
+ ❯ answer src/lib/chats-previews-browser.test.ts:17:14
+
+ ❯ src/lib/chats-previews-browser.test.ts:343:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers
+TimeoutError: locator.fill: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('textbox', { name: 'Find in this conversation' })[22m
+
+ ❯ src/lib/chats-previews-browser.test.ts:342:90
+    340|   const page=await browser.newPage(); await page.goto(url);
+    341|   await page.evaluate(mode=>{const f=(window as any).fixture; f.unmoun…
+    342|   if(mode === "find") await page.getByRole('textbox',{name:'Find in th…
+       |                                                                                          ^
+    343|   await answer(page,"/api/search",A,"secret retained");
+    344|   const shown=()=> mode === "find" ? page.getByText('1 of 1',{exact:tr…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 26 passed (29)
+   Start at  21:15:09
+   Duration  91.38s (transform 5.53s, setup 6.36s, import 529ms, tests 84.38s, environment 0ms)
+

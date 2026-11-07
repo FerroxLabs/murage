@@ -10,7 +10,7 @@ import type { Duplex } from "node:stream";
 import type { DatabaseSync } from "node:sqlite";
 import { WebSocketServer, type WebSocket } from "ws";
 import { CALL_DEVICE, CALL_PROTOCOL } from "../shared/bot-calls-contract.ts";
-import { getIntent, getSession, liveSessions, markTurnCall, ringingIntent, type CallIntent, type SessionEnd } from "./bot-calls-machine.ts";
+import { getIntent, getSession, liveSessions, markTurnCall, ringingIntent, type CallIntent, type CallSession, type SessionEnd } from "./bot-calls-machine.ts";
 import {
   CallRuleInputError, botCallsEnabled, callRulesHold, callsOffUntil, setCallsOffUntil, listCallRules, putCallRules, rearmCallRules, rebuildWatchThreads, setBotCallsEnabled, setNeedsOwnerNowRule, inTransaction,
   type CallRuleInput,
@@ -25,6 +25,7 @@ export interface CallsRouteDeps {
   /** The caller may see this conversation (the desktop sees all; a phone what its sidebar shows). */
   visible(threadId: string): boolean;
   bot(botId: string): { id: string; name: string; threadId?: string } | null;
+  sessionTarget?(targetId: string, threadId: string): { id: string } | null;
   /** The opener's sentence (design 8), server text spoken before the host runs. */
   opener(intent: CallIntent): string;
   /** Quiet hours as the Calls page shows them, and whether this bot has a voice. */
@@ -206,8 +207,10 @@ export async function handleCallsRoute(method: string, path: string, url: URL, d
   }
   if (method === "POST" && path === "/api/calls/sessions") {
     const body = objectOf(await d.readBody());
-    const bot = typeof body.botId === "string" ? d.bot(body.botId) : null;
-    if (!bot || typeof body.threadId !== "string" || !d.visible(body.threadId)) return err(404, "no such conversation");
+    if (typeof body.botId !== "string" || typeof body.threadId !== "string" || !d.visible(body.threadId)) return err(404, "no such conversation");
+    const known = d.bot(body.botId);
+    const bot = d.sessionTarget ? d.sessionTarget(body.botId, body.threadId) : known?.threadId === body.threadId ? known : null;
+    if (!bot) return err(404, "no such conversation");
     if (typeof body.device !== "string" || !CALL_DEVICE.test(body.device)) return err(400, "device");
     const caller = d.caller();
     if (!caller) return err(403, "device");
@@ -303,6 +306,9 @@ export interface CallChannelDeps {
   admitUpgrade(req: IncomingMessage): boolean;
   /** The authenticated device of the upgrading request, in the same form as CallsRouteDeps.caller; null when none is proven. */
   upgradeCaller(req: IncomingMessage): string | null;
+  /** Admitted server session and exact connection identity, never a posted reply boundary. */
+  connected?(session: CallSession, connection: object, emit: (event: unknown) => boolean, request: IncomingMessage): void;
+  disconnected?(callId: string, connection: object): void;
   pingEveryMs?: number;
 }
 
@@ -316,13 +322,28 @@ export function createCallChannel(deps: CallChannelDeps) {
   const sockets = new Map<string, Set<WebSocket>>();
   const frame = (callId: string, reason: SessionEnd) => JSON.stringify({ type: "call.ended", callId, reason });
   function closeAll(callId: string, reason: SessionEnd): void {
-    for (const ws of sockets.get(callId) ?? []) { try { ws.send(frame(callId, reason)); ws.close(1000, "call ended"); } catch { /* already gone */ } }
+    for (const ws of sockets.get(callId) ?? []) { deps.disconnected?.(callId, ws); try { ws.send(frame(callId, reason)); ws.close(1000, "call ended"); } catch { /* already gone */ } }
     sockets.delete(callId);
   }
-  function attach(ws: WebSocket, callId: string): void {
+  function attach(ws: WebSocket, session: CallSession, request: IncomingMessage): void {
+    const callId = session.callId;
     let set = sockets.get(callId);
     if (!set) sockets.set(callId, set = new Set());
     set.add(ws);
+    try {
+      deps.connected?.(session, ws, (event) => {
+        if (ws.readyState !== ws.OPEN || ws.bufferedAmount > 64 * 1024) return false;
+        try { ws.send(JSON.stringify(event)); return true; } catch { return false; }
+      }, request);
+    } catch { set.delete(ws); ws.close(1008, "call unavailable"); return; }
+    // Only the newly authenticated channel owns this call. Retire old transports
+    // even when no speech coordinator is installed.
+    for (const previous of set) {
+      if (previous === ws) continue;
+      deps.disconnected?.(callId, previous);
+      try { previous.send(frame(callId, "lost")); } catch { /* transport already gone */ } finally { previous.terminate(); }
+      set.delete(previous);
+    }
     const traffic = (): boolean => {
       const state = deps.runtime().touch(callId);
       if (state !== "live") { const s = getSession(deps.db(), callId); try { ws.send(frame(callId, s?.endedBy ?? "lost")); ws.close(1000, "call ended"); } catch { /* gone */ } }
@@ -332,7 +353,7 @@ export function createCallChannel(deps: CallChannelDeps) {
     ping.unref?.();
     ws.on("pong", traffic);
     ws.on("message", (data) => { if (traffic()) { try { ws.send(liveFrame(data)); } catch { /* closing */ } } });
-    ws.on("close", () => { clearInterval(ping); set!.delete(ws); if (set!.size === 0 && sockets.get(callId) === set) sockets.delete(callId); });
+    ws.on("close", () => { deps.disconnected?.(callId, ws); clearInterval(ping); set!.delete(ws); if (set!.size === 0 && sockets.get(callId) === set) sockets.delete(callId); });
     ws.on("error", () => { /* close follows */ });
     traffic();
   }
@@ -350,7 +371,7 @@ export function createCallChannel(deps: CallChannelDeps) {
         socket.destroy();
         return true;
       }
-      wss.handleUpgrade(req, socket, head, (ws) => attach(ws, session.callId));
+      wss.handleUpgrade(req, socket, head, (ws) => attach(ws, session, req));
       return true;
     },
     sessionEnded: closeAll,

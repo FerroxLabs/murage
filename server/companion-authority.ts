@@ -1,3 +1,4 @@
+import { isDesktopApp } from "./cloud-owner-surface.ts";
 import { cloudIdentity, isOwnerBrowser } from "./cloud-request-identity.ts";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
@@ -39,3 +40,6 @@ export const ownerActs = (headers: IncomingHttpHeaders): boolean => process.env.
  * authority: `companionAuthorized` stays the only owner proof. */
 export const DOOR_FORWARD_HEADER = "x-murage-door-token";
 export const doorAuthorized = createCompanionAuthority(launchToken, DOOR_FORWARD_HEADER);
+
+/** The identical preview audience for answers, hello, live frames and replay. */
+export const chatsReader = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean => isDesktopApp(headers, query) || ownerActs(headers);

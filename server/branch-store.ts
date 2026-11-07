@@ -12,6 +12,7 @@
 // reaches an unprepared thread fills it on the spot, exactly but slowly, and is
 // counted in `prepareStats.syncPrepares` (a number the suite and the harness
 // hold at zero on every turn path).
+import { syncThreadSummary } from "./thread-summary.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { database as db, transaction } from "./database.ts";
 import { fillOneSlice, noteSlice, prepareStats, prepareSyncOn, queueFrontFill } from "./branch-fill.ts";
@@ -42,10 +43,12 @@ function guarded(database: DatabaseSync, tk: ThreadKey, work: () => void): void 
 }
 
 /** A row was stored at `mrow` (`prior`: the rowid it replaced, if any). `structure: "none"` is for a row a splice places itself. */
-export function afterInsert(database: DatabaseSync, threadId: string, message: Shape, mrow: number, prior: number | undefined, structure: "append" | "none" = "append"): void {
+export function afterInsert(database: DatabaseSync, threadId: string, message: Shape, mrow: number, prior: number | undefined, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
   const tk = ensureThreadKey(database, threadId, hasOtherRows(database, threadId, mrow));
   if (prior !== undefined) database.prepare("UPDATE line SET mrow = ? WHERE key = ? AND mrow = ?").run(mrow, tk.key, prior);
   syncLines(database, tk, mrow, lineClassesOf(message), prior !== undefined);
+  // Appends refresh once after moving the active leaf, in this transaction.
+  if (preview === "sync") syncThreadSummary(database, threadId);
   if (structure === "none") return;
   if (tk.state === THREAD_PREPARED) {
     guarded(database, tk, () => {
@@ -57,9 +60,13 @@ export function afterInsert(database: DatabaseSync, threadId: string, message: S
 }
 
 /** A stored row was rewritten (same rowid). */
-export function afterUpdate(database: DatabaseSync, threadId: string, message: Shape, mrow: number, parentChanged: boolean, splicing = false): void {
+export function afterUpdate(database: DatabaseSync, threadId: string, message: Shape, mrow: number, parentChanged: boolean, splicing = false, priorKind?: string): void {
   const tk = ensureThreadKey(database, threadId, hasOtherRows(database, threadId, mrow));
   syncLines(database, tk, mrow, lineClassesOf(message));
+  // A card payload cannot change a text preview. Its parent can, as can a
+  // transition to or from text. Keep point-card patches independent of the
+  // active branch and avoid re-reading it for every dismissed card at boot.
+  if (parentChanged || priorKind === undefined || priorKind === "text" || message.kind === "text") syncThreadSummary(database, threadId);
   // "prepared" means every row has a branch entry: a row patched before it was ever placed (a lone legacy row, before its first fill) gets its entry now
   if (tk.state === THREAD_PREPARED && !database.prepare("SELECT 1 AS present FROM msg_branch WHERE mrow = ?").get(mrow)) {
     guarded(database, tk, () => encodeRow(database, tk, mrow, parentRowid(database, threadId, mrow, message.parentId)));
@@ -70,6 +77,7 @@ export function afterUpdate(database: DatabaseSync, threadId: string, message: S
 
 /** `fresh` was stored directly before `target`, which it took the parent of (`parentMrow`). */
 export function afterSpliceBefore(database: DatabaseSync, threadId: string, fresh: number, target: number, parentMrow: number | null): void {
+  syncThreadSummary(database, threadId);
   const tk = threadKey(database, threadId);
   if (!tk) return;
   if (tk.state === THREAD_PREPARED) guarded(database, tk, () => { if (!spliceBefore(database, tk, fresh, target, parentMrow)) throw new Error("splice before: the neighbours are not where the index expects"); });
@@ -78,13 +86,17 @@ export function afterSpliceBefore(database: DatabaseSync, threadId: string, fres
 
 /** `fresh` was stored directly after `anchor`, and took the anchor's children. */
 export function afterSpliceAfter(database: DatabaseSync, threadId: string, fresh: number, anchor: number): void {
+  syncThreadSummary(database, threadId);
   const tk = threadKey(database, threadId);
   if (!tk) return;
   if (tk.state === THREAD_PREPARED) guarded(database, tk, () => { if (!spliceAfter(database, tk, fresh, anchor)) throw new Error("splice after: the anchor is not where the index expects"); });
   else if (tk.cursor > 0) invalidateThread(database, tk);
 }
 
-export function forgetThread(database: DatabaseSync, threadId: string): void { dropThread(database, threadId); }
+export function forgetThread(database: DatabaseSync, threadId: string): void {
+  database.prepare("DELETE FROM thread_summary WHERE thread_id = ?").run(threadId);
+  dropThread(database, threadId);
+}
 
 // ── the gate ────────────────────────────────────────────────────────────────
 /** Whether every row of the thread is covered. A thread with no rows is. */
@@ -198,7 +210,9 @@ function boundedBranchTester(database: DatabaseSync, threadId: string, leafId: s
       if (ids.has(cursor) || ids.size >= BOUNDED_WALK_ROWS) { capped = true; return; }
       if (branchWalkBudget) { if (branchWalkBudget.rows <= 0) { capped = true; return; } branchWalkBudget.rows--; }
       ids.add(cursor);
-      cursor = stepUpRow(database, threadId, cursor)?.parent ?? null;
+      const up = stepUpRow(database, threadId, cursor);
+      if (up && "damaged" in up) { capped = true; return; } // an unreadable ancestor: what lies above is unknown
+      cursor = up?.parent ?? null;
     }
   };
   return (messageId) => {
@@ -215,15 +229,16 @@ export function boundedBranchWalk(threadId: string, leafId: string): { rows: Arr
   const database = db();
   const rows: Array<{ mrow: number; json: string }> = [];
   const seen = new Set<string>();
-  let cursor: string | null = leafId;
+  let cursor: string | null = leafId, damaged = false;
   while (cursor !== null && !seen.has(cursor) && rows.length < BOUNDED_WALK_ROWS) {
     seen.add(cursor);
     const step = stepUpRow(database, threadId, cursor);
     if (!step) { cursor = null; break; }
+    if ("damaged" in step) { damaged = true; break; } // unreadable ancestor: the walk is not complete
     rows.push({ mrow: step.position, json: step.json });
     cursor = step.parent;
   }
-  return { rows, complete: cursor === null };
+  return { rows, complete: cursor === null && !damaged };
 }
 
 /** The rowids of a row's children, oldest first (the thread must be prepared: a caller awaits prepareThread first). */
@@ -233,8 +248,9 @@ export function childRowids(threadId: string, anchorMrow: number): number[] {
   return tk ? childrenOf(db(), tk, anchorMrow) : [];
 }
 
-/** Rowid-keyed membership for the branch ending at `leafId`, and the order of two rows on it (the thread is prepared first). */
-export function branchRows(threadId: string, leafId: string | null): { contains: (mrow: number) => boolean; after: (a: number, b: number) => boolean; compare: (a: number, b: number) => number; plain: (mrow: number) => boolean } {
+/** Rowid-keyed membership and order on the branch ending at `leafId`. On an incomplete unprepared walk, unseen rows have undefined
+ * membership; `after` establishes order only for two walked rows. */
+export function branchRows(threadId: string, leafId: string | null): { contains: (mrow: number) => boolean | undefined; after: (a: number, b: number) => boolean; compare: (a: number, b: number) => number; plain: (mrow: number) => boolean } {
   const none = { contains: () => false, after: () => false, compare: () => 0, plain: () => false };
   if (leafId === null) return none;
   if (!isPrepared(threadId)) {
@@ -243,7 +259,7 @@ export function branchRows(threadId: string, leafId: string | null): { contains:
     const walk = boundedBranchWalk(threadId, leafId);
     const rank = new Map(walk.rows.map((row, i) => [row.mrow, walk.rows.length - i]));
     const compare = (a: number, b: number) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0);
-    return { contains: (mrow) => rank.has(mrow), after: (a, b) => compare(a, b) > 0, compare, plain: () => true };
+    return { contains: (mrow) => rank.has(mrow) ? true : walk.complete ? false : undefined, after: (a, b) => rank.has(a) && rank.has(b) && compare(a, b) > 0, compare, plain: () => true };
   }
   const database = db();
   const tk = threadKey(database, threadId);

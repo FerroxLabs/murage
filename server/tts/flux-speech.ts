@@ -1,3 +1,5 @@
+import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
+import { speechFetch, type SpeechPolicy } from "./speech-policy.ts";
 // Speech through Flux Router, or an owner's own OpenAI key.
 //
 // Voice is Flux by default: a workspace with a Flux key needs no second
@@ -18,12 +20,25 @@
 import { clipFrom, type Audio, type Clip, type Voice } from "./elevenlabs.ts";
 import { RateLimitedError, retryAfterMs } from "./rate-limit.ts";
 import { fluxCallHeaders } from "../flux-memory-headers.ts";
-import { notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
+import { voiceRefusalCode, isBudgetReached, notPermitted, VoiceUnavailable, type VoiceEndpoint } from "../voice/voice-routes.ts";
 import { XAI_VOICES } from "./xai-speech.ts";
 
 /** The provider answered, but speech is not switched on for this account
  *  (Flux while its speech capability is dark). The next source can take over. */
 export class SpeechUnavailable extends VoiceUnavailable {}
+
+/** L-COPY voice.budgetReached: what an owner sees when the Flux key's budget
+ *  is used up. */
+export const VOICE_BUDGET_REACHED = "Voice is paused: this Flux key has reached its budget. It starts again when the budget changes.";
+
+/** Flux answered 402 for a budget or balance on the key (not premium_locked).
+ *  Every Flux voice on this key would get the same answer, so the caller
+ *  stops asking until the key or the budget changes (VOICE-402-STOP). */
+export class SpeechBudgetReached extends SpeechUnavailable {
+  constructor() {
+    super(VOICE_BUDGET_REACHED);
+  }
+}
 
 /** Flux's alias for xAI's voices (2026-09-23): the same Flux request, xAI's
  *  voice names. Flux translates it to xAI's own schema. */
@@ -192,8 +207,8 @@ async function refusal(res: Response): Promise<{ message: string; code: string; 
     const body: any = await res.json();
     const error = body?.error ?? body;
     return {
-      message: (typeof error?.message === "string" && error.message.trim()) || "",
-      code: (typeof error?.code === "string" && error.code) || "",
+      message: (typeof error?.message === "string" && error.message.trim()) || (typeof body?.message === "string" ? body.message : ""),
+      code: voiceRefusalCode(body),
       param: (typeof error?.param === "string" && error.param) || "",
     };
   } catch {
@@ -208,8 +223,11 @@ export async function synthesize(text: string, voice: string, endpoint: VoiceEnd
 
 /** `streamed`: hand the audio on as it arrives (both Flux and OpenAI send
  *  it as it is made). */
-export async function synthesizeClip(text: string, voice: string, endpoint: VoiceEndpoint | null, streamed: boolean, call: typeof fetch = fetch, retryMs = TTS_RETRY_MS): Promise<Clip> {
+export async function synthesizeClip(text: string, voice: string, endpoint: VoiceEndpoint | null, streamed: boolean, call: typeof fetch = fetch, retryMs = TTS_RETRY_MS, policy: SpeechPolicy = {}): Promise<Clip> {
+  policy.signal?.throwIfAborted();
+  call = speechFetch(call, policy);
   if (!endpoint) throw new Error("Add a Flux key, or an OpenAI key, in Settings on the computer to turn on voice.");
+  if (policy.attempts === 1 && isBudgetReached(endpoint)) throw new SpeechBudgetReached();
   const provider = endpoint.via === "flux" ? "Flux" : "OpenAI";
   // An agent that still carries a voice from another engine gets Flux's
   // default rather than a 400 for a voice Flux has never heard of.
@@ -234,7 +252,7 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   const control = new AbortController();
   let res: Response | undefined;
   const requestedAt = Date.now();
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < (policy.attempts ?? 2); attempt++) {
     const started = Date.now();
     const timer = setTimeout(() => control.abort(), headerMs);
     let retry = false;
@@ -252,14 +270,15 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
         fail(res.status, Date.now() - started);
         // one retry, and only for a failure that came back fast: the total
         // wait stays bounded
-        retry = attempt === 0 && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
+        retry = policy.attempts !== 1 && attempt === 0 && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
         if (retry) await res.body?.cancel().catch(() => undefined);
       }
     } catch (error) {
       clearTimeout(timer);
+      if (policy.signal?.aborted) throw new DOMException("Speech cancelled", "AbortError");
       const timedOut = control.signal.aborted;
       fail(timedOut ? "timeout" : "network", Date.now() - started);
-      retry = attempt === 0 && !timedOut && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
+      retry = policy.attempts !== 1 && attempt === 0 && !timedOut && Date.now() - started <= RETRY_ONLY_IF_WITHIN_MS;
       if (!retry) throw unreachable();
       res = undefined;
     }
@@ -267,6 +286,7 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
     await new Promise((resolve) => setTimeout(resolve, retryMs));
   }
   if (!res) throw unreachable();
+  try {
   // 4xx and the rest: one line each, status only (never their words). 5xx
   // were logged where they happened.
   if (!res.ok && (res.status < 500 || res.status === 501)) fail(res.status, 0);
@@ -282,11 +302,12 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   }
   if (res.status === 401) throw new Error(`${provider} rejected the saved key. Paste a fresh one in Settings.`);
   if (res.status === 402) {
+    if (policy.attempts === 1) { await res.body?.cancel().catch(() => {}); throw new SpeechBudgetReached(); }
     // Flux: premium_locked is a plan without voices; any other 402 is the
     // balance or a budget on the key, which a plan change would not fix.
-    const { message, code } = await refusal(res);
-    if (endpoint.via !== "flux" || code === "premium_locked") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
-    throw new Error(`${provider} couldn't charge for speech${message ? `: ${message}` : ""}. Check the account's balance and the key's budget.`);
+    const { code } = await refusal(res);
+    if (endpoint.via !== "flux" || classifyFluxRefusal(res.status, { code }) !== "budget") throw new Error(`${provider} voices need a paid plan. The key is fine; the plan does not cover it yet.`);
+    throw new SpeechBudgetReached();
   }
   if (res.status === 429) throw new RateLimitedError((await said(res)) || `${provider} is rate-limiting this account. Wait a moment and try again.`, retryAfterMs(res.headers.get("retry-after")));
   if (eleven && res.status === 400) {
@@ -312,6 +333,7 @@ export async function synthesizeClip(text: string, voice: string, endpoint: Voic
   // the gateway's own first-byte time, next to ours (it is only trusted as a number)
   clip.timing = { headersMs, ...(endpoint.via === "flux" && res.headers.has("x-flux-ttfb-ms") && Number.isFinite(reported) && reported >= 0 ? { fluxTtfbMs: reported } : {}) };
   return clip;
+  } catch (error) { await res.body?.cancel().catch(() => {}); throw error; }
 }
 
 /** The audio body, abandoned if no bytes arrive for BODY_STALL_MS. Time

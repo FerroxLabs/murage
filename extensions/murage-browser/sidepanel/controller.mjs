@@ -26,10 +26,26 @@ export function createController({ send, extensionId, now = Date.now, onChange }
   const bindings = () => status.bindings ?? [];
   const selected = () => pickBinding(bindings(), tabId, manual);
   const changed = () => onChange?.(view());
+  // CHROME-PANEL-AVATAR: the status carries each bot's picture id only. The panel asks the runtime for the bytes of the bot it
+  // shows, once per id, and keeps them while some binding still names that id; so a status never carries pictures.
+  const pictures = new Map(), asking = new Set();
+  const isPicture = v => typeof v === 'string' && v.length <= 16384 && /^data:image\/(?:webp|png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(v);
+  function wantPicture() {
+    const ids = new Set(bindings().map(x => x.botAvatarId).filter(Boolean));
+    for (const id of [...pictures.keys()]) if (!ids.has(id)) pictures.delete(id);
+    const sel = selected(), b = bindings().find(x => x.bindingId === sel), id = b?.botAvatarId;
+    if (typeof id !== 'string' || pictures.has(id) || asking.has(id)) return;
+    asking.add(id);
+    Promise.resolve().then(() => send({ action: 'avatar', bindingId: sel })).then(response => {
+      const r = response?.result;
+      if (r && r.botAvatarId === id && isPicture(r.botAvatar)) { pictures.set(id, r.botAvatar); changed(); }
+    }, () => {}).finally(() => asking.delete(id));
+  }
   function view() {
     const sel = selected(), b = bindings().find(x => x.bindingId === sel);
     const recovery = RECOVERY[status.recovery?.code] ?? (status.persistenceFailed ? RECOVERY.persistence_failed : '');
-    return { ...status, contractAhead: versionAhead, selected: sel, feedback, pending: running[0] ?? '', recovery, shortcut, supports: [...new Set([...BASE_ACTIONS, ...(b?.panelActions ?? [])])] };
+    const withPictures = bindings().map(x => pictures.has(x.botAvatarId) ? { ...x, botAvatar: pictures.get(x.botAvatarId) } : x);
+    return { ...status, bindings: withPictures, contractAhead: versionAhead, selected: sel, feedback, pending: running[0] ?? '', recovery, shortcut, supports: [...new Set([...BASE_ACTIONS, ...(b?.panelActions ?? [])])] };
   }
   function apply(next) {
     if (!next || typeof next !== 'object') throw Error('spErrGeneric');
@@ -37,7 +53,7 @@ export function createController({ send, extensionId, now = Date.now, onChange }
     versionAhead = Number(next.version) > CONTRACT_VERSION;
     status = { connected: Boolean(next.connected), bindings: Array.isArray(next.bindings) ? next.bindings : [], profileId: String(next.profileId ?? ''), version: next.version,
       ...(next.recovery && typeof next.recovery === 'object' ? { recovery: { code: String(next.recovery.code ?? '') } } : {}), persistenceFailed: next.persistenceFailed === true };
-    changed();
+    changed(); wantPicture();
   }
   async function request(action, extra = {}) {
     const response = await send({ action, bindingId: selected(), ...extra });
@@ -66,8 +82,8 @@ export function createController({ send, extensionId, now = Date.now, onChange }
       try { await request(action, extra); running.splice(running.indexOf(action), 1); await this.refresh(); }
       catch (error) { running.splice(running.indexOf(action), 1); feedback = String(error.message).startsWith('spErr') ? error.message : 'spErrGeneric'; changed(); }
     },
-    select(id) { manual = id; changed(); },
-    setTab(id) { if (id !== tabId) { tabId = id; manual = undefined; changed(); } },
+    select(id) { manual = id; changed(); wantPicture(); },
+    setTab(id) { if (id !== tabId) { tabId = id; manual = undefined; changed(); wantPicture(); } },
     setShortcut(s) { shortcut = s ?? ''; changed(); },
     get failures() { return failures; },
   };
