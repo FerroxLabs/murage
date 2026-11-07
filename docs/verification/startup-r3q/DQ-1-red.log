@@ -1,0 +1,40 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-STARTUP-SILENT-1018/repo
+
+ ❯ electron/dock-quit.test.mjs (2 tests | 2 failed) 23ms
+   × DQ-1: unmarked Dock Quit stays unclassified and opens no UI (cleanup fails: false) 13ms
+   × DQ-1: unmarked Dock Quit stays unclassified and opens no UI (cleanup fails: true) 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  electron/dock-quit.test.mjs > DQ-1: unmarked Dock Quit stays unclassified and opens no UI (cleanup fails: false)
+ FAIL  electron/dock-quit.test.mjs > DQ-1: unmarked Dock Quit stays unclassified and opens no UI (cleanup fails: true)
+AssertionError: Expected values to be strictly equal:
++ actual - expected
+
++ null
+- 'unclassified'
+
+
+- Expected:
+"unclassified"
+
++ Received:
+null
+
+ ❯ electron/dock-quit.test.mjs:30:10
+     28|   const f = fixture(failCleanup);
+     29|   await Promise.resolve(); await Promise.resolve();
+     30|   assert.equal(f.ctx.shutdownCause, 'unclassified');
+       |          ^
+     31|   assert.ok(f.logs.some(line => /unclassified/i.test(line)));
+     32|   await settleDesktopStartup(Promise.reject(Error('late startup')), f.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  23:47:45
+   Duration  5.96s (transform 4.73s, setup 5.81s, import 13ms, tests 23ms, environment 0ms)
+

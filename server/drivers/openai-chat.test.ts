@@ -12,6 +12,8 @@ import { recordEvents } from "../testing/events.ts";
 import { appendBounded, createOpenAIChatRuntime, MAX_RESPONSE_BYTES, MAX_SSE_LINE_BYTES } from "./openai-chat.ts";
 
 const SECRET = "sk-openai-chat-test-secret";
+/** A Flux host (the fetch stub never leaves the process): Flux's refusal codes are read only on a Flux route. */
+const FLUX_URL = "https://api.fluxrouter.ai/v1";
 const encoder = new TextEncoder();
 
 const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
@@ -95,7 +97,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
     for (const instance of instances.splice(0)) await instance.dispose();
   });
 
-  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string } = {}) => {
+  const create = (overrides: { retryScale?: number; reasoning?: boolean; timeoutMs?: number | undefined; apiKey?: string; apiUrl?: string } = {}) => {
     const instance = createOpenAIChatRuntime({
       input: { instanceId: "chat-test", displayName: "Chat test", environment: {}, enabled: true, config: {} },
       driverKind: "openai-chat-test",
@@ -122,7 +124,7 @@ describe("createOpenAIChatRuntime stream contract", () => {
   const runTurn = async (
     threadId: string,
     next: Responder[],
-    overrides: { retryScale?: number; reasoning?: boolean } = {},
+    overrides: { retryScale?: number; reasoning?: boolean; apiUrl?: string } = {},
   ) => {
     responders = next;
     const instance = create(overrides);
@@ -316,6 +318,60 @@ describe("createOpenAIChatRuntime stream contract", () => {
     expect(events.filter((event) => event.type === "turn.retrying")).toEqual([
       expect.objectContaining({ attempt: 1, reason: "overloaded" }),
     ]);
+    expect(calls).toBe(2);
+  });
+
+  it("1.0.18 (f): a Flux free_cap_reached 429 is sent exactly once, and its code travels on the error", async () => {
+    // Recorded shape: flux-router rate_limiter.py raises HTTPException(429, detail={"error":{...,"state":"free_cap_reached"}}),
+    // and LiteLLM flattens that dict into the OpenAI envelope's error.message as a Python repr.
+    const repr = "{'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'tier': 'free', 'message': \"Your account's monthly free-tier token allowance is exhausted.\"}}";
+    const refusal = () => new Response(JSON.stringify({ error: { message: repr, type: "None", param: "None", code: "429" } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-flux-free-cap", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+  });
+
+  it("1.0.18 (f): a Flux code that sits only in error.state (not the sentence) is still read, and the 429 is sent once", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { type: "rate_limit_exceeded", state: "free_cap_reached", message: "Your account's monthly allowance is used up." } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-flux-state-only", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "free_cap_reached" });
+  });
+
+  it("1.0.18 (f): a metered Flux 402 names credit_exhausted only in the X-Flux-Hold-Reason header, and the code reaches the error", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { message: "Your credit is used up. Top up at https://fluxrouter.ai/billing" } }), { status: 402, headers: { "content-type": "application/json", "x-flux-hold-reason": "credit_exhausted" } });
+    const { completed, events } = await runTurn("t-flux-header-only", [refusal, refusal, refusal], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(events.some((event) => event.type === "turn.retrying")).toBe(false);
+    expect(calls).toBe(1);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted" });
+  });
+
+  it("1.0.18 (f, Astra r5): a header-only Flux hold keeps its retries and, when they run out, reaches the error as the hold", async () => {
+    const hold = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "concurrency" } });
+    const { completed, events } = await runTurn("t-flux-hold-header", [hold, hold, hold], { retryScale: 0.001, apiUrl: FLUX_URL });
+    expect(completed).toMatchObject({ ok: false });
+    expect(calls).toBe(3);
+    expect(events.find((event) => event.type === "runtime.error")).toMatchObject({ gatewayCode: "hold" });
+  });
+
+  it("1.0.18 (f, Astra r4): Flux's code words in another provider's 429 leave its retry and its card as they were", async () => {
+    const refusal = () => new Response(JSON.stringify({ error: { type: "rate_limit_exceeded", state: "free_cap_reached", message: "slow down" } }), { status: 429, headers: { "content-type": "application/json", "x-flux-hold-reason": "credit_exhausted" } });
+    const { completed, events } = await runTurn("t-not-flux-words", [refusal, () => sse([contentFrame("recovered", "stop"), DONE])], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: true });
+    expect(calls).toBe(2);
+    expect(events.some((event) => event.type === "runtime.error" && "gatewayCode" in event)).toBe(false);
+  });
+
+  it("1.0.18 (f): a plain 429 with no Flux code keeps its quiet retry", async () => {
+    const busy = () => new Response(JSON.stringify({ error: { message: "Too many requests" } }), { status: 429, headers: { "content-type": "application/json" } });
+    const { completed, events } = await runTurn("t-plain-429", [busy, () => sse([contentFrame("recovered", "stop"), DONE])], { retryScale: 0.001 });
+    expect(completed).toMatchObject({ ok: true });
+    expect(events.filter((event) => event.type === "turn.retrying")).toHaveLength(1);
     expect(calls).toBe(2);
   });
 
@@ -635,6 +691,18 @@ describe("createOpenAIChatRuntime stream contract", () => {
     // The provider's own words stay available, with the key redacted.
     expect(failure && "details" in failure ? failure.details : "").toContain("Incorrect API key provided");
     expect(JSON.stringify(recorder.events)).not.toContain(SECRET);
+  });
+
+  for (const code of ["key_budget_reached", "premium_locked"]) for (const body of [{ error: { code } }, { error: code }]) for (const streamed of [false, true]) it(`typed Flux refusal ${code}, stream=${streamed}, body=${JSON.stringify(body)}`, async () => {
+    responders = [() => streamed ? sse([contentFrame("Partial."), frame(body), DONE]) : Response.json(body, { status: 402 })];
+    const instance = create({ apiUrl: "https://api.fluxrouter.ai/v1" });
+    const recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ threadId: "t-flux-budget", text: "hello" });
+    await recorder.until(event => event.type === "turn.completed");
+    recorder.stop();
+    const failure = recorder.events.find(event => event.type === "runtime.error");
+    expect(failure?.providerError?.fluxBudget).toBe(code === "key_budget_reached" ? true : undefined);
+    expect(calls).toBe(1);
   });
 
   it("a 402 turn reads the provider's reason under the plain line, with the key still masked", async () => {

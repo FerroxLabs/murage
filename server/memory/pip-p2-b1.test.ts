@@ -203,7 +203,9 @@ describe("PIP kind list", () => {
       // flow edges; a receipt's scopes for the footprint (disclosures.ts receiptLineageRef); U2 reads a cited record's state, kind and scope to
       // seed the receipts the RC held bad on content (+2); Astra audit P1 2: +5, the same receipts' cited records are asked for their derivation
       // ancestors' states and their evidence sources (ids, states and revisions). Scope ids and states only, never text.
-      "memory/lineage-backfill.ts": 11, "memory/disclosures.ts": 1,
+      // +1 scoped deletion: continuation dependencies seek cited records by id and version,
+      // returning conversation owner keys only. No record text is exposed and no PIP kind is enumerated.
+      "memory/lineage-backfill.ts": 11, "memory/disclosures.ts": 2,
       // Memory review lane (reviewed against I-15): review.ts lists waiting candidates with kind NOT IN PIP_ALL_KINDS_SQL and
       // every id+version lookup (keep, edit, undo) rejects isPipKind rows through candidateRow or reads an owner-keep receipt's
       // own record; review-eligibility.ts adds one point lookup of the pinned record a candidate supersedes, returning no text.

@@ -59,6 +59,56 @@ async function enterBrowser(codeProof?:"email"):Promise<Device> {
 }
 beforeAll(async()=>{const instrumentationSource="const path=await import('node:path'),url=await import('node:url');const controlFixture=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href);controlFixture.installVerificationControl("+JSON.stringify(origin)+","+JSON.stringify(cpKeyPem)+");";fixture=await launchVerificationServer({},undefined,{cloud:{publicOrigin:origin,bootstrapSecret:secret},instrumentationSource,readyTimeoutMs:60_000});environmentId=(await api("GET","/.well-known/murage/environment")).body.environmentId;owner=await pair("owner-desktop");phone=await pair("owner-phone",owner);browser=await enterBrowser("email");chatBrowser=await enterBrowser();},90_000);
 afterAll(async()=>{await fixture?.close();});
+
+it.each(["/api/chats", "/api/search?view=chats&q=preview"])("C2 audience at %s admits owner actions and refuses remembered browsers", async path => {
+  for (const device of [owner, phone]) {
+    const answer = await api("GET", path, undefined, device);
+    expect(answer.status).toBe(200);
+    expect(answer.body.gen).toMatchObject({ epoch: expect.any(String), rev: expect.any(Number) });
+  }
+  for (const device of [browser, chatBrowser]) {
+    const answer = await api("GET", path, undefined, device);
+    expect(answer.status).toBe(404);
+    expect(answer.body.gen).toBeUndefined();
+  }
+});
+
+it("C2 Cloud audience matrix agrees across both routes, hello, live and replay", async () => {
+  const { join } = await import("node:path");
+  const { openSse } = await import("./testing/sse.ts");
+  const { bumpChatsGen, readChatsGen } = await import("./thread-summary.ts");
+  const passkey = await enterBrowser("email");
+  const db = new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
+  db.prepare("UPDATE cloud_browser_factors SET kind='passkey', expiresAt=NULL WHERE device=?").run(passkey.deviceId);
+  const barrierBot=(await api("POST","/api/bots",{name:"Audience barrier"},owner)).body.bot;
+  const rows = [[owner,true],[phone,true],[passkey,true],[browser,false],[chatBrowser,false]] as const;
+  try {
+    for (const [device,admitted] of rows) {
+      const headers:Record<string,string> = {host:"home.example.test",origin,...(device.cookie ? {cookie:device.cookie} : {authorization:`Bearer ${device.accessToken}`})};
+      const stream = await openSse(fixture.info.url+"/api/events",headers);
+      try {
+        const hello = await stream.until(frame=>frame.kind==="hello");
+        expect(!!hello.chatsGen).toBe(admitted);
+        db.exec("BEGIN"); bumpChatsGen(db); db.exec("COMMIT"); const gen=readChatsGen(db);
+        for(const path of ["/api/chats","/api/search?view=chats&q=preview"]) expect((await api("GET",path,undefined,device)).status).toBe(admitted?200:404);
+        // The owner answer flushes publication even when this row was refused.
+        await api("GET","/api/chats",undefined,owner);
+        if(admitted) await stream.until(frame=>frame.kind==="chats.forgot" && frame.gen.rev===gen.rev);
+        const barrierName=`Audience barrier ${gen.rev}`;
+        await api("PATCH",`/api/bots/${barrierBot.id}`,{name:barrierName},owner);
+        await stream.until(frame=>frame.kind==="bot" && frame.bot?.name===barrierName);
+        const replay=await openSse(fixture.info.url+"/api/events?since="+encodeURIComponent(hello.cursor),headers);
+        try {
+          expect((await replay.until(frame=>frame.kind==="hello")).resumed).toBe(true);
+          await replay.until(frame=>frame.kind==="bot" && frame.bot?.name===barrierName);
+          if(admitted) await replay.until(frame=>frame.kind==="chats.forgot" && frame.gen.rev===gen.rev);
+          else { expect(stream.frames.some(frame=>frame.kind==="chats.forgot")).toBe(false); expect(replay.frames.some(frame=>frame.kind==="chats.forgot")).toBe(false); }
+        } finally {replay.close();}
+      } finally {stream.close();}
+    }
+  } finally {db.close();await api("DELETE",`/api/bots/${barrierBot.id}`,undefined,owner);}
+});
+
 describe("cloud sign-in at the actual HTTP dispatcher",()=>{
  it.each([["PATCH","/api/bots/fixture",{alwaysAllow:[]}],["POST","/api/bots/fixture/always-allow",{allowKey:"Bash(*)"}],["POST","/api/routines/fixture/always-allow",{allowKey:"Bash(*)"}],["POST","/api/teams/import",{team:{members:[{alwaysAllow:["Bash(*)"]}]}}],["POST","/api/packages/import",{action:"commit",agents:[{alwaysAllow:["Bash(*)"]}]}]] as const)("real dispatcher denies home grant writer %s %s",async(method,path,body)=>{
   expect((await api(method,path,body,owner,{"x-murage-step-up":await step(owner,method,path,body)})).status).toBe(403);

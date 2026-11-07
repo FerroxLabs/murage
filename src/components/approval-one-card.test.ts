@@ -43,7 +43,7 @@ const COMMAND = "npm run build && rm -rf dist/old && cp -r out dist";
 const COMMAND_HTML = COMMAND.replaceAll("&", "&amp;");
 const HELD = "This action may be destructive. Review it before allowing it.";
 const WHY = { key: "ux.l1.why.unreadCall", params: {} };
-const WHY_TEXT = "Murage could not read this whole, so it asks. Allow it once if it is right.";
+const WHY_TEXT = "Murage could not read all of this, so it asks. Allow it once if it is right.";
 const cls = (extra: Partial<CardClass>): CardClass => ({ reason: "stop-line", unattended: false, automated: false, keys: [], ...extra });
 const PUBLIC = {
   cardClass: cls({ stop: { kind: "message", public: true, placed: true, places: 1 }, keys: ["taskAllowKey", "allowKey"] }),
@@ -203,7 +203,8 @@ describe("(6) the composer hides the textarea while a card waits", () => {
   it("hides the textarea, the controls and the plus menu, and drops the pointer placeholders", () => {
     const composer = read("./Composer.tsx");
     expect(composer).toContain("hidden={Boolean(approval)}");
-    expect(composer).toMatch(/data-composer-controls className=\{cn\([^)]*approval && "hidden"\)\}/);
+    // TODAY's compact Tell box adds a class after it (its selector holds parentheses), so match to the end of the line
+    expect(composer).toMatch(/data-composer-controls className=\{cn\([^\n]*approval && "hidden"[^\n]*\)\}>/);
     expect(composer).toContain("phoneComposer && !locked && !approval && (");
     expect(composer).not.toContain("Answer the approval above to continue");
     expect(composer).not.toContain("Answer the requests above to continue");

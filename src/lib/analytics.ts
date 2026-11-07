@@ -140,6 +140,11 @@ function start(posthog: PostHog) {
     posthog.capture("app_first_open", { platform });
   }
   posthog.capture("app_opened", { platform });
+  // one app_active a day while in use (daily active installs); its own chunk, fetched with the library
+  void import("./analytics-active").then(
+    ({ watchActiveDays }) => watchActiveDays({ canSend: () => ready && analyticsEnabled(), send: () => client?.capture("app_active", { platform }) }),
+    () => { /* no daily count this session */ },
+  );
 }
 
 export function track(event: string, props?: Record<string, unknown>) {

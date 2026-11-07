@@ -1,0 +1,43 @@
+---
+title: Phone calls
+description: Let a bot phone a business for you, like booking a table, with your own Vapi account and number. Set up in Settings, Connected apps, Phone calls.
+icon: Phone
+---
+
+## Phone calls
+
+A bot can phone a business for you, for example to book a table or ask about opening hours. The call uses your own Vapi voice account and your own number, so the cost shows on your Vapi bill. Phone calls need the Murage desktop app.
+
+Set it up in **Settings → Connected apps → Phone calls**:
+
+1. Make a Vapi account and add a card.
+2. Get a number that can call out. Vapi's no-cost numbers only take incoming calls, so buy a number at Twilio or another carrier and import it in Vapi.
+3. Copy your Vapi private key into the card and press Save key. The key stays on this computer and never reaches a bot.
+4. Press Find my numbers and pick the number your bot calls from. Murage only reads your numbers and never dials during setup.
+
+If you get stuck, ask your bot to walk you through it.
+
+## Caller settings
+
+The Caller settings in the same card apply to every call:
+
+- **AI line**: the caller says it is an AI calling for you. In some places, such as the EU, the law expects this.
+- **Recording notice**: the caller says the call may be recorded.
+- **Call language**: a fixed language, or Auto to match the business.
+- **Longest call, in minutes**, and **Record call audio** (off unless you turn it on).
+
+Each save makes a new settings version. A scheduled call keeps the version it was placed with; the card says when scheduled calls use older settings.
+
+## How a bot places a call
+
+On your own turns, a bot on an engine with Murage tools gets two tools: `phone_call_place` to phone a number with a goal, details and limits, and `phone_call_result` to read how the call went. With Ask, you see every call on a card first, with the number, the goal, the language and the settings version. A web page, email or caller can try to steer a bot into making a call, so keep Ask on unless you are sure.
+
+Bots do not get the phone tools in automations, in project roles, or on turns from other people. A bot whose engine has no Murage tools says so and suggests switching to Fuigo or another engine with Murage tools.
+
+## Results and transcripts
+
+The bot gets only the outcome: the status, done or not done, a short reason, whether a reference was given, an agreed time, the length and the cost. It never gets the words the business said.
+
+Recent calls in the card show each call with its transcript, which only you see. Press Share transcript with bot to add it to your next message. You can cancel a scheduled call there, and View in Vapi opens the call in your Vapi dashboard.
+
+If you also add Vapi's own connector (MCP), calls made through it do not use these settings, and it never gets this key.

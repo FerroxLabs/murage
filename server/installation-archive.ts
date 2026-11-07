@@ -10,6 +10,7 @@ import { z } from "zod";
 import { stageInstallationStateWhileOwned, type StateSnapshotManifest } from "./installation-state-snapshot.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { InstallationSnapshotError, withOfflineInstallation } from "./installation-database-snapshot.ts";
+import { claimCopyScratch, sweepStaleCopyScratch } from "./settle-copy.ts";
 import { BACKUP_SKIP_REASONS, MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_BACKUP_MANIFEST_BYTES, MAX_LISTED_SKIPS } from "../shared/backup-limits.ts";
 import { publishNoReplace } from "./publish-file.ts";
 import { botNames } from "./backup-skipped-summary.ts";
@@ -282,7 +283,10 @@ export async function writeInstallationStageArchive(stage: { directory: string; 
   let completed: Promise<void> | undefined;
   const inputs = new Set<Readable>();
   try {
+    // a killed earlier run can leave raw, unsettled copies in this parent (SMOOTH-FTS-MERGE R6 section 3, stale scratch)
+    sweepStaleCopyScratch(parent);
     scratch = mkdtempSync(join(parent, ".murage-archive-write-"));
+    claimCopyScratch(scratch);
     const manifest = validateInstallationArchiveManifest({ ...stage.manifest, format: "murage.installation", files: stage.manifest.files.map(file => ({ ...file, path: file.path.replaceAll("\\", "/").normalize("NFC") })) }, options);
     const file = join(scratch, "backup.zip");
     writer = new ZipWriter();

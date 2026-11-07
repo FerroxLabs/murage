@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 import { Worker } from "node:worker_threads";
 import { inboxDeferredDrain, INBOX_FILL_MAX_HOLD_MS, type InboxDeferredSql } from "./inbox-fill-worker.ts";
 import { observeLine } from "./observe.ts";
@@ -9,6 +10,7 @@ import { INBOX_DECISION_STATUSES, INBOX_RUN_ON_CARD_STATUSES, INBOX_TO_READ_STAT
 import { redactSecretsInText } from "./redact.ts";
 import { type RoutineRunFact, connectionsToRestore, rollUpRoutineRuns } from "./inbox-rollup.ts";
 import { bumpMessagesVersion, messagesVersion } from "./inbox-version.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 
 /** The two status lists as SQL literals. Built from the shared constants so
  *  the query, the counts and the tabs cannot drift: a status added in one
@@ -497,7 +499,7 @@ const recordHighWater = (db: DatabaseSync) => db.prepare("INSERT OR REPLACE INTO
  *  The fill marker is written with the high-water rowid (see
  *  inboxProjectionHighWater), in the same transaction as the triggers. */
 function createInboxProjection(db: DatabaseSync): void {
-  db.exec("SAVEPOINT inbox_projection_init");
+  beginWrite(db, "inbox_projection_init");
   try {
     const layout = tableExists(db, "inbox_projection_state")
       ? (db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get() as { cursor: number } | undefined)?.cursor
@@ -512,9 +514,9 @@ function createInboxProjection(db: DatabaseSync): void {
       db.prepare("INSERT OR REPLACE INTO inbox_projection_state(name,done,cursor) VALUES('inbox',?,0)").run(empty ? 1 : 0);
       recordHighWater(db);
     }
-    db.exec("RELEASE inbox_projection_init");
+    endWrite(db, "inbox_projection_init");
   } catch (error) {
-    try { db.exec("ROLLBACK TO inbox_projection_init; RELEASE inbox_projection_init"); } catch { /* the connection is gone: nothing was committed */ }
+    try { undoWrite(db, "inbox_projection_init"); } catch { /* the connection is gone: nothing was committed */ }
     throw error;
   }
 }
@@ -961,7 +963,8 @@ function scope(access: InboxAccess) {
 }
 function item(row: Row, access: InboxAccess): InboxItem {
   const source = threadsById(access.threads).get(row.thread_id)!;
-  const message = JSON.parse(row.json);
+  // the checked row, typed as loosely as the JSON.parse it replaced: each field below is read with its own guard
+  const message: ReturnType<typeof JSON.parse> = rowToMessage({ json: row.json });
   const runId = row.kind === "routine.run" ? message.routineRun?.runId : row.kind === "goal.run" ? message.goalRun?.runId : undefined;
   const kind = row.kind === "options" ? "request" : row.kind === "secret" || row.kind === "connector" || row.kind === "mcpSignIn" ? "connection" : row.kind === "activity" ? "error" : row.kind === "routine.run" ? "routine" : row.kind === "text" ? "artifact" : "goal";
   const revision = version(row.json);
@@ -1055,6 +1058,8 @@ interface InboxData {
   rows: Row[]; next?: string; total: number; approvals: number; questions: number; connections: number; decisions: number; toRead: number;
   /** Owed items snoozed right now: taken off `decisions`, still owed (UX L2B, the badge counts them). */
   snoozedOwed: number;
+  /** Owed items of each segment snoozed right now: what "N snoozed" says on that segment's own tab. */
+  snoozedApprovals: number; snoozedQuestions: number;
   /** Connection cards snoozed right now: still the one ask for a lost connection, so no fallback restore row joins them. */
   snoozedConnections: number;
   questionThreads: Record<string, number>;
@@ -1103,6 +1108,14 @@ function cachedAnswer(db: DatabaseSync, key: string, now: number, load: () => In
   if (entries.size >= ENTRY_LIMIT) entries.delete(entries.keys().next().value as string);
   entries.set(key, data);
   return data;
+}
+
+/** Owed items snoozed right now on one segment tab (Approvals, Decisions, Connections); 0 on every other view. */
+function segmentSnoozed(view: string, data: Pick<InboxData, "snoozedApprovals" | "snoozedQuestions" | "snoozedConnections">): number {
+  if (view === "approvals") return data.snoozedApprovals;
+  if (view === "questions") return data.snoozedQuestions;
+  if (view === "connections") return data.snoozedConnections;
+  return 0;
 }
 
 function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now: number, cache: boolean): InboxPage {
@@ -1224,7 +1237,8 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
     const wake = (db.prepare(`SELECT MIN(snoozed_until) AS next FROM inbox_items INDEXED BY ${ix("inbox_items_snoozed")} WHERE snoozed_until IS NOT NULL AND snoozed_until>?`).get(now) as { next: number | null } | undefined)?.next;
     return { rows, ...(rows.length === pageSize ? { next: encodeCursor(rows[rows.length - 1]) } : {}), total,
       approvals: count("approvals"), questions: count("questions"), connections: count("connections"), decisions: count("decisions"), toRead: count("to_read"),
-      snoozedOwed: Math.max(0, less("decisions") - snoozedOnCard), snoozedConnections: Math.max(0, less("connections")), questionThreads, wakeAt: typeof wake === "number" ? wake : Infinity, filledAt: now };
+      snoozedOwed: Math.max(0, less("decisions") - snoozedOnCard), snoozedApprovals: Math.max(0, less("approvals")), snoozedQuestions: Math.max(0, less("questions") - snoozedOnCard),
+      snoozedConnections: Math.max(0, less("connections")), questionThreads, wakeAt: typeof wake === "number" ? wake : Infinity, filledAt: now };
   };
   const data = cache ? cachedAnswer(db, JSON.stringify([view, page, pageSize, search, includeSnoozed, allowed, labels, query.after ?? ""]), now, load) : load();
   const { rows, total } = data;
@@ -1277,6 +1291,9 @@ function inboxPage(db: DatabaseSync, query: InboxQuery, access: InboxAccess, now
     // SNOOZED IS NOT ANSWERED (UX L2B). Owed items snoozed right now are off `decisions` and every segment, and the
     // badge adds them back: this is the number to add. Present only when there is one, so other answers keep their shape.
     ...(data.snoozedOwed > 0 ? { snoozedOwed: data.snoozedOwed } : {}),
+    // FUNCTION-SWEEP-1018: a segment tab's "N snoozed" counts that segment only. It read `snoozedOwed`, so a snoozed
+    // question said "1 snoozed" on Approvals, where Show snoozed then showed nothing new.
+    ...(segmentSnoozed(view, data) > 0 ? { snoozedHere: segmentSnoozed(view, data) } : {}),
     // ONE ROW PER ROUTINE, NOT PER RUN, and only where it is asked for. The
     // owner's thirty six rows were four routines; the tab says "one line per
     // routine, not per run" and this is that sentence kept in data.

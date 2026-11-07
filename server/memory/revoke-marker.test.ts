@@ -351,9 +351,9 @@ it("A1/F2: deleting a conversation nothing was captured from writes its deny fac
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta").get()!.deletion_epoch);
   stopJobs();
   transaction(tx => captureThreadDeletion(tx, "X"));
-  // the commit: the conversation's deny fact (lessons.ts reads it for a message reference with no source row: S4), the epoch, the revoke
+  // The commit denies this conversation (including uncaptured lesson evidence) without moving the global epoch.
   expect(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id='X'").get()).toBeTruthy();
-  expect(Number(db.prepare("SELECT deletion_epoch FROM memory_meta").get()!.deletion_epoch)).toBe(epoch + 1);
+  expect(Number(db.prepare("SELECT deletion_epoch FROM memory_meta").get()!.deletion_epoch)).toBe(epoch);
   expect(count(db, "SELECT count(*) AS n FROM memory_revoke_jobs WHERE kind='thread' AND state='active'")).toBe(1);
   expect(verdict(db, "X", "xb")).toBe("withheld");
   expect(verdict(db, "Y", "y-1")).toBe("checking");

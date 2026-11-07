@@ -1,0 +1,38 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-STARTUP-SILENT-1018/repo
+
+ ❯ electron/startup-paint.test.mjs (4 tests | 2 failed) 22ms
+   × replacement waits for first paint past 15 seconds (visible=true) 5ms
+   × replacement waits for first paint past 15 seconds (visible=false) 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  electron/startup-paint.test.mjs > replacement waits for first paint past 15 seconds (visible=true)
+ FAIL  electron/startup-paint.test.mjs > replacement waits for first paint past 15 seconds (visible=false)
+AssertionError: 15 seconds without paint must not reveal a blank replacement
+
+true !== false
+
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ electron/startup-paint.test.mjs:79:10
+     77|   assert.equal(ctx.replaceMainWindow('gpu-lost'), true);
+     78|   for (const timer of timers.filter(t => t.ms <= 16000)) timer.fn();
+     79|   assert.equal(fresh.visible, false, '15 seconds without paint must no…
+       |          ^
+     80|   assert.equal(old.destroyed, false, 'retain the old window until its …
+     81|   assert.equal(old.visible, initiallyVisible);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 2 passed (4)
+   Start at  00:18:16
+   Duration  5.21s (transform 4.11s, setup 5.07s, import 8ms, tests 22ms, environment 0ms)
+
