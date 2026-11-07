@@ -7,6 +7,14 @@ import { precompressPlugin } from "./scripts/compress-dist.mjs";
 import { resolveBuildCommit } from "./scripts/build-commit.mjs";
 import { LINUX_HOME_TESTS } from "./server/testing/linux-home-tests";
 
+// WIN-BACKUP-RT-1018: the real Windows backup round trip runs only as a standard user. No Vitest process collects it
+// (full shards, scoped dispatches, a directory such as `server` or `.`, other workflows, local runs) unless it was
+// started by scripts/ci-windows-standard-user.ps1, the only place that sets MURAGE_TEST_STANDARD_USER_RT=1. The variable
+// only allows collection; the file's own first assertion (a token that is not elevated) still has to pass. This list
+// sits outside the test.exclude literal on purpose, so scripts/ci-test-tiers.mjs still classifies the file as a gate test.
+const STANDARD_USER_ONLY_TESTS = ["server/installation-windows-backup-roundtrip.test.ts"];
+const standardUserRun = process.env.MURAGE_TEST_STANDARD_USER_RT === "1";
+
 export default defineConfig({
   // The commit behind this build, for the About source link (null without git).
   define: { __MURAGE_COMMIT__: JSON.stringify(resolveBuildCommit()) },
@@ -26,8 +34,10 @@ export default defineConfig({
       "server/**/*.test.ts",
       "electron/**/*.test.mjs",
       "src/**/*.test.ts",
+      "src/components/BotSettingsLazy.test.tsx",
       "src/components/PhoneAccessCard.test.tsx",
       "src/components/PhoneForBotsRow.test.tsx",
+      "src/components/RoomShareCard.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
       "companion/**/*.test.ts",
@@ -36,7 +46,7 @@ export default defineConfig({
     // electron/signed-fetch.test.mjs is test support (imported by the node:test files), not a test: vitest finds no suite in it.
     // On Windows the Cloud home tests that drive its Linux-only pieces are left out (the reason and the list are in
     // server/testing/linux-home-tests.ts); every other OS runs them.
-    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : [])],
+    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : []), ...(standardUserRun ? [] : STANDARD_USER_ONLY_TESTS)],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win

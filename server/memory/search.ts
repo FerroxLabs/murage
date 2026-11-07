@@ -3,6 +3,7 @@ import { database } from "../database.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { authorityStamp } from "./authority-epoch.ts";
 import { denyGeneration } from "./deny-read.ts";
+import { learningDeletionEpoch } from "./deny.ts";
 import { plausiblyReadable, readableMemoryRecord, withReaderRule } from "./readable.ts";
 import { isLineageLimit } from "./replay-lineage.ts";
 import type { LineageAllowance } from "./lineage-allowance.ts";
@@ -183,10 +184,11 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const overTime=()=>performance.now()-serviceStarted>hydrationLimitMs;
   // A reader whose audience is not the owner is also judged on the lines its records rest on (disclosures.ts readerWithheldMessage), and
   // a receipt revoke or a marker commit can withhold one without moving data, policy or epoch: its stamp carries the authority stamp
-  // (undefined counts as moved) and the deny generation too (XTHREAD-JUDGE R5). An owner audience keeps the three-part stamp.
+  // (undefined counts as moved) and the deny generation too. The owner follows content withdrawals, including scoped thread
+  // deletion, but an audience-only receipt flip must not discard the owner's accepted words or exhaust its hydration budget.
   const audienceReader=!memoryAccessIsOwnerAudience(access);
   let unstamped=0;
-  const revisionStamp=()=>{const meta=database().prepare("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;const base=`${meta.data_revision}:${meta.policy_revision}:${meta.deletion_epoch}`;if(!audienceReader)return base;const authority=authorityStamp();const generation=denyGeneration(database());return `${base}|${authority===undefined||generation<0?`moved-${++unstamped}`:`${authority}|${generation}`}`;};
+  const revisionStamp=()=>{const meta=database().prepare("SELECT data_revision,policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;const base=`${meta.data_revision}:${meta.policy_revision}:${meta.deletion_epoch}`;if(!audienceReader)return `${base}|${learningDeletionEpoch(database())}`;const authority=authorityStamp();const generation=denyGeneration(database());return `${base}|${authority===undefined||generation<0?`moved-${++unstamped}`:`${authority}|${generation}`}`;};
   let stampAtAccept:string|null=null;
   let revalidationCut=false;
   /** Read `refs` (the ones not yet read), a slice at a time. Stops, flagged partial, at the hydration limit. */

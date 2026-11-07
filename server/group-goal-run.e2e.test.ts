@@ -902,7 +902,8 @@ describe("goal-driven channel runs", () => {
             message.text?.includes("This is unrelated direct work and should be stopped.")
           ),
         };
-      }).toEqual({ busy: true, directReplyStarted: true });
+        // starting the fixture's process is what this waits on, as the other waits for a new turn here do
+      }, { timeout: 10_000 }).toEqual({ busy: true, directReplyStarted: true });
 
       // The ordinary bot Stop belongs to the direct claim made above. The
       // coordinator is no longer an active participant in the waiting room
