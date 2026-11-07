@@ -20,3 +20,15 @@ export const BACKUP_UNAVAILABLE_SENTENCES: Readonly<Record<BackupUnavailableReas
 export const BACKUP_UNAVAILABLE_CODES: readonly string[];
 export function backupUnavailableCode(reason: unknown): string | null;
 export function reviewCaptureFailure(error: string | undefined): { stage: string; code: string };
+
+export type BackupWaitCause = "space" | "drive" | "busy" | "interrupted";
+export const BACKUP_WAIT_CAUSES: Readonly<Record<string, BackupWaitCause>>;
+export function backupWaitCause(code: unknown): BackupWaitCause | null;
+export function backupFailureClass(code: unknown): "wait" | "review";
+export const BACKUP_WAIT_TRIGGERS: Readonly<Record<BackupWaitCause, string>>;
+export function backupWaitDelayMs(attempts: number): number;
+export function backupSizeWords(bytes: unknown): string | null;
+export const BACKUP_WAIT_SENTENCES: Readonly<Record<BackupWaitCause | "spaceUnknown" | "data" | "dataUnknown", string>>;
+export function backupWaitSentence(wait: unknown): string;
+
+export function delayForStops(stops: number): number;

@@ -1,0 +1,63 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo
+
+ ❯ scripts/security-lockfiles.test.mjs (8 tests | 3 failed) 157ms
+   × pins the control-plane Vitest manifest to its workspace importer 4ms
+   × enforces workspace security floors throughout standalone apps/mobile 23ms
+   × enforces workspace security floors throughout standalone cloudflare/push-relay 26ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > pins the control-plane Vitest manifest to its workspace importer
+AssertionError: expected '^4.1.11' to be '4.1.12' // Object.is equality
+
+Expected: "4.1.12"
+Received: "^4.1.11"
+
+ ❯ scripts/security-lockfiles.test.mjs:75:19
+     73| it('pins the control-plane Vitest manifest to its workspace importer',…
+     74|   const version = json('cloudflare/control-plane/package.json').devDep…
+     75|   expect(version).toBe('4.1.12');
+       |                   ^
+     76|   expect(root.importers['cloudflare/control-plane'].devDependencies.vi…
+     77| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > enforces workspace security floors throughout standalone apps/mobile
+AssertionError: expected undefined to be '1.2.2' // Object.is equality
+
+- Expected:
+"1.2.2"
+
++ Received:
+undefined
+
+ ❯ scripts/security-lockfiles.test.mjs:90:38
+     88|       continue;
+     89|     }
+     90|     expect(data.overrides[selector]).toBe(workspace.overrides[selector…
+       |                                      ^
+     91|     expect(keys).toEqual([name + '@' + version]);
+     92|     expect(data.packages[keys[0]]).toEqual(root.packages[keys[0]]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  scripts/security-lockfiles.test.mjs > enforces workspace security floors throughout standalone cloudflare/push-relay
+TypeError: Cannot read properties of undefined (reading 'sharp')
+ ❯ scripts/security-lockfiles.test.mjs:90:26
+     88|       continue;
+     89|     }
+     90|     expect(data.overrides[selector]).toBe(workspace.overrides[selector…
+       |                          ^
+     91|     expect(keys).toEqual([name + '@' + version]);
+     92|     expect(data.packages[keys[0]]).toEqual(root.packages[keys[0]]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 5 passed (8)
+   Start at  16:25:04
+   Duration  6.56s (transform 4.77s, setup 5.98s, import 299ms, tests 157ms, environment 0ms)
+

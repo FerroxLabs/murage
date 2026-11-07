@@ -9,7 +9,8 @@ import { ArrowRight, Check, Lightbulb } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { NeedsSummary } from "@/components/shell/shell-contract";
-import type { TodayRow } from "@/lib/today-model";
+import type { DoneRow, TodayRow } from "@/lib/today-model";
+import { say } from "./say";
 
 const rowButton = "flex min-h-11 w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
 const smallButton = "min-h-11 shrink-0 rounded-lg border border-hairline/50 px-3 text-[13px] font-medium text-ink hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus";
@@ -101,6 +102,72 @@ export function TeamRow({ names, meta, onHire }: { names: string; meta: string; 
   return (
     <div className="flex items-center gap-3 px-2 py-2">
       <Line line={names} meta={meta} />
+      <button type="button" className={smallButton} onClick={onHire}>{t("ux.l2a.today.hire")}</button>
+    </div>
+  );
+}
+
+/** Done today (1.0.18): runs completed, failed or missed today, failed and missed first (doneToday). Title = the
+ *  routine's name; second line = the run's error or the generic line, else the output's first line, else who and
+ *  when. The arrow opens the Needs you results. `limit` is Calm's; Detailed (S4) passes Infinity. */
+export function DoneTodayCard({ rows, onOpen, onOpenResults, limit = 5, detailFor }: {
+  rows: readonly DoneRow[]; onOpen: (row: DoneRow) => void; onOpenResults: () => void; limit?: number;
+  /** Detailed (2b D2): the second line for a row; the row's own line (error or output) moves under it */
+  detailFor?: (row: DoneRow) => string;
+}) {
+  const shown = Number.isFinite(limit) ? rows.slice(0, Math.max(0, Math.floor(limit))) : rows;
+  return (
+    <TodayCard id="today-done" title={t("ux.l2a.today.done.title")} arrowLabel={t("ux.l2a.today.openResults")} onArrow={onOpenResults}>
+      {shown.length === 0 ? (
+        <p className="px-2 py-2 text-[13px] text-ink-secondary">{t("ux.l2a.today.done.empty")}</p>
+      ) : (
+        <ul>
+          {shown.map((row) => (
+            <li key={row.id}>
+              <button type="button" className={rowButton} onClick={() => onOpen(row)} data-done={row.status}>
+                <Mark tone={row.tone} />
+                {detailFor ? (
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] text-ink">{row.title}</span>
+                    <span data-done-detail="" className="block truncate text-[13px] text-ink-secondary">{detailFor(row)}</span>
+                    {row.line && <span className="block truncate text-[13px] text-ink-secondary">{say(row.line)}</span>}
+                  </span>
+                ) : (
+                  <Line line={row.title} meta={row.line ? say(row.line) : [row.botName, row.time].filter(Boolean).join(" · ")} />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rows.length > shown.length && (
+        <button type="button" data-done-more="" onClick={onOpenResults}
+          className="flex min-h-11 w-full items-center rounded-lg px-2 text-left text-[13px] font-medium text-accent-text hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+          {t("ux.l2a.today.done.more", { n: rows.length - shown.length })}
+        </button>
+      )}
+    </TodayCard>
+  );
+}
+
+export interface TeamChip { id: string; name: string; working: boolean }
+
+/** Your team as chips, a dot on each bot working now (1.0.18; replaces the joined names). Scrolls sideways on a phone. */
+export function TeamChips({ bots, onOpen, onHire }: { bots: readonly TeamChip[]; onOpen: (botId: string) => void; onHire: () => void }) {
+  return (
+    <div className="flex items-center gap-2 px-2 py-2">
+      <ul className="flex min-w-0 flex-1 flex-nowrap gap-2 overflow-x-auto md:flex-wrap">
+        {bots.map((bot) => (
+          <li key={bot.id} className="shrink-0">
+            <button type="button" onClick={() => onOpen(bot.id)} data-working={bot.working ? "" : undefined}
+              className="flex min-h-11 items-center gap-2 rounded-full border border-hairline/50 px-3 text-[13px] text-ink hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus">
+              <span aria-hidden="true" className={cn("size-2 rounded-full", bot.working ? "bg-success" : "bg-ink-secondary/40")} />
+              <span>{bot.name}</span>
+              {bot.working && <span className="sr-only">{t("ux.l2a.working.title")}</span>}
+            </button>
+          </li>
+        ))}
+      </ul>
       <button type="button" className={smallButton} onClick={onHire}>{t("ux.l2a.today.hire")}</button>
     </div>
   );

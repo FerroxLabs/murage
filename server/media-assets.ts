@@ -41,6 +41,7 @@ import {
 } from "../shared/media-assets.ts";
 import { isFileRevision, isWorkspaceRelativePath, isWorkspaceScopeRef, type WorkspaceScopeRef } from "../shared/workspace-files.ts";
 import { hiddenRoute, type DelegatedRequest, type DelegatedResult } from "./route-delegation.ts";
+import { workspaceImageMetadata, type WorkspaceImageMetadata } from "./workspace-image-structure.ts";
 import { workspaceRevisionOf } from "./workspace-revision.ts";
 
 export interface MediaAssetsDeps {
@@ -431,6 +432,12 @@ function locateWorkspace(ref: Extract<NormalizedRef, { source: "workspace" }>, d
   if (root === parse(root).root || (home !== undefined && (home === root || home.startsWith(root.endsWith(sep) ? root : root + sep)))) {
     return { ...located, outcome: { state: "denied" } };
   }
+  let dataRoot: string;
+  try { dataRoot = realpathSync.native(deps.dataDir); } catch { return { ...located, outcome: { state: "denied" } }; }
+  const inside = (parent: string, child: string) => child === parent || child.startsWith(parent + sep);
+  if (inside(root, dataRoot) || (inside(dataRoot, root) && !inside(join(dataRoot, "workspaces"), root))) {
+    return { ...located, outcome: { state: "denied" } };
+  }
   const parts = ref.relativePath.split("/");
   if (parts.some((part, index) => privateName(part, index === parts.length - 1))) return { ...located, outcome: { state: "denied" } };
   let canonicalStat: Stats;
@@ -519,11 +526,16 @@ async function readAt(handle: FileHandle, length: number, position: number): Pro
 // ---------------------------------------------------------------------------
 // In-memory asset registry and stream accounting
 
-interface RegistryEntry { ref: NormalizedRef; asset: MediaAsset; revision: string; path: string; fingerprint: string; expiresAt: number }
+interface RegistryEntry { ref: NormalizedRef; asset: MediaAsset; revision: string; path: string; fingerprint: string; expiresAt: number; imageMetadata?: Readonly<WorkspaceImageMetadata> }
 const registry = new Map<string, RegistryEntry>();
 let activeStreams = 0;
 
 function remember(assetId: string, entry: RegistryEntry, now: number): void {
+  if (entry.imageMetadata) {
+    const previous = registry.get(assetId)?.imageMetadata;
+    if (previous && JSON.stringify(previous) !== JSON.stringify(entry.imageMetadata)) throw new Error("Image metadata identity mismatch");
+    entry = { ...entry, imageMetadata: Object.freeze({ ...entry.imageMetadata }) };
+  }
   registry.delete(assetId);
   for (const [id, item] of registry) if (item.expiresAt + CLOCK_SKEW_MS <= now) registry.delete(id);
   registry.set(assetId, entry);
@@ -576,7 +588,8 @@ async function resolveAttachmentMedia(ref: AttachmentRef, deps: MediaAssetsDeps,
 
 async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: number, binding?: MediaCapabilityClaims["cloudSession"]): Promise<MediaResolveResponse> {
   if (ref.source === "attachment") return resolveAttachmentMedia(ref, deps, now, binding);
-  const assetId = mediaAssetIdFor(ref), located = locate(ref, deps, true), outcome = located.outcome;
+  let assetId = mediaAssetIdFor(ref);
+  const located = locate(ref, deps, true), outcome = located.outcome;
   // A non-ready answer never touches the registry: a stale revision from one
   // surface must not revoke a URL another surface holds, and the byte route
   // re-pins the file on every request anyway.
@@ -586,17 +599,26 @@ async function resolveMedia(ref: NormalizedRef, deps: MediaAssetsDeps, now: numb
   const expected = fingerprint(outcome.stat), handle = await openPinned(outcome.path, expected, outcome.observed);
   if (!handle) return { asset: descriptor(assetId, ref, located, "changed", undefined, outcome.stat.size) };
   let sniffed: SniffedMedia, revision = outcome.revision;
+  let imageMetadata: WorkspaceImageMetadata | undefined;
   try {
     sniffed = sniffMedia(await readAt(handle, Math.min(outcome.stat.size, MEDIA_SNIFF_BYTES), 0), outcome.stat.size);
+    if (ref.source === "workspace" && sniffed.supported && sniffed.kind === "image") {
+      imageMetadata = workspaceImageMetadata(await readAt(handle, outcome.stat.size, 0), sniffed.mime);
+      if (!imageMetadata) sniffed = { ...sniffed, supported: false, reason: "The image structure or decoded size is unsupported." };
+    }
     const after = await handle.stat();
     if (fingerprint(after) !== expected || fingerprint(lstatSync(outcome.path)) !== expected || (sniffed.supported && !revision)) {
       return { asset: descriptor(assetId, ref, located, "changed", undefined, outcome.stat.size) };
     }
   } finally { await handle.close().catch(() => undefined); }
   if (!sniffed.supported) return { asset: descriptor(assetId, ref, located, "unsupported", sniffed, outcome.stat.size, revision) };
-  const asset = descriptor(assetId, ref, located, "ready", sniffed, outcome.stat.size, revision);
+  if (imageMetadata && ref.source === "workspace") {
+    const { width, height, frameCount, decodedBytes } = imageMetadata;
+    assetId = `ma1_${mac("media-asset", JSON.stringify([ref.source, ref.scope.botId, ref.scope.threadId, ref.relativePath, "workspace-image-metadata-v1", width, height, frameCount, decodedBytes])).subarray(0, 24).toString("base64url")}`;
+  }
+  const asset = { ...descriptor(assetId, ref, located, "ready", sniffed, outcome.stat.size, revision), ...imageMetadata };
   const { token, expiresAt } = issueMediaCapability(assetId, revision!, now, binding);
-  remember(assetId, { ref, asset, revision: revision!, path: outcome.path, fingerprint: expected, expiresAt }, now);
+  remember(assetId, { ref, asset, revision: revision!, path: outcome.path, fingerprint: expected, expiresAt, imageMetadata }, now);
   return { asset, url: `${MEDIA_ROUTES.bytes}/${assetId}?${MEDIA_CAPABILITY_QUERY_PARAM}=${token}`, expiresAt };
 }
 
@@ -690,6 +712,23 @@ async function serveBytes(request: DelegatedRequest, deps: MediaAssetsDeps, asse
   if (outcome.state === "missing") return bytesError(410, "missing", "This media is no longer available.");
   if (outcome.state !== "ready" || outcome.path !== entry.path || fingerprint(outcome.stat) !== entry.fingerprint
     || (outcome.revision !== undefined && outcome.revision !== entry.revision)) return bytesError(409, "changed", "This media changed. Open it again.");
+  if (entry.ref.source === "workspace" && entry.imageMetadata && request.method !== "HEAD") {
+    if (activeStreams >= MEDIA_MAX_ACTIVE_STREAMS) return bytesError(503, "busy", "Too many media streams are open. Try again.", { "retry-after": "1" });
+    activeStreams++;
+    let handedOver = false;
+    try {
+      const bytes = await readPinnedMediaFile(outcome, MEDIA_IMAGE_MAX_BYTES);
+      if (!bytes) return bytesError(409, "changed", "This media changed. Open it again.");
+      const root = outcome.observed[0]![0];
+      const revision = workspaceRevisionOf(root, entry.ref.relativePath, outcome.stat, bytes);
+      const metadata = workspaceImageMetadata(bytes, entry.asset.mime);
+      if (!revision.ok || revision.revision !== entry.revision || !metadata || JSON.stringify(metadata) !== JSON.stringify(entry.imageMetadata)) return bytesError(409, "changed", "This media changed. Open it again.");
+      const result = snapshotResponse(request, entry, bytes);
+      handedOver = !!result.stream;
+      return result;
+    } catch { return bytesError(409, "changed", "This media changed. Open it again."); }
+    finally { if (!handedOver) activeStreams--; }
+  }
   const size = outcome.stat.size, etag = `"${entry.revision}"`;
   let range = parseByteRange(request.headers.range, size);
   const ifRange = request.headers["if-range"];
@@ -735,6 +774,18 @@ class SnapshotRangeStream extends Readable {
     if (!this.released) { this.released = true; activeStreams--; }
     callback(error);
   }
+}
+
+/** Pure response construction. Its caller owns reservation and every failed return. */
+function snapshotResponse(request: DelegatedRequest, entry: RegistryEntry, bytes: Buffer): DelegatedResult {
+  const size = bytes.length, etag = `"${entry.revision}"`;
+  let range = parseByteRange(request.headers.range, size);
+  if (request.headers.range !== undefined && request.headers["if-range"] !== undefined && request.headers["if-range"] !== etag) range = "full";
+  if (range === "unsatisfiable") return bytesError(416, "range-not-satisfiable", "Request one byte range inside the file.", { "accept-ranges": "bytes", "content-range": `bytes */${size}` });
+  const { start, end } = range === "full" ? { start: 0, end: size - 1 } : range;
+  const partial = range !== "full", length = size ? end - start + 1 : 0;
+  const headers = { ...BYTES_HEADERS, "content-type": entry.asset.mime, "accept-ranges": "bytes", etag, "content-disposition": contentDisposition(entry.asset.name), "content-length": String(length), ...(partial ? { "content-range": `bytes ${start}-${end}/${size}` } : {}) };
+  return { status: partial ? 206 : 200, headers, ...(length ? { stream: new SnapshotRangeStream(bytes, start, end) } : { bytes: new Uint8Array(0) }) };
 }
 
 /** An attachment's bytes: membership, then one bounded read whose digest

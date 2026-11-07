@@ -23,3 +23,26 @@ export const connectedAppAccessSchema = z.object({ revision: z.number().int().no
 export type AccessGrant = z.infer<typeof accessGrantSchema>;
 export type ConnectedAppAccess = z.infer<typeof connectedAppAccessSchema>;
 export interface PendingPermissionStatus { kind: "tool" | "question" | "peer" | "connection" | "access"; ageSeconds: number; blockedReason: "Waiting for owner review" | "Access request is stale" | "Access request expired" | "Connected apps are disabled"; }
+/** B43 grant presets: owner shortcuts that tick one account's checkboxes. A preset
+ * expands to explicit catalog slugs only (never `*`), and it never touches the
+ * bot-wide `allowWrites` switch: writes stay blocked by the relay until the owner
+ * turns that switch on. The owner still presses Save; the server checks as before. */
+export const GRANT_PRESETS = { read: "read", all: "all" } as const;
+export type GrantPreset = keyof typeof GRANT_PRESETS;
+type CatalogEntry = { readonly toolkit: string; readonly tool: string; readonly writes: boolean };
+/** `read` = every catalog tool of `toolkit` with `writes:false`; `all` = every tool of `toolkit`. */
+export function presetTools(toolkit: string, preset: GrantPreset, catalog: ReadonlyArray<CatalogEntry> = CONNECTED_APP_TOOLS): string[] {
+  return catalog.filter((entry) => entry.toolkit === toolkit && (preset === "all" || entry.writes === false)).map((entry) => entry.tool);
+}
+/** Sets one account's tools to exactly `tools`. Every row for that account is replaced
+ * by one row at the first row's place; an empty list REMOVES the row, because
+ * `accessGrantSchema` refuses `tools: []`. Other accounts' rows are left as they are. */
+export function withAccountTools(grants: readonly AccessGrant[], account: { toolkit: string; accountId: string }, tools: readonly string[]): AccessGrant[] {
+  const mine = (grant: AccessGrant) => grant.toolkit === account.toolkit && grant.accountId === account.accountId;
+  const at = grants.findIndex(mine);
+  const rest = grants.filter((grant) => !mine(grant));
+  if (!tools.length) return rest;
+  const row: AccessGrant = { toolkit: account.toolkit, accountId: account.accountId, tools: [...new Set(tools)] };
+  const place = at < 0 ? rest.length : grants.slice(0, at).filter((grant) => !mine(grant)).length;
+  return [...rest.slice(0, place), row, ...rest.slice(place)];
+}

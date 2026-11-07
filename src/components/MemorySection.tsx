@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { learningStillPaused } from "@/lib/learning-limit";
 import { useDesktopSurface } from "@/lib/use-surface";
 import { useAction } from "@/lib/use-action";
 import { openDeepLink } from "@/lib/deep-link";
@@ -22,7 +23,7 @@ interface SectionStatus {
   mode: MemoryStatus["mode"]; learning?: MemoryLearning; configuration: { extractorInstanceId: string | null }; extractors: MemoryStatus["extractors"];
   records?: MemoryStatus["records"]; recordsMore?: MemoryStatus["recordsMore"]; semantic?: MemoryStatus["semantic"];
 }
-type Work = () => Promise<void> | void;
+type Work = () => unknown | Promise<unknown>;
 
 /** A switch that reacts on the press, says when it is slow, and ends with a line saying what happened (or why it did not). */
 function ActionSwitch({ id, label, hint, checked, disabled = false, run, success, failure, settingControl }: { settingControl?: string; id: string; label: string; hint?: string; checked: boolean; disabled?: boolean; run: Work; success: string; failure?: string }) {
@@ -36,11 +37,16 @@ function ActionSwitch({ id, label, hint, checked, disabled = false, run, success
   </div>;
 }
 /** A button with the shared pending, slow, progress and result behaviour. */
-function ActionBtn({ label, pending = t("memoryPage.working"), run, success, failure, blocked = false, className = buttonClass, ...rest }: { label: string; pending?: string; run: Work; success: string | null; failure?: string; blocked?: boolean; className?: string; "aria-pressed"?: boolean; "aria-describedby"?: string; "aria-label"?: string }) {
-  const action = useAction(async () => { await run(); }, { idle: label, pending, success, failure: failure ?? t("memoryPage.didNotWork"), slowHint: t("memoryPage.stillWorking") });
-  return <ActionButton action={action} blocked={blocked} className={className} {...rest}>{label}</ActionButton>;
+function ActionBtn({ label, pending = t("memoryPage.working"), run, success, failure, pauseOnResult = false, blocked = false, className = buttonClass, ...rest }: { label: string; pending?: string; run: Work; success: string | null; failure?: string; pauseOnResult?: boolean; blocked?: boolean; className?: string; "aria-pressed"?: boolean; "aria-describedby"?: string; "aria-label"?: string }) {
+  const [stillPaused, setStillPaused] = useState(false);
+  const action = useAction(async () => { const result = await run(); if (pauseOnResult) setStillPaused(learningStillPaused(result)); return result; }, { idle: label, pending, success: pauseOnResult ? result => learningStillPaused(result) ? t("settings.l6.paused.title") : success ?? "" : success, failure: failure ?? t("memoryPage.didNotWork"), slowHint: t("memoryPage.stillWorking") });
+  return renderActionBtnResult(stillPaused, <ActionButton action={action} blocked={blocked} className={className} {...rest}>{label}</ActionButton>);
 }
-function ConnectionSelect({ value, options, run }: { value: string; options: ReactNode; run: (next: string) => Promise<void> | void }) {
+export function renderActionBtnResult(stillPaused: boolean, button: ReactNode) {
+  if (stillPaused) return <span role="status">{t("settings.l6.paused.title")}</span>;
+  return button;
+}
+function ConnectionSelect({ value, options, run }: { value: string; options: ReactNode; run: (next: string) => Promise<unknown> | unknown }) {
   const action = useAction(async (next: string) => { await run(next); }, { pending: t("memoryPage.saving"), success: t("memoryPage.connection.saved"), failure: t("memoryPage.saveFailed"), slowHint: t("memoryPage.stillSaving") });
   return <div className="space-y-1">
     <label className="block space-y-1">{t("memoryPage.connection.label")}<select data-setting-control="memory-connection-heading" className={`${memoryInputClass} min-h-11`} disabled={action.pending} aria-busy={action.pending} value={value} onChange={event => void action.run(event.target.value)}>{options}</select></label>
@@ -50,7 +56,7 @@ function ConnectionSelect({ value, options, run }: { value: string; options: Rea
 const millions = (tokens: number) => String(Math.round(tokens / 100_000) / 10);
 const parseMillions = (text: string): number | null => { const n = Number(text); return text.trim() !== "" && Number.isFinite(n) && n >= 0 && n <= 1_000_000 ? Math.round(n * 1_000_000) : null; };
 /** Change the monthly limit: two numbers in millions of tokens, saved with the learning revision. */
-function CeilingEditor({ ceiling, onSave, onCancel }: { ceiling: { input: number; output: number }; onSave: (next: { input: number; output: number }) => Promise<void> | void; onCancel: () => void }) {
+function CeilingEditor({ ceiling, onSave, onCancel }: { ceiling: { input: number; output: number }; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown; onCancel: () => void }) {
   const [read, setRead] = useState(millions(ceiling.input)), [written, setWritten] = useState(millions(ceiling.output));
   const input = parseMillions(read), output = parseMillions(written), valid = input !== null && output !== null;
   return <div className="mt-3 space-y-3 rounded-lg border border-hairline/40 p-3 text-[13px]">
@@ -81,8 +87,8 @@ interface ContentProps {
   /** Events whose skipped part has been retried: the row says so instead of offering Try again again. */
   retried?: ReadonlySet<string>; onRetried?(eventId: string): void;
   /** Runs one request. It resolves when the server has answered and throws a plain sentence when it refused. */
-  onAction(action: LearningAction): Promise<void> | void;
-  onFilter(botId: string): void; onMore(): Promise<void> | void; onOpen(source: LearningSource): void; onRefresh(): Promise<void> | void;
+  onAction(action: LearningAction): Promise<unknown> | unknown;
+  onFilter(botId: string): void; onMore(): Promise<unknown> | unknown; onOpen(source: LearningSource): void; onRefresh(): Promise<unknown> | unknown;
   /** Opens the page's Advanced and scrolls to the monthly limit. */
   onOpenAdvanced?(): void;
 }
@@ -127,7 +133,7 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
         {!learning || !settings ? <p role="status" className="mt-3 text-[13px] text-ink-secondary">{t("memoryPage.learningUnavailable")}</p> : <div className="mt-3 space-y-2">
           <p role="status">{memoryStatusLine({ mode: status.mode, learning, memories, memoriesMore: status.recordsMore?.active, waiting, semantic: status.semantic })}</p>
           {ceilingLine && <p className="flex flex-wrap items-center gap-2 text-ink-secondary">{ceilingLine.text}
-            {ceilingLine.follow === "raise" && <ActionBtn label={t("memoryPage.ceiling.raise")} pending={t("memoryPage.ceiling.raising")} blocked={busy} success={t("memoryPage.ceiling.raised")} failure={t("memoryPage.ceiling.raiseFailed")} run={() => onAction({ action: "configure", ceiling: raisedCeiling(ceiling!), learningRevision: learning.revision })} />}
+            {ceilingLine.follow === "raise" && <ActionBtn pauseOnResult label={t("memoryPage.ceiling.raise")} pending={t("memoryPage.ceiling.raising")} blocked={busy} success={t("memoryPage.ceiling.raised")} failure={t("memoryPage.ceiling.raiseFailed")} run={() => onAction({ action: "configure", ceiling: raisedCeiling(ceiling!), learningRevision: learning.revision })} />}
             {ceilingLine.follow === "advanced" && onOpenAdvanced && <button type="button" className={buttonClass} onClick={onOpenAdvanced}>{t("memoryPage.openAdvanced")}</button>}
           </p>}
         </div>}
@@ -184,7 +190,7 @@ export function MemorySectionContent({ status, bots, events, cursor, filter, bus
     {workspace}
   </div>;
 }
-function LimitCard({ ceiling, busy, onSave }: { ceiling: NonNullable<MemoryLearning["ceiling"]>; busy: boolean; onSave: (next: { input: number; output: number }) => Promise<void> | void }) {
+function LimitCard({ ceiling, busy, onSave }: { ceiling: NonNullable<MemoryLearning["ceiling"]>; busy: boolean; onSave: (next: { input: number; output: number }) => Promise<unknown> | unknown }) {
   const [editing, setEditing] = useState(false);
   const rows = [[t("memoryPage.limit.read"), ceiling.inputUsed, ceiling.input], [t("memoryPage.limit.written"), ceiling.outputUsed, ceiling.output]] as const;
   return <section aria-label={t("memoryPage.limit.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]">
@@ -258,6 +264,7 @@ export default function MemorySection({ advanced }: { advanced?: { section: Sett
       if (answer && typeof answer === "object" && "learning" in answer && "mode" in answer) { if (mounted.current) setStatus(answer as MemoryStatus); }
       if (action.action === "learning-keep" || action.action === "learning-undo") { await loadHistory(filter, undefined, true); if (mounted.current) setMemoryRevision(n => n + 1); }
       if (action.action === "retry-skipped") await loadHistory(filter, undefined, true);
+      return answer;
     } catch (cause) {
       // The slice was already retried (the server no longer lists it as skipped): that is the answer the person wanted, not a failure.
       if (action.action === "retry-skipped" && isAlreadyRetried(cause)) { await loadHistory(filter, undefined, true).catch(() => { if (mounted.current) setError(t("memoryPage.historyFailed")); }); return; }

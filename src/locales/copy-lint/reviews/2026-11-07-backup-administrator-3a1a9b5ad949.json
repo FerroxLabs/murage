@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "winrt-r4",
+  "date": "2026-11-07",
+  "base": "01009b6ce",
+  "scope": "Backup started as administrator",
+  "strings": {
+    "en:backup.stopped.administrator": {
+      "text": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Names the cause and recovery steps clearly, with the correct Windows command."
+    },
+    "de:backup.stopped.administrator": {
+      "text": "Murage läuft als Administrator, und Backups laufen nur, wenn Murage normal geöffnet wird, also beende Murage, öffne es ohne „Als Administrator ausführen“ erneut und versuche es dann noch einmal.",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, uses du, and names the Windows command correctly."
+    },
+    "es:backup.stopped.administrator": {
+      "text": "Murage se está ejecutando como administrador y las copias de seguridad solo funcionan cuando se abre de forma normal, así que cierra Murage, vuelve a abrirlo sin «Ejecutar como administrador» e inténtalo de nuevo.",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, uses tú, and names the Windows command correctly."
+    },
+    "fr:backup.stopped.administrator": {
+      "text": "Murage fonctionne en tant qu’administrateur, et les sauvegardes ne se lancent que lorsqu’il est ouvert normalement : quitte Murage, rouvre-le sans « Exécuter en tant qu’administrateur », puis réessaie.",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, uses tu, and names the Windows command correctly."
+    },
+    "hi:backup.stopped.administrator": {
+      "text": "Murage व्यवस्थापक के रूप में चल रहा है, और बैकअप तभी चलते हैं जब इसे सामान्य तरीके से खोला जाए, इसलिए Murage बंद करें, इसे “व्यवस्थापक के रूप में चलाएँ” के बिना फिर से खोलें, और फिर कोशिश करें।",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, uses respectful आप imperatives, and names the Windows command correctly."
+    },
+    "ja:backup.stopped.administrator": {
+      "text": "Murage は管理者として実行されています。バックアップは通常どおり開いたときだけ実行されるため、Murage を終了し、「管理者として実行」を使わずにもう一度開いてから、もう一度お試しください。",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, matches the polite register, and names the Windows command correctly."
+    },
+    "pt-br:backup.stopped.administrator": {
+      "text": "O Murage está sendo executado como administrador, e os backups só funcionam quando ele é aberto normalmente, então feche o Murage, abra-o de novo sem “Executar como administrador” e tente novamente.",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, uses você imperatives, and names the Windows command correctly."
+    },
+    "zh:backup.stopped.administrator": {
+      "text": "Murage 正以管理员身份运行，而备份只在正常打开 Murage 时运行，所以请退出 Murage，不使用“以管理员身份运行”重新打开它，然后重试。",
+      "en": "Murage is running as administrator, and backups only run when it is opened normally, so quit Murage and open it again without Run as administrator, then try again.",
+      "verdict": "pass",
+      "note": "Preserves the meaning, matches the register, and names the Windows command correctly."
+    }
+  },
+  "files": {}
+}

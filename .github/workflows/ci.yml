@@ -148,7 +148,7 @@ jobs:
       # has its own tests in electron/browser-extension-windows.node-test.mjs.
       - name: Murage for Chrome script tests
         if: matrix.os != 'windows-latest'
-        run: pnpm test:browser-extension-scripts
+        run: npm run test:browser-extension-scripts
       # installer/test/*.test.mjs (the installer's bind, pairing, systemd and
       # sidecar rules) ran in no job before; a failure here fails the run the
       # release-ci-gate reads. Ubuntu only: several files are about Linux hosts.
@@ -176,7 +176,7 @@ jobs:
     if: ${{ !inputs.human_files }}
     name: ${{ inputs.vitest_file && 'Scoped Vitest confirmation' || format('Vitest shard {0}/{1}', matrix.vitest_shard, matrix.os == 'windows-latest' && 12 || 10) }} (${{ matrix.os }})
     # Preserve the previous validator-before-tests ordering for scoped dispatch.
-    needs: quality
+    needs: []
     strategy:
       fail-fast: false
       matrix:
@@ -266,6 +266,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Git Bash is required' }
           $fixturePowerShell | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           $fixtureBash | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Stage the real Windows backup helper and pinned age.exe
+        # server/installation-windows-backup-roundtrip.test.ts takes a real encrypted backup on Windows through
+        # the product resolver, the native helper and the hash-pinned age.exe. Only the Authenticode check is
+        # replaced (a runner has no signed install). MURAGE_TEST_REQUIRE_WIN_BACKUP_RT makes the test fail, not skip,
+        # if this step's output is missing.
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          node scripts/prepare-windows-backup-tools.mjs
+          node scripts/build-backup-helper.mjs
+          tools="$(cygpath -w "$PWD/dist-native/backup-tools/win32-x64")"
+          for f in murage-backup-age.exe age.exe age-keygen.exe LICENSE; do test -s "dist-native/backup-tools/win32-x64/$f"; done
+          { echo "MURAGE_TEST_WIN_BACKUP_TOOLS=$tools"; echo "MURAGE_TEST_REQUIRE_WIN_BACKUP_RT=1"; } >> "$GITHUB_ENV"
       - name: Run Vitest shard
         if: inputs.vitest_file == ''
         shell: bash
@@ -280,7 +293,9 @@ jobs:
           SHARD: ${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}
         run: |
           case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
-          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" > "$RUNNER_TEMP/vitest-args.txt"
+          # The real Windows backup round trip runs as a standard user in its own step below, never in an elevated shard.
+          node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" \
+            --skip server/installation-windows-backup-roundtrip.test.ts > "$RUNNER_TEMP/vitest-args.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
           test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
           echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
@@ -295,6 +310,66 @@ jobs:
           echo "Scoped Vitest confirmation only: $VITEST_FILE"
           test_paths=(); while IFS= read -r test_path; do test_paths+=("$test_path"); done <<< "$VITEST_FILE"
           pnpm exec vitest run "${test_paths[@]}"
+      - name: Round trip as a standard Windows user
+        # server/installation-windows-backup-roundtrip.test.ts, and only that file. The backup helper refuses an elevated
+        # token (native/backup-age/transport.cpp:134, exit 72), as it does for a person who starts Murage with Run as
+        # administrator, and this runner's account is an elevated administrator. So the step makes a local standard
+        # user, runs the file as that user with Start-Process -Credential and fails with the test's own exit code. The
+        # password is random, made here, held only in a SecureString, never printed and never in a command line; the
+        # user is removed at the end. The file asserts the token is not elevated before anything else. Throwaway mutant
+        # branches set MURAGE_TEST_RT_MUTANT on this step (see the file's header); the workflow never does.
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' && matrix.vitest_shard == 1 }}
+        shell: powershell
+        timeout-minutes: 30
+        env:
+          MURAGE_TEST_RT_MUTANT: drop
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $user = 'murage-rt'
+          $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+          $bytes = New-Object byte[] 30
+          $rng.GetBytes($bytes)
+          $secret = New-Object System.Security.SecureString
+          foreach ($c in ('Rt7!' + [Convert]::ToBase64String($bytes)).ToCharArray()) { $secret.AppendChar($c) }
+          [Array]::Clear($bytes, 0, $bytes.Length)
+          $secret.MakeReadOnly()
+          New-LocalUser -Name $user -Password $secret -AccountNeverExpires -PasswordNeverExpires -Description 'CI standard user for the Windows backup round trip' | Out-Null
+          $code = $null
+          try {
+            if (-not (Get-LocalGroupMember -SID 'S-1-5-32-545' | Where-Object { $_.Name -like "*\$user" })) { Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user }
+            if (Get-LocalGroupMember -SID 'S-1-5-32-544' | Where-Object { $_.Name -like "*\$user" }) { throw "$user must not be an administrator" }
+            Write-Output "$user is a member of Users and not of Administrators"
+            if ((Get-Service seclogon).StartType -eq 'Disabled') { Set-Service seclogon -StartupType Manual }
+            Start-Service seclogon
+            $out = Join-Path $env:RUNNER_TEMP 'winrt'
+            New-Item -ItemType Directory -Force -Path $out | Out-Null
+            foreach ($dir in @($env:GITHUB_WORKSPACE, $env:TEMP, $out)) {
+              & icacls.exe $dir /grant "${user}:(OI)(CI)M" /C /Q | Out-Null
+              if ($LASTEXITCODE -ne 0) { throw "could not give $user access to $dir" }
+            }
+            $settings = Join-Path $out 'settings.json'
+            [ordered]@{
+              NODE = (Get-Command node.exe).Source; WORKSPACE = $env:GITHUB_WORKSPACE; TEMP = $env:TEMP; TMP = $env:TMP; CI = 'true'
+              MURAGE_TEST_WIN_BACKUP_TOOLS = $env:MURAGE_TEST_WIN_BACKUP_TOOLS; MURAGE_TEST_REQUIRE_WIN_BACKUP_RT = '1'; MURAGE_TEST_RT_MUTANT = [string]$env:MURAGE_TEST_RT_MUTANT
+            } | ConvertTo-Json | Set-Content -Encoding UTF8 -LiteralPath $settings
+            $credential = New-Object System.Management.Automation.PSCredential ($user, $secret)
+            $stdout = Join-Path $out 'vitest.out'
+            $stderr = Join-Path $out 'vitest.err'
+            $launcher = Join-Path $env:GITHUB_WORKSPACE 'scripts\ci-windows-standard-user.ps1'
+            $shell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $child = Start-Process -FilePath $shell -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', "`"$launcher`"", '-Settings', "`"$settings`"") `
+              -Credential $credential -LoadUserProfile -WorkingDirectory $env:GITHUB_WORKSPACE -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+            $handle = $child.Handle
+            $child.WaitForExit()
+            $code = $child.ExitCode
+            Get-Content -LiteralPath $stdout
+            Get-Content -LiteralPath $stderr
+          } finally {
+            Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
+          }
+          Write-Output "Standard-user round trip exit code: $code"
+          if ($null -eq $code) { throw 'the standard-user run gave no exit code' }
+          exit $code
 
   host-power-arm64:
     if: ${{ !inputs.windows_only && !inputs.human_files }}

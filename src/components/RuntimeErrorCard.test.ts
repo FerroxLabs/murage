@@ -235,7 +235,7 @@ describe("typed engine failures", () => {
     // failure." passes it, passes the render assertions below, and reproduces
     // exactly the contradiction this test exists to remove.
     expect(copy, "GOLDEN TEXT: before updating this pin, render the card WITH an engine message — `typed_error_data(None, fallback)` stamps `internal` WITH one, so that is the normal case — and read the explanation and the message together. The explanation must stay true when a reason is printed directly below it.")
-      .toBe("The engine did not classify this failure any further. Retry, and check the engine's own logs if it keeps happening.");
+      .toBe("The engine did not give this error a more specific type. Try again, and check the engine's own record of errors if it keeps happening.");
     const message = "upstream connection reset by peer after 3 attempts";
     const markup = render({ message, errorKind: "internal", details: `${message}\nEngine error kind: internal\n${code}` });
     expect(markup).toContain(rendered(copy));
@@ -299,7 +299,7 @@ describe("local setup failures", () => {
     expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.title"]!));
     expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.message"]!));
     expect(visible).toContain(rendered(en["runtimeError.local.windows-helper.resolution"]!));
-    expect(en["runtimeError.local.windows-helper.message"]).toBe("Claude needs Murage's Windows helper (murage-browser-host.exe) to start. If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Codex and Fuigo keep working.");
+    expect(en["runtimeError.local.windows-helper.message"]).toBe("Claude needs Murage's Windows helper (murage-browser-host.exe) to start. If your antivirus moved it to quarantine, restore it, or reinstall Murage. Then send your message again. Fuigo and Codex keep working.");
     expect(visible).not.toContain(code);
     expect(details).toContain(code);
     expect(markup).not.toMatch(providerAdvice);
