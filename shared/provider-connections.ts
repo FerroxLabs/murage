@@ -13,10 +13,13 @@ export interface ProviderModel {
   outputModalities: string[]; contextWindow?: number;
   pricing?: { inputPerMillion?: number; outputPerMillion?: number; source: string; updatedAt: number };
 }
-export type ProviderCatalogError = "unauthorized" | "forbidden" | "rate-limited" | "offline" | "invalid-catalog" | "unavailable" | "connection-changed" | "needs-sign-in";
+/** `payment` is the provider's HTTP 402 (ERRORS-NAME-THE-SERVICE): before 1.0.18 it fell into `unavailable` and the card said
+ * "try again later" to an account that needed payment. */
+export type ProviderCatalogError = "unauthorized" | "forbidden" | "payment" | "rate-limited" | "offline" | "invalid-catalog" | "unavailable" | "connection-changed" | "needs-sign-in";
 export interface ProviderCatalog {
   connectionId: string; models: ProviderModel[]; fetchedAt?: number; stale: boolean;
-  error?: { code: ProviderCatalogError; message: string };
+  /** `httpStatus` is the provider's own status when it answered (never set for a timeout or an unreachable address). */
+  error?: { code: ProviderCatalogError; message: string; httpStatus?: number };
   assurance: "catalog-only";
 }
 export interface PublicProviderConnection {

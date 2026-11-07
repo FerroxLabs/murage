@@ -339,7 +339,7 @@ test.afterAll(async () => {
 const questionCard = (page: Page) => page.getByRole("region", { name: /^Question from / }).last();
 const filesDialog = (page: Page) => page.getByRole("dialog", { name: "Files", exact: true });
 const pane = (page: Page) => page.getByTestId("workspace-pane");
-const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown source" });
+const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown text" });
 const lightbox = (page: Page) => page.getByTestId("image-lightbox");
 async function openConnectedApps(page: Page) {
   const sidebar = await openSidebar(page);
@@ -478,7 +478,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   await reportCard.getByRole("button", { name: "Open the working file outputs/sweep-report.md here" }).click();
   await expect(pane(page)).toBeVisible();
   await page.getByTestId("workspace-document-edit").click();
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("button", { name: "Markdown text", exact: true }).click();
   const edited = "# Weekly report\n\nEdited in the pane during smoke round 2.\n";
   await sourceBox(page).fill(edited);
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -790,7 +790,7 @@ test("04 RED2C: a turn whose own memory capture rolls the thread checkpoint is n
     await card.getByRole("button", { name: "Open the working file outputs/roll-notes.md here" }).click();
     await expect(pane(page)).toBeVisible();
     await page.getByTestId("workspace-document-edit").click();
-    await page.getByRole("button", { name: "Source", exact: true }).click();
+    await page.getByRole("button", { name: "Markdown text", exact: true }).click();
     const mine = "# Roll notes\n\nSaved by the owner right after the checkpoint-roll turn.\n";
     await sourceBox(page).fill(mine);
     await page.getByRole("button", { name: "Save", exact: true }).click();

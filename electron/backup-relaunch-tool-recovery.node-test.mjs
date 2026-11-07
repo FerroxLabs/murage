@@ -66,6 +66,10 @@ function toolOn(platform, root, events) {
   writeFileSync(executable, "fixture executable");
   const capability = createBackupToolCapability({ resourcesPath: resources, currentExecutable: executable, isUsable: () => check.usable, ...fast, ...options,
     onFailure: ({ failures }) => events.push(`failed ${failures}`), onReady: () => events.push("ready again") });
+  // The capability reads the platform once, when it is built. Everything else
+  // (the real coordinator's durable writes) runs on the real host: a simulated
+  // darwin on a Windows runner must not fsync a folder, which Windows refuses.
+  Object.defineProperty(process, "platform", descriptor);
   return { capability, check, restore: () => { capability.invalidate(); Object.defineProperty(process, "platform", descriptor); delete globalThis[key]; } };
 }
 

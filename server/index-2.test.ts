@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { openSse } from "./testing/sse.ts";
 import { connectorSystemPrompt, requiredAppsSystemPrompt } from "./composio.ts";
 import { redactSecretsInText } from "./redact.ts";
+import { backupRefusalMessage, BackupRefusedError } from "./limit-backup-gate.ts";
 import { parseBotPackage } from "./bot-package.ts";
 // This file fires many revokes within a minute (bots, rooms, language and skill changes). The revoke marker's per-minute write
 // budget (server/memory/revoke-budget.ts) has its own tests; here it is lifted in the server child, as revoke-bounded.test.ts lifts
@@ -1323,9 +1324,17 @@ describe("harness HTTP API", () => {
       const body = call[1]!.trim();
       if (body.startsWith("redactSecretsInText(")) continue;
       const before = indexSource.slice(Math.max(0, call.index! - 1500), call.index);
-      const defined = [...before.matchAll(new RegExp(`const ${body} = ([A-Za-z]+)\\(`, "g"))].at(-1)?.[1];
-      expect(["turnRefusedLine", "lateMemoryRefusalLine"], `turn-failed banner body ${body}`).toContain(defined);
+      // The whole definition is one of these, so no other operand can bring raw text in (U22 G20: a refused limit backup says which and
+      // why, from backupRefusalMessage, which passes only the gate's own line).
+      const definition = [...before.matchAll(new RegExp(`const ${body} = ([^;]+);`, "g"))].at(-1)?.[1] ?? "";
+      expect([
+        "(kind === \"not-started\" ? backupRefusalMessage(submissionBoundary.refusedWith) : undefined) ?? turnRefusedLine(engineNameOf(instance), kind)",
+        "lateMemoryRefusalLine(engine)",
+      ], `turn-failed banner body ${body}`).toContain(definition);
     }
+    expect(backupRefusalMessage(new Error("engine refused: Authorization: Bearer sk-live-raw"))).toBeUndefined();
+    expect(backupRefusalMessage(new BackupRefusedError("hidden", "Kimi is hidden in Settings, so it did not take over. Unhide it or pick another backup.")))
+      .toBe("Kimi is hidden in Settings, so it did not take over. Unhide it or pick another backup.");
     expect(redactSecretsInText("engine refused: Authorization: Bearer sk-ant-api03-AAAAAAAAAAAAAAAAAAAA"))
       .not.toContain("sk-ant-api03-AAAAAAAAAAAAAAAAAAAA");
   });

@@ -28,6 +28,21 @@ export function canScroll(el: { scrollHeight: number; clientHeight: number } | n
   return Boolean(el) && el!.scrollHeight - el!.clientHeight >= 1;
 }
 
+/** What an upward wheel or swipe reveals when the shown rows are too short to
+ * scroll: hidden tool steps can leave a window shorter than the pane, so no
+ * scroll event ever reaches the top and the reader is stuck. First the rows
+ * already held, then the server's older page; nothing when the pane scrolls
+ * (its scroll handler reads back) or there is nothing earlier. */
+export function shortTranscriptReveal(
+  el: { scrollHeight: number; clientHeight: number } | null | undefined,
+  hiddenCount: number,
+  hasMore: boolean,
+): "showEarlier" | "loadOlder" | null {
+  if (!el || canScroll(el)) return null;
+  if (hiddenCount > 0) return "showEarlier";
+  return hasMore ? "loadOlder" : null;
+}
+
 /** Whether the Jump to latest button has anywhere to take the reader: the pane
  * scrolls, or the mounted window stops short of the newest message. */
 export function jumpToLatestVisible(follow: boolean, scrollable: boolean, atLiveTail: boolean): boolean {

@@ -360,7 +360,16 @@ const RAW_READS: Record<string, number> = {
   // voice note it lists; only the note's audio leaves, for a caller who may read the conversation, never the row or its words to a bot.
   // 1.0.17 APPROVE-ALL (design 1): approveAllPreview reads each Approvals item's own card row (messageById on the item's link) to judge it
   // for the owner's confirm sheet; the card goes to the owner's own surface, never a row or its words to a bot.
-  "inbox.ts": 6, "index.ts": 79,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
+  // 1.0.18 VENUE-POST-1017: index.ts adds venuePostStored, the Post in… path's single by-id read (the owner's request line for requestStillShown,
+  // the post's own stable-id line for idempotency and boot recovery, Murage's held card to mark it answered); a boolean or an id leaves, never a
+  // row or its words to a bot.
+  // 1.0.18 APPROVALS-SIMPLE-1018 (5a2f08ba8, section 3, Astra r1 H4): withBulkStamp reads each Approvals request row's own card by its link
+  // (messageById) to stamp the owner's inbox row with the same Approve-all verdict the preview runs; only a reason key and a tool kind leave,
+  // to the owner's own Approvals list, never a row or its words to a bot.
+  // 1.0.18 CHROME-OWNER-NAMED-SITE A6 (bc4b4c016): ownerTurnInstruction reads the one message that started the running turn by its id
+  // (messageById) and keeps it only when it is the owner's own text with an owner origin; the server's browser decision reads its words to
+  // match a site the owner named, and only an id and a yes/no leave it, never a row or its words to a bot.
+  "inbox.ts": 6, "index.ts": 82,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
   // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
   "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
@@ -373,7 +382,12 @@ const RAW_READS: Record<string, number> = {
   // passes that one lookup through; message-db.ts artifactRowsBetween reads a routine run's own saved-file rows to list their Files ids on the
   // card. None hands a stored row's words to a bot.
   "routine-delivery.ts": 2,
-  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
+  // 1.0.18 SMOOTH-FTS T7: settle-copy.ts ORPHAN_IDS names `messages` only inside NOT EXISTS, to find search-index ids whose message is gone
+  // in a PRIVATE copy being settled (backup, damaged export, pre-prune snapshot). It returns index ids to delete, never a row or its words.
+  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "settle-copy.ts": 1, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
+  // C2 previews: one indexed leaf id, a LIMIT 1 existence probe, MAX(rowid) endpoint and a 100-row backfill page.
+  // Ancestor walks stop at 50; only the owner chat list reads summary text, never a bot-facing result.
+  "thread-summary.ts": 4,
   // 1.0.6 recall-forgotten (bb32902a5): thread_list's newestRememberedAt pages a thread's rowid, id, time and withheld stamp to find the newest
   // line the owner has not forgotten; only that time leaves, never a row or its words.
   "thread-recall.ts": 1, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,

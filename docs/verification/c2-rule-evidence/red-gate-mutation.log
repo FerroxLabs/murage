@@ -1,0 +1,198 @@
+
+ RUN  v4.1.10 /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+
+stderr | src/lib/chats-previews-browser.test.ts > ADDENDUM-1: blocked archived replacement stays hidden after main completes, restore, wake and late answers
+Pending [] DOM Back
+All chats· 60
+Bot
+Any
+Project or channel
+Any
+Direct chats only
+Date
+Any
+Today
+Past week
+Past month
+Custom range
+PinnedUnreadArchivedInclude routine runs
+Bots
+#A removed bot·Chat 09:22 PM2 chats
+#A removed bot·Chat 09:22 PM
+#A removed bot·Chat 19:22 PM
+Archived · 60
+
+stderr | src/lib/chats-previews-browser.test.ts > H4: mounted picker hit rows disappear synchronously while replacements are blocked
+Pending [ '/main' ] DOM No messages match “secret”.
+
+stderr | src/lib/chats-previews-browser.test.ts > H4: mounted matches hit rows disappear synchronously while replacements are blocked
+Pending [ '/main' ] DOM 
+
+ ❯ src/lib/chats-previews-browser.test.ts (36 tests | 14 failed | 15 skipped) 91573ms
+   × ADDENDUM-1: blocked archived replacement stays hidden after main completes, restore, wake and late answers 5585ms
+   × H4: mounted picker hit rows disappear synchronously while replacements are blocked 5744ms
+   × H4: mounted matches hit rows disappear synchronously while replacements are blocked 5518ms
+   × mounted StoreProvider handles generation during blocked hydration, Sidebar hides immediately, Stop unmount invalidates 30720ms
+   × mounted StoreProvider handles generation during blocked hydration, Sidebar hides immediately, Stop signout invalidates 30747ms
+   × RULE search holder picker preserves reconnect, drops changed rows, fails once and rejects late answers 652ms
+   × RULE search holder matches preserves reconnect, drops changed rows, fails once and rejects late answers 416ms
+   × RULE search holder sidebar preserves reconnect, drops changed rows, fails once and rejects late answers 811ms
+   × RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers 673ms
+   × RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers 731ms
+   × RULE first paint keeps metadata without proof and equal hello uses zero requests 367ms
+   × RULE list metadata survives lost proof, failed replacement and late restart answer 503ms
+   × RULE popup metadata survives lost proof, failed replacement and late restart answer 497ms
+   × RULE path 13 flat routine folds keep titles and marks while snippets are gated 565ms
+ ❯ src/lib/chats-gen.test.ts (11 tests | 1 failed | 8 skipped) 20ms
+   × RULE path 12 no response can borrow proof, and path 7 replay cannot advance hydration proof 6ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/lib/chats-gen.test.ts > RULE path 12 no response can borrow proof, and path 7 replay cannot advance hydration proof
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ src/lib/chats-gen.test.ts:68:28
+     66|   expect(chatsGenSnapshot().known).toEqual(A);
+     67|   chatsGenUnproven();
+     68|   expect(chatsEligible(A)).toBe(false);
+       |                            ^
+     69|   chatsGenHello(A);
+     70|   expect(chatsEligible(A)).toBe(true);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > ADDENDUM-1: blocked archived replacement stays hidden after main completes, restore, wake and late answers
+TimeoutError: page.waitForFunction: Timeout 5000ms exceeded.
+ ❯ answer src/lib/chats-previews-browser.test.ts:17:14
+
+ ❯ src/lib/chats-previews-browser.test.ts:28:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > H4: mounted picker hit rows disappear synchronously while replacements are blocked
+ FAIL  src/lib/chats-previews-browser.test.ts > H4: mounted matches hit rows disappear synchronously while replacements are blocked
+TimeoutError: page.waitForFunction: Timeout 5000ms exceeded.
+ ❯ answer src/lib/chats-previews-browser.test.ts:17:14
+
+ ❯ src/lib/chats-previews-browser.test.ts:60:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > mounted StoreProvider handles generation during blocked hydration, Sidebar hides immediately, Stop unmount invalidates
+ FAIL  src/lib/chats-previews-browser.test.ts > mounted StoreProvider handles generation during blocked hydration, Sidebar hides immediately, Stop signout invalidates
+TimeoutError: locator.textContent: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByRole('status')[22m
+
+ ❯ src/lib/chats-previews-browser.test.ts:144:41
+    142|   await page.evaluate(gen=>(window as any).fixture.stream({kind:"chats…
+    143|   expect(await page.locator("body").textContent()).not.toContain("side…
+    144|   expect(await page.getByRole("status").textContent()).toBe("Checking …
+       |                                         ^
+    145|   expect(await page.evaluate(()=>(window as any).fixture.snapshot().kn…
+    146|   await page.evaluate(()=>{const f=(window as any).fixture; f.raw(f.pe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder picker preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder matches preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder sidebar preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder palette preserves reconnect, drops changed rows, fails once and rejects late answers
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE search holder find preserves reconnect, drops changed rows, fails once and rejects late answers
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/lib/chats-previews-browser.test.ts:352:33
+    350|   const count=await page.evaluate(()=>(window as any).fixture.starts()…
+    351|   await page.evaluate(()=>(window as any).fixture.wake());
+    352|   expect(await shown().count()).toBe(0);
+       |                                 ^
+    353|   await page.evaluate(gen=>(window as any).fixture.hello(gen),A);
+    354|   await shown().waitFor();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE first paint keeps metadata without proof and equal hello uses zero requests
+AssertionError: expected 'BackAll chats· 60BotAnyProject or cha…' not to contain 'first paint secret'
+
+Expected: "first paint secret"
+Received: "BackAll chats· 60BotAnyProject or channelAnyDirect chats onlyDateAnyTodayPast weekPast monthCustom rangePinnedUnreadArchivedInclude routine runsBots#A removed bot·Chat 09:23 PM2 chats#A removed bot·Chat 0You: first paint secret9:23 PM#A removed bot·Chat 1You: first paint secret9:23 PM"
+
+ ❯ src/lib/chats-previews-browser.test.ts:383:56
+    381|   }
+    382|   await answer(page,'/main',A,'first paint secret');
+    383|   await page.getByText('Chat 0',{exact:true}).first().waitFor();
+       |                                                        ^
+    384|   expect(await page.locator('body').textContent()).not.toContain('firs…
+    385|   expect(await page.locator('body').textContent()).toContain('Checking…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE list metadata survives lost proof, failed replacement and late restart answer
+AssertionError: expected 'BackAll chats· 60BotAnyProject or cha…' not to contain 'protected secret'
+
+Expected: "protected secret"
+Received: "BackAll chats· 60BotAnyProject or channelAnyDirect chats onlyDateAnyTodayPast weekPast monthCustom rangePinnedUnreadArchivedInclude routine runsBots#A removed bot·Chat 09:23 PM2 chats#A removed bot·Chat 0You: protected secret9:23 PM#A removed bot·Chat 1You: protected secret9:23 PM"
+
+ ❯ src/lib/chats-previews-browser.test.ts:419:56
+    417|   await answer(page,path,A,'protected secret');
+    418|   await page.getByText('You: protected secret',{exact:true}).first().w…
+    419|   await page.evaluate(()=>(window as any).fixture.wake());
+       |                                                        ^
+    420|   expect(await page.locator('body').textContent()).not.toContain('prot…
+    421|   expect(await page.locator('body').textContent()).toContain(mode==='l…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE popup metadata survives lost proof, failed replacement and late restart answer
+AssertionError: expected 'Storm chat1SortLast activityCreatedAl…' not to contain 'protected secret'
+
+Expected: "protected secret"
+Received: "Storm chat1SortLast activityCreatedAllYoursRoutinesFrom other botsUnreadJanuary 1970Storm chatYou: protected secretJan 1, 1970Export conversation (Markdown)Current conversation only. Not an importable bot package. New chat"
+
+ ❯ src/lib/chats-previews-browser.test.ts:419:56
+    417|   await answer(page,path,A,'protected secret');
+    418|   await page.getByText('You: protected secret',{exact:true}).first().w…
+    419|   await page.evaluate(()=>(window as any).fixture.wake());
+       |                                                        ^
+    420|   expect(await page.locator('body').textContent()).not.toContain('prot…
+    421|   expect(await page.locator('body').textContent()).toContain(mode==='l…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/15]⎯
+
+ FAIL  src/lib/chats-previews-browser.test.ts > RULE path 13 flat routine folds keep titles and marks while snippets are gated
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ src/lib/chats-previews-browser.test.ts:465:72
+    463|   await page.getByText('routine secret',{exact:true}).first().waitFor(…
+    464|   await page.evaluate(()=>(window as any).fixture.wake());
+    465|   expect(await page.locator('body').textContent()).not.toContain('rout…
+       |                                                                        ^
+    466|   expect(await page.getByText('Routine title 0',{exact:true}).count())…
+    467|   expect(await page.getByLabel('Pinned',{exact:true}).count()).toBe(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/15]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  15 failed | 9 passed | 23 skipped (47)
+   Start at  21:22:14
+   Duration  98.59s (transform 4.76s, setup 5.81s, import 973ms, tests 91.59s, environment 0ms)
+

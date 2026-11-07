@@ -14,7 +14,8 @@ export interface TimelineMessage {
   role: "bot" | "user";
   kind: "text" | "options" | "activity" | "screen" | "connector" | "mcpSignIn" | "secret" | "routine.run" | "goal.run";
   text?: string;
-  tool?: { name: string; ok?: boolean };
+  /** unrecorded (1.0.18 U6 E15): the turn ended with the step still open, so it has no recorded end. */
+  tool?: { name: string; ok?: boolean; unrecorded?: boolean };
   png?: string;
   at: number;
 }
@@ -23,7 +24,7 @@ export interface TimelineEvent {
   id: string;
   at: number;
   label: string;
-  state: "running" | "complete" | "failed" | "observed";
+  state: "running" | "complete" | "failed" | "observed" | "unrecorded";
   kind: "task" | "tool" | "screen" | "result";
 }
 
@@ -71,7 +72,9 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         label: failed ? message.tool.name.replace(/^error:\s*/i, "") : message.tool.name,
         // An activity is appended at tool start and patched with its outcome.
         // Until that patch arrives, do not imply that the action succeeded.
-        state: failed ? "failed" : message.tool.ok === true ? "complete" : "running",
+        // 1.0.18 U6 E15: an open step whose turn has ended is "No result", never running; only the mark says so, so a
+        // live step (no mark) keeps "running".
+        state: failed ? "failed" : message.tool.ok === true ? "complete" : message.tool.unrecorded === true ? "unrecorded" : "running",
         kind: "tool",
       });
     } else if (message.kind === "screen") {
