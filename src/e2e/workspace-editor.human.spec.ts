@@ -197,12 +197,12 @@ async function scrolledToCard(page: Page, artifactId: string) {
   return card;
 }
 const tabNamed = (page: Page, name: string) => page.getByTestId("workspace-tab").filter({ has: page.getByRole("tab", { name: new RegExp(`^${name.replace(/\./g, "\\.")}`) }) });
-const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown source" });
+const sourceBox = (page: Page) => page.getByRole("textbox", { name: "Markdown text" });
 const fileStatus = (page: Page) => page.getByTestId("markdown-file-status");
 async function editInSource(page: Page, expected: string) {
   await page.getByTestId("workspace-document-edit").click();
   await expect(page.getByTestId("workspace-document")).toHaveAttribute("data-mode", "edit");
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("button", { name: "Markdown text", exact: true }).click();
   await expect(sourceBox(page)).toHaveValue(expected);
 }
 async function save(page: Page) {
@@ -443,7 +443,7 @@ test("after a restart the cards, the saved versions and the working file's curre
   await pane(page).getByRole("button", { name: "Open folder outputs", exact: true }).click();
   await pane(page).locator(`[data-workspace-path="${RELATIVE_PATH}"]`).getByRole("button", { name: "Edit weekly-report.md", exact: true }).click();
   await expect(page.getByTestId("workspace-document")).toHaveAttribute("data-mode", "edit");
-  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("button", { name: "Markdown text", exact: true }).click();
   await expect(sourceBox(page)).toHaveValue(MINE_2);
   await sourceBox(page).fill(AFTER_RESTART);
   await save(page);

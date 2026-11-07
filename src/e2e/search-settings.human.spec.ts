@@ -145,7 +145,7 @@ test("browser fallback saves provider separately and replaces or clears write-on
   expect(writes.at(-1)).toEqual({ webSearch: { tavilyApiKey: "" } });
   await expect(page.getByLabel("Search provider", { exact: true })).toHaveValue("tavily");
   await page.getByLabel("Search provider", { exact: true }).selectOption("off");
-  await expect(page.getByText(/Independent engine and MCP search tools may still be available/)).toBeVisible();
+  await expect(page.getByText(/Search tools provided separately by engines or connected tools \(MCP\) may still be available/)).toBeVisible();
   await expect(page.getByText(/Connected|Ready/, { exact: true })).toHaveCount(0);
 });
 

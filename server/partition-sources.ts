@@ -2,6 +2,7 @@ import { continuationResults, roomRequest, type RoomRequest } from "./room-reque
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import type { Message } from "./store.ts";
+import { rowToMessage } from "./transcript-seq.ts";
 import { projectRequestSourceMessages } from "./project-envelope.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { copyFieldsChanged } from "./message-copy-fields.ts";
@@ -59,7 +60,7 @@ export function partitionSourcesVerdict(db: DatabaseSync, botId: string, threadI
         if (!sameThreadPartition(bot, threadId, String(row.thread_id))) return "withheld";
         // every link a row carries is judged (copyOf, handoffOf, handoffFrom): each must resolve to a source in this partition, or the row is
         // withheld. A link that is present but malformed, or names a source that is not stored, does not resolve.
-        const stored = JSON.parse(String(row.json)) as Record<string, unknown>;
+        const stored = rowToMessage({ json: String(row.json) }) as unknown as Record<string, unknown>;
         if (!stored || typeof stored !== "object") return "withheld";
         const copy = stored.copyOf as { threadId?: unknown; messageIds?: unknown } | null | undefined;
         if (copy !== undefined && copy !== null) {
@@ -166,7 +167,7 @@ function readChain(db: DatabaseSync, copy: { threadId: string; messageIds: reado
       const row = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(group.threadId, id);
       if (!row) return false;
       try {
-        const stored = JSON.parse(String(row.json));
+        const stored = rowToMessage({ json: String(row.json) }) as unknown as { copyOf?: { threadId?: unknown; messageIds?: string[] } };
         const further = stored.copyOf;
         if (further) {
           if (typeof further.threadId !== "string" || !Array.isArray(further.messageIds) || !further.messageIds.every((m: unknown) => typeof m === "string")) return false;

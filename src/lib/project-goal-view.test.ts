@@ -35,7 +35,7 @@ it("formats goal-only usage, states, reported tokens and named missing engines w
   const lines = goalBudgetLines(budget,usage,[{id:"a",name:"Jax"}]);
   expect(lines).toContain("1 h 58 min of 2 h"); expect(lines).toContain("2.9M of 3.0M tokens"); expect(lines).toContain("80% used"); expect(lines).toContain("tokens not reported by Jax's engine");
   expect(lines.join(" ")).not.toMatch(/cost|spend|charge|[$£€]/i);
-  expect(goalBudgetLines({...budget,state:"paused"},usage,[])).toContain("Limit reached: stops starting new work at your limit");
+  expect(goalBudgetLines({...budget,state:"paused"},usage,[])).toContain("Limit reached: no new work starts");
   expect(goalBudgetLines(budget,{...usage,totals:{...usage.totals,tokensReported:false}},[]).join(" ")).not.toContain("2.9M");
 });
 

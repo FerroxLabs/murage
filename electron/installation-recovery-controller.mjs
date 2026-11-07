@@ -20,12 +20,14 @@ export function createInstallationRecoveryController(host) {
   };
   const canSeparate = () => host.canRestoreSeparate?.() === true;
   const canCapture = () => canSeparate() && host.canCaptureSeparate?.() === true;
-  const state = () => ({ busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes, ...(activationReview.report.notice ? { notice: activationReview.report.notice } : {}) } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
+  const allowed = () => host.updatePause?.() ? ["state", "diagnostics", ...(host.returnRevoked?.() ? [] : ["retry"])] : [...actions];
+  const state = () => ({ allowedActions:allowed(), busy, available: host.isAvailable(), encryptedAvailable:host.encryptedAvailable?.()===true, separateAvailable: canSeparate(), captureAvailable: canCapture(), retainedDataDirectory: host.retainedDestination?.() ?? null, selection: selection ? { id: selection.id, name: selection.name, encrypted:!!selection.encrypted, coverage:selection.preview.coverage, separate: !!selection.plan, destination: selection.plan?.dataDirectory, snapshotId: selection.preview.snapshotId, sha256: selection.preview.sha256, omittedCount: selection.preview.omittedCount, missingCount: selection.preview.missingCount } : null, review: activationReview ? { id: activationReview.id, snapshotId: activationReview.report.snapshotId, files: activationReview.report.files, bytes: activationReview.report.bytes, ...(activationReview.report.notice ? { notice: activationReview.report.notice } : {}) } : null, result, error, errorAction: error ? errorAction : null, errorPath: error ? errorPath : null, activationAvailable: !!activationReview });
 
   return {
     async handle(event, input) {
       authorize(event);
       if (!input || typeof input !== "object" || Array.isArray(input) || !actions.has(input.action) || Object.keys(input).some(key => key !== "action" && !(["restore", "restore-separate", "restore-encrypted-new"].includes(input.action) && key === "selectionId") && !(input.action === "activate" && key === "reviewId"))) throw new Error("INVALID_RECOVERY_REQUEST");
+      if (!allowed().includes(input.action)) return {...state(),error:"BACKUP_UPGRADE_ACTION_UNAVAILABLE"};
       if (input.action === "state") return state();
       if (busy) return { ...state(), error: "RECOVERY_BUSY" };
       if(input.action.includes("encrypted")&&host.encryptedAvailable?.()!==true)return{...state(),error:"BACKUP_UNAVAILABLE"};
@@ -60,7 +62,7 @@ export function createInstallationRecoveryController(host) {
             authorize(event);if(!host.isAvailable()||host.encryptedAvailable?.()!==true)throw new Error("RECOVERY_OWNERSHIP_REQUIRED");
             selection=null;result=await host.runEncryptedSeparate({archive:chosen.path,sha256:chosen.preview.sha256,readIdentity:chosen.readIdentity},chosen.plan);
             if(result?.status!=="restored-review-required"||result.activationAvailable!==false)throw new Error("INVALID_RECOVERY_PREVIEW");
-            await host.retry();
+            await host.relaunchAfterRestore();
           }
         }else if (input.action === "capture-separate") {
           selection = null;
@@ -73,7 +75,7 @@ export function createInstallationRecoveryController(host) {
           });
           authorize(event);
           if (result?.status !== "restored-review-required" || result.activationAvailable !== false) throw new Error("INVALID_RECOVERY_PREVIEW");
-          await host.retry();
+          await host.relaunchAfterRestore();
         } else if (input.action === "review-installation") {
           const report = await host.run("review", {});
           authorize(event);
@@ -89,7 +91,7 @@ export function createInstallationRecoveryController(host) {
             activationReview = null;
             result = await host.run("activate", { reviewHash: chosen.report.reviewHash, ...(chosen.report.notice ? { acknowledgedNotice: true } : {}) });
             if (result.status !== "reviewed-engines-disabled") throw new Error("INVALID_RECOVERY_PREVIEW");
-            await host.retry();
+            await host.relaunchAfterRestore();
           }
         } else if (["choose-backup", "choose-separate-backup"].includes(input.action)) {
           const separate = input.action === "choose-separate-backup";
@@ -121,7 +123,7 @@ export function createInstallationRecoveryController(host) {
             selection = null;
             result = separate ? await host.runSeparate({ archive: chosen.path, sha256: chosen.preview.sha256 }, chosen.plan)
               : await host.run("restore", { archive: chosen.path, sha256: chosen.preview.sha256 });
-            if (separate) { authorize(event); await host.retry(); }
+            if (separate) { authorize(event); await host.relaunchAfterRestore(); }
           }
         } else if (input.action === "rollback") {
           if (await host.confirm(event, "rollback")) {

@@ -233,7 +233,9 @@ export function startRecordKeysBuild(db: DatabaseSync, options: RecordKeysBuildO
     if (admission && !admission.admitted) { state = "waiting"; later(admission.retryInMs); return; }
     try { await admit(); } catch { /* a gate that fails holds nothing back */ }
     if (stopped) return;
-    if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; }
+    // a connection closed under the wait (shutdown, a restore) ends the build as stop() does, never an unhandled rejection; the next start carries on
+    try { if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; } }
+    catch { if (state === "waiting" || state === "building") state = "absent"; end(false); return; }
     // the write budget: a slice only when the minute has room for its least rows, and no more rows than the room holds
     let room: number;
     try { room = recordKeysRoom(db); } catch (error) { fail(error); return; }

@@ -19,6 +19,7 @@ function fixture(platform,arch,flat=false){
   const root=fs.mkdtempSync(path.join(os.tmpdir(),"murage-memory-artifact-"));roots.push(root);
   const server=path.join(root,"server"),runtimePath="node_modules/@huggingface/transformers/node_modules/onnxruntime-node",runtime=path.join(server,runtimePath),native=path.join(runtime,"bin/napi-v6",platform,arch);
   fs.mkdirSync(native,{recursive:true});fs.mkdirSync(path.join(server,"memory"),{recursive:true});
+  fs.writeFileSync(path.join(server,"browser-extension-panel-avatar-encoder.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"memory/worker.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"bot-package-guard-worker.js"),"// fixture module presence only\n");
   fs.writeFileSync(path.join(server,"engine-history-worker.js"),"// fixture module presence only\n");
@@ -143,4 +144,9 @@ it("requires the exact WebAssembly executor on every target, Intel macOS include
   await expect(validatePackagedMemoryRuntime(escaping.root,"linux","x64")).rejects.toThrow("escapes server resources");
   const version=fixture("linux","x64"),stale=JSON.parse(fs.readFileSync(version.manifest,"utf8"));stale.wasmBackend.version="1.26.0-dev";fs.writeFileSync(version.manifest,JSON.stringify(stale));
   await expect(validatePackagedMemoryRuntime(version.root,"linux","x64")).rejects.toThrow("differs from the native ONNX Runtime");
+});
+
+it("requires the panel avatar encoder helper in the packaged runtime", async () => {
+  const f=fixture("linux","x64");fs.unlinkSync(path.join(f.root,"server/browser-extension-panel-avatar-encoder.js"));
+  await expect(validatePackagedMemoryRuntime(f.root,"linux","x64")).rejects.toThrow("browser-extension-panel-avatar-encoder.js");
 });

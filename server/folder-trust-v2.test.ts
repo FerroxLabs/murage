@@ -354,7 +354,7 @@ describe("copy", () => {
   });
   it("the chosen chip names the owner's choice", () => {
     expect(folderTrustNotice(folderTrustChosenName(["AGENTS.md"]))).toEqual({ kind: "chosen", sources: "AGENTS.md" });
-    expect(folderTrustDisplayName(folderTrustChosenName(["AGENTS.md"]))).toBe("You chose to trust this folder: Fuigo brings in AGENTS.md as it applies that. Instructions apply in a new conversation in this folder");
+    expect(folderTrustDisplayName(folderTrustChosenName(["AGENTS.md"]))).toBe("You chose to trust this folder. Fuigo brings in AGENTS.md when applying your choice. Instructions apply in a new conversation in this folder");
   });
   it("(R8) the primer's folder line, on generation 2, claims neither way; generation 1's is untouched", () => {
     const stack = (line: string) => `before\n${line}\nafter`;
@@ -464,7 +464,7 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     await done(turnId);
     const wire = readDump();
     expect(wire.argv).not.toContain("--trust");
-    expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true, v2: true });
+    expect(wire.initialize.clientCapabilities._meta["fuigo/folderTrust"]).toEqual({ interactive: true, v2: true, reopenNotice: true });
     expect(replies()).toEqual([TRUST_REPLY]);
   });
 
@@ -700,6 +700,16 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     await instance!.adapter.interruptTurn("t-hold-stop");
     await done(turnId);
     expect(promptWritten("t-hold-stop")).toBe(false);
+  });
+  it("(Fuigo 1.0.40 reopenNotice) the engine's one config_notice after a grant mid-turn shows nothing more: Murage's chip appears once", async () => {
+    const K = join(scratch, "K");
+    await create({ FAKE_ACP_TRUST_WORKSPACE: K, FAKE_ACP_TRUST_ON_PROMPT: "1" });
+    await done(await send("t-reopen", { folderTrust: gate({ trustKeys: [K], sources: ["AGENTS.md"] }) }));
+    expect(replies()).toEqual([TRUST_REPLY]);
+    expect(readDump().reopenNoticeSent).toBe(1);
+    expect(chips()).toEqual([folderTrustChosenName(["AGENTS.md"])]);
+    const titles = recorder.events.filter((e) => e.type === "item.started").map((e) => String((e as any).title ?? ""));
+    expect(titles.filter((title) => /Reopen this session/i.test(title))).toEqual([]);
   });
   it("(card hold) a request after the prompt is written still takes the late path", async () => {
     await create({ FAKE_ACP_TRUST_PROMPT_FIRST: "1", FAKE_ACP_TRUST_ON_PROMPT: "1" });

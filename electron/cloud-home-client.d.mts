@@ -8,6 +8,8 @@ export interface CloudHomeClient {
   fetch(homeId: string, path: string, init?: CloudHomeFetchInit): Promise<Response>;
   /** Main-driven step-up for a write the home refused with 403 "step-up required": native confirm, sign over main's bytes, ONE retry. */
   stepUpRetry(homeId: string, path: string, init?: CloudHomeFetchInit): Promise<Response>;
+  /** Read-only lookup for an open step-up confirm: one GET with the in-memory token, never connects, refreshes or steps up. Parsed JSON or undefined. */
+  fetchHomeInfo(homeId: string, path: "/api/bots?messages=0", init?: { signal?: AbortSignal }): Promise<unknown>;
   pairedHomes(): Promise<{ homeId: string; origin: string }[]>;
   /** Pin + version + token check for the Cloud window's banner. Never throws. */
   status(homeId: string): Promise<{ ok: true } | { ok: false; code: string; message: string }>;
@@ -55,7 +57,7 @@ export function createCloudHomeClient(options: {
   cp?: unknown; cpEnvironment?: "staging" | "prod"; schedule?: (fn: () => void, ms: number) => unknown; now?: () => number; refreshAfterMs?: number; healthTtlMs?: number; requestTimeoutMs?: number;
   openExternal?: (url: string) => unknown; generateKeys?: () => any;
 }): CloudHomeClient;
-export function createNativeStepUpConfirm(options: { systemPreferences: unknown; dialog: unknown; platform?: string; getWindow?: () => unknown; resolveBotName?: (homeId: string, botId: string) => Promise<string | undefined> }): (input: { homeId?: string; method: string; path: string; body?: unknown }) => Promise<boolean>;
+export function createNativeStepUpConfirm(options: { systemPreferences: unknown; dialog: unknown; platform?: string; getWindow?: () => unknown; resolveBotName?: (homeId: string, botId: string, init: { signal: AbortSignal }) => Promise<string | undefined>; language?: string | (() => string | undefined); lookupMs?: number }): (input: { homeId?: string; method: string; path: string; body?: unknown }) => Promise<boolean>;
 export function buildDeviceRequest(keys: { sessionPublicKey: string; assertionPublicKey: string }): string;
 export function parseDeviceRequest(text: string): { scope: "owner-desktop"; publicKey: string; assertionKey: string };
 export function buildDeviceCodePackage(input: { homeId: string; homeOrigin: string; account: string; code: string }): string;
