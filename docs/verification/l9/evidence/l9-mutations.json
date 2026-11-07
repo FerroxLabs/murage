@@ -1,0 +1,32 @@
+[
+  {
+    "mutation": "b3-no-fix",
+    "exit": 1,
+    "test": "server/kimi-signin-probe.test.ts",
+    "pattern": "L9 B3\\(a\\)"
+  },
+  {
+    "mutation": "b2-return",
+    "exit": 1,
+    "test": "server/drivers/acp/kimi-signin.test.ts",
+    "pattern": "L9 B2/G1"
+  },
+  {
+    "mutation": "b2-log",
+    "exit": 1,
+    "test": "server/drivers/acp/kimi-signin.test.ts",
+    "pattern": "L9 B2/G1"
+  },
+  {
+    "mutation": "b4-gate",
+    "exit": 1,
+    "test": "server/drivers/acp/kimi-signin-regression.test.ts",
+    "pattern": "L9 B4/G6"
+  },
+  {
+    "mutation": "b5-expiry",
+    "exit": 1,
+    "test": "server/drivers/acp/kimi-signin-regression.test.ts",
+    "pattern": "L9 B5"
+  }
+]

@@ -9,6 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { registerOptionalIndex } from "./memory/optional-index.ts";
 import type { Message } from "./store.ts";
+import { checkStoredRow } from "./stored-row-check.ts";
 
 /** The index both probes and every numbered page read go through. */
 export const SEQ_INDEX = "messages_thread_seq";
@@ -19,18 +20,22 @@ export const SEQ_OPTIONAL_INDEX = registerOptionalIndex({ name: SEQ_INDEX, table
 /** The walk's row in transcript_index_state. */
 export const SEQ_STATE = "seq";
 
-/** The one decoder of a stored row: the JSON, with `seq` from the column (never from the JSON, which never holds it). */
+/** The one decoder of a stored row: the JSON, with `seq` from the column (never from the JSON, which never holds it), passed
+ * through checkStoredRow (U4 S3), so a row written raw into the file (a restore, a hand edit, an older build) reads back checked. */
 export function rowToMessage(row: { seq?: number | bigint | null; json: string }): Message {
-  const message = JSON.parse(row.json) as Message;
+  const message = checkStoredRow(JSON.parse(row.json) as Message);
+  // a damaged row that is not an object comes back as parsed, for the caller's own shape check
+  if (!message || typeof message !== "object") return message;
   if (row.seq === null || row.seq === undefined) delete message.seq;
   else message.seq = Number(row.seq);
   return message;
 }
 
-/** The JSON a row stores: the message without its `seq` (the column holds it). */
+/** The JSON a row stores: the message without its `seq` (the column holds it), passed through checkStoredRow (U4 S3). */
 export function storedJson(message: Message): string {
-  if (message.seq === undefined) return JSON.stringify(message);
-  const { seq: _seq, ...rest } = message;
+  const checked = checkStoredRow(message);
+  if (checked.seq === undefined) return JSON.stringify(checked);
+  const { seq: _seq, ...rest } = checked;
   return JSON.stringify(rest);
 }
 

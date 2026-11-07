@@ -14,7 +14,7 @@ it("only the exact authorized started deferred job can be retried",async()=>{
   await runMemoryEvolutionAction(request,status({authorized:true,job}),{action:"evolution-retry",jobId:"job"});expect(request).toHaveBeenCalledTimes(1);
 });
 it("a passed but unapplied result is not labelled applied",()=>{
-  expect(memoryEvolutionReason(status({job:{...job,status:"complete",decision:"accepted"}}))).toContain("application has not been recorded");
+  expect(memoryEvolutionReason(status({job:{...job,status:"complete",decision:"accepted"}}))).toContain("no record of the change being applied");
 });
 it("policy restore uses the exact refreshed revision and supports the built-in baseline",async()=>{
   const request=vi.fn().mockResolvedValueOnce({current:{revision:"current"},revisions:[{revision:"current",origin:"evaluated",createdAt:1},{revision:"old",origin:"rollback",rollbackOf:"baseline",createdAt:0}]}).mockResolvedValueOnce(status()),refresh=vi.fn(async()=>{}),source=memoryEvolutionHistorySource(request,refresh);

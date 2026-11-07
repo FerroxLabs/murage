@@ -146,6 +146,39 @@ export const VENUE_READ_TOOL = {
     limit: { type: "integer", minimum: 1, maximum: 50, description: "How many lines. Defaults to 20." },
   } },
 };
+/** VENUE-POST-1017: listed only on the turn the owner picked a room with Post in…; the harness decides every call from the turn's record. */
+export const VENUE_POST_TOOL = {
+  name: "venue_post",
+  description: "Post a message as yourself in the project or channel the owner picked with Post in… for this message. Use the venue_id (and venue_thread_id, if one was picked) the owner picked; any other room is refused. Write the post's words in text. Post only what the owner asked you to post.",
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  inputSchema: { type: "object", additionalProperties: false, required: ["venue_id", "text"], properties: {
+    venue_id: { type: "string", maxLength: 200, description: "The project or channel id the owner picked with Post in…." },
+    venue_thread_id: { type: "string", maxLength: 200, description: "The thread of that venue the owner picked. Omit for its main chat." },
+    text: { type: "string", minLength: 1, maxLength: 4000, description: "The words to post, 1 to 4,000 characters." },
+  } },
+};
+/** CROSS-CHAT-READ-1019 2.1: listed only on a member's turn in a room no person but the owner can reach; the harness re-checks every call. */
+export const ASK_OWNER_TO_SHARE_TOOL = {
+  name: "ask_owner_to_share",
+  description: "Ask the owner to bring something into this room from your own chats with them or your other rooms. Say what you are looking for. Murage finds the lines and shows them only to the owner; you do not see them. If the owner shares them, they appear in this room as the owner's message.",
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  inputSchema: { type: "object", additionalProperties: false, required: ["query"], properties: {
+    query: { type: "string", minLength: 1, maxLength: 200, description: "What you are looking for, in a few words." },
+    from: { type: "string", enum: ["my-chats", "my-rooms", "both"], description: "Where to look. Defaults to both." },
+  } },
+};
+/** The tool as listed on the turn: the owner's pick (the ids the harness recorded from the owner's own line) is named in its description,
+ *  so the bot posts where the owner picked without guessing among its rooms. Listing is presentation; server/venue-post.ts still refuses
+ *  any other venue (Q5b). */
+export function venuePostToolFor(pick: { venueId: string; venueThreadId?: string } | null): typeof VENUE_POST_TOOL {
+  if (!pick || typeof pick.venueId !== "string" || !pick.venueId) return VENUE_POST_TOOL;
+  const thread = typeof pick.venueThreadId === "string" && pick.venueThreadId ? ` and venue_thread_id ${JSON.stringify(pick.venueThreadId)}` : " (its main chat: omit venue_thread_id)";
+  return { ...VENUE_POST_TOOL, description: `${VENUE_POST_TOOL.description} For this message the owner picked venue_id ${JSON.stringify(pick.venueId)}${thread}.` };
+}
+/** The post tool's wire body: never a threadId or bot id (the harness reads both from the capability). */
+export const venuePostBody = (args: Record<string, unknown>): Record<string, unknown> => ({
+  venueId: args.venue_id, ...(args.venue_thread_id !== undefined ? { venueThreadId: args.venue_thread_id } : {}), text: args.text,
+});
 /** The venue tool's wire body: never a threadId (the harness reads the consuming thread from the capability). */
 export const venueReadBody = (args: Record<string, unknown>): Record<string, unknown> =>
   Object.fromEntries(Object.entries({ venueId: args.venue_id, venueThreadId: args.venue_thread_id, before: args.before, limit: args.limit }).filter(([, value]) => value !== undefined));

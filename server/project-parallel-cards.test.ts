@@ -369,10 +369,10 @@ function serverStop(name: string, deps: Record<string, unknown>) {
   expect(begin).toBeGreaterThan(0); expect(end).toBeGreaterThan(begin);
   const code = ts.transpileModule(source.slice(begin, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   // the owed asker wakes a bot Stop forgets (lane 0163-delegate-wake) are not under test here
-  const all: Record<string, unknown> = { askerWakes: { dropBot: () => {} }, dropHeldAskerWakes: () => {}, ...deps };
+  const all: Record<string, unknown> = { replyState: { invalidate: () => {} }, askerWakes: { dropBot: () => {} }, dropHeldAskerWakes: () => {}, ...deps };
   // a bot Stop also walks the bot's pending threads to drop their held wakes; this fixture holds none
   const store = all.store as Record<string, unknown> | undefined;
-  if (store && !("pendingThreadsFor" in store)) all.store = { ...store, pendingThreadsFor: () => [] };
+  if (store && !("pendingThreadsFor" in store)) all.store = { ...store, tasks: () => [], pendingThreadsFor: () => [] };
   return new Function(...Object.keys(all), code + `return ${name};`)(...Object.values(all));
 }
 it.each(["Stop all", "bot Stop"])("%s wiring drains live and backoff cards without replay or double release", async action => {

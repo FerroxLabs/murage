@@ -65,7 +65,7 @@ describe("when the owner last looked", () => {
 
 describe("the settings list", () => {
   it("shows the count on one row, and opening that section clears it", () => {
-    const dialog = read("../components/BotSettingsDialog.tsx");
+    const dialog = read("../components/BotSettingsPane.tsx");
     expect(dialog).toContain("useLearningBadge(bot.id, section === LEARNING_BADGE_SECTION)");
     expect(dialog).toContain("item.id === LEARNING_BADGE_SECTION && badgeText(newLearning)");
     expect(read("./learning-counts.ts")).toMatch(/if \(looking\) \{ writeSeen\(botId\); return; \}/);

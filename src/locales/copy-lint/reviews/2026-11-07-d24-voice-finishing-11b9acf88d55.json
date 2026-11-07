@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "d24-speech-snap",
+  "date": "2026-11-07",
+  "base": "81e08c356",
+  "scope": "D24 Prepare to reinstall: a voice reply still finishing",
+  "strings": {
+    "stepup/en:prepare.voiceFinishing": {
+      "text": "Murage is finishing a voice reply.",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Plain, calm and accurate."
+    },
+    "stepup/en:prepare.voiceFinishingDetail": {
+      "text": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Clearly states the wait and preserves the reassurance."
+    },
+    "stepup/en:prepare.quit": {
+      "text": "Quit",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Accurately labels the app quitting."
+    },
+    "stepup/de:prepare.voiceFinishing": {
+      "text": "Murage beendet gerade eine Sprachantwort.",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Naturally describes Murage finishing the reply."
+    },
+    "stepup/de:prepare.voiceFinishingDetail": {
+      "text": "Versuch es in {minutes} Min. noch einmal. Deine Chats und Erinnerungen sind unverändert.",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Matches the informal address and established terminology."
+    },
+    "stepup/de:prepare.quit": {
+      "text": "Beenden",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Standard label for quitting the app."
+    },
+    "stepup/es:prepare.voiceFinishing": {
+      "text": "Murage está terminando una respuesta de voz.",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Natural and faithful to the English."
+    },
+    "stepup/es:prepare.voiceFinishingDetail": {
+      "text": "Vuelve a intentarlo en {minutes} min. Tus chats y recuerdos siguen como estaban.",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Matches the informal address and vocabulary used in the app."
+    },
+    "stepup/es:prepare.quit": {
+      "text": "Salir",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Clearly labels the app quitting."
+    },
+    "stepup/fr:prepare.voiceFinishing": {
+      "text": "Murage termine une réponse vocale.",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Brief, natural and accurate."
+    },
+    "stepup/fr:prepare.voiceFinishingDetail": {
+      "text": "Réessaie dans {minutes} min. Tes discussions et tes souvenirs n'ont pas changé.",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Uses the established informal address and app terminology."
+    },
+    "stepup/fr:prepare.quit": {
+      "text": "Quitter",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Standard label for quitting the app."
+    },
+    "stepup/hi:prepare.voiceFinishing": {
+      "text": "Murage एक आवाज़ वाला जवाब पूरा कर रहा है।",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Clearly describes Murage completing a voice reply."
+    },
+    "stepup/hi:prepare.voiceFinishingDetail": {
+      "text": "{minutes} मिनट बाद फिर से कोशिश करें। आपकी चैट और यादें पहले जैसी हैं।",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Matches the respectful address and established app vocabulary."
+    },
+    "stepup/hi:prepare.quit": {
+      "text": "बंद करें",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Naturally labels closing the app."
+    },
+    "stepup/ja:prepare.voiceFinishing": {
+      "text": "Murage は音声の返信を仕上げています。",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Politely and naturally describes the reply being finished."
+    },
+    "stepup/ja:prepare.voiceFinishingDetail": {
+      "text": "{minutes} 分後にもう一度お試しください。チャットとメモリはそのままです。",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Sol's replacement text, applied exactly (the app's established メモリ spelling)."
+    },
+    "stepup/ja:prepare.quit": {
+      "text": "終了",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Standard label for quitting the app."
+    },
+    "stepup/pt-br:prepare.voiceFinishing": {
+      "text": "O Murage está terminando uma resposta por voz.",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Natural, calm and faithful to the English."
+    },
+    "stepup/pt-br:prepare.voiceFinishingDetail": {
+      "text": "Tente de novo em {minutes} min. Suas conversas e memórias continuam como estavam.",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Matches the owner address and established app terminology."
+    },
+    "stepup/pt-br:prepare.quit": {
+      "text": "Sair",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Clearly labels the app quitting."
+    },
+    "stepup/zh:prepare.voiceFinishing": {
+      "text": "Murage 正在完成一条语音回复。",
+      "en": "Murage is finishing a voice reply.",
+      "verdict": "pass",
+      "note": "Clearly describes Murage finishing a voice reply."
+    },
+    "stepup/zh:prepare.voiceFinishingDetail": {
+      "text": "请在 {minutes} 分钟后再试。你的聊天和记忆都保持原样。",
+      "en": "Try again in {minutes} min. Your chats and memories are as they were.",
+      "verdict": "pass",
+      "note": "Matches the owner address and established app terminology."
+    },
+    "stepup/zh:prepare.quit": {
+      "text": "退出",
+      "en": "Quit",
+      "verdict": "pass",
+      "note": "Standard label for quitting the app."
+    }
+  },
+  "files": {}
+}

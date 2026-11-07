@@ -213,6 +213,12 @@
         "43dcf0abd9a7b67f": "if (ctx.windowsBash && (windowsRunner === \"interpreter\" || windowsRunner === \"launch",
         "c2b2989bcf2825a7": "if (ctx.windowsForeign && (powershellRunner(name) === \"interpreter\" || interpreterKey(name) !== undefined)) throw new Unreadable(\"pwsh\", `${name} reached throug"
       }
+    },
+    "server/drivers/muse-code.ts": {
+      "reason": "label: marks a Muse Code shell ask on Windows as written for PowerShell (commandShell 'pwsh') so the approval readers judge it in that dialect; Muse runs its own shell, this line starts nothing",
+      "lines": {
+        "ccbd3a95be838c7e": "...(shell !== undefined && process.platform === \"win32\" ? { commandShell: \"pwsh\" } : {}),"
+      }
     }
   },
   "user_terminal": {
