@@ -89,3 +89,15 @@ it("records a redistribution row for every preinstalled engine CLI", () => {
 it("never uses grep -q pipes", () => {
   expect(build).not.toMatch(/\|\s*grep\s+(-\w*\s+)*-\w*q/);
 });
+
+it("captures model support from the exact pinned artifacts and gates Claude at that build", async () => {
+  const evidence = JSON.parse(readFileSync(new URL("../../docs/verification/model-defaults-artifacts.json", import.meta.url), "utf8"));
+  const { CLAUDE_MIN_VERSION } = await import("../drivers/claude-guards.ts");
+  expect(evidence.codex.version).toBe(PINS[1][1]);
+  expect(evidence.codex.archiveSha256).toBe(PINS[1][2]);
+  expect(evidence.codex.catalogRow).toMatchObject({ slug: "gpt-6.1-sol", visibility: "list", supported_in_api: true });
+  expect(evidence.claude.version).toBe(PINS[0][1]);
+  expect(evidence.claude.binarySha256).toBe(PINS[0][2]);
+  expect(evidence.claude.embeddedSourceExcerpt).toContain("claude-sonnet-5-5");
+  expect(CLAUDE_MIN_VERSION).toBe(evidence.claude.version);
+});

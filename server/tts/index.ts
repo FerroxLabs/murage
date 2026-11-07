@@ -1,3 +1,4 @@
+import type { SpeechPolicy } from "./speech-policy.ts";
 // Voice, wired to config. Four engines live behind this file: Flux
 // (flux-speech.ts, on the workspace's Flux key, the default when no other
 // engine was chosen), ElevenLabs (elevenlabs.ts, the owner's own key) and
@@ -13,8 +14,9 @@ import type { AppConfig } from "../config.ts";
 import * as elevenlabs from "./elevenlabs.ts";
 import * as fluxSpeech from "./flux-speech.ts";
 import * as xaiSpeech from "./xai-speech.ts";
-import { pronounceable } from "./speech-text.ts";
-import { clearUnavailable, isUnavailable, markUnavailable, resetUnavailable, type VoiceEndpoint, type VoicePart } from "../voice/voice-routes.ts";
+import { compileSpeechSource, MAX_SOURCE_BYTES } from "./speech-source.ts";
+import { clearUnavailable, isBudgetReached, isUnavailable, markBudgetReached, markUnavailable, resetUnavailable, type VoiceEndpoint, type VoicePart } from "../voice/voice-routes.ts";
+export { SpeechBudgetReached } from "./flux-speech.ts";
 
 /** Where hosted speech runs (Flux, or an own OpenAI key) and which provider
  *  serves each part of a call. Injected by the harness, which owns the model
@@ -135,15 +137,20 @@ async function fluxElevenVoices(): Promise<elevenlabs.Voice[]> {
  *  in the Flux list's default voice rather than going silent. A preview is
  *  `exact`: it says why instead, since a sample in some other voice would
  *  answer a question nobody asked. */
-async function speakFluxEleven(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean, exact: boolean): Promise<elevenlabs.Clip> {
+async function speakFluxEleven(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean, exact: boolean, policy: SpeakOptions = {}): Promise<elevenlabs.Clip> {
+  policy.signal?.throwIfAborted();
   const flux = fluxElevenRoute();
   if (!flux) {
     // hosted speech on an own OpenAI key: no Flux to reach these voices
     if (exact) throw new Error("ElevenLabs voices in this list speak through Flux. Add a Flux key in Settings to hear them.");
-    return speakHosted(text, voice, run, streamed);
+    return speakHosted(text, voice, run, streamed, policy);
   }
   // what Flux's voice list already said for this key, when it has been read
   const known = knownElevenCatalog(flux);
+  if (isBudgetReached(flux)) {
+    if (exact) throw new fluxSpeech.SpeechBudgetReached();
+    return speakPastBudget(text, run, policy);
+  }
   if (isUnavailable(flux) || known?.status === "notOnKey") {
     if (exact) throw new fluxSpeech.ElevenNotOnKey(fluxSpeech.ELEVEN_NOT_ON_KEY);
   } else if (known?.status === "locked") {
@@ -152,26 +159,39 @@ async function speakFluxEleven(text: string, voice: string, run: systemVoices.Ru
     if (exact) throw new fluxSpeech.ElevenVoiceNotOffered(`Flux no longer offers the ElevenLabs voice ${voice}. Pick another voice.`);
   } else {
     try {
-      return await fluxSpeech.synthesizeClip(text, voice, flux, streamed);
+      return await fluxSpeech.synthesizeClip(text, voice, flux, streamed, fetch, undefined, policy);
     } catch (error) {
+      policy.signal?.throwIfAborted();
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(flux);
+        if (exact) throw error;
+        return speakPastBudget(text, run, policy);
+      }
       if (error instanceof fluxSpeech.ElevenNotOnKey) markUnavailable(flux);
       else if (!(error instanceof fluxSpeech.ElevenRefused)) throw error;
       if (exact) throw error;
     }
   }
   // the rest of the Flux list, in its own default voice
-  return speakFluxGrok(text, DEFAULT_GROK_VOICE, run, streamed);
+  return speakFluxGrok(text, DEFAULT_GROK_VOICE, run, streamed, policy);
 }
 
 /** xAI's voices: on the owner's own xAI key when there is one, else on
  *  their Flux key through Flux's xAI alias. */
-async function speakXai(text: string, voice: string | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
+async function speakXai(text: string, voice: string | undefined, streamed: boolean, policy: SpeakOptions = {}): Promise<elevenlabs.Clip> {
+  policy.signal?.throwIfAborted();
   const own = xaiRoute();
   const flux = own ? null : fluxGrokRoute();
-  if (!flux || isUnavailable(flux)) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
+  if (flux && isBudgetReached(flux)) return speakPastBudget(text, undefined, policy);
+  if (!flux || isUnavailable(flux)) return xaiSpeech.synthesizeClip(text, voice, own, streamed, fetch, policy);
   try {
-    return await fluxSpeech.synthesizeClip(text, voice ?? DEFAULT_GROK_VOICE, flux, streamed);
+    return await fluxSpeech.synthesizeClip(text, voice ?? DEFAULT_GROK_VOICE, flux, streamed, fetch, undefined, policy);
   } catch (error) {
+      policy.signal?.throwIfAborted();
+    if (error instanceof fluxSpeech.SpeechBudgetReached) {
+      markBudgetReached(flux);
+      return speakPastBudget(text, undefined, policy);
+    }
     if (error instanceof fluxSpeech.SpeechUnavailable) markUnavailable(flux);
     throw error;
   }
@@ -180,31 +200,48 @@ async function speakXai(text: string, voice: string | undefined, streamed: boole
 /** A Grok voice picked from the Flux list: always Flux's xAI alias, since
  *  that is where the list said it comes from. If Flux will not speak it,
  *  an own xAI key takes over, else the Flux list's other voices do. */
-async function speakFluxGrok(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
+async function speakFluxGrok(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean, policy: SpeakOptions = {}): Promise<elevenlabs.Clip> {
+  policy.signal?.throwIfAborted();
   const flux = fluxGrokRoute();
+  // the key's budget is used up: no other paid route first, only the
+  // computer's own voice (VOICE-402-STOP)
+  if (flux && isBudgetReached(flux)) return speakPastBudget(text, run, policy);
   if (flux && !isUnavailable(flux)) {
     try {
-      return await fluxSpeech.synthesizeClip(text, voice, flux, streamed);
+      return await fluxSpeech.synthesizeClip(text, voice, flux, streamed, fetch, undefined, policy);
     } catch (error) {
+      policy.signal?.throwIfAborted();
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(flux);
+        return speakPastBudget(text, run, policy);
+      }
       if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
       markUnavailable(flux);
     }
   }
   const own = xaiRoute();
-  if (own) return xaiSpeech.synthesizeClip(text, voice, own, streamed);
-  return speakHosted(text, voice, run, streamed);
+  if (own) return xaiSpeech.synthesizeClip(text, voice, own, streamed, fetch, policy);
+  return speakHosted(text, voice, run, streamed, policy);
 }
 
 /** Hosted speech, one source after another. When every source refuses as
  *  not switched on, the computer's own voice speaks rather than nothing:
  *  a call that goes silent looks broken, and a plainer voice does not. */
-async function speakHosted(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean): Promise<elevenlabs.Clip> {
+async function speakHosted(text: string, voice: string, run: systemVoices.Runner | undefined, streamed: boolean, policy: SpeakOptions = {}): Promise<elevenlabs.Clip> {
+  policy.signal?.throwIfAborted();
   let refused: Error | null = null;
-  for (const route of speechRoutes()) {
+  const routes = speechRoutes();
+  if (routes.some((route) => route.via === "flux" && isBudgetReached(route))) return speakPastBudget(text, run, policy);
+  for (const route of routes) {
     if (isUnavailable(route)) continue;
     try {
-      return await fluxSpeech.synthesizeClip(text, voice, route, streamed);
+      return await fluxSpeech.synthesizeClip(text, voice, route, streamed, fetch, undefined, policy);
     } catch (error) {
+      policy.signal?.throwIfAborted();
+      if (error instanceof fluxSpeech.SpeechBudgetReached) {
+        markBudgetReached(route);
+        return speakPastBudget(text, run, policy);
+      }
       if (!(error instanceof fluxSpeech.SpeechUnavailable)) throw error;
       markUnavailable(route);
       refused = error;
@@ -219,6 +256,19 @@ async function speakHosted(text: string, voice: string, run: systemVoices.Runner
 }
 import * as systemVoices from "./system-voices.ts";
 import * as windowsVoices from "./windows-voices.ts";
+
+/** The Flux key's budget is used up: the computer's own voice speaks where
+ *  there is one, else the plain budget line. Never another paid route. */
+async function speakPastBudget(text: string, run: systemVoices.Runner | undefined, policy: SpeakOptions = {}): Promise<elevenlabs.Clip> {
+  policy.signal?.throwIfAborted();
+  if (policy.call) throw new fluxSpeech.SpeechBudgetReached();
+  if (platformCanSpeak() || run) {
+    return windowsVoices.windowsVoicesAvailable()
+      ? windowsVoices.synthesizeWindows(text, undefined)
+      : systemVoices.synthesizeSystem(text, undefined, run);
+  }
+  throw new fluxSpeech.SpeechBudgetReached();
+}
 
 /** Whether this machine can speak without a key. Windows was missing before,
  *  which left a Windows owner with no voice at all on day one. */
@@ -368,14 +418,19 @@ export function speakStreamed(cfg: AppConfig, written: string, voiceId?: string,
   return speakClip(cfg, written, voiceId, undefined, own, true, opts);
 }
 
-export interface SpeakOptions {
+export interface SpeakOptions extends SpeechPolicy {
+  call?: boolean;
+  /** Closing speech uses only the computer voice, never a paid route. */
+  budgetClosing?: boolean;
   /** A voice sample from the picker: speak exactly this voice or say why
    *  not, never stand in another voice for it. */
   preview?: boolean;
 }
 
 function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined, run: systemVoices.Runner | undefined, own: VoiceProvider | undefined, streamed: boolean, opts: SpeakOptions = {}): Promise<elevenlabs.Clip> {
-  const text = pronounceable(written);
+  opts.signal?.throwIfAborted();
+  const text = compileSpeechSource(written, { maxUnits: MAX_SOURCE_BYTES * 2 });
+  if (opts.budgetClosing) return speakPastBudget(text, run, { ...opts, call: false });
   const provider = effectiveProvider(cfg, own);
   // A Grok voice on a bot with no service of its own is the default the app
   // assigned (bot-voice.ts). It belongs to the Flux list, so where the
@@ -385,16 +440,16 @@ function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined,
   // Same for Flux's ElevenLabs voices: a name, which an own ElevenLabs key
   // (raw voice ids) or a built-in voice would not know.
   if ((provider === "elevenlabs" || provider === "system") && fluxSpeech.isFluxElevenVoice(voiceId)) voiceId = undefined;
-  if (provider === "xai") return speakXai(text, voiceId, streamed);
+  if (provider === "xai") return speakXai(text, voiceId, streamed, opts);
   if (provider === "flux") {
     if (!hostedSpeech()) throw new NoVoiceConfigured("key");
     // no voice chosen anywhere: Flux's Grok default where Flux serves it,
     // else the OpenAI default
     const voice = voiceId || cfg.tts?.voice || (fluxGrokRoute() ? DEFAULT_GROK_VOICE : "marin");
     // ids never collide between the three lists, so the voice says which
-    if (xaiSpeech.isXaiVoice(voice)) return speakFluxGrok(text, voice, run, streamed);
-    if (fluxSpeech.isFluxElevenVoice(voice)) return speakFluxEleven(text, voice, run, streamed, Boolean(opts.preview));
-    return speakHosted(text, voice, run, streamed);
+    if (xaiSpeech.isXaiVoice(voice)) return speakFluxGrok(text, voice, run, streamed, opts);
+    if (fluxSpeech.isFluxElevenVoice(voice)) return speakFluxEleven(text, voice, run, streamed, Boolean(opts.preview), opts);
+    return speakHosted(text, voice, run, streamed, opts);
   }
   if (provider === "system") {
     const voice = voiceId || cfg.tts?.voice;
@@ -412,7 +467,7 @@ function speakClip(cfg: AppConfig, written: string, voiceId: string | undefined,
   const workspaceVoice = fluxSpeech.isFluxElevenVoice(cfg.tts?.voice) ? undefined : cfg.tts?.voice;
   const voice = voiceId || workspaceVoice;
   if (!voice) throw new NoVoiceConfigured("voice");
-  return elevenlabs.synthesizeClip(text, voice, key, streamed);
+  return elevenlabs.synthesizeClip(text, voice, key, streamed, opts);
 }
 
 export type { Voice, Audio, Clip, StreamedAudio } from "./elevenlabs.ts";

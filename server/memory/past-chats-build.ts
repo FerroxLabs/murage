@@ -186,7 +186,9 @@ export function startPastChatsBuild(db: DatabaseSync, store: ExportReaderStore, 
     if (admission && !admission.admitted) { later(admission.retryInMs); return; }
     try { await admit(); } catch { /* a gate that fails holds nothing back */ }
     if (stopped) return;
-    if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; }
+    // a connection closed under the wait (shutdown, a restore) ends the build as stop() does, never an unhandled rejection; the next start carries on
+    try { if ((db as { isTransaction?: boolean }).isTransaction) { later(pause); return; } }
+    catch { end(false); return; }
     try {
       const step = ioBudget.withSource("past-chats-build", () => stepPastChatsBuild(db, store));
       if (step.done) { try { options.onDone?.(); } catch { /* reporting never stops anything */ } end(true); return; }

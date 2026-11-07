@@ -186,3 +186,20 @@ test("win32: an installer whose ProductVersion and fixed version disagree is ref
   const verifier = createUpdateDownloadVerifier({ platform: "win32", currentVersion: "1.0.3" });
   await assert.rejects(verifier({ files: [write("Murage-1.0.4-setup.exe", pe("1.0.4", [1, 0, 2]))], version: "1.0.4" }), { code: "ERR_MURAGE_UPDATE_VERIFICATION" });
 });
+
+for(const changed of [false,true])test(`BF-G2 T28a stopped real install leaves download alone changed=${changed}`,async()=>{
+ const build=write('stopped.zip',macBuild('1.0.4'));
+ const updater=new EventEmitter();updater.on('error',()=>{});
+ let rechecks=0,errors=0,installs=0,admissions=0;
+ updater.downloadUpdate=async()=>{updater.emit('update-downloaded',{version:'1.0.4'});return [build];};
+ updater.quitAndInstall=()=>installs++;
+ const verify=createUpdateDownloadVerifier({platform:'darwin',currentVersion:'1.0.3'});
+ const {prepareBackedUpInstall}=await import('./preupgrade-continuation.mjs');
+ const coordinator=createUpdaterCoordinator(updater,state=>{if(state.status==='error')errors++;},{
+  verifyDownload:async args=>{const receipt=await verify(args);return {...receipt,recheck:async()=>{rechecks++;return receipt.recheck();}};},
+  beforeInstall:()=>prepareBackedUpInstall(null,{backup:{requestUpgrade:async()=>{admissions++;if(changed)writeFileSync(build,'changed during Quit');return {status:'stopped'};}},prepareNormal:()=>assert.fail('stopped must not prepare')}),
+ });
+ await coordinator.download();const result=await coordinator.install();
+ assert.equal(rechecks,1,'only the pre-admission recheck is allowed');
+ assert.equal(result.status,'stopped');assert.equal(admissions,1);assert.equal(errors,0);assert.equal(installs,0);assert.equal(existsSync(build),true);
+});

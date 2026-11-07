@@ -17,6 +17,8 @@
 // - Ended, by one path (end): the call screen hung up or moved to another target, a server end (call.ended on the channel
 //   or as an SSE hint, or a 404/410 ticket), or clientGivesUpMs with no echo. It ends the call screen here (endCall: the
 //   screen, its microphone and its audio), closes the channel and tells the server (the end route is idempotent).
+import { speaker } from "./tts";
+import type { CallReplyId } from "./tts/call-audio";
 import { CALL_PROTOCOL } from "../../shared/bot-calls-contract";
 import { CALL_EVENT } from "./bot-call-event";
 import { BOT_CALL_WORDS, thisCallDevice } from "./bot-calls";
@@ -42,8 +44,36 @@ interface Session {
   retries: number;
   timer: ReturnType<typeof setTimeout> | null;
   ended: boolean;
+  replies: Map<string, CallSpeechReply>;
 }
 let session: Session | null = null;
+export interface CallSpeechReply extends CallReplyId { botId: string; messageId: string; bootId: string }
+const speechWatchers = new Set<(reply: CallSpeechReply | null) => void>();
+export function onCallSpeechReply(fn: (reply: CallSpeechReply | null) => void): () => void {
+  speechWatchers.add(fn); return () => { speechWatchers.delete(fn); };
+}
+function clearSpeech(s: Session): void {
+  s.replies.clear();
+  if (currentCall() === s.botId) speaker.stop();
+  for (const fn of [...speechWatchers]) fn(null);
+}
+export function callSpeechReply(messageId: string, threadId: string, signal: AbortSignal): Promise<CallSpeechReply | null> {
+  const s = session;
+  if (!s || s.ended || signal.aborted) return Promise.resolve(null);
+  const found = s.replies.get(messageId);
+  if (found?.threadId === threadId) return Promise.resolve(found);
+  return new Promise(resolve => {
+    const done = (reply: CallSpeechReply | null) => { clearTimeout(timer); off(); signal.removeEventListener("abort", cancel); resolve(reply); };
+    const cancel = () => done(null);
+    const off = onCallSpeechReply(reply => {
+      if (!reply || session !== s) done(null);
+      else if (reply.messageId === messageId && reply.threadId === threadId) done(reply);
+    });
+    const timer = setTimeout(cancel, 10_000);
+    signal.addEventListener("abort", cancel, { once: true });
+  });
+}
+
 
 // Told whenever this window's session starts, gets its server id or ends. The ring banner reads callSessionOpening()
 // during render; a call screen opening its session renders nothing else, so the banner subscribes here.
@@ -95,6 +125,7 @@ function stopBeat(s: Session): void {
 function end(s: Session, note?: string): void {
   if (s.ended) return;
   s.ended = true;
+  clearSpeech(s);
   if (s.timer) clearTimeout(s.timer);
   s.timer = null;
   stopBeat(s);
@@ -158,15 +189,24 @@ function connect(s: Session): void {
       s.beat = setInterval(() => heartbeat(s, ws), CALL_PROTOCOL.pingEveryMs);
     };
     ws.onmessage = (event) => {
-      let frame: { type?: unknown; seq?: unknown };
-      try { frame = JSON.parse(String(event.data)) as { type?: unknown; seq?: unknown }; } catch { return; }
+      let frame: Record<string, unknown>;
+      try { frame = JSON.parse(String(event.data)) as Record<string, unknown>; } catch { return; }
       if (s.socket !== ws) return;
-      if (frame.type === "call.ended") end(s);
+      if (frame.type === "call.speech.ready" && mine(s) && frame.callId === s.callId && ["threadId", "botId", "messageId", "replyId", "bootId"].every(key => typeof frame[key] === "string" && /^[\w-]{1,128}$/.test(frame[key] as string))) {
+        const reply: CallSpeechReply = { callSessionId: s.callId!, threadId: frame.threadId as string, botId: frame.botId as string, messageId: frame.messageId as string, replyId: frame.replyId as string, bootId: frame.bootId as string };
+        if (s.replies.has(reply.messageId)) return;
+        if (s.replies.size >= 4096) return end(s);
+        s.replies.set(reply.messageId, reply);
+        for (const fn of [...speechWatchers]) fn(reply);
+      }
+      else if (frame.type === "call.speech.invalidated" && frame.callId === s.callId) clearSpeech(s);
+      else if (frame.type === "call.ended") end(s);
       else if (frame.type === "call.live" && typeof frame.seq === "number" && frame.seq >= 1 && frame.seq <= s.seq) heard(s);
     };
     ws.onclose = () => {
       if (s.socket !== ws) return;
       s.socket = null;
+      clearSpeech(s);
       stopBeat(s);
       retry();
     };
@@ -175,7 +215,7 @@ function connect(s: Session): void {
 
 function start(o: { botId: string; device: string; callId: string | null; opener: Promise<string | null> | null }): Session {
   if (session) end(session);
-  const s: Session = { ...o, socket: null, heardAt: Date.now(), seq: 0, beat: null, retries: 0, timer: null, ended: false };
+  const s: Session = { ...o, socket: null, heardAt: Date.now(), seq: 0, beat: null, retries: 0, timer: null, ended: false, replies: new Map() };
   session = s;
   return s;
 }

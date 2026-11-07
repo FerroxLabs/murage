@@ -17,7 +17,7 @@
 
 import { NATIVE_DOM_SOURCE } from "./browser-native-dom.ts";
 import type { EngineObject } from "./browser-extension-engine.ts";
-import type { FloorFacts } from "./browser-floor.ts";
+import { recipientScanReasonOf, type FloorFacts, type RecipientScanReason } from "./browser-floor.ts";
 import { cleanRecipients } from "./browser-recipient-safety.ts";
 import { SECRET_CLASSIFIER_SOURCE, looksLikeSecretName } from "../shared/browser-secret-classifier.ts";
 import { CARD_AUTOCOMPLETE_PREFIX, CREDENTIAL_AUTOCOMPLETE_TOKENS, CREDENTIAL_FIELD, CREDENTIAL_IDENTIFIER_TOKENS, compilePhrases, foldText } from "./browser-floor-lexicon.ts";
@@ -148,6 +148,8 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
     const SECRET=/(^|\s)(one-time-code|current-password|new-password|cc-[a-z-]+)(\s|$)|pass|pwd|card|cvv|cvc|csc|ccnum|ccexp|expir|otp|one.?time|token|secret|iban|ssn|social.?sec|national.?id|tax.?id|security.?code|\bpin\b/i;
     const CHIP=['email','data-email','data-hovercard-id','data-recipient','data-recipient-email','data-address','data-identifier'];
     let incomplete=false,capped=false,sawComposer=false,sawRecipient=false;
+    // B1: why a scan is incomplete, as fixed words and counts only. Never a name, id, label, value, URL or text.
+    const why={};const miss=k=>{incomplete=true;why[k]=(why[k]||0)+1;};
     const out=[],fields=[],names=new WeakMap(),unresolved=new WeakSet();
     const attr=(e,k)=>dom.attr(e,k)||'';
     const nameOf=e=>{
@@ -158,10 +160,10 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
       const root=dom.root(e);
       for(const id of attr(e,'aria-labelledby').split(/\s+/).filter(Boolean)){
         const label=dom.byId(root&&dom.kind(root)===11?root:D,id);
-        if(!label){incomplete=true;unresolved.add(e);}else parts.push(dom.text(label));
+        if(!label){miss('unresolved-name');unresolved.add(e);}else parts.push(dom.text(label));
       }
       const name=parts.filter(Boolean).join(' ').trim();
-      if(name.length>2000){incomplete=true;unresolved.add(e);}
+      if(name.length>2000){miss('unresolved-name');unresolved.add(e);}
       names.set(e,name.slice(0,2000));return names.get(e);
     };
     const privateOwn=e=>dom.controlType(e)==='password'||SECRET.test(nameOf(e)+' '+attr(e,'autocomplete'))||SC.secretName(nameOf(e)+' '+attr(e,'autocomplete'));
@@ -174,29 +176,29 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
     const descriptor=e=>({type:dom.controlType(e),autocomplete:attr(e,'autocomplete'),names:nameOf(e),idName:(attr(e,'id')+' '+attr(e,'name')).slice(0,120),masked:false});
     // Each selected value is resolved independently; a parsed neighbour cannot cover it.
     const emit=(e,value,required=false)=>{
-      value=String(value||'').trim();if(!value){if(required)incomplete=true;return;}
-      if(value.length>2000||privateChain(e)||unresolved.has(e)||SC.looksLikeSecretValue(value)){incomplete=true;return;}
+      value=String(value||'').trim();if(!value){if(required)miss('select-unread');return;}
+      if(value.length>2000||privateChain(e)||unresolved.has(e)||SC.looksLikeSecretValue(value)){miss(unresolved.has(e)?'unresolved-name':'unclassified-field');return;}
       const tokens=/^[+\d\s().-]+$/.test(value)?[value]:value.split(/[,;\n\r\t ]+/);
       for(const token of tokens){
         const t=token.replace(/^[<"']+|[>"']+$/g,'');if(!t)continue;
-        if(t.length>254||SC.looksLikeSecretValue(t)||SC.looksLikeSecretValue(t.replace(/^@/,''))||!(t.includes('@')||/^[+\d\s().-]+$/.test(t)&&t.replace(/\D/g,'').length>=7)){incomplete=true;continue;}
-        if(out.includes(t))continue;if(out.length>=20){incomplete=true;capped=true;continue;}
+        if(t.length>254||SC.looksLikeSecretValue(t)||SC.looksLikeSecretValue(t.replace(/^@/,''))||!(t.includes('@')||/^[+\d\s().-]+$/.test(t)&&t.replace(/\D/g,'').length>=7)){miss('unclassified-field');continue;}
+        if(out.includes(t))continue;if(out.length>=20){miss('cap');capped=true;continue;}
         out.push(t);fields.push(descriptor(e));
       }
     };
     let inventory;
     try{
       inventory=dom.fieldPresence(D);
-      incomplete=inventory.incomplete;
+      if(inventory.incomplete)miss('frame');
       if(inventory.count===0&&!incomplete){dom.assertComplete();return{sendCapable:true,recipients:[],fields:[],incomplete:false,capped:false,noRecipientField:true,composerOnly:false};}
       const controls=new Set(inventory.fields),knownNon=new Set();
       for(const e of inventory.fields){
         const tag=dom.tag(e),type=dom.controlType(e),role=attr(e,'role').toLowerCase(),own=nameOf(e);
-        if(unresolved.has(e)){incomplete=true;continue;}
+        if(unresolved.has(e)){miss('unresolved-name');continue;}
         if(privateChain(e)){knownNon.add(e);continue;}
         // Named surrounding recipient regions also name native selectors and chips.
         let context='',p=dom.parent(e),depth=0;
-        for(;p&&depth<200;p=dom.parent(p),depth++)if(dom.kind(p)===1){const n=nameOf(p);if(unresolved.has(p))incomplete=true;if(WORD.test(n))context+=' '+n;}
+        for(;p&&depth<200;p=dom.parent(p),depth++)if(dom.kind(p)===1){const n=nameOf(p);if(unresolved.has(p))miss('unresolved-name');if(WORD.test(n))context+=' '+n;}
         if(p)throw Error('Incomplete native name context');
         const recipient=type==='email'||type==='tel'||/^(email|tel)$/.test(attr(e,'autocomplete'))||WORD.test(own+context);
         const composerName=/^(?:(?:type|write|enter) (?:a |your )?)?(message|subject|compose|reply|comment|notes)(\b|$)/i.test(own);
@@ -206,25 +208,25 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
         const form=!recipient&&searchName?(dom.form(e)||dom.closest(e,'form')):null;
         const search=searchName&&(tag==='input'&&type==='search'||['searchbox','combobox'].includes(role)||form&&attr(form,'role')==='search'&&(tag==='input'||tag==='textarea'||role==='textbox'));
         if(!recipient){
-          if(composer||search){knownNon.add(e);if(composer)sawComposer=true;}else incomplete=true;
+          if(composer||search){knownNon.add(e);if(composer)sawComposer=true;}else miss('unclassified-field');
           continue;
         }
         sawRecipient=true;
         if(tag==='input'&&['checkbox','radio'].includes(type)){if(dom.checked(e))emit(e,dom.value(e),true);continue;}
-        if(['checkbox','radio','switch','menuitemcheckbox','menuitemradio'].includes(role)&&!['true','false','mixed'].includes(attr(e,'aria-checked')))incomplete=true;
+        if(['checkbox','radio','switch','menuitemcheckbox','menuitemradio'].includes(role)&&!['true','false','mixed'].includes(attr(e,'aria-checked')))miss('select-unread');
         if(['checkbox','radio','switch','menuitemcheckbox','menuitemradio'].includes(role)&&attr(e,'aria-checked')==='false'||['option','treeitem','gridcell'].includes(role)&&attr(e,'aria-selected')==='false')continue;
-        if(tag==='select'){for(const value of dom.selected(e)){if(!String(value).trim())incomplete=true;else emit(e,value);}continue;}
+        if(tag==='select'){for(const value of dom.selected(e)){if(!String(value).trim())miss('select-unread');else emit(e,value);}continue;}
         if(tag==='input'||tag==='textarea'){emit(e,dom.value(e));continue;}
         if(tag==='button'){emit(e,attr(e,'value'));continue;}
         const value=attr(e,'aria-valuetext'),active=attr(e,'aria-activedescendant');
         const numeric=attr(e,'aria-valuenow');if(numeric)emit(e,numeric,true);
         if(value)emit(e,value);
-        if(active){const root=dom.root(e),option=dom.byId(root&&dom.kind(root)===11?root:D,active);if(!option)incomplete=true;else emit(option,dom.text(option));}
+        if(active){const root=dom.root(e),option=dom.byId(root&&dom.kind(root)===11?root:D,active);if(!option)miss('unresolved-name');else emit(option,dom.text(option));}
         // Read each chosen ARIA option, never aggregate all options into a single success.
         if(role==='listbox'){
           const selected=inventory.fields.filter(option=>attr(option,'role')==='option'&&dom.contains(e,option)&&attr(option,'aria-selected')==='true');
           for(const option of selected)emit(option,dom.text(option),true);
-          if(!selected.length&&dom.text(e).trim())incomplete=true;
+          if(!selected.length&&dom.text(e).trim())miss('select-unread');
         }
         // Container text and chips remain values even with an empty nested input
         // or another resolved value source. Each source must resolve on its own.
@@ -233,7 +235,7 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
       }
       // Recipient chips are read from the same inventory, without a second walk.
       for(const e of inventory.all){
-        if(['iframe','frame','object','embed'].includes(dom.tag(e)))incomplete=true;
+        if(['iframe','frame','object','embed'].includes(dom.tag(e)))miss('frame');
         for(const key of CHIP){const v=attr(e,key);if(v){sawRecipient=true;emit(e,v);}}
         if(!controls.has(e)&&WORD.test(nameOf(e))&&!['a','button','label','form'].includes(dom.tag(e))&&!['button','link','menuitem'].includes(attr(e,'role'))){
           const descendants=inventory.all.filter(n=>n!==e&&dom.contains(e,n));
@@ -243,13 +245,14 @@ export const COLLECT_RECIPIENTS_SOURCE = String.raw`function(operation='click',k
             if(CHIP.some(k=>attr(n,k))){chip=true;continue;}
             if(!controls.has(n)&&attr(n,'aria-label').includes('@')){chip=true;sawRecipient=true;emit(n,attr(n,'aria-label'));}
           }
-          if(!hasControls&&!chip&&dom.text(e).trim())incomplete=true;
+          if(!hasControls&&!chip&&dom.text(e).trim())miss('text-node');
         }
       }
       dom.assertComplete();
       const composerOnly=!incomplete&&sawComposer&&!sawRecipient&&inventory.fields.every(e=>knownNon.has(e));
-      return{sendCapable:true,recipients:out,fields,incomplete:incomplete||composerOnly,capped,scoped:false,noRecipientField:inventory.count===0&&!incomplete&&!sawRecipient,composerOnly};
-    }catch{ return{sendCapable:true,recipients:out,fields,incomplete:true,capped,noRecipientField:false,composerOnly:false}; }
+      if(composerOnly)why['composer-only']=1;
+      return{sendCapable:true,recipients:out,fields,incomplete:incomplete||composerOnly,capped,scoped:false,noRecipientField:inventory.count===0&&!incomplete&&!sawRecipient,composerOnly,reason:why};
+    }catch{ why.throw=(why.throw||0)+1;return{sendCapable:true,recipients:out,fields,incomplete:true,capped,noRecipientField:false,composerOnly:false,reason:why}; }
   }`;
 
 /**
@@ -1260,7 +1263,7 @@ export async function collectFloorFacts(io: FloorFactsIo, target: FloorTarget | 
     facts.sendCapable = typeof raw.sendCapable === "boolean" ? raw.sendCapable : undefined;
     if (RECIPIENT_OPERATIONS.has(operation) && raw.sendCapable !== false) {
       // T22: a scan that cannot run is not "no recipients". The flag lets I2 ask (attended) or refuse (unattended).
-      let usable = false, noField = false, composer = false, capped = false;
+      let usable = false, noField = false, composer = false, capped = false, reason: RecipientScanReason | undefined;
       try {
         const found = await io.send("Runtime.callFunctionOn", { objectId: effectObjectId, functionDeclaration: COLLECT_RECIPIENTS_SOURCE, arguments: [{ value: operation }, { value: extra.key ?? null }], returnByValue: true }, document);
         const value = isObject(found?.result?.value) ? (found.result.value as Json) : undefined;
@@ -1268,6 +1271,7 @@ export async function collectFloorFacts(io: FloorFactsIo, target: FloorTarget | 
         const cleaned = isObject(found?.result?.value) && Array.isArray(value?.recipients) ? cleanScanned(value.recipients as unknown[], value.fields) : undefined;
         const list = cleaned ? cleaned.list : value?.recipients;
         capped = value?.capped === true;
+        reason = recipientScanReasonOf(value?.reason);
         noField = value?.noRecipientField === true && Array.isArray(list) && list.length === 0;
         composer = value?.composerOnly === true && Array.isArray(list) && list.length === 0;
         // H3: only an explicit "complete" counts. A scan that hit a cap or could not read something is unknown recipients, not none.
@@ -1280,8 +1284,10 @@ export async function collectFloorFacts(io: FloorFactsIo, target: FloorTarget | 
           const recipients = list.filter((item): item is string => item.length > 0 && item.length <= 254).slice(0, 20);
           if (recipients.length) facts.recipients = recipients;
         }
-      } catch { /* the list stays absent and the flag below is set */ }
+      } catch { reason = { reasons: ["throw"], counts: { throw: 1 } }; /* the list stays absent and the flag below is set */ }
       if (!usable) facts.recipientScanFailed = true;
+      // B1: diagnostic only. A failure building it leaves it absent and changes nothing else.
+      if (!usable && reason) facts.recipientScanReason = reason;
       if (capped) facts.recipientCapped = true;
       if (composer && !usable) facts.recipientComposer = true;
       if (noField && !usable) facts.recipientNoField = true;

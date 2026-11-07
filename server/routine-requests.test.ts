@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   RoutineRequestError,
@@ -107,6 +107,48 @@ function cardFingerprint(card: RoutineRequestOptionCard, messageId: string): str
   return routineRequestFingerprint(card.routineRequest, messageId);
 }
 
+describe("1.0.18 U6 E32: routine cards say the time zone in plain words", () => {
+  // On a desktop the card's zone IS the computer's zone (index.ts builds RoutineRequestService with no timeZone, so it reads
+  // the process zone, and nextOccurrence works daily times out in that same zone). The harness names Asia/Kolkata, so the
+  // process runs in it too; otherwise a UTC test box works 9:00 out as 9:00 UTC and prints 2:30 PM India time.
+  let savedTz: string | undefined;
+  beforeEach(() => { savedTz = process.env.TZ; process.env.TZ = "Asia/Kolkata"; });
+  afterEach(() => { if (savedTz === undefined) delete process.env.TZ; else process.env.TZ = savedTz; });
+  it("weekly, once and interval cards never show the IANA id, and a never-run routine reads First run", async () => {
+    const { service, store } = harness();
+    const weekly = await service.propose({ botId: "bot-a", threadId: "thread-w", proposal: createProposal() });
+    expect(weekly.summary).toContain("Monday, Wednesday at 9:00 India time");
+    const weeklyCard = store.messagesFor("thread-w")[0]!.card!;
+    expect(weeklyCard.subtitle).toContain("First run: Mon, Aug 31, 9:00 AM India time");
+    expect(weeklyCard.subtitle).not.toContain("Next run:");
+    const once = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-o",
+      proposal: createProposal({ schedule: { type: "once", at: "2026-09-02T09:30:00+05:30" } }),
+    });
+    const interval = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-i",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 60, anchorAt: "2026-08-29T09:00:00+05:30" } }),
+    });
+    // a new interval with no anchor has not run either: "First run: One interval after confirmation" (Astra r1 M2)
+    const deferred = await service.propose({
+      botId: "bot-a",
+      threadId: "thread-d",
+      proposal: createProposal({ schedule: { type: "interval", everyMinutes: 60 } }),
+    });
+    expect(deferred.detail).toContain("First run: One interval after confirmation");
+    expect(deferred.detail).not.toContain("Next run:");
+    for (const [proposed, thread] of [[once, "thread-o"], [interval, "thread-i"]] as const) {
+      const card = store.messagesFor(thread)[0]!.card!;
+      for (const text of [proposed.summary, card.subtitle ?? ""]) {
+        expect(text).not.toContain("Asia/Kolkata");
+        expect(text).toContain("India time");
+      }
+    }
+  });
+});
+
 describe("RoutineRequestService", () => {
   it("normalizes weekly input, scrubs hidden payload text, and creates a durable confirmation card", async () => {
     const { service, store, routines } = harness();
@@ -119,7 +161,7 @@ describe("RoutineRequestService", () => {
 
     expect(routines.listRoutines()).toHaveLength(0);
     expect(proposed.timeZone).toBe("Asia/Kolkata");
-    expect(proposed.summary).toContain("Monday, Wednesday at 09:00 (Asia/Kolkata)");
+    expect(proposed.summary).toContain("Monday, Wednesday at 9:00 India time");
     const card = store.messagesFor("thread-a")[0]!.card!;
     expect(card.requestId).toBe(proposed.requestId);
     expect(card.tool).toBe("schedule_routine");

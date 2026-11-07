@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR, ensureDirs } from "../../config.ts";
-import type { execCli } from "../../procs.ts";
+import { engineJob, spawnCli, type execCli } from "../../procs.ts";
 import type { SendTurnInput } from "../../contracts.ts";
 import { OWN_READS } from "../../../shared/own-servers.ts";
 import { recordEvents } from "../../testing/events.ts";
@@ -26,6 +26,8 @@ import {
   STATIC_CURSOR_MODELS,
   resolveCursorAcpModelId,
   fetchCursorModels,
+  cursorCatalogFromSession,
+  probeCursorSessionModels,
   linkCursorSessions,
   removeCursorSessionsLink,
 } from "./cursor.ts";
@@ -496,6 +498,94 @@ describe("cursor model source", () => {
   });
 });
 
+describe("F31: the Cursor picker lists every model the ACP session offers (upstream 80012e69d)", () => {
+  const textOnlyAuto = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) =>
+    cb(null, "auto - Auto\n")) as never;
+
+  it("maps parameterised session ids to plain slugs and keeps a built-in entry only when the session offers it", () => {
+    const catalog = cursorCatalogFromSession([
+      { modelId: "default[]", name: "Auto" },
+      { modelId: "composer-2.5[fast=false]", name: "Composer 2.5" },
+      { modelId: "gpt-5.3-codex[reasoning=medium,fast=false]", name: "Codex 5.3" },
+      { modelId: "gpt-5.3-codex[reasoning=high,fast=false]", name: "Codex 5.3 High" },
+      { modelId: "grok-4.7[]", name: "grok-4.7" },
+      { modelId: "opus-5.5-thinking[]", name: "Opus 5.5 Thinking" },
+    ]);
+    expect(catalog?.default).toBe("auto");
+    const ids = catalog!.options.map((option) => option.id);
+    expect(ids).toEqual(["auto", "composer-2.5", "gpt-5.3-codex", "grok-4.7", "opus-5.5-thinking"]);
+    // A built-in entry the session does not offer is not listed.
+    expect(ids).not.toContain("claude-sonnet-5-thinking-high");
+    expect(catalog!.options.find((option) => option.id === "opus-5.5-thinking")?.label).toBe("Opus 5.5 Thinking");
+    expect(cursorCatalogFromSession([])).toBeNull();
+    expect(cursorCatalogFromSession([{ name: "no id" }])).toBeNull();
+  });
+
+  it("the session list wins over `cursor-agent models`, which prints only auto on current CLIs", async () => {
+    const catalog = await fetchCursorModels("cursor-agent", {}, textOnlyAuto, async () => [
+      { modelId: "default[]" },
+      { modelId: "grok-4.7[]" },
+      { modelId: "gpt-6-sol[reasoning=medium]" },
+    ]);
+    expect(catalog.source).toBe("live");
+    expect(catalog.options.map((option) => option.id)).toEqual(["auto", "grok-4.7", "gpt-6-sol"]);
+  });
+
+  it("falls back to the text list, then the built-in list, when no session opens", async () => {
+    const empty = await fetchCursorModels("cursor-agent", {}, textOnlyAuto, async () => []);
+    expect(empty.source).toBe("live");
+    expect(empty.options.map((option) => option.id)).toEqual(STATIC_CURSOR_MODELS.options.map((option) => option.id));
+    const failing = ((_cli: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(new Error("x"), "")) as never;
+    const rejected = await fetchCursorModels("cursor-agent", {}, failing, async () => {
+      throw new Error("spawn failed");
+    });
+    expect(rejected.source).toBe("static");
+  });
+
+  it("reads session/new from a real ACP process and stops it", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const models = await probeCursorSessionModels(FAKE_CLI, { ...process.env, FAKE_ACP_SESSION_MODELS: "default[]|Auto,grok-4.7[]|Grok 4.7" });
+    expect(models.map((model) => model.modelId)).toEqual(["default[]", "grok-4.7[]"]);
+    expect(await probeCursorSessionModels(FAKE_CLI, { ...process.env })).toEqual([]);
+    expect(await probeCursorSessionModels(join(tmpdir(), "no-such-cursor-agent"), { ...process.env })).toEqual([]);
+  });
+
+  it("runs the probe under the same engine job a Cursor turn gets, so the stop reaches every process it started", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    const jobs: unknown[] = [];
+    const recording = ((cli: string, args: string[], opts: never, job?: unknown) => {
+      jobs.push(job);
+      return spawnCli(cli, args, opts, job as never);
+    }) as typeof spawnCli;
+    const models = await probeCursorSessionModels(FAKE_CLI, { ...process.env, FAKE_ACP_SESSION_MODELS: "grok-4.7[]|Grok 4.7" }, 8_000, recording);
+    expect(models.map((model) => model.modelId)).toEqual(["grok-4.7[]"]);
+    expect(jobs).toHaveLength(1);
+    const expected = engineJob() as { name?: string; hostPower?: boolean } | undefined;
+    const got = jobs[0] as { name?: string; hostPower?: boolean } | undefined;
+    expect(got).toBeDefined();
+    expect(got?.hostPower).toBe(expected?.hostPower);
+    if (process.platform === "win32") expect(got?.name).toMatch(/murage-pip-eng-/);
+  });
+
+  it("bounds a stalled initialize and closes its child before falling back", async () => {
+    chmodSync(FAKE_CLI, 0o755);
+    let closed: Promise<void> | undefined;
+    const recording: typeof spawnCli = (cli, args, opts, job) => {
+      const child = spawnCli(cli, args, opts, job);
+      closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      return child;
+    };
+    const models = await probeCursorSessionModels(FAKE_CLI, {
+      ...process.env,
+      FAKE_ACP_INIT_DELAY_MS: "60000",
+      FAKE_ACP_SESSION_MODELS: "grok-4.7[]|Grok 4.7",
+    }, 100, recording);
+    expect(models).toEqual([]);
+    expect(closed).toBeDefined();
+    await closed;
+  });
+});
+
 describe("host-computer turns run Murage's computer tools unasked by the engine (Murage asks per action)", () => {
   const cleanup: string[] = [];
   afterEach(async () => { while (cleanup.length) await removeTempDir(cleanup.pop()!); });
@@ -645,4 +735,33 @@ describe("cursor acp-sessions link on Windows (no symlink privilege)", () => {
     expect(() => removeCursorSessionsLink(join(root, "plain"))).toThrow();
     expect(existsSync(join(root, "plain"))).toBe(true);
   });
+});
+
+it("offers the fast alias only with a resolvable advertised fast variant", () => {
+  for (const param of ["fast=false", "", "fast=true", "reasoning=high,fast=true"]) {
+    const available = [{ modelId: `composer-2.5[${param}]` }];
+    const ids = cursorCatalogFromSession(available)!.options.map(row => row.id);
+    expect(ids.includes("composer-2.5-fast")).toBe(param.includes("fast=true"));
+    if (ids.includes("composer-2.5-fast")) expect(resolveCursorAcpModelId(available, "composer-2.5-fast")).toBe(available[0]!.modelId);
+  }
+});
+it.each(["unterminated", "records"])("stops a flooding probe on %s output before the deadline", async (kind) => {
+  const root = mkdtempSync(join(tmpdir(), "cursor-flood-"));
+  const cli = join(root, "flood.cjs");
+  writeFileSync(cli, `setInterval(() => process.stdout.write(${JSON.stringify(kind === "records" ? "{}\n".repeat(20000) : "x".repeat(65536))}), 10);`);
+  let closed: Promise<void> | undefined;
+  let bytes = 0;
+  const recording: typeof spawnCli = (command, _args, opts, job) => {
+    const child = spawnCli(process.execPath, [command], opts, job);
+    child.stdout?.on("data", chunk => { bytes += chunk.length; });
+    closed = new Promise(resolve => child.once("close", () => resolve()));
+    return child;
+  };
+  try {
+    const started = Date.now();
+    expect(await probeCursorSessionModels(cli, { ...process.env }, 8000, recording)).toEqual([]);
+    expect(bytes).toBeGreaterThan(65536);
+    expect(Date.now() - started).toBeLessThan(4000);
+    await closed;
+  } finally { await removeTempDir(root); }
 });

@@ -5,6 +5,7 @@ import { packagedGepaManifestEnvironment } from "./harness-resources.mjs";
 import { launchSecretVia } from "./launch-secret.mjs";
 import { closedControlDirectory } from "./backup-closed-controller.mjs";
 import { desktopFluxEnvironment } from "./workspace-credentials.mjs";
+import { phoneSecretsEnv } from "./phone-secrets.mjs";
 
 it("the real main-process launch blocks share one fresh private token without mutating ambient env", async () => {
   const source = readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
@@ -25,7 +26,7 @@ it("the real main-process launch blocks share one fresh private token without mu
   // startServerOn awaits the port check (electron/port-availability.mjs), so
   // the extracted body runs in an async function with the port reported free.
   const AsyncFunction = (async () => {}).constructor;
-  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory","desktopFluxEnvironment","reasonForTest",`
+  const launch = new AsyncFunction("randomBytes","process","path","app","packagedGepaManifestEnvironment","launchSecretVia","closedControlDirectory","desktopFluxEnvironment","phoneSecretsEnv","reasonForTest",`
     const portAvailable=async()=>true;
     const SERVER_PORT=8799;
     const remoteAccessLaunch=()=>null, slog=()=>{};
@@ -52,10 +53,11 @@ it("the real main-process launch blocks share one fresh private token without mu
     const env=await (async (port)=>{${source.slice(source.indexOf("{",serverStart)+1,serverEnd)}return childEnv;})(8799);
     return {env,options:companionLaunchOptions()};
   `);
-  const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value",FLUX_API_KEY:"sk-flux-FAKE_SHELL",MURAGE_SECRET_SAVE_REFUSED:"inherited"};
+  const AMBIENT_PHONE = JSON.stringify({key:"ambient-vapi-key-FAKE",origin:"https://api.vapi.ai"});
+  const ambient = {MURAGE_COMPANION_TOKEN:"untrusted-ambient-value",FLUX_API_KEY:"sk-flux-FAKE_SHELL",MURAGE_SECRET_SAVE_REFUSED:"inherited",MURAGE_PHONE_CALL_SECRETS:AMBIENT_PHONE};
   const process = {env:ambient,resourcesPath:"/fixture/resources"};
   // The real GEPA manifest pin helper: an unpackaged launch publishes an empty pin.
-  const invoke = (reason = "keyring") => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory,desktopFluxEnvironment,reason);
+  const invoke = (reason = "keyring") => launch(randomBytes,process,{join:(...parts)=>parts.join("/")},{isPackaged:false,getPath:()=>"/fixture/user-data",getAppPath:()=>"/fixture/app",getVersion:()=>"1.0.0-fixture"},packagedGepaManifestEnvironment,launchSecretVia,closedControlDirectory,desktopFluxEnvironment,phoneSecretsEnv,reason);
   const first = await invoke();
   const second = await invoke();
   // The token reaches the harness over the private parent port, never the
@@ -83,11 +85,14 @@ it("the real main-process launch blocks share one fresh private token without mu
   expect(first.env.FLUX_API_KEY).toBeUndefined();
   expect(first.env.MURAGE_FLUX_AMBIENT_KEY).toBe("sk-flux-FAKE_SHELL");
   expect(JSON.stringify(first.env)).not.toMatch(/MURAGE_SECRET_SAVE_REFUSED":"[^"]*sk-flux/);
+  // The phone-call key comes only from the desktop's credential store (none in this fixture): an inherited value never reaches the server.
+  expect(first.env.MURAGE_PHONE_CALL_SECRETS).toBe("{}");
+  expect(JSON.stringify(first.env)).not.toContain("ambient-vapi-key-FAKE");
   // a launch whose store takes writes clears an inherited reason, and still never makes the shell key the workspace key
   const writable = await invoke("");
   expect(writable.env.MURAGE_SECRET_SAVE_REFUSED).toBe("");
   expect(writable.env.FLUX_API_KEY).toBeUndefined();
-  expect(ambient).toEqual({MURAGE_COMPANION_TOKEN:"untrusted-ambient-value",FLUX_API_KEY:"sk-flux-FAKE_SHELL",MURAGE_SECRET_SAVE_REFUSED:"inherited"});
+  expect(ambient).toEqual({MURAGE_COMPANION_TOKEN:"untrusted-ambient-value",FLUX_API_KEY:"sk-flux-FAKE_SHELL",MURAGE_SECRET_SAVE_REFUSED:"inherited",MURAGE_PHONE_CALL_SECRETS:AMBIENT_PHONE});
 });
 
 it("the real companion child environment overrides inherited device state for a restored profile", () => {

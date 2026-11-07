@@ -19,6 +19,8 @@ import { memoryOwnerRoute } from "./settings.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
+import { commitRevoke } from "./revoke-commit.ts";
+import { drainRevokeMarker } from "./memory-revocation.ts";
 
 const threadId="7f00a32e-17a4-426b-bdc6-910220ba66c9";
 const roster={bots:[{id:"bot",threadId}],groups:[]};
@@ -28,7 +30,7 @@ function complete(text:string,options:{id?:string;speaker?:string;kind?:string;o
   const messageId=randomUUID();storeAnchorMessage(database(),threadId,messageId,text,options.speaker&&options.speaker!=="owner"?"bot":"user");
   captureSource(database(),{id,threadId,messageId,origin:{kind:"attended"},kind:options.kind??"text",speaker:options.speaker??"owner",outcome:options.outcome??"recorded",turnId:options.turnId,text});
   const work=claimMemoryJob("p09-worker")!;if(!work)throw new Error("fixture did not claim a real capture job");
-  publishMemoryWork(work,"p09-worker",captureWork(work));return {id,jobId:work.id,revision:work.revision};
+  publishMemoryWork(work,"p09-worker",captureWork(work));return {id,jobId:work.id,revision:work.revision,messageId};
 }
 function access(){const registry=new InternalCapabilities(),generation=registry.begin("bot",threadId),token=registry.mint({botId:"bot",threadId,generation,depth:0,kind:"memory",skillAuthoring:false});return memoryAccess(registry,registry.resolve(`Bearer ${token}`)!,()=>roster);}
 
@@ -124,6 +126,41 @@ it("uses the existing skill review path and rechecks source validity before stag
   expect(applyStagedSkillWrite("bot",next.id)).toHaveProperty("error","MEMORY_SKILL_SOURCE_UNAVAILABLE");
   expect(stageSkillWrite("bot",{action:"create",source:review.source,files:files("refused-recovery")})).toHaveProperty("error","MEMORY_SKILL_SOURCE_UNAVAILABLE");
   expect(listSkills("bot").map(skill=>skill.name)).toEqual(["verified-recovery"]);
+});
+
+// SKILL-HIDE (1.0.18): a review-as-skill snapshot is read through the same visibility as a memory read. A line the owner hid or
+// forgot, or a thread excluded from memory, never reaches a /learn turn, and a hide made after the review started blocks staging and approval.
+// `started`: the error a review started before the change meets (an exclusion is a settings change, so the started review reads revoked).
+const hideCases:Array<[string,(source:{messageId:string})=>Promise<void>,RegExp]>=[
+  ["hide the chat line",async source=>{
+    database().prepare("UPDATE messages SET json=json_set(json,'$.withheldFromBots',json('true')) WHERE thread_id=? AND id=?").run(threadId,source.messageId);
+    commitRevoke(database(),{kind:"line",threadId,messageIds:[source.messageId],cause:"hide"});drainRevokeMarker(database());
+  },/^MEMORY_SKILL_SOURCE_UNAVAILABLE$/],
+  ["forget the chat line",async source=>{
+    database().prepare("UPDATE messages SET json=json_set(json,'$.withheldFromBots','forgotten') WHERE thread_id=? AND id=?").run(threadId,source.messageId);
+    commitRevoke(database(),{kind:"line",threadId,messageIds:[source.messageId],cause:"forget"});drainRevokeMarker(database());
+  },/^MEMORY_SKILL_SOURCE_UNAVAILABLE$/],
+  ["exclude the thread",async()=>{await memoryOwnerRoute("/api/memory/action",{action:"configure",excludedThreadIds:[threadId]},ownerMemoryTicket(),roster);},/^MEMORY_SKILL_SOURCE_(UNAVAILABLE|REVOKED)$/],
+];
+it.each(hideCases)("keeps words out of a skill review once the owner chose to %s, before and after the review started",async(_name,withhold,started)=>{
+  const source=complete("SKILL_HIDE_WORDS: rotate the vault key every Friday.");
+  const id=String(database().prepare("SELECT id FROM memory_records WHERE kind='source'").get()!.id);
+  const review=prepareMemorySkillReview(ownerMemoryTicket(),"bot",id,1);
+  const files=(name:string)=>[{path:"SKILL.md",content:`---\nname: ${name}\ndescription: Rotate the key\n---\nRotate it.\n`}];
+  const staged=stageSkillWrite("bot",{action:"create",source:review.source,files:files("staged-before")});
+  if("error" in staged)throw new Error(staged.error);
+  await withhold(source);
+  const applied=applyStagedSkillWrite("bot",staged.id),restaged=stageSkillWrite("bot",{action:"create",source:review.source,files:files("staged-after")});
+  expect("error" in applied?applied.error:"applied").toMatch(started);
+  expect("error" in restaged?restaged.error:"staged").toMatch(started);
+  // the words themselves: no /learn request built after the change carries them, and no skill holds them
+  expect(JSON.stringify(review.request)).toContain("SKILL_HIDE_WORDS"); // the fixture's words did reach the request before the change
+  let after:unknown,refused="";
+  try{after=prepareMemorySkillReview(ownerMemoryTicket(),"bot",id,1);}catch(error){refused=String(error);}
+  expect(refused).toContain("MEMORY_SKILL_SOURCE_UNAVAILABLE");
+  expect(JSON.stringify(after??null)).not.toContain("SKILL_HIDE_WORDS");
+  expect(listSkills("bot")).toHaveLength(0);
+  expect(JSON.stringify(listSkills("bot"))).not.toContain("SKILL_HIDE_WORDS");
 });
 
 it("refuses procedural disclosure to another bot and never activates a skill when the learn handoff fails",async()=>{
