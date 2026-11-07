@@ -161,7 +161,9 @@ export function backupActivityBusy(value) {
 }
 export async function prepareBackupRestart(send, stopped=()=>false) {
   const token=randomUUID();
-  const release=async()=>{if(stopped())return;const value=await send("cancel",token);if(typeof value?.released!=="boolean")throw new Error("BACKUP_RELEASE_UNCONFIRMED");};
+  const cancel=async()=>{const value=await send("cancel",token);if(typeof value?.released!=="boolean")throw new Error("BACKUP_RELEASE_UNCONFIRMED");};
+  const release=async()=>{if(stopped())return;await cancel();};
+  release.cancel=cancel;
   try{const value=await send("prepare",token);if(value?.prepared!==true||value.token!==token)throw new Error("BACKUP_PREPARE_UNCONFIRMED");return release;}
   catch(error){await release();throw error;}
 }

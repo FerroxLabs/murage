@@ -86,7 +86,7 @@ it("an older build's family with no record of what its attempt sent counts that 
 });
 
 // Every terminal state a family can reach. A refusal's reason is open (`refused:${verdict.reason}`), so any refused:* is terminal.
-const TERMINAL: FamilyStateName[] = ["applied", "off", "refused:off", "refused:unstable", "refused:cap", "refused:transient", "refused:unsupported", "refused:bad-output", "refused:schema", "refused:some-future-reason"];
+const TERMINAL: FamilyStateName[] = ["refused:monthly-limit", "refused:unseen-calls", "refused:call-pace", "applied", "off", "refused:off", "refused:unstable", "refused:cap", "refused:transient", "refused:unsupported", "refused:bad-output", "refused:schema", "refused:some-future-reason"];
 const LIVE: FamilyStateName[] = ["pending", "requested", "uncertain-transport", "validated", "catch-up"];
 
 it("every terminal state commits without result words, whatever path wrote it; live states keep theirs", () => {

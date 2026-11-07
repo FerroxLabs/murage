@@ -486,6 +486,17 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await removeTempDir(scratch);
   });
 
+  it.each(["", undefined])("dispatches an empty native selection %s with the catalog default", async model => {
+    const dump = join(scratch, "blank-model.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await create();
+    const sent = await instance.adapter.sendTurn({ threadId: "blank-model", text: "hi", model });
+    await recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    const { argv } = JSON.parse(readFileSync(dump, "utf8"));
+    expect(argv[argv.indexOf("--model") + 1]).toBe(instance.models.default);
+    expect(instance.models.default).toBe("claude-sonnet-5-5");
+  });
+
   it("reports exactly one usage total for each of two turns on the same process",async()=>{
     const dump=join(scratch,"usage-process.json");process.env.FAKE_CLAUDE_DUMP=dump;
     await create();const pids=new Set<number>();
@@ -679,6 +690,21 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await expect(recorder.until((event) => event.type === "turn.completed" && event.turnId === continued.turnId))
       .resolves.toMatchObject({ ok: true });
     expect(JSON.parse(readFileSync(healthyDump, "utf8")).pid).toBe(healthyPid);
+  });
+
+  it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
+    const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
+    resetUnavailable();
+    await create("api-error", { FAKE_CLAUDE_API_ERROR: `API Error: 402 ${JSON.stringify({ error: { code } })}` });
+    await instance.adapter.sendTurn({ threadId: "t-cli-budget", text: "hi", model: "fixture-model",
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "anthropic", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+    await recorder.until(e => e.type === "turn.completed");
+    const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
+    expect(Boolean(failure)).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
+    resetUnavailable();
   });
 
   it.each(["anthropic", "flux"] as const)("routes a selected %s provider authentication failure to its connection, never native Claude login", async preset => {
@@ -971,22 +997,16 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable", version: "2.1.279 (Claude Code)", reason: CLAUDE_UPDATE_MESSAGE });
   });
 
-  it("launches at the floor, and on a version answer it cannot read, which it logs", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      for (const [version, thread] of [["2.1.280", "t-at-floor"], ["nightly", "t-unknown"]] as const) {
-        process.env.FAKE_CLAUDE_VERSION = version;
-        resetClaudeVersionGate();
-        await create();
-        await instance.adapter.sendTurn({ threadId: thread, text: "hi", cwd: scratch });
-        await recorder.until((e) => e.type === "turn.completed" && e.threadId === thread);
-        expect(recorder.events.filter((e) => e.threadId === thread).at(-1)).toMatchObject({ type: "turn.completed", ok: true });
-        if (version !== "nightly") await instance.dispose();
-      }
-      expect(warn.mock.calls.filter((call) => String(call[0]).includes("printed no version"))).toHaveLength(1);
-    } finally {
-      warn.mockRestore();
-    }
+  it.each([["2.1.292", true], ["2.1.280", false], ["nightly", false]] as const)("qualifies launch version %s", async (version, allowed) => {
+    process.env.FAKE_CLAUDE_VERSION = version;
+    resetClaudeVersionGate();
+    await create();
+    const dump = join(scratch, "qualified-launch.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    await instance.adapter.sendTurn({ threadId: "t-qualified", text: "hi", cwd: scratch });
+    const done = await recorder.until(e => e.type === "turn.completed");
+    expect(done).toMatchObject({ ok: allowed, ...(!allowed ? { stopReason: "update_required" } : {}) });
+    expect(existsSync(dump)).toBe(allowed);
   });
 
   it("strips ambient routing switches left in the shell by a provider switcher", async () => {
@@ -3660,7 +3680,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         expect(preAllowedByCli(allowed, tool), tool).toBe(false);
       }
       // every OWN_UNASKED tool of a mounted own server stays pre-allowed, by its exact name; the email tools only as the mount lists them
-      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
+      // native HighLevel is not mounted on these turns: none of its tools may be pre-allowed (an owner's own server could carry the name)
+      expect(allowed.filter((tool) => tool.startsWith("mcp__highlevel"))).toEqual([]);
+      const ownUnasked = OWN_UNASKED.filter((row) => row.mount !== "own:connector" && row.mount !== "own:highlevel").flatMap((row) => row.tools.map((tool) => `mcp__${OWN_BUILTINS[row.mount.slice("own:".length) as OwnBuiltin]}__${tool}`));
       expect(ownUnasked).toEqual(expect.arrayContaining(EMAIL_ALL));
       const expected = ownUnasked.filter((tool) => !EMAIL_ALL.includes(tool) || (emailListed as readonly string[]).includes(tool));
       expect(expected.length).toBeGreaterThan(40);
@@ -4587,12 +4609,12 @@ describe("claudeLaunchRefusal", () => {
     ]) expect(claudeLaunchRefusal(said), said).toBeNull();
   });
 
-  it("holds the floor at 1.0.1's 2.1.280 and lets an unreadable answer through", () => {
-    expect(CLAUDE_MIN_VERSION).toBe("2.1.280");
+  it("requires the qualified Sonnet 5.5 floor and identifies unreadable answers", () => {
+    expect(CLAUDE_MIN_VERSION).toBe("2.1.292");
     expect(claudeVersionBelow("2.1.279 (Claude Code)")).toBe(true);
     expect(claudeVersionBelow("2.0.999")).toBe(true);
-    expect(claudeVersionBelow("2.1.280 (Claude Code)")).toBe(false);
-    expect(claudeVersionBelow("2.1.281 (Claude Code)")).toBe(false);
+    expect(claudeVersionBelow("2.1.280 (Claude Code)")).toBe(true);
+    expect(claudeVersionBelow("2.1.281 (Claude Code)")).toBe(true);
     expect(claudeVersionBelow("2.2.0")).toBe(false);
     expect(claudeVersionVerdict("2.1.295 (Claude Code)")).toBe("ok");
     expect(claudeVersionVerdict("1.0.0")).toBe("below");
@@ -4625,24 +4647,24 @@ describe("requireClaudeCliVersion", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("lets a failed probe launch, logged once, and does not probe again for ten minutes", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      vi.useFakeTimers({ toFake: ["Date"] });
-      const cli = cliFile();
-      const { run, calls } = runner([null, "2.1.295 (Claude Code)"]);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      vi.setSystemTime(Date.now() + VERSION_FAILURE_BACKOFF_MS - 1_000);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      expect(calls).toHaveLength(1);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes("did not answer"))).toHaveLength(1);
-      vi.setSystemTime(Date.now() + 2_000);
-      await requireClaudeCliVersion(cli, {}, undefined, run);
-      expect(calls).toHaveLength(2);
-    } finally {
-      warn.mockRestore();
-    }
+  it.each([null, "garbage", "2.1.291 (Claude Code)"])("blocks unqualified version %s", async answer => {
+    const cli = cliFile();
+    const { run } = runner([answer]);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+  });
+
+  it("blocks a failed probe and does not probe again for ten minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const cli = cliFile();
+    const { run, calls } = runner([null, "2.1.292 (Claude Code)"]);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    vi.setSystemTime(Date.now() + VERSION_FAILURE_BACKOFF_MS - 1_000);
+    await expect(requireClaudeCliVersion(cli, {}, undefined, run)).rejects.toBeInstanceOf(ClaudeUpdateRequired);
+    expect(calls).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 2_000);
+    await requireClaudeCliVersion(cli, {}, undefined, run);
+    expect(calls).toHaveLength(2);
   });
 
   it("stops waiting the moment the turn is stopped", async () => {

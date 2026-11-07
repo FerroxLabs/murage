@@ -14,6 +14,7 @@ import { closeDatabase, database } from "../database.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { captureBranchChange, captureMessage, captureThreadDeletion } from "./capture.ts";
+import { captureStoredMessage } from "./testing/captured-message.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { setMemoryMode } from "./repository.ts";
 import { readMemoryLearning, updateMemoryLearning } from "./learning-policy.ts";
@@ -50,11 +51,11 @@ afterEach(() => { setMemoryCaptureRoster(null); pipReadHooks.between = undefined
 const done = () => database().exec("UPDATE memory_jobs SET status='complete',cursor=100");
 const sourceIdOf = (id: string, thread = "private") => `message:${thread}:${id}`;
 function owner(id: string, at: number, text: string, thread = "private") {
-  captureMessage(database(), thread, { id, at, role: "user", kind: "text", text, origin: "desktop" } as never); done();
+  captureStoredMessage(database(), thread, { id, at, role: "user", kind: "text", text, origin: "desktop" } as never); done();
   return sourceIdOf(id, thread);
 }
 function reply(id: string, at: number, thread = "private") {
-  captureMessage(database(), thread, { id, at, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never); done();
+  captureStoredMessage(database(), thread, { id, at, role: "bot", kind: "text", text: "Sure.", turnTerminal: true, from: { botId: "moss" } } as never); done();
 }
 const TEXTS = ["Alpha note.", "Bravo note.", "Charlie note."];
 function seedConversation(texts = TEXTS, thread = "private", from = T0) {

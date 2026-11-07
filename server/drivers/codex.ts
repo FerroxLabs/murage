@@ -1,3 +1,5 @@
+import { cliFluxBudget } from "./cli-flux-budget.ts";
+import { nativeTurnModel } from "../default-engine.ts";
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderContents, type CloudCodexPolicy, type CloudMcpStanza } from "../cloud-home/turn-process.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
@@ -32,7 +34,7 @@ import { ScopeUnavailableError, engineUpdateRequired, scopeLocalFailureOf, withS
 import {
   CODEX_EXEC_YIELD_MIN, CODEX_GATE_MIN, CodexHookGate, HOOK_ASK_BOUND_MS, HookDecisionTable, hookLivenessSetting, codexGatePlan, codexNativeEditCall, codexShellFormArgs,
   CODEX_HOOK_EXE_ENV, CODEX_HOOK_LAUNCH_ENV, hookConfigOf, hooksListBounds, hookWindowsLaunchValue, newHookToken, routeDelivery, tripwireLine, trustHooks, versionAtLeast, writeHookFiles,
-  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv,
+  HOOK_ENV_VAR, hookEnvPathOf, sweepHookEnv, hookRuntime, warmHookRunner,
   type CodexGatePlan, type HookAnswer, type HookDelivery, type HookRoute, type HookStopAnswer,
 } from "./codex-hook.ts";
 import { execEnvHanded, execEnvNow, handedEngineEnv, ownedTurnNames, type HandedEnv } from "../engine-env.ts";
@@ -63,7 +65,7 @@ import type {
   SendTurnInput,
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
-import { decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
+import { CodexCatalogUpdateRequired, decodeCodexSelection, readCodexModelCatalog, STATIC_CODEX_MODELS } from "./codex-catalog.ts";
 import { codexLocalProviderArgs } from "./local-inject.ts";
 import { withCliMemoryLearning } from "./cli-memory-learning.ts";
 import { fluxKey } from "../flux-config.ts";
@@ -389,8 +391,10 @@ export class CodexRpcTimeout extends Error {
 /** An error answer from the app-server, with its JSON-RPC code kept (-32601: the method does not exist on this build). */
 export class CodexRpcErrorAnswer extends Error {
   readonly rpcCode: number | undefined;
-  constructor(error: { code?: unknown; message?: unknown }) {
+  readonly data: unknown;
+  constructor(error: { code?: unknown; message?: unknown; data?: unknown }) {
     super(typeof error.message === "string" ? error.message : JSON.stringify(error));
+    this.data = error.data;
     this.rpcCode = typeof error.code === "number" ? error.code : undefined;
   }
 }
@@ -400,6 +404,14 @@ export class CodexRpcErrorAnswer extends Error {
 const CODEX_ACTING_ITEM_TYPES: ReadonlySet<unknown> = new Set(["commandExecution", "fileChange", "mcpToolCall", "webSearch"]);
 export const CODEX_TOOL_MAY_HAVE_RUN = "A tool action may have run. Check its effects before trying again.";
 const turnStartTimeoutMs = (): number => Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) > 0 ? Number(process.env.MURAGE_CODEX_RPC_TIMEOUT_MS) : 60_000;
+
+/** Billing reported by the CLI, independent of whether its exit verified the login. */
+export function readCodexLoginMode(text: string): "subscription" | "metered" | "unknown" | "signed-out" {
+  if (/^not logged in\b/im.test(text)) return "signed-out";
+  if (/^logged in using chatgpt/im.test(text)) return "subscription";
+  if (/^logged in using (an )?api[ -]?key/im.test(text)) return "metered";
+  return "unknown";
+}
 
 /** What `codex login status` said. Signed out it prints "Not logged in" and exits 1 (measured, 0.151.0), so the words decide, not
  *  the exit. Undefined when it did not say: a timeout or a crash is not signed out, so a login that is already there cannot pass for a new one. */
@@ -465,16 +477,27 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     };
     const catalogEnv = childEnv();
     let models = STATIC_CODEX_MODELS;
-    const refreshModels = async () => {
+    let catalogQualified: string | undefined;
+    let catalogError: CodexCatalogUpdateRequired | undefined;
+    const refreshModels = async (onlyIfChanged = false) => {
+      const identity = cliSig(config.cli, catalogEnv);
+      if (onlyIfChanged && catalogQualified === identity) return;
       try {
         const officialOptions = models.options.filter(option => !option.custom && !option.id.includes("::"));
         const officialFallback = officialOptions.length ? {
           default: officialOptions.some(option => option.id === models.default) ? models.default : officialOptions[0].id,
           options: officialOptions,
         } : STATIC_CODEX_MODELS;
-        const resolved = await readCodexModelCatalog(catalogEnv, fetch, config.cli, officialFallback);
+        const resolved = await readCodexModelCatalog(catalogEnv, fetch, config.cli, catalogQualified === identity ? officialFallback : undefined);
+        catalogQualified = identity;
+        catalogError = undefined;
         if (resolved.options.length) models = resolved;
-      } catch {
+      } catch (error) {
+        if (error instanceof CodexCatalogUpdateRequired) {
+          catalogQualified = undefined;
+          catalogError = error;
+          models = { default: "", options: [] };
+        }
         // Keep the last usable catalog when a local provider is down.
       }
     };
@@ -623,6 +646,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
      * followed), for a takeover to end through its owned process tree. */
     const prewarmChildren = new Map<string, () => ReturnType<typeof spawnCli> | undefined>();
     const sendTurn = async (turn: SendTurnInput) => {
+      // Reuse catalog qualification before resolving the default or dispatching a replaced executable.
+      await refreshModels(true);
       if (!turn.prewarm) {
         if (turn.background) backgroundThreads.add(turn.threadId); else backgroundThreads.delete(turn.threadId);
         if (!turn.background) { warmPool.noteUserActivity(); warmPool.sent(turn.threadId); lastTurns.remember(turn.threadId, spawnInputsOf(turn)); }
@@ -741,13 +766,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // `flux-auto` decodes to OFFICIAL_CODEX_PROVIDER (codex-catalog.ts:57)
         // and is refused at spawn (index.ts:2508); it must not half-apply a
         // provider table here that thread/start would never select.
-        const flux = !turn.providerRoute && fluxIdIsRoutable(turn.model, DRIVER_KIND)
-          ? applyFluxSurface(DRIVER_KIND, env, turn.model, fluxKey())
+        const launchModel = nativeTurnModel({ driverKind: DRIVER_KIND, models }, turn.model);
+        const flux = !turn.providerRoute && fluxIdIsRoutable(launchModel, DRIVER_KIND)
+          ? applyFluxSurface(DRIVER_KIND, env, launchModel, fluxKey())
           : null;
         // Flux Memory: the table this thread starts under. The headers live in
         // three provider tables declared once in argv (flux-routing.ts), so the
         // shared app-server is never recycled for an audience change; the warm
         // key below carries the choice so a change still re-evaluates the thread.
+        const budgetRoute = turn.providerRoute ? (turn.providerRoute.preset === "flux" ? { key: turn.providerRoute.apiKey, baseUrl: turn.providerRoute.baseUrl } : null) : flux?.applied ? { key: env[FLUX_CODEX_ENV_KEY] ?? "", baseUrl: FLUX_RESPONSES_BASE } : null;
         const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
@@ -779,7 +806,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         const appServerArgs = [
           "app-server",
-          ...(providerBinding || cloudHome ? [] : await codexLocalProviderArgs(env, turn.model)),
+          ...(providerBinding || cloudHome ? [] : await codexLocalProviderArgs(env, launchModel)),
           ...(cloudHome ? [] : flux?.args ?? []),
           ...(providerBinding?.args ?? []),
           // Codex has no metadata for a `flux-*` id and falls back to a
@@ -847,6 +874,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phoneJobs) {
           mount("phoneJobs", turn.integrations.phoneJobs, true, "own:phoneJobs");
         }
+        // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
+        if (turn.integrations?.highlevel) {
+          mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
+        }
         // A custom server named like one in the owner's own config.toml would
         // be MERGED with it by the `-c` override, not replace it: a stdio
         // command over a remote `url` entry is "invalid configuration" and
@@ -858,7 +889,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The servers that actually get mounted, chosen BEFORE any name is
         // allocated: a skipped server must not reserve its name, and a moved
         // server must not land on a sibling's.
-        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs"))
+        const customMcpServers = customMountEntries(turn.integrations?.custom, (name) => name === "murage-memory" || (Boolean(turn.integrations?.phoneJobs) && name === "phoneJobs") || (Boolean(turn.integrations?.highlevel) && name === "highlevel"))
           .map((mount): [string, { command: string; args: string[]; env: Record<string, string> }] => [mount.name, { command: mount.command, args: mount.args, env: mount.env }])
           // Rule 11: a name holding `__` cannot be told apart from its tools,
           // so it is not mounted and no record is written for it.
@@ -963,6 +994,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (attempt === 0) emit({ ...base(threadId, turnId), type: "turn.started" });
           emit({ ...base(threadId, turnId), type: "runtime.error", message: error.message, localFailure: scopeLocalFailureOf(error), ...(error.engine ? { localFailureEngine: error.engine } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "scope_unavailable", cost: null });
+          endPrewarm(); forgetPrewarm();
+          return;
+        }
+        if (catalogError) {
+          if (active.get(threadId) === slot) active.delete(threadId);
+          if (attempt === 0) emit({ ...base(threadId, turnId), type: "turn.started" });
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: catalogError.message });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok: false, stopReason: "update_required", cost: null });
           endPrewarm(); forgetPrewarm();
           return;
         }
@@ -1166,12 +1205,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
         const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
         if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
+        // HOOK-LIVENESS-COLD-START: the runtime's first start runs beside Codex's own start and handshake; turn/start waits for it
+        if (hookFiles) void warmHookRunner();
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
         // PowerShell; it expands to the quoted path of the scope's launcher (murage-hook.cmd, which sets ELECTRON_RUN_AS_NODE and runs
         // the script with MURAGE_CODEX_EXE, this program), and that value rides in this process's environment, which Codex hands each hook it runs.
         if (hookFiles && !reuse && process.platform === "win32") {
           env[CODEX_HOOK_LAUNCH_ENV] = hookWindowsLaunchValue(hookFiles.launcher);
-          env[CODEX_HOOK_EXE_ENV] = process.execPath;
+          env[CODEX_HOOK_EXE_ENV] = hookRuntime();
         }
         // the process's SessionStart proof, kept with it between turns
         const proof: HookProof | undefined = reuse?.proof ?? (gated ? new HookProof(hookConfigOf(scopedHome!)) : undefined);
@@ -1342,6 +1383,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       })();
       let completeStoppedTurn: (() => void) | undefined;
       let lastProviderError: string | undefined;
+      let reportedBudget = false;
       const stop = async (why: "asked" | "closing") => {
         stopAsked ||= why === "asked";
         stopRequested = true;
@@ -2124,9 +2166,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // STOP1: an end Codex reports after the person's Stop (a clean end the Stop's own deny let it reach, an
             // interrupted or failed end while it dies) is that Stop: no error card, and settle ends it as cancelled.
             if (stopRequested) { void settle(true, "cancelled"); break; }
-            const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : undefined;
-            if (t.status === "failed" && terminalMessage && terminalMessage !== lastProviderError) {
-              emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage });
+            const providerError = t.status === "failed" ? cliFluxBudget(t.error, budgetRoute) : undefined;
+            const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : providerError ? "This Flux key has reached its budget." : undefined;
+            if (t.status === "failed" && terminalMessage && (terminalMessage !== lastProviderError || (providerError && !reportedBudget))) {
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage, providerError });
             }
             if (t.status === "completed" && !stopRequested && helpers.open.size > 0) { holdForHelpers(); break; }
             if (helpers.holding && t.status === "completed") { void settle(true, null); break; }
@@ -2137,11 +2180,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // shape drift: 0.144 sends {message}, 0.139 nests it under
             // {error:{message}} — surface either (agentcal armor)
             {
-              const message = p.message ?? p.error?.message;
+              const providerError = !stopRequested ? cliFluxBudget(p, budgetRoute) : undefined;
+              const message = p.message ?? p.error?.message ?? (providerError ? "This Flux key has reached its budget." : undefined);
               // a provider error while a stopped process dies is part of the Stop, not an error card (STOP1)
               if (message && !stopRequested) {
                 lastProviderError = String(message).slice(0, 400);
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError });
+                reportedBudget ||= Boolean(providerError);
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError, providerError });
               }
             }
             break;
@@ -2362,7 +2407,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The selected model and provider: what a new thread starts with, what a resumed thread is asked to run on (03-2), and what
         // every turn/start names. A Flux selection names the table whose headers match its audience: the headers belong to the table,
         // and the audience may have changed since the thread started.
-        const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(turn.model);
+        const selection = providerBinding ? { model: providerBinding.model, modelProvider: providerBinding.modelProvider } : decodeCodexSelection(cursor || reuse ? turn.model : launchModel);
         const fluxSelected = Boolean(flux?.applied && !providerBinding && selection.modelProvider === FLUX_CODEX_PROVIDER);
         if (fluxSelected) selection.modelProvider = fluxProvider;
         const usageTable = !Object.keys(usageTags).length || process.env.MURAGE_CLOUD_ROLE === "home" ? null
@@ -2415,6 +2460,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           }
         }
         if (!codexThreadId) {
+          // A blank resume accepts the model owned by that conversation. Only a
+          // new thread needs the catalog default (including a saved CLI choice).
+          if (!selection.model && !providerBinding) Object.assign(selection, decodeCodexSelection(launchModel));
           if (fluxSelected) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
           const started = await request("thread/start", {
             cwd: turn.cwd ?? (process.env.MURAGE_CLOUD_ROLE === "home" ? cloudEngineHome("codex") : homedir()),
@@ -2531,6 +2579,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           try { conn.baseline = await descendantPids(enginePid); } catch { /* stays null: fails closed at settle */ }
         }
         if (cancelledBeforeStart()) return;
+        // HOOK-LIVENESS-COLD-START: the hook's runtime has started once before the bound starts (codex-hook.ts warmHookRunner), so the
+        // bound measures the hook, not the operating system's first launch of the runtime. Started when the process launched; usually done.
+        if (hookGate && !refusal.hookLive && (method === "turn/start" || method === "review/start")) {
+          await warmHookRunner();
+          // an attempt the close path retired (or a turn that settled) during the wait writes nothing (Astra r1 #1)
+          if (abandoned || state.settled || cancelledBeforeStart()) return;
+        }
         // The submission fence (SendTurnInput.beforeSubmit), on every
         // attempt: no await separates it from the turn/start write below. A
         // refusal writes nothing. Before sendTurn resolved the harness stops
@@ -2671,6 +2726,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...base(threadId, turnId),
             type: "runtime.error",
             message: earlyToolActivity ? `${message} ${CODEX_TOOL_MAY_HAVE_RUN}` : message,
+            providerError: cliFluxBudget(e, budgetRoute),
             ...(needsAuth ? { setup: true } : {}),
           });
           settle(false, needsAuth ? "auth_required" : "rpc_error");
@@ -2717,19 +2773,21 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
   // Upstream #3433: a slow probe keeps the last version; only a real miss reads as not installed.
   const snapshotVersionOf = cliVersionReader(config.cli);
   const snapshot = async (): Promise<ProviderSnapshot> => {
+    if (catalogError) return { state: "unavailable", reason: catalogError.message };
     const env = childEnv();
     const probed = await cachedCliVersion(config.cli, env, execCli);
     const probe = snapshotVersionOf(probed.error, probed.stdout);
     if (!("version" in probe)) return { state: "unavailable", reason: probe.reason };
     const { version } = probe;
-    const authenticated = await new Promise<boolean | undefined>((resolve) => {
-      execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
-        resolve(readCodexLogin(Boolean(err), `${stdout}\n${stderr ?? ""}`)),
-      );
+    const { authenticated, mode } = await new Promise<{ authenticated: boolean | undefined; mode: ReturnType<typeof readCodexLoginMode> }>((resolve) => {
+      execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) => {
+        const text = `${stdout}\n${stderr ?? ""}`;
+        resolve({ authenticated: readCodexLogin(Boolean(err), text), mode: readCodexLoginMode(text) });
+      });
     });
-    // childEnv drops OPENAI_API_KEY on purpose: off a home turns run on the ChatGPT login. On a home
+    // childEnv drops OPENAI_API_KEY; desktop billing follows the verified CLI login mode. On a home
     // the launcher knows whether an API key (C store) or a ChatGPT sign-in pays for the turns.
-    return { state: "available", version, ...(authenticated === undefined ? { authUnverified: true as const } : { authenticated }), billing: await codexCloudBilling() };
+    return { state: "available", version, ...(authenticated === undefined ? { authUnverified: true as const } : { authenticated }), ...(process.env.MURAGE_CLOUD_ROLE === "home" ? { billing: await codexCloudBilling() } : mode === "subscription" || mode === "metered" ? { billing: mode } : {}) };
   };
 
   return withCliMemoryLearning({
@@ -2741,7 +2799,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     get models() {
       return models;
     },
-    refreshModels,
+    refreshModels: () => refreshModels(),
     snapshot,
     adapter: {
       provider: DRIVER_KIND,

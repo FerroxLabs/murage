@@ -100,7 +100,7 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
   void message;
   switch (variant) {
     case "welcome":
-      return <FirstRunHelloCard settled={settled} />;
+      return <FirstRunHelloCard settled={settled} bot={bot} />;
     case "found":
       return <FirstRunAgentsCard bot={bot} settled={settled} />;
     case "bare":
@@ -121,7 +121,7 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
     case "no-key":
       return <FirstRunNoKeyCard />;
     case "jobs":
-      return <FirstRunJobsCard settled={settled} />;
+      return <FirstRunJobsCard settled={settled} bot={bot} />;
     case "do-it":
       return <FirstRunDoItCard bot={bot} settled={settled} />;
     // ── PARKED, AND THEREFORE HISTORY. ───────────────────────────────────

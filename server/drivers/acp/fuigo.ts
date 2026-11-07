@@ -49,6 +49,7 @@ import {
 import { quoteToml, readTomlConfigForEdit, removeTomlTables, tomlTables } from "./kimi.ts";
 import { versionAtLeast } from "../codex-hook.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
+import { applyFuigoPolicyEnv, checkFuigoPolicyAck, ensureFuigoPolicy, fuigoPolicyErrorText, fuigoPolicyFailure, fuigoPolicyFromEnv, fuigoPolicyMeta, pinFuigoPolicyEnv } from "./fuigo-policy.ts";
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
  *  defaultSelection. Renaming this renames the engine everywhere. */
@@ -237,6 +238,16 @@ export function scrubFuigoHandedEnv(
   }
   // after the key mirror, from the child's finished env: the map and the child carry the same park decision
   applyFuigoParkPin(map, presentedFuigoKey(child, platform), platform);
+  // FUIGO-SCOPE: the launch policy the engine sees is the child's, never an owner shell's (any spelling)
+  pinFuigoPolicyEnv(map, child, platform);
+}
+
+/** FUIGO-SCOPE: every turn launches under Murage's policy (fuigo-policy.ts), scoped, routed and native alike. A Cloud
+ *  home's launcher keeps its own env allowlist and file view, so it is not given a desktop path here: it writes the
+ *  same ask list into the turn's read-only Fuigo config instead (murage-turn-launch.py FUIGO_ASK, 1.0.18). */
+export function applyFuigoTurnPolicy(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  if (process.env.MURAGE_CLOUD_ROLE === "home") return;
+  applyFuigoPolicyEnv(env, ensureFuigoPolicy(), platform);
 }
 
 /** The Flux key the child will present, after the scrub, or null. */
@@ -913,7 +924,23 @@ const support: AcpSupport = {
     applyFuigoParkPin(env, presentedFuigoKey(env));
   },
   // a provider route replaces the Flux key after transformEnv: the park follows the key the turn finally presents
-  finishTurnEnv: (env) => applyFuigoParkPin(env, presentedFuigoKey(env)),
+  finishTurnEnv: (env) => {
+    applyFuigoParkPin(env, presentedFuigoKey(env));
+    applyFuigoTurnPolicy(env);
+  },
+  // FUIGO-SCOPE: the policy pair rides every session/new and session/load (Fuigo keeps no stored fallback), and an
+  // answer with no matching ack stops the turn before the prompt: an engine that ignored the policy would run reads
+  // and shell commands unasked.
+  sessionMeta: (env) => {
+    const policy = fuigoPolicyFromEnv(env);
+    return policy ? fuigoPolicyMeta(policy) : undefined;
+  },
+  checkSession: (result, env) => {
+    const policy = fuigoPolicyFromEnv(env);
+    if (policy) checkFuigoPolicyAck(result, policy);
+  },
+  exitNote: (stderr) => fuigoPolicyErrorText(stderr),
+  policyFailure: (error) => fuigoPolicyFailure(error),
   scrubHandedEnv: (map, child) => scrubFuigoHandedEnv(map, child),
 
   /**

@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "ea031914b5680189bd36054dbbc8a9f72d8a158a44d9edeb8037f4acbffec4e9";
+export const CAPABILITY_DB_REV = "615581bc2f8ffd9f22c04dca30a7f8234276f41f3fa4791d21e706485f387d80";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -161,11 +161,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   },
   {
     "id": "cap:bots.channel-turns",
-    "title": "Channel turn timeout",
+    "title": "Time limit for bot activity in channels",
     "description": "Murage can do this.",
     "heading": "How long does a bot keep working in a quiet channel? / Change the channel turn timeout / A bot's reply in a channel stopped after a while / Set the no activity limit for channel replies",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Bots → Advanced → Channel turn timeout",
+    "where": "Settings → Bots → Advanced → Time limit for bot activity in channels",
     "url": "https://murage.ai/docs/features/chat-and-teams#rooms",
     "text": "A bot's reply in a channel stops after a set number of minutes with no activity. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count. The No activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.",
     "capability": "bots.channel-turns",
@@ -182,7 +182,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "42eb98fad7cbed2936cf75e916dfc22a898fec473421cd873a547565e3faabb6"
+    "rev": "368117e49f1e66f01e7056137b16250c43007a86d1ef25dfb09a567509950c7b"
   },
   {
     "id": "cap:engines.continue-with-chatgpt-grok",
@@ -222,10 +222,10 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Use a plan you already have",
     "url": "https://murage.ai/docs/providers#use-a-plan-you-already-have",
-    "text": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
+    "text": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for. Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
     "capability": "engines.use-my-subscription",
     "status": "can",
-    "answer": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first.",
+    "answer": "Which one do you pay for: ChatGPT, Grok or Claude? ChatGPT and Grok take one sign-in with nothing to install. Claude runs in Claude Code, so we set up Claude Code and log you in. Kimi Code and other apps set up from the Engines list. Never list keys first. ChatGPT: [Continue with ChatGPT](murage://plan/chatgpt). Grok, and say it is Unofficial: [Continue with Grok](murage://plan/supergrok). Claude: [Set up Claude Code](murage://engine/set-up?engine=claude). After a plan sign-in nothing switches a bot: say to pick a ChatGPT or Grok model in the model picker. A bot on Claude Code moves to Fuigo first. What you use depends on the one you pay for.",
     "limits": "Grok is marked Unofficial and needs SuperGrok or X Premium. A Claude plan cannot be used through Fuigo.",
     "askYourBot": "",
     "platforms": [
@@ -237,7 +237,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "bd206325f49ea95d276d697accd076c6acc292054bcb3ea87e8a5af09d6e99d0"
+    "rev": "3305b5090644c38f2d47febf9991455528b4ca3f467a5fa2ce0e879c942fe01d"
   },
   {
     "id": "cap:engines.set-up-claude-code",
@@ -340,6 +340,58 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "rev": "1541a17b07978e99607de92d84a5cbf102ef80aa605f047c5bdd8dd7cba97c3e"
   },
   {
+    "id": "cap:engines.default-models",
+    "title": "Default models and saved choices",
+    "description": "Murage can do this.",
+    "heading": "Which models are recommended for Claude Code and Codex? / Will an update change my saved model? / Does Murage bundle Codex?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/providers#default-models-and-saved-choices",
+    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "capability": "engines.default-models",
+    "status": "can",
+    "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
+    "limits": "Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux",
+      "cloud"
+    ],
+    "engines": [
+      "claude",
+      "codex"
+    ],
+    "applies": "Applies to Mac, Windows, Linux, Murage Cloud; Claude, Codex.",
+    "rev": "b3ca443fc348176eb42d6e1c3db1b8de7399e0ffa94b852a594a840c64113a4b"
+  },
+  {
+    "id": "cap:engines.muse-code",
+    "title": "Muse Code from Meta",
+    "description": "Murage can do this.",
+    "heading": "Set up Muse Code / Who pays for Muse Code? / Is Muse Code on Murage Cloud?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Models & engines → Engines",
+    "url": "https://murage.ai/docs/providers#muse-code",
+    "text": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take a regular model, Murage doesn't send your message. Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "capability": "engines.muse-code",
+    "status": "can",
+    "answer": "Yes, in the desktop app. Install Muse Code from Meta, then run muse login in a terminal or add a Meta API key. Meta bills your own account or key, and Meta's terms apply. It never goes through Flux Router. Murage always runs Muse Code on a regular model, never a Contributor model, and if Muse won't take a regular model, Murage doesn't send your message.",
+    "limits": "Not on Murage Cloud yet. At Ask and Auto, Muse Code can't write files; it writes files only at Full access. Install and update it from Meta yourself.",
+    "askYourBot": "",
+    "platforms": [
+      "mac",
+      "windows",
+      "linux"
+    ],
+    "engines": [
+      "muse"
+    ],
+    "applies": "Applies to Mac, Windows, Linux; Muse Code.",
+    "rev": "1c17f3e557c185a10f51168b62779a04e75198654516459850808515ab24e60e"
+  },
+  {
     "id": "cap:install-account.ubuntu-computer-control",
     "title": "Let a bot control this Ubuntu computer",
     "description": "Murage can do this.",
@@ -420,6 +472,29 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     ],
     "applies": "Applies to every platform; every engine.",
     "rev": "c5683039417e01a002c9ca0e9c269cf159013d11f9d303576a845ed132a441a6"
+  },
+  {
+    "id": "cap:limits.plan-usage",
+    "title": "View plan usage",
+    "description": "Murage can do part of this.",
+    "heading": "How much of my plan have I used? / When does my plan limit reset? / Where can I check plan usage?",
+    "breadcrumb": "Murage capabilities",
+    "where": "Settings → Usage",
+    "url": "https://murage.ai/docs",
+    "text": "Settings, Usage shows the plan use last reported by an engine, when it was checked, and the reported reset time. Use Refresh to check again. Readings are available when Codex reports them. Other engines and Murage Cloud may show no reading. A reset time does not confirm that more use is available. Ask your bot: Ask your bot to remind you to check your engine account when no reading is available.",
+    "capability": "limits.plan-usage",
+    "status": "partial",
+    "answer": "Settings, Usage shows the plan use last reported by an engine, when it was checked, and the reported reset time. Use Refresh to check again.",
+    "limits": "Readings are available when Codex reports them. Other engines and Murage Cloud may show no reading. A reset time does not confirm that more use is available.",
+    "askYourBot": "Ask your bot to remind you to check your engine account when no reading is available.",
+    "platforms": [
+      "all"
+    ],
+    "engines": [
+      "codex"
+    ],
+    "applies": "Applies to every platform; Codex.",
+    "rev": "7cf01ce8108865766247ffd69c2974940f3ed8a316e07dbbc86266c3fd09bdcf"
   },
   {
     "id": "cap:memory.learn-about-me",

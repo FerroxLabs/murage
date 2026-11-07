@@ -1,0 +1,46 @@
+✖ BF-B2: timeout during upgrade retains a window until recovery exists (4.530346ms)
+✖ BF-B2: exited during upgrade retains a window until recovery exists (1.461004ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 74.729123
+
+✖ failing tests:
+
+test at electron/memory-upgrade-window.node-test.mjs:14:46
+✖ BF-B2: timeout during upgrade retains a window until recovery exists (4.530346ms)
+  AssertionError [ERR_ASSERTION]: stopping the child must not close the only window and quit
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///root/swarm1018/SPEC-STARTUP-SILENT-1018/repo/electron/memory-upgrade-window.node-test.mjs:72:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at electron/memory-upgrade-window.node-test.mjs:14:46
+✖ BF-B2: exited during upgrade retains a window until recovery exists (1.461004ms)
+  AssertionError [ERR_ASSERTION]: stopping the child must not close the only window and quit
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (file:///root/swarm1018/SPEC-STARTUP-SILENT-1018/repo/electron/memory-upgrade-window.node-test.mjs:72:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

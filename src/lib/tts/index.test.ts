@@ -1110,3 +1110,40 @@ describe("Speaker.fetchClip", () => {
     await expect(new Speaker().fetchClip("One sec.", { botId: "b" })).rejects.toThrow("nope");
   });
 });
+
+describe("D24 server call audio playback", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("submits only reply identity and owns playback until the real player ends", async () => {
+    const fetcher = vi.fn(async () => new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID"}\n{"type":"complete"}\n'));
+    vi.stubGlobal("fetch", fetcher);
+    let end!: (outcome: ClipOutcome) => void;
+    const play = vi.fn(() => new Promise<ClipOutcome>(resolve => { end = resolve; }));
+    const speaker = new Speaker();
+    speaker.useOutput({ play, teardown: vi.fn(), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const playing = speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" }, { botId: "bot", messageId: "message" });
+    await vi.waitFor(() => expect(play).toHaveBeenCalledOnce());
+    expect(speaker.state.status).toBe("speaking");
+    expect(JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)).toEqual({ callSessionId: "call", replyId: "reply", threadId: "thread" });
+    expect((fetcher.mock.calls[0] as unknown as [string])[0]).toBe("/api/tts/call/reply");
+    end("ended");
+    expect(await playing).toBe(true);
+    expect(speaker.state.status).toBe("idle");
+  });
+  it("Stop cuts playback and aborts the identity request", async () => {
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, options: RequestInit) => {
+      signal = options.signal as AbortSignal;
+      return new Response('{"type":"clip","mime":"audio/mpeg","data":"AQID"}\n{"type":"complete"}\n');
+    }));
+    let end: ((outcome: ClipOutcome) => void) | undefined;
+    const speaker = new Speaker();
+    const play = vi.fn(() => new Promise<ClipOutcome>(resolve => { end = resolve; }));
+    speaker.useOutput({ play, teardown: () => end?.("cut"), pause: vi.fn(), resume: vi.fn(), streams: false });
+    const playing = speaker.playCallReply({ callSessionId: "call", replyId: "reply", threadId: "thread" });
+    await vi.waitFor(() => expect(play).toHaveBeenCalledOnce());
+    speaker.stop();
+    expect(await playing).toBe(false);
+    expect(signal?.aborted).toBe(true);
+    expect(speaker.state.status).toBe("idle");
+  });
+});
