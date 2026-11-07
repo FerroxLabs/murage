@@ -1,0 +1,20 @@
+{
+  "base": [
+    "server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child",
+    "server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > pooled: the probes ask about the CLI, a replaced MCP child (parent: the CLI) is admitted, and a Stop ends the tree",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child process left running after end_turn closes the process and kills its whole tree",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child that starts after the park check passed is caught before the next prompt: closed, and the turn spawns fresh",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a fresh process replacing a rejected reused one keeps none of its session: a load answering null opens a new session"
+  ],
+  "head": [
+    "server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child",
+    "server/drivers/acp/engine-tree-stop.test.ts > ACP Stop ends the whole tree behind a launcher (U24 T11) > pooled: the probes ask about the CLI, a replaced MCP child (parent: the CLI) is admitted, and a Stop ends the tree",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > MCP servers the engine replaces each turn are baseline: four replacing turns on one process, never closed as a leftover",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a candidate is unavailable until its park check succeeded: an immediate follow-up never adopts a process the check found unfit",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child process left running after end_turn closes the process and kills its whole tree",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a child that starts after the park check passed is caught before the next prompt: closed, and the turn spawns fresh",
+    "server/drivers/acp/pool.test.ts > ACP process pool (fake CLI) > a fresh process replacing a rejected reused one keeps none of its session: a load answering null opens a new session"
+  ]
+}

@@ -38,3 +38,15 @@ export function waitForAnchor<E>({ find, onFound, onGiveUp, startedAt, limitMs =
   look();
   return () => { stopped = true; cancel?.(); };
 }
+
+/** Scroll to an anchor, focus it, and mark it for two seconds (a search "Open" and a Settings address land the same way). */
+export function revealAnchor(element: HTMLElement) {
+  element.scrollIntoView({ block: "start" });
+  if (!element.hasAttribute("tabindex") && !/^(?:BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(element.tagName)) element.setAttribute("tabindex", "-1");
+  element.focus({ preventScroll: true });
+  // Settings focuses its own dialog as it mounts; take focus back once.
+  requestAnimationFrame(() => { if (document.activeElement !== element) element.focus({ preventScroll: true }); });
+  const mark = ["rounded-xl", "ring-2", "ring-accent", "transition-shadow"];
+  element.classList.add(...mark);
+  window.setTimeout(() => element.classList.remove(...mark), 2000);
+}

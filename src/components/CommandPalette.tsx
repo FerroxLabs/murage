@@ -1,3 +1,4 @@
+import { useChatResource, type HitsPage } from "@/lib/chat-previews";
 // ⌘K switcher: bots and rooms from local state, transcript hits from
 // /api/search, and (0.1.62) the Settings pages whose words match, so
 // "images" jumps straight to Settings > Images. Self-contained — owns its
@@ -5,7 +6,7 @@
 // search field opens it through lib/app-events.ts.
 import { useEffect, useRef, useState } from "react";
 import { Bot as BotIcon, MessageSquare, Search, Settings as SettingsIcon, Users } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
+import { useStore, type AppSettingsSection, type Bot, type Group } from "@/state/store";
 import { OPEN_PALETTE_EVENT } from "@/lib/app-events";
 import { SETTINGS_SECTIONS, sectionsForSurface, settingsGroupLabel, settingsSectionLabel } from "@/lib/settings-sections";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -15,6 +16,7 @@ import { cn } from "@/lib/cn";
 import { BOX_FRAME, BoxBody, BoxHead } from "./ui/BoxShell";
 import type { SearchHit } from "@/lib/search-hit";
 import { landOnSearchHit } from "@/lib/focus-message";
+import { imeComposing } from "@/lib/composer-enter";
 
 type PaletteEntry =
   | { kind: "bot"; bot: Bot }
@@ -35,7 +37,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   const [settingsSearch, setSettingsSearch] = useState<typeof import("@/lib/settings-search") | null>(null);
   const handedQuery = useRef(initialQuery);
   const [query, setQuery] = useState("");
-  const [messageHits, setMessageHits] = useState<SearchHit[]>([]);
+
   const [cursor, setCursor] = useState(0);
   const selectedRef = useRef<HTMLButtonElement>(null);
 
@@ -44,6 +46,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   // modifier chord never collides with typing.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (imeComposing(e)) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k" && !e.shiftKey && !e.altKey) {
         e.preventDefault();
         setOpen((o) => !o);
@@ -76,7 +79,6 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
     if (!open) return;
     setQuery(handedQuery.current);
     handedQuery.current = "";
-    setMessageHits([]);
     setCursor(0);
   }, [open]);
 
@@ -86,28 +88,8 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
 
   const q = query.trim().toLowerCase();
 
-  // Same debounce pattern as the sidebar search: names answer instantly
-  // from local state, transcript hits arrive a beat later, and a stale
-  // response for an outdated query is dropped.
-  useEffect(() => {
-    if (!open || !q) {
-      setMessageHits([]);
-      return;
-    }
-    // Results for the previous query must not remain clickable while the
-    // debounce and request for this query are pending.
-    setMessageHits([]);
-    let alive = true;
-    const timer = setTimeout(() => {
-      api(`/api/search?q=${encodeURIComponent(q)}&limit=12`)
-        .then((result: { hits?: SearchHit[] }) => alive && setMessageHits(result.hits ?? []))
-        .catch(() => alive && setMessageHits([]));
-    }, 150);
-    return () => {
-      alive = false;
-      clearTimeout(timer);
-    };
-  }, [open, q]);
+  const messages = useChatResource<HitsPage>(open && q ? `/api/search?q=${encodeURIComponent(q)}&limit=12` : null, undefined, 150);
+  const messageHits = messages.eligible ? messages.data?.hits ?? [] : [];
 
   useEffect(() => setCursor(0), [q]);
 
@@ -139,7 +121,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
     } else if (entry.kind === "message") {
       const hit = entry.hit;
       try {
-        await landOnSearchHit(hit, state, dispatch);
+        await landOnSearchHit(hit, state, dispatch, messages.listGen);
       } catch (error) {
         dispatch({ type: "error", message: error instanceof Error ? error.message : String(error) });
       }
@@ -150,6 +132,7 @@ export function CommandPalette({ onOpenChange, initialOpen = false, initialQuery
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (imeComposing(e.nativeEvent)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       // shield the window listeners other modals hang their own Esc on

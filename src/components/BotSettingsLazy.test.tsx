@@ -2,8 +2,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SettingsSection } from "./SettingsPanel";
+
+// Vitest runs here without a DOM, and importing the panel reads window.muragebox.
+vi.hoisted(() => { (globalThis as { window?: unknown }).window ??= {}; });
 
 const read = (file: string) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
 const marker = (text: string) => createElement("p", null, text);
@@ -29,7 +32,7 @@ describe("bot settings tabs mount lazily", () => {
     expect(html).toContain("VOICE-BODY");
   });
   it("the dialog still routes intents into the section prop that mounts the tab", () => {
-    const dialog = read("./BotSettingsDialog.tsx");
+    const dialog = read("./BotSettingsPane.tsx");
     expect(dialog).toContain("setSection(state.botSettingsIntent.section)");
     expect(dialog).toContain("section={section}");
     expect(read("./BotSkillsPanel.tsx")).toContain("useState(Boolean(state.botSettingsIntent?.addSkill))");

@@ -5,6 +5,7 @@ import type { ProviderInstance } from "./contracts.ts";
 import { fluxKey } from "./flux-config.ts";
 import { FLUX_OPENAI_BASE } from "./flux-routing.ts";
 import { fluxCallHeaders } from "./flux-memory-headers.ts";
+import { fluxKeyMayCall, noteFluxModelRefused } from "./flux-key-models.ts";
 import type { CheckerTransport } from "./browser-action-checker.ts";
 import { learningGate, sampleLearningFence } from "./memory/learning-send.ts";
 
@@ -136,17 +137,36 @@ export function resolveCheckerConnection(input: CheckerConnectionInput): Checker
   if (input.switch === "bot") return botConnection(false);
   const fluxLive = input.noRetainDeployed ?? FLUX_NO_RETAIN_DEPLOYED;
   const readKey = input.readKey ?? fluxKey;
-  if (!fluxLive || !readKey()) return botConnection(true);
+  const liveKey = fluxLive ? readKey() : null;
+  if (!liveKey) return botConnection(true);
+  // A free-plan key may call flux-fast and flux-auto only, and the checker never runs on an unpinned id: when the key's catalog
+  // leaves a checker model out, or Flux refused it lately, or the catalog is missing or unreadable (Flux has not said the key may
+  // call the pin), the bot's own engine checks instead of a pinned id Flux may refuse.
+  // With no engine that can check, the Flux path stays, so the owner is asked with the plan's own reason (checker_model_not_allowed).
+  if (fluxKeyMayCall(liveKey, models.stage1) !== "yes" || fluxKeyMayCall(liveKey, models.stage2) !== "yes") {
+    const engine = botConnection(true);
+    if (engine) return engine;
+  }
   const transport: CheckerTransport = async (req) => {
-    count++;
     // Read again at dispatch so a revoked or replaced key never survives in a closure.
     const apiKey = readKey();
+    // Asked again at dispatch: a key replaced by a free one, a model Flux refused since this connection was made, or a catalog that
+    // is now missing or unreadable goes to the bot's own engine when one can check (its transport counts the call).
+    if (apiKey && fluxKeyMayCall(apiKey, req.model) !== "yes") {
+      const engine = botConnection(true);
+      if (engine) return engine.transport(req);
+    }
+    count++;
     if (!apiKey) throw new Error("CHECKER_UNAVAILABLE");
     try {
       const out = await fluxCall({ apiKey, req, record: input.record, requireEcho: input.requireNoRetainEcho ?? fluxLive, botId: input.botId });
       input.record?.({ kind: "call", model: req.model, ok: true });
       return out;
-    } catch (error) { input.record?.({ kind: "call", model: req.model, ok: false }); throw error; }
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code === "CHECKER_MODEL_NOT_ALLOWED" || code === "CHECKER_MODEL_NOT_PERMITTED") noteFluxModelRefused(apiKey, req.model);
+      input.record?.({ kind: "call", model: req.model, ok: false }); throw error;
+    }
   };
   return { source: "flux", transport, calls: () => count, models };
 }

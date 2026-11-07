@@ -1,0 +1,160 @@
+
+ RUN  v4.1.12 /root/swarm1018/DEP-AUDIT-RESIDUAL-1018/repo/apps/mobile
+
+ ❯ src/android-cap-path.test.ts (13 tests | 1 failed) 109ms
+     × accepts this checkout's real path 10ms
+ ❯ src/e2e-host-safety.test.ts (20 tests | 6 failed) 5316ms
+     × refuses to kill PIDs from host.env and door.pid that are not the isolated server or door 17ms
+     × kills the isolated server and door it can identify, then cleans up 4031ms
+     × refuses to delete a DATA path that climbs out with .. 15ms
+     × refuses with "is busy" while another run holds the lock, and leaves the lock alone 15ms
+     × takes over a stale lock (owner gone, no isolated port listening), then releases it on its own failed start 10ms
+     × stop-host.sh releases the lock with the host 11ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/android-cap-path.test.ts > P3: cap_path keeps the Capacitor path inside node_modules > accepts this checkout's real path
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/android-cap-path.test.ts:87:20
+     85|   it("accepts this checkout's real path", () => {
+     86|     const { status, out } = capPath(fileURLToPath(new URL("..", import…
+     87|     expect(status).toBe(0);
+       |                    ^
+     88|     expect(out).toMatch(/^node_modules\/\.pnpm\/@capacitor\+android@/);
+     89|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > stop-host.sh kills only the isolated host's own processes > refuses to kill PIDs from host.env and door.pid that are not the isolated server or door
+AssertionError: expected 'lsof is needed to check the isolated …' to match /refusing to kill 1353/
+
+- Expected:
+/refusing to kill 1353/
+
++ Received:
+"lsof is needed to check the isolated host's ports and processes; nothing was changed
+"
+
+ ❯ src/e2e-host-safety.test.ts:185:25
+    183|     const data = hostEnv(stranger, other);
+    184|     const stop = run("stop-host.sh");
+    185|     expect(stop.stderr).toMatch(new RegExp(`refusing to kill ${strange…
+       |                         ^
+    186|     expect(stop.stderr).toMatch(new RegExp(`refusing to kill ${other}`…
+    187|     await new Promise((r) => setTimeout(r, 300));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > stop-host.sh kills only the isolated host's own processes > kills the isolated server and door it can identify, then cleans up
+AssertionError: lsof is needed to check the isolated host's ports and processes; nothing was changed
+: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/e2e-host-safety.test.ts:201:38
+    199|     await settle(server);
+    200|     await settle(door);
+    201|     expect(stop.status, stop.stderr).toBe(0);
+       |                                      ^
+    202|     expect(alive(server)).toBe(false);
+    203|     expect(alive(door)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > stop-host.sh kills only the isolated host's own processes > refuses to delete a DATA path that climbs out with ..
+AssertionError: expected 'lsof is needed to check the isolated …' to match /refusing to delete/
+
+- Expected:
+/refusing to delete/
+
++ Received:
+"lsof is needed to check the isolated host's ports and processes; nothing was changed
+"
+
+ ❯ src/e2e-host-safety.test.ts:212:25
+    210|     writeFileSync(file("host.env"), `DATA=/tmp/murage-e2e-data-x/../..…
+    211|     const stop = run("stop-host.sh");
+    212|     expect(stop.stderr).toMatch(/refusing to delete/);
+       |                         ^
+    213|     expect(existsSync(outside)).toBe(true);
+    214|     rmSync(outside, { recursive: true, force: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > run-host.sh takes host.lock, so two E2E runs never both start a host > refuses with "is busy" while another run holds the lock, and leaves the lock alone
+AssertionError: expected 'lsof is needed to check the isolated …' to match /is busy/
+
+- Expected:
+/is busy/
+
++ Received:
+"lsof is needed to check the isolated host's ports and processes; nothing was changed
+"
+
+ ❯ src/e2e-host-safety.test.ts:236:26
+    234|     const start = run("run-host.sh");
+    235|     expect(start.status).toBe(1);
+    236|     expect(start.stderr).toMatch(/is busy/);
+       |                          ^
+    237|     expect(existsSync(file("host.lock"))).toBe(true);
+    238|     expect(existsSync(file("host.env"))).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > run-host.sh takes host.lock, so two E2E runs never both start a host > takes over a stale lock (owner gone, no isolated port listening), then releases it on its own failed start
+AssertionError: expected 'lsof is needed to check the isolated …' to match /took over a stale host.lock/
+
+- Expected:
+/took over a stale host.lock/
+
++ Received:
+"lsof is needed to check the isolated host's ports and processes; nothing was changed
+"
+
+ ❯ src/e2e-host-safety.test.ts:252:26
+    250|     lockedBy(deadPid());
+    251|     const start = run("run-host.sh");
+    252|     expect(start.stderr).toMatch(/took over a stale host.lock/);
+       |                          ^
+    253|     expect(start.status).not.toBe(0); // the fake CLI has no MagicDNS …
+    254|     expect(existsSync(file("host.lock"))).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯
+
+ FAIL  src/e2e-host-safety.test.ts > run-host.sh takes host.lock, so two E2E runs never both start a host > stop-host.sh releases the lock with the host
+AssertionError: lsof is needed to check the isolated host's ports and processes; nothing was changed
+: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ src/e2e-host-safety.test.ts:279:38
+    277|     writeFileSync(file("host.env"), `DATA=${data}\nTS_HOST=h.ts.net\nC…
+    278|     const stop = run("stop-host.sh");
+    279|     expect(stop.status, stop.stderr).toBe(0);
+       |                                      ^
+    280|     expect(existsSync(file("host.lock"))).toBe(false);
+    281|     expect(existsSync(data)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯
+
+
+ Test Files  2 failed | 22 passed (24)
+      Tests  7 failed | 848 passed (855)
+   Start at  16:24:16
+   Duration  5.66s (transform 3.37s, setup 0ms, import 4.60s, tests 6.29s, environment 2ms)
+
