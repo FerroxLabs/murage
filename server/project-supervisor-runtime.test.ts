@@ -78,7 +78,7 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
   f.pending.set("thread", run); f.turns.set(JSON.stringify(["thread", "turn"]), run);
   // phone tools (1.0.9 union-server): a revoked generation also drops its phone dispatch facts, phone authority and phone jobs
   const phoneDispatchFacts = new Map([["gen", {}], ["other", {}]]), phoneAuthorities = { revokeGeneration: vi.fn() }, phoneJobs = { turnEnded: vi.fn() }, highlevelCalls = { turnEnded: vi.fn() };
-  const deps: Record<string, unknown> = { ...f.deps, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs, highlevelCalls }; // lineage: a revoked generation drops its turn output roots
+  const deps: Record<string, unknown> = { ...f.deps, replyState: { invalidateGeneration: vi.fn() }, callSpeech: { invalidate: vi.fn() }, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs, highlevelCalls }; // lineage: a revoked generation drops its turn output roots
   // The cleanup seam is injected only if the implementation uses one.
   if (source.includes("function abandonProjectUsageTurn(")) deps.abandonProjectUsageTurn = seam("abandonProjectUsageTurn", deps);
   seam("revokeInternalGeneration", deps)("thread", "gen");

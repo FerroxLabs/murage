@@ -43,9 +43,9 @@ describe("what a Markdown image may become", () => {
 
   it("never fetches a local-looking path, even one whose filename matches a generated attachment", () => {
     for (const src of [
-      "/Users/sean/private/abc-123.png",
+      "/Users/alex/private/abc-123.png",
       "C:\\Users\\sean\\abc-123.png",
-      "file:///Users/sean/abc-123.png",
+      "file:///Users/alex/abc-123.png",
       "abc-123.png",
       "./abc-123.png",
       "/api/attachments/../secret.png",
@@ -193,10 +193,10 @@ describe("closed-state markup", () => {
     expect(external).not.toContain("tracker.example/p.gif");
     expect(external).toContain("Image from tracker.example not loaded.");
     expect(external).toContain(">Load image</button>");
-    const local = renderToStaticMarkup(createElement(MarkdownImage, { src: "/Users/sean/secret.png", alt: "secret" }));
+    const local = renderToStaticMarkup(createElement(MarkdownImage, { src: "/Users/alex/secret.png", alt: "secret" }));
     expect(local).not.toContain("<img");
-    expect(local).not.toContain("/Users/sean");
-    expect(local).toContain("Local image paths are not loaded in chat.");
+    expect(local).not.toContain("/Users/alex");
+    expect(local).toContain("Only pictures in this conversation&#x27;s folder load here.");
   });
 });
 

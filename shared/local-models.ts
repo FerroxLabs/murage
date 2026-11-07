@@ -307,7 +307,8 @@ export const LOCAL_SERVER_NAME_MAX = 60;
 export const LOCAL_SERVER_KEY_MAX = 512;
 export const LOCAL_SERVERS_MAX = 32;
 /** Same shape `decodeInjectId` accepts for the model half of `host::model`. */
-export const LOCAL_MODEL_ID = /^[\w][\w./:+-]*$/;
+// `@` carries LM Studio's quant variant ("publisher/model@q4_k_m").
+export const LOCAL_MODEL_ID = /^[\w][\w./:+@-]*$/;
 
 export function isValidLocalServerName(value: unknown): value is string {
   return (

@@ -1,0 +1,10 @@
+
+> murage@1.0.17 catalog:check /root/swarm1018/SPEC-C2-PREVIEWS-1018/repo
+> node --experimental-strip-types scripts/build-local-catalog.mjs --check
+
+entries            283
+solo profiles      204
+skill references   2766
+bytes              519467
+declared but not shipped 0
+library/catalog.json is up to date

@@ -1,21 +1,19 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The help panel's words. They live in src/locales/en-ux/l4a.json (lane
-// prefix ux.l4a.*), which L-COPY-A's loader merges into the English pack, so
-// t() answers them, translations included. The words for each screen are help
-// only, so they ride the help chunk (src/lib/help-screen-copy.ts) and join the
-// English pack when it loads. The screens index names its copy
-// by key at run time, so this takes a plain string and shows a missing key as
-// itself instead of crashing the panel.
-import { t } from "@/lib/i18n";
-import { en, type LocaleKey } from "@/locales";
+// The help panel's words. The panel's own lines are main-pack keys
+// (src/locales/en-ux/l4a.json, prefix ux.l4a.*), answered by t(); the words
+// for each screen are Help keys (src/locales/en-help/*.json), answered from
+// the active language's Help pack by the help copy store
+// (src/lib/help-copy-store.ts). This module is help chunk only: the
+// always-loaded part (HelpHost.tsx, the Workspace pane's "?", Keyboard
+// shortcuts) uses t() and never imports it (src/first-paint.test.ts).
+import { hx } from "@/lib/help-copy-store";
 
-export function hx(key: string, params?: Record<string, string | number>): string {
-  return Object.hasOwn(en, key) ? t(key as LocaleKey, params) : key;
-}
+export { hx };
 
-/** The modifier key as an owner reads it in a sentence ("Cmd K", "Ctrl K"). */
+/** The modifier key as an owner reads it in a sentence ("Cmd K", "Ctrl K"),
+ *  in the app's language (de "Strg K"): main-pack keys, never fixed English. */
 export function modWord(mac: boolean): string {
-  return mac ? "Cmd" : "Ctrl";
+  return hx(mac ? "ux.l4a.mod.mac" : "ux.l4a.mod.other");
 }

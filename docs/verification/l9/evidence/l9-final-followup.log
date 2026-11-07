@@ -1,0 +1,9 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+
+ Test Files  4 passed (4)
+      Tests  43 passed (43)
+   Start at  16:53:55
+   Duration  24.93s (transform 6.72s, setup 8.12s, import 2.15s, tests 14.19s, environment 0ms)
+

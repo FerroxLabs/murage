@@ -210,8 +210,26 @@ for (const status of ["waiting", "needs-you"]) {
     expect(get(db, { view: "questions", includeSnoozed: true }).total).toBe(0);
     // The badge adds snoozed owed items back (UX L2B); the snoozed receipt was never owed beside its card, so the badge stays 1.
     expect(page.decisions + (page.snoozedOwed ?? 0)).toBe(1);
+    // ...and no tab says "1 snoozed" for it either (FUNCTION-SWEEP-1018)
+    for (const view of ["approvals", "questions", "connections"] as const) expect(get(db, { view }).snoozedHere, view).toBeUndefined();
   });
 }
+
+it("3c. a snoozed question says '1 snoozed' on Decisions and the umbrella, never on Approvals (FUNCTION-SWEEP-1018)", () => {
+  const db = fixture();
+  put(db, "dm", approval("card", "req-a"));
+  put(db, "room", { ...question("ask", "req-q"), at: NOW - 30_000 });
+  const asked = get(db, { view: "questions" }).items[0]!;
+  expect(post(db, { id: asked.id, version: asked.version, snoozedUntil: Date.now() + 60 * 60 * 1000 }).status).toBe(200);
+  const umbrella = get(db, { view: "decisions" });
+  expect({ decisions: umbrella.decisions, snoozedOwed: umbrella.snoozedOwed, snoozedHere: umbrella.snoozedHere }).toEqual({ decisions: 1, snoozedOwed: 1, snoozedHere: undefined });
+  expect(get(db, { view: "questions" }).snoozedHere).toBe(1);
+  expect(get(db, { view: "approvals" }).snoozedHere).toBeUndefined();
+  expect(get(db, { view: "connections" }).snoozedHere).toBeUndefined();
+  // the umbrella's own number does not move with the tab
+  for (const view of ["approvals", "questions", "connections"] as const) expect(get(db, { view }).snoozedOwed, view).toBe(1);
+  expect(get(db, { view: "questions", includeSnoozed: true }).total).toBe(1);
+});
 
 it("3b. a snooze that runs out with no write: the same numbers, and the shared read ran once", () => {
   const raw = fixture();
