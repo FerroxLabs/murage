@@ -59,9 +59,11 @@ export function updateMemoryLearning(db: DatabaseSync, patch: unknown, expectedR
 // monthly ceiling, and their conversions. Memory schema 11 stores v3; the v2
 // names above stay frozen for the v1 -> v2 -> v3 chain and the 11 -> 10 downgrade.
 
+export const LEARNING_CEILING_MAX = 1_000_000_000_000;
+
 export const learningCeilingSchema = z.object({
-  input: z.number().int().nonnegative().max(1_000_000_000_000),
-  output: z.number().int().nonnegative().max(1_000_000_000_000),
+  input: z.number().int().nonnegative().max(LEARNING_CEILING_MAX),
+  output: z.number().int().nonnegative().max(LEARNING_CEILING_MAX),
 }).strict();
 
 /** v3: the two daily caps become one monthly ceiling; everything else is v2 verbatim. */

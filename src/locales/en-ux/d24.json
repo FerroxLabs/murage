@@ -1,0 +1,8 @@
+{
+  "ux.d24.label": "Spoken replies",
+  "ux.d24.help": "Read finished replies aloud on this computer, in the conversation you have open. Off while you are on a call. Needs a hosted voice.",
+  "ux.d24.disclosure": "Speech uses a voice service. Avoid reading sensitive replies aloud.",
+  "ux.d24.budget": "Spoken replies paused: voice budget reached.",
+  "ux.d24.failed": "Couldn't speak that reply.",
+  "ux.d24.hosted": "Spoken replies need a hosted voice."
+}

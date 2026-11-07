@@ -53,8 +53,8 @@ const entry = (files: Map<string, { entries: Record<string, unknown>[] }>, id: s
 
 const SLICE = [
   "apps.bot-email", "apps.chat-approval-buttons", "apps.own-browser", "apps.webhook-routines", "bots.channel-turns", "bots.rename-chief",
-  "engines.continue-with-chatgpt-grok", "engines.grok-images", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
-  "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.spending-per-bot",
+  "engines.continue-with-chatgpt-grok", "engines.default-models", "engines.grok-images", "engines.muse-code", "engines.openai-compatible-tools", "engines.set-up-claude-code", "engines.set-up-from-the-app", "engines.use-my-subscription",
+  "install-account.policy-lock", "install-account.ubuntu-computer-control", "limits.plan-usage", "limits.spending-per-bot",
   "memory.learn-about-me", "memory.pin",
 ];
 
@@ -169,7 +169,7 @@ describe("export and diff", () => {
     expect(JSON.stringify(exported)).not.toContain("\"internal\"");
     for (const record of exported.entries) expect(record.applies).toMatch(/^Applies to /);
     expect(exported.valid_paths).toEqual(expect.arrayContaining([
-      "Settings → Bots → Advanced → Channel turn timeout", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
+      "Settings → Bots → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
     ]));
     const diff = run(["--diff", join(scratch, "no-previous.json"), "--current", file]);
     expect(diff.ok).toBe(true);

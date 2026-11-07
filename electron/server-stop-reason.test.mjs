@@ -29,7 +29,7 @@ describe("server stop reason line", () => {
   it("main names the reason on every stop path and logs as the close begins", () => {
     const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
     for (const reason of ["update", "backup", "system-shutdown", "restart"]) expect(main).toContain(`serverStopReason.note("${reason}")`);
-    expect(main.indexOf("serverStopReason.logOnce()")).toBeGreaterThan(main.indexOf("function cleanupDesktopForExit()"));
-    expect(main.slice(main.indexOf("function cleanupDesktopForExit()"), main.indexOf("serverStopReason.logOnce()"))).not.toContain("return");
+    expect(main.indexOf("serverStopReason.logOnce()")).toBeGreaterThan(main.indexOf("function cleanupDesktopForExit("));
+    expect(main.slice(main.indexOf("function cleanupDesktopForExit("), main.indexOf("serverStopReason.logOnce()"))).not.toContain("return");
   });
 });

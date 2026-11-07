@@ -1,0 +1,26 @@
+
+ RUN  v4.1.10 /root/swarm1018/ENGINES-REST-1018/repo
+
+ ❯ server/drivers/acp/acp.test.ts (474 tests | 1 failed | 473 skipped) 30154ms
+     × an upstream-trusted folder never sees a card and never a withheld chip, even over a Murage 'Don't trust' 30122ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/drivers/acp/acp.test.ts > ACP folder trust (fake CLI in folder-trust mode) > an upstream-trusted folder never sees a card and never a withheld chip, even over a Murage 'Don't trust'
+Error: no matching event within 30000ms; saw: turn.started, request.opened, session.started
+ ❯ Timeout._onTimeout server/testing/events.ts:48:13
+     46|           if (idx !== -1) waiters.splice(idx, 1);
+     47|           reject(
+     48|             new Error(
+       |             ^
+     49|               `no matching event within ${timeoutMs}ms; saw: ${events.…
+     50|             ),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 473 skipped (474)
+   Start at  16:54:57
+   Duration  37.84s (transform 6.00s, setup 5.94s, import 1.58s, tests 30.15s, environment 0ms)
+

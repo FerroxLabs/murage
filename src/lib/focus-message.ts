@@ -1,3 +1,4 @@
+import { chatsEligible, type ChatsGen } from "./chats-gen";
 // Landing on a message: after a search hit, scroll the row into view and
 // flash it. The wrapper carrying data-mid is the transcript row itself, or a
 // `display: contents` step inside a run; its last child (the bubble or chip,
@@ -16,7 +17,9 @@ export async function landOnSearchHit(
   hit: SearchHit,
   state: Pick<AppState, "bots" | "groups" | "pageIntent">,
   dispatch: React.Dispatch<Action>,
+  gen?: ChatsGen | null,
 ): Promise<void> {
+  if (gen !== undefined && !chatsEligible(gen)) return;
   const ownerId = hit.botId ?? hit.groupId;
   const bot = hit.botId ? state.bots.find((candidate) => candidate.id === hit.botId) : undefined;
   const group = hit.groupId ? state.groups.find((candidate) => candidate.id === hit.groupId) : undefined;
@@ -42,6 +45,7 @@ export async function landOnSearchHit(
       dispatch({ type: "threadActive", threadId: hit.threadId, activeLeafId: branch.activeLeafId });
     }
   }
+  if (gen !== undefined && !chatsEligible(gen)) return;
   const sentence = searchHitSentence(hit);
   dispatch({ type: "focusMessage", threadId: hit.threadId, messageId: hit.messageId, ...(sentence ? { sentence } : {}) });
 }

@@ -1,0 +1,36 @@
+{
+  "tsconfig.server.json": {
+    "exit": 0,
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  },
+  "tsconfig.json": {
+    "exit": 0,
+    "NODE_OPTIONS": "--max-old-space-size=8192"
+  },
+  "locale_catalog": {
+    "exit": 0,
+    "languages": 8,
+    "english_strings": 4055
+  },
+  "targeted": {
+    "files": 20,
+    "passed": 323
+  },
+  "acp_neighbour": {
+    "passed": 471,
+    "failed_on_base_and_build": 1,
+    "skipped": 2
+  },
+  "pool_and_engine_tree": {
+    "passed": 61,
+    "failed_on_base_and_build": 7
+  },
+  "mutations": {
+    "attempted": 5,
+    "rejected": 5
+  },
+  "ci_try": {
+    "status": "unavailable",
+    "reason": "No ci-try executable, configuration or connected runner; no push authorized. macOS and Windows not executed."
+  }
+}

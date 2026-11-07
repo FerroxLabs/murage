@@ -91,7 +91,7 @@ export interface PasteOptions {
 
 /** Every sentence this module can show. One place so the copy can be linted. */
 export const PASTE_MESSAGES: Record<PasteFailureReason, string> = {
-  empty: "Paste a link, a command, or a config snippet.",
+  empty: "Paste a link, a command, or a short piece of settings text.",
   "too-large": "That is more than 64 KiB. Paste just the part for the server you want.",
   "too-many": "That snippet has more than 20 servers. Paste fewer at a time.",
   toml: "Codex config.toml files are not supported yet. Paste the server's link or its command instead.",
@@ -101,7 +101,7 @@ export const PASTE_MESSAGES: Record<PasteFailureReason, string> = {
   "multi-command": "Paste one command at a time.",
   "shell-syntax": "Paste a single command without pipes, redirects, or substitutions. Murage runs it directly, not through a shell.",
   "unterminated-quote": "That command has a quote that is never closed.",
-  unrecognized: "Murage could not tell what that is. Paste a link, a command, or a config snippet.",
+  unrecognized: "Murage could not tell what that is. Paste a link, a command, or a short piece of settings text.",
 };
 
 /** The English of every note, with {entry} and {field} to fill. The catalogue
