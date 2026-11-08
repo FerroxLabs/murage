@@ -337,6 +337,18 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "source": "server/drivers/project-tool-schemas.ts"
   },
   {
+    "kind": "tool",
+    "name": "phone_call_place",
+    "term": "phone_call_place",
+    "source": "server/drivers/phone-tool-schemas.ts"
+  },
+  {
+    "kind": "tool",
+    "name": "phone_call_result",
+    "term": "phone_call_result",
+    "source": "server/drivers/phone-tool-schemas.ts"
+  },
+  {
     "kind": "settings-page",
     "name": "general",
     "term": "General",
@@ -666,6 +678,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/data-dir",
+    "term": "data folder",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/decisions",
     "term": "decisions",
     "source": "server/index.ts"
@@ -728,6 +746,12 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
     "kind": "route",
     "name": "/api/help",
     "term": "help",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/highlevel",
+    "term": "HighLevel",
     "source": "server/index.ts"
   },
   {
@@ -804,8 +828,20 @@ export const HELP_CAPABILITIES: readonly Capability[] = [
   },
   {
     "kind": "route",
+    "name": "/api/phone-calls",
+    "term": "phone calls",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
     "name": "/api/phones",
     "term": "phone tools",
+    "source": "server/index.ts"
+  },
+  {
+    "kind": "route",
+    "name": "/api/plan-usage",
+    "term": "usage",
     "source": "server/index.ts"
   },
   {

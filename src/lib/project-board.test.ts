@@ -135,7 +135,7 @@ it("swimlanes sort members then Unassigned and You; lane changes reassign or tak
   const lanes = swimlanes(members); expect(lanes.map(l => l.id)).toEqual(["a", "b", "unassigned", "you"]);
   expect(planLaneDrop(board(), "c", "b", { columnId: "done", index: 0 })).toMatchObject({ ok: true, body: { action: "reassign", assigneeBotId: "b", expectedRevision: 4 } });
   expect(planLaneDrop(board(), "c", "you", { columnId: "todo", index: 0 })).toMatchObject({ ok: true, body: { action: "take_over" } });
-  expect(planLaneDrop(board(), "c", "unassigned", { columnId: "todo", index: 0 })).toEqual({ ok: false, reason: "Pick a teammate to reassign" });
+  expect(planLaneDrop(board(), "c", "unassigned", { columnId: "todo", index: 0 })).toEqual({ ok: false, reason: "Pick a teammate to reassign this to" });
   let k = keyboardBoard(null, { type: "focus", cardId: "c" }, board(), boardColumns(board()), lanes);
   k = keyboardBoard(k, { type: "key", key: "Enter" }, board(), boardColumns(board()), lanes);
   k = keyboardBoard(k, { type: "key", key: "ArrowDown" }, board(), boardColumns(board()), lanes);

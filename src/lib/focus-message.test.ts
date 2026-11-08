@@ -120,10 +120,29 @@ describe("a search hit lands with its matched phrase", () => {
     await landOnSearchHit(hit, { bots: [{ id: "b1", threadId: "t1" }], groups: [], pageIntent: {} } as never, dispatch);
     expect(dispatch).toHaveBeenLastCalledWith({ type: "focusMessage", threadId: "t1", messageId: "m1", sentence: "the launch date" });
   });
+  it("BF-11: stale caller keeps accepted navigation but cannot issue final focus", async () => {
+    const dispatch = vi.fn();
+    await landOnSearchHit(hit, { bots: [{ id: "b1", threadId: "t1" }], groups: [], pageIntent: {} } as never, dispatch, undefined, () => false);
+    expect(dispatch).toHaveBeenCalledWith({ type: "select", id: "b1", threadId: "t1" });
+    expect(dispatch.mock.calls.some(([action]) => action.type === "focusMessage")).toBe(false);
+  });
   it("leaves the sentence off when there is no match range", async () => {
     const dispatch = vi.fn();
     await landOnSearchHit({ ...hit, matchLength: 0 }, { bots: [{ id: "b1", threadId: "t1" }], groups: [], pageIntent: {} } as never, dispatch);
     expect(dispatch).toHaveBeenLastCalledWith({ type: "focusMessage", threadId: "t1", messageId: "m1" });
     expect(searchHitSentence({ snippet: "abc", matchStart: -1, matchLength: 2 })).toBe("");
   });
+});
+
+it("RULE Find and Palette do not focus a hit after its generation changed during landing", async()=>{
+  const { chatsGenHello, chatsGenFrame } = await import('./chats-gen');
+  const { api } = await import('@/state/store');
+  const gen={epoch:'landing',rev:0};chatsGenHello(gen);
+  const dispatch=vi.fn();
+  vi.mocked(api).mockImplementationOnce(async()=>{chatsGenFrame({...gen,rev:1},false);return {activeLeafId:'m'};});
+  await landOnSearchHit({threadId:'t',messageId:'m',botId:'b',onActivePath:false,snippet:'owner visible forgotten',matchStart:0,matchLength:5} as never,{bots:[{id:'b',threadId:'t'}],groups:[],pageIntent:{}} as never,dispatch,gen);
+  expect(dispatch.mock.calls.some(([action])=>action.type==='focusMessage')).toBe(false);
+  dispatch.mockClear();
+  await landOnSearchHit({threadId:'t',messageId:'m',botId:'b',onActivePath:true} as never,{bots:[{id:'b',threadId:'t'}],groups:[],pageIntent:{}} as never,dispatch,gen);
+  expect(dispatch).not.toHaveBeenCalled();
 });

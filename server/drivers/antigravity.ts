@@ -30,6 +30,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DATA_DIR, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
+import { ownedPath } from "../data-roots.ts";
 import { computerProxyEnv } from "../container-computer.ts";
 import { augmentedPath } from "../env-path.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
@@ -409,13 +410,14 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
     const env = antigravityEnvironment(input.environment);
     const catalogEnv: Record<string, string | undefined> = env;
     let models = STATIC_ANTIGRAVITY_MODELS;
-    const refreshModels = async () => {
+    let lastListed: ModelCatalog | undefined;
+    let pendingCatalog: Promise<void> | undefined;
+    const loadModels = async () => {
       try {
         // No local server rows (0.1.52 spec E3): agy takes only `--model <id>`
         // and has no base-URL or key input, so a local pick never reached the
         // local host. Hidden rather than listed and failing later.
         const resolved = readAntigravityModelCatalog(catalogEnv);
-        if (resolved.options.length) models = resolved;
         // The installed agy's own list wins: ids it no longer accepts must not stay selectable.
         const listed = await new Promise<string>((resolve) => {
           try {
@@ -423,15 +425,21 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
           } catch { resolve(""); }
         });
         const live = parseAntigravityModelsOutput(listed);
-        if (live.length) {
-          const fromAgy = catalogFromAgyList(live);
+        if (live.length) lastListed = catalogFromAgyList(live);
+        if (lastListed) {
+          const fromAgy = lastListed;
           const seen = new Set(fromAgy.options.map((option) => option.id));
           const custom = resolved.options.filter((option) => option.custom && !seen.has(option.id));
-          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: "live" };
-        }
+          models = { default: fromAgy.default, options: [...fromAgy.options, ...custom], source: live.length ? "live" : "static" };
+        } else if (resolved.options.length) models = resolved;
       } catch {
         // Keep the last usable catalog when settings.json is unreadable.
+        models = { ...models, source: "static" };
       }
+    };
+    const refreshModels = (): Promise<void> => {
+      pendingCatalog ??= loadModels().finally(() => { pendingCatalog = undefined; });
+      return pendingCatalog;
     };
     await refreshModels();
     // Versions before 1.0.2 mounted Murage's tools in the owner's own global
@@ -569,10 +577,11 @@ export const AntigravityDriver: ProviderDriver<AntigravityConfig> = {
       // A turn that names its own folder (the Chief's proposal turn) gets no
       // per-thread workspace: it would stay behind, empty, after every run.
       const tag = threadId.replace(/[^\w-]/g, "");
-      const workspace = join(DATA_DIR, "workspaces", tag);
+      let workspace = join(DATA_DIR, "workspaces", tag);
       if (!turn.cwd) {
         try {
-          mkdirSync(workspace, { recursive: true });
+          // C11 (S5-DATADIR-PATHS r4.1): the one walker; a `workspaces/<tag>` link is refused, and the spawn uses the canonical (DR5)
+          workspace = ownedPath(workspace, { create: true }).canonical;
         } catch (error) {
           pending.delete(threadId);
           throw error;

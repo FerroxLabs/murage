@@ -5,6 +5,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR, loadConfig } from "./config.ts";
+import { resetDataRootsForTest } from "./data-roots.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store, isIndividualAssistant } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
@@ -49,7 +50,7 @@ function seam(name: string, deps: Record<string, unknown>) {
   return evaluate(`${ts.isVariableDeclaration(node) ? "const " : ""}${node.getText(ast)}; return ${name};`, deps);
 }
 function value(name: string, deps: Record<string, unknown>) { return seam(name, deps); }
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); });
 function fixture() {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
   const make = (name: string, section: string) => { const bot = store.createBot(); store.patchBot(bot.id, { name, section }); return bot; };
@@ -158,7 +159,8 @@ it("R2.7 index standing prompt path selects Sales and excludes home notes", () =
 it("R2.7 real permission event denies cross-partition writes before Full access autoVerdict", () => {
   const f = fixture(); Object.assign(f.iris, { autoApprove: true, fullAccess: true, noLimits: true });
   const respondToRequest = vi.fn(), judged = vi.fn(autoVerdict);
-  const fold = seam("foldRuntimeEvent", { fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
+  // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
+  const fold = seam("foldRuntimeEvent", { callSpeech: { provider: () => undefined }, fluxFirstTokenProbe: { begin() {}, observe() {} }, providerReplyOf: () => undefined, accountProjectEvent: vi.fn(), shouldIgnoreProviderEvent: () => false, accountPresentedProjectEvent: () => true, presentedRequests: { publish: vi.fn() }, localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => undefined, broadcast: vi.fn(), routines: null, store: f.store, botForDirectThread: () => f.iris, partitionFileRefusal, turnCwdByThread: new Map(), turnEngineByThread: new Map(), registry: { get: () => ({ adapter: { respondToRequest } }) }, autoVerdict: judged,
     // index.ts imports it from engine-env.ts and calls it for every permission event (Rule 74a): the real one, as in production
     noteStartupFileEvent,
     // 1.0.8 #19: an automatic denial is tied to its request and turn (approval-delivery.ts), the real ones over a bus that never fires
